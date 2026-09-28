@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,77 @@ test('KHA-133 private Chromium socket path stays within the Linux Unix socket li
   const profileSocket = path.join(scratchRoot, `${browserScratchPrefix}XXXXXX`,
     'peer', '.org.chromium.XXXXXX', 'SingletonSocket');
   assert.ok(Buffer.byteLength(profileSocket) < 108, 'browser profile socket has room for its terminator');
+});
+
+test('KHA-133 peer server serves its JS bundle from a trailing-slash root and rejects traversal', async () => {
+  const testBase = path.join(os.homedir(), '.cache', 'khala-executor');
+  await mkdir(testBase, { recursive: true, mode: 0o700 });
+  const assets = await mkdtemp(path.join(testBase, 'peer-assets-'));
+  let served: Awaited<ReturnType<typeof servePeer>> | null = null;
+  try {
+    await mkdir(path.join(assets, 'assets'));
+    await writeFile(path.join(assets, 'index.html'), '<script src="/assets/peer.js"></script>');
+    await writeFile(path.join(assets, 'assets', 'peer.js'), 'globalThis.peer = true;');
+    await writeFile(path.join(assets, 'assets', 'crypto.wasm'), new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+    served = await servePeer(assets + path.sep);
+    const index = await fetch(served.origin);
+    const script = await fetch(`${served.origin}/assets/peer.js`);
+    assert.equal(index.status, 200);
+    assert.equal(script.status, 200);
+    assert.equal(await script.text(), 'globalThis.peer = true;');
+    const wasm = await fetch(`${served.origin}/assets/crypto.wasm`);
+    assert.equal(wasm.headers.get('content-type'), 'application/wasm');
+    const wasmRuntime = (globalThis as unknown as {
+      WebAssembly: { instantiateStreaming(response: Response): Promise<unknown> };
+    }).WebAssembly;
+    await wasmRuntime.instantiateStreaming(wasm);
+    assert.equal(peerAssetPath(assets + path.sep, '/../outside.js'), null);
+    assert.equal((await fetch(`${served.origin}/assets/missing.js`)).status, 404);
+  } finally {
+    if (served) await new Promise<void>(resolve => served!.server.close(() => resolve()));
+    await rm(assets, { recursive: true, force: true });
+  }
+});
+
+test('KHA-133 built peer bundle boots in Chromium through the fixture server', {
+  skip: process.env.KHALA_42_BROWSER_ASSET_PROBE !== '1' ? 'opt-in built browser probe' : undefined,
+}, async () => {
+  const scratchRoot = process.env.TMPDIR;
+  if (!scratchRoot || !path.isAbsolute(scratchRoot)) throw new Error('private_browser_probe_tmpdir_required');
+  await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  const scratchStat = await lstat(scratchRoot);
+  if (!scratchStat.isDirectory() || scratchStat.isSymbolicLink()
+    || scratchStat.uid !== process.getuid?.() || (scratchStat.mode & 0o077) !== 0) {
+    throw new Error('private_browser_probe_tmpdir_unsafe');
+  }
+  const profile = await mkdtemp(path.join(scratchRoot, 'k-'));
+  let served: Awaited<ReturnType<typeof servePeer>> | null = null;
+  let browser: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
+  try {
+    served = await servePeer();
+    browser = await chromium.launchPersistentContext(profile, {
+      executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
+    });
+    const page = await browser.newPage();
+    await page.goto(served.origin);
+    await page.waitForFunction(() => !!(globalThis as unknown as { peer?: Peer }).peer,
+      undefined, { timeout: 10_000 });
+    const wasmFiles = (await readdir(path.join(peerRoot, 'assets'))).filter(name => name.endsWith('.wasm'));
+    assert.equal(wasmFiles.length, 1, 'one built Matrix SDK WASM asset');
+    assert.equal(await page.evaluate(async wasmUrl => {
+      const response = await fetch(wasmUrl);
+      if (response.headers.get('content-type') !== 'application/wasm') return false;
+      const wasmRuntime = (globalThis as unknown as {
+        WebAssembly: { compileStreaming(response: Response): Promise<unknown> };
+      }).WebAssembly;
+      await wasmRuntime.compileStreaming(response);
+      return true;
+    }, `/assets/${wasmFiles[0]}`), true);
+  } finally {
+    if (browser) await browser.close();
+    if (served) await new Promise<void>(resolve => served!.server.close(() => resolve()));
+    await rm(profile, { recursive: true, force: true });
+  }
 });
 
 test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome unknown, no duplicate', {
@@ -227,18 +298,26 @@ async function recover(env: NodeJS.ProcessEnv): Promise<Recovery> {
   return result;
 }
 
-async function servePeer(): Promise<{ server: Server; origin: string }> {
+function peerAssetPath(assetRoot: string, pathname: string): string | null {
+  const normalizedRoot = path.resolve(assetRoot);
+  const target = path.resolve(normalizedRoot, '.' + (pathname === '/' ? '/index.html' : pathname));
+  return target === path.join(normalizedRoot, 'index.html') || target.startsWith(normalizedRoot + path.sep)
+    ? target : null;
+}
+
+async function servePeer(assetRoot = peerRoot): Promise<{ server: Server; origin: string }> {
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-    const target = path.resolve(peerRoot, '.' + (pathname === '/' ? '/index.html' : pathname));
-    if (target !== path.join(peerRoot, 'index.html') && !target.startsWith(peerRoot + path.sep)) {
+    const target = peerAssetPath(assetRoot, pathname);
+    if (target === null) {
       response.writeHead(404).end();
       return;
     }
     try {
       const bytes = await readFile(target);
       const contentType = target.endsWith('.html') ? 'text/html'
-        : target.endsWith('.js') ? 'text/javascript' : 'application/octet-stream';
+        : target.endsWith('.js') ? 'text/javascript'
+          : target.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream';
       response.writeHead(200, { 'content-type': contentType }).end(bytes);
     } catch { response.writeHead(404).end(); }
   });
