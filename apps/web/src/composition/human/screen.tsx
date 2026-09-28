@@ -32,6 +32,8 @@ export type HumanScreenProps<Route> = Readonly<{
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
   /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
   renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => ReactNode;
+  /** Account action for signed-in device or route failures outside the ready shell. */
+  renderSignedInAction?: (mode: ShellMode) => ReactNode;
 }>;
 
 /** Shell state the screen owns, so it survives a switch between the default and a ready shell. */
@@ -77,6 +79,7 @@ export function HumanScreen<Route>({
   renderDeviceLoss,
   attachCapabilities,
   renderReadyShell,
+  renderSignedInAction,
 }: HumanScreenProps<Route>) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
   const [theme, setTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
@@ -113,14 +116,19 @@ export function HumanScreen<Route>({
   if (snapshot.phase === 'ready' && renderReadyShell !== undefined) {
     return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
   }
+  const signedInAction = snapshot.phase === 'unavailable' && snapshot.source !== 'identity'
+    ? renderSignedInAction?.(mode) : null;
   return (
     <AiurShell
       mode={mode}
-      navigation={mode === 'standalone' ? [{ id: 'khala', label: 'Khala', href: routes.createPath(), current: true }] : []}
+      brandHref={routes.createPath()}
+      navigation={[]}
+      actions={signedInAction}
       theme={chrome.theme}
       collapsed={collapsed}
       onCollapsedChange={setCollapsed}
     >
+      {mode === 'hosted-content' && signedInAction ? <div className="khala-content-actions">{signedInAction}</div> : null}
       {content}
     </AiurShell>
   );

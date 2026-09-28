@@ -280,14 +280,17 @@ class MatrixSubstrate implements RoomSubstrate {
     if (rooms.length === 0) return;
     const count = Math.min(rooms.length, 4);
     for (let offset = 0; offset < count; offset++) {
+      if (this.runtime.active?.client !== client) break;
       const room = rooms[(this.pollCursor + offset) % rooms.length]!;
       const proof: BrowserSendProof = { roomId: room.roomId as RoomId, deviceId, matrixAccessToken };
       const hold = await this.sendFence.inspect(proof);
-      if (!hold || this.runtime.active?.client !== client) continue;
+      if (this.runtime.active?.client !== client) break;
+      if (!hold) continue;
       const receipt = `${room.roomId}:${hold.operationId}:${hold.epoch}:${deviceId}`;
       if (this.rotationReceipts.has(receipt)) continue;
       try {
         await crypto.forceDiscardSession(room.roomId);
+        if (this.runtime.active?.client !== client) break;
         if (await this.sendFence.rotation(proof, hold.operationId, hold.epoch)) this.rotationReceipts.add(receipt);
       } catch { /* An offline SDK remains pending until the next poll. */ }
     }
@@ -542,7 +545,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
       return input.credentials.resolve(principal, signal);
     },
   };
-  const device = createBrowserDeviceService({
+  const browserDevice = createBrowserDeviceService({
     identity: input.identity,
     credentials: credentialSource,
     stores: createIndexedDbStoreFactory(),
@@ -553,6 +556,16 @@ export function createMatrixBrowserPorts(input: Readonly<{
   const substrate = new MatrixSubstrate(runtime, input.limits, input.participants, input.sendFence);
   const journals = new Map<OwnerId, RoomJournal>();
   let current: { ownerId: OwnerId; generation: number; service: ReturnType<typeof createRoomService> } | null = null;
+  const device: DevicePort = {
+    ...browserDevice,
+    async stop() {
+      await browserDevice.stop();
+      current?.service.stop();
+      current = null;
+      journals.clear();
+      runtime.principalByOwner.clear();
+    },
+  };
 
   function service(): ReturnType<typeof createRoomService> | null {
     const active = runtime.active;
