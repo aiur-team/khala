@@ -84,4 +84,11 @@ describe('renderNetlifyHeaders', () => {
   it('fails the build on a set but malformed origin rather than widening the policy', () => {
     expect(() => renderNetlifyHeaders('https:')).toThrow(/PUBLIC_HOMESERVER_ORIGIN must be an HTTPS origin/);
   });
+
+  it('admits HTTP loopback only with the explicit local build flag', () => {
+    const loopback = 'http://127.0.0.1:8008';
+    expect(() => renderNetlifyHeaders(loopback)).toThrow(/PUBLIC_HOMESERVER_ORIGIN must be an HTTPS origin/);
+    expect(renderNetlifyHeaders(loopback, true)).toContain(`connect-src 'self' ${loopback};`);
+    expect(() => renderNetlifyHeaders('http://matrix.example.com', true)).toThrow(/PUBLIC_HOMESERVER_ORIGIN must be an HTTPS origin/);
+  });
 });
