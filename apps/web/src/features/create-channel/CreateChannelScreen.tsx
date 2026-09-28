@@ -206,7 +206,7 @@ export function CreateChannelScreen({
         </button>
       ) : null}
 
-      {mode === 'shared' && view.roomId && view.phase !== 'ready' && onOpenRoom ? (
+      {mode === 'shared' && view.roomId && retryable && onOpenRoom ? (
         <button type="button" onClick={() => onOpenRoom(view.roomId!)}>
           Open created channel
         </button>
