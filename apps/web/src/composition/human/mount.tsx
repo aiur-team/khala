@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ChannelAccessRequestHandle, IdentityPort } from '@khala/contracts/messaging/index';
 import { AiurShell } from '../../shell/AiurShell';
@@ -114,7 +114,46 @@ function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: ChannelAcces
   );
 }
 
-function OwnerShell({ createController, routes, chrome, children }: {
+function LogoutAction({ application, routes, mode }: {
+  application: HumanApplicationHandle;
+  routes: HumanRouteCodec;
+  mode: ShellMode;
+}) {
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
+  const signOutInFlight = useRef(false);
+
+  async function signOut() {
+    if (signOutInFlight.current) return;
+    signOutInFlight.current = true;
+    setSigningOut(true);
+    setSignOutFailed(false);
+    try {
+      const result = await application.signOut();
+      if (result.kind !== 'ok') setSignOutFailed(true);
+      else if (mode === 'standalone') globalThis.history?.replaceState(null, '', routes.createPath());
+    } finally {
+      signOutInFlight.current = false;
+      setSigningOut(false);
+    }
+  }
+
+  return <>
+    {signOutFailed ? <span role="alert">Log out failed. Try again.</span> : null}
+    {signingOut ? <span role="status">Logging out…</span> : null}
+    <button type="button" className="aiur-shell__icon-button" aria-label="Log out" title="Log out"
+      disabled={signingOut} onClick={() => void signOut()}>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10 17l5-5-5-5M15 12H3" />
+        <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7" />
+      </svg>
+    </button>
+  </>;
+}
+
+function OwnerShell({ application, createController, routes, chrome, children }: {
+  application: HumanApplicationHandle;
   createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
@@ -126,6 +165,7 @@ function OwnerShell({ createController, routes, chrome, children }: {
     controller.start();
     return () => controller.dispose();
   }, [controller]);
+  const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
   return (
     <AiurShell
       mode={chrome.mode}
@@ -146,10 +186,13 @@ function OwnerShell({ createController, routes, chrome, children }: {
           ),
         },
       ]}
+      brandHref={routes.createPath()}
+      actions={actions}
       theme={chrome.theme}
       collapsed={chrome.collapsed}
       onCollapsedChange={chrome.onCollapsedChange}
     >
+      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{actions}</div> : null}
       <ChannelAccessContext.Provider value={controller}>{children}</ChannelAccessContext.Provider>
     </AiurShell>
   );
@@ -199,7 +242,7 @@ export function HumanApplicationScreen({
   // shell renders only for a ready snapshot, so agent/discovery credential
   // routes never see owner-only inbox chrome.
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => (
-    <OwnerShell key={context.principal.ownerId} createController={createChannelAccess} routes={routes} chrome={chrome}>
+    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome}>
       {children}
     </OwnerShell>
   );
@@ -214,6 +257,7 @@ export function HumanApplicationScreen({
       renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}
+      renderSignedInAction={shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
     />
   );
 }

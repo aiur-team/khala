@@ -48,7 +48,7 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     assert.equal(await page.getByRole('main').count(), 1);
     assert.equal(await page.getByText('2', { exact: true }).count(), 1);
     assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1);
-    assert.equal(await page.locator('.aiur-shell__brand').innerText(), 'Khala');
+    assert.equal(await page.locator('.aiur-shell__brand').innerText(), 'KHALA');
     assert.equal(await page.locator('.aiur-shell__theme-toggle svg').count(), 2);
     assert.equal(await page.locator('.aiur-shell__nav-toggle svg').count(), 1);
     const themeWidth = await page.locator('.aiur-shell__theme-toggle').evaluate(node => node.getBoundingClientRect().width);

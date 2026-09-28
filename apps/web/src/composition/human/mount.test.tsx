@@ -22,6 +22,7 @@ function application(snapshot: HumanApplicationSnapshot): HumanApplicationHandle
     getSnapshot: () => snapshot,
     subscribe: () => () => undefined,
     navigate: vi.fn(),
+    signOut: vi.fn(),
     dispose: vi.fn(),
   };
 }
@@ -56,6 +57,8 @@ describe('HumanApplicationScreen', () => {
       <HumanApplicationScreen application={application({ phase: 'signed_out', path: '/', context: null })} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />,
     );
     expect(signedOut).toContain('Sign in');
+    expect(signedOut).not.toContain('aria-label="Log out"');
+    expect(signedOut).not.toContain('class="aiur-shell__nav-label">Khala</span>');
 
     const unavailable = renderToStaticMarkup(
       <HumanApplicationScreen
@@ -90,6 +93,7 @@ describe('HumanApplicationScreen', () => {
       expect(html).not.toContain('Check retained keys again');
       expect(html).not.toContain('Use new device');
       expect(html).not.toContain('live room');
+      expect(html).toContain('aria-label="Log out"');
       expect(renderRoom).not.toHaveBeenCalled();
     }
     const revoked = renderToStaticMarkup(
@@ -99,6 +103,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(revoked).not.toContain('original keys');
     expect(revoked).toContain('revoked_by_owner');
+    expect(revoked).toContain('aria-label="Log out"');
   });
 
   it('keeps standalone chrome out of a host-content mount', async () => {
@@ -113,7 +118,7 @@ describe('HumanApplicationScreen', () => {
     const standalone = renderToStaticMarkup(
       <HumanApplicationScreen application={application(snapshot)} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} mode="standalone" />,
     );
-    expect(standalone).toContain('class="aiur-shell__brand">Khala</span>');
+    expect(standalone).toContain('class="aiur-shell__brand" href="/new"');
   });
 
   it('delegates a ready room route to the required live room renderer', async () => {
@@ -130,6 +135,7 @@ describe('HumanApplicationScreen', () => {
       />,
     );
     expect(room).toContain('live room');
+    expect(room).toContain('aria-label="Log out"');
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
@@ -149,6 +155,12 @@ describe('HumanApplicationScreen', () => {
     );
 
     expect(html).toContain('Channel requests');
+    expect(html).toContain('aria-label="Log out"');
+    expect(html).toContain('class="aiur-shell__brand" href="/new"');
+    expect(html).toContain('href="/conversations"');
+    expect(html).toContain('>Conversations</span>');
+    expect(html).toContain('>New channel</span>');
+    expect(html).not.toContain('class="aiur-shell__nav-label">Khala</span>');
     expect(html).toContain('<h1 id="khala-channel-requests-title">Channel requests</h1>');
     expect(html).not.toContain('<h2>Channel requests</h2>');
     expect(html).toContain('<h2 id="channel-requests-pending-heading"');

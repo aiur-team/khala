@@ -5,6 +5,10 @@ import { createFakeJournal } from '../../../features/channel-access/fakes';
 import { createHumanApplication } from '../application';
 import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
+import '../../../brand/tokens.css';
+import '../../../brand/fonts.css';
+import '../../../shell/shell.css';
+import '../../../features/channel-access/channel-access.css';
 
 const alice: AuthPrincipal = { v: 1, ownerId: 'owner_alice' as never, providerIssuer: 'https://id.example',
   providerSubject: 'alice', verifiedEmail: 'alice@example.test', sessionExpiresAt: '2030-01-01T00:00:00Z' };
@@ -14,18 +18,29 @@ let state: 'lost' | 'ready' | 'revoked' = new URLSearchParams(location.search).g
 let reason: DeviceView['reason'] = state === 'ready' ? null : 'storage_cleared';
 let activationCount = 0;
 let inboxCount = 0;
+const logoutHarness = new URLSearchParams(location.search).has('logout');
+const hostedHarness = new URLSearchParams(location.search).has('hosted');
+let signedOut = false;
+let signOutCount = 0;
+let stopCount = 0;
 const listeners = new Set<(view: DeviceView) => void>();
 const view = (): DeviceView => ({ deviceId: `device_${principal.ownerId}` as never, state, generation: 1, reason });
 const identity: IdentityPort = {
-  async current() { return { kind: 'signed_in', principal }; },
+  async current() { return signedOut ? { kind: 'signed_out' } : { kind: 'signed_in', principal }; },
   async beginSignIn() { return { kind: 'rejected', code: 'invalid_return_path' }; },
-  async signOut() { return { kind: 'ok', value: null }; },
+  async signOut() {
+    signOutCount += 1;
+    if (logoutHarness) await new Promise(resolve => setTimeout(resolve, 150));
+    if (logoutHarness && signOutCount === 1) return { kind: 'unavailable', retryable: true };
+    signedOut = true;
+    return { kind: 'ok', value: null };
+  },
 };
 const device: DevicePort = {
   async ensureReady() { activationCount += 1; return { kind: 'ok', value: view() }; },
   current: view,
   observe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-  async stop() { /* The sticky loss remains until retained keys are restored. */ },
+  async stop() { stopCount += 1; },
 };
 const routes = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
 const application = createHumanApplication({ identity, device, room: {} as never, admission: {} as never,
@@ -36,7 +51,7 @@ createRoot(document.getElementById('app')!).render(
     createChannelAccess={() => {
       inboxCount += 1;
       return createChannelAccessInboxController({ requests: createFakeJournal().port });
-    }} capabilities={[]} />,
+    }} capabilities={[]} mode={logoutHarness && !hostedHarness ? 'standalone' : 'hosted-content'} />,
 );
 application.navigate('/channels/room_1');
 
@@ -46,6 +61,8 @@ declare global { interface Window {
     switchAccount(): void;
     activationCount(): number;
     inboxCount(): number;
+    signOutCount(): number;
+    stopCount(): number;
   };
 } }
 window.__lossHarness = {
@@ -64,4 +81,6 @@ window.__lossHarness = {
   },
   activationCount: () => activationCount,
   inboxCount: () => inboxCount,
+  signOutCount: () => signOutCount,
+  stopCount: () => stopCount,
 };

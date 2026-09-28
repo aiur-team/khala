@@ -2,6 +2,7 @@
 // verified contract ports to route composition and owns their route/device
 // teardown ordering; UI modules never locate global services themselves.
 
+import { unavailable } from '@khala/contracts/messaging/index';
 import type {
   AdmissionPort,
   AuthPrincipal,
@@ -11,6 +12,7 @@ import type {
   Disposer,
   IdentityPort,
   IdentityState,
+  OperationResult,
   ParticipantView,
   RoomPort,
   RoomId,
@@ -83,6 +85,7 @@ export interface HumanApplicationHandle {
   getSnapshot(): HumanApplicationSnapshot;
   subscribe(listener: () => void): Disposer;
   navigate(path: string): void;
+  signOut(): Promise<OperationResult<null, never>>;
   dispose(): void;
 }
 
@@ -104,6 +107,8 @@ export function createHumanApplication(
   let disposed = false;
   let identityAbort: AbortController | null = null;
   let routeScope: Set<Disposer> | null = null;
+  let signOutPending: Promise<OperationResult<null, never>> | null = null;
+  let signOutOperationId: string | null = null;
   let snapshot: HumanApplicationSnapshot = { phase: 'checking_identity', path, context: null };
   const listeners = new Set<() => void>();
   const deviceSession = createHumanDeviceSession(ports.device);
@@ -256,6 +261,35 @@ export function createHumanApplication(
       if (disposed) return;
       path = nextPath;
       void synchronize(path);
+    },
+
+    signOut() {
+      if (disposed) return Promise.resolve(unavailable());
+      if (signOutPending) return signOutPending;
+      const operationId = signOutOperationId ?? `logout_${crypto.randomUUID()}`;
+      signOutOperationId = operationId;
+      const pending = (async (): Promise<OperationResult<null, never>> => {
+        let result: OperationResult<null, never>;
+        try {
+          result = await ports.identity.signOut(operationId);
+        } catch {
+          result = unavailable();
+        }
+        if (result.kind === 'ok' && !disposed) {
+          epoch += 1;
+          identityAbort?.abort();
+          deactivateRoute();
+          path = '/new';
+          setSnapshot({ phase: 'checking_identity', path, context: null });
+          await deviceSession.release();
+          setSnapshot({ phase: 'signed_out', path, context: null });
+          signOutOperationId = null;
+        }
+        return result;
+      })();
+      signOutPending = pending;
+      void pending.finally(() => { if (signOutPending === pending) signOutPending = null; });
+      return pending;
     },
 
     dispose() {
