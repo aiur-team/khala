@@ -11,7 +11,7 @@ export type OidcAdapterOptions = Readonly<{
   /** Exact issuer identifier; discovery must return the same value. */
   issuer: string;
   clientId: string;
-  /** Confidential clients authenticate with HTTP Basic. Omit for a public client. */
+  /** Confidential clients authenticate with form-body credentials. Omit for a public client. */
   clientSecret?: string;
   /** Aligns the library's token time checks with the trusted clock. */
   clock?: TrustedClock;
@@ -36,7 +36,7 @@ const SCOPE = 'openid email';
 
 export function createOidcClient(options: OidcAdapterOptions): OidcClient {
   const issuer = new URL(options.issuer);
-  const clientAuth = options.clientSecret === undefined ? oauth.None() : oauth.ClientSecretBasic(options.clientSecret);
+  const clientAuth = options.clientSecret === undefined ? oauth.None() : oauth.ClientSecretPost(options.clientSecret);
   const timeoutMs = options.timeoutMs ?? 10_000;
   let metadata: Promise<oauth.AuthorizationServer> | null = null;
 
