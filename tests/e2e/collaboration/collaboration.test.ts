@@ -8,7 +8,8 @@ import { TASK_CHECKS } from './assertions';
 import { type AcceptanceResult, appendRun, blockedResult, evaluate, newRunId, renderRun } from './evidence';
 import {
   type CaseSetup, type CollaborationCase, type CollaborationDecisions, CollaborationBlocked, GATE_IDS, type GateId,
-  APPROVED_HARNESS_ROUTES, PLAN_AGREEMENT_TASK, RECORDED_DECISIONS, bindCase,
+  APPROVED_HARNESS_ROUTES, CURRENT_LIVE_DECISIONS, CURRENT_SCOPE_HARNESSES, HISTORICAL_FIXTURE_DECISIONS,
+  LIVE_PRE_ACTION_GATES, PLAN_AGREEMENT_TASK, bindCase, bindLiveCase,
 } from './scenario';
 
 const setup: CaseSetup = {
@@ -145,24 +146,62 @@ const move = (steps: readonly Step[], step: Step, anchor: Step) =>
   insertBefore(steps.filter(candidate => candidate.join() !== step.join()), anchor, step);
 
 describe('collaboration case binding', () => {
-  it('binds the P05 plan-agreement task under the decisions recorded today', () => {
-    const bound = bindCase(RECORDED_DECISIONS, setup);
+  it('keeps the live case blocked on unanswered policy even with a pinned historical route', () => {
+    const pinned = { ...setup, harnessVersions: { 'claude-code-cli-hooks': '1' } };
+    const live = bindLiveCase(pinned);
+    expect(live.kind).toBe('blocked');
+    if (live.kind !== 'blocked') return;
+    expect(live.openGates).toEqual(expect.arrayContaining(['G-HARNESSES', 'G-AUTOMATION', 'G-ADMISSION', 'P02']));
+    for (const gate of ['G-AUTOMATION', 'G-ADMISSION', 'P02']) {
+      expect(live.reasons.some(reason => reason.startsWith(`${gate} is open:`))).toBe(true);
+    }
+    expect(CURRENT_LIVE_DECISIONS.gates['G-RETENTION'].status).toBe('resolved');
+
+    // A future route decision alone cannot make live policy ready.
+    const routeOnly = { ...CURRENT_LIVE_DECISIONS, gates: { ...CURRENT_LIVE_DECISIONS.gates,
+      'G-HARNESSES': { status: 'resolved' as const, decisionRef: 'synthetic route-only test', source: 'test' } } };
+    const stillBlocked = bindCase(routeOnly, pinned, LIVE_PRE_ACTION_GATES);
+    expect(stillBlocked.kind).toBe('blocked');
+    if (stillBlocked.kind !== 'blocked') return;
+    expect(stillBlocked.reasons.some(reason => reason.startsWith('G-HARNESSES is open:'))).toBe(false);
+    for (const gate of ['G-AUTOMATION', 'G-ADMISSION', 'P02']) {
+      expect(stillBlocked.reasons.some(reason => reason.startsWith(`${gate} is open:`))).toBe(true);
+    }
+  });
+
+  it('does not apply the old two-route exclusion to the current Codex scope', () => {
+    const codex = { ...setup, harnessVersions: { codex: '0.157.1' } };
+    const live = bindLiveCase(codex);
+    expect(live.kind).toBe('blocked');
+    if (live.kind !== 'blocked') return;
+    expect(live.reasons.some(reason => reason.includes('harness route codex is not in this case'))).toBe(false);
+    for (const gate of ['G-HARNESSES', 'G-AUTOMATION', 'G-ADMISSION', 'P02']) {
+      expect(live.reasons.some(reason => reason.startsWith(`${gate} is open:`))).toBe(true);
+    }
+
+    // This pure synthetic binding tests route-scope separation, not operator authority.
+    const resolvedForTest = bindCase(decisions(), codex, LIVE_PRE_ACTION_GATES, CURRENT_SCOPE_HARNESSES);
+    expect(resolvedForTest.kind).toBe('ready');
+  });
+
+  it('keeps historical synthetic plan-agreement evaluator coverage', () => {
+    const bound = bindCase(HISTORICAL_FIXTURE_DECISIONS, setup);
     expect(bound).toMatchObject({
       kind: 'ready',
       case: { expectedTaskAssertions: PLAN_AGREEMENT_TASK.assertions, browserClosedMode: 'required', openGates: [] },
     });
     for (const route of APPROVED_HARNESS_ROUTES) {
-      expect(bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: { [route]: '1' } }).kind).toBe('ready');
+      expect(bindCase(HISTORICAL_FIXTURE_DECISIONS, { ...setup, harnessVersions: { [route]: '1' } }).kind).toBe('ready');
     }
   });
 
   it('is blocked before any action with no pinned route or an unapproved one', () => {
-    const unpinned = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
+    const unpinned = bindCase(HISTORICAL_FIXTURE_DECISIONS, { ...setup, harnessVersions: {} });
     expect(unpinned).toMatchObject({ kind: 'blocked', reasons: ['no harness version is pinned for the case'] });
-    const codex = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: { ...setup.harnessVersions, codex: '1' } });
+    const codex = bindCase(HISTORICAL_FIXTURE_DECISIONS, { ...setup, harnessVersions: { ...setup.harnessVersions, codex: '1' } });
     expect(codex.kind).toBe('blocked');
     if (codex.kind !== 'blocked') return;
-    expect(codex.reasons.join('\n')).toMatch(/harness route codex is not approved by G-HARNESSES/);
+    expect(codex.reasons.join('\n')).toMatch(/harness route codex is not in this case's scope/);
     expect(() => { throw new CollaborationBlocked(codex); }).toThrow(/blocked before any action/);
   });
 
@@ -375,7 +414,7 @@ describe('collaboration acceptance evaluation', () => {
 
 describe('collaboration evidence report', () => {
   it('appends blocked runs under distinct run ids and never overwrites one', () => {
-    const bound = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
+    const bound = bindCase(HISTORICAL_FIXTURE_DECISIONS, { ...setup, harnessVersions: {} });
     if (bound.kind !== 'blocked') throw new Error('expected blocked');
     const first = blockedResult(newRunId(new Date('2026-09-25T00:00:00Z')), bound);
     const second = blockedResult(newRunId(new Date('2026-09-25T00:00:00Z')), bound);
@@ -390,9 +429,9 @@ describe('collaboration evidence report', () => {
 
 describeLive('collaboration acceptance (KHA-139)', liveCase => {
   liveCase('two owners collaborate, then an independent third owner joins', async () => {
-    // Every gate is decided, but no live route version is pinned until a live driver exists.
-    // The acceptance tickets (#134, #241) pin an approved route and reuse this harness-neutral task.
-    const bound = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
+    // The acceptance tickets (#134, #241) must pin a genuine route and resolve
+    // current policy gates before a real driver can use this harness-neutral task.
+    const bound = bindLiveCase({ ...setup, harnessVersions: {} });
     // Blocked is a failed live run, never a skip: the report keeps the blocked row.
     if (bound.kind === 'blocked') throw new CollaborationBlocked(bound);
     throw new Error('no live collaboration driver is registered for the approved task');
