@@ -16,8 +16,11 @@ describe('surface inventory', () => {
     expect(auditInventory(ids, SURFACE_INVENTORY)).toEqual({ unlisted: [], stale: [] });
   });
 
-  it('fails the audit for a registered surface nobody inventoried', async () => {
+  it('accounts for guarded replacement while rejecting a newly injected surface', async () => {
     const { ids } = await discoverSurfaces();
+    expect(SURFACE_INVENTORY['http-control:POST /api/human/devices/replacement']).toMatchObject({
+      kind: 'not-observed',
+    });
     const audit = auditInventory([...ids, 'mcp-tool:khala_search_history'], SURFACE_INVENTORY);
     expect(audit.unlisted).toEqual(['mcp-tool:khala_search_history']);
   });
