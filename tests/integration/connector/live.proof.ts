@@ -133,6 +133,8 @@ test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome
           harness: 'codex', sessionId: gate.fixture.sessionId, generation: 0,
         },
       };
+      assert.notEqual(packet.binding.bindingId, gate.preflightBindingId,
+        'crash ledger binding must be distinct from the native preflight binding');
       await writeFile(packetFile, JSON.stringify(packet), { mode: 0o600 });
       const env = { ...process.env, CODEX_HOME: gate.fixture.codexHome, KHALA_42_PACKET: packetFile };
       const crashed = await killAtNativeAcceptance({

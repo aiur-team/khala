@@ -1,10 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessCapabilities } from '../../../packages/contracts/src/delivery/index';
 import { NATIVE_CLI_CODEX_VERSIONS } from '../../../packages/harnesses/src/codex/capabilities';
 import { inspectHostedCodexHooks } from '../../../packages/agent-cli/src/composition/local-harness-capabilities';
 import { readInstalledCodexVersion } from '../../../packages/agent-cli/src/composition/hosted-session-inspection';
 import { setupEnvironment } from '../../../packages/agent-cli/src/setup/environment';
+import { inspectNativeSolHandoff, type NativeSolHandoff } from './native-sol-handoff';
 
 export type NativeFixture = Readonly<{
   v: 1;
@@ -14,9 +15,11 @@ export type NativeFixture = Readonly<{
   workdir: string;
   codexHome: string;
 }>;
+type NativeSolFixture = Omit<NativeFixture, 'v'> & NativeSolHandoff & Readonly<{ v: 2 }>;
 
 export type NativeGate =
-  | Readonly<{ kind: 'ready'; fixture: NativeFixture; capabilities: HarnessCapabilities }>
+  | Readonly<{ kind: 'ready'; fixture: NativeFixture; capabilities: HarnessCapabilities;
+      preflightBindingId: string | null }>
   | Readonly<{ kind: 'blocked'; code: string }>;
 
 /** Keep CLI queue evidence and hook evidence scoped to the same exact native version. */
@@ -34,19 +37,25 @@ const absoluteDirectory = (value: unknown) => typeof value === 'string' && path.
 export async function inspectNativeGate(descriptorPath: string | undefined): Promise<NativeGate> {
   if (!descriptorPath) return { kind: 'blocked', code: 'native_fixture_not_supplied' };
   if (!path.isAbsolute(descriptorPath)) return { kind: 'blocked', code: 'native_fixture_path_invalid' };
-  let fixture: NativeFixture;
+  let descriptor: NativeFixture | NativeSolFixture;
+  let descriptorMode: number;
   try {
-    const value = JSON.parse(await readFile(descriptorPath, 'utf8')) as Partial<NativeFixture>;
-    if (value.v !== 1 || value.disposable !== true || value.harness !== 'codex'
+    const file = await lstat(descriptorPath);
+    if (!file.isFile() || file.isSymbolicLink() || file.uid !== process.getuid?.()
+      || file.size > 64 * 1024) return { kind: 'blocked', code: 'native_fixture_invalid' };
+    descriptorMode = file.mode;
+    const value = JSON.parse(await readFile(descriptorPath, 'utf8')) as
+      Partial<Omit<NativeFixture, 'v'> & NativeSolHandoff> & { v?: number };
+    if ((value.v !== 1 && value.v !== 2) || value.disposable !== true || value.harness !== 'codex'
       || typeof value.sessionId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(value.sessionId)
       || !absoluteDirectory(value.workdir) || !absoluteDirectory(value.codexHome)) {
       return { kind: 'blocked', code: 'native_fixture_invalid' };
     }
-    fixture = value as NativeFixture;
+    descriptor = value as NativeFixture | NativeSolFixture;
   } catch {
     return { kind: 'blocked', code: 'native_fixture_unreadable' };
   }
-  const environment = setupEnvironment({ ...process.env, CODEX_HOME: fixture.codexHome });
+  const environment = setupEnvironment({ ...process.env, CODEX_HOME: descriptor.codexHome });
   const [version, hooks] = await Promise.all([
     readInstalledCodexVersion(environment),
     inspectHostedCodexHooks(environment),
@@ -54,5 +63,16 @@ export async function inspectNativeGate(descriptorPath: string | undefined): Pro
   const blocked = nativeProofBlock(version, hooks);
   if (blocked !== null) return { kind: 'blocked', code: blocked };
   if (hooks === null) throw new Error('native proof guard failed');
-  return { kind: 'ready', fixture, capabilities: hooks };
+  let preflightBindingId: string | null = null;
+  if (version === '0.157.1') {
+    if (descriptor.v !== 2 || (descriptorMode & 0o077) !== 0) {
+      return { kind: 'blocked', code: 'native_sol_handoff_unproven' };
+    }
+    const handoff = await inspectNativeSolHandoff(descriptor);
+    if (handoff.kind !== 'ready') return { kind: 'blocked', code: handoff.code };
+    preflightBindingId = handoff.bindingId;
+  } else if (descriptor.v !== 1) return { kind: 'blocked', code: 'native_fixture_invalid' };
+  const fixture: NativeFixture = { v: 1, disposable: true, harness: 'codex',
+    sessionId: descriptor.sessionId, workdir: descriptor.workdir, codexHome: descriptor.codexHome };
+  return { kind: 'ready', fixture, capabilities: hooks, preflightBindingId };
 }

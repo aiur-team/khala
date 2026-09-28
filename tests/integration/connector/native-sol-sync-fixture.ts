@@ -33,6 +33,7 @@ const bindingPath = path.join(state, 'binding.json');
 const inboxPath = path.join(state, 'inbox');
 const markersPath = path.join(state, 'markers.json');
 const scopePath = path.join(state, 'scope.json');
+const crashDescriptorPath = path.join(state, 'crash-descriptor.json');
 const callsPath = path.join(state, 'calls.jsonl');
 const originDiagnosticsPath = path.join(state, 'origin-diagnostics.jsonl');
 const inboxDiagnosticsPath = path.join(state, 'inbox-diagnostics.jsonl');
@@ -312,8 +313,15 @@ async function bind(): Promise<void> {
     nativeExecutable: tui.executable, sessionFile,
     sessionId, cgroup: tui.cgroup, codexHome, fixtureRoot: root, daemons }) + '\n',
     { mode: 0o600, flag: 'wx' });
+  // The crash runner gets a separate fresh ledger binding; this descriptor
+  // attests only the still-running, normally trusted native preflight session.
+  await writeFile(crashDescriptorPath, JSON.stringify({ v: 2, disposable: true, harness: 'codex',
+    sessionId, workdir, codexHome, preflightRoot: root, nativePid: processIds[0],
+    nativeStartTime: tui.startTime, preflightBindingId: binding.bindingId,
+    preflightGeneration: binding.generation }) + '\n', { mode: 0o600, flag: 'wx' });
   process.stdout.write(JSON.stringify({ bound: true, nativePid: processIds[0], version: '0.157.1',
-    model: 'gpt-6-sol', workdirMatched: true, pinnedDaemons: daemons.length }) + '\n');
+    model: 'gpt-6-sol', workdirMatched: true, pinnedDaemons: daemons.length,
+    crashDescriptor: crashDescriptorPath }) + '\n');
 }
 
 async function enqueue(): Promise<void> {
