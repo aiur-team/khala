@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AuthPrincipal, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, EventId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createRoomSendFence } from './room-send-fence';
 import { createDeviceAdmission, type Replacement } from './device-admission';
@@ -11,6 +11,7 @@ const principal = { v: 1, ownerId, providerIssuer: 'https://id.example', provide
   verifiedEmail: 'owner@example.test', sessionExpiresAt: new Date(T0 + 60_000).toISOString() } as AuthPrincipal;
 const deviceKey = 'C'.repeat(43);
 const operationId = 'replacement_1';
+const eventId = (position: number) => `$event_${position}` as EventId;
 
 function setup() {
   const store = fakeStore(() => T0).store;
@@ -25,6 +26,7 @@ function setup() {
   let tokenKey = deviceKey;
   const authorize = async () => consent ? 'authorized' as const : 'refused' as const;
   const ledger = createDeviceAdmission({ store, authorize, currentPosition: async () => position,
+    positionFor: async (_room, event) => Number(/^\$event_(\d+)$/u.exec(event)?.[1] ?? NaN),
     distributionReady: async () => distributed });
   const routes = createDeviceAdmissionRoutes({ store,
     auth: { async requireHumanMutation() {
@@ -104,14 +106,14 @@ describe('owner replacement operation route', () => {
       policyDigest: 'd'.repeat(64) });
     const replacement: Replacement = { ownerId, roomId, deviceId: 'new_A', deviceKey, generation: 2,
       policyDigest: 'd'.repeat(64), operationId };
-    expect(await h.ledger.allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     expect((await h.call('activate')).status).toBe(202);
     expect(await h.fence.acknowledgeRotation(roomId, sender, operationId, 1)).toBe('applied');
     expect((await h.call('activate')).status).toBe(202);
     h.setDistributed(true);
     expect((await h.call('activate')).status).toBe(200);
-    expect(await h.ledger.allows({ ...replacement, position: 10 })).toBe(false);
-    expect(await h.ledger.allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(10) })).toBe(false);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(11) })).toBe(true);
     h.setConsent(false);
     expect((await h.call('revoke')).status).toBe(403);
   });

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ControlStore, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { ControlStore, EventId, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import { guardStore, settleWrite } from '../../auth/store';
 import { createRoomSendFence } from './room-send-fence';
 
@@ -12,7 +12,7 @@ type RoomRecord = Readonly<{ v: 1; roomId: RoomId; devices: readonly Device[] }>
 export type Replacement = Readonly<{ roomId: RoomId; ownerId: OwnerId; deviceId: string; deviceKey: string;
   generation: number; policyDigest: string; operationId: string }>;
 export type DeviceRead = Readonly<{ roomId: RoomId; ownerId: OwnerId; deviceId: string;
-  deviceKey: string; generation: number; position: number }>;
+  deviceKey: string; generation: number; eventId: EventId }>;
 type Result = 'applied' | 'pending' | 'conflict' | 'refused' | 'unavailable';
 
 function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -58,6 +58,8 @@ export function createDeviceAdmission(input: Readonly<{
   store: ControlStore;
   authorize(request: Replacement): Promise<'authorized' | 'refused' | 'unavailable'>;
   currentPosition(roomId: RoomId): Promise<number | null>;
+  /** Resolve a Matrix event to a trusted per-room order; never use browser metadata. */
+  positionFor(roomId: RoomId, eventId: EventId): Promise<number | null>;
   distributionReady(request: Replacement): Promise<boolean>;
 }>) {
   const store = guardStore(input.store);
@@ -191,13 +193,14 @@ export function createDeviceAdmission(input: Readonly<{
     },
     /** Use for every replacement-device plaintext/key/timeline read. */
     async allows(readRequest: DeviceRead): Promise<boolean> {
-      if (!Number.isSafeInteger(readRequest.position) || readRequest.position < 0) return false;
       const current = await read(readRequest.roomId);
       if (current.kind !== 'found') return false;
-      if (!current.value.devices.some(device => device.state === 'active'
+      const active = current.value.devices.find(device => device.state === 'active'
         && device.ownerId === readRequest.ownerId && device.deviceId === readRequest.deviceId
-        && device.deviceKey === readRequest.deviceKey && device.generation === readRequest.generation
-        && readRequest.position > device.cutoff)) return false;
+        && device.deviceKey === readRequest.deviceKey && device.generation === readRequest.generation);
+      if (!active) return false;
+      const position = await input.positionFor(readRequest.roomId, readRequest.eventId).catch(() => null);
+      if (position === null || !Number.isSafeInteger(position) || position <= active.cutoff) return false;
       // An active admission is not enough during a later room-wide rotation or
       // when the verified roster has acquired a sender that has not rotated.
       const room = await fence.inspect(readRequest.roomId);

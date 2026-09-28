@@ -72,7 +72,11 @@ export function createDeviceAdmissionRoutes(input: Readonly<{
       const replacement: Replacement = { ...binding, operationId: parsed.operationId };
       const ledger = createDeviceAdmission({ store: input.store,
         authorize: candidate => input.authorize(principal, candidate),
-        currentPosition: input.currentPosition, distributionReady: input.distributionReady });
+        currentPosition: input.currentPosition,
+        // This command route never serves reads. No trusted event-position source
+        // is composed, so the ledger's read predicate must fail closed here.
+        positionFor: async () => null,
+        distributionReady: input.distributionReady });
       // Recheck authority inside the ledger on every reserve/activate/revoke retry.
       const result = await ledger[parsed.action](replacement).catch(() => 'unavailable' as const);
       return json(result === 'applied' ? 200 : result === 'pending' ? 202
