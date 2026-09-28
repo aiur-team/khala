@@ -8,6 +8,29 @@ const sender = { senderId: 'owner_device_A', deviceId: 'device_A', deviceKey: 'A
 const excludedKey = 'B'.repeat(43);
 
 describe('durable room send fence', () => {
+  it('refuses admission against an empty sender snapshot', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    expect(await fence.seedRoster(roomId, [])).toBe('applied');
+    expect(await fence.beginHold(roomId, 'replacement_empty', null)).toBe('unavailable');
+  });
+  it('holds replacement admission until every verified sender rotates, including the former device', async () => {
+    const store = fakeStore(() => T0).store;
+    const fence = createRoomSendFence(store);
+    const other = { senderId: 'agent_device_B', deviceId: 'device_B', deviceKey: 'C'.repeat(43) };
+    await fence.readySender(roomId, sender);
+    await fence.readySender(roomId, other);
+    await fence.seedRoster(roomId, [sender, other]);
+    expect(await fence.beginHold(roomId, 'replacement_1', null)).toBe('held');
+    expect(await fence.acquire(roomId, sender, 'after_admission')).toMatchObject({ kind: 'held' });
+    expect(await fence.acknowledgeRotation(roomId, sender, 'replacement_1', 1)).toBe('applied');
+    expect(await fence.rotationStatus(roomId, 'replacement_1')).toBe('pending');
+    expect(await fence.releaseHold(roomId, 'replacement_1', 'rotated')).toBe('unavailable');
+    const restarted = createRoomSendFence(store);
+    expect(await restarted.acknowledgeRotation(roomId, other, 'replacement_1', 1)).toBe('applied');
+    expect(await restarted.rotationStatus(roomId, 'replacement_1')).toBe('rotated');
+    expect(await restarted.releaseHold(roomId, 'replacement_1', 'rotated')).toBe('applied');
+    expect(await restarted.acquire(roomId, sender, 'after_admission')).toMatchObject({ kind: 'granted' });
+  });
   it('refuses revocation protocol admission until a trusted legacy sender inventory is seeded', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
     expect(await fence.beginHold(roomId, 'operation_unseeded', excludedKey)).toBe('unavailable');
