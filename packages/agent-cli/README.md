@@ -89,6 +89,8 @@ environment before the first release.
 
 ## Internal mode
 
+For the shortest two-agent manual path, start with the [local quickstart](../../README.md#open-a-local-channel-with-two-existing-agents).
+
 `khala internal` starts one local channel server for the operator and nothing
 else. It never starts, wraps, signals, or stops an agent CLI; agent sessions you
 start yourself connect through the runtime descriptor later.

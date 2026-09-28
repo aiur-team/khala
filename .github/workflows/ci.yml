@@ -44,6 +44,7 @@ jobs:
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"
           export CHROMIUM_PATH
           pnpm test:browser
+          node --test tests/integration/internal-chat/packaged-smoke.test.mjs
       # Screenshot baselines only match the browser, fonts and rasteriser they
       # were taken with, so this runs in the pinned Playwright image (keep the
       # tag equal to the @playwright/test version). Two passes prove the
