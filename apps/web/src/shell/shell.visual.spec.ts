@@ -19,7 +19,7 @@ async function openStandalone(page: Page, theme: Theme, viewport = { width: 1280
   await page.goto(url);
   await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
   // The harness starts dark; light is one click on the shell's own toggle.
-  if (theme === 'light') await page.getByRole('button', { name: 'Use light theme' }).click();
+  if (theme === 'light') await page.getByRole('button', { name: 'Toggle color theme' }).click();
   await expect(page.locator('.aiur-shell')).toHaveAttribute('data-theme', theme);
   await page.mouse.move(0, 0);
   await settle(page);

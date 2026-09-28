@@ -29,6 +29,21 @@ describe('AiurShell standalone', () => {
     expect((html.match(/<nav/g) ?? []).length).toBe(1);
     expect((html.match(/<main/g) ?? []).length).toBe(1);
     expect(html).toContain('<main class="aiur-shell__content" aria-label="Khala"');
+    expect(html).toContain('class="aiur-shell__brand">Khala</span>');
+    expect(html).not.toContain('>AIUR<');
+  });
+
+  test('renders Aiur dashboard icon controls with accessible names', () => {
+    const expanded = renderStandalone();
+    expect(expanded).toContain('aria-label="Toggle color theme"');
+    expect(expanded).toContain('class="sun"');
+    expect(expanded).toContain('class="moon"');
+    expect(expanded).toContain('aria-label="Collapse navigation"');
+    expect(expanded).toContain('M9 4v16');
+
+    const collapsed = renderStandalone({ collapsed: true });
+    expect(collapsed).toContain('aria-label="Expand navigation"');
+    expect(collapsed).toContain('aria-pressed="true"');
   });
 
   test('the current navigation item carries aria-current="page"', () => {
