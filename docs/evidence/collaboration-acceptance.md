@@ -4,11 +4,15 @@ KHA-139 proves the chosen collaboration task end to end. Two humans and their ex
 agent sessions complete it, and then an independent third owner joins. This report
 records each acceptance run under its own run ID. Blocked and failed runs stay here.
 
-**Status: blocked.** No live collaboration has run. Every gate this case reads is
-decided (see the rulings below), and the case binds once it pins an approved harness route. The live
-run belongs to the acceptance tickets (#134, and #241 for OpenCode+DeepSeek ↔ Claude).
-They pin a route version, register a live driver and reuse this harness-neutral
-script. Until they do, the live entry fails with no route pinned.
+**Status: blocked; no live collaboration has run.** The gate bindings and three
+blocked runs below are a 2026-09-26 historical snapshot. The evaluator's
+`RECORDED_DECISIONS` still encodes Executor assumptions about P02, hosted
+G-AUTOMATION and harness exclusion; that code is not a direct operator decision.
+P02, G-ADMISSION and hosted P08/G-AUTOMATION remain unanswered for final
+acceptance. The live run belongs to #134 and the native acceptance tickets,
+including #241's OpenCode+DeepSeek ↔ Claude pair. OpenCode remains in scope
+pending an actual scope decision. No pinned route or passing scripted evaluator
+run substitutes for the missing hosted, model-visible collaboration proof.
 
 ## Task (G-TASK / P05)
 
@@ -41,9 +45,10 @@ transcript of the live run.
 | Gate | State | Effect on this case |
 | --- | --- | --- |
 | G-TASK / P05: first collaboration task and success evidence | Resolved by the Executor ruling: cross-owner plan agreement | Supplies the task and the four task checks above |
-| G-HARNESSES: which harness routes the task runs on | Resolved by the Executor ruling: only the routes proven on main, which are the Claude Code CLI hooks (#326/#310) and the OpenCode plugin (#323/#312). Codex is excluded while #230/#266 are parked | `APPROVED_HARNESS_ROUTES`. A case that pins no route, or pins any other route, is blocked before any action |
-| G-AUTOMATION: busy, unattended, trust backlog and reply budgets | Resolved by the Executor ruling: hosted automation stays closed (`CLOSED_AUTOMATION`), and only the local fence `{3,3,1,wait}` applies. A human approves every message | An automatic release never counts as a release. `trusted_delivery` requires the effective state to be reported apart from the request, and no automatic release |
-| P02: agent conversations with browsers closed | Resolved by the Executor ruling: approved messages keep flowing with no browser open, because the connector delivers them. New messages wait for approval until an owner opens the app | Mode `required`. `browser_closed` checks both halves. No new mode is built |
+| G-HARNESSES: which harness routes the task runs on | The historical evaluator hard-codes Claude Code hooks and OpenCode plugin, excluding Codex. That list is stale as a final scope ruling: Codex 0.157.1 has since passed a bounded native Sol preflight, while full hosted and cross-harness proof remains open | Pin each genuinely supported version and session in the live case; the old `APPROVED_HARNESS_ROUTES` list cannot waive Codex or OpenCode |
+| G-AUTOMATION / P08: busy, unattended, trust backlog and reply budgets | Hosted authority remains unanswered. The local bounded peer fence and production refusal of hosted `auto` are safety behavior, not approval of a hosted automation policy | Manual review remains the only demonstrated release path; automation rows stay blocked pending an authorized policy and live proof |
+| P02: agent conversations with browsers closed | Operator choice remains unanswered. The historical evaluator encoded an Executor-selected `required` mode, not a product ruling | Keep `browser_closed` blocked for final acceptance until the behavior is authorized and observed |
+| G-ADMISSION: admission consent interaction | The consent authority remains open; the historical evaluator does not model this gate. P12 already settles per-link policy and P14 separately rules out history recovery | Third-owner consent needs approved authority and live proof. Replacement-device readmission also needs the missing exact-device cutoff and no-backfill implementation |
 | G-RETENTION: recovery, closure and history on admission | Settled for this case by P12, P13 and P14 | Third owner sees no earlier history by default. Recovery has no backfill |
 
 The KHA-139 plan names "KHA-109's approved collaboration scenario" as the source of
@@ -77,21 +82,29 @@ reports `blocked`, and the run is then not a pass.
 - Timing is reported only as durations on one owner's monotonic clock. No cross-host
   latency or latency SLO is claimed.
 - A relay or transport receipt is never counted as model consumption.
-- Nothing is released automatically. A human approves every message, and hosted
-  automation stays closed (G-AUTOMATION).
-- With every browser closed, only messages approved earlier are delivered. New messages
-  wait until an owner opens the app (P02).
-- Only the Claude Code CLI hooks and the OpenCode plugin are approved routes. Codex
-  is not supported (G-HARNESSES).
+- Hosted `auto` currently refuses rather than silently releasing; this is not a
+  final hosted automation decision. Manual approval is the only path asserted here.
+- Browser-closed delivery remains an unanswered P02 choice, so neither historical
+  `required` behavior nor its opposite is claimed as accepted.
+- OpenCode and Codex remain in native acceptance scope. The Codex 0.157.1
+  [local preflight](codex-0157-native-cli.md) proves one sync route only; the
+  [crash runner](../../tests/integration/connector/README.md) and
+  [selected-only browser driver](../../tests/integration/review/README.md)
+  have not supplied hosted collaboration evidence.
 - Isolation from an unrestricted agent on the same host is not claimed. KHA-138 owns
   hostile security proof.
-- No live collaboration driver exists yet. The KHA-134 and KHA-135 compositions
-  still lack a protected human control transport, and nothing in production starts the
-  connector runtime (`tests/integration/review/README.md`,
-  `tests/integration/controls/README.md`). A live driver can exercise them only once
-  those exist.
+- The protected owner-mailbox, CLI connector entry, and manual controls and
+  selected-only live drivers now exist. Their documented disposable environment,
+  owner pairing and native proof prerequisites are unmet; neither driver has a
+  qualifying hosted run ([review](../../tests/integration/review/README.md),
+  [controls](../../tests/integration/controls/README.md)). No three-owner
+  collaboration driver has completed the final scenario.
 
 ## Runs
+
+The following runs remain unchanged historical blocked records. In particular,
+the third run's recorded resolved-gate assumptions are not current operator
+authority or live product evidence.
 
 ### Run `collab-2026-09-26t063951380z-be94f335`
 
