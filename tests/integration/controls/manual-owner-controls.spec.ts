@@ -1,10 +1,88 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { signIn } from '../human/fixtures';
+import { signIn, syntheticCanary } from '../human/fixtures';
+import { nativeReviewBaseline, nativeSelectedOnlyProof, readReviewNativeConfig } from '../review/native-witness';
 import { connectorWitness, controlsStatus, mailbox, mailboxOutcome, readLiveControlsEnvironment,
   sameProcessRunning } from './fixtures';
 
 const environment = readLiveControlsEnvironment();
 const { human, controls } = environment;
+// A missing private native witness is a failed live run, never a skipped assertion.
+const native = readReviewNativeConfig();
+
+async function send(page: Page, body: string) {
+  await page.getByLabel('Message').fill(body);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText(body, { exact: true })).toBeVisible();
+}
+
+function pendingRow(page: Page, body: string) {
+  const review = page.locator('section.review').filter({ hasText: `To: ${controls.agentParticipantId}` });
+  return review.getByRole('list', { name: 'Pending messages' })
+    .locator('li.review-item').filter({ hasText: body });
+}
+
+async function approveOne(page: Page, body: string) {
+  const review = page.locator('section.review').filter({ hasText: `To: ${controls.agentParticipantId}` });
+  const row = pendingRow(page, body);
+  await expect(row).toHaveCount(1);
+  const eventId = await row.getAttribute('data-event-id');
+  expect(eventId).toBeTruthy();
+  const captured: { operationId: string; selection: Array<{ eventId: string }> }[] = [];
+  const capture = (request: import('@playwright/test').Request) => {
+    if (new URL(request.url()).pathname !== '/api/human/owner-mailbox/submit') return;
+    const value = request.postDataJSON() as { kind?: string; operationId?: string;
+      body?: { selection?: Array<{ eventId: string }> } };
+    if (value.kind === 'review_approve' && typeof value.operationId === 'string'
+      && Array.isArray(value.body?.selection)) captured.push({ operationId: value.operationId,
+        selection: value.body.selection });
+  };
+  page.on('request', capture);
+  try {
+    await row.locator('input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await expect.poll(() => captured.length).toBe(1);
+    expect(captured[0]!.selection.map(item => item.eventId)).toEqual([eventId]);
+    const result = await mailboxOutcome(page, controls.bindingId, captured[0]!.operationId) as {
+      ok?: boolean; releaseIds?: unknown };
+    expect(result.ok).toBe(true);
+    expect(result.releaseIds).toHaveLength(1);
+    return { eventId: eventId!, releaseId: (result.releaseIds as string[])[0]! };
+  } finally { page.off('request', capture); }
+}
+
+async function absentFromPinnedNative(baseline: Awaited<ReturnType<typeof nativeReviewBaseline>>, body: string) {
+  const current = await nativeReviewBaseline(native, baseline.sessionId);
+  expect(current).toMatchObject({ startTicks: baseline.startTicks,
+    rolloutDevice: baseline.rolloutDevice, rolloutInode: baseline.rolloutInode });
+  expect(current.offset).toBeGreaterThanOrEqual(baseline.offset);
+  const raw = await readFile(native.rolloutFile, 'utf8');
+  if (raw.length < current.offset) throw new Error('native_controls_rollout_changed');
+  return !raw.slice(baseline.offset).includes(body);
+}
+
+async function absentFromNativeInbox(bindingId: string, generation: number, releaseId: string) {
+  const directory = createHash('sha256').update(JSON.stringify([bindingId, generation])).digest('base64url');
+  const filename = join(native.xdgStateHome, 'khala', 'bindings', directory, 'inbox.jsonl');
+  let raw: string;
+  try { raw = await readFile(filename, 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
+  // A partial or malformed inbox line is unknown, never evidence of absence.
+  if (raw.length > 0 && !raw.endsWith('\n')) throw new Error('native_controls_inbox_incomplete');
+  const records = raw.split('\n').filter(Boolean).map(line => {
+    const record: unknown = JSON.parse(line);
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+      throw new Error('native_controls_inbox_invalid');
+    }
+    return record as { releaseId?: unknown };
+  });
+  return !records.some(record => record.releaseId === releaseId);
+}
 
 function command(status: Awaited<ReturnType<typeof controlsStatus>>, paused: boolean) {
   if (status.policy.effectiveVersion === null || status.policy.effectiveMode !== 'review') {
@@ -53,7 +131,7 @@ function panel(page: Page) {
 }
 
 test('real owner browser and connector acknowledge manual controls across races and restart', async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const owner = await ownerPage(browser, human.users[0]);
   const other = await ownerPage(browser, human.users[1]);
   const secondTab = await owner.context.newPage();
@@ -156,8 +234,60 @@ test('real owner browser and connector acknowledge manual controls across races 
     const afterRestart = await controlsStatus(owner.page, controls.bindingId);
     expect(afterRestart.policy).toEqual(beforeRestart.policy);
 
-    // Resume is still a review-mode policy change, not an automatic release.
+    // An exact approval made while paused must stay outside the native session.
+    // The same native session must later consume it after effective resume.
+    await other.page.goto(`${human.appOrigin}/channels/${encodeURIComponent(controls.roomId)}`);
+    await expect(other.page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    const pausedBaseline = await nativeReviewBaseline(native, restarted.sessionId);
+    const pausedApproved = syntheticCanary('pausedApproved');
+    const pausedPending = syntheticCanary('pausedPending');
+    await send(other.page, pausedApproved);
+    await send(other.page, pausedPending);
+    const pendingEvent = await pendingRow(owner.page, pausedPending).getAttribute('data-event-id');
+    expect(pendingEvent).toBeTruthy();
+    const approved = await approveOne(owner.page, pausedApproved);
+    expect((await controlsStatus(owner.page, controls.bindingId)).policy.paused).toBe(true);
+    await owner.page.waitForTimeout(1_500);
+    expect(await absentFromPinnedNative(pausedBaseline, pausedApproved)).toBe(true);
+    expect(await absentFromPinnedNative(pausedBaseline, pausedPending)).toBe(true);
+    expect(await absentFromNativeInbox(controls.bindingId, restarted.generation, approved.releaseId)).toBe(true);
+
+    // Resume is still review mode: the prior exact approval may proceed, while
+    // the unapproved neighbor remains outside the model and the durable inbox.
     await setPolicy(owner.page, false);
+    await expect.poll(async () => {
+      try {
+        await nativeSelectedOnlyProof(native, pausedBaseline, {
+          withheld: pausedPending, released: pausedApproved,
+          withheldEventId: pendingEvent!, releasedEventId: approved.eventId,
+          bindingId: controls.bindingId, generation: restarted.generation, releaseId: approved.releaseId,
+        });
+        return true;
+      } catch { return false; }
+    }, { timeout: 45_000, intervals: [250, 500, 1_000] }).toBe(true);
+
+    // An event arriving after the effective review boundary remains pending
+    // while a separately approved event reaches the same native session.
+    const reviewBaseline = await nativeReviewBaseline(native, restarted.sessionId);
+    const postReviewPending = syntheticCanary('postReviewPending');
+    const postReviewApproved = syntheticCanary('postReviewApproved');
+    await send(other.page, postReviewPending);
+    await send(other.page, postReviewApproved);
+    const postPendingEvent = await pendingRow(owner.page, postReviewPending).getAttribute('data-event-id');
+    expect(postPendingEvent).toBeTruthy();
+    const postApproved = await approveOne(owner.page, postReviewApproved);
+    await expect.poll(async () => {
+      try {
+        await nativeSelectedOnlyProof(native, reviewBaseline, {
+          withheld: postReviewPending, released: postReviewApproved,
+          withheldEventId: postPendingEvent!, releasedEventId: postApproved.eventId,
+          bindingId: controls.bindingId, generation: restarted.generation, releaseId: postApproved.releaseId,
+        });
+        return true;
+      } catch { return false; }
+    }, { timeout: 45_000, intervals: [250, 500, 1_000] }).toBe(true);
+    expect(await absentFromPinnedNative(reviewBaseline, postReviewPending)).toBe(true);
+    await expect(pendingRow(owner.page, postReviewPending)).toHaveCount(1);
     await expect(ownerPanel.locator('.agent-controls__effective')).toContainText('Review');
     await expect(ownerPanel.getByRole('button', { name: 'Request pause' })).toBeEnabled();
   } finally {
