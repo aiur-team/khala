@@ -19,6 +19,7 @@ import type { Dispatcher } from '@khala/connector/dispatch/types';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { type ConnectorStorage, openConnectorStorage } from '@khala/connector/storage/open';
 import { sha256Digest } from '@khala/connector/storage/payloads';
+import { recoverConnectorStorage } from '@khala/connector/storage/recovery';
 import type { ConnectorCapabilityContext } from '../../runtime/capabilities';
 import type { ReviewControlHandler } from './control-handler';
 import { registerReview } from './register';
@@ -280,5 +281,107 @@ describe('review delivery composition', () => {
     expect(harness.submitted).toHaveLength(1);
     const state2 = await createConnectorDispatchStorage(reopened).ledger.transact(tx => tx.record('release_1' as never));
     expect(state2?.state).toBe('outcome_unknown');
+  });
+
+  it.each([0, 1])('holds a receipt-only unknown release with receipt generation %i across repeated restarts', async receiptGeneration => {
+    const { storage, state } = await seed();
+    const harness = new SessionHarness();
+    const beforeHandoff = await connector(storage, harness, { dropHandoff: true });
+    expect(await beforeHandoff.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await beforeHandoff.capability.stop();
+    await beforeHandoff.dispatcher.stop();
+
+    // A prior dispatcher may have begun the external write before its own record
+    // was included in this backup. The receipt is the durable uncertainty signal.
+    await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: {
+      v: 1, receiptId: 'receipt-release_1-dispatching' as DeliveryReceipt['receiptId'],
+      releaseId: 'release_1' as DeliveryReceipt['releaseId'], bindingId, generation: receiptGeneration,
+      kind: 'dispatching', observedAt: '2026-09-25T10:02:00Z', source: 'connector',
+      evidenceRef: null, errorCode: null,
+    } }));
+    await storage.close();
+    const backup = path.join(path.dirname(state), 'backup');
+    fs.cpSync(state, backup, { recursive: true });
+
+    for (let restart = 0; restart < 2; restart += 1) {
+      const restored = await openStore(backup, 'existing');
+      expect((await recoverConnectorStorage(restored)).outcomeUnknownReleases).toEqual(['release_1']);
+      const resumed = await connector(restored, harness);
+      expect(await resumed.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+      await resumed.dispatcher.idle();
+      expect(harness.submitted).toEqual([]);
+      expect(await createConnectorDispatchStorage(restored).ledger.transact(tx => tx.record('release_1' as never))).toBeNull();
+      await resumed.capability.stop();
+      await resumed.dispatcher.stop();
+      await restored.close();
+    }
+  });
+
+  it('dispatches a queued-only release once after restoring its backup', async () => {
+    const { storage, state } = await seed();
+    const harness = new SessionHarness();
+    const beforeHandoff = await connector(storage, harness, { dropHandoff: true });
+    expect(await beforeHandoff.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await beforeHandoff.capability.stop();
+    await beforeHandoff.dispatcher.stop();
+    await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: {
+      v: 1, receiptId: 'receipt-release_1-queued' as DeliveryReceipt['receiptId'],
+      releaseId: 'release_1' as DeliveryReceipt['releaseId'], bindingId, generation: 0,
+      kind: 'queued', observedAt: '2026-09-25T10:02:00Z', source: 'connector',
+      evidenceRef: null, errorCode: null,
+    } }));
+    await storage.close();
+    const backup = path.join(path.dirname(state), 'queued-backup');
+    fs.cpSync(state, backup, { recursive: true });
+
+    const restored = await openStore(backup, 'existing');
+    expect((await recoverConnectorStorage(restored)).undispatchedReleases).toEqual(['release_1']);
+    const resumed = await connector(restored, harness);
+    expect(await resumed.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await resumed.dispatcher.idle();
+    expect(harness.submitted).toHaveLength(1);
+    await resumed.capability.stop();
+    await resumed.dispatcher.stop();
+    await restored.close();
+
+    const restarted = await connector(await openStore(backup, 'existing'), harness);
+    expect(await restarted.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await restarted.dispatcher.idle();
+    expect(harness.submitted).toHaveLength(1);
+  });
+
+  it('dispatches after a wrong-generation terminal receipt in a restored backup', async () => {
+    const { storage, state } = await seed();
+    const harness = new SessionHarness();
+    const beforeHandoff = await connector(storage, harness, { dropHandoff: true });
+    expect(await beforeHandoff.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await beforeHandoff.capability.stop();
+    await beforeHandoff.dispatcher.stop();
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: {
+      v: 1, receiptId: 'receipt-release_1-wrong-generation' as DeliveryReceipt['receiptId'],
+      releaseId: 'release_1' as DeliveryReceipt['releaseId'], bindingId, generation: 1,
+      kind: 'completed', observedAt: '2026-09-25T10:02:00Z', source: 'connector',
+      evidenceRef: null, errorCode: null,
+    } }))).toEqual({ kind: 'conflict', code: 'correlation_mismatch' });
+    await storage.close();
+    const backup = path.join(path.dirname(state), 'mismatched-terminal-backup');
+    fs.cpSync(state, backup, { recursive: true });
+
+    const restored = await openStore(backup, 'existing');
+    expect(await recoverConnectorStorage(restored)).toMatchObject({
+      outcomeUnknownReleases: [], undispatchedReleases: ['release_1'], uncorrelatedReceipts: 1,
+    });
+    const resumed = await connector(restored, harness);
+    expect(await resumed.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await resumed.dispatcher.idle();
+    expect(harness.submitted).toHaveLength(1);
+    await resumed.capability.stop();
+    await resumed.dispatcher.stop();
+    await restored.close();
+
+    const restarted = await connector(await openStore(backup, 'existing'), harness);
+    expect(await restarted.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+    await restarted.dispatcher.idle();
+    expect(harness.submitted).toHaveLength(1);
   });
 });

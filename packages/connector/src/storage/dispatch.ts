@@ -21,6 +21,7 @@ import {
 } from './ledger';
 import { type ConnectorStorage, storageInternals } from './open';
 import { sha256Digest } from './payloads';
+import { DISPATCH_EVIDENCE, TERMINAL_RECEIPTS } from './recovery';
 
 const STATES: readonly DispatchState[] = [
   'queued', 'claimed', 'quarantined', 'rejected', 'dispatching', 'accepted', 'outcome_unknown', 'completed', 'failed',
@@ -288,6 +289,16 @@ function makeTx(storage: ConnectorStorage, live: () => boolean): { tx: DispatchT
         const decoded = decodeReleasedJob(parseJson(row.job), limits);
         if (!decoded.ok || decoded.value.releaseId !== next.releaseId) throw new StorageError('corrupt');
         if (!sameRelease(decoded.value, next.job)) throw new StorageError('invalid_input');
+        // Match recovery's evidence rules: dispatch evidence is held even when
+        // uncorrelated, while only a correlated terminal receipt settles this release.
+        const dispatchKinds = DISPATCH_EVIDENCE.map(() => '?').join(', ');
+        const terminalKinds = TERMINAL_RECEIPTS.map(() => '?').join(', ');
+        if (db.prepare(`SELECT 1 FROM receipts WHERE release_id = ?
+          AND (json_extract(receipt, '$.kind') IN (${dispatchKinds})
+            OR (correlation = 'correlated' AND json_extract(receipt, '$.kind') IN (${terminalKinds})))
+          LIMIT 1`).get(next.releaseId, ...DISPATCH_EVIDENCE, ...TERMINAL_RECEIPTS)) {
+          throw new StorageError('invalid_input');
+        }
       } else if (current.seq !== next.seq || !sameRelease(current.job, next.job)) {
         throw new StorageError('invalid_input');
       }
