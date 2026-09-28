@@ -71,9 +71,10 @@ selection, and every success is still journalled once.
 `selected-only.spec.ts` is a fail-closed **unrun** live driver for one exact
 Codex 0.157.1/Linux x64/GPT-6-Sol native sync route. It exercises a mounted
 browser release through the deployed protected owner mailbox and an already
-paired, already-running connector/TUI. A and B are sent by the second real
-OAuth human into the real encrypted channel. Both must appear in the owner's
-production pending review list; the owner selects B alone. The driver reads
+paired, already-running connector/TUI. Its actors are two humans and **one**
+agent; this narrower result cannot count as a four-actor collaboration proof.
+A and B are sent by the second real OAuth human into the real encrypted channel.
+Both must appear in the owner's production pending review list; the owner selects B alone. The driver reads
 the real browser command/result, the production CLI inbox record and cursor,
 and only the new interval of the same TUI's private native rollout. It requires
 B's exact event/release, hook-visible content, assistant relay, successful
@@ -82,10 +83,24 @@ pending and is absent from both native context and the CLI inbox. The process,
 model, workdir, cgroup, private home and current rollout session are pinned.
 No test harness writes a fake approval, native ACK, inbox item or rollout.
 
+`four-actor.spec.ts` is the separate fail-closed **unrun** four-actor driver.
+Both OAuth humans own independently paired agents in the same encrypted room.
+Before either sends, it pins both real connector processes and native rollout
+baselines. Each human sends distinct A/B canaries; the other human approves
+only B for their own agent through the mounted browser. The driver requires
+both agents' native hook-visible B, assistant relay, model-origin read/ACK,
+advanced cursors and exact single-release inbox records. Each agent's interval
+and inbox must also exclude the other owner's A and B. Two independent
+bindings, participant IDs, PIDs, native session IDs and private homes are
+required; one agent cannot stand in for both.
+
 The descriptor includes the `controls` object documented in
 `tests/integration/controls/README.md` solely for its exact connector process
-witness, plus this private metadata. The descriptor file must be owned by the
-current user with mode 0600; the rollout file must be a private regular file
+witness, plus this private metadata. The four-actor case additionally requires
+`reviewPeer` with the same shape as `controls`, identifying the second
+human's independently bound agent in the **same room**, and
+`reviewPeerNative` with the same shape as `reviewNative`. The descriptor file
+must be owned by the current user with mode 0600; each rollout file must be a private regular file
 under the native session's `CODEX_HOME/sessions` directory:
 
 ```json
@@ -114,28 +129,20 @@ as if it were the deployed owner binding. This case does not prove AE1's crash
 after a harness write, unknown-result reconciliation or other native versions,
 models and modes. Those remain separate acceptance obligations.
 
-After the hosted environment, owner pairing, process and rollout witness are
-actually provisioned, its exact command is:
+After the hosted environment, both owner pairings, processes and rollout
+witnesses are actually provisioned, the four-actor command is:
 
 ```sh
 KHALA_E2E_LIVE=1 \
 KHALA_E2E_DISPOSABLE_ENV=/absolute/path/to/khala-live.json \
-pnpm test:integration tests/integration/review/selected-only.spec.ts
+pnpm test:integration tests/integration/review/four-actor.spec.ts
 ```
 
-The private descriptor, provider credentials and rollout are not CI artifacts.
+The private descriptor, provider credentials and rollouts are not CI artifacts.
 The driver reports only sanitized assertions; preserve no raw token, message
-body, private key, rollout or browser storage in evidence. A missing fixture or
-skipped case cannot count as acceptance.
-
-Follow `tests/integration/human/README.md`: disposable identities, a disposable
-deployment and an already-running harness session, with synthetic canaries A and B:
-
-```sh
-KHALA_E2E_LIVE=1 \
-KHALA_E2E_DISPOSABLE_ENV=/absolute/path/to/khala-live.json \
-pnpm test:integration tests/integration/review/selected-only.spec.ts
-```
+body, private key, rollout or browser storage in evidence. Follow
+`tests/integration/human/README.md` for disposable identities and deployment.
+A missing fixture or skipped case cannot count as acceptance.
 
 Evidence must not include passwords, access tokens, OAuth cookies, invitation
 secrets, or canary bodies. The boundary does not protect against an agent with

@@ -78,7 +78,8 @@ const record = { v: 1, releaseId: 'release_B', bindingId: 'binding_owner', gener
   events: [{ eventId: 'event_B' }], payloadBase64: payload.toString('base64'),
   payloadDigest: `sha256:${createHash('sha256').update(payload).digest('hex')}` };
 const selected = { releaseId: 'release_B', bindingId: 'binding_owner', generation: 3,
-  releasedEventId: 'event_B', withheldEventId: 'event_A', released: 'released B' };
+  releasedEventId: 'event_B', withheldEventId: 'event_A', withheld: 'pending A',
+  released: 'released B' };
 
 test('durable inbox release is exact B and rejects an enqueued pending A', () => {
   assert.equal(inspectInboxSelection([record], selected), true);
@@ -86,6 +87,9 @@ test('durable inbox release is exact B and rejects an enqueued pending A', () =>
     events: [{ eventId: 'event_A' }] }], selected), false);
   assert.equal(inspectInboxSelection([{ ...record, events: [{ eventId: 'event_A' }] }], selected), false);
   assert.equal(inspectInboxSelection([{ ...record, payloadDigest: `sha256:${'0'.repeat(64)}` }], selected), false);
+  const contaminated = Buffer.from('{"body":"released B and pending A"}', 'utf8');
+  assert.equal(inspectInboxSelection([{ ...record, payloadBase64: contaminated.toString('base64'),
+    payloadDigest: `sha256:${createHash('sha256').update(contaminated).digest('hex')}` }], selected), false);
   assert.equal(inspectInboxSelection([record, record], selected), false);
   assert.equal(inspectInboxSelection([record], { ...selected, releaseId: 'wrong_release' }), false);
   assert.equal(inspectInboxSelection([record], { ...selected, generation: 4 }), false);

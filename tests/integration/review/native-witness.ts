@@ -20,7 +20,7 @@ const fail = (code: string): never => { throw new Error(`native_review_${code}`)
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 /** The descriptor is metadata only, but private rollout paths remain owner-scoped. */
-export function readReviewNativeConfig(): NativeReviewConfig {
+export function readReviewNativeConfig(key: 'reviewNative' | 'reviewPeerNative' = 'reviewNative'): NativeReviewConfig {
   const filename = process.env.KHALA_E2E_DISPOSABLE_ENV;
   if (!absolute(filename)) return fail('descriptor_path_required');
   let raw: unknown;
@@ -29,8 +29,8 @@ export function readReviewNativeConfig(): NativeReviewConfig {
     if (!privateFile(info, 64 * 1024)) fail('descriptor_unsafe');
     raw = JSON.parse(readFileSync(filename, 'utf8')) as unknown;
   } catch { return fail('descriptor_unavailable'); }
-  if (!object(raw) || !object(raw.reviewNative)) return fail('descriptor_review_native_missing');
-  const native = raw.reviewNative;
+  if (!object(raw) || !object(raw[key])) return fail(`descriptor_${key}_missing`);
+  const native = raw[key];
   if (!Number.isSafeInteger(native.pid) || typeof native.startTicks !== 'string'
     || ![native.executable, native.workdir, native.cgroup, native.codexHome,
       native.xdgStateHome, native.xdgDataHome, native.rolloutFile].every(value => typeof value === 'string')) {
@@ -156,7 +156,7 @@ export function inspectSelectedOnlyInterval(input: Readonly<{
 /** An actual pending neighbor must never appear among durable CLI releases. */
 export function inspectInboxSelection(inbox: readonly ObjectRow[], input: Readonly<{
   bindingId: string; generation: number; releaseId: string; releasedEventId: string;
-  withheldEventId: string; released: string;
+  withheldEventId: string; withheld: string; released: string;
 }>): boolean {
   if (inbox.some(item => Array.isArray(item.events) && item.events.some(event => object(event)
     && event.eventId === input.withheldEventId))) return false;
@@ -169,7 +169,8 @@ export function inspectInboxSelection(inbox: readonly ObjectRow[], input: Readon
     || typeof release.payloadBase64 !== 'string') return false;
   const payload = Buffer.from(release.payloadBase64, 'base64');
   return release.payloadDigest === `sha256:${createHash('sha256').update(payload).digest('hex')}`
-    && payload.toString('utf8').includes(input.released);
+    && payload.toString('utf8').includes(input.released)
+    && !payload.toString('utf8').includes(input.withheld);
 }
 
 /** The live reader and focused tests share the final cursor/model decision. */
