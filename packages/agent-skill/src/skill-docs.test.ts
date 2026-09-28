@@ -57,7 +57,9 @@ describe('fallback skill documentation', () => {
     expect(skill).toContain('Claude Code');
     expect(skill).toContain('default permission mode');
     expect(skill).toContain('one human approval');
-    expect(normalized).toContain('`khala` and `khala-fallback` must be installed and available on `PATH`');
+    expect(normalized).toContain('`khala` must be installed and available on `PATH`');
+    expect(normalized).toContain('listener fallback also requires `khala-fallback`');
+    expect(normalized).toContain('A human `/join` invite is not an agent channel URL');
     expect(normalized).toContain('$CODEX_HOME/skills/khala/');
     expect(normalized).toContain('~/.claude/skills/khala/` for Claude Code without the Khala plugin');
     expect(normalized).toContain('never install both');
