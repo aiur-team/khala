@@ -12,17 +12,22 @@ pnpm install --frozen-lockfile
 pnpm -C experiments/browser-crypto install --frozen-lockfile
 pnpm -C experiments/browser-crypto build
 pnpm -C apps/connector exec vite build --config vite.matrix.config.mjs
-pnpm exec tsx --test apps/connector/src/substrate/browser-harness/live.proof.ts
+node --conditions=khala-source --import tsx --test apps/connector/src/substrate/browser-harness/live.proof.ts
 ```
 
 The proof asserts that an unverified recipient has no decryptable Megolm key;
 wrong fingerprint trust is denied; a post-verification encrypted event decrypts
 with the sender's verified Matrix device ID; Synapse stores ciphertext; a second
 writer cannot open the same profile; an independent Chromium restart preserves
-fingerprint and cursor replay; Synapse outage reports unavailable and recovers;
+fingerprint and cursor replay; the independent browser's retained profile keeps
+its exact SDK device key and decrypts an earlier encrypted event after a full
+Chromium process restart; Synapse outage reports unavailable and recovers;
 and deleted crypto profile refuses startup. The experiment peer rotates its
 outbound session with the SDK's public `forceDiscardSession` after trust so an
 older pre-verification session cannot silently continue without sharing a key.
+The browser peer uses the real Matrix SDK but is not the hosted Khala browser
+composition. This proves retained-profile SDK continuity, not a replacement
+device's no-backfill boundary or recovery from total device loss.
 
 The production bootstrap must supply a durable credential for the same Matrix
 user/device and call `trustPeer` only with an authenticated, owner-approved
