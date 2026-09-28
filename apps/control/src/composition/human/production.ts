@@ -83,6 +83,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       clientId: env.oidcClientId,
       clientSecret: env.oidcClientSecret,
       clock,
+      onFailure: diagnostic => console.warn('Khala OIDC callback failed', JSON.stringify(diagnostic)),
       ...(dependencies.fetch ? { fetch: dependencies.fetch as never } : {}),
     });
     const auth = createAuthService({

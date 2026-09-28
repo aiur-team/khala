@@ -25,6 +25,7 @@ async function fakeServer() {
   const server = {
     down: false,
     tokenStatus: 200,
+    tokenChallenge: false,
     signWithRogueKey: false,
     idToken: {} as Record<string, unknown>,
     omitEmail: false,
@@ -53,6 +54,7 @@ async function fakeServer() {
       }
       if (path !== '/token') return json({ error: 'not_found' }, 404);
       server.tokenRequests += 1;
+      if (server.tokenChallenge) return new Response(null, { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="khala"' } });
       if (server.tokenStatus !== 200) return new Response('upstream down', { status: server.tokenStatus });
       const form = new URLSearchParams(String(init.body));
       const grant = grants.get(form.get('code') ?? '');
@@ -100,6 +102,60 @@ async function setup() {
 }
 
 describe('oauth4webapi adapter', () => {
+  it('reports a sanitized token-stage diagnostic without exposing credentials or tokens', async () => {
+    const server = await fakeServer();
+    const diagnostics: unknown[] = [];
+    const client = createOidcClient({
+      issuer: ISSUER, clientId: CLIENT_ID, clientSecret: 'wrong-client-secret', clock: () => T0,
+      fetch: server.fetch, onFailure: diagnostic => diagnostics.push(diagnostic),
+    });
+    const verifier = 'v'.repeat(43);
+    const state = 's'.repeat(43);
+    const nonce = 'n'.repeat(43);
+    const url = await client.authorizationUrl({
+      redirectUri: REDIRECT, state, nonce,
+      codeChallenge: createHash('sha256').update(verifier).digest('base64url'), codeChallengeMethod: 'S256',
+    });
+    if (url.kind !== 'ok') throw new Error('authorization URL failed');
+    const callbackUrl = server.approve(url.value);
+    expect(await client.exchangeCode({ callbackUrl, redirectUri: REDIRECT, expectedState: state, nonce, codeVerifier: verifier }))
+      .toEqual({ kind: 'rejected', code: 'invalid_response' });
+    expect(diagnostics).toEqual([{ stage: 'token_response', category: 'provider_rejection', status: 401, providerError: 'invalid_client' }]);
+    expect(JSON.stringify(diagnostics)).not.toMatch(/wrong-client-secret|client-secret|code-1|at-secret|ada@example/);
+  });
+
+  it('reports token endpoint outages without changing the public result', async () => {
+    const { server, begin } = await setup();
+    const diagnostics: unknown[] = [];
+    const client = createOidcClient({ issuer: ISSUER, clientId: CLIENT_ID, clientSecret: SECRET, clock: () => T0,
+      fetch: server.fetch, onFailure: diagnostic => diagnostics.push(diagnostic) });
+    server.tokenStatus = 503;
+    expect(await client.exchangeCode(await begin())).toEqual({ kind: 'unavailable' });
+    expect(diagnostics).toEqual([{ stage: 'token_response', category: 'network_failure', status: 503 }]);
+  });
+
+  it('reports discovery failure at callback without logging provider data', async () => {
+    const { server } = await setup();
+    const diagnostics: unknown[] = [];
+    const client = createOidcClient({ issuer: ISSUER, clientId: CLIENT_ID, clientSecret: SECRET, clock: () => T0,
+      fetch: server.fetch, onFailure: diagnostic => diagnostics.push(diagnostic) });
+    server.down = true;
+    expect(await client.exchangeCode({ callbackUrl: `${REDIRECT}?code=secret-code&state=secret-state`, redirectUri: REDIRECT,
+      expectedState: 'secret-state', nonce: 'secret-nonce', codeVerifier: 'secret-verifier' }))
+      .toEqual({ kind: 'unavailable' });
+    expect(diagnostics).toEqual([{ stage: 'discovery', category: 'network_failure' }]);
+  });
+
+  it('reports an HTTP authentication challenge as a provider rejection', async () => {
+    const { server, begin } = await setup();
+    const diagnostics: unknown[] = [];
+    const client = createOidcClient({ issuer: ISSUER, clientId: CLIENT_ID, clientSecret: SECRET, clock: () => T0,
+      fetch: server.fetch, onFailure: diagnostic => diagnostics.push(diagnostic) });
+    server.tokenChallenge = true;
+    expect(await client.exchangeCode(await begin())).toEqual({ kind: 'rejected', code: 'invalid_response' });
+    expect(diagnostics).toEqual([{ stage: 'token_response', category: 'provider_rejection', status: 401 }]);
+  });
+
   it('builds an S256 code-flow authorization URL from discovery', async () => {
     const { client } = await setup();
     const result = await client.authorizationUrl({ redirectUri: REDIRECT, state: 's', nonce: 'n', codeChallenge: 'c', codeChallengeMethod: 'S256' });
