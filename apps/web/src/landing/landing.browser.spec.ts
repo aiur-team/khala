@@ -190,6 +190,16 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
         `${width}px: no horizontal overflow`,
       );
       assert.equal(await copy.isVisible(), true, `${width}px: copy button visible`);
+      assert.equal(await page.locator('#agentPrompt').evaluate(node => {
+        const text = node.firstChild;
+        if (!text) return 0;
+        const content = text.textContent ?? '';
+        const start = content.indexOf('https://khala.aiur.team');
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, start + 'https://khala.aiur.team'.length);
+        return range.getClientRects().length;
+      }), 1, `${width}px: the agent URL stays on one line`);
       assert.equal(await page.getByRole('link', { name: 'Docs' }).isVisible(), true, `${width}px: Docs visible`);
       if (width === 390) {
         assert.equal(

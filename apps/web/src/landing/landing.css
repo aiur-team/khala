@@ -604,6 +604,20 @@ a {
   }
 }
 
+@media (max-width: 370px) {
+  .install-box {
+    flex-wrap: wrap;
+  }
+
+  .install-box .cmd {
+    flex: 1 1 calc(100% - 32px);
+  }
+
+  .install-box .copy {
+    margin-left: auto;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
