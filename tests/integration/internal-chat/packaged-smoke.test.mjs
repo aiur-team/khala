@@ -27,17 +27,16 @@ function success(result) {
 
 function refusalCode(result) {
   assert.notEqual(result.code, 0, JSON.stringify(result));
-  // Node 22 can also write its experimental SQLite warning to stderr.
-  const codes = [result.out, result.err]
-    .flatMap(output => output.split('\n'))
-    .filter(line => line.startsWith('{'))
-    .map(line => {
-      const body = JSON.parse(line);
-      return body.code ?? body.error;
-    })
-    .filter(Boolean);
-  assert.deepEqual(codes, ['not_connected'], JSON.stringify(result));
-  return codes[0];
+  // Node 22 can append this experimental SQLite warning to stderr.
+  const sqliteWarning = /\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/;
+  const stderr = result.err.replace(sqliteWarning, '');
+  assert.ok(!result.out || !stderr, JSON.stringify(result));
+  const response = result.out || stderr;
+  assert.match(response, /^\{[^\n]+\}\n?$/, JSON.stringify(result));
+  const body = JSON.parse(response);
+  assert.equal(body.ok, false, JSON.stringify(result));
+  assert.equal(body.code ?? body.error, 'not_connected', JSON.stringify(result));
+  return body.code ?? body.error;
 }
 
 function readBodies(result) {
