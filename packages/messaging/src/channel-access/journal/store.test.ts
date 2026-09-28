@@ -245,6 +245,24 @@ describe('channel access journal reads and decisions', () => {
 });
 
 describe('channel access fulfillment and retention', () => {
+  it('requires an explicit composed-Stop opt-in to owner-revoke connected', async () => {
+    const h = harness();
+    const created = await accepted(h);
+    await h.journal.decide({ ownerId: 'owner_1', requestHandle: created.requestHandle, expectedRevision: 1, decision: 'approve', operationId: 'approve' });
+    await h.journal.claimAccess({ binding: request(), expectedRevision: 2, consumerId: 'grant_exchange', operationId: 'claim' });
+    await h.journal.updateLifecycle({
+      requestHandle: created.requestHandle, expectedRevision: 3, consumerId: 'grant_exchange',
+      outcome: 'connected', operationId: 'connected',
+    });
+    const command = {
+      ownerId: 'owner_1', requestHandle: created.requestHandle, channelId: 'authorized_1',
+      expectedRevision: 4, operationId: 'owner-stop',
+    };
+    expect(await h.journal.revokeOwner(command)).toEqual({ kind: 'connected' });
+    expect(await h.journal.revokeOwner({ ...command, connected: true }))
+      .toEqual({ kind: 'updated', revision: 5 });
+  });
+
   it('returns operation-specific authorization only after a typed claim and records lifecycle', async () => {
     const access = harness();
     const accessCreated = await accepted(access);

@@ -225,13 +225,15 @@ export interface ChannelAccessStore {
     | Readonly<{ kind: 'updated'; outcome: 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'not_found' | 'unavailable' }>
   >;
-  /** Owner-authorized, exact-request revocation. Connected requests need the separate Stop flow. */
+  /** Owner-authorized, exact-request revocation. Connected opt-in requires a composed binding Stop. */
   revokeOwner(input: Readonly<{
     ownerId: string;
     requestHandle: string;
     channelId: string;
     expectedRevision: number;
     operationId: string;
+    /** Never set outside a caller that finishes exact binding Stop before reporting success. */
+    connected?: boolean;
   }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; revision: number }>
     | Readonly<{ kind: 'not_found' | 'wrong_channel' | 'stale' | 'connected' | 'conflict' | 'unavailable' }>
@@ -795,8 +797,11 @@ export function createChannelAccessStore(deps: Readonly<{
           : { kind: 'conflict' as const });
       }
       if (row.revision !== input.expectedRevision) return unchanged({ kind: 'stale' as const });
-      if (row.outcome === 'connected') return unchanged({ kind: 'connected' as const });
-      if (row.outcome !== 'approved' && row.outcome !== 'connecting' && row.outcome !== 'repair_required') {
+      if (row.outcome === 'connected' && input.connected !== true) {
+        return unchanged({ kind: 'connected' as const });
+      }
+      if (row.outcome !== 'approved' && row.outcome !== 'connecting'
+        && row.outcome !== 'connected' && row.outcome !== 'repair_required') {
         return unchanged({ kind: 'conflict' as const });
       }
       const value = cloneAggregate(aggregate);

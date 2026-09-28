@@ -20,6 +20,7 @@ import type { HumanAuthority } from '../../server/credentials';
 import type { ChannelStore } from '../../store/channel-store';
 import {
   type DiscoveryAgentContext, type DiscoveryAgentView, type DiscoverySettingsView, type InternalDiscoveryPort,
+  type RequestBindingStop,
   ed25519Thumbprint,
 } from '../../server/discovery';
 import type { DiscoveryAgent, DiscoveryStore } from '../../store/discovery-store';
@@ -563,23 +564,54 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       return decisions.decide(command, owner);
     },
 
-    async revokeRequest(principal, command) {
+    async revokeRequest(principal, command, stopBinding?: RequestBindingStop) {
       if (!isOwner(principal)) return { kind: 'rejected', code: 'forbidden' };
       const match = /^carev_([1-9][0-9]*)$/.exec(command.expectedRevision);
       const expectedRevision = match ? Number(match[1]) : NaN;
       if (!Number.isSafeInteger(expectedRevision)) return { kind: 'rejected', code: 'stale_revision' };
+      const before = await journal.readContext({ requestHandle: command.requestHandle });
+      if (before.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+      // The shared journal can fence a connected binding durably, but only this running
+      // server can drain its effects and clear its live capability and descriptor.
+      if (before.kind === 'found' && before.context.ownerId === principal.ownerId
+        && before.context.outcome === 'connected' && !stopBinding) {
+        return { kind: 'rejected', code: 'connected' };
+      }
       const result = await journal.revokeOwner({
         ownerId: principal.ownerId,
         requestHandle: command.requestHandle,
         channelId: command.channelId,
         expectedRevision,
         operationId: command.operationId,
+        ...(stopBinding ? { connected: true } : {}),
       });
       if (result.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
       if (result.kind !== 'updated') {
         const code = result.kind === 'stale' ? 'stale_revision'
           : result.kind === 'conflict' ? 'operation_mismatch' : result.kind;
         return { kind: 'rejected', code };
+      }
+      if (before.kind !== 'found') return { kind: 'unavailable', retryable: true };
+      const request = before.context;
+      const key = activationKey({ principal: request.requester, origin: request.origin }, request.operationId);
+      const activation = store.activation(key);
+      if (activation.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+      if (activation.kind === 'absent' && request.outcome === 'connected') {
+        return { kind: 'unavailable', retryable: true };
+      }
+      if (activation.kind === 'found') {
+        const { binding, channelId, sessionGeneration } = activation.activation;
+        if (channelId !== command.channelId || binding.bindingId !== `binding_${key}`
+          || binding.ownerId !== principal.ownerId || binding.sessionId !== request.sessionFingerprint
+          || binding.harness !== request.harness || binding.generation !== request.sessionGeneration
+          || sessionGeneration !== request.sessionGeneration
+          || binding.agentParticipantId !== agentParticipant(request.requester)
+          || !stopBinding) return { kind: 'unavailable', retryable: true };
+        const stopped = await stopBinding(command.channelId, {
+          bindingId: binding.bindingId, generation: binding.generation,
+          agentParticipantId: binding.agentParticipantId,
+        });
+        if (stopped !== 'stopped') return { kind: 'unavailable', retryable: true };
       }
       return { kind: 'ok', value: {
         v: 1, requestHandle: command.requestHandle, channelId: command.channelId,

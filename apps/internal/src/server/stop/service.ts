@@ -121,13 +121,15 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
       selected = matched;
     }
     // A binding already barred by an earlier partial Stop is retried even when its row still reads active.
+    // A journal fence may have revoked the row before Stop reached this server. Its earlier
+    // effects still need draining, and its live capability and streams still need closing.
     const active = selected.filter(candidate => candidate.status === 'active');
 
-    for (const { binding } of active) {
+    for (const { binding } of selected) {
       ports.barrier.raise(binding);
       ports.dropCapability(binding);
     }
-    await Promise.all(active.map(({ binding }) => ports.barrier.drain(binding)));
+    await Promise.all(selected.map(({ binding }) => ports.barrier.drain(binding)));
 
     const stopped: StopBindingView[] = [];
     const remaining: (StopBindingView & Readonly<{ reason: StopRemainingReason }>)[] = [];

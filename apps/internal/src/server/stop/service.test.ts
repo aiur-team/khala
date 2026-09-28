@@ -85,13 +85,26 @@ describe('binding Stop service', () => {
     ]);
   });
 
-  it('skips already revoked generations and reports unavailable when candidates cannot be read', async () => {
+  it('drains a binding fenced by the journal before reporting exact Stop complete', async () => {
     const calls: Calls = [];
-    const service = createBindingStopService(ports({
-      candidates: [{ binding: bobBinding, status: 'revoked', latest: true }],
-    }, calls));
-    expect(await service.stop('channel-one', null)).toEqual({ kind: 'stopped', stopped: [] });
-    expect(calls).toEqual(['candidates']);
+    const connected = ports({ candidates: [
+      { binding: bobBinding, status: 'revoked', latest: true }, active(carolBinding),
+    ] }, calls);
+    const service = createBindingStopService(connected);
+    let finish: () => void = () => {};
+    connected.barrier.run(bobBinding, () => new Promise<void>(resolve => { finish = resolve; }));
+    let settled = false;
+    const stopped = service.stop('channel-one', [{
+      bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob',
+    }]).then(result => { settled = true; return result; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(connected.barrier.run(bobBinding, () => 'late')).toEqual({ kind: 'barred' });
+    expect(connected.barrier.run(carolBinding, () => 'other')).toEqual({ kind: 'ran', value: 'other' });
+    expect(settled).toBe(false);
+    finish();
+    expect(await stopped).toEqual({ kind: 'stopped', stopped: [] });
+    expect(calls).toEqual(['candidates', 'raise:binding-bob', 'drop:binding-bob', 'drain:binding-bob']);
     expect(await createBindingStopService(ports({ candidates: 'unavailable' })).stop('channel-one', null))
       .toEqual({ kind: 'unavailable' });
   });
