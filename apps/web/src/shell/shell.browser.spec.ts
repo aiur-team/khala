@@ -73,6 +73,11 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
       1,
       'long nav link keeps its accessible name while collapsed',
     );
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await collapseToggle.isVisible(), false, 'phone navigation has no collapse control');
+    const phoneLabelWidth = await page.locator('.aiur-shell__nav-label').first().evaluate(node => node.getBoundingClientRect().width);
+    assert.ok(phoneLabelWidth > 50, `collapsed desktop state must restore route labels on phone; got ${phoneLabelWidth}px`);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await collapseToggle.click();
 
     // Theme swap changes tokens without breaking legibility or focus.

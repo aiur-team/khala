@@ -223,8 +223,22 @@
     display: none;
   }
 
+  .aiur-shell--collapsed .aiur-shell__nav {
+    padding: 1rem;
+  }
+
   .aiur-shell--collapsed .aiur-shell__nav-list {
     margin-top: 0;
+  }
+
+  .aiur-shell--collapsed .aiur-shell__nav-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
   }
 
   .aiur-shell__content {
