@@ -42,7 +42,7 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     // A retained profile is a fresh application lifecycle, not a retry of the
     // sticky lost service instance above.
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready');
-    await page.getByTestId('live-room').getByText('Room for owner_alice').waitFor();
+    await page.getByTestId('live-room').getByText('Channel for owner_alice').waitFor();
     assert.equal(await page.getByRole('heading', { name: "This device's keys are unavailable" }).count(), 0);
     await page.evaluate(() => window.__lossHarness.setDevice('revoked'));
     await page.getByText('revoked_by_owner').waitFor();

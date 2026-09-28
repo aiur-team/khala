@@ -32,7 +32,7 @@ const application = createHumanApplication({ identity, device, room: {} as never
   limits: {} as never }, { initialPath: '/channels/room_1' });
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
-    renderRoom={context => <p data-testid="live-room">Room for {context.principal.ownerId}</p>}
+    renderRoom={context => <p data-testid="live-room">Channel for {context.principal.ownerId}</p>}
     createChannelAccess={() => {
       inboxCount += 1;
       return createChannelAccessInboxController({ requests: createFakeJournal().port });
