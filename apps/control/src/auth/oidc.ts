@@ -19,6 +19,15 @@ export type OidcAdapterOptions = Readonly<{
   timeoutMs?: number;
   /** Test seam for the provider's HTTP endpoints. */
   fetch?: (url: string, init: oauth.CustomFetchOptions<string, unknown>) => Promise<Response>;
+  /** Sanitized protocol diagnostic; never receives a provider body, URL, token or claim. */
+  onFailure?: (diagnostic: OidcFailureDiagnostic) => void;
+}>;
+
+export type OidcFailureDiagnostic = Readonly<{
+  stage: 'discovery' | 'callback' | 'token_request' | 'token_response' | 'signature' | 'claims' | 'userinfo';
+  category: 'provider_rejection' | 'protocol_failure' | 'network_failure';
+  status?: number;
+  providerError?: 'invalid_client' | 'invalid_grant' | 'access_denied';
 }>;
 
 type Json = Record<string, unknown>;
@@ -43,6 +52,10 @@ export function createOidcClient(options: OidcAdapterOptions): OidcClient {
     client_id: options.clientId,
     ...(options.clock ? { [oauth.clockSkew]: Math.round((options.clock() - Date.now()) / 1000) } : {}),
   });
+
+  const report = (diagnostic: OidcFailureDiagnostic) => {
+    try { options.onFailure?.(diagnostic); } catch { /* Diagnostics must not change sign-in behavior. */ }
+  };
 
   // Cached after the first success; a failed discovery is retried on the next call.
   function server(call?: CallOptions): Promise<oauth.AuthorizationServer> {
@@ -90,41 +103,77 @@ export function createOidcClient(options: OidcAdapterOptions): OidcClient {
         as = await server(call);
       } catch {
         // Discovery says nothing about this callback; it is an outage, not a rejection.
+        report({ stage: 'discovery', category: 'network_failure' });
         return { kind: 'unavailable' };
       }
+      let stage: OidcFailureDiagnostic['stage'] = 'callback';
       try {
         const c = client();
         const parameters = oauth.validateAuthResponse(as, c, new URL(exchange.callbackUrl), exchange.expectedState);
+        stage = 'token_request';
         const response = await oauth.authorizationCodeGrantRequest(
           as, c, clientAuth, parameters, exchange.redirectUri, exchange.codeVerifier, http(call),
         );
-        if (response.status >= 500) return { kind: 'unavailable' };
+        if (response.status >= 500) {
+          report({ stage: 'token_response', category: 'network_failure', status: response.status });
+          return { kind: 'unavailable' };
+        }
+        stage = 'token_response';
         const tokens = await oauth.processAuthorizationCodeResponse(as, c, response, {
           expectedNonce: exchange.nonce, requireIdToken: true,
         });
         // The token came over TLS from the token endpoint, but the port promises a
         // signature check, so it does not rest on transport alone.
+        stage = 'signature';
         await oauth.validateApplicationLevelSignature(as, response, http(call));
+        stage = 'claims';
         const idToken = oauth.getValidatedIdTokenClaims(tokens);
-        if (!idToken) return { kind: 'rejected', code: 'invalid_response' };
+        if (!idToken) {
+          report({ stage: 'claims', category: 'protocol_failure' });
+          return { kind: 'rejected', code: 'invalid_response' };
+        }
         const claims: Json = { ...idToken };
         if (claims.email === undefined || claims.email_verified === undefined) {
           if (!as.userinfo_endpoint) return { kind: 'ok', value: claims };
+          stage = 'userinfo';
           const info = await oauth.processUserInfoResponse(
             as, c, idToken.sub, await oauth.userInfoRequest(as, c, tokens.access_token, http(call)),
           );
           // The library already refuses a different subject; this check does not depend on it.
-          if (info.sub !== idToken.sub) return { kind: 'rejected', code: 'invalid_response' };
+          if (info.sub !== idToken.sub) {
+            report({ stage: 'userinfo', category: 'protocol_failure' });
+            return { kind: 'rejected', code: 'invalid_response' };
+          }
           // Both come from one source, so the verified flag describes this email.
           claims.email = info.email;
           claims.email_verified = info.email_verified;
         }
         return { kind: 'ok', value: claims };
       } catch (error) {
+        report(diagnosticFor(stage, error));
         return classify(error);
       }
     },
   };
+}
+
+function diagnosticFor(stage: OidcFailureDiagnostic['stage'], error: unknown): OidcFailureDiagnostic {
+  if (error instanceof oauth.ResponseBodyError) {
+    const providerError = error.error === 'invalid_client' || error.error === 'invalid_grant' || error.error === 'access_denied'
+      ? error.error : undefined;
+    return { stage, category: 'provider_rejection', status: error.status, ...(providerError ? { providerError } : {}) };
+  }
+  if (error instanceof oauth.AuthorizationResponseError) {
+    return { stage, category: 'provider_rejection', ...(error.error === 'access_denied' ? { providerError: 'access_denied' as const } : {}) };
+  }
+  if (error instanceof oauth.WWWAuthenticateChallengeError) {
+    return { stage, category: 'provider_rejection', status: error.status };
+  }
+  if (error instanceof oauth.OperationProcessingError) {
+    return { stage, category: 'protocol_failure' };
+  }
+  if (stage === 'callback') return { stage, category: 'protocol_failure' };
+  return { stage, category: 'network_failure' };
 }
 
 /**
