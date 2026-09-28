@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CompareAndSetInput, ControlStore, JsonValue, RoomId } from '@khala/contracts/messaging/index';
+import type { CompareAndSetInput, ControlStore, EventId, JsonValue, RoomId } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createDeviceAdmission, type Replacement } from './device-admission';
 import { createRoomSendFence } from './room-send-fence';
@@ -9,6 +9,7 @@ const sender = { senderId: 'owner_A', deviceId: 'old_A', deviceKey: 'A'.repeat(4
 const other = { senderId: 'owner_B', deviceId: 'old_B', deviceKey: 'B'.repeat(43) };
 const replacement: Replacement = { roomId, ownerId: 'owner_A' as Replacement['ownerId'], deviceId: 'new_A',
   deviceKey: 'C'.repeat(43), generation: 2, policyDigest: 'd'.repeat(64), operationId: 'replacement_1' };
+const eventId = (position: number) => `$event_${position}` as EventId;
 
 async function setup() {
   const raw = fakeStore(() => T0).store;
@@ -30,13 +31,20 @@ async function setup() {
   let authorized = true;
   let distributed = false;
   let position: number | null = 10;
+  let positionsAvailable = true;
   const deps = { store,
     authorize: async () => authorized ? 'authorized' as const : 'refused' as const,
     currentPosition: async () => position,
+    positionFor: async (room: RoomId, event: EventId) => {
+      if (!positionsAvailable || room !== roomId) return null;
+      const match = /^\$event_(\d+)$/u.exec(event);
+      return match ? Number(match[1]) : null;
+    },
     distributionReady: async () => distributed };
   return { ledger: createDeviceAdmission(deps), restart: () => createDeviceAdmission(deps), fence,
     setAuthorized(value: boolean) { authorized = value; }, setDistributed(value: boolean) { distributed = value; },
     setPosition(value: number | null) { position = value; },
+    setPositionsAvailable(value: boolean) { positionsAvailable = value; },
     setFailRelease(value: 'rotated' | 'refused' | null) { failRelease = value; } };
 }
 
@@ -44,7 +52,7 @@ describe('replacement device admission boundary', () => {
   it('keeps content withheld until all senders rotate and verified distribution completes', async () => {
     const h = await setup();
     expect(await h.ledger.reserve(replacement)).toBe('pending');
-    expect(await h.ledger.allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     expect(await h.ledger.activate(replacement)).toBe('pending');
     expect(await h.fence.acknowledgeRotation(roomId, sender, replacement.operationId, 1)).toBe('applied');
     expect(await h.ledger.activate(replacement)).toBe('pending');
@@ -56,11 +64,16 @@ describe('replacement device admission boundary', () => {
     expect(await h.ledger.activate(replacement)).toBe('refused');
     h.setAuthorized(true);
     expect(await h.restart().activate(replacement)).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 10 })).toBe(false);
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
-    expect(await h.restart().allows({ ...replacement, position: 100, deviceKey: 'D'.repeat(43) })).toBe(false);
-    expect(await h.restart().allows({ ...replacement, position: 100, generation: 1 })).toBe(false);
-    expect(await h.restart().allows({ ...replacement, position: 100, ownerId: 'owner_B' as Replacement['ownerId'] })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(10) })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
+    h.setPositionsAvailable(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(false);
+    h.setPositionsAvailable(true);
+    expect(await h.restart().allows({ ...replacement, eventId: '$unknown' as EventId })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(100), deviceKey: 'D'.repeat(43) })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(100), generation: 1 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(100), ownerId: 'owner_B' as Replacement['ownerId'] })).toBe(false);
   });
 
   it('pins operation, owner, channel, device, key and policy through retries and revocation', async () => {
@@ -80,7 +93,7 @@ describe('replacement device admission boundary', () => {
     expect(await h.fence.acquire(roomId, sender, 'after_cancellation')).toMatchObject({ kind: 'granted' });
     expect(await h.restart().revoke(replacement)).toBe('applied');
     expect(await h.restart().reserve(replacement)).toBe('conflict');
-    expect(await h.restart().allows({ ...replacement, position: 100 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(100) })).toBe(false);
   });
 
   it('withholds reads if the send hold release fails after activation is prepared', async () => {
@@ -91,11 +104,11 @@ describe('replacement device admission boundary', () => {
     h.setDistributed(true);
     h.setFailRelease('rotated');
     expect(await h.ledger.activate(replacement)).toBe('pending');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     expect(await h.restart().revoke(replacement)).toBe('refused');
     h.setFailRelease(null);
     expect(await h.restart().activate(replacement)).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
   });
 
   it('refuses ledger-only revocation once an admitted device can retain room keys', async () => {
@@ -106,7 +119,7 @@ describe('replacement device admission boundary', () => {
     h.setDistributed(true);
     expect(await h.ledger.activate(replacement)).toBe('applied');
     expect(await h.restart().revoke(replacement)).toBe('refused');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
   });
 
   it('withholds active-device reads during a later hold and until a new sender is rotation-ready', async () => {
@@ -116,21 +129,21 @@ describe('replacement device admission boundary', () => {
     await h.fence.acknowledgeRotation(roomId, other, replacement.operationId, 1);
     h.setDistributed(true);
     expect(await h.ledger.activate(replacement)).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
 
     expect(await h.fence.beginHold(roomId, 'later_rotation', null)).toBe('held');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     await h.fence.acknowledgeRotation(roomId, sender, 'later_rotation', 2);
     await h.fence.acknowledgeRotation(roomId, other, 'later_rotation', 2);
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     expect(await h.fence.releaseHold(roomId, 'later_rotation', 'rotated')).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
 
     const added = { senderId: 'owner_C', deviceId: 'old_C', deviceKey: 'D'.repeat(43) };
     expect(await h.fence.seedRoster(roomId, [sender, other, added])).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     expect(await h.fence.readySender(roomId, added)).toBe('applied');
-    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+    expect(await h.restart().allows({ ...replacement, eventId: eventId(11) })).toBe(true);
   });
 
   it('retries a failed pending-cancellation release after restart before reporting success', async () => {
@@ -173,10 +186,10 @@ describe('replacement device admission boundary', () => {
     const h = await setup();
     h.setAuthorized(false);
     expect(await h.ledger.reserve(replacement)).toBe('refused');
-    expect(await h.ledger.allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(11) })).toBe(false);
     h.setAuthorized(true);
     h.setPosition(null);
     expect(await h.ledger.reserve(replacement)).toBe('unavailable');
-    expect(await h.ledger.allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.ledger.allows({ ...replacement, eventId: eventId(11) })).toBe(false);
   });
 });
