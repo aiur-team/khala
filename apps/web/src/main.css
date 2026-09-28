@@ -8,7 +8,7 @@ body,
 body {
   background: #16171a;
   color: #edeef0;
-  font-family: 'Khala Space Grotesk', system-ui, sans-serif;
+  font-family: var(--aiur-font-body);
 }
 
 button,

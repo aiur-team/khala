@@ -2,6 +2,7 @@
  * Shell chrome layout. Depends on ../brand/tokens.css custom properties
  * being in scope; composition roots must import both.
  */
+@import '@aiur/components/buttons.css';
 
 .aiur-shell {
   min-height: 100vh;

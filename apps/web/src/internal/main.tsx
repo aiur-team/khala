@@ -17,7 +17,6 @@ import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
 import { mountLocalApplication } from './composition/screen';
-import '../brand/fonts.css';
 import '../brand/tokens.css';
 import '../shell/shell.css';
 import '../features/create-channel/create-channel.css';

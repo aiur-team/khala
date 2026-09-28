@@ -248,7 +248,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
       </ol>
 
       <div className="review__action-bar">
-        <button type="button" className="review__release" disabled={!canSubmit} onClick={() => void controller.submit()}>
+        <button type="button" className="review__release aiur-action" disabled={!canSubmit} onClick={() => void controller.submit()}>
           Release{selectedCount > 0 ? ` ${selectedCount} selected` : ''}
         </button>
         {submission.phase !== 'idle' ? (

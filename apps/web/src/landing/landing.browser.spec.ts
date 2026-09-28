@@ -11,7 +11,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 // The production splash build config, with only the output directory redirected.
 const configFile = join(here, '../../vite.landing.config.mjs');
 const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
-const BUTTON_BLUE = 'rgb(31, 87, 196)';
+const LIGHT_ACTION = 'rgb(31, 87, 196)';
+const DARK_ACTION = 'rgb(0, 112, 240)';
 const WHITE = 'rgb(255, 255, 255)';
 const FEATURE_TITLES = [
   'Multiplayer',
@@ -123,12 +124,16 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     const toggle = page.getByRole('button', { name: 'Dark mode' });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false', 'light system preference: dark mode off');
 
-    // Every button is white on archon blue, in the light theme. The context
-    // runs with reduced motion, so parking the pointer ends hover at once.
+    // The primary action follows Aiur's dashboard fill. The topbar and copy
+    // controls follow the quiet controls on aiur.team.
     await page.mouse.move(0, 0);
     const lightButtons = await buttonColors(page);
     assert.ok(lightButtons.length >= 3, 'Docs, theme toggle, Copy and the call to action');
-    for (const button of lightButtons) assert.deepEqual([button.label, button.background, button.color], [button.label, BUTTON_BLUE, WHITE]);
+    assert.equal(lightButtons.find(button => button.label === 'Open Khala app')?.background, LIGHT_ACTION);
+    assert.equal(lightButtons.find(button => button.label === 'Open Khala app')?.color, WHITE);
+    assert.equal(lightButtons.find(button => button.label === 'Docs')?.background, 'rgba(0, 0, 0, 0)');
+    assert.equal(lightButtons.find(button => button.label === 'Copy the prompt')?.background, 'rgba(0, 0, 0, 0)');
+    assert.equal(await toggle.evaluate(node => getComputedStyle(node).borderRadius), '50%');
     const lightBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
     // ...and after switching to dark, which persists across a reload.
@@ -139,7 +144,11 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.notEqual(darkBackground, lightBackground);
     assert.equal(darkBackground, 'rgb(26, 27, 30)');
     await page.mouse.move(0, 0);
-    for (const button of await buttonColors(page)) assert.deepEqual([button.label, button.background, button.color], [button.label, BUTTON_BLUE, WHITE]);
+    const darkButtons = await buttonColors(page);
+    assert.equal(darkButtons.find(button => button.label === 'Open Khala app')?.background, DARK_ACTION);
+    assert.equal(darkButtons.find(button => button.label === 'Open Khala app')?.color, WHITE);
+    assert.equal(darkButtons.find(button => button.label === 'Docs')?.background, 'rgba(0, 0, 0, 0)');
+    assert.equal(darkButtons.find(button => button.label === 'Copy the prompt')?.background, 'rgba(0, 0, 0, 0)');
     await page.reload();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.equal(await page.getByRole('button', { name: 'Dark mode' }).getAttribute('aria-pressed'), 'true');
@@ -150,7 +159,10 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     await darkPage.goto(url);
     assert.equal(await darkPage.getByRole('button', { name: 'Dark mode' }).getAttribute('aria-pressed'), 'true');
     assert.equal(await darkPage.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(26, 27, 30)');
-    assert.equal(await darkPage.evaluate(() => document.documentElement.hasAttribute('data-theme')), false);
+    assert.equal(await darkPage.evaluate(() => document.documentElement.dataset.theme), 'dark');
+    await darkPage.emulateMedia({ colorScheme: 'light' });
+    await darkPage.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+    assert.equal(await darkPage.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(231, 214, 178)');
     await darkContext.close();
 
     const blockedStorageContext = await browser.newContext({ viewport: { width: 1024, height: 800 }, colorScheme: 'light' });

@@ -96,16 +96,16 @@ describe('ReviewScreen', () => {
     const controller = fakeController({ view: { access: 'revoked', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [], receipts: [] } });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     expect(html).toContain('no longer have authority');
-    expect(html).toMatch(/review__release"[^>]*disabled=""/);
+    expect(html).toMatch(/review__release aiur-action"[^>]*disabled=""/);
   });
 
   it('the release action is disabled with nothing selected, and enabled once selected', () => {
     const nothingSelected = renderToStaticMarkup(<ReviewScreen controller={fakeController()} recipientLabel="Agent" renderContent={inertRenderContent} />);
-    expect(nothingSelected).toMatch(/review__release"[^>]*disabled=""/);
+    expect(nothingSelected).toMatch(/review__release aiur-action"[^>]*disabled=""/);
 
     const controller = fakeController({ selection: { phase: 'selected', refs: [ref('E1')], captured: { bindingId, bindingGeneration: 0, policyVersion: 3 } } });
     const withSelection = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
-    expect(withSelection).not.toMatch(/review__release"[^>]*disabled=""/);
+    expect(withSelection).not.toMatch(/review__release aiur-action"[^>]*disabled=""/);
   });
 
   it('U3: an outcome_unknown submission shows a check-status action instead of a silent resubmit', () => {
@@ -113,7 +113,7 @@ describe('ReviewScreen', () => {
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     expect(html).toContain('Release status unknown');
     expect(html).toContain('Check release status');
-    expect(html).toMatch(/review__release"[^>]*disabled=""/);
+    expect(html).toMatch(/review__release aiur-action"[^>]*disabled=""/);
   });
 
   it('U3: a released submission shows receipt-derived evidence, never inventing consumption from release alone', () => {

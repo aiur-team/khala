@@ -212,7 +212,7 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
       <div className="agent-controls__actions">
         <button
           type="button"
-          className="agent-controls__apply-mode-button"
+          className="agent-controls__apply-mode-button aiur-action"
           disabled={!canApply}
           aria-describedby={listening.inactiveReason ? inactiveId : undefined}
           onClick={() => controller.applyListeningMode()}
@@ -354,7 +354,7 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
       <div className="agent-controls__actions">
         <button
           type="button"
-          className="agent-controls__pause-button"
+          className="agent-controls__pause-button aiur-action"
           disabled={!view.controlsAvailable}
           aria-describedby={!view.controlsAvailable && view.unavailableReason ? unavailableReasonId : undefined}
           onClick={() => controller.requestPause(nextPaused)}
@@ -362,12 +362,12 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
           {nextPaused ? 'Request pause' : 'Resume review delivery'}
         </button>
         {view.notice ? (
-          <button type="button" className="agent-controls__refresh-button" onClick={() => controller.refresh()}>
+          <button type="button" className="agent-controls__refresh-button aiur-action" onClick={() => controller.refresh()}>
             Refresh
           </button>
         ) : null}
         {view.retryAvailable ? (
-          <button type="button" className="agent-controls__retry-button" onClick={() => controller.retry()}>
+          <button type="button" className="agent-controls__retry-button aiur-action" onClick={() => controller.retry()}>
             Retry
           </button>
         ) : null}

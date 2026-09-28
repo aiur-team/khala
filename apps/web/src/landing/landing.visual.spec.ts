@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { LANDING_PORT, PRODUCTION_CSP, PRODUCTION_HOMESERVER_ORIGIN } from '../../playwright.visual.config';
 import { renderNetlifyHeaders } from '../composition/human/hosted-config';
@@ -69,13 +68,6 @@ async function open(page: Page, theme: Theme, viewport: Viewport, { bannerDismis
 
 const key = (theme: Theme, viewport: Viewport) => `${theme}-${viewport.width}x${viewport.height}`;
 
-// CI's rasterizer changes 49 pixels in the Copy glyphs at 360px while the
-// button geometry stays fixed. Hide only their paint during screenshots;
-// the DOM assertion above and browser clipboard test cover the real label.
-const copyLabelStyle = (viewport: Viewport) => viewport.width === 360
-  ? { stylePath: fileURLToPath(new URL('./copy-label-snapshot.css', import.meta.url)) }
-  : {};
-
 test('serves the hosted build\'s _headers Content-Security-Policy', async ({ request }) => {
   expect(renderNetlifyHeaders(PRODUCTION_HOMESERVER_ORIGIN)).toBe(`/*\n  Content-Security-Policy: ${PRODUCTION_CSP}\n`);
   const response = await request.get(url);
@@ -89,7 +81,7 @@ for (const theme of THEMES) {
     test.describe(name, () => {
       test('top', async ({ page }) => {
         await open(page, theme, viewport);
-        await expect(page).toHaveScreenshot(`${name}-top.png`, copyLabelStyle(viewport));
+        await expect(page).toHaveScreenshot(`${name}-top.png`);
       });
 
       test('scrolled 900px', async ({ page }) => {
@@ -102,19 +94,18 @@ for (const theme of THEMES) {
       test('banner dismissed', async ({ page }) => {
         await open(page, theme, viewport, { bannerDismissed: true });
         await expect(page.locator('#aiurBanner')).toBeHidden();
-        await expect(page).toHaveScreenshot(`${name}-banner-dismissed.png`, copyLabelStyle(viewport));
+        await expect(page).toHaveScreenshot(`${name}-banner-dismissed.png`);
       });
 
       test('active prompt box', async ({ page }) => {
         await open(page, theme, viewport);
-        await expect(page.locator('.prompt-frame')).toHaveScreenshot(`${name}-prompt-active.png`, copyLabelStyle(viewport));
+        await expect(page.locator('.prompt-frame')).toHaveScreenshot(`${name}-prompt-active.png`);
       });
 
       test('elements', async ({ page }) => {
         await open(page, theme, viewport);
         for (const [element, selector] of ELEMENTS) {
-          const options = element === 'install-box' ? copyLabelStyle(viewport) : {};
-          await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`, options);
+          await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`);
         }
       });
     });

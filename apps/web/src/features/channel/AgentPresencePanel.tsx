@@ -42,7 +42,7 @@ function Onboarding({ agent, copy, copyState }: {
         <>
           <p>Give this one command to the agent:</p>
           <code className="agent-presence__command">{agent.installCommand}</code>
-          <button type="button" className="agent-presence__copy" onClick={() => copy(agent)}>
+          <button type="button" className="agent-presence__copy aiur-action" onClick={() => copy(agent)}>
             {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy install command'}
           </button>
         </>

@@ -32,12 +32,6 @@ function contrast(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
-function token(name: string): string {
-  const match = css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i'));
-  if (!match?.[1]) throw new Error(`missing token --${name}`);
-  return match[1];
-}
-
 describe('splash page prompt', () => {
   test('the hero prompt reads exactly as specified, in the page and in code', () => {
     expect(AGENT_PROMPT).toBe(EXACT_PROMPT);
@@ -54,9 +48,9 @@ describe('splash page prompt', () => {
   });
 
   test('links the hero to the hosted app with an enabled prompt', () => {
-    expect(html).toContain('<a class="button cta app-cta" href="/new">Open Khala app</a>');
+    expect(html).toContain('<a class="button cta app-cta aiur-action" href="/new">Open Khala app</a>');
     expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('create');
-    expect(html).toMatch(/<button class="button copy" id="copyBtn"[^>]*>/);
+    expect(html).toMatch(/<button class="button copy aiur-copy-control" id="copyBtn"[^>]*>/);
     expect(html).not.toContain('Coming soon.');
     expect(html).not.toContain('aria-disabled="true"');
   });
@@ -115,7 +109,7 @@ describe('splash page constraints', () => {
 
   test('uses the exact protocol tagline and aiur.team hero treatments', () => {
     expect(html).toContain('<meta name="description" content="Multi-model, multi-machine agent messaging protocol" />');
-    expect(html).toContain('<p class="what keepout hug">Multi-model, multi-machine agent messaging protocol</p>');
+    expect(html).toContain('<p class="what aiur-tagline keepout hug">Multi-model, multi-machine agent messaging protocol</p>');
     expect(html).not.toContain('Explore features');
     expect(html).toContain('class="scrollcue"');
     expect(html.match(/\bkeepout\b/g)).toHaveLength(5);
@@ -133,15 +127,22 @@ describe('splash page constraints', () => {
     for (const [tag] of html.matchAll(/<a\b[^>]*class="[^"]*\b(?:cta|docs)\b[^"]*"[^>]*>/g)) expect(tag).toMatch(/class="button\b/);
   });
 
-  test('buttons are white on archon blue with at least AA text contrast', () => {
-    expect(token('button-bg')).toBe('#1f57c4');
-    expect(token('button-fg')).toBe('#ffffff');
-    expect(contrast(token('button-fg'), token('button-bg'))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(token('button-fg'), token('button-bg-hover'))).toBeGreaterThanOrEqual(4.5);
+  test('shared Aiur package owns action, marketing, theme, and font styles', () => {
+    for (const module of ['theme.css', 'fonts.css', 'marketing.css', 'buttons.css']) {
+      expect(css).toContain(`@import '@aiur/components/${module}'`);
+    }
+    expect(html).toContain('aiur-topbar-link');
+    expect(html).toContain('aiur-theme-toggle');
+    expect(html).toContain('aiur-lockup-logo');
+    expect(html).toContain('aiur-wordmark');
+    expect(html).toContain('aiur-copy-control');
+    expect(html).toContain('aiur-action');
+    expect(contrast('#ffffff', '#1f57c4')).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#ffffff', '#0070f0')).toBeGreaterThanOrEqual(4.5);
   });
 
   test('buttons have a focus-visible style', () => {
-    expect(css).toMatch(/\.button:focus-visible\s*\{[^}]*outline:\s*2px solid/);
+    expect(css).toContain("@import '@aiur/components/buttons.css'");
   });
 });
 
