@@ -18,6 +18,7 @@ import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';
 import { REVOCATION_REVOKE_PATH, REVOCATION_STATUS_PATH, REVOCATION_TARGETS_PATH } from './revocation';
 import { createLazyRoomSendRoutes } from './room-send-routes';
+import { createLazyDeviceAdmissionRoutes } from './device-admission-routes';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
@@ -366,6 +367,7 @@ export type HumanHandlerDependencies = Readonly<{
   /** Authenticated owner binding revocation and durable operation status. */
   revocation?: () => readonly RouteRegistration[];
   roomSend?: () => readonly RouteRegistration[];
+  deviceAdmission?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -430,6 +432,7 @@ export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): 
     ...(dependencies?.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().human),
     ...(dependencies?.revocation?.() ?? unavailableRevocationRoutes),
     ...(dependencies?.roomSend?.() ?? createLazyRoomSendRoutes(() => []).filter(route => route.path.startsWith('/api/human/'))),
+    ...(dependencies?.deviceAdmission?.() ?? createLazyDeviceAdmissionRoutes(() => [])),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
