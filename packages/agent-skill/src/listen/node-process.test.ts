@@ -1,6 +1,11 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { createNodeListenerProcess, nodeListenerProcess } from './node-process.js';
+import {
+  createKnownSqliteWarningFilter, createNodeListenerProcess, nodeListenerProcess,
+} from './node-process.js';
+
+const sqliteWarning = '(node:1234) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
+  + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
 
 function capture() {
   const stream = new PassThrough();
@@ -38,6 +43,81 @@ describe('node listener process', () => {
 
     expect(result).toEqual({ code: 2, signal: null, errorCode: 'listener_busy' });
     expect(stderr.text()).toBe('{"ok":false,"error":"listener_busy"}\n');
+  });
+
+  it.each(['before', 'after'] as const)(
+    'ignores only the SQLite runtime warning %s a structured listener error', async order => {
+      const stderr = capture();
+      const busy = '{"ok":false,"error":"listener_busy"}\n';
+      const lines = order === 'before' ? sqliteWarning + busy : busy + sqliteWarning;
+      const result = await nodeListenerProcess.run({
+        command: process.execPath,
+        args: ['-e', `process.stderr.write(${JSON.stringify(lines)}); process.exitCode=2`],
+        stdout: new PassThrough(),
+        stderr: stderr.stream,
+        signal: new AbortController().signal,
+      });
+
+      expect(result).toEqual({ code: 2, signal: null, errorCode: 'listener_busy' });
+      expect(stderr.text()).toBe(busy);
+    },
+  );
+
+  it('keeps a successful SQLite listener stderr clean without hiding unrelated diagnostics', async () => {
+    const stderr = capture();
+    const result = await nodeListenerProcess.run({
+      command: process.execPath,
+      args: ['-e', `process.stderr.write(${JSON.stringify(sqliteWarning)})`],
+      stdout: new PassThrough(),
+      stderr: stderr.stream,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ code: 0, signal: null, errorCode: null });
+    expect(stderr.text()).toBe('');
+  });
+
+  it('handles a warning split across chunks and preserves unknown warnings and partial output', () => {
+    const output: Buffer[] = [];
+    const filter = createKnownSqliteWarningFilter(chunk => output.push(chunk));
+    const input = 'diagnostic\n' + sqliteWarning
+      + '(node:1234) ExperimentalWarning: Other feature is experimental\n'
+      + '(Use `node --trace-warnings ...` to show where the warning was created)\n'
+      + '{"ok":false,"error":"listener_busy"}';
+    for (const byte of Buffer.from(input)) filter.write(Buffer.from([byte]));
+    filter.flush();
+
+    expect(Buffer.concat(output).toString('utf8')).toBe('diagnostic\n'
+      + '(node:1234) ExperimentalWarning: Other feature is experimental\n'
+      + '(Use `node --trace-warnings ...` to show where the warning was created)\n'
+      + '{"ok":false,"error":"listener_busy"}');
+  });
+
+  it('does not mistake a warning-shaped suffix of an overlong line for a runtime warning', () => {
+    const output: Buffer[] = [];
+    const filter = createKnownSqliteWarningFilter(chunk => output.push(chunk));
+    const prefix = 'x'.repeat(513);
+    filter.write(Buffer.from(prefix));
+    filter.write(Buffer.from(sqliteWarning));
+    filter.flush();
+
+    expect(Buffer.concat(output).toString('utf8')).toBe(prefix + sqliteWarning);
+  });
+
+  it('keeps an unrelated trailing warning observable and does not classify an earlier error', async () => {
+    const stderr = capture();
+    const lines = '{"ok":false,"error":"listener_busy"}\n'
+      + '(node:1234) ExperimentalWarning: Other feature is experimental\n';
+    const result = await nodeListenerProcess.run({
+      command: process.execPath,
+      args: ['-e', `process.stderr.write(${JSON.stringify(lines)}); process.exitCode=2`],
+      stdout: new PassThrough(),
+      stderr: stderr.stream,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ code: 2, signal: null, errorCode: null });
+    expect(stderr.text()).toBe(lines);
   });
 
   it('parses the last non-empty bounded stderr line', async () => {

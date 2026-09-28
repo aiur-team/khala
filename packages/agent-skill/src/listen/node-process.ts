@@ -4,7 +4,10 @@ import {
 } from './supervisor.js';
 
 const MAX_ERROR_BYTES = 1_024;
+const MAX_WARNING_LINE_BYTES = 512;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
+const SQLITE_WARNING = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\r?\n$/u;
+const WARNING_HINT = /^\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n$/u;
 const ENVIRONMENT_ALLOWLIST = [
   'PATH', 'HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME',
   'XDG_STATE_HOME', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS',
@@ -26,13 +29,16 @@ export function createNodeListenerProcess(
           env: allowedEnvironment(),
         });
         child.stdout.pipe(input.stdout, { end: false });
-        child.stderr.pipe(input.stderr, { end: false });
         let errorTail = Buffer.alloc(0);
         const observeError = (chunk: Buffer) => {
           errorTail = Buffer.concat([errorTail, chunk]);
           if (errorTail.byteLength > MAX_ERROR_BYTES) errorTail = errorTail.subarray(-MAX_ERROR_BYTES);
         };
-        child.stderr.on('data', observeError);
+        const stderrFilter = createKnownSqliteWarningFilter(chunk => {
+          input.stderr.write(chunk);
+          observeError(chunk);
+        });
+        child.stderr.on('data', stderrFilter.write);
         let settled = false;
         let killTimer: NodeJS.Timeout | undefined;
         const finish = (work: () => void) => {
@@ -41,7 +47,7 @@ export function createNodeListenerProcess(
           if (killTimer !== undefined) clearTimeout(killTimer);
           input.signal.removeEventListener('abort', stop);
           process.removeListener('exit', stopForParentExit);
-          child.stderr.removeListener('data', observeError);
+          child.stderr.removeListener('data', stderrFilter.write);
           work();
         };
         const stop = () => {
@@ -57,12 +63,67 @@ export function createNodeListenerProcess(
         process.once('exit', stopForParentExit);
         if (input.signal.aborted) stop();
         child.once('error', () => finish(() => reject(new Error('listener_spawn_failed'))));
-        child.once('close', (code, signal) => finish(() => resolve({
-          code,
-          signal,
-          errorCode: code === 0 ? null : recognizedError(errorTail),
-        })));
+        child.once('close', (code, signal) => {
+          stderrFilter.flush();
+          finish(() => resolve({
+            code,
+            signal,
+            errorCode: code === 0 ? null : recognizedError(errorTail),
+          }));
+        });
       });
+    },
+  };
+}
+
+// Node's node:sqlite warning is runtime noise, not listener stderr. Keep every
+// other byte observable, including unknown warnings and malformed diagnostics.
+export function createKnownSqliteWarningFilter(emit: (chunk: Buffer) => void): Readonly<{
+  write: (chunk: Buffer) => void;
+  flush: () => void;
+}> {
+  let pending = Buffer.alloc(0);
+  let afterSqliteWarning = false;
+  let passingLongLine = false;
+  const forwardLine = (line: Buffer) => {
+    const value = line.toString('utf8');
+    if (SQLITE_WARNING.test(value)) {
+      afterSqliteWarning = true;
+    } else if (afterSqliteWarning && WARNING_HINT.test(value)) {
+      afterSqliteWarning = false;
+    } else {
+      afterSqliteWarning = false;
+      emit(line);
+    }
+  };
+  return {
+    write(chunk) {
+      if (passingLongLine) {
+        const newline = chunk.indexOf(0x0a);
+        if (newline === -1) {
+          emit(chunk);
+          return;
+        }
+        emit(chunk.subarray(0, newline + 1));
+        chunk = chunk.subarray(newline + 1);
+        passingLongLine = false;
+      }
+      pending = Buffer.concat([pending, chunk]);
+      let newline: number;
+      while ((newline = pending.indexOf(0x0a)) !== -1) {
+        forwardLine(pending.subarray(0, newline + 1));
+        pending = pending.subarray(newline + 1);
+      }
+      if (pending.byteLength > MAX_WARNING_LINE_BYTES) {
+        afterSqliteWarning = false;
+        emit(pending);
+        pending = Buffer.alloc(0);
+        passingLongLine = true;
+      }
+    },
+    flush() {
+      if (pending.byteLength > 0) emit(pending);
+      pending = Buffer.alloc(0);
     },
   };
 }
