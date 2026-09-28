@@ -31,7 +31,7 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html');
     try {
-      await page.getByRole('heading', { name: "This device's keys are unavailable" }).waitFor({ timeout: 5_000 });
+      await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor({ timeout: 5_000 });
     } catch (error) {
       throw new Error(`Lost state did not mount; page errors: ${errors.join(' | ')}; body: ${await page.locator('body').innerText()}`, { cause: error });
     }
@@ -43,14 +43,14 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     // sticky lost service instance above.
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready');
     await page.getByTestId('live-room').getByText('Channel for owner_alice').waitFor();
-    assert.equal(await page.getByRole('heading', { name: "This device's keys are unavailable" }).count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Device keys unavailable' }).count(), 0);
     await page.evaluate(() => window.__lossHarness.setDevice('revoked'));
     await page.getByText('revoked_by_owner').waitFor();
     assert.equal(await page.getByTestId('live-room').count(), 0);
-    assert.equal(await page.getByRole('heading', { name: "This device's keys are unavailable" }).count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Device keys unavailable' }).count(), 0);
 
     await page.evaluate(() => window.__lossHarness.switchAccount());
-    await page.getByRole('heading', { name: "This device's keys are unavailable" }).waitFor();
+    await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor();
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 1);
   } finally {

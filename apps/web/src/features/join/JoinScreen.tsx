@@ -63,7 +63,7 @@ function SignIn({ onSignIn }: { onSignIn: () => void }) {
   return (
     <div className="join-sign-in">
       <p>Sign in to accept this invitation.</p>
-      <button type="button" onClick={onSignIn}>
+      <button type="button" className="aiur-action" onClick={onSignIn}>
         Sign in
       </button>
     </div>
@@ -97,7 +97,7 @@ function Outcome({
       <StatusBadge tone="critical" label={heading} />
       <p>{body}</p>
       {retryAllowed ? (
-        <button type="button" onClick={onRetry} autoFocus>
+        <button type="button" className="aiur-action" onClick={onRetry} autoFocus>
           Try again
         </button>
       ) : null}

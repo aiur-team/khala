@@ -90,6 +90,35 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     assert.equal(await page.evaluate(() => document.querySelector('.aiur-shell')!.getAttribute('data-theme')), 'light');
     await themeToggle.click();
 
+    // A routed sign-in action uses Aiur's shared control treatment in both
+    // themes, including a visible keyboard focus ring.
+    await page.locator('.panel').first().evaluate(panel => {
+      const signIn = document.createElement('button');
+      signIn.type = 'button';
+      signIn.className = 'aiur-action';
+      signIn.textContent = 'Sign in';
+      panel.append(signIn);
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Cancel';
+      panel.append(cancel);
+    });
+    const signIn = page.getByRole('button', { name: 'Sign in' });
+    const actionStyle = () => signIn.evaluate(node => {
+      const style = getComputedStyle(node);
+      return { background: style.backgroundColor, color: style.color, radius: style.borderRadius, height: node.getBoundingClientRect().height };
+    });
+    assert.deepEqual(await actionStyle(), { background: 'rgb(0, 112, 240)', color: 'rgb(255, 255, 255)', radius: '10px', height: 36 });
+    assert.notEqual(await page.getByRole('button', { name: 'Cancel' }).evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(0, 112, 240)', 'neutral controls stay distinct from the primary action');
+    for (let step = 0; step < 30 && !(await signIn.evaluate(node => node === document.activeElement)); step++) {
+      await page.keyboard.press('Tab');
+    }
+    assert.equal(await signIn.evaluate(node => node === document.activeElement), true);
+    assert.notEqual(await signIn.evaluate(node => getComputedStyle(node).outlineStyle), 'none');
+    await themeToggle.click();
+    assert.equal((await actionStyle()).background, 'rgb(31, 87, 196)');
+    await themeToggle.click();
+
     // Keyboard reaches the review control and it stays visible.
     const review = page.getByRole('button', { name: 'Review selected batch' });
     await review.focus();

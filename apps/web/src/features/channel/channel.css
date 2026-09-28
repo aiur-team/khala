@@ -71,12 +71,8 @@
 .agent-presence__copy {
   margin-top: 0.65rem;
   width: 100%;
-  border: 0;
-  border-radius: 999px;
+  border-radius: 10px;
   padding: 0.55rem 0.85rem;
-  background: var(--khala-accent);
-  color: var(--khala-fill);
-  font-weight: 650;
 }
 
 .agent-presence__list {

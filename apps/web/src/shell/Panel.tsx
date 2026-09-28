@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 export type PanelStatus = 'idle' | 'busy' | 'empty' | 'error';
 
 export interface PanelProps {
-  heading: string;
+  heading?: string | undefined;
   status?: PanelStatus;
   statusMessage?: string;
   footer?: ReactNode;
@@ -19,9 +19,7 @@ const DEFAULT_STATUS_MESSAGE: Record<Exclude<PanelStatus, 'idle'>, string> = {
 export function Panel({ heading, status = 'idle', statusMessage, footer, children }: PanelProps) {
   return (
     <section className="panel" aria-busy={status === 'busy'}>
-      <header className="panel__header">
-        <h2>{heading}</h2>
-      </header>
+      {heading ? <header className="panel__header"><h2>{heading}</h2></header> : null}
       <div className="panel__body">
         {status === 'idle' ? (
           children

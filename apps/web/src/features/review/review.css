@@ -64,8 +64,8 @@
 }
 
 .review__filter-chip--active {
-  background: var(--khala-accent);
-  color: var(--khala-fill);
+  background: var(--aiur-accent-strong);
+  color: var(--aiur-on-accent);
   border-color: transparent;
   font-weight: 600;
 }
@@ -149,12 +149,8 @@
 
 .review__release {
   align-self: flex-start;
-  background: var(--khala-accent);
-  color: var(--khala-fill);
-  border: none;
-  border-radius: 999px;
+  border-radius: 10px;
   padding: 0.5rem 1.1rem;
-  font-weight: 600;
 }
 
 .review__release:disabled {

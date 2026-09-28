@@ -83,7 +83,7 @@ describe('HumanApplicationScreen', () => {
           identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess}
         />,
       );
-      expect(html).toContain("This device&#x27;s keys are unavailable");
+      expect(html).toContain('>Device keys unavailable</h1>');
       expect(html).toContain('earlier history cannot be recovered');
       expect(html).toContain('fresh authorized admission');
       expect(html).toContain('open Khala there');
@@ -149,6 +149,10 @@ describe('HumanApplicationScreen', () => {
     );
 
     expect(html).toContain('Channel requests');
+    expect(html).toContain('<h1 id="khala-channel-requests-title">Channel requests</h1>');
+    expect(html).not.toContain('<h2>Channel requests</h2>');
+    expect(html).toContain('<h2 id="channel-requests-pending-heading"');
+    expect(html).toContain('<h2 id="channel-requests-recent-heading">Recent</h2>');
     expect(html).toContain('>50<');
     expect(html).toContain('50 pending');
     expect(html).toContain('Waiting for you (60)');

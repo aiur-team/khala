@@ -17,7 +17,6 @@ import { registerHumanCapabilities } from './composition/human/capabilities';
 import { createHumanRouteCodec } from './composition/human/routes';
 import { mountHostedUnavailable } from './composition/human/unavailable';
 import { createChannelAccessInboxController } from './features/channel-access/controller';
-import './brand/fonts.css';
 import './brand/tokens.css';
 import './shell/shell.css';
 import './features/create-channel/create-channel.css';

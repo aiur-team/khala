@@ -115,6 +115,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@aiur/components':
+        specifier: github:aiur-team/aiur#ce325788a15183c12628a926050c22409b5a29bf
+        version: https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -230,6 +233,10 @@ importers:
         version: link:../contracts
 
 packages:
+
+  '@aiur/components@https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf':
+    resolution: {gitHosted: true, integrity: sha512-RcZlZHfYufujytxQL9y4TFo2h/F5/kvA4TzXsmWWqh9Guk3yDyq9xTHKBW47X7PWWl7SDPxlMekJyMmT6bxKtw==, tarball: https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf}
+    version: 0.1.0
 
   '@babel/runtime@8.0.5':
     resolution: {integrity: sha512-7NK+Lz3spQ52XsUGTxIEVU4jYN2/dIaX8sTxRFAUtYmttYZnVh3aehiihv+/Gb7+duMNHl2OrFcBQRyOHScxpg==}
@@ -1588,6 +1595,8 @@ packages:
     resolution: {integrity: sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==}
 
 snapshots:
+
+  '@aiur/components@https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf': {}
 
   '@babel/runtime@8.0.5': {}
 

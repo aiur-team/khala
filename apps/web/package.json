@@ -91,6 +91,7 @@
     "test:visual": "playwright test --config playwright.visual.config.ts"
   },
   "dependencies": {
+    "@aiur/components": "github:aiur-team/aiur#ce325788a15183c12628a926050c22409b5a29bf",
     "@khala/contracts": "workspace:*",
     "@khala/messaging": "workspace:*",
     "matrix-js-sdk": "42.4.0",

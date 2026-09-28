@@ -1,13 +1,15 @@
 // Runs before first paint (a classic, render-blocking script in <head>; the CSP
-// forbids inline script). Applies a theme the visitor chose earlier; with no
-// stored choice the page follows prefers-color-scheme through CSS alone. Keep
-// the key and values in step with ../theme.ts. Storage can throw when site
-// data is blocked, so the access is guarded and the page renders without it.
+// forbids inline script). Resolves the shared Aiur theme tokens from the saved
+// choice or the system preference. Storage can throw when site data is blocked.
 (function () {
+  var stored;
   try {
-    var stored = window.localStorage.getItem('khala.theme');
-    if (stored === 'light' || stored === 'dark') document.documentElement.setAttribute('data-theme', stored);
+    stored = window.localStorage.getItem('khala.theme');
   } catch {
-    /* no stored choice: follow the system preference */
+    /* follow the system preference */
   }
+  var theme = stored === 'light' || stored === 'dark'
+    ? stored
+    : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', theme);
 })();

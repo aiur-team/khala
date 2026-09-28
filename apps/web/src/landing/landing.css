@@ -1,67 +1,31 @@
 /*
  * Public splash page for khala.aiur.team, modelled on archon.aiur.team: the
  * same tan/charcoal palette, Bungee wordmark, Space Grotesk body, JetBrains
- * Mono prompt pill and solid blue call to action. Fonts are the vendored,
- * self-hosted brand faces (see ../brand/SOURCES.md); nothing loads from a
- * third-party origin, so the site CSP needs no exception.
+ * Mono prompt pill and Aiur action controls. Brand styles and fonts come from
+ * @aiur/components; nothing loads from a third-party origin.
  */
-@import '../brand/fonts.css';
+@import '@aiur/components/theme.css';
+@import '@aiur/components/fonts.css';
+@import '@aiur/components/marketing.css';
+@import '@aiur/components/buttons.css';
 
-/* Light is the bare :root so no colour exists only inside a media block. */
 :root {
-  color-scheme: light;
-  --bg: #e7d6b2;
-  --fg: #2a2520;
-  --muted: #5f5645;
-  --accent: #1f57c4;
-  --hairline: rgba(42, 37, 26, 0.12);
-  --pill-bd: rgba(42, 37, 26, 0.16);
-  --pill-bg: rgba(42, 37, 26, 0.035);
-  --line: rgba(42, 37, 26, 0.17);
-  --focus: #1f57c4;
-
-  /*
-   * Every button is white on archon's "Example Doc" blue. That blue is
-   * archon's light-theme accent, #1f57c4, and it stays the same in both
-   * themes: white on archon's dark-theme accent (#2f86ff) is only about
-   * 3.5:1, below WCAG AA for text, while white on #1f57c4 is about 6.5:1.
-   */
-  --button-bg: #1f57c4;
-  --button-bg-hover: #1a4aa6;
-  --button-fg: #ffffff;
-
-  --font-display: 'Khala Bungee', 'Space Grotesk', system-ui, sans-serif;
-  --font-body: 'Khala Space Grotesk', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Khala JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --bg: var(--aiur-bg);
+  --fg: var(--aiur-fg);
+  --muted: var(--aiur-muted);
+  --accent: var(--aiur-accent);
+  --hairline: var(--aiur-hairline);
+  --pill-bd: var(--aiur-pill-border);
+  --pill-bg: var(--aiur-pill-bg);
+  --line: var(--aiur-line);
+  --focus: var(--aiur-accent);
+  --font-display: var(--aiur-font-display);
+  --font-body: var(--aiur-font-body);
+  --font-mono: var(--aiur-font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    color-scheme: dark;
-    --bg: #1a1b1e;
-    --fg: #edeef0;
-    --muted: #8c8d93;
-    --accent: #2f86ff;
-    --hairline: rgba(221, 226, 235, 0.1);
-    --pill-bd: rgba(221, 226, 235, 0.13);
-    --pill-bg: rgba(221, 226, 235, 0.03);
-    --line: rgba(221, 226, 235, 0.14);
-    --focus: #2f86ff;
-  }
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --bg: #1a1b1e;
-  --fg: #edeef0;
-  --muted: #8c8d93;
-  --accent: #2f86ff;
-  --hairline: rgba(221, 226, 235, 0.1);
-  --pill-bd: rgba(221, 226, 235, 0.13);
-  --pill-bg: rgba(221, 226, 235, 0.03);
-  --line: rgba(221, 226, 235, 0.14);
-  --focus: #2f86ff;
-}
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
 
 * {
   box-sizing: border-box;
@@ -99,42 +63,6 @@ body {
 a {
   color: var(--accent);
   text-underline-offset: 3px;
-}
-
-/* ---- Buttons: one look for every button and button-styled link. ---- */
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--button-bg);
-  color: var(--button-fg);
-  font-family: var(--font-body);
-  font-weight: 500;
-  font-size: 15px;
-  line-height: 1;
-  letter-spacing: 0.01em;
-  text-decoration: none;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.button:hover {
-  background: var(--button-bg-hover);
-}
-
-.button:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 3px;
-}
-
-.button svg {
-  width: 15px;
-  height: 15px;
-  flex: none;
 }
 
 /* ---- Aiur announcement ---- */
@@ -223,35 +151,6 @@ a {
   padding: 0.75rem clamp(0.9rem, 3vw, 1.25rem) 0;
 }
 
-.docs {
-  padding: 0.6rem 1.1rem;
-  font-size: 0.95rem;
-}
-
-.icon {
-  width: 38px;
-  height: 38px;
-  padding: 0;
-}
-
-.icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* The toggle shows what pressing it switches to: a moon in light, a sun in dark. */
-.theme-toggle .icon-sun {
-  display: none;
-}
-
-.theme-toggle[aria-pressed='true'] .icon-sun {
-  display: block;
-}
-
-.theme-toggle[aria-pressed='true'] .icon-moon {
-  display: none;
-}
-
 /* ---- Hero ---- */
 
 .stage {
@@ -288,23 +187,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(12px, 2.2vw, 26px);
-}
-
-.aiur-logo {
-  display: block;
-  width: auto;
-  height: clamp(72px, 12vw, 132px);
-}
-
-.wordmark {
-  display: flex;
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: clamp(48px, 11vw, 104px);
-  line-height: 0.9;
-  letter-spacing: 0.01em;
-  color: var(--fg);
+  gap: clamp(14px, 2.4vw, 30px);
 }
 
 /* Each letter rises in a beat apart, as archon's wordmark does. */
@@ -332,10 +215,7 @@ a {
   margin-top: clamp(26px, 5vh, 44px);
   max-width: 34ch;
   text-wrap: balance;
-  font-size: clamp(18px, 2.7vw, 25px);
-  font-weight: 500;
   line-height: 1.42;
-  letter-spacing: -0.012em;
 }
 
 .prompt-hint {
@@ -372,19 +252,6 @@ a {
   min-width: 0;
   letter-spacing: 0.01em;
   overflow-wrap: anywhere;
-}
-
-.copy {
-  flex: none;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-}
-
-.copy svg {
-  width: 14px;
-  height: 14px;
 }
 
 .copy-status {
@@ -586,14 +453,6 @@ a {
     gap: 8px;
   }
 
-  .aiur-logo {
-    height: clamp(58px, 21vw, 80px);
-  }
-
-  .wordmark {
-    font-size: clamp(42px, 18vw, 68px);
-  }
-
   .features {
     grid-template-columns: minmax(0, 1fr);
     gap: 34px;
@@ -636,10 +495,6 @@ a {
     scroll-behavior: auto;
   }
 
-  .button {
-    transition: none;
-  }
-
   .wordmark span,
   .scrollcue {
     animation: none;
@@ -667,5 +522,4 @@ a {
 
 .app-cta {
   margin-top: 14px;
-  padding: 13px 22px;
 }

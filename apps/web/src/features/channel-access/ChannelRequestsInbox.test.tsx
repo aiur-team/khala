@@ -58,6 +58,23 @@ describe('ChannelRequestsInbox', () => {
     expect(html).not.toContain('channel-requests__row');
   });
 
+  it('shows one error when the inbox could not load', () => {
+    const html = render(ready([], { phase: 'load_failed', status: { kind: 'refresh_failed' } }));
+    expect(text(html)).toContain('Requests could not load.');
+    expect(text(html)).not.toContain('Refresh failed.');
+    expect(html).toContain('Reload requests');
+  });
+
+  it('nests subsection headings directly below the page title when embedded', () => {
+    const embedded = renderToStaticMarkup(<ChannelRequestsInbox controller={controllerFor(ready([]))} embedded />);
+    expect(embedded).not.toContain('<h2>Channel requests</h2>');
+    expect(embedded).toContain('<h2 id="channel-requests-pending-heading"');
+    expect(embedded).toContain('<h2 id="channel-requests-recent-heading">Recent</h2>');
+    const standalone = render(ready([]));
+    expect(standalone).toContain('<h2>Channel requests</h2>');
+    expect(standalone).toContain('<h3 id="channel-requests-pending-heading"');
+  });
+
   it('shows an empty inbox with a zero count', () => {
     const html = render(ready([]));
     expect(text(html)).toContain('Waiting for you (0)');
@@ -148,7 +165,7 @@ describe('ChannelRequestsInbox', () => {
       [{ kind: 'mute_failed', code: 'forbidden' }, 'You no longer own this channel'],
       [{ kind: 'mute_failed', code: 'unavailable' }, 'Could not reach the server. Nothing was changed'],
       [{ kind: 'mute_failed', code: 'unknown' }, 'Could not confirm whether that change was saved.'],
-      [{ kind: 'refresh_failed' }, 'Could not refresh channel requests.'],
+      [{ kind: 'refresh_failed' }, 'Refresh failed.'],
     ];
     for (const [status, message] of cases) {
       expect(render(ready([], { status }))).toMatch(new RegExp(`<p role="status" aria-live="polite"[^>]*>${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
@@ -203,6 +220,6 @@ describe('ChannelRequestsNavEntry', () => {
   });
 
   it('does not claim a count before the inbox loads', () => {
-    expect(text(nav(INITIAL_INBOX_VIEW))).toContain('pending count loading');
+    expect(text(nav(INITIAL_INBOX_VIEW)).trim()).toBe('Channel requests');
   });
 });

@@ -134,12 +134,8 @@
 
 .timeline__jump-latest {
   align-self: center;
-  background: var(--khala-accent);
-  color: var(--khala-fill);
-  border: none;
-  border-radius: 999px;
+  border-radius: 10px;
   padding: 0.4rem 0.9rem;
-  font-weight: 600;
 }
 
 .timeline__composer {

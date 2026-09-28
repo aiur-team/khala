@@ -162,7 +162,7 @@ export function DecisionDialog({ id, prompt, status, onDecide, onRetry, onDismis
                 <button type="button" disabled={submitting} onClick={() => onDecide('deny')}>
                   {prompt.denyLabel}
                 </button>
-                <button type="button" className="decision-dialog__approve" disabled={submitting} onClick={() => onDecide('approve')}>
+                <button type="button" className="decision-dialog__approve aiur-action" disabled={submitting} onClick={() => onDecide('approve')}>
                   {prompt.approveLabel}
                 </button>
               </>

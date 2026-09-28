@@ -21,11 +21,5 @@
 
 .join-sign-in button,
 .join-outcome button {
-  background: var(--khala-accent);
-  color: var(--khala-fill);
-  border: none;
-  border-radius: 0.5rem;
   padding: 0.6rem 1rem;
-  font: inherit;
-  cursor: pointer;
 }

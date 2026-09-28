@@ -1,7 +1,7 @@
 // Theme choice for the public splash page. With no stored choice the page
-// follows prefers-color-scheme through CSS; a click stores an explicit choice
-// and sets `data-theme` on <html>. `public/theme-init.js` applies the stored
-// choice before first paint and must use the same key and values.
+// follows prefers-color-scheme through data-theme; a click stores an explicit choice.
+// `public/theme-init.js` applies the resolved theme before first paint and
+// must use the same key and values.
 
 export type Theme = 'light' | 'dark';
 
@@ -49,13 +49,14 @@ function safeStorage(): ThemeStorage | null {
 export function wireThemeToggle(button: HTMLButtonElement, root: HTMLElement = document.documentElement): () => void {
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   const storage = safeStorage();
-  const stored = readStoredTheme(storage);
-  if (stored) root.dataset.theme = stored;
+  let selected = readStoredTheme(storage);
+  root.dataset.theme = effectiveTheme(selected, media.matches);
 
   const current = () => effectiveTheme(root.getAttribute('data-theme'), media.matches);
   const sync = () => button.setAttribute('aria-pressed', String(current() === 'dark'));
   const onClick = () => {
     const next: Theme = current() === 'dark' ? 'light' : 'dark';
+    selected = next;
     root.dataset.theme = next;
     storeTheme(storage, next);
     sync();
@@ -63,9 +64,13 @@ export function wireThemeToggle(button: HTMLButtonElement, root: HTMLElement = d
 
   sync();
   button.addEventListener('click', onClick);
-  media.addEventListener('change', sync);
+  const onMediaChange = () => {
+    if (!selected) root.dataset.theme = effectiveTheme(null, media.matches);
+    sync();
+  };
+  media.addEventListener('change', onMediaChange);
   return () => {
     button.removeEventListener('click', onClick);
-    media.removeEventListener('change', sync);
+    media.removeEventListener('change', onMediaChange);
   };
 }

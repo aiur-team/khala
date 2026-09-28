@@ -17,7 +17,7 @@ export function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: Chann
   const controller = useContext(InboxContext);
   return (
     <KhalaPageFrame model={{ title: 'Channel requests', labelledBy: 'khala-channel-requests-title' }}>
-      {controller === null ? null : <ChannelRequestsInbox controller={controller} selectedHandle={selectedHandle} />}
+      {controller === null ? null : <ChannelRequestsInbox controller={controller} selectedHandle={selectedHandle} embedded />}
     </KhalaPageFrame>
   );
 }

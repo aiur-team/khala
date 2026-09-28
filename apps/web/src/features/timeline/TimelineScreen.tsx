@@ -374,7 +374,7 @@ export function TimelineScreen({
       {!atLatest && data.newMessageCount > 0 ? (
         <button
           type="button"
-          className="timeline__jump-latest"
+          className="timeline__jump-latest aiur-action"
           onClick={() => {
             setAtLatest(true);
             const list = listRef.current;
