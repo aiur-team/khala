@@ -1,0 +1,7 @@
+# Khala conversations
+
+Signed-in owners open `/conversations` to see joined, encrypted rooms from their active Matrix session. Selecting a room opens its canonical `/channels/<encoded roomId>` link. The list searches only locally authorized rooms. If the session, owner, device generation, or room membership changes, the view clears and checks access again before showing messages. The channel view keeps the existing encrypted timeline, retry, recovery, review, and owner controls.
+
+The presentational boundary is `apps/web/src/ui/conversation/index.ts`. It exports `ConversationLayout`, `ConversationList`, `ChatThread`, `ChatMessage`, `ChatComposer`, and `ParticipantDetail`, plus the `ConversationSummary` prop type. These components accept display data and callbacks; Matrix, auth, routing, and Khala contract types stay in `apps/web/src/composition/human/`. A later shared Aiur package can move the UI directory and its token based CSS, then replace the local import paths without moving the Matrix adapter.
+
+For visual review, run the web Vite server and open `/conversation-fixture.html`. Its fixed populated list, message thread, composer, and optional detail pane are independent of live data. Check dark and light at widths 1440, 1100, 900, 760, and 390 pixels. Live proof requires a signed-in Matrix owner with an admitted encrypted room: open `/conversations`, send from another admitted device, then verify live arrival, send/retry, reload, pagination, and browser back navigation on the canonical channel link.

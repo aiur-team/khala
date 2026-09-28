@@ -130,7 +130,7 @@ describe('HumanApplicationScreen', () => {
       />,
     );
     expect(room).toContain('live room');
-    expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
+    expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
   it('mounts the owner inbox route with a badge capped at 50', async () => {

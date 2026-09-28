@@ -16,6 +16,7 @@ import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
+import { ChatComposer } from '../../ui/conversation';
 
 export interface TimelineScreenProps {
   controller: TimelineController;
@@ -308,7 +309,7 @@ export function TimelineScreen({
                   <EvidenceGroup unit={unit} status={evidenceView.status} />
                 </li>
               ))}
-              <li data-event-id={item.ref.eventId} className="timeline__row">
+              <li data-event-id={item.ref.eventId} className={`timeline__row${attribution.isViewerOwned ? ' timeline__row--mine' : ''}`}>
                 <header className="timeline__row-header">
                   <span className="timeline__author" dir="auto">
                     {resolveDisplayName(item.participant)}
@@ -384,36 +385,10 @@ export function TimelineScreen({
           {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
         </button>
       ) : null}
-      <form
-        className="timeline__composer"
-        onSubmit={event => {
-          event.preventDefault();
-          void handleSend();
-        }}
-      >
-        <label htmlFor="timeline-draft" className="timeline__composer-label">
-          Message
-        </label>
-        <textarea
-          id="timeline-draft"
-          className="timeline__composer-input"
-          value={draft}
-          onChange={event => setDraft(event.currentTarget.value)}
-          disabled={!canCompose}
-        />
-        <button
-          type="submit"
-          disabled={!canCompose || !draft.trim() || anySendUnresolved || sendBlocked}
-          aria-describedby={sendBlocked ? 'timeline-send-blocked' : undefined}
-        >
-          Send
-        </button>
-        {sendBlocked ? (
-          <p id="timeline-send-blocked" className="timeline__status">
-            {sendBlockedReason}
-          </p>
-        ) : null}
-      </form>
+      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
+        disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
+        {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
+      {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
     </section>
   );
 }

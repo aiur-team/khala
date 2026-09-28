@@ -51,6 +51,8 @@ import {
 } from '@khala/messaging/rooms/index';
 import { createBrowserRoomJournal } from './room-journal';
 import type { BrowserSendFence, BrowserSendProof } from './browser-api';
+import { sortConversations, type ConversationIndexPort } from './conversations';
+import type { ConversationSummary } from '../../ui/conversation';
 
 const CREATE_EVENT = 'com.aiur.khala.create.v1';
 
@@ -105,6 +107,27 @@ function roomSummary(room: Room, limits: ContentLimits): RoomSummary {
   const withoutUntrustedTitle = decodeRoomSummary({ ...base, title: null }, limits);
   if (withoutUntrustedTitle.ok) return withoutUntrustedTitle.value;
   throw new Error('Matrix room metadata is invalid');
+}
+
+/** Only local, joined encrypted rooms enter the owner conversation index. */
+export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms'>, limits: ContentLimits): readonly ConversationSummary[] {
+  return sortConversations(client.getRooms()
+    .filter(candidate => candidate.getMyMembership() === 'join' && candidate.hasEncryptionStateEvent())
+    .map(candidate => {
+      const summary = roomSummary(candidate, limits);
+      const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
+        event.getType() === EventType.RoomMessage && !event.isDecryptionFailure()
+        && typeof event.getClearContent()?.body === 'string');
+      const body = latest?.getClearContent()?.body;
+      const unread = candidate.getUnreadNotificationCount();
+      return {
+        id: summary.roomId,
+        title: summary.title ?? 'Encrypted conversation',
+        preview: typeof body === 'string' ? body : null,
+        timestamp: latest ? new Date(latest.getTs()).toISOString() : null,
+        unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
+      };
+    }));
 }
 
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
@@ -514,6 +537,7 @@ class MatrixSubstrate implements RoomSubstrate {
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort;
+  conversations: ConversationIndexPort;
   participant(): ParticipantView | null;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
@@ -587,8 +611,28 @@ export function createMatrixBrowserPorts(input: Readonly<{
     },
   };
 
+  const conversations: ConversationIndexPort = {
+    snapshot(ownerId, generation) {
+      const active = runtime.active;
+      const view = device.current();
+      if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready' || view.generation !== generation || active.generation !== generation) return null;
+      try { return projectJoinedEncryptedRooms(active.client, input.limits); } catch { return null; }
+    },
+    subscribe(ownerId, generation, listener) {
+      const active = runtime.active;
+      if (!active || active.principal.ownerId !== ownerId || active.generation !== generation) return () => undefined;
+      const publish = () => { if (runtime.active === active && device.current().generation === generation) listener(); };
+      active.client.on(RoomEvent.Timeline, publish);
+      active.client.on(ClientEvent.Sync, publish);
+      return () => {
+        active.client.off(RoomEvent.Timeline, publish);
+        active.client.off(ClientEvent.Sync, publish);
+      };
+    },
+  };
+
   return {
-    device, room, participant: () => runtime.active?.actor ?? null,
+    device, room, conversations, participant: () => runtime.active?.actor ?? null,
     roomPresent(ownerId, roomId) {
       const active = runtime.active;
       return active?.principal.ownerId === ownerId && active.client.getRoom(roomId) !== null;

@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ThemeChoice } from '../../shell/types';
 import { AgentPresencePanel } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
+import { ChatThread, ConversationLayout, ParticipantDetail } from '../../ui/conversation';
 
 export interface ChannelScreenProps {
   title: string;
@@ -13,22 +14,24 @@ export interface ChannelScreenProps {
   renderTimeline: () => ReactNode;
   renderReview: () => ReactNode;
   renderControls: () => ReactNode;
+  renderList?: () => ReactNode;
+  onBack?: () => void;
+  embedded?: boolean;
 }
 
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
 export type RoomScreenProps = ChannelScreenProps;
 
-export function ChannelScreen({ title, description, theme = 'dark', controller, renderTimeline, renderReview, renderControls }: ChannelScreenProps) {
-  return (
-    <AiurShell
-      mode="hosted-content"
-      navigation={[]}
-      theme={{ theme, onThemeChange: () => {} }}
-      collapsed={false}
-      onCollapsedChange={() => {}}
-    >
+export function ChannelScreen({ title, description, theme = 'dark', controller, renderTimeline, renderReview, renderControls, renderList, onBack, embedded = false }: ChannelScreenProps) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const content = (
       <KhalaPageFrame model={{ title, ...(description ? { description } : {}), labelledBy: 'khala-channel-title' }}>
-        <div className="channel-screen">
+        {renderList ? <ConversationLayout inThread list={renderList()} thread={<ChatThread title={title} onBack={onBack ?? (() => {})}>
+          <div className="channel-screen__chat-actions"><span>{description}</span><button type="button" onClick={() => setDetailOpen(true)}>Details and controls</button></div>
+          {renderTimeline()}
+        </ChatThread>} detail={detailOpen ? <ParticipantDetail name={title} onClose={() => setDetailOpen(false)}>
+          <AgentPresencePanel controller={controller} />{renderControls()}{renderReview()}
+        </ParticipantDetail> : undefined} /> : <div className="channel-screen">
           <aside className="channel-screen__presence" aria-label="Channel agents">
             <AgentPresencePanel controller={controller} />
             <div className="channel-screen__controls">{renderControls()}</div>
@@ -39,8 +42,18 @@ export function ChannelScreen({ title, description, theme = 'dark', controller, 
           <aside className="channel-screen__review" aria-label="Recipient review">
             {renderReview()}
           </aside>
-        </div>
+        </div>}
       </KhalaPageFrame>
+  );
+  return embedded ? content : (
+    <AiurShell
+      mode="hosted-content"
+      navigation={[]}
+      theme={{ theme, onThemeChange: () => {} }}
+      collapsed={false}
+      onCollapsedChange={() => {}}
+    >
+      {content}
     </AiurShell>
   );
 }
