@@ -185,7 +185,7 @@ describe('durable inbox', () => {
     await replacement.release();
   });
 
-  it('recovers an atomic listener lock left by a dead process', async () => {
+  it('refuses a pre-existing legacy lock without guessing liveness across PID namespaces', async () => {
     const directory = stateDirectory();
     const inbox = await openInbox({
       stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
@@ -194,10 +194,47 @@ describe('durable inbox', () => {
     fs.writeFileSync(lockPath, JSON.stringify({ v: 1, pid: 2_147_483_647, token: 'stale-owner' }) + '\n', { mode: 0o600 });
     fs.chmodSync(lockPath, 0o600);
 
-    const held = await inbox.acquireListener();
-    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toMatchObject({ v: 1, pid: process.pid });
-    await held.release();
-    expect(fs.existsSync(lockPath)).toBe(false);
+    await expect(inbox.acquireListener()).rejects.toEqual(new CliError('listener_busy'));
+    await expect(inbox.acquireCallConsumer!()).rejects.toEqual(new CliError('listener_busy'));
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toEqual({ v: 1, pid: 2_147_483_647, token: 'stale-owner' });
+  });
+
+  it('uses one kernel lock for socketless calls and wake listeners without opening a call socket', async () => {
+    const directory = stateDirectory();
+    const first = await openInbox({ stateDirectory: directory, bindingId, generation: 3,
+      maxPayloadBytes: 1024, maxSelectionEvents: 32 });
+    const second = await openInbox({ stateDirectory: directory, bindingId, generation: 3,
+      maxPayloadBytes: 1024, maxSelectionEvents: 32 });
+    await first.enqueue(delivery());
+    const call = await first.acquireCallConsumer!();
+    expect(fs.existsSync(listenerSocket(directory))).toBe(false);
+    expect((await call.readBatch({ maxBytes: 1024 }))?.items.map(item => item.record.releaseId)).toEqual(['release-1']);
+    await expect(second.acquireListener()).rejects.toEqual(new CliError('listener_busy'));
+    await expect(second.acquireCallConsumer!()).rejects.toEqual(new CliError('listener_busy'));
+    const marker = JSON.parse(fs.readFileSync(path.join(bindingDirectory(directory), 'listener.lock'), 'utf8'));
+    expect(marker).toEqual({ v: 1, pid: 1, token: 'sqlite-consumer-lock-v1' });
+    await call.release();
+    const listener = await second.acquireListener();
+    await expect(first.acquireCallConsumer!()).rejects.toEqual(new CliError('listener_busy'));
+    await listener.release();
+    expect(fs.existsSync(path.join(bindingDirectory(directory), 'listener.lock'))).toBe(true);
+  });
+
+  it('releases a socketless kernel lease after a killed process across process boundaries', async () => {
+    const directory = stateDirectory();
+    const inbox = await openInbox({ stateDirectory: directory, bindingId, generation: 3,
+      maxPayloadBytes: 1024, maxSelectionEvents: 32 });
+    const module = new URL('./inbox.ts', import.meta.url).href;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--conditions=khala-source', '-e',
+      `import(${JSON.stringify(module)}).then(async ({openInbox}) => {`
+      + `const inbox = await openInbox({stateDirectory:${JSON.stringify(directory)},bindingId:'binding-1',`
+      + `generation:3,maxPayloadBytes:1024,maxSelectionEvents:32});`
+      + `await inbox.acquireCallConsumer();process.stdout.write('HELD\\n');process.kill(process.pid,'SIGKILL');})`,
+    ], { encoding: 'utf8', timeout: 5_000 });
+    expect(child.signal, child.stderr).toBe('SIGKILL');
+    expect(child.stdout).toContain('HELD');
+    const recovered = await inbox.acquireCallConsumer!();
+    await recovered.release();
   });
 
   it('falls back to the private tmp socket root when the canonical path is too long', async () => {

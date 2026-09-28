@@ -59,6 +59,40 @@ function nativeHarness() {
 }
 
 describe('Codex native CLI route selection', () => {
+  it('admits 0.157.1 only on the native route with its own evidence', async () => {
+    const selected = nativeHarness();
+    selected.cli.inspection = { ...selected.cli.inspection, version: '0.157.1' };
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({
+      support: 'tested', version: '0.157.1', existingSession: 'native_cli_queue',
+      evidenceRef: 'docs/evidence/codex-0157-native-cli.md#queue-idle',
+    });
+    await expect(selected.harness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
+      kind: 'harness_queued', source: 'harness',
+    });
+    expect(selected.cli.argv).toEqual([['queue', '--thread', 'session-b', '--message', expect.any(String)]]);
+    expect(selected.inbox.deliveries).toHaveLength(1);
+  });
+
+  it('does not turn 0.157.1 native evidence into hosted app-server support', async () => {
+    const selected = nativeHarness();
+    selected.hosts.host = new FakeHosts({ cliVersion: '0.157.1' }).host;
+    selected.cli.inspection = { ...selected.cli.inspection, version: '0.157.1' };
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({ support: 'unsupported' });
+    expect(selected.cli.inspected).toEqual([]);
+    expect(selected.inbox.deliveries).toEqual([]);
+  });
+
+  it('does not admit an adjacent unproven patch version', async () => {
+    const selected = nativeHarness();
+    selected.cli.inspection = { ...selected.cli.inspection, version: '0.157.0' };
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({ support: 'unsupported' });
+    await expect(selected.harness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
+      kind: 'failed', errorCode: 'harness_unavailable',
+    });
+    expect(selected.cli.argv).toEqual([]);
+    expect(selected.inbox.deliveries).toEqual([]);
+  });
+
   it('selects the native notification route once when no Khala host owns the thread', async () => {
     const { harness, cli } = nativeHarness();
 

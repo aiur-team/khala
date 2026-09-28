@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { chromium } from '@playwright/test';
-import { proof } from '../../../experiments/backend/check';
 import { openMatrixConnectorSubstrate } from '../../../apps/connector/src/substrate/matrix';
+import { startClosureSynapse } from '../fixtures/closure-synapse';
 import { inspectNativeGate } from './native-gate';
 import { killAtNativeAcceptance } from './supervisor';
 
@@ -37,116 +37,140 @@ test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome
   if (gate.kind === 'blocked') {
     throw new Error('not_observed_native_gate: ' + gate.code);
   }
-  const scratch = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-42-live-'));
+  const recoveryFile = process.env.KHALA_42_RECOVERY_FILE;
+  const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
+  if (!recoveryFile || path.dirname(recoveryFile) !== privateRoot
+    || !/^relay-recovery-[a-f0-9]{12}\.json$/u.test(path.basename(recoveryFile))) {
+    throw new Error('native_crash_recovery_file_required');
+  }
+  const scratchRoot = `${recoveryFile}.scratch`;
+  if (process.env.TMPDIR !== scratchRoot) throw new Error('native_crash_scratch_scope_invalid');
+  await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  const scratchStat = await lstat(scratchRoot);
+  if (!scratchStat.isDirectory() || scratchStat.isSymbolicLink()
+    || scratchStat.uid !== process.getuid?.() || (scratchStat.mode & 0o077) !== 0) {
+    throw new Error('native_crash_scratch_scope_unsafe');
+  }
+  const scratch = await mkdtemp(path.join(scratchRoot, 'khala-42-live-'));
   let peerServer: Awaited<ReturnType<typeof servePeer>> | null = null;
+  let synapse: Awaited<ReturnType<typeof startClosureSynapse>> | null = null;
   try {
     peerServer = await servePeer();
     const peerOrigin = peerServer.origin;
-    await proof(async ({ baseUrl, alice, bob }) => {
-      const api = async (route: string, token: string, body: unknown) => {
-        const response = await fetch(baseUrl + '/_matrix/client/v3' + route, {
-          method: 'POST',
-          headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        assert.equal(response.ok, true, 'disposable Matrix request ' + route + ': ' + response.status);
-        return response.json() as Promise<{ room_id: string }>;
-      };
-      const { room_id: roomId } = await api('/createRoom', alice.access_token, {
-        visibility: 'private', invite: [bob.user_id],
-        initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
-      });
-      await api('/join/' + encodeURIComponent(roomId), bob.access_token, {});
-      const browser = await chromium.launchPersistentContext(path.join(scratch, 'peer'), {
-        executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
-      });
-      try {
-        const page = await browser.newPage();
-        await page.goto(peerOrigin);
-        await page.waitForFunction(() => !!(globalThis as unknown as { peer?: Peer }).peer);
-        const peerKey = await page.evaluate(input => (globalThis as unknown as { peer: Peer }).peer.open(input), {
-          baseUrl, userId: alice.user_id, deviceId: alice.device_id, accessToken: alice.access_token,
-        });
-        const matrixInput = {
-          baseUrl, userId: bob.user_id, deviceId: bob.device_id, accessToken: bob.access_token,
-          roomId, profileDirectory: path.join(scratch, 'matrix'),
-          browserBundleDirectory: connectorBundle,
-          participantIdFor: (userId: string) => userId === alice.user_id ? 'owner-sender' as never : null,
-        };
-        const substrate = await openMatrixConnectorSubstrate(matrixInput);
-        let eventRef: unknown;
-        let withheldRef: unknown;
-        try {
-          assert.equal(await page.evaluate(({ userId, deviceId, fingerprint }) =>
-            (globalThis as unknown as { peer: Peer }).peer.trust(userId, deviceId, fingerprint),
-          { userId: bob.user_id, deviceId: bob.device_id, fingerprint: substrate.fingerprint }), true);
-          await substrate.trustPeer(alice.user_id, alice.device_id, peerKey.ed25519);
-          await page.evaluate(room => (globalThis as unknown as { peer: Peer }).peer.rotate(room), roomId);
-          const sent = await page.evaluate(({ room, body }) =>
-            (globalThis as unknown as { peer: Peer }).peer.send(room, body), { room: roomId, body: pending });
-          const withheldSent = await page.evaluate(({ room, body }) =>
-            (globalThis as unknown as { peer: Peer }).peer.send(room, body), { room: roomId, body: withheld });
-          for (let attempt = 0; attempt < 30 && (!eventRef || !withheldRef); attempt++) {
-            const read = await substrate.source.read({ cursor: null, limit: 100 });
-            if (read.kind === 'page') {
-              const found = read.events.find(event => event.ref.eventId === sent.event_id);
-              if (found?.kind === 'decrypted') eventRef = found.ref;
-              const withheldEvent = read.events.find(event => event.ref.eventId === withheldSent.event_id);
-              if (withheldEvent?.kind === 'decrypted') withheldRef = withheldEvent.ref;
-            }
-            if (!eventRef || !withheldRef) await new Promise(resolve => setTimeout(resolve, 250));
-          }
-          assert.ok(eventRef, 'verified encrypted pending event');
-          assert.ok(withheldRef, 'verified encrypted withheld event');
-        } finally { await substrate.close(); }
-        const packetFile = path.join(scratch, 'packet.json');
-        const packet = {
-          v: 1, baseUrl, roomId, alice, bob, eventRef, withheldRef,
-          stateDirectory: path.join(scratch, 'ledger'),
-          matrixProfile: path.join(scratch, 'matrix'),
-          browserBundleDirectory: connectorBundle,
-          inboxDirectory: path.join(scratch, 'inbox'),
-          native: gate.fixture,
-          pending, withheld,
-          binding: {
-            v: 1, bindingId: 'binding-' + randomUUID(), ownerId: 'owner-' + randomUUID(),
-            agentParticipantId: 'agent-' + randomUUID(), deviceId: bob.device_id,
-            harness: 'codex', sessionId: gate.fixture.sessionId, generation: 0,
-          },
-        };
-        await writeFile(packetFile, JSON.stringify(packet), { mode: 0o600 });
-        const env = { ...process.env, CODEX_HOME: gate.fixture.codexHome, KHALA_42_PACKET: packetFile };
-        const crashed = await killAtNativeAcceptance({
-          command: process.execPath, args: ['--import', 'tsx', worker, 'first'],
-          cwd: process.cwd(), env, expectedReleaseId: 'release-live-1',
-          expectedSessionId: gate.fixture.sessionId, timeoutMs: 90_000,
-        });
-        assert.equal(crashed.signal, 'SIGKILL');
-        assert.equal(crashed.accepted.bindingId, packet.binding.bindingId);
-        assert.ok(crashed.accepted.deviceFingerprint);
-        assert.ok(crashed.accepted.signerThumbprint);
-        // A dead process cannot still own the profile. Remove only this exact
-        // scratch lock, then let the SDK verify its persisted identity.
-        await rm(path.join(packet.matrixProfile, 'writer.lock'));
-        const result = await recover(env);
-        assert.equal(result.bindingId, packet.binding.bindingId);
-        assert.equal(result.deviceId, packet.binding.deviceId);
-        assert.equal(result.sessionId, packet.binding.sessionId);
-        assert.equal(result.deviceFingerprint, crashed.accepted.deviceFingerprint);
-        assert.equal(result.signerThumbprint, crashed.accepted.signerThumbprint);
-        assert.equal(result.bootstrapOperationSame, true);
-        assert.equal(result.recordState, 'outcome_unknown');
-        assert.equal(result.restartSubmissions, 0);
-        assert.equal(result.inboxReleaseCount, 1);
-        assert.equal(result.releasedInInbox, true);
-        assert.equal(result.withheldInInbox, false);
-        assert.equal(result.pendingStillReviewable, true);
-      } finally { await browser.close(); }
+    synapse = await startClosureSynapse({ recoveryFile, limits: {
+      synapse: { memoryBytes: 1024 * 1024 * 1024, cpus: 1, pids: 256 },
+      postgres: { memoryBytes: 512 * 1024 * 1024, cpus: 0.5, pids: 128 },
+    } });
+    const { baseUrl } = synapse;
+    const aliceProvisioned = await synapse.provision(`@khala_crash_alice:${synapse.serverName}`, 'CRASH_ALICE');
+    const bobProvisioned = await synapse.provision(`@khala_crash_bob:${synapse.serverName}`, 'CRASH_BOB');
+    // The worker needs Matrix sessions, never the disposable account passwords.
+    const alice = { user_id: aliceProvisioned.user_id, device_id: aliceProvisioned.device_id,
+      access_token: aliceProvisioned.access_token };
+    const bob = { user_id: bobProvisioned.user_id, device_id: bobProvisioned.device_id,
+      access_token: bobProvisioned.access_token };
+    const created = await synapse.api('/createRoom', alice.access_token, 'POST', {
+      visibility: 'private', invite: [bob.user_id],
+      initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
     });
+    assert.equal(typeof created.room_id, 'string', 'disposable encrypted room created');
+    const roomId = created.room_id as string;
+    await synapse.api('/join/' + encodeURIComponent(roomId), bob.access_token, 'POST', {});
+    const browser = await chromium.launchPersistentContext(path.join(scratch, 'peer'), {
+      executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.goto(peerOrigin);
+      await page.waitForFunction(() => !!(globalThis as unknown as { peer?: Peer }).peer);
+      const peerKey = await page.evaluate(input => (globalThis as unknown as { peer: Peer }).peer.open(input), {
+        baseUrl, userId: alice.user_id, deviceId: alice.device_id, accessToken: alice.access_token,
+      });
+      const matrixInput = {
+        baseUrl, userId: bob.user_id, deviceId: bob.device_id, accessToken: bob.access_token,
+        roomId, profileDirectory: path.join(scratch, 'matrix'),
+        browserBundleDirectory: connectorBundle,
+        participantIdFor: (userId: string) => userId === alice.user_id ? 'owner-sender' as never : null,
+      };
+      const substrate = await openMatrixConnectorSubstrate(matrixInput);
+      let eventRef: unknown;
+      let withheldRef: unknown;
+      try {
+        assert.equal(await page.evaluate(({ userId, deviceId, fingerprint }) =>
+          (globalThis as unknown as { peer: Peer }).peer.trust(userId, deviceId, fingerprint),
+        { userId: bob.user_id, deviceId: bob.device_id, fingerprint: substrate.fingerprint }), true);
+        await substrate.trustPeer(alice.user_id, alice.device_id, peerKey.ed25519);
+        await page.evaluate(room => (globalThis as unknown as { peer: Peer }).peer.rotate(room), roomId);
+        const sent = await page.evaluate(({ room, body }) =>
+          (globalThis as unknown as { peer: Peer }).peer.send(room, body), { room: roomId, body: pending });
+        const withheldSent = await page.evaluate(({ room, body }) =>
+          (globalThis as unknown as { peer: Peer }).peer.send(room, body), { room: roomId, body: withheld });
+        for (let attempt = 0; attempt < 30 && (!eventRef || !withheldRef); attempt++) {
+          const read = await substrate.source.read({ cursor: null, limit: 100 });
+          if (read.kind === 'page') {
+            const found = read.events.find(event => event.ref.eventId === sent.event_id);
+            if (found?.kind === 'decrypted') eventRef = found.ref;
+            const withheldEvent = read.events.find(event => event.ref.eventId === withheldSent.event_id);
+            if (withheldEvent?.kind === 'decrypted') withheldRef = withheldEvent.ref;
+          }
+          if (!eventRef || !withheldRef) await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        assert.ok(eventRef, 'verified encrypted pending event');
+        assert.ok(withheldRef, 'verified encrypted withheld event');
+      } finally { await substrate.close(); }
+      const packetFile = path.join(scratch, 'packet.json');
+      const packet = {
+        v: 1, baseUrl, roomId, alice, bob, eventRef, withheldRef,
+        stateDirectory: path.join(scratch, 'ledger'),
+        matrixProfile: path.join(scratch, 'matrix'),
+        browserBundleDirectory: connectorBundle,
+        inboxDirectory: path.join(scratch, 'inbox'),
+        native: gate.fixture,
+        pending, withheld,
+        binding: {
+          v: 1, bindingId: 'binding-' + randomUUID(), ownerId: 'owner-' + randomUUID(),
+          agentParticipantId: 'agent-' + randomUUID(), deviceId: bob.device_id,
+          harness: 'codex', sessionId: gate.fixture.sessionId, generation: 0,
+        },
+      };
+      assert.notEqual(packet.binding.bindingId, gate.preflightBindingId,
+        'crash ledger binding must be distinct from the native preflight binding');
+      await writeFile(packetFile, JSON.stringify(packet), { mode: 0o600 });
+      const env = { ...process.env, CODEX_HOME: gate.fixture.codexHome, KHALA_42_PACKET: packetFile };
+      const crashed = await killAtNativeAcceptance({
+        command: process.execPath, args: ['--import', 'tsx', worker, 'first'],
+        cwd: process.cwd(), env, expectedReleaseId: 'release-live-1',
+        expectedSessionId: gate.fixture.sessionId, timeoutMs: 90_000,
+      });
+      assert.equal(crashed.signal, 'SIGKILL');
+      assert.equal(crashed.accepted.bindingId, packet.binding.bindingId);
+      assert.ok(crashed.accepted.deviceFingerprint);
+      assert.ok(crashed.accepted.signerThumbprint);
+      // A dead process cannot still own the profile. Remove only this exact
+      // scratch lock, then let the SDK verify its persisted identity.
+      await rm(path.join(packet.matrixProfile, 'writer.lock'));
+      const result = await recover(env);
+      assert.equal(result.bindingId, packet.binding.bindingId);
+      assert.equal(result.deviceId, packet.binding.deviceId);
+      assert.equal(result.sessionId, packet.binding.sessionId);
+      assert.equal(result.deviceFingerprint, crashed.accepted.deviceFingerprint);
+      assert.equal(result.signerThumbprint, crashed.accepted.signerThumbprint);
+      assert.equal(result.bootstrapOperationSame, true);
+      assert.equal(result.recordState, 'outcome_unknown');
+      assert.equal(result.restartSubmissions, 0);
+      assert.equal(result.inboxReleaseCount, 1);
+      assert.equal(result.releasedInInbox, true);
+      assert.equal(result.withheldInInbox, false);
+      assert.equal(result.pendingStillReviewable, true);
+    } finally { await browser.close(); }
   } finally {
-    const activePeer = peerServer;
-    if (activePeer) await new Promise<void>(resolve => activePeer.server.close(() => resolve()));
-    await rm(scratch, { recursive: true, force: true });
+    try {
+      const activePeer = peerServer;
+      if (activePeer) await new Promise<void>(resolve => activePeer.server.close(() => resolve()));
+    } finally {
+      try { synapse?.close(); }
+      finally { await rm(scratchRoot, { recursive: true, force: true }); }
+    }
   }
 });
 

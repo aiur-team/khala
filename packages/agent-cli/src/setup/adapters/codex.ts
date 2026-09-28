@@ -21,7 +21,7 @@ import type {
 } from '../types.js';
 
 /** Exact Codex versions whose skill, hook, and MCP layout this adapter has proven. */
-export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0']);
+export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1']);
 export const CODEX_MCP_ENTRY = 'mcp_servers.khala';
 export const CODEX_HOOKS_ENTRY = 'hooks.khala';
 

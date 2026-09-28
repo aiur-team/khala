@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { SessionInspectionPort } from '@khala/connector/bootstrap/index';
-import { nativeCliCapabilities, TESTED_CODEX_VERSIONS } from '@khala/harnesses/codex/capabilities';
+import { nativeCliCapabilities, NATIVE_CLI_CODEX_VERSIONS } from '@khala/harnesses/codex/capabilities';
 import { LOCAL_DELIVERY_LIMITS } from './local-harness-capabilities.js';
 import type { HarnessSession } from './session-grant.js';
 import { parseCodexVersion } from '../setup/adapters/codex.js';
@@ -36,7 +36,7 @@ export function codexMcpSessionInspection(input: Readonly<{
         || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
       try {
         const [version, generation] = await Promise.all([input.readVersion(), input.generation(input.session)]);
-        if (version === null || !TESTED_CODEX_VERSIONS.includes(version)) return { kind: 'unsupported' };
+        if (version === null || !NATIVE_CLI_CODEX_VERSIONS.includes(version)) return { kind: 'unsupported' };
         if (generation === null || !Number.isSafeInteger(generation) || generation < 0) return { kind: 'unavailable' };
         return {
           kind: 'verified',

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { codexHooksFragment } from '../codex/hooks-config.js';
 import type { SetupEnvironment } from '../setup/types.js';
-import { inspectHostedCodexHooks, localHarnessCapabilities } from './local-harness-capabilities.js';
+import { inspectHostedCodexHooks, localHarness, localHarnessCapabilities } from './local-harness-capabilities.js';
 
 const CODEX_HOME = '/home/user/.codex';
 const HOOKS_PATH = `${CODEX_HOME}/hooks.json`;
@@ -44,6 +44,11 @@ describe('local harness capabilities', () => {
     expect(trusted).toMatchObject({ version: '0.154.0', support: 'tested',
       modes: { steer: { status: 'proven' }, sync: { status: 'proven' }, async: { status: 'unknown' } } });
     expect(await inspectHostedCodexHooks(environment({ version: '0.154.0', config: null }))).toBeNull();
+    expect(await inspectHostedCodexHooks(environment({ version: '0.157.1', config: TRUST })))
+      .toMatchObject({ version: '0.157.1', support: 'tested', modes: { sync: { status: 'proven' } } });
+    expect(await localHarness(() => environment({ version: '0.157.1', config: TRUST })).observation(binding('codex')))
+      .toEqual({ version: '0.157.1', hookReview: 'trusted', platform: process.platform, arch: process.arch });
+    expect(await inspectHostedCodexHooks(environment({ version: '0.157.0', config: TRUST }))).toBeNull();
     expect(await inspectHostedCodexHooks(environment({ version: '0.156.1', config: TRUST }))).toBeNull();
     expect(await inspectHostedCodexHooks(environment({ version: null, config: TRUST }))).toBeNull();
   });

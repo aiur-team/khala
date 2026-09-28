@@ -119,6 +119,10 @@ describe('Codex detection', () => {
   it('keeps absent, supported, and unknown versions distinct', async () => {
     const adapter = createCodexSetupAdapter({ skill: SKILL_V1 });
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.154.0', supported: true });
+    version = 'codex-cli 0.157.1\n';
+    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.1', supported: true });
+    version = 'codex-cli 0.157.0\n';
+    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.0', supported: false });
     version = 'codex-cli 0.156.1\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.156.1', supported: false });
     version = 'something else';

@@ -6,7 +6,7 @@ import {
   type ReleaseId, type SessionBinding, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import {
-  TESTED_CODEX_VERSIONS, nativeCliCapabilities, probeBinding, testedCapabilities, unsupportedCapabilities,
+  NATIVE_CLI_CODEX_VERSIONS, nativeCliCapabilities, probeBinding, testedCapabilities, unsupportedCapabilities,
   unsupportedNativeCliCapabilities,
 } from './capabilities';
 import {
@@ -19,8 +19,8 @@ import { type AttemptedReleases, type ReleaseCodecPort, submitRelease } from './
 
 export {
   CODEX_ADAPTER_VERSION, CODEX_EVIDENCE_REF, CODEX_HARNESS, CODEX_NATIVE_CLI_ADAPTER_VERSION,
-  CODEX_NATIVE_CLI_EVIDENCE_REF, CODEX_NATIVE_CLI_RECEIPT_EVIDENCE, CODEX_RECEIPT_EVIDENCE,
-  TESTED_CODEX_VERSIONS, type ProbeFailure, probeBinding,
+  CODEX_NATIVE_CLI_EVIDENCE_REF, CODEX_NATIVE_CLI_0157_EVIDENCE_REF, CODEX_NATIVE_CLI_RECEIPT_EVIDENCE,
+  CODEX_RECEIPT_EVIDENCE, NATIVE_CLI_CODEX_VERSIONS, TESTED_CODEX_VERSIONS, type ProbeFailure, probeBinding,
 } from './capabilities';
 export type {
   CodexNativeCliInspection, CodexNativeCliOutcome, CodexNativeCliPort, CodexNativeInboxDelivery,
@@ -100,7 +100,7 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
         return unsupportedNativeCliCapabilities('unknown', deps.limits);
       }
       if (
-        !TESTED_CODEX_VERSIONS.includes(native.version)
+        !NATIVE_CLI_CODEX_VERSIONS.includes(native.version)
         || native.platform !== 'linux'
         || native.arch !== 'x64'
       ) {

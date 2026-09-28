@@ -39,6 +39,16 @@ describe('codex idle wake', () => {
     expect(runs).toHaveLength(0);
   });
 
+  it('queues the proved 0.157.1 Sol sync route but refuses its unproved steer route', async () => {
+    const { wake, runs } = harness();
+    expect(await wake.wake(binding, 'steer', '0.157.1')).toBe('not_idle_mode');
+    expect(await wake.wake(binding, 'sync', '0.157.1')).toBe('queued');
+    expect(runs.map(run => run.argv)).toEqual([
+      ['queue', '--thread', binding.sessionId, '--message', CODEX_IDLE_WAKE_NOTICE],
+    ]);
+    expect(wake.state(binding)).toBe('available');
+  });
+
   it('coalesces concurrent wakes into one queue command', async () => {
     const releases: (() => void)[] = [];
     const { wake, runs } = harness(() => new Promise(resolve => { releases.push(() => resolve({ status: 'queued' })); }));

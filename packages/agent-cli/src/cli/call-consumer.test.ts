@@ -15,6 +15,18 @@ function inbox(acquireListener: () => Promise<InboxConsumer>): BatchInbox {
 }
 
 describe('call-scoped listener', () => {
+  it('uses the socketless call lease when offered and never opens a wake listener', async () => {
+    const acquireListener = vi.fn(async (): Promise<InboxConsumer> => {
+      throw new Error('wake socket must not open');
+    });
+    const acquireCallConsumer = vi.fn(async (): Promise<InboxConsumer> => ({
+      async readBatch() { return null; }, async release() {},
+    }));
+    const offered = { ...inbox(acquireListener), acquireCallConsumer };
+    await expect(callScopedConsumer(offered).readBatch({ maxBytes: 1 })).resolves.toBeNull();
+    expect(acquireCallConsumer).toHaveBeenCalledOnce();
+    expect(acquireListener).not.toHaveBeenCalled();
+  });
   it('waits for another short-lived consumer and releases after each selection', async () => {
     const release = vi.fn(async () => undefined);
     const readBatch = vi.fn(async () => null);

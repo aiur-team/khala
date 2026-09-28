@@ -204,9 +204,19 @@ export const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     });
     expect(targeted.status).toBe(400);
     add(s, 'POST agent harness targeted', targeted);
+    const targetedRuntime = await s.world.http('POST', '/api/v1/agent/harness', {
+      body: { v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64', bindingId: 'binding-carol' },
+    });
+    expect(targetedRuntime.status).toBe(400);
+    add(s, 'POST agent harness runtime targeted', targetedRuntime);
     const own = await s.world.http('POST', '/api/v1/agent/harness', { body: { v: 1, version: '0.156.1', hookReview: 'trusted' } });
     expect(own.status).toBe(200);
     add(s, 'POST agent harness own', own);
+    const ownRuntime = await s.world.http('POST', '/api/v1/agent/harness', {
+      body: { v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' },
+    });
+    expect(ownRuntime.status).toBe(200);
+    add(s, 'POST agent harness own runtime', ownRuntime);
   },
   'http-internal:POST /api/v1/agent/idle-wake': async s => {
     // A foreign session cannot wake this binding and the response carries no
