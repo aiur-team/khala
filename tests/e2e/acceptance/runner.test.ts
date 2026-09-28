@@ -134,6 +134,46 @@ describe('live acceptance runner', () => {
     expect(world.stopCalls).toEqual([]);
   });
 
+  it('cancels only the captured first request when the second fixture never arrives', async () => {
+    const world = createWorld({ missingSessionFor: 'b' });
+    const report = await run(world);
+    expect(report.verdict).toBe('fail');
+    expect(report.errors.join('\n')).toMatch(/timed out waiting for both access grants/);
+    expect(world.revokeCalls).toEqual(['request_a']);
+    expect(world.bindingStatus('a')).toBe('revoked');
+    expect(world.stopCalls).toEqual([]);
+    expectCleanTail(world, report);
+  });
+
+  it('uses the original grant identity for cleanup after the capture disappears', async () => {
+    const world = createWorld({ missingSessionFor: 'b' });
+    const capturedSession = world.deps.aiur.capturedSession;
+    let reads = 0;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async capturedSession(ticket, runId, role) {
+        if (role === 'a' && ++reads > 1) return null;
+        return capturedSession(ticket, runId, role);
+      },
+    } } });
+    expect(report.verdict).toBe('fail');
+    expect(world.revokeCalls).toEqual(['request_a']);
+    expect(world.bindingStatus('a')).toBe('revoked');
+    expectCleanTail(world, report);
+  });
+
+  it('reports a connected or unavailable exact-request cleanup as non-passing', async () => {
+    for (const knobs of [{ connectedOnGrant: true }, { revokeFails: true }]) {
+      const world = createWorld({ missingSessionFor: 'b', ...knobs });
+      const report = await run(world);
+      expect(report.verdict).toBe('fail');
+      expect(report.errors.join('\n')).toMatch(/request cleanup #1001: request revoke/);
+      expect(world.revokeCalls).toEqual(['request_a']);
+      expect(world.bindingStatus('a')).toBe('active');
+      expectCleanTail(world, report);
+    }
+  });
+
   it('does not accept a READY marker whose owner binding has another session fingerprint', async () => {
     const world = createWorld();
     const launcher = world.deps.launcher;

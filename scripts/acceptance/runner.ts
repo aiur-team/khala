@@ -27,7 +27,7 @@ class Refused extends Error {}
 
 const DEFAULT_POLL_MS = 2_000;
 
-type MutableRole = { role: RoleName; ticket: number; session: RoleRecord['session']; target: StopTarget | null; granted: boolean };
+type MutableRole = { role: RoleName; ticket: number; session: RoleRecord['session']; target: StopTarget | null; request: AccessRequest | null; requestSession: RoleRecord['session']; granted: boolean };
 
 function readyPattern(markers: Markers, role: RoleName): RegExp {
   return new RegExp(`^${markers.ready(role)}$`);
@@ -146,7 +146,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
           body: ticketPrompt({ profile, role, markers, plan, channelUrl: owner.channelUrl }),
           labels: [ACCEPTANCE_LABEL, profile.dispatchLabel, DRIVER_MODEL_LABEL],
         });
-        roles.push({ role: role.role, ticket: issue.number, session: null, target: null, granted: false });
+        roles.push({ role: role.role, ticket: issue.number, session: null, target: null, request: null, requestSession: null, granted: false });
         controller.note(`created #${issue.number} for role ${role.role.toUpperCase()}`);
         controller.note(`Executor fixture: capture native session for run ${options.runId}, ticket ${issue.number}, role ${role.role} before joining the channel`);
       }
@@ -188,6 +188,9 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
       // A timeout or failure before Stop still stops whatever was bound.
       if (owner && !stop && roles.some(record => record.target)) {
         try { stop = await guardedStop(deps, owner, server, roles, markers, options.runId); } catch (error) { errors.push(`stop: ${(error as Error).message}`); }
+      }
+      if (owner && (errors.length > 0 || stop?.reply?.kind !== 'stopped')) {
+        await revokeUnfinishedRequests(owner, roles, options.runId, errors);
       }
       if (owner) {
         try { timeline = await owner.timeline(); } catch (error) { errors.push(`timeline: ${(error as Error).message}`); }
@@ -261,11 +264,35 @@ async function grantPair(
         ticket: record.ticket, role: record.role, harness: role.harness, sessionFingerprint: request.sessionFingerprint, verified: true,
       });
       if (!confirmed) throw new Refused(`the human declined the grant for role ${record.role}`);
+      record.request = request;
+      record.requestSession = record.session;
       await owner.approve(request, `acc-grant-${record.ticket}`);
       record.granted = true;
     }
     return roles.every(record => record.granted) ? true : null;
   });
+}
+
+/** A failed run only cancels requests tied to its captured fixtures. Connected
+ * requests need a separate exact binding cleanup route; refusal is reported. */
+async function revokeUnfinishedRequests(
+  owner: OwnerSession, roles: readonly MutableRole[], runId: string, errors: string[],
+): Promise<void> {
+  for (const record of roles) {
+    if (!record.request || !record.requestSession) continue;
+    try {
+      const matches = (await owner.accessRequests()).filter(request => request.requestHandle === record.request!.requestHandle);
+      const current = matches.length === 1 ? matches[0]! : null;
+      if (!current || current.harness !== record.requestSession.harness
+        || current.sessionFingerprint !== sessionDigest(record.requestSession.harness, record.requestSession.sessionId)
+        || !(Date.parse(current.createdAt) > Date.parse(record.requestSession.capturedAt))) {
+        throw new Error('owned request could not be reverified');
+      }
+      if (current.outcome !== 'revoked') await owner.revokeRequest(current, `acc-revoke-${runId}-${record.ticket}`);
+    } catch (error) {
+      errors.push(`request cleanup #${record.ticket}: ${(error as Error).message}`);
+    }
+  }
 }
 
 async function guardedStop(
