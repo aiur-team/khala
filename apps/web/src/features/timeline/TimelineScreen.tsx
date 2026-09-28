@@ -35,6 +35,7 @@ export interface TimelineScreenProps {
   pendingStore?: PendingSendStore;
   /** The owner's durable receipt evidence for this channel; absent means none is shown. */
   evidence?: ReceiptEvidenceController;
+  composerPlaceholder?: string;
 }
 
 /** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
@@ -124,6 +125,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  composerPlaceholder = 'Write a message',
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(
@@ -386,6 +388,7 @@ export function TimelineScreen({
         </button>
       ) : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
+        placeholder={composerPlaceholder}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}

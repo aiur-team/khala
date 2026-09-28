@@ -26,6 +26,7 @@ export function ConversationIndexRoute({ context, routes, navigate }: Readonly<{
   const [query, setQuery] = useState('');
   const items = useConversationIndex(context);
   return <ConversationLayout list={<ConversationList conversations={items ?? []} query={query} onQueryChange={setQuery}
+    emptyLabel="No encrypted conversations yet."
     onSelect={id => { if (items?.some(item => item.id === id)) navigate(routes.roomPath(id)); }}
     status={!context.conversations || items === null ? 'error' : items === undefined ? 'loading' : 'ready'} />} />;
 }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import './conversation.css';
 
 export type ConversationSummary = Readonly<{
@@ -9,13 +9,14 @@ export type ConversationSummary = Readonly<{
   unreadCount: number | null;
 }>;
 
-export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status }: Readonly<{
+export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.' }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
   onQueryChange(value: string): void;
   onSelect(id: string): void;
   status?: 'loading' | 'ready' | 'error';
+  emptyLabel?: string;
 }>) {
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <aside className="conversation-list" aria-label="Conversations">
@@ -27,7 +28,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
     <div className="conversation-list__items">
       {status === 'loading' ? <p role="status">Loading conversations…</p> : null}
       {status === 'error' ? <p role="alert">Conversations are unavailable. Try reloading.</p> : null}
-      {status === 'ready' && visible.length === 0 ? <p role="status">{query ? 'No matching conversations.' : 'No encrypted conversations yet.'}</p> : null}
+      {status === 'ready' && visible.length === 0 ? <p role="status">{query ? 'No matching conversations.' : emptyLabel}</p> : null}
       {visible.map(item => <button key={item.id} type="button" className={`conversation-list__item${selectedId === item.id ? ' is-active' : ''}`}
         aria-current={selectedId === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
         <span className="conversation-list__avatar" aria-hidden="true">{item.title.trim().slice(0, 1).toLocaleUpperCase()}</span>
@@ -56,18 +57,36 @@ export function ChatMessage({ id, author, time, mine = false, children }: Readon
   </li>;
 }
 
-export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId }: Readonly<{
-  value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string;
+export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId, placeholder = 'Write a message' }: Readonly<{
+  value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string; placeholder?: string;
 }>) {
   return <form className="conversation-composer" onSubmit={event => { event.preventDefault(); onSend(); }}>
     <label className="sr-only" htmlFor="conversation-draft">Message</label>
-    <textarea id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder="Message the Khala" />
+    <textarea id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder} />
     <button type="submit" disabled={disabled || sendDisabled || !value.trim()} aria-describedby={sendDescriptionId} aria-label="Send message">↑</button>
   </form>;
 }
 
 export function ParticipantDetail({ name, children, onClose }: Readonly<{ name: string; children?: ReactNode; onClose(): void }>) {
-  return <aside className="conversation-detail" aria-label="Conversation details"><button type="button" onClick={onClose} aria-label="Close details">×</button><h2>{name}</h2>{children}</aside>;
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
+    if (event.key !== 'Tab') return;
+    const focusable = [...(detailRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])];
+    if (focusable.length === 0) { event.preventDefault(); closeRef.current?.focus(); return; }
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+  return <aside ref={detailRef} className="conversation-detail" role="dialog" aria-modal="true" aria-label="Conversation details" onKeyDown={handleKeyDown}>
+    <button ref={closeRef} type="button" onClick={onClose} aria-label="Close details">×</button><h2>{name}</h2>{children}</aside>;
 }
 
 export function ConversationLayout({ list, thread, detail, inThread = false }: Readonly<{

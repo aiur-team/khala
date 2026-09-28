@@ -242,10 +242,10 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   }, [room, timeline, recovery]);
   const viewer = context.participant?.() ?? null;
   if (context.conversations && conversations === undefined) {
-    return <Panel heading="Loading conversation"><p role="status">Checking encrypted room access…</p></Panel>;
+    return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
   }
   if (context.conversations && conversations === null) {
-    return <Panel heading="Conversation unavailable"><p role="alert">Encrypted room access could not be checked. Try reloading.</p></Panel>;
+    return <Panel heading="Conversation unavailable"><p role="alert">Channel access could not be checked. Try reloading.</p></Panel>;
   }
   if (context.conversations && conversations && !conversations.some(item => item.id === roomId)) {
     return <Panel heading="Conversation unavailable"><p role="alert">You no longer have access to this encrypted conversation.</p></Panel>;
@@ -266,12 +266,14 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       controller={room}
       {...(context.conversations && routes && navigate ? {
         renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
+          emptyLabel="No encrypted conversations yet."
           onQueryChange={setQuery} status={conversations ? 'ready' : 'error'}
           onSelect={id => { if (conversations?.some(item => item.id === id)) navigate(routes.roomPath(id)); }} />,
         onBack: () => navigate(routes.conversationsPath()),
       } : {})}
       renderTimeline={() => (
-        <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} />
+        <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          composerPlaceholder="Message this channel" />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}

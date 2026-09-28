@@ -3,6 +3,7 @@ import {
   Direction,
   EventType,
   MatrixEvent,
+  MatrixEventEvent,
   MsgType,
   Preset,
   Room,
@@ -128,6 +129,40 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
       };
     }));
+}
+
+/** Rebinds decrypt listeners as sync adds or removes events; all callbacks share the session fence. */
+export function subscribeConversationIndex(client: Pick<MatrixClient, 'getRooms' | 'on' | 'off'>,
+  isCurrent: () => boolean, listener: () => void): () => void {
+  const observed = new Set<MatrixEvent>();
+  let disposed = false;
+  const onDecrypted = () => { if (!disposed && isCurrent()) listener(); };
+  const bindEvents = () => {
+    const available = new Set(client.getRooms()
+      .filter(room => room.getMyMembership() === 'join' && room.hasEncryptionStateEvent())
+      .flatMap(room => room.getLiveTimeline().getEvents()));
+    for (const event of observed) {
+      if (!available.has(event)) { event.off(MatrixEventEvent.Decrypted, onDecrypted); observed.delete(event); }
+    }
+    for (const event of available) {
+      if (!observed.has(event)) { event.on(MatrixEventEvent.Decrypted, onDecrypted); observed.add(event); }
+    }
+  };
+  const publish = () => {
+    if (disposed || !isCurrent()) return;
+    try { bindEvents(); } catch { /* Snapshot reports unavailable without crashing the route. */ }
+    listener();
+  };
+  client.on(RoomEvent.Timeline, publish);
+  client.on(ClientEvent.Sync, publish);
+  publish();
+  return () => {
+    disposed = true;
+    client.off(RoomEvent.Timeline, publish);
+    client.off(ClientEvent.Sync, publish);
+    for (const event of observed) event.off(MatrixEventEvent.Decrypted, onDecrypted);
+    observed.clear();
+  };
 }
 
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
@@ -621,13 +656,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
     subscribe(ownerId, generation, listener) {
       const active = runtime.active;
       if (!active || active.principal.ownerId !== ownerId || active.generation !== generation) return () => undefined;
-      const publish = () => { if (runtime.active === active && device.current().generation === generation) listener(); };
-      active.client.on(RoomEvent.Timeline, publish);
-      active.client.on(ClientEvent.Sync, publish);
-      return () => {
-        active.client.off(RoomEvent.Timeline, publish);
-        active.client.off(ClientEvent.Sync, publish);
-      };
+      return subscribeConversationIndex(active.client,
+        () => runtime.active === active && device.current().generation === generation, listener);
     },
   };
 
