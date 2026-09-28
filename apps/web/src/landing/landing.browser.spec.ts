@@ -211,6 +211,10 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     }
 
     assert.deepEqual(failures, [], 'no page or console errors');
+    assert.equal(await copy.locator('[data-copy-label]').innerText(), 'Copy');
+    await copy.click();
+    await page.waitForFunction(() => document.querySelector('#copyBtn [data-copy-label]')?.textContent === 'Copied');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), EXACT_PROMPT);
     await page.getByRole('link', { name: 'Open Khala app' }).click();
     assert.equal(new URL(page.url()).pathname, '/new', 'the hero link opens the canonical create route');
   } finally {
