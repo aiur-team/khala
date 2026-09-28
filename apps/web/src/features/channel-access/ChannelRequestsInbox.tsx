@@ -32,6 +32,8 @@ export interface ChannelRequestsInboxProps {
   controller: ChannelAccessInboxController;
   /** A request handle from direct navigation (a deep link). Selects the row; never opens it. */
   selectedHandle?: string | null | undefined;
+  /** The route supplies the page heading; standalone embeds supply their own. */
+  embedded?: boolean;
 }
 
 const MUTE_FAILURE: Readonly<Record<string, string>> = {
@@ -72,7 +74,7 @@ function noticeText(notice: InboxNotice): string {
 
 const rowId = (handle: string) => `channel-request-${handle}`;
 
-export function ChannelRequestsInbox({ controller, selectedHandle }: ChannelRequestsInboxProps) {
+export function ChannelRequestsInbox({ controller, selectedHandle, embedded = false }: ChannelRequestsInboxProps) {
   const view = useInboxView(controller);
   const pendingHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const handledSequence = useRef(0);
@@ -145,9 +147,9 @@ export function ChannelRequestsInbox({ controller, selectedHandle }: ChannelRequ
 
   const dialog = view.dialog;
   return (
-    <Panel heading="Channel requests">
+    <Panel heading={embedded ? undefined : 'Channel requests'}>
       <div className="channel-requests" aria-busy={view.phase === 'loading'}>
-        <p role="status" aria-live="polite" className="channel-requests__status">{status}</p>
+        <p role="status" aria-live="polite" className="channel-requests__status">{view.phase === 'load_failed' ? '' : status}</p>
 
         <section className="channel-requests__notices" aria-label="Channel request notifications" aria-live="polite">
           {view.notices.map(notice => (
@@ -165,7 +167,7 @@ export function ChannelRequestsInbox({ controller, selectedHandle }: ChannelRequ
 
         {view.phase === 'load_failed' ? (
           <div role="alert">
-            <p>{view.readOnly ? statusMessage({ kind: 'authority_lost' }) : 'Could not load channel requests.'}</p>
+            <p>{view.readOnly ? statusMessage({ kind: 'authority_lost' }) : 'Requests could not load.'}</p>
             <button type="button" onClick={() => controller.refresh()}>
               Reload requests
             </button>

@@ -58,6 +58,13 @@ describe('ChannelRequestsInbox', () => {
     expect(html).not.toContain('channel-requests__row');
   });
 
+  it('shows one error when the inbox could not load', () => {
+    const html = render(ready([], { phase: 'load_failed', status: { kind: 'refresh_failed' } }));
+    expect(text(html)).toContain('Requests could not load.');
+    expect(text(html)).not.toContain('Could not refresh channel requests.');
+    expect(html).toContain('Reload requests');
+  });
+
   it('shows an empty inbox with a zero count', () => {
     const html = render(ready([]));
     expect(text(html)).toContain('Waiting for you (0)');
@@ -203,6 +210,6 @@ describe('ChannelRequestsNavEntry', () => {
   });
 
   it('does not claim a count before the inbox loads', () => {
-    expect(text(nav(INITIAL_INBOX_VIEW))).toContain('pending count loading');
+    expect(text(nav(INITIAL_INBOX_VIEW)).trim()).toBe('Channel requests');
   });
 });

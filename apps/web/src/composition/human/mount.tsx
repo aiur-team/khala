@@ -82,7 +82,7 @@ function SignInPanel({ identity, path, navigateExternal }: {
 
   return (
     <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
-      <Panel heading="Continue with your account">
+      <Panel>
         <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
         {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}
       </Panel>
@@ -93,7 +93,7 @@ function SignInPanel({ identity, path, navigateExternal }: {
 function LostDevicePanel() {
   return (
     <KhalaPageFrame model={{ title: 'Device keys unavailable', labelledBy: 'khala-device-loss' }}>
-      <Panel heading="This device's keys are unavailable">
+      <Panel>
         <p role="alert">Khala cannot open this device's encrypted messages or channels with the keys available here.</p>
         <p>If you still have a device or browser profile with its original keys, open Khala there to read its history. This browser profile cannot regain keys by retrying this page.</p>
         <p>If every device's keys are gone, earlier history cannot be recovered. Access from a new device requires a fresh authorized admission; this screen cannot grant one.</p>
@@ -108,7 +108,7 @@ function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: ChannelAcces
   const controller = useContext(ChannelAccessContext);
   return (
     <KhalaPageFrame model={{ title: 'Channel requests', labelledBy: 'khala-channel-requests-title' }}>
-      {controller === null ? null : <ChannelRequestsInbox controller={controller} selectedHandle={selectedHandle} />}
+      {controller === null ? null : <ChannelRequestsInbox controller={controller} selectedHandle={selectedHandle} embedded />}
     </KhalaPageFrame>
   );
 }

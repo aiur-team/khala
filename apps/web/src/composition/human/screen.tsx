@@ -97,8 +97,8 @@ export function HumanScreen<Route>({
     content = renderDeviceLoss(snapshot.path);
   } else {
     content = (
-      <KhalaPageFrame model={{ title: 'Khala', labelledBy: 'khala-status' }}>
-        <Panel heading="Account and device status">{statusContent(snapshot)}</Panel>
+      <KhalaPageFrame model={{ title: 'Account and device status', labelledBy: 'khala-status' }}>
+        <Panel>{statusContent(snapshot)}</Panel>
       </KhalaPageFrame>
     );
   }

@@ -21,8 +21,8 @@ export function ChannelRequestsNavEntry({ controller, href, current = false }: C
   return (
     <a href={href} className="channel-requests-nav" aria-current={current ? 'page' : undefined}>
       <span className="channel-requests-nav__label">Channel requests</span>
-      <span className="channel-requests-nav__count" aria-hidden="true">{known ? count : '–'}</span>
-      <span className="channel-requests-nav__sr">{known ? `, ${count} pending` : ', pending count loading'}</span>
+      {known ? <span className="channel-requests-nav__count" aria-hidden="true">{count}</span> : null}
+      {known ? <span className="channel-requests-nav__sr">{`, ${count} pending`}</span> : null}
     </a>
   );
 }

@@ -92,6 +92,7 @@ describe('LocalApplicationScreen', () => {
   it('renders the shared inbox and the shared settings panel on their own routes', () => {
     const requests = render('/channel-requests');
     expect(requests).toContain('khala-channel-requests-title');
+    expect(requests).not.toContain('<h2>Channel requests</h2>');
     const settings = render('/channels/ch_1/settings');
     expect(settings).toContain('Channel discovery settings');
     expect(settings).toContain('href="/channels/ch_1"');
