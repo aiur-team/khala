@@ -3,8 +3,9 @@ import {
   ok,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it, vi } from 'vitest';
+import { createRecoveryController } from '../../features/recovery/controller';
 import type { HumanRouteContext } from '../human/application';
-import { type BrowserClosure, type BrowserRevocation, createBrowserRecoveryPort, sessionResumeStore } from './browser-port';
+import { type BrowserClosure, type BrowserRevocation, createBrowserRecoveryPort, memoryResumeStore, sessionResumeStore } from './browser-port';
 import { projectRecovery } from './projection';
 import { registerRecovery } from './register';
 
@@ -13,6 +14,9 @@ const principal: AuthPrincipal = {
   v: 1, ownerId: 'owner_b' as OwnerId, providerIssuer: 'https://id.example.test', providerSubject: 'sub-owner-b',
   verifiedEmail: 'owner-b@example.test', sessionExpiresAt: '2026-09-18T20:00:00Z',
 };
+const scopedTargets = (targets: readonly { targetKind: 'binding'; targetId: BindingId; expectedGeneration: number }[]) => ({
+  ownerId: principal.ownerId, providerIssuer: principal.providerIssuer, providerSubject: principal.providerSubject, targets,
+});
 
 function fakeDevice(initial: DeviceView) {
   let view = initial;
@@ -92,7 +96,7 @@ describe('createBrowserRecoveryPort', () => {
 
   it('keeps a device without keys unavailable, and a signed-out owner without targets', async () => {
     const device = fakeDevice({ ...ready, state: 'locked', reason: 'key_material_missing' });
-    const revocation = { targets: () => [{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }] } as unknown as BrowserRevocation;
+    const revocation = { targets: () => scopedTargets([{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }]) } as unknown as BrowserRevocation;
     const ports = createBrowserRecoveryPort({ principal, identity: identity({ kind: 'signed_out' }), device: device.port, revocation });
     await settled();
 
@@ -131,7 +135,7 @@ describe('createBrowserRecoveryPort', () => {
 
     const progress = { operationId: 'revoke-1', targetKind: 'binding', targetId: 'bnd_1', generation: 4, state: 'partial' } as const;
     const revocation: BrowserRevocation = {
-      targets: () => [{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }],
+      targets: () => scopedTargets([{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }]),
       revoke: vi.fn(async () => ok(progress as never)),
       inspect: vi.fn(async () => ok(progress as never)),
     };
@@ -178,7 +182,7 @@ describe('createBrowserRecoveryPort', () => {
     } };
     const progress = { operationId: 'revoke-1', targetKind: 'binding', targetId: 'bnd_1', generation: 4, state: 'partial' } as const;
     const revocation: BrowserRevocation = {
-      targets: () => [{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }],
+      targets: () => scopedTargets([{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }]),
       revoke: vi.fn(async () => ok(progress as never)),
       inspect: vi.fn(async () => ok(progress as never)),
     };
@@ -214,12 +218,77 @@ describe('createBrowserRecoveryPort', () => {
 
     current = { kind: 'signed_in', principal };
     identityUnavailable = true;
-    expect(await ports.ui.revoke(revoke)).toEqual({ kind: 'rejected', code: 'forbidden' });
-    expect(await ports.ui.closeRoom(close)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await ports.ui.revoke(revoke)).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await ports.ui.inspectRevocation('revoke-1')).toEqual({ kind: 'outcome_unknown', operationId: 'revoke-1' });
+    expect(await ports.ui.closeRoom(close)).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await ports.ui.inspectClosure('close-1')).toEqual({ kind: 'outcome_unknown', operationId: 'close-1' });
     expect(revocation.revoke).not.toHaveBeenCalled();
     expect(revocation.inspect).not.toHaveBeenCalled();
     expect(closure.closeRoom).not.toHaveBeenCalled();
     expect(closure.inspectClosure).not.toHaveBeenCalled();
+  });
+
+  it('does not publish mixed-owner targets when identity changes during lookup', async () => {
+    const device = fakeDevice(ready);
+    let current: IdentityState = { kind: 'signed_in', principal };
+    const ownerIdentity: IdentityPort = { ...identity(), current: async () => current };
+    let resolveTargets!: (targets: readonly { targetKind: 'binding'; targetId: BindingId; expectedGeneration: number }[]) => void;
+    const targets = new Promise<readonly { targetKind: 'binding'; targetId: BindingId; expectedGeneration: number }[]>(resolve => {
+      resolveTargets = resolve;
+    });
+    const revocation = { targets: () => targets.then(scopedTargets) } as unknown as BrowserRevocation;
+    const ports = createBrowserRecoveryPort({ principal, identity: ownerIdentity, device: device.port, revocation });
+    await settled();
+    current = { kind: 'signed_in', principal: { ...principal, ownerId: 'other-owner' as OwnerId } };
+    resolveTargets([{ targetKind: 'binding', targetId: 'other-binding' as BindingId, expectedGeneration: 4 }]);
+    await settled();
+    expect(ports.ui.snapshot().identity).toEqual(current);
+    expect(ports.ui.snapshot().revocationTargets).toEqual([]);
+  });
+
+  it('rejects a target response bound to another owner even after an A-B-A identity switch', async () => {
+    const device = fakeDevice(ready);
+    const other = { ...principal, ownerId: 'other-owner' as OwnerId };
+    let current: IdentityState = { kind: 'signed_in', principal };
+    const ownerIdentity: IdentityPort = { ...identity(), current: async () => current };
+    let resolveTargets!: (value: ReturnType<typeof scopedTargets>) => void;
+    const targets = new Promise<ReturnType<typeof scopedTargets>>(resolve => { resolveTargets = resolve; });
+    const revocation = { targets: () => targets } as unknown as BrowserRevocation;
+    const ports = createBrowserRecoveryPort({ principal, identity: ownerIdentity, device: device.port, revocation });
+    await settled();
+    current = { kind: 'signed_in', principal: other };
+    resolveTargets({ ...scopedTargets([{ targetKind: 'binding', targetId: 'other-binding' as BindingId,
+      expectedGeneration: 4 }]), ownerId: other.ownerId });
+    current = { kind: 'signed_in', principal };
+    await settled();
+    expect(ports.ui.snapshot().identity).toEqual(current);
+    expect(ports.ui.snapshot().revocationTargets).toEqual([]);
+  });
+
+  it('keeps a pending operation reference when identity inspection is unavailable', async () => {
+    const device = fakeDevice(ready);
+    let identityUnavailable = false;
+    const ownerIdentity: IdentityPort = { ...identity(), current: async () => {
+      if (identityUnavailable) throw new Error('identity_unavailable');
+      return { kind: 'signed_in', principal };
+    } };
+    const inspect = vi.fn(async () => ok({ operationId: 'revoke-pending', targetKind: 'binding' as const,
+      targetId: 'bnd_1' as BindingId, generation: 4, state: 'complete' as const }));
+    const revocation = { targets: () => scopedTargets([]), inspect } as unknown as BrowserRevocation;
+    const ports = createBrowserRecoveryPort({ principal, identity: ownerIdentity, device: device.port, revocation });
+    await settled();
+    const roomId = 'room_1' as never;
+    const reference = { kind: 'revocation', operationId: 'revoke-pending', ownerId: principal.ownerId,
+      deviceId: ready.deviceId, deviceGeneration: ready.generation, roomId, roomRevision: 0 } as const;
+    const resumeStore = memoryResumeStore();
+    resumeStore.save(reference);
+    identityUnavailable = true;
+    const controller = createRecoveryController({ ui: ports.ui, resumeStore }, { roomId, roomRevision: 0 });
+    await settled();
+    expect(controller.getView().operation).toMatchObject({ kind: 'revocation', operationId: 'revoke-pending', state: 'outcome_unknown' });
+    expect(resumeStore.load()).toEqual(reference);
+    expect(inspect).not.toHaveBeenCalled();
+    controller.dispose();
   });
 
   it('keeps owner identity and closure usable when optional revocation target lookup fails', async () => {

@@ -35,8 +35,11 @@ export interface HumanApplicationPorts {
   readonly participant?: () => ParticipantView | null;
   readonly closure?: (roomId: RoomId) => ChannelClosureContext;
   readonly revocation?: (roomId: RoomId) => RevocationPort & Readonly<{
-    targets(): readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[]
-      | Promise<readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[]>;
+    targets(): Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
+      targets: readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[];
+    }> | null | Promise<Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
+      targets: readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[];
+    }> | null>;
   }>;
 }
 

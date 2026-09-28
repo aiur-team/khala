@@ -72,7 +72,8 @@ async function setup() {
 describe('owner revocation routes', () => {
   it('lists only current owner targets and preserves a protocol refusal as partial progress', async () => {
     const h = await setup();
-    expect(await (await h.call(REVOCATION_TARGETS_PATH, 'GET')).json()).toEqual({ targets: [
+    expect(await (await h.call(REVOCATION_TARGETS_PATH, 'GET')).json()).toEqual({
+      ownerId: binding.ownerId, providerIssuer: 'https://id.example', providerSubject: binding.ownerId, targets: [
       { targetKind: 'binding', targetId: binding.bindingId, expectedGeneration: 2 },
     ] });
     const result = await h.call(REVOCATION_REVOKE_PATH, 'POST', h.request);
