@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { createServer as createTcpServer, connect, type Server as TcpServer, type Socket } from 'node:net';
 import { join } from 'node:path';
@@ -57,12 +57,13 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
       });
       await api(`/join/${encodeURIComponent(roomId)}`, bob.access_token, {});
-      const peer = await chromium.launchPersistentContext(join(scratch, 'peer'), {
+      const peerProfile = join(scratch, 'peer');
+      let peer = await chromium.launchPersistentContext(peerProfile, {
         executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
       });
       let substrate: Awaited<ReturnType<typeof openMatrixConnectorSubstrate>> | null = null;
       try {
-        const page = await peer.newPage();
+        let page = await peer.newPage();
         await page.goto(peerOrigin);
         await page.waitForFunction(() => !!(globalThis as unknown as { peer?: PeerBridge }).peer);
         const aliceKeys = await page.evaluate(input => (globalThis as unknown as { peer: PeerBridge }).peer.open(input), {
@@ -115,6 +116,24 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         const ownSent = await substrate.send(ownTxn, ownMessage);
         assert.equal(await page.evaluate(({ room, eventId }) => (globalThis as unknown as { peer: PeerBridge }).peer.decrypt(room, eventId),
           { room: roomId, eventId: ownSent.eventId }), ownMessage);
+        // The browser's real Rust crypto store survives a full Chromium process restart.
+        // This is retained-profile continuity, not recovery from a lost profile.
+        const firstPeerPid = (await readlink(join(peerProfile, 'SingletonLock'))).split('-').at(-1);
+        await peer.close();
+        peer = await chromium.launchPersistentContext(peerProfile, {
+          executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
+        });
+        const reopenedPeerPid = (await readlink(join(peerProfile, 'SingletonLock'))).split('-').at(-1);
+        assert.notEqual(reopenedPeerPid, firstPeerPid, 'retained browser profile reopens in a distinct Chromium process');
+        page = await peer.newPage();
+        await page.goto(peerOrigin);
+        await page.waitForFunction(() => !!(globalThis as unknown as { peer?: PeerBridge }).peer);
+        const retainedKeys = await page.evaluate(input => (globalThis as unknown as { peer: PeerBridge }).peer.open(input), {
+          baseUrl, userId: alice.user_id, deviceId: alice.device_id, accessToken: alice.access_token,
+        }) as { ed25519: string };
+        assert.equal(retainedKeys.ed25519, aliceKeys.ed25519, 'retained browser profile keeps its exact Matrix device key');
+        assert.equal(await page.evaluate(({ room, eventId }) => (globalThis as unknown as { peer: PeerBridge }).peer.decrypt(room, eventId),
+          { room: roomId, eventId: ownSent.eventId }), ownMessage, 'retained browser profile decrypts its earlier encrypted event');
         assert.deepEqual(await substrate.send(ownTxn, ownMessage), ownSent);
         await assert.rejects(substrate.send(ownTxn, 'changed transaction body'), /matrix_send_conflict/);
         const firstCursor = first.nextCursor;
