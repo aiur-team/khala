@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser } from '@playwright/test';
 
-test('details overlay traps keyboard focus and returns it to the opener', { timeout: 90_000 }, async () => {
+test('details trap focus only as an overlay and stay nonmodal on desktop', { timeout: 90_000 }, async () => {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-conversation-detail-'));
   const root = join(import.meta.dirname, '../../..');
   let server: PreviewServer | null = null;
@@ -30,6 +30,14 @@ test('details overlay traps keyboard focus and returns it to the opener', { time
     await page.keyboard.press('Escape');
     assert.equal(await page.getByRole('dialog').count(), 0);
     assert.equal(await opener.evaluate(element => document.activeElement === element), true);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await opener.click();
+    const desktopDetail = page.getByRole('complementary', { name: 'Conversation details' });
+    assert.equal(await desktopDetail.count(), 1);
+    assert.equal(await desktopDetail.getAttribute('aria-modal'), null);
+    assert.equal(await opener.evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('Tab');
+    assert.equal(await page.getByRole('textbox', { name: 'Message' }).evaluate(element => document.activeElement === element), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
