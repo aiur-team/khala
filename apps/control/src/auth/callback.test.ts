@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ORIGIN, beginAndReturn, cookiePairs, harness, request, signIn } from './support.test';
 
 describe('startSignIn', () => {
@@ -172,7 +172,39 @@ describe('completeSignIn', () => {
     const result = await h.service.completeSignIn(await beginAndReturn(h));
     const text = JSON.stringify([result, h.logs]);
     expect(text).not.toMatch(/eyJ|exploded|code-1|ada@/);
-    expect(h.logs).toEqual([{ event: 'callback', code: 'unavailable', requestId: null }]);
+    expect(h.logs).toEqual([{ event: 'callback', code: 'oidc_exchange', requestId: null }]);
+  });
+
+  it.each([
+    ['read', 'auth.login.', 'login_read'],
+    ['compareAndSet', 'auth.login.', 'login_consume'],
+    ['read', 'auth.owner.', 'owner_mapping'],
+    ['compareAndSet', 'auth.session.', 'session_create'],
+  ] as const)('reports only the failing %s stage for %s', async (operation, keyPrefix, stage) => {
+    const h = harness();
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    const callback = await beginAndReturn(h);
+    if (operation === 'read') {
+      const original = h.store.store.read.bind(h.store.store);
+      vi.spyOn(h.store.store, 'read').mockImplementation(async (key, options) =>
+        key.startsWith(keyPrefix) ? { kind: 'unavailable' } : original(key, options));
+    } else {
+      const original = h.store.store.compareAndSet.bind(h.store.store);
+      vi.spyOn(h.store.store, 'compareAndSet').mockImplementation(async (input, options) =>
+        input.key.startsWith(keyPrefix) ? { kind: 'unavailable' } : original(input, options));
+    }
+    const result = await h.service.completeSignIn(callback);
+    expect(result.kind).toBe('unavailable');
+    expect(h.logs).toEqual([{ event: 'callback', code: stage, requestId: null }]);
+    expect(JSON.stringify(h.logs)).not.toMatch(/ada@|user-1|code-|eyJ|exploded|__Host/);
+  });
+
+  it.each(['lookup', 'create'] as const)('reports Matrix %s failure without logging owner or provider details', async operation => {
+    const h = harness();
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    h.messaging.inject(operation, 'unavailable');
+    expect((await h.service.completeSignIn(await beginAndReturn(h))).kind).toBe('unavailable');
+    expect(h.logs).toEqual([{ event: 'callback', code: 'matrix_provisioning', requestId: null }]);
   });
 
   it('returns to the stored path, never one supplied on the callback', async () => {

@@ -95,6 +95,9 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       origin: env.publicAppOrigin,
       sessionTtlMs: SESSION_TTL_MS,
       loginTtlMs: LOGIN_TTL_MS,
+      log: entry => {
+        if (entry.event === 'callback') console.warn('Khala auth callback', JSON.stringify({ stage: entry.code }));
+      },
     });
     runtime = { auth, store, matrix, env, clock };
     return runtime;

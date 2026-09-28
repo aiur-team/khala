@@ -153,8 +153,8 @@ export function createAuthService(options: AuthServiceOptions): AuthService {
       return result;
     },
     async completeSignIn(request) {
-      const result = await completeSignIn(deps, request);
-      if (result.kind !== 'signed_in') log(request, 'callback', result.kind === 'rejected' ? result.code : 'unavailable');
+      const result = await completeSignIn(deps, request, stage => log(request, 'callback', stage));
+      if (result.kind === 'rejected') log(request, 'callback', result.code);
       return result;
     },
     authenticateRequest,

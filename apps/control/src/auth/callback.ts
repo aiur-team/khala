@@ -89,15 +89,26 @@ export type CallbackResult =
   /** Infrastructure failure (store, provider or messaging); never a sign-out. */
   | Readonly<{ kind: 'unavailable'; cookies: readonly string[] }>;
 
-export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'url' | 'headers'>): Promise<CallbackResult> {
+export type CallbackUnavailableStage =
+  | 'login_read' | 'login_consume' | 'oidc_exchange' | 'owner_mapping' | 'matrix_provisioning' | 'session_create';
+
+export async function completeSignIn(
+  deps: SignInDeps,
+  request: Pick<Request, 'url' | 'headers'>,
+  onUnavailable?: (stage: CallbackUnavailableStage) => void,
+): Promise<CallbackResult> {
   const clear = [clearCookie(LOGIN_COOKIE)];
   const reject = (code: CallbackRejection): CallbackResult => ({ kind: 'rejected', code, cookies: clear });
+  const unavailable = (stage: CallbackUnavailableStage, cookies: readonly string[]): CallbackResult => {
+    try { onUnavailable?.(stage); } catch { /* Diagnostics cannot change the callback outcome. */ }
+    return { kind: 'unavailable', cookies };
+  };
   const handle = readCookie(request.headers.get('cookie'), LOGIN_COOKIE);
   if (handle === null || !TOKEN.test(handle)) return reject('login_expired');
   const key = loginKey(handle);
   const read = await deps.store.read<LoginRecord>(key);
   // Keep the login cookie: the binding may still be intact once the store recovers.
-  if (read.kind === 'unavailable') return { kind: 'unavailable', cookies: [] };
+  if (read.kind === 'unavailable') return unavailable('login_read', []);
   if (read.kind === 'absent') return reject('login_expired');
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
@@ -116,7 +127,7 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
     next: { value: { ...login, status: 'consumed' }, expiresAt: read.record.expiresAt },
   });
   if (consume.kind === 'conflict') return reject('login_replayed');
-  if (consume.kind !== 'applied') return { kind: 'unavailable', cookies: clear };
+  if (consume.kind !== 'applied') return unavailable('login_consume', clear);
 
   const exchanged = await orUnavailable(() => deps.oidc.exchangeCode({
     callbackUrl: request.url,
@@ -126,21 +137,21 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
     codeVerifier: login.codeVerifier,
   }));
   if (exchanged.kind === 'rejected') return reject(exchanged.code === 'denied' ? 'provider_denied' : 'invalid_response');
-  if (exchanged.kind !== 'ok') return { kind: 'unavailable', cookies: clear };
+  if (exchanged.kind !== 'ok') return unavailable('oidc_exchange', clear);
 
   const nowMs = deps.clock();
   const claims = checkClaims(exchanged.value, { issuer: deps.oidc.issuer, clientId: deps.oidc.clientId, nonce: login.nonce, nowMs });
   if (!claims.ok) return reject(claims.code);
   const owner = await resolveOwner(deps.store, deps.random, claims.identity);
-  if (owner.kind !== 'owner') return { kind: 'unavailable', cookies: clear };
+  if (owner.kind !== 'owner') return unavailable('owner_mapping', clear);
   const account = await ensureMessagingAccount(deps.store, deps.messaging, deps.random, owner.ownerId);
   if (account.kind === 'conflict') return reject('mapping_conflict');
-  if (account.kind !== 'active') return { kind: 'unavailable', cookies: clear };
+  if (account.kind !== 'active') return unavailable('matrix_provisioning', clear);
 
   const session = await createSession(deps.store, deps.random, {
     ownerId: owner.ownerId, identity: claims.identity, expiresAtMs: nowMs + deps.sessionTtlMs,
   });
-  if (session.kind !== 'created') return { kind: 'unavailable', cookies: clear };
+  if (session.kind !== 'created') return unavailable('session_create', clear);
   // A new sign-in replaces this browser's previous session rather than leaving it
   // live. Best effort: the new session stands even if the old one cannot be revoked
   // now, and the old one still expires on its own.

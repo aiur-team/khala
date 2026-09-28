@@ -143,6 +143,19 @@ describe('human handler registration', () => {
 });
 
 describe('auth route handlers', () => {
+  it.each([
+    ['service_init', async () => { throw new Error('secret callback URL and token'); }],
+    ['handler_exception', async () => services({ auth: { completeSignIn: vi.fn(async () => { throw new Error('secret callback URL and token'); }) } })],
+  ] as const)('reports a fixed callback %s label without exception details', async (stage, load) => {
+    const reported = vi.fn();
+    const registrations = createHumanHandlers(load, reported);
+    const response = await route(registrations, '/api/human/auth/callback').handle(request('/api/human/auth/callback?code=secret-code&state=secret-state'));
+    expect(response.status).toBe(503);
+    expect(await body(response)).toEqual({ code: 'unavailable' });
+    expect(reported).toHaveBeenCalledExactlyOnceWith(stage);
+    expect(JSON.stringify(reported.mock.calls)).not.toMatch(/secret|token|callback URL/);
+  });
+
   it('maps login, callback and current-session results without caching secrets', async () => {
     const auth = services({
       auth: {
