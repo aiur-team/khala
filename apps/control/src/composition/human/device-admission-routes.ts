@@ -45,7 +45,7 @@ export function createDeviceAdmissionRoutes(input: Readonly<{
   distributionReady(request: Replacement): Promise<boolean>;
 }>): readonly RouteRegistration[] {
   // The ledger's callback is request-scoped: no ambient principal or client-supplied authority.
-  const route: RouteRegistration = {
+  const route: RouteRegistration = Object.freeze({
     path: DEVICE_ADMISSION_PATH, methods: ['POST'],
     async handle(request) {
       const signed = await input.auth.requireHumanMutation(request).catch(() => ({ kind: 'unavailable' as const }));
@@ -78,14 +78,14 @@ export function createDeviceAdmissionRoutes(input: Readonly<{
       return json(result === 'applied' ? 200 : result === 'pending' ? 202
         : result === 'conflict' ? 409 : result === 'refused' ? 403 : 503, { kind: result });
     },
-  };
+  });
   return Object.freeze([route]);
 }
 
 export function createLazyDeviceAdmissionRoutes(load: () => readonly RouteRegistration[]): readonly RouteRegistration[] {
-  return Object.freeze([{ path: DEVICE_ADMISSION_PATH, methods: Object.freeze(['POST']),
+  return Object.freeze([Object.freeze({ path: DEVICE_ADMISSION_PATH, methods: Object.freeze(['POST']),
     async handle(request: Request) {
       const selected = load().find(route => route.path === DEVICE_ADMISSION_PATH);
       return selected ? selected.handle(request) : json(503, { code: 'feature_unavailable' });
-    } }]);
+    } })]);
 }

@@ -188,6 +188,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/revocation/status', methods: ['GET'], domain: 'human' },
       ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
         ({ path: `/api/human/room-send/${action}`, methods: ['POST'], domain: 'human' })),
+      { path: '/api/human/devices/replacement', methods: ['POST'], domain: 'human' },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-access/inbox', methods: ['GET'], domain: 'human' },
