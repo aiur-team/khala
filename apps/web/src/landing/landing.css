@@ -460,6 +460,11 @@ a {
     padding-inline: 16px;
   }
 
+  /* Keep wrapped prompt glyphs on whole-pixel line boxes. */
+  .install-box {
+    line-height: 19px;
+  }
+
   .lockup {
     gap: 8px;
   }
