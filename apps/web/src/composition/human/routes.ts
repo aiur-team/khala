@@ -19,16 +19,17 @@ export interface HumanRouteCodec extends RouteCodec {
 export type HumanRouteCodecOptions = Readonly<{
   origin: string;
   basePath: string;
+  allowInsecureLoopback?: boolean;
 }>;
 
-function exactHttpsOrigin(value: string): string {
+function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
     throw new Error('human route origin must be an exact https origin');
   }
-  const loopback = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  const loopback = allowInsecureLoopback && parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
   if (!(parsed.protocol === 'https:' || loopback) || parsed.username || parsed.password || parsed.origin !== value || parsed.pathname !== '/' || parsed.search || parsed.hash) {
     throw new Error(!loopback && parsed.protocol !== 'https:' ? 'human route origin must be an https origin' : 'human route origin must be an exact origin');
   }
@@ -47,7 +48,7 @@ function normalizedBasePath(value: string): string {
 }
 
 export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRouteCodec {
-  const origin = exactHttpsOrigin(options.origin);
+  const origin = exactHttpsOrigin(options.origin, options.allowInsecureLoopback);
   const base = normalizedBasePath(options.basePath);
   // The site root belongs to the public landing page (netlify.toml), so the
   // application's create route lives one segment below the base path.

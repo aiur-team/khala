@@ -9,7 +9,8 @@ describe('parsePublicOrigin', () => {
   });
 
   it('accepts plain HTTP only on loopback', () => {
-    expect(parsePublicOrigin('http://localhost:8008')).toBe('http://localhost:8008');
+    expect(parsePublicOrigin('http://localhost:8008')).toBeNull();
+    expect(parsePublicOrigin('http://localhost:8008', true)).toBe('http://localhost:8008');
     expect(parsePublicOrigin('http://matrix.example.com')).toBeNull();
   });
 
@@ -35,7 +36,15 @@ describe('readHostedConfig', () => {
     expect(readHostedConfig({
       PUBLIC_APP_ORIGIN: 'https://khala.aiur.team',
       PUBLIC_HOMESERVER_ORIGIN: 'https://matrix.example.com/',
-    })).toEqual({ ok: true, appOrigin: 'https://khala.aiur.team', homeserverOrigin: 'https://matrix.example.com' });
+    })).toEqual({ ok: true, appOrigin: 'https://khala.aiur.team', homeserverOrigin: 'https://matrix.example.com', localDev: false });
+  });
+
+  it('requires the explicit public dev flag for HTTP loopback origins', () => {
+    const local = { PUBLIC_APP_ORIGIN: 'http://localhost:8888', PUBLIC_HOMESERVER_ORIGIN: 'http://127.0.0.1:8008' };
+    expect(readHostedConfig(local)).toEqual({ ok: false, missing: ['PUBLIC_APP_ORIGIN', 'PUBLIC_HOMESERVER_ORIGIN'] });
+    expect(readHostedConfig({ ...local, PUBLIC_LOCAL_DEV_MODE: 'enabled' })).toEqual({
+      ok: true, appOrigin: local.PUBLIC_APP_ORIGIN, homeserverOrigin: local.PUBLIC_HOMESERVER_ORIGIN, localDev: true,
+    });
   });
 
   it('names every missing or malformed origin instead of throwing', () => {

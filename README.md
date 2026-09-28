@@ -12,7 +12,7 @@ The [44 detailed plans](docs/plans/README.md) link each ticket’s product contr
 
 ## Run locally
 
-Install Node 22.23.2 and pnpm 10.34.5, then run `pnpm install --frozen-lockfile`. Copy `.env.example` to the ignored `.env`; set its Matrix origin, server name, and registration secret to a disposable local Synapse instance. Generate fresh values for the password-derivation and invitation secrets. Keep `NODE_ENV=development`, `KHALA_LOCAL_AUTH=enabled`, and `PUBLIC_APP_ORIGIN=http://localhost:8888`. The local provider uses `KHALA_LOCAL_AUTH_EMAIL` as the owner identity.
+Install Node 22.23.2 and pnpm 10.34.5, then run `pnpm install --frozen-lockfile`. Copy `.env.example` to the ignored `.env`; set its Matrix origin, server name, and registration secret to a disposable local Synapse instance. Generate fresh values for the password-derivation and invitation secrets. Keep `NODE_ENV=development`, `KHALA_LOCAL_AUTH=enabled`, `PUBLIC_LOCAL_DEV_MODE=enabled`, and `PUBLIC_APP_ORIGIN=http://localhost:8888`. The local provider uses `KHALA_LOCAL_AUTH_EMAIL` as the owner identity.
 
 Load the root `.env` for the build and local gateway:
 

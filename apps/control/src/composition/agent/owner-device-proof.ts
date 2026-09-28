@@ -38,12 +38,15 @@ export type OwnerDeviceProofDependencies = Readonly<{
 /** Matrix HTTP check for the token held by the browser's opened crypto device. */
 export function createMatrixBrowserDeviceVerifier(input: Readonly<{
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   serverName: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 }>): OwnerDeviceProofDependencies['verifyBrowserDevice'] {
   const origin = new URL(input.homeserverOrigin);
-  if (origin.protocol !== 'https:' || origin.origin !== input.homeserverOrigin
+  const loopback = input.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || loopback) || origin.origin !== input.homeserverOrigin
     || origin.username || origin.password) throw new Error('Matrix origin must be exact HTTPS');
   if (!/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u.test(input.serverName)) throw new Error('invalid Matrix server name');
   const fetch = input.fetch ?? globalThis.fetch.bind(globalThis);

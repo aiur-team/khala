@@ -1,6 +1,7 @@
 import { decodeApprovalCommand, decodeDeliveryLimits, type ApprovalCommand, type BindingId } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { ReviewControlClient, ReviewPreviewRequest } from './browser-port';
+import { parsePublicOrigin } from '../human/hosted-config';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -17,13 +18,14 @@ export type OwnerReviewBinding = Readonly<{ bindingId: BindingId; generation: nu
 /** Same-origin, cookie-authenticated human route. Authority is never supplied by this client. */
 export function createOwnerMailboxReviewClient(input: Readonly<{
   origin: string;
+  allowInsecureLoopback?: boolean;
   csrf: () => Promise<string | null>;
   fetch?: Fetch;
   waitMs?: number;
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }>): Readonly<{ review: ReviewControlClient; bindings(roomId: RoomId, signal: AbortSignal): Promise<readonly OwnerReviewBinding[] | null> }> {
   const origin = new URL(input.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== input.origin) throw new Error('review_origin_invalid');
+  if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('review_origin_invalid');
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   const waitMs = input.waitMs ?? 8_000;
   const submittedCommands = new Set<string>();

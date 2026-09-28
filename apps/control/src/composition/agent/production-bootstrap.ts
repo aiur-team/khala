@@ -93,6 +93,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const bootstrap = createAgentBootstrapHandlers({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       clock: active.clock,
       random: dependencies.random ?? (bytes => randomBytes(bytes)),
@@ -112,6 +113,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const attestation = createDeviceAttestationRoutes({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       capabilities: bootstrap.capabilities,
       publishedFingerprint: binding => matrixAgents.publishedDeviceFingerprint(binding),
@@ -137,6 +139,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       verifyBrowserDevice: createMatrixBrowserDeviceVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
     });
