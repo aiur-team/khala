@@ -260,7 +260,7 @@ describe('review delivery composition', () => {
     expect(harness.submitted[0]).toContain(canaryB);
   });
 
-  it('a crash after the harness write restores outcome_unknown and never submits again', async () => {
+  it('a backup after an ambiguous harness write restores outcome_unknown without replay', async () => {
     const { storage, state } = await seed();
     const harness = new SessionHarness();
     harness.crashAfterWrite = true;
@@ -271,16 +271,30 @@ describe('review delivery composition', () => {
     await first.dispatcher.stop();
     await storage.close();
 
+    const backup = path.join(path.dirname(state), 'written-backup');
+    fs.cpSync(state, backup, { recursive: true });
     harness.crashAfterWrite = false;
-    const reopened = await openStore(state, 'existing');
-    const second = await connector(reopened, harness);
-    await second.dispatcher.idle();
-    expect(await second.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
-    await second.dispatcher.idle();
+    for (let restore = 0; restore < 2; restore += 1) {
+      const restoredState = path.join(path.dirname(state), `written-restore-${restore}`);
+      fs.cpSync(backup, restoredState, { recursive: true });
+      const restored = await openStore(restoredState, 'existing');
+      expect((await recoverConnectorStorage(restored)).outcomeUnknownReleases).toEqual(['release_1']);
+      const resumed = await connector(restored, harness);
+      await resumed.dispatcher.idle();
+      expect(await resumed.approve(approveB())).toEqual({ ok: true, releaseIds: ['release_1'] });
+      await resumed.dispatcher.idle();
 
-    expect(harness.submitted).toHaveLength(1);
-    const state2 = await createConnectorDispatchStorage(reopened).ledger.transact(tx => tx.record('release_1' as never));
-    expect(state2?.state).toBe('outcome_unknown');
+      expect(harness.submitted).toHaveLength(1);
+      expect(harness.submitted[0]).toContain(canaryB);
+      expect(harness.submitted.join('\n')).not.toContain(canaryA);
+      const preview = await resumed.preview({ bindingId, candidates: [refA], releaseIds: [] });
+      expect(preview.ok && preview.preview.pending).toEqual([refA]);
+      const record = await createConnectorDispatchStorage(restored).ledger.transact(tx => tx.record('release_1' as never));
+      expect(record?.state).toBe('outcome_unknown');
+      await resumed.capability.stop();
+      await resumed.dispatcher.stop();
+      await restored.close();
+    }
   });
 
   it.each([0, 1])('holds a receipt-only unknown release with receipt generation %i across repeated restarts', async receiptGeneration => {
