@@ -28,6 +28,34 @@ const peerRoot = fileURLToPath(new URL('../../../experiments/browser-crypto/dist
 const connectorBundle = fileURLToPath(new URL('../../../apps/connector/dist/substrate-browser/', import.meta.url));
 const pending = 'pending-' + randomUUID();
 const withheld = 'withheld-' + randomUUID();
+const recoveryNamePattern = /^relay-recovery-([a-f0-9]{12})\.json$/u;
+const browserScratchPrefix = 'k-';
+
+function nativeScratchRoot(recoveryFile: string): string {
+  const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
+  const match = recoveryNamePattern.exec(path.basename(recoveryFile));
+  if (path.dirname(recoveryFile) !== privateRoot || !match) {
+    throw new Error('native_crash_recovery_file_required');
+  }
+  return path.join(privateRoot, `s-${match[1]}`);
+}
+
+test('KHA-133 private Chromium socket path stays within the Linux Unix socket limit', {
+  skip: process.platform !== 'linux' ? 'Linux Chromium socket budget' : undefined,
+}, () => {
+  const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
+  const recoveryFile = path.join(privateRoot, 'relay-recovery-000000000000.json');
+  const scratchRoot = nativeScratchRoot(recoveryFile);
+  assert.throws(() => nativeScratchRoot(path.join(privateRoot, 'r-000000000000.json')),
+    /native_crash_recovery_file_required/u);
+  assert.throws(() => nativeScratchRoot(path.join(privateRoot, 'other', path.basename(recoveryFile))),
+    /native_crash_recovery_file_required/u);
+  const runtimeSocket = path.join(scratchRoot, 'org.chromium.Chromium.XXXXXX', 'SingletonSocket');
+  assert.ok(Buffer.byteLength(runtimeSocket) < 108, 'Chromium runtime socket fits the Linux limit');
+  const profileSocket = path.join(scratchRoot, `${browserScratchPrefix}XXXXXX`,
+    'peer', '.org.chromium.XXXXXX', 'SingletonSocket');
+  assert.ok(Buffer.byteLength(profileSocket) < 108, 'browser profile socket has room for its terminator');
+});
 
 test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome unknown, no duplicate', {
   timeout: 360_000,
@@ -38,12 +66,8 @@ test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome
     throw new Error('not_observed_native_gate: ' + gate.code);
   }
   const recoveryFile = process.env.KHALA_42_RECOVERY_FILE;
-  const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
-  if (!recoveryFile || path.dirname(recoveryFile) !== privateRoot
-    || !/^relay-recovery-[a-f0-9]{12}\.json$/u.test(path.basename(recoveryFile))) {
-    throw new Error('native_crash_recovery_file_required');
-  }
-  const scratchRoot = `${recoveryFile}.scratch`;
+  if (!recoveryFile) throw new Error('native_crash_recovery_file_required');
+  const scratchRoot = nativeScratchRoot(recoveryFile);
   if (process.env.TMPDIR !== scratchRoot) throw new Error('native_crash_scratch_scope_invalid');
   await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
   const scratchStat = await lstat(scratchRoot);
@@ -51,7 +75,7 @@ test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome
     || scratchStat.uid !== process.getuid?.() || (scratchStat.mode & 0o077) !== 0) {
     throw new Error('native_crash_scratch_scope_unsafe');
   }
-  const scratch = await mkdtemp(path.join(scratchRoot, 'khala-42-live-'));
+  const scratch = await mkdtemp(path.join(scratchRoot, browserScratchPrefix));
   let peerServer: Awaited<ReturnType<typeof servePeer>> | null = null;
   let synapse: Awaited<ReturnType<typeof startClosureSynapse>> | null = null;
   try {

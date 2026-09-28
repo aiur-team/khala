@@ -14,11 +14,11 @@ function docker(args, env) {
 
 function cleanup(recoveryFile) {
   const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
-  if (path.dirname(recoveryFile) !== privateRoot
-    || !/^relay-recovery-[a-f0-9]{12}\.json$/u.test(path.basename(recoveryFile))) {
+  const recoveryMatch = /^relay-recovery-([a-f0-9]{12})\.json$/u.exec(path.basename(recoveryFile));
+  if (path.dirname(recoveryFile) !== privateRoot || !recoveryMatch) {
     throw new Error('relay_cleanup_path_invalid');
   }
-  const scratch = `${recoveryFile}.scratch`;
+  const scratch = path.join(privateRoot, `s-${recoveryMatch[1]}`);
   if (!existsSync(recoveryFile)) { rmSync(scratch, { recursive: true, force: true }); return; }
   const item = JSON.parse(readFileSync(recoveryFile, 'utf8'));
   const composeFile = fileURLToPath(new URL('../../../experiments/backend/compose.yaml', import.meta.url));
