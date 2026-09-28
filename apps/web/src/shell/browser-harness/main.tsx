@@ -31,7 +31,7 @@ function Harness() {
         <Panel
           heading="Human review"
           footer={
-            <button type="button" aria-describedby="review-hint">
+            <button type="button" className="aiur-action" aria-describedby="review-hint">
               Review selected batch
             </button>
           }

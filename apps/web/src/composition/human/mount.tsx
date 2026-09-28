@@ -83,7 +83,7 @@ function SignInPanel({ identity, path, navigateExternal }: {
   return (
     <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
       <Panel heading="Continue with your account">
-        <button type="button" onClick={() => void signIn()}>Sign in</button>
+        <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
         {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}
       </Panel>
     </KhalaPageFrame>

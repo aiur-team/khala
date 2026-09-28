@@ -35,7 +35,7 @@ build and make no external requests.
 ## Fonts
 
 Khala imports Bungee, Space Grotesk, and JetBrains Mono from the pinned
-[`@aiur/components` package](https://github.com/aiur-team/aiur/tree/ad7975717e3124421c915aff483b10b7d4efeaad/packages/components).
+[`@aiur/components` package](https://github.com/aiur-team/aiur/tree/ce325788a15183c12628a926050c22409b5a29bf).
 That package owns the font files, `@font-face` declarations, SIL Open Font
 License notices, theme tokens, and shared control styles. `fonts.css` here is
 only a compatibility import for existing Khala browser harnesses.
