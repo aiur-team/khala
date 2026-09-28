@@ -55,12 +55,16 @@ client. These are local checks, not a real-service acceptance run.
 
 `manual-owner-controls.spec.ts` is a fail-closed live driver. It has not been run
 and is not acceptance evidence. It uses the deployed HTTPS control routes, two
-real OAuth sessions and a real, pre-paired local connector process. It exercises
-the mounted owner panel, connector acknowledgment, wrong-owner refusal, two-tab
-version conflict, a browser reply lost *after* the actual submit, and a restart
-of the same process/session. Its final review-mode check is only the manual
-resume boundary; it does not prove a post-re-arm event was withheld from the
-model. No skipped or fixture-backed spec counts as a pass.
+real OAuth sessions, a real pre-paired local connector process and the private
+native witness documented below. It exercises the mounted owner panel,
+connector acknowledgment, wrong-owner refusal, two-tab version conflict, a
+browser reply lost *after* the actual submit, and a restart of the same
+process/session. It then approves an exact event while pause is effective,
+checks that the pinned native session did not see it during the paused
+observation, resumes review delivery and requires its native ACK and cursor.
+A separate event sent after effective review resume stays pending and absent
+while its approved neighbor reaches the same native session. Hosted `auto`
+and its re-arm remain gated. No skipped or fixture-backed spec counts as a pass.
 
 - **Real protected-browser and process proof.** The owner mailbox route, production
   client, SQLite trust journal, initial policy and panel mount now exist, but the
@@ -69,7 +73,7 @@ model. No skipped or fixture-backed spec counts as a pass.
   transport loss, restart reconciliation and event-level re-arm against the actual
   process. The new driver covers wrong-owner denial, acknowledgment, conflict,
   transport loss and restart, but has no qualifying run. Model-surface refusal
-  and post-re-arm native model input remain unobserved.
+  and post-resume native model input remain unobserved until a qualifying run.
 - **Live races.** U2 needs a disposable runtime with fault and barrier hooks between an
   incoming event, dispatch and a restrictive control. U3 is blocked by the gates above.
 
@@ -100,7 +104,8 @@ The operator must approve and provision a disposable hosted deployment with
 real OIDC, Matrix/Synapse, persistent control store and explicit browser
 admission, plus a pre-paired owner connector attached to an already-running
 supported native session. The descriptor's first OAuth user owns `roomId` and
-the binding; the second user has a separate real identity. The agent participant
+the binding; the second user has a separate real identity and is already admitted
+to the room to send synthetic events. The agent participant
 and binding IDs must come from the deployed binding, not a seeded stand-in.
 The local `connectorControl` executable is a process supervisor adapter, not an
 HTTP or mailbox substitute: `<args> status` reports JSON
@@ -143,14 +148,21 @@ itself. This change does not provision a unit or start a native process.
 After restart, the test must still get a fresh connector status through the
 protected mailbox, so a PID-only restart cannot count as success.
 
+The same private descriptor must include `reviewNative` as specified in
+`tests/integration/review/README.md`. Its process and rollout identify the
+already-running Codex 0.157.1 GPT-6-Sol session named by protected connector
+status. The driver reads only new rollout intervals and the production CLI
+inbox/cursor. Missing or changed process, model, rollout, ACK, cursor or
+pending neighbor fails the test. The descriptor must be an owned mode-0600
+regular file; credentials and rollout contents stay outside test output.
+
 The driver also requires the deployed browser bundle to include the owner
 controls wiring and the connector to inspect a *tested* manual route. A disabled
-button or unavailable status is a failure. Full event-level re-arm proof needs
-an admitted disposable sender, a synthetic event after the effective review
-barrier, and an independent observation of the actual native session showing
-that event absent until exact owner approval. Do not claim that result from a
-policy status, queue receipt or scripted transport. The current descriptor has
-no native transcript witness for this check.
+button or unavailable status is a failure. The native witness checks an event
+arriving after effective review resume against an independently approved
+neighbor. This does not prove a transition from hosted `auto` back to review;
+that transition remains blocked by G-AUTOMATION. A finite absence observation
+does not claim to retract already consumed content.
 
 Run only after these prerequisites are approved and available:
 
