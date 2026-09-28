@@ -113,6 +113,9 @@ test('real owner browser and connector acknowledge manual controls across races 
     // Drop only the browser reply after the real HTTPS submit reached the service.
     // The browser must reconcile or retry the same command without claiming a lost write failed.
     if (raced.policy.paused) await setPolicy(owner.page, false);
+    const beforeLost = await controlsStatus(owner.page, controls.bindingId);
+    expect(beforeLost.policy.paused).toBe(false);
+    expect(beforeLost.policy.effectiveVersion).not.toBeNull();
     await expect(ownerPanel.getByRole('button', { name: 'Request pause' })).toBeEnabled();
     let lostBody: { operationId?: string; kind?: string; body?: unknown } | null = null;
     await owner.page.route('**/api/human/owner-mailbox/submit', async route => {
@@ -141,7 +144,7 @@ test('real owner browser and connector acknowledge manual controls across races 
     await expect(ownerPanel.locator('.agent-controls__requested')).toContainText('confirmed');
     await expect.poll(async () => (await controlsStatus(owner.page, controls.bindingId)).policy.paused).toBe(true);
     const afterLost = await controlsStatus(owner.page, controls.bindingId);
-    expect(afterLost.policy.effectiveVersion).toBe(raced.policy.effectiveVersion! + 1);
+    expect(afterLost.policy.effectiveVersion).toBe(beforeLost.policy.effectiveVersion! + 1);
 
     const beforeRestart = await controlsStatus(owner.page, controls.bindingId);
     const restarted = await connectorWitness(controls, 'restart');
