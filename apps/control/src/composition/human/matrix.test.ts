@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
 import { createMatrixHumanServices } from './matrix';
@@ -6,6 +6,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
+import { ensureMessagingAccount } from '../../auth/provisioning';
 
 const registrationSecret = 'registration-secret-with-more-than-32-bytes';
 const passwordSecret = 'password-secret-with-more-than-32-bytes';
@@ -66,6 +67,33 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('treats Synapse missing-profile M_UNKNOWN as absent, but refuses other unknown 404s', async () => {
+    for (const [error, expected] of [
+      ['No row found (profiles)', 'absent'],
+      ['Unknown endpoint', 'unavailable'],
+    ] as const) {
+      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+        if (path.startsWith('/_matrix/client/v3/profile/')) return json(404, { errcode: 'M_UNKNOWN', error });
+        if (path === '/_synapse/admin/v1/register' && init?.method !== 'POST') return json(200, { nonce: 'nonce_1' });
+        if (path === '/_synapse/admin/v1/register') {
+          const request = JSON.parse(String(init?.body)) as { username: string };
+          return json(200, { user_id: `@${request.username.toLowerCase()}:matrix.example.test` });
+        }
+        throw new Error(`unexpected request ${path}`);
+      });
+      const store = memoryStore();
+      const directory = services(fetch, store).directory;
+      expect((await directory.lookup(principal.ownerId)).kind).toBe(expected);
+      const provisioned = await ensureMessagingAccount(store, directory,
+        bytes => new Uint8Array(randomBytes(bytes)), principal.ownerId);
+      expect(provisioned.kind).toBe(expected === 'absent' ? 'active' : 'unavailable');
+      expect(fetch.mock.calls.some(([input, init]) =>
+        new URL(input instanceof Request ? input.url : input.toString()).pathname === '/_synapse/admin/v1/register'
+          && init?.method === 'POST')).toBe(expected === 'absent');
+    }
+  });
+
   it('registers an ordinary owner when Synapse canonicalizes shared-secret usernames to lowercase', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
