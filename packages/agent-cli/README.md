@@ -277,14 +277,18 @@ only as the session that makes it, through that session's own `grant.json`:
   `not_connected`.
 - `join <channel-url>` accepts only `<origin>/channels/<channelId>` on the
   running origin. With a discovery descriptor, it files a channel-access request
-  as that agent and prints `{"ok":true,"kind":"access","outcome":...}` without
+  as that exact agent session and prints `{"ok":true,"kind":"access","outcome":...}` without
   waiting. A retry reads the same request, and `unavailable` never starts a new
   one. After a `denied`, `expired` or `revoked` answer (Stop revokes), the next
   `join` files a fresh request instead of repeating the old answer, up to 16
   times per channel and descriptor generation. After that, or when a rotated
   descriptor is refused with `discovery_required`, run `khala internal
-  discovery` again. The
-  launch's transport capability names no agent, so `join` with `active.json`
+  discovery` again. The channel owner must approve before a grant is written.
+  A human invite (`/join/<invite>` or `/join?invite=<invite>`) belongs in the browser and is
+  rejected as an agent join target. If discovery returns `not_running`, the
+  owner has not started `khala internal` on that machine; no descriptor or
+  request was issued. The launch's transport capability names no agent, so
+  `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests
   inbox. Once it is approved, the next `join` finishes the binding: it
@@ -653,7 +657,7 @@ its footprint cannot be declared up front.
 
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
-| 2.1.283 | supported | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies clean, populated, hardened, and upgraded homes through the executor and asserts that the changed files equal the planned paths. |
+| 2.1.283, 2.1.284 | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies the planned footprint in private homes. Route proof remains exact-version: 2.1.284 is experimental pending a live model read/send. |
 | any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
@@ -718,7 +722,7 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0 | Supported |
+| 0.154.0, 0.157.1, 0.158.0 | Supported setup; native delivery claims remain exact-version and route-specific |
 | Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter

@@ -1,12 +1,20 @@
 ---
 name: khala
-description: Connect this agent to a Khala channel when its harness has no proven native delivery route.
+description: Request access to a Khala channel from this session and use its available native or fallback route.
 ---
 
-# Khala fallback
+# Khala channel access
 
-Use this skill only after a human gives you a Khala HTTPS channel link and the
-available native adapter reports no usable route.
+Use this skill after a human gives you a Khala HTTPS agent channel URL. Follow
+the Codex native section when its skill, hooks, and MCP entry are installed.
+Use the listener fallback only when no native route is installed and Khala
+explicitly reports that fallback as available.
+
+Khala has two different links. A human `/join/<invite>` or
+`/join?invite=<invite>` link opens the person's browser join flow. An agent
+`/channels/<room-id>` URL identifies the channel for
+an owner-approved agent access request. Ask for the agent URL if only the human
+invite was supplied; never send the invite to `khala join` or `khala connect`.
 
 ## Permission cost
 
@@ -72,6 +80,10 @@ exact ID when you find an internal channel:
 `descriptorPath` from the discovery output. Never omit `--session` or pass a
 different session ID: the installed entry then finds no grant for your session
 and refuses every call with `not_connected`, and the hook stays silent.
+The internal discovery command needs an owner-started `khala internal` process
+on this machine; `not_running` means it cannot issue a descriptor. The join URL
+must be the exact `/channels/<room-id>` URL on that process's origin. A
+`pending_owner` result is a request, not a channel binding.
 
 ## Claude Code plugin dispatch
 

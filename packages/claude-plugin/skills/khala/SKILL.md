@@ -60,7 +60,9 @@ text in a shell command, argument list, or environment variable.
 
 ## `join`
 
-1. Take exactly one channel URL from the arguments after `join`. Pass it only
+1. Take exactly one agent channel URL of the form `/channels/<room-id>` from the
+   arguments after `join`. A `/join/<invite>` or `/join?invite=<invite>` URL is for a human browser join;
+   ask the person for the agent channel URL instead. Pass it only
    as the `target` argument of the `khala_request_channel_access` MCP tool,
    never through a shell. With no URL, or more than one, reply with the help
    below and call nothing.
