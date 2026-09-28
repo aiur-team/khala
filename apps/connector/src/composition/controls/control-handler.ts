@@ -14,7 +14,7 @@
 
 import {
   type BindingId, type HarnessCapabilities, type OwnerAuthority, type PolicyAck, type PolicyAckErrorCode,
-  type RoomId, type SessionBinding, decodeBindingId, decodePolicySetCommand,
+  type RoomId, type SessionBinding, decodeBindingId, decodePolicySetCommand, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { DispatchPolicy } from '@khala/connector/dispatch/types';
 import type { ConnectorDispatchStorage, EffectivePolicyWriteResult } from '@khala/connector/storage/dispatch';
@@ -45,7 +45,7 @@ export type PolicyControlDependencies = Readonly<{
   /** When set, only this runtime's binding is served; every other binding reads as forbidden. */
   bindingId?: BindingId;
   /** The bound route's inspected capability record, or null when not inspected. */
-  capabilities?: () => HarnessCapabilities | null;
+  capabilities?: () => Promise<HarnessCapabilities | null> | HarnessCapabilities | null;
 }>;
 
 export type PolicyControlResult =
@@ -304,19 +304,27 @@ export function createPolicyControlHandler(deps: PolicyControlDependencies): Pol
     const bindingId = decoded.value;
     if (deps.bindingId !== undefined && bindingId !== deps.bindingId) return { ok: false, code: 'forbidden' };
     try {
+      const authorized = await readLedger(bindingId);
+      if (authorized === null || authorized.binding.ownerId !== authority.ownerId) return { ok: false, code: 'forbidden' };
+      // Inspection may cross a process/HTTP boundary. Observe the ledger only
+      // after it resolves so an in-flight revoke cannot publish an older active view.
+      const capabilities = await deps.capabilities?.() ?? null;
       const observed = await dispatchStorage.ledger.transact(tx => {
         const state = tx.binding(bindingId);
         if (state === null || state.binding.ownerId !== authority.ownerId) return null;
         return observeStatus(tx, state.binding, state.revoked);
       });
       if (observed === null) return { ok: false, code: 'forbidden' };
+      // A replacement may have occurred while inspection waited. Its capability
+      // belongs to the old session and must never be paired with the new ledger row.
+      if (!sameSessionBinding(observed.binding, authorized.binding)) return { ok: false, code: 'unavailable' };
       const stored = await trust.read(bindingId);
       const { enforced, ...rest } = observed;
       return {
         ok: true,
         status: {
           ...rest,
-          capabilities: deps.capabilities?.() ?? null,
+          capabilities,
           ...policyStatus(observed.binding, enforced, stored),
         },
       };

@@ -111,6 +111,8 @@ describe('browser agent controls port', () => {
 
     script.onStatus(() => ({ kind: 'ok', body: statusBody({ extra: { ownerAuthority: 'x' } }) }));
     await expect(port.readSnapshot(bindingId)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(port.observation()).toMatchObject({ connection: 'offline' });
+    await expect(port.submitPolicy(command('untrusted-status'))).rejects.toMatchObject({ code: 'unavailable' });
     script.onStatus(() => ({ kind: 'ok', body: { ...statusBody(), binding: { ...binding(), bindingId: 'binding_x' } } }));
     await expect(port.readSnapshot(bindingId)).rejects.toMatchObject({ code: 'unavailable' });
     // An enforced request is never reported as still pending.
@@ -121,6 +123,20 @@ describe('browser agent controls port', () => {
       }),
     }));
     await expect(port.readSnapshot(bindingId)).rejects.toMatchObject({ code: 'unavailable' });
+    port.dispose();
+  });
+
+  it('keeps a discovered owner binding pinned to its exact generation', async () => {
+    const script = scripted();
+    const port = createBrowserAgentControlsPort({ client: script.client, bindingId, bindingGeneration: 0, refreshMs: 0 });
+    await port.readSnapshot(bindingId);
+    script.onStatus(() => ({ kind: 'ok', body: statusBody({ generation: 1 }) }));
+    expect(await port.readSnapshot(bindingId)).toMatchObject({ connection: 'offline', capabilities: null,
+      policy: { generation: 0, effectiveVersion: 3 } });
+    await expect(port.submitPolicy(command('generation-mismatch', { expectedBindingGeneration: 1 })))
+      .rejects.toMatchObject({ code: 'unavailable' });
+    await expect(port.submitPolicy(command('old-generation'))).rejects.toMatchObject({ code: 'unavailable' });
+    expect(script.commands).toHaveLength(0);
     port.dispose();
   });
 
@@ -144,8 +160,11 @@ describe('browser agent controls port', () => {
 
   it('returns only an acknowledgment that echoes the exact command; anything else is unknown', async () => {
     const script = scripted();
+    const reads = vi.spyOn(script.client, 'status');
     const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
     expect(await port.submitPolicy(command('pause-1'))).toMatchObject({ commandId: 'pause-1', connectorState: 'effective' });
+    await tick();
+    const correlatedReads = reads.mock.calls.length;
 
     script.onPolicy(next => ({ kind: 'answered', body: ack({ ...next, commandId: 'other' as CommandId }) }));
     await expect(port.submitPolicy(command('pause-2'))).rejects.toMatchObject({ code: 'lost' });
@@ -153,6 +172,7 @@ describe('browser agent controls port', () => {
     await expect(port.submitPolicy(command('pause-3'))).rejects.toMatchObject({ code: 'lost' });
     script.onPolicy(() => ({ kind: 'lost' }));
     await expect(port.submitPolicy(command('pause-4'))).rejects.toMatchObject({ code: 'lost' });
+    expect(reads.mock.calls.length).toBe(correlatedReads);
     await expect(port.submitPolicy(command('pause-5', { bindingId: 'binding_x' as BindingId })))
       .rejects.toMatchObject({ code: 'unavailable' });
     expect(script.commands.map(sent => sent.commandId)).toEqual(['pause-1', 'pause-2', 'pause-3', 'pause-4']);
@@ -294,5 +314,19 @@ describe('browser controls registration', () => {
     expect(status.mock.calls.length).toBe(calls);
     expect(listener).not.toHaveBeenCalled();
     expect(capability.portFor(context, roomId)).toBeNull();
+  });
+
+  it('creates a generation-scoped port only after route attachment for an owner-discovered binding', () => {
+    const script = scripted();
+    const capability = registerControls({ client: script.client, bindingFor: () => null, refreshMs: 0 });
+    const discovered = { bindingId, generation: 0 };
+    expect(capability.portFor(context, roomId, discovered)).toBeNull();
+    const attachment = capability.attach(context);
+    const port = capability.portFor(context, roomId, discovered);
+    expect(port).not.toBeNull();
+    expect(capability.portFor(context, roomId, discovered)).toBe(port);
+    expect(capability.portFor(context, roomId, { bindingId, generation: 1 })).not.toBe(port);
+    attachment.dispose();
+    expect(capability.portFor(context, roomId, discovered)).toBeNull();
   });
 });

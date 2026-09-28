@@ -8,6 +8,8 @@ import { readHostedConfig } from './composition/human/hosted-config';
 import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
 import { createHumanRoomRenderer } from './composition/human/room';
+import { createOwnerMailboxControlsClient } from './composition/controls/owner-mailbox-client';
+import { registerControls } from './composition/controls/register';
 import { createOwnerMailboxReviewClient } from './composition/review/owner-mailbox-client';
 import { createOwnerDeviceClient } from './composition/review/owner-device-client';
 import { registerReview } from './composition/review/register';
@@ -22,6 +24,7 @@ import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
 import './features/channel/channel.css';
 import './features/review/review.css';
+import './features/agent-controls/agent-controls.css';
 import './features/recovery/recovery.css';
 import './features/approval-decision/approval-decision.css';
 import './features/channel-access/channel-access.css';
@@ -49,6 +52,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
 
   const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
   const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const controlsClient = createOwnerMailboxControlsClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const controlsCapability = registerControls({ client: controlsClient, bindingFor: () => null });
   const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf });
   const deliveryLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
   if (!deliveryLimits.ok) throw new Error('invalid review limits');
@@ -107,7 +112,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     routes,
     createChannelAccess,
     mode: entry.mode,
-    capabilities: registerHumanCapabilities(reviewCapability),
+    capabilities: registerHumanCapabilities(reviewCapability, controlsCapability),
     renderRoom: createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
       if (!binding.device) return false;
       const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
@@ -119,7 +124,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
       const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
         binding.device.deviceId, binding.device.fingerprint);
       return established && currentOwner();
-    }),
+    }, 5_000, controlsCapability),
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);

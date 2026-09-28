@@ -261,7 +261,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       capability: () => capabilityFor(next).ensure(), matrix: substrate });
     const activeTrust = ownerTrust;
     const controls = createPolicyControlHandler({ dispatchStorage, trust,
-      roomId: session.roomId as never, bindingId: next.bindingId });
+      roomId: session.roomId as never, bindingId: next.bindingId,
+      // The same bound, current-session inspection used at the dispatch boundary.
+      // An absent or failed inspection remains unknown; it never grants controls.
+      capabilities: async () => harness ? await harness.inspect(next).catch(() => null) : null });
     const stop = createLocalClosureFence({ storage, binding: next, roomId: session.roomId,
       stateDirectory: sessionDirectory, clock: Date.now,
       quiesce: quiesceDelivery,
