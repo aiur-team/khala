@@ -341,6 +341,8 @@ export type RunReport = Readonly<{
   stop: StopRecord | null;
   launcherClosed: boolean;
   cleanup: readonly Readonly<{ ticket: number; outcome: 'closed' | 'already_closed' | 'refused' | 'failed'; detail: string }>[];
+  /** Exact owner-request cleanup attempted after a failed pair; request handles remain private. */
+  requestCleanup: readonly Readonly<{ ticket: number; outcome: 'revoked' | 'already_revoked' | 'failed'; detail: string }>[];
   unexpectedPullRequests: readonly number[];
   errors: readonly string[];
   status: unknown;

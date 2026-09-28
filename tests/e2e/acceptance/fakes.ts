@@ -55,6 +55,7 @@ export type WorldKnobs = {
   sessions: boolean;
   missingSessionFor: RoleName | null;
   connectedOnGrant: boolean;
+  connectedRevokeUnavailable: boolean;
   revokeFails: boolean;
   /** Recipients acknowledge each handshake event through a batch-token receipt. */
   receipts: boolean;
@@ -79,7 +80,7 @@ export type WorldKnobs = {
 };
 
 const DEFAULT_KNOBS: WorldKnobs = {
-  sessions: true, missingSessionFor: null, connectedOnGrant: false, revokeFails: false,
+  sessions: true, missingSessionFor: null, connectedOnGrant: false, connectedRevokeUnavailable: false, revokeFails: false,
   receipts: true, handshake: true, reannounce: false, stopThrows: false, deliverAfterStop: false,
   stopKillsSessions: false, closeFailsFor: null, confirmChannel: true, mode: { kind: 'effective' }, lockHeld: false,
 };
@@ -254,7 +255,8 @@ export function createWorld(
       if (knobs.revokeFails) throw new Error('request revoke unavailable');
       const role = request.requestHandle.endsWith('_a') ? 'a' : 'b';
       const current = requests.get(role);
-      if (!current || current.revision !== request.revision || current.outcome === 'connected') {
+      if (!current || current.revision !== request.revision
+        || (current.outcome === 'connected' && knobs.connectedRevokeUnavailable)) {
         throw new Error('request revoke unproven: 409 connected_or_stale');
       }
       requests.set(role, { ...current, outcome: 'revoked', revision: 'carev_3' });

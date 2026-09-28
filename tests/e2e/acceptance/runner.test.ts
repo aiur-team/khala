@@ -141,6 +141,7 @@ describe('live acceptance runner', () => {
     expect(report.errors.join('\n')).toMatch(/timed out waiting for both access grants/);
     expect(world.revokeCalls).toEqual(['request_a']);
     expect(world.bindingStatus('a')).toBe('revoked');
+    expect(report.requestCleanup).toEqual([{ ticket: 1001, outcome: 'revoked', detail: 'exact owner request revoked' }]);
     expect(world.stopCalls).toEqual([]);
     expectCleanTail(world, report);
   });
@@ -159,15 +160,29 @@ describe('live acceptance runner', () => {
     expect(report.verdict).toBe('fail');
     expect(world.revokeCalls).toEqual(['request_a']);
     expect(world.bindingStatus('a')).toBe('revoked');
+    expect(report.requestCleanup).toEqual([{ ticket: 1001, outcome: 'revoked', detail: 'exact owner request revoked' }]);
     expectCleanTail(world, report);
   });
 
-  it('reports a connected or unavailable exact-request cleanup as non-passing', async () => {
-    for (const knobs of [{ connectedOnGrant: true }, { revokeFails: true }]) {
+  it('revokes one connected request when the pair fails before a READY binding', async () => {
+    const world = createWorld({ missingSessionFor: 'b', connectedOnGrant: true });
+    const report = await run(world);
+    expect(report.verdict).toBe('fail'); // The pair timed out; cleanup succeeds independently.
+    expect(report.requestCleanup).toEqual([{ ticket: 1001, outcome: 'revoked', detail: 'exact owner request revoked' }]);
+    expect(world.revokeCalls).toEqual(['request_a']);
+    expect(world.bindingStatus('a')).toBe('revoked');
+    expect(world.stopCalls).toEqual([]);
+    expectCleanTail(world, report);
+  });
+
+  it('reports a connected route refusal or outage as failed cleanup', async () => {
+    for (const knobs of [{ connectedOnGrant: true, connectedRevokeUnavailable: true }, { connectedOnGrant: true, revokeFails: true }]) {
       const world = createWorld({ missingSessionFor: 'b', ...knobs });
       const report = await run(world);
       expect(report.verdict).toBe('fail');
       expect(report.errors.join('\n')).toMatch(/request cleanup #1001: request revoke/);
+      expect(report.requestCleanup).toHaveLength(1);
+      expect(report.requestCleanup[0]).toMatchObject({ ticket: 1001, outcome: 'failed' });
       expect(world.revokeCalls).toEqual(['request_a']);
       expect(world.bindingStatus('a')).toBe('active');
       expectCleanTail(world, report);
