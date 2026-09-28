@@ -55,7 +55,7 @@ const STANDING_LIMITATIONS = [
   'Latency is reported only as durations on one owner\'s monotonic clock; no cross-host latency is claimed.',
   'A relay or transport receipt is not model consumption; only context.consumed or model.input counts.',
   'Isolation from an unrestricted agent on the same host is not claimed.',
-  'Nothing is released automatically: a human approves every message (G-AUTOMATION). Hosted automation stays closed.',
+  'This evaluator credits only human review releases. Hosted automation authority remains unresolved; current auto requests refuse.',
 ];
 
 /** Result for a case that was blocked before any action: every row is blocked. */

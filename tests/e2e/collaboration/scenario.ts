@@ -7,7 +7,7 @@ import { TASK_CHECKS } from './assertions';
 import { type OwnerControls, type OwnerFixture, assertIndependentOwners, createOwnerFixture } from '../harness/owners';
 
 /** Gates this acceptance case reads, from `docs/product/ticket-graph.proposal.json` and `docs/product/decisions.md`. */
-export const GATE_IDS = ['G-TASK', 'G-HARNESSES', 'G-AUTOMATION', 'G-RETENTION', 'P02'] as const;
+export const GATE_IDS = ['G-TASK', 'G-HARNESSES', 'G-AUTOMATION', 'G-ADMISSION', 'G-RETENTION', 'P02'] as const;
 export type GateId = (typeof GATE_IDS)[number];
 
 /**
@@ -15,6 +15,8 @@ export type GateId = (typeof GATE_IDS)[number];
  * assertions that name them, and those rows stay in the report as `blocked`.
  */
 export const PRE_ACTION_GATES: readonly GateId[] = ['G-TASK', 'G-HARNESSES'];
+/** Live acceptance cannot start while any of these operator choices is open. */
+export const LIVE_PRE_ACTION_GATES: readonly GateId[] = [...PRE_ACTION_GATES, 'G-AUTOMATION', 'G-ADMISSION', 'P02'];
 
 export type GateState =
   | Readonly<{ status: 'open'; question: string; source: string }>
@@ -53,17 +55,16 @@ export const PLAN_AGREEMENT_TASK: TaskDecision = Object.freeze({
 const RULINGS = 'https://github.com/aiur-team/khala/issues/48#issuecomment-5844179178';
 
 /**
- * The harness routes G-HARNESSES approves, which are the ones proven on main.
- * `harnessVersions` pins a version per route, so a case that names any other route,
- * Codex included, is blocked.
+ * Historical evaluator route allowlist. Live G-HARNESSES remains open; this
+ * list cannot waive a required route or establish current acceptance scope.
  */
 export const APPROVED_HARNESS_ROUTES: readonly string[] = Object.freeze(['claude-code-cli-hooks', 'opencode-plugin']);
 
 /**
- * The decisions as recorded in the repository at the time of writing. A change here
- * must cite the decision that changed it; nothing in this suite may invent one.
+ * Historical synthetic evaluator fixture. It preserves the old row-level
+ * tests, but must never be passed to the live entry as product authority.
  */
-export const RECORDED_DECISIONS: CollaborationDecisions = {
+export const HISTORICAL_FIXTURE_DECISIONS: CollaborationDecisions = {
   gates: {
     'G-TASK': {
       status: 'resolved',
@@ -80,6 +81,11 @@ export const RECORDED_DECISIONS: CollaborationDecisions = {
       decisionRef: 'Executor ruling: hosted automation stays closed; only the local fence {3,3,1,wait} applies; a human approves every message',
       source: RULINGS,
     },
+    'G-ADMISSION': {
+      status: 'resolved',
+      decisionRef: 'synthetic admission consent for historical evaluator fixtures only',
+      source: 'test fixture, not operator authority',
+    },
     'G-RETENTION': {
       status: 'resolved',
       decisionRef: 'P12 (per-link admission, default no earlier history), P13 (closure promises no deletion), P14 (no recovery, no escrow)',
@@ -93,6 +99,24 @@ export const RECORDED_DECISIONS: CollaborationDecisions = {
   },
   task: PLAN_AGREEMENT_TASK,
   browserClosedMode: 'required',
+};
+
+/** Current authority: preserve settled task/retention; leave unanswered choices open. */
+export const CURRENT_LIVE_DECISIONS: CollaborationDecisions = {
+  gates: {
+    'G-TASK': HISTORICAL_FIXTURE_DECISIONS.gates['G-TASK'],
+    'G-HARNESSES': { status: 'open', question: 'pin the required exact native routes and versions without a scope waiver',
+      source: 'docs/product/requirements-coverage.md R07-R09' },
+    'G-AUTOMATION': { status: 'open', question: 'authorize hosted unattended, trust backlog and reply budgets',
+      source: 'docs/product/decisions.md P08' },
+    'G-ADMISSION': { status: 'open', question: 'authorize the admission consent interaction',
+      source: 'docs/product/ticket-graph.proposal.json G-ADMISSION' },
+    'G-RETENTION': HISTORICAL_FIXTURE_DECISIONS.gates['G-RETENTION'],
+    P02: { status: 'open', question: 'choose browser-closed delivery behavior',
+      source: 'docs/product/decisions.md P02' },
+  },
+  task: PLAN_AGREEMENT_TASK,
+  browserClosedMode: 'unresolved',
 };
 
 /** Scenario contract from the KHA-139 plan, with `unresolved` added for an open P02. */
@@ -129,10 +153,11 @@ export function openGates(decisions: CollaborationDecisions): GateId[] {
  * Binds the case, or returns `blocked` naming every decision that is missing. It is
  * pure: a caller that gets `blocked` has not touched any owner, session or driver.
  */
-export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup): BoundCase {
+export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup,
+  preActionGates: readonly GateId[] = PRE_ACTION_GATES): BoundCase {
   const open = openGates(decisions);
   const reasons: string[] = [];
-  for (const id of PRE_ACTION_GATES) {
+  for (const id of preActionGates) {
     const gate = decisions.gates[id];
     if (gate.status === 'open') reasons.push(`${id} is open: ${gate.question} (${gate.source})`);
   }
@@ -176,6 +201,11 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup): B
       openGates: Object.freeze(open),
     }),
   });
+}
+
+/** The real entry uses current authority, never the scripted historical fixture. */
+export function bindLiveCase(setup: CaseSetup): BoundCase {
+  return bindCase(CURRENT_LIVE_DECISIONS, setup, LIVE_PRE_ACTION_GATES);
 }
 
 export class CollaborationBlocked extends Error {

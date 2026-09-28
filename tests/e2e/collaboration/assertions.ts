@@ -42,8 +42,8 @@ const CONSUMPTION: readonly string[] = ['model.input', 'context.consumed'];
 
 /**
  * Everything the owner's model consumed follows that owner's own review release of the
- * same operation. Under the G-AUTOMATION ruling a human approves every message, so an
- * automatic release never counts. Another owner's release never counts either.
+ * same operation. This manual-review evaluator never credits automatic release
+ * while hosted G-AUTOMATION remains unresolved. Another owner's release never counts.
  */
 function gatedConsumption(records: readonly EvidenceRecord[], ownerId: string, requireAny: boolean): Verdict {
   const consumed = records.filter(record => record.ownerId === ownerId && CONSUMPTION.includes(record.kind));
@@ -235,9 +235,8 @@ export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
   {
     id: 'trusted_delivery', covers: ['R2'], unit: 'U3', gates: ['G-AUTOMATION'],
     check(records, acceptance) {
-      // G-AUTOMATION ruling: hosted `auto` is refused and the local fence may accept it.
-      // Either way the effective state is reported apart from the request, and no
-      // message is released without a human.
+      // The historical synthetic case tests a reported trust response separately
+      // from the request. It cannot authorize hosted automation or auto-release.
       const b = acceptance.owners[1].ownerId;
       const requested = owned(records, b, 'trust.requested')[0];
       if (!requested) return fail(`${b} never requested trusted delivery`);

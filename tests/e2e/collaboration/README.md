@@ -6,21 +6,22 @@ sessions, then an independent third owner joins. The report lives in
 
 ## Modules
 
-- `scenario.ts`: `RECORDED_DECISIONS` holds the gates this case reads, as recorded in
-  `docs/product/decisions.md`, the ticket graph and the P05 Executor ruling
-  (`PLAN_AGREEMENT_TASK`), and the later rulings on G-HARNESSES, G-AUTOMATION and P02.
-  Every gate is now resolved. `bindCase` is pure. It returns `blocked` before any
-  owner, session or driver is touched while G-TASK or G-HARNESSES is open, while no
-  task is approved, or when the case pins no harness version or pins a route outside
-  `APPROVED_HARNESS_ROUTES` (`claude-code-cli-hooks`, `opencode-plugin`; Codex is
-  excluded). A task assertion with no check in `TASK_CHECKS` is refused. Any other open
-  gate blocks only the rows that name it. Owners A, B and C must share no verified identity.
+- `scenario.ts`: `CURRENT_LIVE_DECISIONS` is the live authority snapshot.
+  P02, hosted G-AUTOMATION/P08, G-ADMISSION consent and current harness scope
+  remain open; P12/P14 retention and the P05 task stay as recorded.
+  `bindLiveCase` blocks before owner, session or driver work while any of those
+  choices is open, even if a route version is added. The old Claude/OpenCode
+  allowlist and Executor assumptions survive only in
+  `HISTORICAL_FIXTURE_DECISIONS` for synthetic evaluator tests; they do not
+  waive Codex or OpenCode acceptance. A task assertion without a check is
+  refused, and owners A, B and C must have independent identities.
 - `assertions.ts`: one check per row, over live evidence records. Order is compared
   only within one owner's clock. A `model.input` or `context.consumed` counts only
   after that owner's own review release. A human approves every message
   (G-AUTOMATION), so an automatic release never counts. `browser_closed` follows P02:
   a message approved before the browser closed still flows, and a new one waits until
-  the owner opens the app. `relay.accepted`
+  the owner opens the app in the historical synthetic fixture. The live P02 choice
+  remains open. `relay.accepted`
   never counts as consumption, and an `outcome_unknown` receipt cannot later be credited
   without new evidence. `TASK_CHECKS` holds the P05 task checks that
   `useful_task_result` runs.
@@ -62,9 +63,10 @@ KHALA_E2E_DISPOSABLE_ENV=/absolute/path/to/khala-live.json \
 pnpm test:e2e -- tests/e2e/collaboration/collaboration.test.ts
 ```
 
-This is the acceptance run. Today it fails with `CollaborationBlocked`, because no
-approved harness route is pinned. Once one is pinned, the run still fails until a live
-collaboration driver is registered. A blocked live run is a failure, never
+This is the acceptance entry. Today it fails with `CollaborationBlocked` because
+policy and route gates remain open and no route is pinned. Pinning a route alone
+cannot make it ready; a real collaboration driver is also still required.
+A blocked live run is a failure, never
 a skip. The live run itself belongs to the acceptance tickets, such as #134 and #241
 (OpenCode+DeepSeek ↔ Claude). The task is harness-neutral, so they reuse this script.
 
@@ -73,8 +75,9 @@ A real run needs:
 - three designated owner accounts, each with its own device and an existing agent
   session;
 - the selected deployment;
-- a harness version pinned for each route in use, either `claude-code-cli-hooks` or
-  `opencode-plugin`, matching the version the live driver reports;
+- a harness version pinned for every route in use, matching the live driver's
+  report and the required native/cross-harness scope; the historical fixture
+  allowlist is not a final scope ruling;
 - a scratch repository with a toy CLI for the P05 plan-agreement task.
 
 Follow `tests/integration/human/README.md` for disposable identities. Never pass
