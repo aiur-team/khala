@@ -95,11 +95,11 @@ function assertScannerControl(haystack: Buffer, probes: readonly Probe[]): void 
 export async function runRelayComponent(): Promise<EvidenceManifest> {
   const recoveryFile = process.env.KHALA_SECURITY_RELAY_RECOVERY_FILE ?? '';
   const privateRoot = path.join(os.homedir(), '.cache', 'khala-executor');
-  if (path.dirname(recoveryFile) !== privateRoot
-    || !/^relay-recovery-[a-f0-9]{12}\.json$/u.test(path.basename(recoveryFile))) {
+  const recoveryMatch = /^relay-recovery-([a-f0-9]{12})\.json$/u.exec(path.basename(recoveryFile));
+  if (path.dirname(recoveryFile) !== privateRoot || !recoveryMatch) {
     throw new Error('relay_recovery_file_required');
   }
-  const scratch = `${recoveryFile}.scratch`;
+  const scratch = path.join(privateRoot, `s-${recoveryMatch[1]}`);
   try { await mkdir(scratch, { mode: 0o700 }); await chmod(scratch, 0o700); }
   catch { throw new Error('relay_scratch_unavailable'); }
   let synapse: Awaited<ReturnType<typeof startClosureSynapse>> | null = null;
