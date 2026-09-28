@@ -12,8 +12,9 @@ sessions, then an independent third owner joins. The report lives in
   `bindLiveCase` blocks before owner, session or driver work while any of those
   choices is open, even if a route version is added. The old Claude/OpenCode
   allowlist and Executor assumptions survive only in
-  `HISTORICAL_FIXTURE_DECISIONS` for synthetic evaluator tests; they do not
-  waive Codex or OpenCode acceptance. A task assertion without a check is
+  `HISTORICAL_FIXTURE_DECISIONS` for synthetic evaluator tests. The live binder
+  uses a separate current-scope name set containing Claude, OpenCode and Codex;
+  none of those names waives version/session proof or the open gates. A task assertion without a check is
   refused, and owners A, B and C must have independent identities.
 - `assertions.ts`: one check per row, over live evidence records. Order is compared
   only within one owner's clock. A `model.input` or `context.consumed` counts only

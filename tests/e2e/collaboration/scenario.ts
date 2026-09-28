@@ -59,6 +59,8 @@ const RULINGS = 'https://github.com/aiur-team/khala/issues/48#issuecomment-58441
  * list cannot waive a required route or establish current acceptance scope.
  */
 export const APPROVED_HARNESS_ROUTES: readonly string[] = Object.freeze(['claude-code-cli-hooks', 'opencode-plugin']);
+/** Route names still in final native scope; listing one is not evidence or authority to run it. */
+export const CURRENT_SCOPE_HARNESSES: readonly string[] = Object.freeze(['claude-code-cli-hooks', 'opencode-plugin', 'codex']);
 
 /**
  * Historical synthetic evaluator fixture. It preserves the old row-level
@@ -135,7 +137,7 @@ export type CaseSetup = Readonly<{
   caseId: string;
   /** Owners A and B collaborate first; C joins later with its own identity, device and session. */
   owners: Readonly<{ a: OwnerControls; b: OwnerControls; c: OwnerControls }>;
-  /** The pinned version for each harness route, keyed by a route in `APPROVED_HARNESS_ROUTES`. */
+  /** Pinned harness component/version pairs; the binder's explicit scope selects valid component names. */
   harnessVersions: Readonly<Record<string, string>>;
 }>;
 
@@ -154,7 +156,8 @@ export function openGates(decisions: CollaborationDecisions): GateId[] {
  * pure: a caller that gets `blocked` has not touched any owner, session or driver.
  */
 export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup,
-  preActionGates: readonly GateId[] = PRE_ACTION_GATES): BoundCase {
+  preActionGates: readonly GateId[] = PRE_ACTION_GATES,
+  routeScope: readonly string[] = APPROVED_HARNESS_ROUTES): BoundCase {
   const open = openGates(decisions);
   const reasons: string[] = [];
   for (const id of preActionGates) {
@@ -165,8 +168,8 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup,
   else if (decisions.task.assertions.length === 0) reasons.push(`task ${decisions.task.decisionRef} names no success assertions`);
   if (Object.keys(setup.harnessVersions).length === 0) reasons.push('no harness version is pinned for the case');
   for (const route of Object.keys(setup.harnessVersions)) {
-    if (!APPROVED_HARNESS_ROUTES.includes(route)) {
-      reasons.push(`harness route ${route} is not approved by G-HARNESSES (${APPROVED_HARNESS_ROUTES.join(', ')})`);
+    if (!routeScope.includes(route)) {
+      reasons.push(`harness route ${route} is not in this case's scope (${routeScope.join(', ')})`);
     }
   }
   if (decisions.gates.P02.status === 'resolved' && decisions.browserClosedMode === 'unresolved') {
@@ -205,7 +208,7 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup,
 
 /** The real entry uses current authority, never the scripted historical fixture. */
 export function bindLiveCase(setup: CaseSetup): BoundCase {
-  return bindCase(CURRENT_LIVE_DECISIONS, setup, LIVE_PRE_ACTION_GATES);
+  return bindCase(CURRENT_LIVE_DECISIONS, setup, LIVE_PRE_ACTION_GATES, CURRENT_SCOPE_HARNESSES);
 }
 
 export class CollaborationBlocked extends Error {

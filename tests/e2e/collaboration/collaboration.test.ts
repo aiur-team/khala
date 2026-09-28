@@ -8,7 +8,7 @@ import { TASK_CHECKS } from './assertions';
 import { type AcceptanceResult, appendRun, blockedResult, evaluate, newRunId, renderRun } from './evidence';
 import {
   type CaseSetup, type CollaborationCase, type CollaborationDecisions, CollaborationBlocked, GATE_IDS, type GateId,
-  APPROVED_HARNESS_ROUTES, CURRENT_LIVE_DECISIONS, HISTORICAL_FIXTURE_DECISIONS,
+  APPROVED_HARNESS_ROUTES, CURRENT_LIVE_DECISIONS, CURRENT_SCOPE_HARNESSES, HISTORICAL_FIXTURE_DECISIONS,
   LIVE_PRE_ACTION_GATES, PLAN_AGREEMENT_TASK, bindCase, bindLiveCase,
 } from './scenario';
 
@@ -169,6 +169,21 @@ describe('collaboration case binding', () => {
     }
   });
 
+  it('does not apply the old two-route exclusion to the current Codex scope', () => {
+    const codex = { ...setup, harnessVersions: { codex: '0.157.1' } };
+    const live = bindLiveCase(codex);
+    expect(live.kind).toBe('blocked');
+    if (live.kind !== 'blocked') return;
+    expect(live.reasons.some(reason => reason.includes('harness route codex is not in this case'))).toBe(false);
+    for (const gate of ['G-HARNESSES', 'G-AUTOMATION', 'G-ADMISSION', 'P02']) {
+      expect(live.reasons.some(reason => reason.startsWith(`${gate} is open:`))).toBe(true);
+    }
+
+    // This pure synthetic binding tests route-scope separation, not operator authority.
+    const resolvedForTest = bindCase(decisions(), codex, LIVE_PRE_ACTION_GATES, CURRENT_SCOPE_HARNESSES);
+    expect(resolvedForTest.kind).toBe('ready');
+  });
+
   it('keeps historical synthetic plan-agreement evaluator coverage', () => {
     const bound = bindCase(HISTORICAL_FIXTURE_DECISIONS, setup);
     expect(bound).toMatchObject({
@@ -186,7 +201,7 @@ describe('collaboration case binding', () => {
     const codex = bindCase(HISTORICAL_FIXTURE_DECISIONS, { ...setup, harnessVersions: { ...setup.harnessVersions, codex: '1' } });
     expect(codex.kind).toBe('blocked');
     if (codex.kind !== 'blocked') return;
-    expect(codex.reasons.join('\n')).toMatch(/harness route codex is not approved by G-HARNESSES/);
+    expect(codex.reasons.join('\n')).toMatch(/harness route codex is not in this case's scope/);
     expect(() => { throw new CollaborationBlocked(codex); }).toThrow(/blocked before any action/);
   });
 
