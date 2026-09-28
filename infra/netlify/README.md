@@ -46,8 +46,11 @@ Two disjoint groups, enforced by `infra/netlify/env.schema.json`:
 - **Server** — read only inside a function's request handling (never at
   module import time), never logged, never echoed in a response body.
 
-Production's `PUBLIC_APP_ORIGIN` is fixed to `https://khala.aiur.team` in
-`netlify.toml`; the OAuth callback is `https://khala.aiur.team/api/human/auth/callback`.
+Production's `PUBLIC_APP_ORIGIN` is `https://khala.aiur.team` in both
+`netlify.toml` for the build and the Netlify site's Functions-scoped production
+environment for the control runtime. Netlify does not expose `netlify.toml`
+environment variables to Functions. The OAuth callback is
+`https://khala.aiur.team/api/human/auth/callback`.
 Set `PUBLIC_HOMESERVER_ORIGIN` to the operator-provisioned Railway Synapse HTTPS
 origin (a bare origin such as `https://matrix.example.com`, no path); it is
 configuration, not an endpoint inferred or embedded by the app, and it is the
