@@ -108,12 +108,12 @@ describe('HumanApplicationScreen', () => {
       <HumanApplicationScreen application={application(snapshot)} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} mode="hosted-content" />,
     );
     expect(hosted).toContain('khala-content-root');
-    expect(hosted).not.toContain('AIUR');
+    expect(hosted).not.toContain('aiur-shell__topbar');
 
     const standalone = renderToStaticMarkup(
       <HumanApplicationScreen application={application(snapshot)} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} mode="standalone" />,
     );
-    expect(standalone).toContain('AIUR');
+    expect(standalone).toContain('class="aiur-shell__brand">Khala</span>');
   });
 
   it('delegates a ready room route to the required live room renderer', async () => {
