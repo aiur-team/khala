@@ -35,7 +35,8 @@ export type PreparedRoute = Awaited<ReturnType<typeof prepareRoute>>;
 async function send(page: Page, value: string): Promise<void> {
   await page.getByLabel('Message').fill(value);
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByRole('list', { name: 'Messages' }).getByText(value, { exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Messages' })
+    .locator('li.timeline__row[data-event-id]').filter({ hasText: value })).toHaveCount(1);
 }
 
 export async function releaseOnlyB(owner: Page, sender: Page, route: PreparedRoute) {
