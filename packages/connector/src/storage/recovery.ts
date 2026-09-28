@@ -54,9 +54,9 @@ export type RecoveryReport = Readonly<{
   blocked: readonly RecoveryBlocker[];
 }>;
 
-const TERMINAL_RECEIPTS: readonly ReceiptKindV2[] = ['completed', 'failed', 'cancelled'];
+export const TERMINAL_RECEIPTS: readonly ReceiptKindV2[] = ['completed', 'failed', 'cancelled'];
 /** Any of these proves dispatch progressed beyond a merely queued local release. */
-const DISPATCH_EVIDENCE: readonly ReceiptKindV2[] = [
+export const DISPATCH_EVIDENCE: readonly ReceiptKindV2[] = [
   'dispatching', 'transport_written', 'harness_queued', 'context_consumed', 'outcome_unknown', 'agent_acknowledged',
 ];
 /** Dispatcher states reached only after the dispatch intent was persisted, still unsettled. */
