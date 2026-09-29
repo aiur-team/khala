@@ -418,6 +418,9 @@ describe('generated hosted production composition', () => {
     const ownerCookie = { cookie: `${SESSION_COOKIE}=${owner.token}` };
     const page = await route(new Request(approveUrl, { headers: ownerCookie }));
     expect(page.status).toBe(200);
+    // Chromium sends Origin: null for a POST form under no-referrer, which the
+    // mutation guard must reject. These owner forms send only the origin.
+    expect(page.headers.get('referrer-policy')).toBe('origin');
     const consentText = await page.text();
     expect(consentText).toContain('cannot verify that provider thread exists');
     expect(consentText).toContain('owner-wide, not limited to that one link');
@@ -735,6 +738,7 @@ describe('generated hosted production composition', () => {
     const revokeUrl = `${origin}${PROOF_KEY_REVOKE_PATH}?${new URLSearchParams({ harness: 'codex', session_id: 'caller-label' })}`;
     const revokePage = await route(new Request(revokeUrl, { headers: ownerCookie }));
     expect(revokePage.status).toBe(200);
+    expect(revokePage.headers.get('referrer-policy')).toBe('origin');
     expect(await revokePage.text()).toContain(jkt);
     const revokeBody = new URLSearchParams({ harness: 'codex', session_id: 'caller-label', proof_jkt: jkt,
       generation: '0', csrf_token: csrfTokenFor(owner.token), decision: 'revoke' });

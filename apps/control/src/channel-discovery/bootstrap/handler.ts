@@ -133,6 +133,9 @@ const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 const STATE = /^[A-Za-z0-9._~-]{16,128}$/;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const BASE_HEADERS = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' } as const;
+// The owner consent form must send the site's Origin on POST. `origin` omits
+// the authorization query (including state and proof key) from Referer.
+export const DISCOVERY_CONSENT_FORM_HEADERS = { ...BASE_HEADERS, 'referrer-policy': 'origin' } as const;
 
 export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBootstrapDeps): ChannelDiscoveryBootstrapHandlers {
   const origin = new URL(deps.origin);
@@ -579,7 +582,7 @@ function consentPage(params: AuthorizeParams, stablePrincipal: StableAgentPrinci
 <form method="post" action="${AUTHORIZE_PATH}">${fields}<button type="submit" name="decision" value="allow">Authorize</button>
 <button type="submit" name="decision" value="deny">Cancel</button></form></body></html>`;
   return new Response(body, { status: 200, headers: {
-    ...BASE_HEADERS, 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY',
+    ...DISCOVERY_CONSENT_FORM_HEADERS, 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY',
     'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   } });
 }
