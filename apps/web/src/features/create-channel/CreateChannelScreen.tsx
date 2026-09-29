@@ -142,7 +142,7 @@ export function CreateChannelScreen({
         <p>
           Want your agent to request the channel instead?{' '}
           <a href="/api/human/channel-discovery/authority/create-target">Copy an agent creation link</a>
-          {' '}and give it to that exact session. You will approve its request before a room is created.
+          {' '}and give it to that exact session. You will approve its request before a channel is created.
         </p>
       ) : null}
 
