@@ -18,6 +18,7 @@ const ELEMENTS = [
   ['banner', '#aiurBanner'],
   ['topbar', '.topbar'],
   ['install-box', '.install-box'],
+  ['showcase', '.showcase-window'],
   ['features', '.features'],
   ['footer', 'footer'],
 ] as const;

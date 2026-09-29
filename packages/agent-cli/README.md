@@ -298,6 +298,9 @@ only as the session that makes it, through that session's own `grant.json`:
   one OS user can both join one channel as separate bindings. No grant is
   copied into `active.json`, which stays transport-only. A
   `grant.json` left from an earlier launch is replaced on the next `join`.
+  A connected `join` prints `grantDescriptorPath`, the path to pass as
+  `--internal-descriptor` for later CLI `status`, `send`, `read` and `listen`.
+  The discovery `descriptor.json` remains unjoined for those commands.
   Stop removes the grant from every `grant.json` whose
   binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash

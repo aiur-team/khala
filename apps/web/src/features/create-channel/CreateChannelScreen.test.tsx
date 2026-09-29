@@ -68,13 +68,11 @@ describe('CreateChannelScreen initial render', () => {
     expect(html).not.toContain('Introduction messages');
   });
 
-  it('offers supported admission policies and defaults to a no-history link', () => {
+  it('keeps access choices off the create screen', () => {
     const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} />);
-    expect(html).toContain('<legend>Who can join from this link?</legend>');
-    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_no_history")(?=[^>]*\bchecked="")[^>]*>/);
-    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="named_no_history")[^>]*>/);
-    expect(html).not.toContain('value="link_full_history"');
-    expect(html).toContain('Reading messages from before joining is currently unavailable.');
+    expect(html).not.toContain('Who can join from this link?');
+    expect(html).not.toContain('Reading messages from before joining');
+    expect(html).not.toContain('create-channel-admission-policy');
   });
 
   it('disables submit while readiness is still being checked, and shows no share link or error yet', () => {
@@ -87,7 +85,7 @@ describe('CreateChannelScreen initial render', () => {
 });
 
 describe('CreateChannelScreen with a pre-driven controller', () => {
-  it('shows an email field and validation error for the named-recipient policy', () => {
+  it('keeps a controller-selected email policy out of the creation UI', () => {
     const controller = createCreateChannelController({
       room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
@@ -97,8 +95,7 @@ describe('CreateChannelScreen with a pre-driven controller', () => {
     controller.submit();
 
     const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} controller={controller} />);
-    expect(html).toContain('for="create-channel-policy-email"');
-    expect(html).toContain('Enter a valid email address.');
+    expect(html).not.toContain('create-channel-policy-email');
   });
 
   it('attaches the error to an alert and offers retry once a rejection lands', async () => {

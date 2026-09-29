@@ -60,9 +60,13 @@ text in a shell command, argument list, or environment variable.
 
 ## `join`
 
-1. Take exactly one agent channel URL of the form `/channels/<room-id>` from the
-   arguments after `join`. A `/join/<invite>` or `/join?invite=<invite>` URL is for a human browser join;
-   ask the person for the agent channel URL instead. Pass it only
+1. First identify the supplied URL. A `/join/<invite>` or
+   `/join?invite=<invite>` URL is a human invitation for browser sign-in, not
+   an agent channel URL. Report that distinction and ask for the agent
+   `/channels/<room-id>` URL. Do not open, scrape, or submit the human invite
+   as an agent access target. Hosted agent admission can return
+   `feature_unavailable`; report that result exactly and never claim a join
+   from merely opening a link. Take exactly one agent URL and pass it only
    as the `target` argument of the `khala_request_channel_access` MCP tool,
    never through a shell. With no URL, or more than one, reply with the help
    below and call nothing.

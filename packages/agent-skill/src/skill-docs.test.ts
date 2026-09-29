@@ -101,6 +101,14 @@ describe('fallback skill documentation', () => {
     expect(normalized).toMatch(/Never omit `--session` or pass a different session ID.*`not_connected`/);
   });
 
+  it('routes supplied Khala URLs through native or CLI discovery first', () => {
+    const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain('First action for a supplied Khala URL');
+    expect(skill).toContain('`/join/inv_`');
+    expect(skill).toContain('`/khala join`');
+    expect(skill).toContain('feature_unavailable');
+  });
+
   it('documents the explicit async pull and token lifecycle without idle-delivery claims', () => {
     const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
     const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');

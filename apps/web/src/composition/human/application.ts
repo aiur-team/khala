@@ -21,6 +21,8 @@ import type {
   RevocationPort,
   RevocationSubject,
 } from '@khala/contracts/messaging/index';
+import type { ChannelService } from '@khala/messaging/channels/index';
+import type { ConversationIndexPort } from './conversations';
 
 type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
   currentCapability(): Promise<ClosureCapability | null>;
@@ -30,7 +32,8 @@ import { createHumanDeviceSession } from './device-session';
 export interface HumanApplicationPorts {
   readonly identity: IdentityPort;
   readonly device: DevicePort;
-  readonly room: RoomPort;
+  readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
+  readonly conversations?: ConversationIndexPort;
   readonly admission: AdmissionPort;
   readonly limits: ContentLimits;
   /** Authenticated participant mapping supplied by the live messaging adapter. */

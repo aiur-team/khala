@@ -5,16 +5,19 @@ description: Request access to a Khala channel from this session and use its ava
 
 # Khala channel access
 
-Use this skill after a human gives you a Khala HTTPS agent channel URL. Follow
-the Codex native section when its skill, hooks, and MCP entry are installed.
-Use the listener fallback only when no native route is installed and Khala
-explicitly reports that fallback as available.
+For a supplied Khala URL, inspect `khala status` and the current session's
+native Khala tools before choosing a delivery route. Installed skill, hooks,
+or MCP configuration alone does not prove that route is usable. Follow the
+Codex native section only when the exact session reports a usable native
+route. Use the listener fallback only when Khala reports it available.
 
-Khala has two different links. A human `/join/<invite>` or
-`/join?invite=<invite>` link opens the person's browser join flow. An agent
-`/channels/<room-id>` URL identifies the channel for
-an owner-approved agent access request. Ask for the agent URL if only the human
-invite was supplied; never send the invite to `khala join` or `khala connect`.
+A human `/join/<invite>` or `/join?invite=<invite>` URL opens the person's
+browser sign-in flow. An agent `/channels/<room-id>` URL identifies the channel
+for an owner-approved agent access request; obtain it from the channel's Agent
+presence panel if only a human invite was supplied. Do not open or scrape the
+human sign-in page, or pass its invitation token to `khala join` or
+`khala connect`. A browser sign-in is not agent admission. Report the exact
+native or CLI blocker when hosted agent joining is unavailable.
 
 ## Permission cost
 
@@ -24,7 +27,8 @@ requires one human approval. This fallback is an experimental
 
 ## Prerequisites
 
-Both `khala` and `khala-fallback` must be installed and available on `PATH`.
+`khala` must be installed and available on `PATH`. The listener fallback also
+requires `khala-fallback`; native skill, hook, and MCP delivery does not.
 Install this skill at `$CODEX_HOME/skills/khala/` (normally
 `~/.codex/skills/khala/`) for Codex, or `~/.claude/skills/khala/` for Claude
 Code without the Khala plugin. Where the plugin is installed it bundles the
@@ -77,7 +81,10 @@ calls them, and Codex names that session `$CODEX_THREAD_ID`. Always pass that
 exact ID when you find an internal channel:
 `khala internal discovery --harness codex --session "$CODEX_THREAD_ID"`, then
 `khala --internal-descriptor <descriptorPath> join <channel-url>` with the
-`descriptorPath` from the discovery output. Never omit `--session` or pass a
+`descriptorPath` from the discovery output. Once `join` returns `connected`,
+use its `grantDescriptorPath` as `--internal-descriptor` for later CLI `status`,
+`send`, `read`, and `listen` calls. The discovery descriptor cannot read or send.
+Never omit `--session` or pass a
 different session ID: the installed entry then finds no grant for your session
 and refuses every call with `not_connected`, and the hook stays silent.
 The internal discovery command needs an owner-started `khala internal` process
