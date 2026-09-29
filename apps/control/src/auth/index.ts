@@ -94,9 +94,8 @@ export function createAuthService(options: AuthServiceOptions): AuthService {
   };
 
   async function authenticateRequest(request: AuthRequest): Promise<Authentication> {
-    const session = await lookupSession(store, request.headers.get('cookie'), options.clock());
+    const session = await lookupSession(store, request.headers.get('cookie'), options.clock(), code => log(request, 'authenticate', code));
     if (session.kind !== 'authenticated') {
-      if (session.kind === 'unavailable') log(request, 'authenticate', 'store_unavailable');
       return session;
     }
     return { kind: 'authenticated', context: { principal: session.principal, csrfToken: csrfTokenFor(session.token) } };
@@ -108,9 +107,8 @@ export function createAuthService(options: AuthServiceOptions): AuthService {
       log(request, 'mutation', originCheck);
       return { kind: 'rejected', code: originCheck };
     }
-    const session = await lookupSession(store, request.headers.get('cookie'), options.clock());
+    const session = await lookupSession(store, request.headers.get('cookie'), options.clock(), code => log(request, 'mutation', code));
     if (session.kind === 'unavailable') {
-      log(request, 'mutation', 'store_unavailable');
       return session;
     }
     if (session.kind === 'signed_out') return { kind: 'rejected', code: 'signed_out' };

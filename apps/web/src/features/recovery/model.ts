@@ -59,7 +59,7 @@ export type RecoveryView = Readonly<{
 
 export const IDLE_RECOVERY_OPERATION: RecoveryOperation = Object.freeze({ kind: 'idle' });
 
-const HISTORY_STATES: readonly HistoryAvailability[] = ['available', 'partial', 'unavailable'];
+const HISTORY_STATES: readonly HistoryAvailability[] = ['available', 'policy_limited', 'partial', 'decrypt_failed', 'digest_unavailable', 'unavailable'];
 const CONNECTION_STATES: readonly RecoveryConnection[] = ['online', 'offline', 'unknown'];
 
 function identityKind(identity: IdentityState): IdentityState['kind'] {
