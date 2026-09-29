@@ -10,7 +10,7 @@ import type { AgentClientPort } from '../cli/types.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
-  it.each(['connect', 'create'] as const)('drives approved native %s through exchange, redeem, durable resume and ready', async mode => {
+  it.each(['connect', 'create'] as const)('activates %s from a simulated approved status and retries a lost redeem response', async mode => {
     const origin = 'https://khala.aiur.team';
     const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
     const principal = `agent_${signer.jkt}` as DiscoveryCredential['requester']['principal'];
@@ -131,6 +131,8 @@ describe('installed hosted connector factory', () => {
       expect(await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
         .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
       expect(calls).not.toContain('/api/agent/channel-access/exchange');
+      // The control composition tests own signed-in authorization. This transport
+      // supplies a synthetic approved status to exercise only the packaged client.
       createApproved = true;
       await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin });
     }
