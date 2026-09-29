@@ -94,7 +94,7 @@ export type AgentStatus = Readonly<{
   readiness?: AgentReadiness;
 }>;
 export type AccessRequestResult =
-  | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
+  | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome; grantDescriptorPath?: string }>
   | Readonly<{ kind: 'refused'; code: 'invalid_link' | 'discovery_required' }>
   | Readonly<{ kind: 'unavailable' }>;
 /** The held binding's effective listening mode; `effective` is null when no mode is currently usable. */

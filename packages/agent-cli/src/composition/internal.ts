@@ -252,7 +252,9 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
           descriptorPath: options.descriptorPath, descriptor: selection.descriptor, origin: selection.origin,
           operationId: answered.operationId, repair: joined.outcome === 'repair_required', fetch: options.fetch, signal, clock: options.clock,
         });
-        if (activated !== 'unavailable') return { kind: 'status', outcome: activated };
+        if (activated !== 'unavailable') return { kind: 'status', outcome: activated,
+          ...(activated === 'connected' ? { grantDescriptorPath: grantPath } : {}),
+        };
         // Never report `connected` for a binding this descriptor does not hold.
         return joined.outcome === 'connected' ? { kind: 'unavailable' } : joined;
       }
