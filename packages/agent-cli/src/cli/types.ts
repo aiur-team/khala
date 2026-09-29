@@ -105,6 +105,8 @@ export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
   /** Present only on a descriptor-backed local client; asks the channel-access journal for a human grant. */
   requestAccess?(channelUrl: string, signal?: AbortSignal): Promise<AccessRequestResult>;
+  /** CLI-only path to this discovery session's grant; never part of an access-status response. */
+  joinedGrantDescriptorPath?(): string | null;
   /** Present only when the connector is configured for code-only pairing with a hosted origin. */
   pair?(code: string, signal?: AbortSignal): Promise<PairResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;

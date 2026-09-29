@@ -43,6 +43,17 @@ const viewer = participant('viewer', 'human', 'Viewer');
 const noopSendPort: Pick<ChannelPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
 
 describe('TimelineScreen', () => {
+  it('renders live rows through the shared avatar and grouped bubble component', () => {
+    const alice = participant('alice', 'human', 'Alice');
+    const data = { phase: 'ready' as const, items: [item('E1', alice, 'first'), item('E2', alice, 'second')], nextCursor: null, newMessageCount: 0 };
+    const html = renderToStaticMarkup(
+      <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />,
+    );
+    expect(html.match(/conversation-message__bubble/g)).toHaveLength(2);
+    expect(html.match(/conversation-message__avatar/g)).toHaveLength(2);
+    expect(html).toContain('conversation-message--grouped');
+  });
+
   it('distinguishes human and agent authors, labeling each row by its own kind — a swapped label would fail this', () => {
     const alice = participant('alice', 'human', 'Alice');
     const bot = participant('bot', 'agent', 'Release Bot');
@@ -155,6 +166,15 @@ describe('TimelineScreen', () => {
       <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />,
     );
     expect(html).toContain('No messages yet');
+  });
+
+  it('does not describe an encrypted room with unreadable activity as empty', () => {
+    const data = { phase: 'ready' as const, items: [], nextCursor: null, newMessageCount: 0 };
+    const html = renderToStaticMarkup(
+      <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} unreadableActivity />,
+    );
+    expect(html).toContain('Messages in this channel are unavailable on this device.');
+    expect(html).not.toContain('No messages yet');
   });
 
   it('renders a load-earlier control only when a further page exists', () => {

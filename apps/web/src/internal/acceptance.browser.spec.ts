@@ -149,7 +149,8 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await composer.focus();
     await page.keyboard.type('Owner: both of you, please hold');
     await page.keyboard.press('Tab');
-    assert.equal(await focused(page), 'Send', 'Send follows the composer in tab order');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Send message',
+      'Send follows the composer in tab order');
     await page.keyboard.press('Enter');
     await rowWith(page, 'Owner: both of you, please hold').waitFor();
     assert.deepEqual(await ada.readAll(), ['Owner: both of you, please hold']);

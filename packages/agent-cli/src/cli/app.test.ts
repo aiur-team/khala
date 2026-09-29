@@ -44,6 +44,19 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
 function unusedInbox(): Promise<BatchInbox> { throw new Error('inbox should not be opened'); }
 
 describe('runCli', () => {
+  it('prints the usable grant path after an internal join connects', async () => {
+    const discoveryPath = '/private/discovery/session/descriptor.json';
+    const grantPath = '/private/discovery/session/grant.json';
+    const io = streams();
+    const local = client({
+      async requestAccess() { return { kind: 'status', outcome: 'connected' }; },
+      joinedGrantDescriptorPath() { return grantPath; },
+    });
+    expect(await runCli(['--internal-descriptor', discoveryPath, 'join', 'http://127.0.0.1:4870/channels/ch_1'], {
+      client: client(), internalClient: async () => local, inbox: unusedInbox, ...io,
+    })).toBe(0);
+    expect(JSON.parse(io.output())).toEqual({ ok: true, kind: 'access', outcome: 'connected', grantDescriptorPath: grantPath });
+  });
   it('routes installed session inbox arrivals through the native wake composition', async () => {
     const call = mcpCall(1);
     (call.params as Record<string, unknown>)._meta = { threadId: 'native-thread-one' };
