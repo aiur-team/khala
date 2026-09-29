@@ -7,7 +7,7 @@ import type { PairingGrantPort } from '../../pairing/store';
 import { readHostedAccessTarget } from '../human/hosted-channel-access-resolver';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
-import { recordChannelAccessBinding } from './channel-access-binding';
+import { findChannelAccessBinding, recordChannelAccessBinding } from './channel-access-binding';
 
 /** The bootstrap redeem route accepts a channel grant only after an exact
  * approved exchange, signed connector key, device, session and live sponsor
@@ -42,6 +42,12 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         || record.deviceId !== input.deviceId || record.sessionGeneration !== input.session.generation) {
         return { kind: 'invalid_grant' };
       }
+      // The issuance record is written before the first capability is returned.
+      // Refuse a completed operation before device provisioning can log in again.
+      // An absent record still permits recovery of a consumed, unissued grant.
+      const issued = await findChannelAccessBinding(active.store, binding);
+      if (issued.kind === 'unavailable') return { kind: 'unavailable' };
+      if (issued.kind === 'found') return { kind: 'replayed' };
       const live = await authority.authorize({ operationId: binding.operationId, requester: binding.requester,
         origin: binding.origin, sessionGeneration: binding.sessionGeneration,
         sessionFingerprint: record.sessionFingerprint, claimOperationId: `${loaded.stored.key}#claim` });

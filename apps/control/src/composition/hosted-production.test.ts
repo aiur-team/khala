@@ -511,6 +511,7 @@ describe('generated hosted production composition', () => {
         dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_B'),
     }));
     expect(replay.status).toBe(401);
+    expect(matrixLogins).toBe(1);
     const resumePath = `${origin}/api/agent/channel-access/resume?operation=b-agent-request`;
     // The server committed redemption, but the native journal still knows only its
     // pre-redeem operation, approved key, generation and device after response loss.
