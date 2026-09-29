@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 import { createAuthService, type AuthDiagnostic } from '../../auth/index';
 import { createOidcClient } from '../../auth/oidc';
+import { createLocalOidcClient, localOidcEnabled } from '../../auth/local-oidc';
 import { createAdmissionService } from '../../invitations/index';
 import type { ShareDiagnosticStage } from '../../invitations/index';
 import { createControlStore, type BlobsStoreLike } from '../../runtime/control-store';
+import { localBlobStores } from '../../runtime/local-blob-store';
 import { readHumanServerEnv } from '../../runtime/env';
 import type { HumanHandlerServices, LoadHumanServices } from './handlers';
 import { createMatrixHumanServices } from './matrix';
@@ -79,10 +81,12 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
 
   function initialize(): ProductionHumanRuntime {
     if (runtime !== null) return runtime;
-    const env = readHumanServerEnv(dependencies.env);
+    const rawEnv = dependencies.env ?? process.env;
+    const localAuth = localOidcEnabled(rawEnv);
+    const env = readHumanServerEnv(rawEnv);
     const clock = dependencies.clock ?? (() => Date.now());
     const random = dependencies.random ?? (bytes => randomBytes(bytes));
-    const storeFor = dependencies.stores ?? (name => getStore(name) as unknown as BlobsStoreLike);
+    const storeFor = dependencies.stores ?? (localAuth ? localBlobStores : (name => getStore(name) as unknown as BlobsStoreLike));
     // Netlify supplies a short-lived Blobs credential in the invocation context.
     // A warm function retains this runtime, so retain the adapter but bind the
     // SDK store at each operation instead of capturing an expired credential.
@@ -98,6 +102,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
     });
     const matrix = createMatrixHumanServices({
       homeserverOrigin: env.publicHomeserverOrigin,
+      allowInsecureLoopback: localAuth,
       serverName: env.matrixServerName,
       registrationSharedSecret: env.matrixRegistrationSharedSecret,
       registrationIngressToken: env.matrixRegistrationIngressToken,
@@ -105,7 +110,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       store,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
     });
-    const oidc = createOidcClient({
+    const oidc = localAuth ? createLocalOidcClient(env.publicAppOrigin, rawEnv.KHALA_LOCAL_AUTH_EMAIL ?? 'owner@khala.local') : createOidcClient({
       issuer: env.oidcIssuer,
       clientId: env.oidcClientId,
       clientSecret: env.oidcClientSecret,
@@ -122,6 +127,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       origin: env.publicAppOrigin,
       sessionTtlMs: SESSION_TTL_MS,
       loginTtlMs: LOGIN_TTL_MS,
+      allowInsecureLoopback: localAuth,
       log: entry => {
         if (entry.event === 'callback') console.warn('Khala auth callback', JSON.stringify({ stage: entry.code }));
         else productionDiagnostic(entry.event, entry.code);

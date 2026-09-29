@@ -16,6 +16,7 @@ import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, cr
 import { createOwnerRevocationRoutes, createLazyOwnerRevocationRoutes } from '../human/revocation';
 import { createAgentRevocationCleanupRoutes, createCleanupProtocolPort, createLazyAgentRevocationCleanupRoutes } from '../human/revocation-cleanup';
 import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoomSendRoutes } from '../human/room-send-routes';
+import { localOidcEnabled } from '../../auth/local-oidc';
 import { createDeviceAdmissionRoutes, createLazyDeviceAdmissionRoutes } from '../human/device-admission-routes';
 import { senderIdFor } from '../human/room-send-fence';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
@@ -54,10 +55,12 @@ export function inviteFromShareLink(url: URL, origin: string): string | null {
 export function createProductionBootstrapRoutes(dependencies: ProductionBootstrapDependencies) {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   const ingressToken = (dependencies.env ?? process.env).MATRIX_REGISTRATION_INGRESS_TOKEN;
+  const localAuth = localOidcEnabled(dependencies.env ?? process.env);
   const compose = () => {
     const active = runtime();
     const matrixAgents = createMatrixAgentAdmission({
       homeserverOrigin: active.env.publicHomeserverOrigin,
+      allowInsecureLoopback: localAuth,
       serverName: active.env.matrixServerName,
       registrationSharedSecret: active.env.matrixRegistrationSharedSecret,
       passwordDerivationSecret: active.env.matrixPasswordDerivationSecret,
@@ -90,6 +93,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const bootstrap = createAgentBootstrapHandlers({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       clock: active.clock,
       random: dependencies.random ?? (bytes => randomBytes(bytes)),
@@ -109,6 +113,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const attestation = createDeviceAttestationRoutes({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       capabilities: bootstrap.capabilities,
       publishedFingerprint: binding => matrixAgents.publishedDeviceFingerprint(binding),
@@ -134,6 +139,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       verifyBrowserDevice: createMatrixBrowserDeviceVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
     });
@@ -169,6 +175,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       verifyBrowserSender: createMatrixBrowserSenderVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
       async agentSender(binding) {
@@ -181,6 +188,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       store: active.store, auth: active.auth,
       verifyBrowserSender: createMatrixBrowserSenderVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
       // G-ADMISSION, a trusted replacement binding/generation, room event position,
