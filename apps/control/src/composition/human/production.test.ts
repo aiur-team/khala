@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BlobsStoreLike } from '../../runtime/control-store';
-import { createProductionHumanServiceLoader } from './production';
+import { createProductionHumanRuntimeLoader, createProductionHumanServiceLoader } from './production';
 
 const env = {
   PUBLIC_APP_ORIGIN: 'https://khala.aiur.team',
@@ -23,6 +23,25 @@ function emptyStore(): BlobsStoreLike {
 }
 
 describe('createProductionHumanServiceLoader', () => {
+  it('logs only the HTTP status when a session store read fails', async () => {
+    const output: string[] = [];
+    const log = vi.spyOn(console, 'info').mockImplementation(value => { output.push(String(value)); });
+    try {
+      const runtime = createProductionHumanRuntimeLoader({
+        env,
+        stores: () => ({
+          getWithMetadata: async () => { throw Object.assign(new Error('private session value'), { status: 403 }); },
+          setJSON: async () => ({ modified: true, etag: '1' }),
+        }),
+      })();
+      expect(await runtime.store.read('auth.session.v1.private')).toEqual({ kind: 'unavailable' });
+      expect(output).toEqual(['{"component":"human","event":"runtime","stage":"session_read_error","httpStatus":403}']);
+      expect(output.join(' ')).not.toContain('private session value');
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('logs only a fixed callback stage when the production store cannot read the login', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {

@@ -13,10 +13,10 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
 const LOGIN_TTL_MS = 10 * 60 * 1_000;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
-function productionDiagnostic(event: 'runtime' | AuthDiagnostic['event'] | 'share', stage: string): void {
+function productionDiagnostic(event: 'runtime' | AuthDiagnostic['event'] | 'share', stage: string, httpStatus?: number): void {
   // The stage is selected from finite internal codes. Never include a request,
   // exception, identity, cookie, room, operation or invitation value.
-  console.info(JSON.stringify({ component: 'human', event, stage }));
+  console.info(JSON.stringify({ component: 'human', event, stage, ...(httpStatus === undefined ? {} : { httpStatus }) }));
 }
 
 export type ProductionHumanDependencies = Readonly<{
@@ -87,7 +87,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       records: storeFor(`${env.controlStateNamespace}-records`),
       operations: storeFor(`${env.controlStateNamespace}-operations`),
       clock,
-      diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`),
+      diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
     });
     const matrix = createMatrixHumanServices({
       homeserverOrigin: env.publicHomeserverOrigin,
