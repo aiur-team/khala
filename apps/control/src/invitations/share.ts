@@ -14,6 +14,7 @@ export async function shareInvite(
   runtime: AdmissionRuntime,
   input: ShareInput,
   options?: CallOptions,
+  expectedOwnerId?: string,
 ): Promise<OperationResult<ShareGrant, AdmissionRejection>> {
   const diagnostic = (stage: Parameters<NonNullable<AdmissionRuntime['diagnostic']>>[0]) => {
     try { runtime.diagnostic?.(stage); } catch { /* Diagnostics never change share outcomes. */ }
@@ -21,6 +22,7 @@ export async function shareInvite(
   const identity = await currentPrincipal(runtime.identity, options);
   if (identity === 'auth_required') { diagnostic('identity_required'); return rejected('auth_required'); }
   if (identity === 'unavailable') { diagnostic('identity_unavailable'); return unavailable(); }
+  if (expectedOwnerId !== undefined && identity.principal.ownerId !== expectedOwnerId) return rejected('identity_mismatch');
   const policy = storePolicy(input.policy, runtime.digests);
   if (!policy) { diagnostic('policy_invalid'); return rejected('forbidden'); }
   let authority: 'allowed' | 'forbidden' | 'unavailable';

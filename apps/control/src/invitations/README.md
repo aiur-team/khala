@@ -15,6 +15,14 @@ email. Purpose-separated keyed digests protect lookup and comparison values. The
 service constructs the canonical `/join/<inviteRef>` URL from an explicitly
 allowlisted application origin.
 
+`personalLink(roomId)` derives a purpose-separated share operation for the
+authenticated human and room. A stored generation keeps the URL stable across
+retries and rotates it atomically after expiry or revocation. It still checks
+current membership. The invite's `creatorOwnerId` names the authenticated link
+issuer and agent sponsor. It may be a joined member B while A remains the Matrix
+room creator. The channel-link resolver compares this issuer with a trusted
+native sponsor before an agent request can reach the channel-access journal.
+
 Admission is linearized against revocation with a ControlStore CAS, then journaled
 by operation ID and bound to the principal, device, invite revision, and policy
 revision. Provider calls receive that same operation ID. An ambiguous provider
