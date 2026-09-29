@@ -67,7 +67,8 @@ describe('hosted Matrix channel admission', () => {
       }
       if (path.includes('/state/m.room.member/')) {
         if (path.includes('khala_a_') && membershipFailure !== null) {
-          return Response.json({ errcode: 'M_FORBIDDEN' }, { status: membershipFailure });
+          return Response.json(membershipFailure === 200 ? { membership: ['leave'] }
+            : { errcode: 'M_FORBIDDEN' }, { status: membershipFailure });
         }
         if (path.includes('khala_a_')) return joined
           ? Response.json({ membership: 'join' }) : Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });

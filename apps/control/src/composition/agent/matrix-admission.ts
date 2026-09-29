@@ -330,9 +330,10 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
         headers: { authorization: `Bearer ${token}` },
       });
       if (result.status === 404 && result.body?.errcode === 'M_NOT_FOUND') return 'absent';
-      if (result.status !== 200) return 'unavailable';
-      return result.body?.membership === 'join' ? 'joined'
-        : ['leave', 'ban', 'invite', 'knock'].includes(String(result.body?.membership)) ? 'absent' : 'unavailable';
+      const membership = result.body?.membership;
+      if (result.status !== 200 || typeof membership !== 'string') return 'unavailable';
+      return membership === 'join' ? 'joined'
+        : ['leave', 'ban', 'invite', 'knock'].includes(membership) ? 'absent' : 'unavailable';
     } catch { return 'unavailable'; }
   }
   return {
