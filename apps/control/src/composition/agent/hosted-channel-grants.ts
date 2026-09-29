@@ -7,7 +7,7 @@ import type { PairingGrantPort } from '../../pairing/store';
 import { readHostedAccessTarget } from '../human/hosted-channel-access-resolver';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
-import { findChannelAccessBinding, recordChannelAccessBinding } from './channel-access-binding';
+import { findChannelAccessBinding, recordChannelAccessBinding, reserveChannelAccessIssuance } from './channel-access-binding';
 
 /** The bootstrap redeem route accepts a channel grant only after an exact
  * approved exchange, signed connector key, device, session and live sponsor
@@ -86,6 +86,15 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         claimFingerprint: record.sessionFingerprint, approvedAt: new Date(active.clock()).toISOString(),
         expiresAt: live.authorization.deadline,
       } };
+    },
+    async reserveIssue(input) {
+      const inspected = await issuer.inspect(input.grant);
+      if (inspected.kind === 'unavailable') return 'unavailable';
+      if (inspected.kind !== 'found' || inspected.binding.operationId !== input.operationId) return 'replayed';
+      const loaded = await exchanges.load(inspected.binding);
+      if (loaded.kind === 'unavailable') return 'unavailable';
+      if (loaded.kind !== 'found' || loaded.stored.record.phase !== 'sealed') return 'replayed';
+      return reserveChannelAccessIssuance(active.store, inspected.binding, input.bindingId, loaded.stored.record.expiresAt);
     },
     async markIssued(input) {
       // Binding and Matrix device setup happen after redemption. Recheck the

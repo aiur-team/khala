@@ -38,6 +38,7 @@ export function registerHostedProductionRoutes(
     ...options,
     externalGrants: {
       redeem: input => access.grants.redeem(input),
+      reserveIssue: input => access.grants.reserveIssue!(input),
       markIssued: input => access.grants.markIssued(input),
     },
     admissionPolicy: async ({ principal, inviteRef, session }) => {

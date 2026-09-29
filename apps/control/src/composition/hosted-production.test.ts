@@ -209,11 +209,22 @@ describe('generated hosted production composition', () => {
     let agentJoined = false;
     let matrixLogins = 0;
     let humanJoined = false;
+    let holdDeviceLogin = false;
+    let signalDeviceLogin = () => {};
+    let releaseDeviceLogin = () => {};
+    const deviceLoginStarted = new Promise<void>(resolve => { signalDeviceLogin = resolve; });
+    const deviceLoginGate = new Promise<void>(resolve => { releaseDeviceLogin = resolve; });
     const matrixFetch: typeof fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === '/_matrix/client/v3/login') {
         const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
-        if (body.device_id === 'DEVICE_B') matrixLogins += 1;
+        if (body.device_id === 'DEVICE_B') {
+          matrixLogins += 1;
+          if (holdDeviceLogin && matrixLogins === 1) {
+            signalDeviceLogin();
+            await deviceLoginGate;
+          }
+        }
         return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
       }
       if (path.startsWith('/_matrix/client/v3/profile/')) return Response.json({});
@@ -490,11 +501,24 @@ describe('generated hosted production composition', () => {
         dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_OTHER'),
     }));
     expect(wrongDevice.status).toBe(401);
-    const redeemed = await restarted(new Request(redeemPath, { method: 'POST',
+    holdDeviceLogin = true;
+    const redeemInFlight = restarted(new Request(redeemPath, { method: 'POST',
       headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
         dpop: signedProof('POST', redeemPath, grant) },
       body: redeemBody('DEVICE_B'),
     }));
+    expect(await Promise.race([
+      deviceLoginStarted.then(() => 'login'),
+      redeemInFlight.then(response => `response ${response.status}`),
+    ])).toBe('login');
+    const concurrentReplay = await restarted(new Request(redeemPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
+        dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_B'),
+    }));
+    expect(concurrentReplay.status).toBe(401);
+    expect(matrixLogins).toBe(1);
+    releaseDeviceLogin();
+    const redeemed = await redeemInFlight;
     expect(redeemed.status).toBe(200);
     const activated = await redeemed.json() as { binding: { bindingId: string }; adapter_capability: { token: string };
       matrix_session: { accessToken: string; deviceId: string; userId: string; roomId: string } };

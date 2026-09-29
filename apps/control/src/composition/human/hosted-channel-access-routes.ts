@@ -163,6 +163,10 @@ export function createHostedChannelAccessRoutes(
       try { return await compose().grants?.redeem(input) ?? { kind: 'unavailable' }; }
       catch { return { kind: 'unavailable' }; }
     },
+    async reserveIssue(input) {
+      try { return await compose().grants?.reserveIssue?.(input) ?? 'unavailable'; }
+      catch { return 'unavailable'; }
+    },
     async markIssued(input) {
       try { return await compose().grants?.markIssued(input) ?? 'unavailable'; }
       catch { return 'unavailable'; }
