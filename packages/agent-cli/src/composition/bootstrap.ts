@@ -5,6 +5,8 @@ import { CONNECT_REFUSAL_CODES, PAIR_REFUSAL_CODES, type AgentClientPort, type C
 export type ConnectorBootstrapClientOptions = Readonly<{
   ports: BootstrapPorts; session: SessionClaim; send: AgentClientPort['send']; status: AgentClientPort['status'];
   listChannels: AgentClientPort['listChannels']; listAgents: AgentClientPort['listAgents'];
+  requestChannelAccess?: AgentClientPort['requestChannelAccess'];
+  channelAccessStatus?: AgentClientPort['channelAccessStatus'];
   listeningMode?: AgentClientPort['listeningMode'];
   listeningModeControl?: AgentClientPort['listeningModeControl'];
 }>;
@@ -47,6 +49,8 @@ export function createConnectorBootstrapClient(options: ConnectorBootstrapClient
     status: options.status,
     listChannels: options.listChannels,
     listAgents: options.listAgents,
+    ...(options.requestChannelAccess ? { requestChannelAccess: options.requestChannelAccess } : {}),
+    ...(options.channelAccessStatus ? { channelAccessStatus: options.channelAccessStatus } : {}),
     ...(options.listeningMode ? { listeningMode: options.listeningMode } : {}),
     ...(options.listeningModeControl ? { listeningModeControl: options.listeningModeControl } : {}),
   };

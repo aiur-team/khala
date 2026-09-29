@@ -1,23 +1,36 @@
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { AuthPrincipal, OwnerId, StableAgentPrincipal } from '@khala/contracts/messaging/index';
-import { fakeStore, secureRandom, T0 } from '../auth/support.test';
-import { AUTHORIZE_PATH, createChannelDiscoveryBootstrapHandlers } from './bootstrap/handler';
-import { createNativeSessionAuthority, type VerifiedNativeCandidate } from './native-session-authority';
+import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
+import { fakeStore, T0 } from '../auth/support.test';
+import { thumbprint } from '../agent-bootstrap/proof';
+import { createNativeSessionAuthority } from './native-session-authority';
 
 const ORIGIN = 'https://khala.aiur.team';
 const TARGET = `${ORIGIN}/channels/room-one`;
 const OWNER = 'owner_one' as OwnerId;
 const OTHER = 'owner_other' as OwnerId;
-const KEY = 'A'.repeat(43);
-const candidate: VerifiedNativeCandidate = {
-  principal: 'agent_native_one' as StableAgentPrincipal,
-  session: { harness: 'codex', sessionId: 'provider-thread-one', generation: 0 },
-  proofKeyThumbprint: KEY,
-};
-const secondCandidate: VerifiedNativeCandidate = { ...candidate,
-  principal: 'agent_native_two' as StableAgentPrincipal,
-  session: { harness: 'codex', sessionId: 'provider-thread-two', generation: 0 },
-  proofKeyThumbprint: 'D'.repeat(43) };
+const SESSION = { harness: 'codex', sessionId: 'untrusted-local-label', generation: 0 };
+const OPERATION = 'native-op-one';
+
+function key() {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const x = createPublicKey(privateKey).export({ format: 'jwk' }).x!;
+  return { privateKey, x, jkt: thumbprint(x) };
+}
+
+function proof(identity: ReturnType<typeof key>, now: number, input: {
+  operationId: string; target: string; session: typeof SESSION; nonce: string;
+}, jti = randomBytes(16).toString('base64url'), signer: KeyObject = identity.privateKey) {
+  const bodyHash = createHash('sha256').update(JSON.stringify(['khala.proof-key-candidate.v1',
+    input.operationId, input.target, input.session.harness, input.session.sessionId, input.session.generation])).digest('base64url');
+  const header = Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'dpop+jwt',
+    jwk: { kty: 'OKP', crv: 'Ed25519', x: identity.x } })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ htm: 'POST',
+    htu: `${ORIGIN}/api/agent/channel-discovery/authority/candidate`, iat: Math.floor(now / 1000), jti,
+    nonce: input.nonce, body_hash: bodyHash,
+  })).toString('base64url');
+  return `${header}.${payload}.${sign(null, Buffer.from(`${header}.${payload}`), signer).toString('base64url')}`;
+}
 
 function principal(ownerId: OwnerId): AuthPrincipal {
   return { v: 1, ownerId, providerIssuer: 'https://id.example.test', providerSubject: ownerId,
@@ -26,121 +39,118 @@ function principal(ownerId: OwnerId): AuthPrincipal {
 
 function fixture() {
   let now = T0;
-  let current: 'current' | 'removed' | 'rebound' | 'unavailable' = 'current';
   let roomOwner = OWNER;
   const store = fakeStore(() => now);
   const ports = {
-    store: store.store, clock: () => now,
-    verifier: {
-      async verify(input: { evidence: unknown; target: string; operationId: string }) {
-        if (input.target !== TARGET || input.operationId !== 'native-op-one') return { kind: 'rejected' as const };
-        if (input.evidence === 'provider-attested-proof') return { kind: 'verified' as const, candidate };
-        return input.evidence === 'provider-attested-proof-two'
-          ? { kind: 'verified' as const, candidate: secondCandidate } : { kind: 'rejected' as const };
-      },
-      async current(held: VerifiedNativeCandidate) {
-        return held.proofKeyThumbprint === KEY || held.proofKeyThumbprint === secondCandidate.proofKeyThumbprint
-          ? current : 'removed' as const;
-      },
-    },
+    store: store.store, clock: () => now, origin: ORIGIN,
     async resolveOwner(target: string) {
       return target === TARGET ? { kind: 'resolved' as const, ownerId: roomOwner } : { kind: 'rejected' as const };
     },
   };
-  return { store, ports, authority: createNativeSessionAuthority(ports),
-    advance(ms: number) { now += ms; }, setCurrent(next: typeof current) { current = next; },
-    setRoomOwner(next: OwnerId) { roomOwner = next; } };
+  const first = key();
+  const second = key();
+  const authority = createNativeSessionAuthority(ports);
+  const submit = async (identity = first, session = SESSION, operationId = OPERATION, target = TARGET) => {
+    const challenge = await authority.challenge(identity.jkt);
+    if (challenge.kind !== 'issued') throw new Error('challenge not issued');
+    const input = { operationId, target, session, nonce: challenge.nonce };
+    return { ...input, proof: proof(identity, now, input) };
+  };
+  return { store, ports, first, second, submit, authority,
+    advance(ms: number) { now += ms; }, setRoomOwner(next: OwnerId) { roomOwner = next; }, now: () => now };
 }
 
-describe('durable native-session authority', () => {
-  it('keeps two native agents distinct when they use the same channel operation ID', async () => {
+describe('owner-approved proof-key authority', () => {
+  it('isolates two keys using the same target and operation ID', async () => {
     const h = fixture();
-    const first = await h.authority.propose({ operationId: 'native-op-one', target: TARGET,
-      evidence: 'provider-attested-proof' });
-    const second = await h.authority.propose({ operationId: 'native-op-one', target: TARGET,
-      evidence: 'provider-attested-proof-two' });
+    const first = await h.authority.propose(await h.submit());
+    const secondSession = { harness: 'claude', sessionId: 'another-untrusted-label', generation: 0 };
+    const second = await h.authority.propose(await h.submit(h.second, secondSession));
     if (first.kind !== 'pending_owner' || second.kind !== 'pending_owner') throw new Error('candidates not recorded');
     expect(first.candidateId).not.toBe(second.candidateId);
-    expect(await h.authority.approve({ candidateId: first.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'approved' });
-    expect(await h.authority.inspect({ ownerId: OWNER, session: secondCandidate.session })).toEqual({ kind: 'removed' });
-    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'approved' });
-    expect(await h.authority.inspect({ ownerId: OWNER, session: secondCandidate.session })).toMatchObject({
-      kind: 'verified', principal: secondCandidate.principal, proofKeyThumbprint: secondCandidate.proofKeyThumbprint,
+    expect(await h.authority.approve({ candidateId: first.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.first.jkt,
+    });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: secondSession })).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.second.jkt,
     });
   });
 
-  it('requires trusted native evidence and exact owner approval before discovery consent', async () => {
+  it('refuses forged labels, substituted keys, changed targets and replayed proofs', async () => {
     const h = fixture();
-    const request = { operationId: 'native-op-one', target: TARGET, evidence: 'provider-attested-proof' };
-    expect(await h.authority.propose({ ...request, evidence: { harness: 'codex', sessionId: candidate.session.sessionId } }))
+    const valid = await h.submit();
+    const rawLabel = { operationId: OPERATION, target: TARGET, session: SESSION, nonce: valid.nonce, proof: null };
+    expect(await h.authority.propose(rawLabel)).toEqual({ kind: 'rejected' });
+    expect(await h.authority.propose({ ...valid, target: `${ORIGIN}/channels/other` })).toEqual({ kind: 'rejected' });
+    expect(await h.authority.propose({ ...valid, proof: proof(h.first, h.now(), valid, undefined, h.second.privateKey) }))
       .toEqual({ kind: 'rejected' });
-    expect(await h.authority.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({ kind: 'removed' });
-    const proposed = await h.authority.propose(request);
-    expect(proposed).toMatchObject({ kind: 'pending_owner', operationId: request.operationId });
+    const proposed = await h.authority.propose(valid);
+    expect(proposed.kind).toBe('pending_owner');
+    expect(await h.authority.propose(valid)).toEqual({ kind: 'rejected' });
     if (proposed.kind !== 'pending_owner') throw new Error('candidate not recorded');
-    expect(await h.authority.propose(request)).toEqual(proposed);
-    expect(await h.authority.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({ kind: 'removed' });
-    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OTHER) }))
-      .toEqual({ kind: 'forbidden' });
-    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'approved' });
-
-    // A reconstructed composition reads the same durable authority. The browser
-    // can only request the key already verified by the native ingress.
-    const restarted = createNativeSessionAuthority(h.ports);
-    expect(await restarted.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({
-      kind: 'verified', principal: candidate.principal, currentGeneration: 0, proofKeyThumbprint: KEY,
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OTHER) })).toEqual({ kind: 'forbidden' });
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    expect(await createNativeSessionAuthority(h.ports).inspect({ ownerId: OWNER, session: SESSION })).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.first.jkt,
     });
-    const bootstrap = createChannelDiscoveryBootstrapHandlers({
-      origin: ORIGIN, store: h.store.store, clock: h.ports.clock, random: secureRandom,
-      authenticate: async () => ({ kind: 'authenticated', context: { principal: principal(OWNER), csrfToken: 'csrf' } }),
-      sessionAuthority: restarted,
-      trustedSource: async () => ({ kind: 'trusted', source: 'edge:test' }),
-      limiter: { reserve: async () => ({ kind: 'reserved', permit: { permitId: 'permit' } }),
-        finalize: async () => ({ kind: 'released' }) },
-    });
-    const consent = (jkt: string) => bootstrap.human[0]!.handle(new Request(`${ORIGIN}${AUTHORIZE_PATH}?${new URLSearchParams({
-      redirect_uri: 'http://127.0.0.1:49152/khala/discovery/callback', state: 'state-0123456789abcdef',
-      code_challenge: 'B'.repeat(43), code_challenge_method: 'S256', origin: ORIGIN,
-      harness: candidate.session.harness, session_id: candidate.session.sessionId,
-      generation: '0', proof_jkt: jkt,
-    })}`));
-    expect((await consent(KEY)).status).toBe(200);
-    expect((await consent('C'.repeat(43))).status).toBe(403);
-    expect(await restarted.inspect({ ownerId: OTHER, session: candidate.session })).toEqual({ kind: 'removed' });
-    expect(await restarted.inspect({ ownerId: OWNER, session: { ...candidate.session, generation: 1 } }))
-      .toEqual({ kind: 'rebound' });
+    expect(await h.authority.inspect({ ownerId: OTHER, session: SESSION })).toEqual({ kind: 'removed' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: { ...SESSION, generation: 1 } })).toEqual({ kind: 'rebound' });
   });
 
-  it('fails closed when native freshness is lost or the owner waits past the candidate lease', async () => {
+  it('expires candidates and rechecks exact room ownership at approval', async () => {
     const h = fixture();
-    const request = { operationId: 'native-op-one', target: TARGET, evidence: 'provider-attested-proof' };
-    const proposed = await h.authority.propose(request);
+    const proposed = await h.authority.propose(await h.submit());
     if (proposed.kind !== 'pending_owner') throw new Error('candidate not recorded');
+    h.setRoomOwner(OTHER);
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'conflict' });
+    h.setRoomOwner(OWNER);
     h.advance(5 * 60_000 + 1);
-    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'absent' });
-    expect(await h.authority.propose(request)).toEqual({ kind: 'unavailable' });
-    expect(await h.authority.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({ kind: 'removed' });
-    const fresh = fixture();
-    const freshProposed = await fresh.authority.propose(request);
-    if (freshProposed.kind !== 'pending_owner') throw new Error('candidate not recorded');
-    fresh.setCurrent('rebound');
-    expect(await fresh.authority.approve({ candidateId: freshProposed.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'conflict' });
-    fresh.setCurrent('current');
-    expect(await fresh.authority.approve({ candidateId: freshProposed.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'approved' });
-    fresh.setCurrent('removed');
-    expect(await fresh.authority.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({ kind: 'removed' });
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'absent' });
+  });
 
-    const moved = fixture();
-    const movedProposed = await moved.authority.propose(request);
-    if (movedProposed.kind !== 'pending_owner') throw new Error('candidate not recorded');
-    moved.setRoomOwner(OTHER);
-    expect(await moved.authority.approve({ candidateId: movedProposed.candidateId, principal: principal(OWNER) }))
-      .toEqual({ kind: 'conflict' });
+  it('requires explicit owner revocation before a new key or generation can replace an approval', async () => {
+    const h = fixture();
+    const first = await h.authority.propose(await h.submit());
+    if (first.kind !== 'pending_owner') throw new Error('first candidate missing');
+    expect(await h.authority.approve({ candidateId: first.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    const firstApproval = await h.authority.inspect({ ownerId: OWNER, session: SESSION });
+    if (firstApproval.kind !== 'verified') throw new Error('first approval missing');
+    const second = await h.authority.propose(await h.submit(h.second));
+    if (second.kind !== 'pending_owner') throw new Error('second candidate missing');
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'conflict' });
+    const held = { principal: principal(OWNER), harness: SESSION.harness, sessionId: SESSION.sessionId,
+      proofKeyThumbprint: h.first.jkt, generation: 0 };
+    expect(await h.authority.revoke({ ...held, proofKeyThumbprint: h.second.jkt })).toEqual({ kind: 'conflict' });
+    expect(await h.authority.revoke({ ...held, principal: principal(OTHER) })).toEqual({ kind: 'absent' });
+    expect(await h.authority.revoke(held)).toEqual({ kind: 'revoked' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'removed' });
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    const replacement = await h.authority.inspect({ ownerId: OWNER, session: SESSION });
+    expect(replacement).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.second.jkt,
+    });
+    if (replacement.kind !== 'verified') throw new Error('replacement missing');
+    expect(replacement.authorityRevision).not.toBe(firstApproval.authorityRevision);
+    expect(await h.authority.revoke({ ...held, proofKeyThumbprint: h.second.jkt })).toEqual({ kind: 'revoked' });
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'conflict' });
+    const nextGeneration = { ...SESSION, generation: 1 };
+    const third = await h.authority.propose(await h.submit(h.second, nextGeneration));
+    if (third.kind !== 'pending_owner') throw new Error('new generation missing');
+    expect(await h.authority.approve({ candidateId: third.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'rebound' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: nextGeneration })).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.second.jkt, currentGeneration: 1,
+    });
+  });
+
+  it('invalidates a prior approval when the exact room owner changes', async () => {
+    const h = fixture();
+    const proposed = await h.authority.propose(await h.submit());
+    if (proposed.kind !== 'pending_owner') throw new Error('candidate missing');
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    h.setRoomOwner(OTHER);
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'removed' });
   });
 });
