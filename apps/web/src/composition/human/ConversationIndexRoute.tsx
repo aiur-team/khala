@@ -6,7 +6,7 @@ import type { HumanRouteCodec } from './routes';
 export function useConversationIndex(context: HumanRouteContext) {
   const [items, setItems] = useState<readonly ConversationSummary[] | null | undefined>(undefined);
   const ownerId = context.principal.ownerId;
-  const generation = context.deviceView.generation;
+  const generation = context.generation;
   useEffect(() => {
     const port = context.conversations;
     if (!port) return undefined;

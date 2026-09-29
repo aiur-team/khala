@@ -16,7 +16,7 @@ import type {
   TimelinePage,
   SendState,
 } from '@khala/contracts/messaging/index';
-import { decodeContentLimits } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, ok, unavailable } from '@khala/contracts/messaging/index';
 import { CreateChannelScreen } from './CreateChannelScreen';
 import { createCreateChannelController } from './controller';
 import type { CreateChannelPorts } from './ports';
@@ -62,19 +62,19 @@ function fakePorts(): CreateChannelPorts {
 }
 
 describe('CreateChannelScreen initial render', () => {
-  it('labels the title field, the intro fieldset and every intro control with an accessible name', () => {
+  it('labels the title field without introduction controls', () => {
     const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} />);
     expect(html).toContain('for="create-channel-title"');
-    expect(html).toContain('<legend>Introduction messages</legend>');
-    expect(html).toContain('>Add introduction message<');
+    expect(html).not.toContain('Introduction messages');
   });
 
-  it('offers all three admission policies and defaults to a no-history link', () => {
+  it('offers supported admission policies and defaults to a no-history link', () => {
     const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} />);
     expect(html).toContain('<legend>Who can join from this link?</legend>');
     expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_no_history")(?=[^>]*\bchecked="")[^>]*>/);
     expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="named_no_history")[^>]*>/);
-    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_full_history")[^>]*>/);
+    expect(html).not.toContain('value="link_full_history"');
+    expect(html).toContain('Reading messages from before joining is currently unavailable.');
   });
 
   it('disables submit while readiness is still being checked, and shows no share link or error yet', () => {
@@ -84,10 +84,6 @@ describe('CreateChannelScreen initial render', () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it('the empty-state intro list renders as a real, empty <ol>', () => {
-    const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} />);
-    expect(html).toContain('<ol class="create-channel__intro-list"></ol>');
-  });
 });
 
 describe('CreateChannelScreen with a pre-driven controller', () => {
@@ -105,28 +101,6 @@ describe('CreateChannelScreen with a pre-driven controller', () => {
     expect(html).toContain('Enter a valid email address.');
   });
 
-  it('names every intro row by position and disables move-up on the first, move-down on the last', () => {
-    const controller = createCreateChannelController({
-      room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
-      admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
-      limits: LIMITS,
-    });
-    controller.addIntro();
-    controller.addIntro();
-    const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} controller={controller} />);
-
-    expect(html).toContain('>Message 1<');
-    expect(html).toContain('>Message 2<');
-    expect(html).toContain('>Move message 1 up<');
-    expect(html).toContain('>Remove message 1<');
-    expect(html).toContain('>Remove message 2<');
-    // Move-up on the first row and move-down on the last row are both disabled.
-    const rows = html.split('<li class="create-channel__intro-item">').slice(1);
-    expect(rows[0]).toMatch(/Move message 1 up<\/button>/);
-    expect(rows[0]!.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(rows[1]).toMatch(/Move message 2 down<\/button>/);
-  });
-
   it('attaches the error to an alert and offers retry once a rejection lands', async () => {
     const create = vi.fn().mockResolvedValue({ kind: 'rejected', code: 'invalid_request' });
     const controller = createCreateChannelController({
@@ -140,5 +114,22 @@ describe('CreateChannelScreen with a pre-driven controller', () => {
     const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} controller={controller} />);
     expect(html).toContain('role="alert"');
     expect(html).toContain('invalid_request');
+  });
+
+  it('identifies a failed share and keeps the created channel reachable', async () => {
+    const roomId = 'room_1' as ChannelSummary['roomId'];
+    const controller = createCreateChannelController({
+      room: { create: vi.fn().mockResolvedValue(ok({ roomId, title: null, membership: 'joined', revision: 'rev_1' })), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
+      admission: { share: vi.fn().mockResolvedValue(unavailable()), inspect: vi.fn(), admit: vi.fn() },
+      limits: LIMITS,
+    });
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
+
+    const html = renderToStaticMarkup(<CreateChannelScreen ports={fakePorts()} controller={controller} onOpenRoom={() => {}} />);
+    expect(html).toContain('Could not prepare the share link (unavailable).');
+    expect(html).toContain('>Open created channel</button>');
+    expect(html).toContain('>Retry</button>');
+    expect(html).not.toContain('introduction');
   });
 });

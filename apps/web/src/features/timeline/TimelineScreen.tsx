@@ -236,7 +236,11 @@ export function TimelineScreen({
     if (!body || !canCompose || sendBlocked) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
-    setPendingList(list => [...list, { clientTxnId, content, phase: 'pending' }]);
+    const next = [...pendingList, { clientTxnId, content, phase: 'pending' as const }];
+    // Persist before starting Matrix I/O: a reload can interrupt the request
+    // before React's passive effect has saved the newly visible local row.
+    pendingStore?.save(next);
+    setPendingList(next);
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     setPendingList(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
@@ -254,7 +258,8 @@ export function TimelineScreen({
   // submit the same text again under a fresh `clientTxnId`, duplicating a
   // send that may already have gone through (AE2). Only Retry — which reuses
   // the original `clientTxnId` — may resolve it.
-  const anySendUnresolved = pendingList.some(entry => entry.phase !== 'accepted');
+  const visiblePending = pendingList.filter(entry => !isReconciled(entry, data.items));
+  const anySendUnresolved = visiblePending.some(entry => entry.phase !== 'accepted');
 
   return (
     <section className="timeline" aria-label="Conversation">
@@ -351,7 +356,7 @@ export function TimelineScreen({
             </Fragment>
           );
         })}
-        {pendingList.map(entry => (
+        {visiblePending.map(entry => (
           <li key={entry.clientTxnId} className="timeline__row timeline__row--pending" aria-live="polite">
             <header className="timeline__row-header">
               <span className="timeline__author" dir="auto">

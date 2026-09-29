@@ -19,6 +19,7 @@ import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 import { ConversationList } from '../../ui/conversation';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
+import { createHumanPendingSendStore } from './pending-send-store';
 
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 type ReviewRoomId = Parameters<HumanRoomRenderer>[1]['roomId'];
@@ -225,6 +226,10 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  const deviceId = context.device.current().deviceId;
+  const pendingStore = useMemo(() => deviceId === null ? undefined
+    : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
+  [context.principal.ownerId, deviceId, roomId]);
   const room = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
@@ -272,8 +277,9 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
         onBack: () => navigate(routes.conversationsPath()),
       } : {})}
       renderTimeline={() => (
-        <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
-          composerPlaceholder="Message this channel" />
+        <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel" />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}
