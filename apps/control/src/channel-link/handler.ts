@@ -24,8 +24,8 @@ export function createChannelLinkHandlers(deps: Readonly<{
   store: ControlStore;
   secret: string;
   clock: () => number;
-  auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
-  admissionFor(request: Request): AdmissionService;
+  auth?: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
+  admissionFor?(request: Request): AdmissionService;
   agent?: Readonly<{
     authenticate(request: Request): Promise<AgentLinkAuthentication>;
     inspectMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
@@ -38,7 +38,10 @@ export function createChannelLinkHandlers(deps: Readonly<{
   }>;
 }>): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[] }> {
   async function resolveHuman(request: Request): Promise<Response> {
-    const auth = await safe(() => deps.auth.authenticateRequest(request));
+    const humanAuth = deps.auth;
+    const admissionFor = deps.admissionFor;
+    if (!humanAuth || !admissionFor) return result(503, 'unavailable');
+    const auth = await safe(() => humanAuth.authenticateRequest(request));
     if (!auth || auth.kind === 'unavailable') return result(503, 'unavailable');
     if (auth.kind === 'signed_out') return result(401, 'auth_required');
     const body = await readBody(request, ['v', 'channelUrl']);
@@ -47,7 +50,7 @@ export function createChannelLinkHandlers(deps: Readonly<{
     try { url = new URL(body.channelUrl); } catch { return result(400, 'invalid_link'); }
     const invite = inviteFromShareLink(url, deps.origin);
     if (invite === null) return result(400, 'invalid_link');
-    const state = await safe(() => deps.admissionFor(request).inspect(invite));
+    const state = await safe(() => admissionFor(request).inspect(invite));
     if (!state || state === 'unavailable') return result(503, 'unavailable');
     if (state === 'auth_required') return result(401, 'auth_required');
     if (state === 'eligible') return result(200, 'join_required');
@@ -57,14 +60,17 @@ export function createChannelLinkHandlers(deps: Readonly<{
   }
 
   async function personalHuman(request: Request): Promise<Response> {
-    const auth = await safe(() => deps.auth.requireHumanMutation(request));
+    const humanAuth = deps.auth;
+    const admissionFor = deps.admissionFor;
+    if (!humanAuth || !admissionFor) return result(503, 'unavailable');
+    const auth = await safe(() => humanAuth.requireHumanMutation(request));
     if (!auth || auth.kind === 'unavailable') return result(503, 'unavailable');
     if (auth.kind === 'rejected') return result(auth.code === 'signed_out' ? 401 : 403,
       auth.code === 'signed_out' ? 'auth_required' : 'forbidden');
     const body = await readBody(request, ['v', 'roomId']);
     const room = decodeRoomId(body?.roomId);
     if (!body || body.v !== 1 || !room.ok) return result(400, 'invalid_link');
-    const shared = await safe(() => deps.admissionFor(request).personalLink(room.value));
+    const shared = await safe(() => admissionFor(request).personalLink(room.value));
     if (!shared || shared.kind === 'unavailable') return result(503, 'unavailable');
     if (shared.kind === 'outcome_unknown') return result(503, 'unavailable');
     if (shared.kind === 'rejected') {
@@ -105,10 +111,10 @@ export function createChannelLinkHandlers(deps: Readonly<{
   }
 
   return Object.freeze({
-    human: Object.freeze([
+    human: Object.freeze(deps.auth && deps.admissionFor ? [
       { path: HUMAN_CHANNEL_LINK_RESOLVE_PATH, methods: ['POST'], handle: resolveHuman },
       { path: HUMAN_CHANNEL_LINK_PERSONAL_PATH, methods: ['POST'], handle: personalHuman },
-    ]),
+    ] : []),
     agent: Object.freeze(deps.agent ? [{ path: AGENT_CHANNEL_LINK_REQUEST_PATH, methods: ['POST'], handle: requestAgent }] : []),
   });
 }

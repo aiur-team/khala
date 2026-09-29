@@ -180,17 +180,17 @@ describe('generated hosted production composition', () => {
     const gatewayRoute = gateway('explicit_browser_consent');
     expect((await gatewayRoute(request)).status).toBe(401);
   });
-  it('requires a signed challenged key and the exact owner before making discovery authority available', async () => {
+  it('takes B from A’s room link through B’s signed agent request and B’s approval', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-28T12:00:00Z');
     const roomId = '!room:matrix.example.test';
-    const inviteRef = 'inv_abcdefgh';
-    const link = `${origin}/join/${inviteRef}`;
+    const inviteRef = 'inv_creator_a';
+    const creatorLink = `${origin}/join/${inviteRef}`;
     const control = createControlStore({ records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
       operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`), clock: () => now });
     const digests = createDigests(env.INVITATION_HMAC_SECRET);
     expect((await control.compareAndSet({ key: digests.inviteKey(inviteRef), expectedRevision: null,
-      operationId: 'create-invite', next: { value: { v: 1, roomId, creatorOwnerId: 'owner_1',
+      operationId: 'create-invite', next: { value: { v: 1, roomId, creatorOwnerId: 'owner_2',
         inviteRefDigest: digests.inviteRef(inviteRef), policyRevision: 1,
         policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null,
         lastAuthorizedOperationDigest: null }, expiresAt: null } })).kind).toBe('applied');
@@ -207,6 +207,7 @@ describe('generated hosted production composition', () => {
     });
     if (owner.kind !== 'created' || other.kind !== 'created') throw new Error('owner sessions unavailable');
     let agentJoined = false;
+    let humanJoined = false;
     const matrixFetch: typeof fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === '/_matrix/client/v3/login') {
@@ -216,7 +217,8 @@ describe('generated hosted production composition', () => {
       if (path.startsWith('/_matrix/client/v3/profile/')) return Response.json({});
       if (path.includes('/state/m.room.member/')) {
         const member = decodeURIComponent(path.split('/').at(-1)!);
-        return member.startsWith('@khala_a_') && !agentJoined
+        return (member.startsWith('@khala_a_') && !agentJoined)
+          || (!member.startsWith('@khala_a_') && !humanJoined)
           ? Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 })
           : Response.json({ membership: 'join' });
       }
@@ -231,6 +233,28 @@ describe('generated hosted production composition', () => {
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
       clock: () => now, fetch: matrixFetch,
     }), absentPrefixes: [], appOrigin: origin });
+    const creatorResolution = () => route(new Request(`${origin}/api/human/channel-link/resolve`, {
+      method: 'POST', headers: { origin, cookie: `${SESSION_COOKIE}=${owner.token}`,
+        'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, channelUrl: creatorLink }),
+    }));
+    expect(await (await creatorResolution()).json()).toEqual({ v: 1, kind: 'join_required' });
+    humanJoined = true;
+    expect(await (await creatorResolution()).json()).toEqual({ v: 1, kind: 'joined' });
+    const personal = await route(new Request(`${origin}/api/human/channel-link/personal`, {
+      method: 'POST', headers: { origin, cookie: `${SESSION_COOKIE}=${owner.token}`,
+        'content-type': 'application/json', 'x-khala-csrf': csrfTokenFor(owner.token) },
+      body: JSON.stringify({ v: 1, roomId }),
+    }));
+    expect(personal.status).toBe(200);
+    const { shareUrl: link } = await personal.json() as { shareUrl: string };
+    expect(link).not.toBe(creatorLink);
+    const personalRef = new URL(link).pathname.slice('/join/'.length);
+    const personalRecord = await control.read(digests.inviteKey(personalRef));
+    expect(personalRecord.kind).toBe('record');
+    if (personalRecord.kind === 'record') expect(personalRecord.record.value).toMatchObject({
+      roomId, creatorOwnerId: 'owner_1', status: 'active',
+    });
     const { privateKey } = generateKeyPairSync('ed25519');
     const x = createPublicKey(privateKey).export({ format: 'jwk' }).x!;
     const jkt = thumbprint(x);
@@ -308,21 +332,23 @@ describe('generated hosted production composition', () => {
     const tokenValue = await tokenResponse.json() as { credential: { credentialRef: string } };
     expect(tokenResponse.status, JSON.stringify(tokenValue)).toBe(200);
     const credential = tokenValue;
-    const requestPath = `${origin}/api/agent/channel-access/request`;
-    const creatorInviteRef = 'inv_creator_a';
-    expect((await control.compareAndSet({ key: digests.inviteKey(creatorInviteRef), expectedRevision: null,
-      operationId: 'create-a-link', next: { value: { v: 1, roomId, creatorOwnerId: 'owner_2',
-        inviteRefDigest: digests.inviteRef(creatorInviteRef), policyRevision: 1,
-        policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null,
-        lastAuthorizedOperationDigest: null }, expiresAt: null } })).kind).toBe('applied');
+    const requestPath = `${origin}/api/agent/channel-link/request`;
+    const unsigned = await route(new Request(requestPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, kind: 'channel_url', operationId: 'unsigned-agent-request',
+        credentialRef: credential.credential.credentialRef, channelUrl: link }),
+    }));
+    expect(unsigned.status).toBe(401);
+    expect(await unsigned.json()).toEqual({ v: 1, kind: 'auth_required' });
     const wrongLink = await route(new Request(requestPath, { method: 'POST',
       headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${credential.credential.credentialRef}`,
         dpop: signedProof('POST', requestPath, credential.credential.credentialRef) },
       body: JSON.stringify({ v: 1, kind: 'channel_url', operationId: 'b-agent-wrong-link',
-        credentialRef: credential.credential.credentialRef, channelUrl: `${origin}/join/${creatorInviteRef}` }),
+        credentialRef: credential.credential.credentialRef, channelUrl: creatorLink }),
     }));
-    expect(wrongLink.status).toBe(200);
-    expect(await wrongLink.json()).toMatchObject({ outcome: 'unavailable' });
+    expect(wrongLink.status).toBe(409);
+    expect(await wrongLink.json()).toEqual({ v: 1, kind: 'use_your_link',
+      action: 'join_in_browser_then_copy_your_link' });
     const accessRequest = await route(new Request(requestPath, { method: 'POST',
       headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${credential.credential.credentialRef}`,
         dpop: signedProof('POST', requestPath, credential.credential.credentialRef) },
@@ -330,7 +356,7 @@ describe('generated hosted production composition', () => {
         credentialRef: credential.credential.credentialRef, channelUrl: link }),
     }));
     expect(accessRequest.status).toBe(200);
-    expect(await accessRequest.json()).toMatchObject({ outcome: 'pending_owner' });
+    expect(await accessRequest.json()).toMatchObject({ kind: 'request', outcome: 'pending_owner' });
     // A stale row must not make the sponsor's entire inbox unavailable.
     const staleInviteRef = 'inv_stale_b';
     const staleInviteKey = digests.inviteKey(staleInviteRef);

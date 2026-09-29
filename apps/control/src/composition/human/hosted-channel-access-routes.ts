@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ChannelAccessResolutionPort } from '@khala/contracts/messaging/index';
+import type { ChannelAccessRequestJournalPort, ChannelAccessResolutionPort } from '@khala/contracts/messaging/index';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
 import { createChannelAccessService } from '@khala/messaging/channel-access/journal/service';
@@ -14,6 +14,21 @@ import type { PairingGrantPort } from '../../pairing/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './production';
 import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
+
+function createHostedAccessState(active: ProductionHumanRuntime, resolver: ChannelAccessResolutionPort) {
+  const key = createHash('sha256').update('khala.hosted.channel-access.policy.v1\0')
+    .update(active.env.invitationHmacSecret).digest();
+  const policy = createChannelAccessPolicy({ key });
+  const journal = createChannelAccessStore({ store: active.store, policy, clock: active.clock });
+  return { journal, service: createChannelAccessService({ store: journal, resolver, policy }) };
+}
+
+/** Submit through the same hosted journal and revision checks as the channel-access route. */
+export function createHostedAccessRequestJournal(
+  active: ProductionHumanRuntime, authority: HostedAccessRequesterAuthority,
+): ChannelAccessRequestJournalPort {
+  return createHostedAccessState(active, createHostedChannelAccessResolver(active, authority)).service.journal;
+}
 
 /**
  * The hosted integration supplies approved proof-key authority and fresh
@@ -59,10 +74,6 @@ export function createHostedChannelAccessRoutes(
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   function compose() {
     const active = runtime();
-    const key = createHash('sha256').update('khala.hosted.channel-access.policy.v1\0')
-      .update(active.env.invitationHmacSecret).digest();
-    const policy = createChannelAccessPolicy({ key });
-    const journal = createChannelAccessStore({ store: active.store, policy, clock: active.clock });
     const hostedAuthority = ports.hostedAuthority?.(active);
     const authenticateAgent = hostedAuthority?.authenticateAgent ?? ports.authenticateAgent;
     const requesterAuthority = hostedAuthority?.requesterAuthority ?? ports.requesterAuthority;
@@ -70,7 +81,7 @@ export function createHostedChannelAccessRoutes(
     const resolver = ports.resolver?.(active) ?? (requesterAuthority
       ? createHostedChannelAccessResolver(active, requesterAuthority) : null);
     if (resolver === null) throw new Error('requester authority unavailable');
-    const service = createChannelAccessService({ store: journal, resolver, policy });
+    const { journal, service } = createHostedAccessState(active, resolver);
     const handlers = createChannelAccessHandlers({
       service, auth: active.auth,
       async authenticateAgent(request) {
