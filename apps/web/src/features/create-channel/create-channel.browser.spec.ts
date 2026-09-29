@@ -8,10 +8,10 @@ import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const harnessRoot = join(here, 'browser-harness');
+const harnessRoot = join(here, '../../composition/human/create-channel-browser-harness');
 
 // Browser-verified against the production CreateChannelScreen with synthetic,
-// fabricated ports (see browser-harness/main.tsx) — no real Matrix credentials,
+// fabricated ports (see composition/human/create-channel-browser-harness/main.tsx) — no real Matrix credentials,
 // network calls or decrypted content. Narrow viewports per
 // docs/evidence/ui-planning-grounding.md.
 test('CreateChannelScreen creates directly and keeps submit/copy reachable at narrow viewports', { timeout: 90_000 }, async () => {
@@ -38,8 +38,8 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     await titleField.waitFor();
     await titleField.focus();
 
-    // The selected supported policy is carried to admission unchanged.
-    assert.equal(await page.getByText('Reading messages from before joining is currently unavailable.').isVisible(), true);
+    assert.equal(await page.getByText('Who can join from this link?').count(), 0);
+    assert.equal(await page.getByText('Reading messages from before joining is currently unavailable.').count(), 0);
 
     const submit = page.getByRole('button', { name: 'Create channel' });
     await submit.waitFor();
@@ -53,16 +53,23 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     await page.getByText('Creating the channel…').waitFor();
     assert.equal(await titleField.isDisabled(), true);
 
-    // The share link appears once the operation journal reaches "ready".
-    const shareUrlField = page.getByLabel('Channel link');
-    await shareUrlField.waitFor({ timeout: 10_000 });
-    assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
-    assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
+    // Creation opens the channel page without leaving an unused bearer invite.
+    await page.getByRole('region', { name: 'Share channel' }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator('#opened-channel').textContent(), 'room_harness');
+    assert.equal(await page.locator('#share-count').textContent(), '0');
+    assert.equal(await page.getByLabel('Channel link').count(), 0);
 
     const copyButton = page.getByRole('button', { name: 'Copy link' });
     await copyButton.click();
     await page.getByText('Link copied.').waitFor();
+    const shareUrlField = page.getByLabel('Channel link');
+    assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
+    assert.equal(await page.locator('#share-count').textContent(), '1');
+    assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
     assert.equal(await page.locator('#copy-log').innerText(), 'https://khala.aiur.team/i/harness');
+
+    await copyButton.click();
+    assert.equal(await page.locator('#share-count').textContent(), '1', 'copy reuses the first invite');
 
     for (const [label, width, height] of [
       ['iPhone-class phone', 390, 844],
@@ -78,12 +85,11 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
       assert.equal(await copyButton.isVisible(), true, `${label}: copy control remains reachable`);
     }
 
-    // Simulating a sign-out swaps the injected ports; the previous controller's
-    // share link must not linger under the new (signed-out) session.
+    // A sign-out removes the prior channel's share panel.
     await page.setViewportSize({ width: 1024, height: 900 });
     await page.getByRole('button', { name: 'Simulate sign-out' }).click();
     await page.getByText('Sign in to create a channel.').waitFor();
-    assert.equal(await page.getByLabel('Channel link').count(), 0, 'the prior share link is cleared, not left stale, after a session change');
+    assert.equal(await page.getByLabel('Channel link').count(), 0, 'the prior share link is cleared after a session change');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

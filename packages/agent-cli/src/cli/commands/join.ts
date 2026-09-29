@@ -21,7 +21,10 @@ export const joinCommand: CliCommand = {
       throw new CliError('transport_unavailable');
     }
     const ok = !SETTLED_REFUSALS.has(result.outcome);
-    await write(deps.stdout, JSON.stringify({ ok, kind: 'access', outcome: result.outcome }) + '\n');
+    const grantDescriptorPath = result.outcome === 'connected' ? deps.client.joinedGrantDescriptorPath?.() : null;
+    await write(deps.stdout, JSON.stringify({ ok, kind: 'access', outcome: result.outcome,
+      ...(grantDescriptorPath ? { grantDescriptorPath } : {}),
+    }) + '\n');
     return ok ? 0 : 3;
   },
 };
