@@ -27,7 +27,10 @@ describe('installed hosted connector composition', () => {
     const roomId = '!active:example';
     const deviceId = 'DEVICE_ACTIVE';
     const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
-    const send = vi.fn(async (_clientTxnId: string, _body: string) => ({ eventId: '$sent:example' }));
+    const send = vi.fn(async (clientTxnId: string, body: string) => {
+      if (!clientTxnId || !body) throw new Error('test send missing transaction or body');
+      return { eventId: '$sent:example' };
+    });
     const opens: MatrixConnectorInput[] = [];
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
