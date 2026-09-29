@@ -5,11 +5,43 @@ import type { AgentMatrixSession } from '../../agent-bootstrap/handler';
 
 type IssuedBinding = Readonly<{ v: 1; bindingId: string; operation: ExchangeGrantBinding;
   matrixSession: AgentMatrixSession }>;
+const ISSUANCE_STALE_MS = 30_000;
 
 function key(operation: Pick<ExchangeGrantBinding, 'requester' | 'origin' | 'operationId'>): string {
   return `channel-access-operation-binding/${createHash('sha256')
     .update('khala.channel-access.operation-binding.v1\0')
     .update(JSON.stringify([operation.requester, operation.origin, operation.operationId])).digest('hex')}`;
+}
+
+/** A one-way claim: uncertainty after device login must never permit another login. */
+export async function reserveChannelAccessIssuance(
+  store: ControlStore, operation: ExchangeGrantBinding, bindingId: string, expiresAt: string, now: number,
+): Promise<'applied' | 'pending' | 'stale' | 'unavailable'> {
+  if (!Number.isFinite(Date.parse(expiresAt))) return 'unavailable';
+  const storeKey = `${key(operation)}#issuance`;
+  const operationId = `${storeKey}#${randomBytes(16).toString('base64url')}`;
+  const result = await store.compareAndSet({ key: storeKey, expectedRevision: null, operationId,
+    next: { value: { v: 1, bindingId, operation, claimedAt: now }, expiresAt } });
+  if (result.kind === 'applied') return 'applied';
+  if (result.kind === 'conflict' || result.kind === 'operation_mismatch') {
+    const read = await store.read(storeKey);
+    if (read.kind !== 'record') return 'unavailable';
+    const claim = read.record.value as Record<string, unknown>;
+    if (claim.v !== 1 || claim.bindingId !== bindingId || !sameOperation(claim.operation, operation)
+      || typeof claim.claimedAt !== 'number' || !Number.isSafeInteger(claim.claimedAt)
+      || now < claim.claimedAt) return 'unavailable';
+    return now - claim.claimedAt < ISSUANCE_STALE_MS ? 'pending' : 'stale';
+  }
+  if (result.kind !== 'outcome_unknown') return 'unavailable';
+  const resolved = await store.resolve({ key: storeKey, operationId });
+  return resolved.kind === 'applied' ? 'applied' : 'unavailable';
+}
+
+function sameOperation(value: unknown, operation: ExchangeGrantBinding): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const held = value as Record<string, unknown>;
+  return Object.keys(held).sort().join(',') === 'channelRef,deviceId,operationId,origin,ownerId,proofKeyThumbprint,requester,sessionGeneration'
+    && Object.keys(operation).every(field => held[field] === operation[field as keyof ExchangeGrantBinding]);
 }
 
 /** Written before redeem returns a capability. A missing or conflicting mapping fails closed. */
