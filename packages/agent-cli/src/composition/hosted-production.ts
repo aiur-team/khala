@@ -161,9 +161,17 @@ export function hostedSessionFactory(options: Readonly<{
         async resume(input) {
           const recovered = await connector.channelAccess!.recovered(input.operationId);
           const resumed = await redeem.resume(input);
-          return resumed.kind === 'admitted' && recovered && sameSessionBinding(resumed.binding, recovered.binding)
+          if (resumed.kind !== 'admitted') return resumed;
+          if (recovered) return sameSessionBinding(resumed.binding, recovered.binding)
             ? { ...resumed, matrixSession: recovered.matrixSession }
-            : resumed.kind === 'admitted' ? { kind: 'refused', code: 'binding_conflict' } : resumed;
+            : { kind: 'refused', code: 'binding_conflict' };
+          // A lost redeem response leaves no local admission. The authenticated
+          // resume endpoint must return the original device session to recover it.
+          if (!resumed.matrixSession || resumed.binding.deviceId !== input.deviceId
+            || resumed.matrixSession.deviceId !== input.deviceId) return { kind: 'refused', code: 'admission_denied' };
+          await connector.channelAccess!.admitted(input.operationId,
+            { binding: resumed.binding, matrixSession: resumed.matrixSession });
+          return resumed;
         },
       },
       signer: connector.proofSigner,
