@@ -8,6 +8,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
+import { builtinModules } from 'node:module';
 import { build } from 'esbuild';
 import { HEALTH_PATH, RESERVED_PREFIXES, type RouteRegistration } from './handler';
 
@@ -197,12 +198,16 @@ export async function bundleGeneratedFunction(result: DiscoveryResult, repoRoot:
     platform: 'node',
     format: 'esm',
     target: 'node22',
+    // libsodium's ESM build retains a Node crypto require as its WebCrypto
+    // fallback. Provide an ESM-safe require for that built-in only.
+    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
     metafile: true,
     write: false,
   });
   const externalImports = Object.values(bundled.metafile!.outputs)
     .flatMap(output => output.imports.filter(dependency => dependency.external).map(dependency => dependency.path));
-  const nonBuiltinImports = externalImports.filter(specifier => !specifier.startsWith('node:'));
+  const builtins = new Set(builtinModules);
+  const nonBuiltinImports = externalImports.filter(specifier => !specifier.startsWith('node:') && !builtins.has(specifier));
   if (nonBuiltinImports.length > 0) {
     throw new DiscoverError(`generated function has unbundled dependencies: ${nonBuiltinImports.join(', ')}`);
   }

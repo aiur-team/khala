@@ -198,6 +198,7 @@ export function createGrantExchangeService(deps: Readonly<{
       channelRef: authorization.channelRef,
       requester: record.requester,
       sessionGeneration: record.sessionGeneration,
+      sessionFingerprint: record.sessionFingerprint,
       deviceId: record.deviceId,
       history: 'none',
     };

@@ -64,6 +64,8 @@ export type ChannelAdmissionRequest = Readonly<{
   channelRef: AuthorizedChannelRef;
   requester: StableAgentPrincipal;
   sessionGeneration: number;
+  /** Exact journal-bound native session, independent of an agent-supplied locator. */
+  sessionFingerprint: string;
   deviceId: DeviceId;
   history: 'none';
 }>;

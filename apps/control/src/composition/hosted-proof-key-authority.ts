@@ -46,7 +46,10 @@ async function resolveInviteOwner(active: ProductionHumanRuntime, target: string
   if (authority.kind !== 'record' || !authority.record.value || typeof authority.record.value !== 'object'
     || Array.isArray(authority.record.value)) return { kind: 'rejected' as const };
   const value = authority.record.value as Record<string, JsonValue>;
-  if (value.v !== 1 || value.roomId !== roomId || value.ownerId !== ownerId) return { kind: 'rejected' as const };
+  // A joined human's personal link names that human as sponsor. The durable
+  // room authority still names the original room creator, who can differ.
+  if (value.v !== 1 || value.roomId !== roomId || typeof value.ownerId !== 'string'
+    || value.ownerId.length === 0) return { kind: 'rejected' as const };
   const membership = await active.matrix.inspectOwnerMembership(ownerId, roomId);
   return membership.kind === 'joined' ? { kind: 'resolved' as const, ownerId }
     : { kind: 'unavailable' as const };
