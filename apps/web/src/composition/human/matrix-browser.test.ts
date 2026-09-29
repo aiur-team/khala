@@ -38,6 +38,7 @@ describe('Matrix browser safety boundaries', () => {
       getType: () => EventType.RoomMessage,
       isDecryptionFailure: () => false,
       getClearContent: () => ({ body: 'Verified plaintext' }),
+      getContent: () => ({ body: 'Verified plaintext', msgtype: 'm.text' }),
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$event',
     };
@@ -65,6 +66,7 @@ describe('Matrix browser safety boundaries', () => {
       getType: () => decrypted ? EventType.RoomMessage : 'm.room.encrypted',
       isDecryptionFailure: () => false,
       getClearContent: () => decrypted ? { body: 'Recovered plaintext' } : {},
+      getContent: () => decrypted ? { body: 'Recovered plaintext', msgtype: 'm.text' } : {},
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$late',
       on: vi.fn((kind: string, callback: () => void) => { if (kind === MatrixEventEvent.Decrypted) decryptListeners.add(callback); }),
