@@ -7,6 +7,7 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import type { ApprovalCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 
 declare global { interface Window {
+  __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
   __roomReviewCommand: () => ApprovalCommand | null;
   __allowReviewTrust: () => void;
   __reviewLookupCount: () => number;
@@ -22,6 +23,25 @@ declare global { interface Window {
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
 } }
+
+test('created channel page can copy a link and prepare a named email invitation', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('button', { name: 'Copy link' }).click();
+    await page.getByRole('textbox', { name: 'Channel link' }).waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.getByRole('textbox', { name: 'Invite by email' }).fill('friend@example.com');
+    await page.getByRole('button', { name: 'Create email invite' }).click();
+    await page.getByRole('link', { name: 'Open email draft' }).waitFor();
+    assert.match((await page.getByRole('link', { name: 'Open email draft' }).getAttribute('href')) ?? '', /friend%40example.com/);
+    assert.deepEqual(await page.evaluate(() => window.__shareRequests()), [
+      { roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'none' } },
+      { roomId: 'room_1', policy: { v: 1, kind: 'named_email', email: 'friend@example.com', history: 'none' } },
+    ]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
+      'room sharing stays within the phone viewport');
+  });
+});
 
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
