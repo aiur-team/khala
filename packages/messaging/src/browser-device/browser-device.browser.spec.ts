@@ -85,7 +85,7 @@ test('browser device lifecycle survives a full browser restart and refuses lost 
     // Two tabs contend: the second never becomes a writer while the first holds the lock.
     const second = await open(context);
     assert.deepEqual(await call(second, 'ensure', { ...alice, publishedFingerprint: fingerprint, lockWaitMs: 300 }), { kind: 'unavailable', retryable: true });
-    assert.deepEqual(await call(second, 'current'), { deviceId: null, state: 'failed', generation: 1, reason: 'storage_unavailable' });
+    assert.deepEqual(await call(second, 'current'), { deviceId: null, state: 'failed', generation: 1, reason: 'lease_unavailable' });
     assert.deepEqual(await call(second, 'decrypt', event!), { kind: 'rejected' });
 
     // Closing the owning tab releases the lock; the survivor opens the same store.
