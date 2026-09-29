@@ -94,6 +94,19 @@ test('mounted human room keeps one confirmed message after reload', { timeout: 9
   });
 });
 
+test('replacement device cannot see or retry the prior device pending send', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__reload_pending prior device');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending prior device' }).getByText('Sending…').waitFor();
+    await page.evaluate(() => window.__switchReviewDevice());
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending prior device' }).waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('button', { name: 'Check delivery' }).count(), 0);
+    await page.getByRole('textbox', { name: 'Message' }).fill('new device draft');
+    assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), false);
+  });
+});
+
 test('new binding and account stay current after older trust finishes out of order', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?race=1', async page => {
     await page.getByText('Waiting for verified agent device trust.').waitFor();

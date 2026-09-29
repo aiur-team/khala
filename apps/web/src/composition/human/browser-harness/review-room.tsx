@@ -112,6 +112,7 @@ declare global { interface Window {
   __oldTrustReturned: () => boolean;
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
+  __switchReviewDevice: () => void;
   __releaseAccountTrust: () => void;
   __controlCommands: () => readonly PolicySetCommand[];
   __releaseOldStatus: () => void;
@@ -190,5 +191,11 @@ window.__switchReviewAccount = () => {
     participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
   controlsAttachment = controls.attach(nextContext);
+  root.render(renderer(nextContext, route));
+};
+window.__switchReviewDevice = () => {
+  const nextContext = { ...context, generation: 2,
+    device: { ...context.device, current: () => ({ state: 'ready', deviceId: 'device_2', generation: 2 }),
+      observe: () => () => undefined } } as unknown as HumanRouteContext;
   root.render(renderer(nextContext, route));
 };

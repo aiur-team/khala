@@ -217,8 +217,10 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
-  const pendingStore = useMemo(() => createHumanPendingSendStore(context.principal.ownerId, roomId),
-    [context.principal.ownerId, roomId]);
+  const deviceId = context.device.current().deviceId;
+  const pendingStore = useMemo(() => deviceId === null ? undefined
+    : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
+  [context.principal.ownerId, deviceId, roomId]);
   const room = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
@@ -249,8 +251,9 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
       description="Encrypted messages shared by admitted participants."
       controller={room}
       renderTimeline={() => (
-        <TimelineScreen key={JSON.stringify([context.principal.ownerId, context.generation, roomId])}
-          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} pendingStore={pendingStore} />
+        <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          {...(pendingStore ? { pendingStore } : {})} />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}

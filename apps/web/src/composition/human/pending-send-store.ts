@@ -1,4 +1,4 @@
-import type { OwnerId, RoomId } from '@khala/contracts/messaging/ids';
+import type { DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/ids';
 import type { PendingSendStore } from '../../features/timeline/TimelineScreen';
 import type { PendingSend } from '../../features/timeline/send';
 
@@ -21,10 +21,10 @@ function isPendingSend(value: unknown): value is PendingSend {
     && typeof (content as Record<string, unknown>).body === 'string';
 }
 
-/** One tab's unresolved sends, scoped to the signed-in owner and exact channel. */
-export function createHumanPendingSendStore(ownerId: OwnerId, roomId: RoomId,
+/** One tab's unresolved sends, scoped to the signed-in owner, exact device and channel. */
+export function createHumanPendingSendStore(ownerId: OwnerId, deviceId: DeviceId, roomId: RoomId,
   storage: StoragePort | null = browserStorage()): PendingSendStore {
-  const key = `khala.pending-send.v1:${JSON.stringify([ownerId, roomId])}`;
+  const key = `khala.pending-send.v2:${JSON.stringify([ownerId, deviceId, roomId])}`;
   return {
     load() {
       if (!storage) return [];
