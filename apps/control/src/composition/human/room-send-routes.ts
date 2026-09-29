@@ -38,10 +38,12 @@ export type BrowserSenderVerifier = (principal: AuthPrincipal, deviceId: string,
   Promise<Readonly<{ matrixUserId: string; deviceKey: string }> | null>;
 
 export function createMatrixBrowserSenderVerifier(input: Readonly<{
-  homeserverOrigin: string; serverName: string; fetch?: typeof globalThis.fetch;
+  homeserverOrigin: string; serverName: string; allowInsecureLoopback?: boolean; fetch?: typeof globalThis.fetch;
 }>): BrowserSenderVerifier {
-  if (new URL(input.homeserverOrigin).origin !== input.homeserverOrigin
-    || new URL(input.homeserverOrigin).protocol !== 'https:') throw new Error('invalid_matrix_origin');
+  const origin = new URL(input.homeserverOrigin);
+  const loopback = input.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (origin.origin !== input.homeserverOrigin || !(origin.protocol === 'https:' || loopback)) throw new Error('invalid_matrix_origin');
   const transport = input.fetch ?? globalThis.fetch.bind(globalThis);
   return async (principal, deviceId, accessToken) => {
     const matrixUserId = ownerMatrixUserId(principal.ownerId, input.serverName);

@@ -172,6 +172,21 @@ describe('createHumanBrowserApi', () => {
     expect(JSON.stringify(fetch.mock.calls)).not.toContain('password');
   });
 
+  it('accepts a returned loopback Matrix session only in explicit local mode', async () => {
+    const localOrigin = 'http://localhost:8888';
+    const localMatrix = 'http://127.0.0.1:8008';
+    const session = { homeserverOrigin: localMatrix, userId: '@alice:localhost', accessToken: 'device-token',
+      deviceId: 'KH_WEB_1', publishedFingerprint: null };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { session }));
+    const api = createHumanBrowserApi({ origin: localOrigin, homeserverOrigin: localMatrix,
+      allowInsecureLoopback: true, limits, fetch, deviceIds: { get: () => 'KH_WEB_1', put: () => {} } });
+    expect(await api.credentials.resolve(principal, new AbortController().signal)).toMatchObject({
+      kind: 'ok', session: { credentials: { homeserverOrigin: localMatrix } },
+    });
+  });
+
   it('decodes server-authoritative Matrix participant mappings', async () => {
     const userId = '@khala_b3duZXJfYm9i:matrix.example.test';
     const fetch = vi.fn<typeof globalThis.fetch>()
