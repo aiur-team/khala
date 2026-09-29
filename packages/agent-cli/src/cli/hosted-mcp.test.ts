@@ -52,7 +52,8 @@ describe('installed hosted MCP routing', () => {
     }));
     const hostedBindingPresent = vi.fn(async () => false);
     const replies = await serve([
-      call(1, 'khala_request_channel_access', { threadId: 'attacker-named-thread' },
+      // Any process can write a provider-shaped thread ID to MCP stdio.
+      call(1, 'khala_request_channel_access', { threadId: THREAD },
         { target: 'https://khala.aiur.team/channels/room-one' }),
     ], hostedSession, hostedBindingPresent);
     expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
