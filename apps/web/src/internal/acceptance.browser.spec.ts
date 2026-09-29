@@ -37,6 +37,7 @@ async function approveByKeyboard(page: Page, origin: string, agent: string, dial
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: dialogName });
   await dialog.waitFor();
+  await page.waitForFunction(() => Boolean(document.activeElement?.closest('[role="dialog"]')));
   assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]'))), true, 'focus moves into the dialog');
   const approveButton = dialog.getByRole('button', { name: approve });
   // Tab to the approve action rather than clicking it.
