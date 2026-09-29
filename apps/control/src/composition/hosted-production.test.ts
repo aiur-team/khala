@@ -92,6 +92,11 @@ describe('generated hosted production composition', () => {
         policyRevision: 1, policy: { v: 1, kind: 'link', history: 'none' }, status: 'active',
         expiresAt: new Date(now + 7 * 24 * 3600_000).toISOString(), lastAuthorizedOperationDigest: null }, expiresAt: null },
     })).kind).toBe('applied');
+    expect((await control.compareAndSet({
+      key: `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`,
+      expectedRevision: null, operationId: 'claim-room',
+      next: { value: { v: 1, roomId, ownerId: 'owner_a' }, expiresAt: null },
+    })).kind).toBe('applied');
     const route = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
       clock: () => now, fetch: matrixFetch,
@@ -111,6 +116,12 @@ describe('generated hosted production composition', () => {
     const result = await personal.json() as { shareUrl: string; kind: string };
     expect(result.kind).toBe('personal_link');
     expect(result.shareUrl).not.toBe(`${origin}/join/${inviteRef}`);
+    const personalRef = new URL(result.shareUrl).pathname.slice('/join/'.length);
+    const personalRecord = await control.read(digests.inviteKey(personalRef));
+    expect(personalRecord.kind).toBe('record');
+    if (personalRecord.kind === 'record') expect(personalRecord.record.value).toMatchObject({
+      roomId, creatorOwnerId: 'owner_b', status: 'active',
+    });
     expect(await (await route(new Request(`${origin}/api/human/channel-link/personal`, {
       method: 'POST', headers: { ...headers, 'x-khala-csrf': csrfTokenFor(session.token) },
       body: JSON.stringify({ v: 1, roomId }),
