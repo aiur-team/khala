@@ -19,6 +19,9 @@ browser may still join through that link as its own authenticated principal.
 The agent route accepts a sponsor and requester only from trusted authentication;
 its `submitAccess` port must recheck the exact invite revision while creating
 the channel-access journal row. Approval and admission remain separate.
+For A's room and B's personal link, A remains the room authority while B is the
+link issuer, agent sponsor, and approver of B's agent request. The invite's
+`creatorOwnerId` field records the link issuer; it does not assert room creation.
 
 All responses are versioned, `no-store`, and contain no grant or room key. The
 shared response decoders live in `@khala/contracts/messaging/channel-link`.
