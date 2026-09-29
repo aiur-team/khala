@@ -9,6 +9,8 @@ import { decodeChannelAccessOwnerProjection } from '@khala/contracts/messaging/i
 import type { BlobsStoreLike } from '../runtime/control-store';
 import { createGateway } from '../runtime/handler';
 import { registerHostedProductionRoutes } from './hosted-production';
+import type { HostedChannelAccessPorts } from './human/hosted-channel-access-routes';
+import { connectorRequest, DIGEST, DEVICE } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 
 const origin = 'https://khala.aiur.team';
 const env = {
@@ -55,6 +57,180 @@ function gateway(mode?: string, appOrigin = origin) {
 }
 
 describe('generated hosted production composition', () => {
+  it('runs request, owner decision and one exchange across durable restart with exact authority', async () => {
+    const blobs = durableStores();
+    const now = Date.parse('2026-09-25T12:00:00Z');
+    const roomId = '!room:matrix.example.test';
+    const control = createControlStore({
+      records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
+      operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`),
+      clock: () => now,
+    });
+    const session = await createSession(control, () => new Uint8Array(32).fill(7), {
+      ownerId: 'owner_1' as never,
+      identity: { issuer: env.OIDC_ISSUER, subject: 'owner-one', verifiedEmail: 'one@example.test' },
+      expiresAtMs: now + 3600_000,
+    });
+    expect(session.kind).toBe('created');
+    if (session.kind !== 'created') throw new Error('session unavailable');
+    expect((await control.compareAndSet({
+      key: `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`,
+      expectedRevision: null, operationId: 'claim-room-owner',
+      next: { value: { v: 1, roomId, ownerId: 'owner_1' }, expiresAt: null },
+    })).kind).toBe('applied');
+    const matrixFetch: typeof fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/_matrix/client/v3/login') {
+        const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
+      }
+      if (path.includes('/state/m.room.member/')) return Response.json({ membership: 'join' });
+      return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+    };
+    const requester = {
+      principal: 'principal_1' as never, origin,
+      proofKey: { algorithm: 'Ed25519' as const, publicKey: 'b'.repeat(43), thumbprint: 'c'.repeat(43) },
+      sessionGeneration: 3,
+    };
+    const context = {
+      v: 1 as const, principal: requester.principal, origin, sessionGeneration: 3,
+      sessionFingerprint: DIGEST, harness: 'codex', displayLabel: 'Build agent', workspaceLabel: 'Khala',
+    };
+    const exchangeBody = await connectorRequest({ origin }, now);
+    const admitted = new Set<string>();
+    const ports: HostedChannelAccessPorts = {
+      authenticateAgent: async request => request.headers.get('authorization') === 'Bearer exact-test-session'
+        ? { kind: 'authenticated', requester, context } : { kind: 'rejected', code: 'auth_required' },
+      authenticateConnector: async request => request.headers.get('authorization') === 'Bearer exact-test-connector'
+        ? { kind: 'authenticated', connector: {
+          requester: requester.principal, origin, sessionGeneration: 3, sessionFingerprint: DIGEST,
+          deviceId: DEVICE, proofKeyThumbprint: exchangeBody.proofKey.thumbprint,
+        } } : { kind: 'rejected', code: 'auth_required' },
+      resolver: () => ({
+        async resolveAccess() {
+          return { kind: 'resolved', ownerId: 'owner_1' as never, channelRef: roomId as never,
+            targetRevision: `matrix:${roomId}`, title: 'Owner room' };
+        },
+        async resolveCreate() { return { kind: 'unavailable' }; },
+        async revalidateAccess() {
+          return { kind: 'current', ownerId: 'owner_1' as never, targetRevision: `matrix:${roomId}`, title: 'Owner room' };
+        },
+        async revalidateCreate() { return { kind: 'unavailable' }; },
+        async currentAccessOwner() {
+          return { kind: 'owned', ownerId: 'owner_1' as never, targetRevision: `matrix:${roomId}` };
+        },
+        async checkRequester() { return { kind: 'current' }; },
+      }),
+      provider: {
+        async admit(input) {
+          const membership = admitted.has(input.providerOperationId) ? 'already_joined' : 'joined';
+          admitted.add(input.providerOperationId);
+          return { kind: 'admitted', membership };
+        },
+        async reconcile(input) {
+          return admitted.has(input.providerOperationId)
+            ? { kind: 'admitted', membership: 'joined' } : { kind: 'not_applied' };
+        },
+      },
+      bindings: { async resumeAdapterCapability() { return { kind: 'refused', code: 'binding_revoked' }; } },
+    };
+    const route = () => createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      clock: () => now, fetch: matrixFetch, channelAccess: ports,
+    }), absentPrefixes: [], appOrigin: origin });
+    const first = route();
+    const requestUrl = `${origin}/api/agent/channel-access/request`;
+    const requestBody = {
+      v: 1, kind: 'listing_ref', operationId: 'op_access_1',
+      credentialRef: 'credential_1', listingRef: 'listing_1',
+    };
+    const postRequest = (body: unknown, authorization = 'Bearer exact-test-session') => first(new Request(requestUrl, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin, authorization }, body: JSON.stringify(body),
+    }));
+    expect((await postRequest(requestBody, '')).status).toBe(401);
+    expect((await postRequest({ ...requestBody, ownerId: 'owner_2' })).status).toBe(400);
+    expect((await postRequest({ ...requestBody, operationId: 3 })).status).toBe(400);
+    const foreign = createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      clock: () => now, fetch: matrixFetch,
+      channelAccess: { ...ports, authenticateAgent: async () => ({
+        kind: 'authenticated', requester: { ...requester, origin: 'https://evil.example' }, context,
+      }) },
+    }), absentPrefixes: [], appOrigin: origin });
+    expect((await foreign(new Request(requestUrl, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(requestBody),
+    }))).status).toBe(403);
+    expect(await (await postRequest(requestBody)).json()).toEqual({
+      v: 1, operationId: 'op_access_1', outcome: 'pending_owner',
+    });
+    const restarted = route();
+    const ownerHeaders = { cookie: `${SESSION_COOKIE}=${session.token}` };
+    const inbox = await restarted(new Request(`${origin}/api/human/channel-access/inbox`, { headers: ownerHeaders }));
+    expect(inbox.status).toBe(200);
+    const projection = await inbox.json() as { requests: { requestHandle: string; revision: string }[] };
+    expect(projection.requests).toHaveLength(1);
+    const decisionUrl = `${origin}/api/human/channel-access/decision`;
+    const decision = {
+      v: 1, requestHandle: projection.requests[0]!.requestHandle,
+      expectedRevision: projection.requests[0]!.revision, decision: 'approve', operationId: 'owner-decision-1',
+    };
+    const ownerPost = (requestOrigin: string, csrf: string) => restarted(new Request(decisionUrl, {
+      method: 'POST', headers: { ...ownerHeaders, origin: requestOrigin, 'content-type': 'application/json',
+        'x-khala-csrf': csrf }, body: JSON.stringify(decision),
+    }));
+    expect((await ownerPost('https://evil.example', csrfTokenFor(session.token))).status).toBe(403);
+    expect((await ownerPost(origin, 'wrong')).status).toBe(403);
+    const otherOwner = await createSession(control, () => new Uint8Array(32).fill(8), {
+      ownerId: 'owner_2' as never,
+      identity: { issuer: env.OIDC_ISSUER, subject: 'owner-two', verifiedEmail: 'two@example.test' },
+      expiresAtMs: now + 3600_000,
+    });
+    expect(otherOwner.kind).toBe('created');
+    if (otherOwner.kind !== 'created') throw new Error('other session unavailable');
+    const crossOwner = await restarted(new Request(decisionUrl, {
+      method: 'POST', headers: { cookie: `${SESSION_COOKIE}=${otherOwner.token}`, origin,
+        'content-type': 'application/json', 'x-khala-csrf': csrfTokenFor(otherOwner.token) },
+      body: JSON.stringify(decision),
+    }));
+    expect(crossOwner.status).toBe(404);
+    const approved = await ownerPost(origin, csrfTokenFor(session.token));
+    expect(approved.status).toBe(200);
+    expect(await approved.json()).toMatchObject({ outcome: 'approved' });
+    const status = await restarted(new Request(
+      `${origin}/api/agent/channel-access/status?v=1&operationId=op_access_1&operationKind=access`,
+      { headers: { authorization: 'Bearer exact-test-session' } },
+    ));
+    expect(await status.json()).toEqual({ v: 1, operationId: 'op_access_1', outcome: 'approved' });
+    const mute = await restarted(new Request(`${origin}/api/human/channel-access/mute`, {
+      method: 'POST', headers: { ...ownerHeaders, origin, 'content-type': 'application/json',
+        'x-khala-csrf': csrfTokenFor(session.token) },
+      body: JSON.stringify({ v: 1, requestHandle: decision.requestHandle,
+        expectedRevision: null, action: 'mute', operationId: 'owner-mute-1' }),
+    }));
+    expect(mute.status).toBe(200);
+    expect(await mute.json()).toMatchObject({ muted: true });
+    const exchangeUrl = `${origin}/api/agent/channel-access/exchange?operation=op_access_1`;
+    const exchange = (authorization: string) => restarted(new Request(exchangeUrl, {
+      method: 'POST', headers: { authorization, origin, 'content-type': 'application/json' },
+      body: JSON.stringify(exchangeBody),
+    }));
+    expect((await exchange('')).status).toBe(401);
+    const wrongOrigin = await restarted(new Request(exchangeUrl, {
+      method: 'POST', headers: { authorization: 'Bearer exact-test-connector', origin: 'https://evil.example',
+        'content-type': 'application/json' }, body: JSON.stringify(exchangeBody),
+    }));
+    expect(wrongOrigin.status).toBe(403);
+    const envelope = await exchange('Bearer exact-test-connector');
+    expect(envelope.status).toBe(200);
+    const bytes = await envelope.text();
+    expect(JSON.parse(bytes)).toMatchObject({ v: 1, recipientKeyThumbprint: exchangeBody.encryptionKey.thumbprint });
+    expect(await (await exchange('Bearer exact-test-connector')).text()).toBe(bytes);
+    expect(admitted.size).toBe(1);
+    expect((await restarted(new Request(`${origin}/api/agent/channel-access/resume?operation=op_access_1`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    }))).status).toBe(401);
+  });
   it('authenticates the durable owner inbox across a composition restart without leaking another owner', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-28T12:00:00Z');

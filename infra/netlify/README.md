@@ -90,7 +90,10 @@ For stored requests, Control rechecks the recorded room owner and live Matrix
 membership before showing the row; unavailable or changed authority returns 503.
 Channel-access request, decision, mute, exchange, readiness and resume still
 return 503 until hosted agent authentication, channel resolution and Matrix
-admission adapters are composed. The inbox does not approve or admit an agent.
+admission adapters are composed. The route composition and durable journal are
+present, but the generated production entry does not supply the trusted
+native-session and provider ports yet. A share link alone cannot authenticate
+an agent. The inbox does not approve or admit an agent.
 
 ## Routing
 
