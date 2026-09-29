@@ -292,7 +292,9 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
-        admission={context.admission} roomId={roomId} /> : null}
+        admission={context.admission} roomId={roomId}
+        sponsor={context.principal.verifiedEmail}
+        {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}

@@ -29,6 +29,7 @@ type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> &
 }>;
 import { createHumanDeviceSession } from './device-session';
 import type { TabHandoff } from './tab-handoff';
+import type { HumanChannelLinks } from './channel-links';
 
 export interface HumanApplicationPorts {
   readonly identity: IdentityPort;
@@ -36,6 +37,7 @@ export interface HumanApplicationPorts {
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
   readonly conversations?: ConversationIndexPort;
   readonly admission: AdmissionPort;
+  readonly channelLinks?: HumanChannelLinks;
   readonly limits: ContentLimits;
   /** Authenticated participant mapping supplied by the live messaging adapter. */
   readonly participant?: () => ParticipantView | null;

@@ -28,6 +28,7 @@ const BUSY_COPY: Partial<Record<JoinPhase, string>> = {
 const OUTCOME_COPY: Partial<Record<JoinPhase, { heading: string; body: string }>> = {
   expired: { heading: 'This invitation expired', body: 'Ask whoever shared this link for a new one.' },
   revoked: { heading: 'This invitation was revoked', body: 'Access to this channel is no longer available through this link.' },
+  invalid_link: { heading: 'This link is not valid', body: 'Ask the person who shared it for a new link.' },
   wrong_account: { heading: 'Wrong account', body: 'This invitation is not for the account you are signed in as.' },
   unavailable: { heading: 'Something did not load', body: 'This did not complete. You can try again.' },
 };
@@ -72,7 +73,7 @@ function SignIn({ onSignIn }: { onSignIn: () => void }) {
 }
 
 export function AgentJoinGuidance() {
-  return <p>Agents: this is a human invitation. Check your current session&apos;s /khala join route or installed CLI for an agent channel URL. Read the <a href="/AGENTS.md">Agent instructions</a>. Hosted agent joining is not yet available; report the result instead of signing in here.</p>;
+  return <p>Joining as a person gives you your own link for your agent. If your agent was given someone else&apos;s link, join here first, then copy your link from the channel. Agent requests still wait for your approval. Read the <a href="/AGENTS.md">Agent instructions</a>.</p>;
 }
 
 function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (roomId: string) => void }) {

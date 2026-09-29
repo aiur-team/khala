@@ -9,6 +9,8 @@ import {
   decodeParticipantView,
   decodeRevocationProgress,
   decodeShareGrant,
+  decodeHumanChannelLinkResult,
+  decodePersonalChannelLinkResult,
   isSameOriginReturnPath,
   sameProviderIdentity,
   outcomeUnknown,
@@ -36,11 +38,14 @@ import type {
 } from '../../features/channel-access/ports';
 import type { BrowserRevocation } from '../recovery/browser-port';
 import { parsePublicOrigin } from './hosted-config';
+import type { HumanChannelLinks } from './channel-links';
 
 const ME_PATH = '/api/human/me';
 const LOGIN_PATH = '/api/human/auth/login';
 const LOGOUT_PATH = '/api/human/auth/logout';
 const SHARE_PATH = '/api/human/invitations/share';
+const LINK_RESOLVE_PATH = '/api/human/channel-link/resolve';
+const LINK_PERSONAL_PATH = '/api/human/channel-link/personal';
 const INSPECT_PATH = '/api/human/invitations/inspect';
 const ADMIT_PATH = '/api/human/invitations/admit';
 const MATRIX_SESSION_PATH = '/api/human/messaging/session';
@@ -79,6 +84,7 @@ export type HumanBrowserApi = Readonly<{
   reviewCsrf(): Promise<string | null>;
   identity: IdentityPort;
   admission: AdmissionPort;
+  channelLinks: HumanChannelLinks;
   credentials: CredentialSource;
   participants: Readonly<{
     resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
@@ -580,7 +586,20 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       return { operationId: body.hold.operationId, epoch: body.hold.epoch as number };
     },
   };
-  return { identity, admission, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
+  const channelLinks: HumanChannelLinks = {
+    async resolve(channelUrl, signal) {
+      const response = await mutation(LINK_RESOLVE_PATH, { v: 1, channelUrl }, signal);
+      const decoded = response && decodeHumanChannelLinkResult(await jsonObject(response));
+      return decoded?.ok ? decoded.value : { v: 1, kind: 'unavailable' };
+    },
+    async personal(roomId, signal) {
+      const response = await mutation(LINK_PERSONAL_PATH, { v: 1, roomId }, signal);
+      const decoded = response && decodePersonalChannelLinkResult(await jsonObject(response));
+      return decoded?.ok && (decoded.value.kind !== 'personal_link' || new URL(decoded.value.shareUrl).origin === origin)
+        ? decoded.value : { v: 1, kind: 'unavailable' };
+    },
+  };
+  return { identity, admission, channelLinks, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
     async reviewCsrf() {
       if (csrfToken !== null) return csrfToken;
       return (await readCurrent()).kind === 'signed_in' ? csrfToken : null;

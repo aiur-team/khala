@@ -100,7 +100,7 @@ describe('HumanApplicationScreen', () => {
     expect(storageFailure).toContain('storage_unavailable');
   });
 
-  it('shows CLI guidance for a signed-out human invitation without exposing its token', async () => {
+  it('explains personal links to a signed-out invitee without exposing the link reference', async () => {
     const channelAccess = await channelAccessController();
     const inviteRef = 'inv_opaqueSecret123';
     const html = renderToStaticMarkup(
@@ -108,8 +108,8 @@ describe('HumanApplicationScreen', () => {
         identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />,
     );
     expect(html).toContain('Humans: sign in');
-    expect(html).toContain('Agents: this is a human invitation');
-    expect(html).toContain('/khala join route or installed CLI');
+    expect(html).toContain('Joining as a person gives you your own link for your agent');
+    expect(html).toContain('Agent requests still wait for your approval');
     expect(html).toContain('href="/AGENTS.md"');
     expect(html).not.toContain(inviteRef);
   });

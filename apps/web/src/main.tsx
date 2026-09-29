@@ -88,6 +88,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     room: matrix.room,
     conversations: matrix.conversations,
     admission: api.admission,
+    channelLinks: api.channelLinks,
     participant: matrix.participant,
     closure,
     ...(api.revocation ? { revocation: api.revocation } : {}),
