@@ -8,6 +8,7 @@ import { createProductionHumanRuntimeLoader } from './human/production';
 import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
 import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
 import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
+import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
 
@@ -45,6 +46,7 @@ export function registerHostedProductionRoutes(
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
       channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
       channelDiscoveryBootstrap: () => discovery.human,
+      channelLink: () => createHostedHumanChannelLinkRoutes(options),
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),

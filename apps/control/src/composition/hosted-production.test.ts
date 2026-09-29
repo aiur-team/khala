@@ -60,6 +60,85 @@ function gateway(mode?: string, appOrigin = origin) {
 }
 
 describe('generated hosted production composition', () => {
+  it('resolves A’s link as authenticated B and issues B’s own link after join', async () => {
+    const blobs = durableStores();
+    const now = Date.parse('2026-09-28T12:00:00Z');
+    const roomId = '!room:matrix.example.test';
+    let joined = false;
+    const matrixFetch: typeof fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/_matrix/client/v3/login') {
+        const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
+      }
+      if (path.includes('/state/m.room.member/')) return joined
+        ? Response.json({ membership: 'join' }) : Response.json({ errcode: 'M_FORBIDDEN' }, { status: 403 });
+      return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+    };
+    const control = createControlStore({ records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
+      operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`), clock: () => now });
+    const session = await createSession(control, () => new Uint8Array(32).fill(9), {
+      ownerId: 'owner_b' as never,
+      identity: { issuer: env.OIDC_ISSUER, subject: 'owner-b', verifiedEmail: 'b@example.test' },
+      expiresAtMs: now + 3600_000,
+    });
+    expect(session.kind).toBe('created');
+    if (session.kind !== 'created') return;
+    const digests = createDigests(env.INVITATION_HMAC_SECRET);
+    const inviteRef = digests.token('shared_by_a');
+    expect((await control.compareAndSet({
+      key: digests.inviteKey(inviteRef), expectedRevision: null, operationId: 'seed-invite',
+      next: { value: { v: 1, roomId, creatorOwnerId: 'owner_a', inviteRefDigest: digests.inviteRef(inviteRef),
+        policyRevision: 1, policy: { v: 1, kind: 'link', history: 'none' }, status: 'active',
+        expiresAt: new Date(now + 7 * 24 * 3600_000).toISOString(), lastAuthorizedOperationDigest: null }, expiresAt: null },
+    })).kind).toBe('applied');
+    expect((await control.compareAndSet({
+      key: `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`,
+      expectedRevision: null, operationId: 'claim-room',
+      next: { value: { v: 1, roomId, ownerId: 'owner_a' }, expiresAt: null },
+    })).kind).toBe('applied');
+    const route = createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      clock: () => now, fetch: matrixFetch,
+    }), absentPrefixes: [], appOrigin: origin });
+    const headers = { cookie: `${SESSION_COOKIE}=${session.token}`, origin, 'content-type': 'application/json' };
+    const resolve = () => route(new Request(`${origin}/api/human/channel-link/resolve`, {
+      method: 'POST', headers, body: JSON.stringify({ v: 1, channelUrl: `${origin}/join/${inviteRef}` }),
+    }));
+    expect(await (await resolve()).json()).toEqual({ v: 1, kind: 'join_required' });
+    joined = true;
+    expect(await (await resolve()).json()).toEqual({ v: 1, kind: 'joined' });
+    const personal = await route(new Request(`${origin}/api/human/channel-link/personal`, {
+      method: 'POST', headers: { ...headers, 'x-khala-csrf': csrfTokenFor(session.token) },
+      body: JSON.stringify({ v: 1, roomId }),
+    }));
+    expect(personal.status).toBe(200);
+    const result = await personal.json() as { shareUrl: string; kind: string };
+    expect(result.kind).toBe('personal_link');
+    expect(result.shareUrl).not.toBe(`${origin}/join/${inviteRef}`);
+    const personalRef = new URL(result.shareUrl).pathname.slice('/join/'.length);
+    const personalRecord = await control.read(digests.inviteKey(personalRef));
+    expect(personalRecord.kind).toBe('record');
+    if (personalRecord.kind === 'record') expect(personalRecord.record.value).toMatchObject({
+      roomId, creatorOwnerId: 'owner_b', status: 'active',
+    });
+    expect(await (await route(new Request(`${origin}/api/human/channel-link/personal`, {
+      method: 'POST', headers: { ...headers, 'x-khala-csrf': csrfTokenFor(session.token) },
+      body: JSON.stringify({ v: 1, roomId }),
+    }))).json()).toEqual(result);
+  });
+
+  it('registers signed-in channel-link resolution and personal issuance in hosted mode', async () => {
+    const route = gateway('explicit_browser_consent');
+    for (const path of ['/api/human/channel-link/resolve', '/api/human/channel-link/personal']) {
+      const response = await route(new Request(`${origin}${path}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', origin }, body: '{}',
+      }));
+      expect(response.status).toBe(401);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    }
+  });
+
   it('bounds anonymous proof-key challenges before allocating durable records', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-28T12:00:00Z');

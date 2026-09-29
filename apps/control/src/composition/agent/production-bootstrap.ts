@@ -3,6 +3,7 @@ import {
   createAgentBootstrapHandlers, type AdmissionPolicy, type AgentAdmissionPort, type AgentDeviceSessionPort,
 } from '../../agent-bootstrap/handler';
 import { createAdmissionService } from '../../invitations';
+import { inviteFromShareLink } from '../../invitations/link';
 import {
   createProductionHumanRuntimeLoader,
   type ProductionHumanDependencies,
@@ -32,19 +33,7 @@ export type ProductionBootstrapDependencies = ProductionHumanDependencies & Read
   admissionPolicy: AdmissionPolicy;
 }>;
 
-/** Parse only the canonical share URL, without accepting an arbitrary same-origin path. */
-export function inviteFromShareLink(url: URL, origin: string): string | null {
-  if (url.origin !== origin || url.username || url.password || url.search || url.hash
-    || !url.pathname.startsWith('/join/')) return null;
-  const encoded = url.pathname.slice('/join/'.length);
-  if (!encoded || encoded.includes('/')) return null;
-  try {
-    const invite = decodeURIComponent(encoded);
-    return /^[A-Za-z0-9_-]{8,256}$/u.test(invite) ? invite : null;
-  } catch {
-    return null;
-  }
-}
+export { inviteFromShareLink };
 
 /**
  * Bind the existing one-use bootstrap protocol to the same production OIDC,

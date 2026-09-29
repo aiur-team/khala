@@ -17,6 +17,7 @@ export type StoredAdmissionPolicy =
 export type InviteRecord = Readonly<{
   v: 1;
   roomId: RoomId;
+  /** The human who issued this link; a joined member may differ from the room creator. */
   creatorOwnerId: OwnerId;
   inviteRefDigest: string;
   policyRevision: 1;
