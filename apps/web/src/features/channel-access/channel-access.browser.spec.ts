@@ -56,15 +56,16 @@ test('channel requests stay in the inbox, never auto-open, and keep focus where 
     const status = page.locator('.channel-requests__status[role="status"]');
     const nav = page.getByRole('link', { name: /Channel requests/ });
     await page.getByText('Waiting for you (0)').waitFor();
-    assert.equal(await nav.getAttribute('href'), '#/channel-requests');
-    await nav.getByText(', 0 pending').waitFor({ state: 'attached' });
+    assert.equal(await nav.count(), 0, 'zero pending requests have no control');
 
     // Wrong-implementation test (RD4B): enqueue two requests. Neither opens
     // on arrival, and closing the first never opens the second or moves focus to it.
     const first = await submit(page, { kind: 'access', title: 'Release planning', fingerprint: 'agent-one', displayLabel: 'build bot' });
     const second = await submit(page, { kind: 'access', title: 'Release planning', fingerprint: 'agent-two', displayLabel: 'build bot', workspaceLabel: 'Verified: ~/src/khala' });
     await page.getByText('Waiting for you (2)').waitFor();
-    await nav.getByText(', 2 pending').waitFor({ state: 'attached' });
+    assert.equal(await nav.getAttribute('href'), '#/channel-requests');
+    assert.equal(await nav.getAttribute('aria-label'), 'Channel requests, 2 pending');
+    assert.equal((await nav.innerText()).trim(), '2');
     assert.equal(await dialogCount(page), 0, 'queued requests never auto-open');
     assert.equal(await page.locator('.channel-requests__notice').count(), 2, 'each request raises a non-modal notice');
     assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'arrivals do not take focus');
@@ -88,7 +89,7 @@ test('channel requests stay in the inbox, never auto-open, and keep focus where 
     await page.waitForTimeout(400);
     assert.equal(await dialogCount(page), 0, 'the second request never auto-opens after the first closes');
     assert.equal(await activeId(page), `channel-request-${first}`, 'focus returns to the decided request, not the next one');
-    await nav.getByText(', 1 pending').waitFor({ state: 'attached' });
+    assert.equal(await nav.getAttribute('aria-label'), 'Channel requests, 1 pending');
     await row(page, first).getByText('Waiting for the agent’s connector to pick up your approval').waitFor();
 
     // Dismissing without deciding returns focus to the opener, and the row stays pending.

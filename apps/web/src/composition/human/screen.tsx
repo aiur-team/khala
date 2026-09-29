@@ -32,6 +32,8 @@ export type HumanScreenProps<Route> = Readonly<{
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
   /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
   renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => ReactNode;
+  /** Neutral shell while identity is checked or the signed-in device is unavailable. */
+  renderPendingShell?: (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable', children: ReactNode) => ReactNode;
   /** Account action for signed-in device or route failures outside the ready shell. */
   renderSignedInAction?: (mode: ShellMode) => ReactNode;
 }>;
@@ -95,6 +97,7 @@ export function HumanScreen<Route>({
   renderDeviceLoss,
   attachCapabilities,
   renderReadyShell,
+  renderPendingShell,
   renderSignedInAction,
 }: HumanScreenProps<Route>) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
@@ -119,6 +122,13 @@ export function HumanScreen<Route>({
     && (snapshot.reason === 'storage_cleared' || snapshot.reason === 'key_material_missing')
     && renderDeviceLoss !== undefined) {
     content = renderDeviceLoss(snapshot.path);
+  } else if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
+    || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity')) && renderPendingShell) {
+    content = <section className="khala-device-status" aria-label="Channel status">{statusContent(snapshot)}
+      {snapshot.phase === 'unavailable' && snapshot.retryable
+        ? <button type="button" className="aiur-action" onClick={() => application.navigate(snapshot.path)}>Try again</button>
+        : null}
+    </section>;
   } else {
     content = (
       <KhalaPageFrame model={{ title: 'Account and device status', labelledBy: 'khala-status' }}>
@@ -136,6 +146,11 @@ export function HumanScreen<Route>({
   };
   if ((snapshot.phase === 'ready' || snapshot.phase === 'navigating') && renderReadyShell !== undefined) {
     return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
+  }
+  if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
+    || snapshot.phase === 'inactive'
+    || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity')) && renderPendingShell) {
+    return <>{renderPendingShell(chrome, snapshot.phase, content)}</>;
   }
   const signedInAction = snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source !== 'identity'
     ? renderSignedInAction?.(mode) : null;

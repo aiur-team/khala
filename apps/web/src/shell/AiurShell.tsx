@@ -1,11 +1,21 @@
-import type { AiurShellProps } from './types';
+import type { AiurShellProps, ThemePort } from './types';
 import aiurLogo from '../landing/public/assets/aiur-logo.png';
 import { ThemeIcon } from './icons';
 
-export function AiurShell({ mode, brandHref = '/new', navigation, sidebar, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
+export function ThemeToggle({ theme }: Readonly<{ theme: ThemePort }>) {
+  return <button
+    type="button"
+    className="aiur-shell__theme-toggle aiur-shell__icon-button"
+    aria-label="Toggle color theme"
+    title="Toggle color theme"
+    onClick={() => theme.onThemeChange(theme.theme === 'dark' ? 'light' : 'dark')}
+  ><ThemeIcon /></button>;
+}
+
+export function AiurShell({ mode, brandHref = '/new', className = '', title, navigation, sidebar, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
   if (mode === 'hosted-content') {
     return (
-      <div className={`khala-content-root${sidebar ? ' khala-content-root--channels' : ''}`} data-theme={theme.theme}>
+      <div className={`khala-content-root${sidebar ? ' khala-content-root--channels' : ''}${className ? ` ${className}` : ''}`} data-theme={theme.theme}>
         {sidebar ? <aside className="khala-content-sidebar" aria-label="Channels">{sidebar}</aside> : null}
         <div className="khala-content-main">{children}</div>
       </div>
@@ -13,24 +23,16 @@ export function AiurShell({ mode, brandHref = '/new', navigation, sidebar, actio
   }
 
   return (
-    <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}${sidebar ? ' aiur-shell--channels' : ''}`} data-theme={theme.theme}>
+    <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}${sidebar ? ' aiur-shell--channels' : ''}${className ? ` ${className}` : ''}`} data-theme={theme.theme}>
       <header className="aiur-shell__topbar">
-        <a className="aiur-shell__brand" href={brandHref}>
+        <div className="aiur-shell__brand-section"><a className="aiur-shell__brand" href={brandHref}>
           <img src={aiurLogo} alt="" width="1215" height="1068" />
           <span>KHALA</span>
-        </a>
-        <div className="aiur-shell__actions">
-          <button
-            type="button"
-            className="aiur-shell__theme-toggle aiur-shell__icon-button"
-            aria-label="Toggle color theme"
-            title="Toggle color theme"
-            onClick={() => theme.onThemeChange(theme.theme === 'dark' ? 'light' : 'dark')}
-          >
-            <ThemeIcon />
-          </button>
+        </a><div className="aiur-shell__actions">
+          <ThemeToggle theme={theme} />
           {actions}
-        </div>
+        </div></div>
+        {title ? <h1 className="aiur-shell__title" dir="auto">{title}</h1> : null}
       </header>
       <nav className="aiur-shell__nav" aria-label="Main navigation">
         {sidebar}

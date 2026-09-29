@@ -29,7 +29,7 @@ ID and kind, device state, history, the recovery refusal and allowed actions. No
 SDK token or principal can reach it.
 
 `registerRecovery({ render, revocation, closure })` is `ready` only when it is given a `render` slot.
-The hosted channel room mounts `RecoveryPanel` directly with its owner-scoped browser closure port.
+The hosted channel-care route mounts `RecoveryPanel` with its owner-scoped browser closure port.
 The generic capability slot remains unavailable until it has a separate render host.
 
 ## Not wired here

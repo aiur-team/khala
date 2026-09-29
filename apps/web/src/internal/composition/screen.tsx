@@ -107,7 +107,6 @@ export function LocalApplicationScreen({
               makeExternal={makeExternal}
               onMakeExternal={() => navigateRoute(routes.makeExternalPath(route.roomId))}
               settingsHref={routes.settingsPath(route.roomId)}
-              requestsHref={routes.channelRequestsPath()}
             />
         );
       case 'channel_settings':

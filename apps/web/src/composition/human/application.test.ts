@@ -363,6 +363,24 @@ describe('createHumanApplication', () => {
     expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', context: null });
   });
 
+  it('keeps the signed-in shell phase through device retry without granting a route context', async () => {
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const ensureReady = vi.fn(async () => unavailable());
+    const app = application(identity, fakeDevice({ ensureReady }));
+    await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
+    const seen: HumanApplicationSnapshot[] = [];
+    const dispose = app.subscribe(() => seen.push(app.getSnapshot()));
+    app.navigate('/new');
+    await eventually(() => expect(ensureReady).toHaveBeenCalledTimes(2));
+    await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
+    expect(seen.map(snapshot => snapshot.phase)).toEqual(['initializing_device', 'initializing_device', 'unavailable']);
+    expect(seen.every(snapshot => snapshot.context === null)).toBe(true);
+    dispose();
+  });
+
   it('keeps the owner context mounted while navigating and exposes a later device failure', async () => {
     const nextIdentity = deferred<IdentityState>();
     let notify: (view: DeviceView) => void = () => undefined;

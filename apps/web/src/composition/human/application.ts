@@ -171,9 +171,12 @@ export function createHumanApplication(
     // navigation starts. The device stays leased until identity is known, so a
     // same-owner route change can reuse it without a second SDK/store.
     const previous = snapshot.phase === 'ready' || snapshot.phase === 'navigating' ? snapshot.context : null;
+    const pendingSignedIn = snapshot.phase === 'initializing_device'
+      || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity');
     deactivateRoute();
     setSnapshot(previous ? { phase: 'navigating', path: activePath, context: previous }
-      : { phase: 'checking_identity', path: activePath, context: null });
+      : pendingSignedIn ? { phase: 'initializing_device', path: activePath, context: null }
+        : { phase: 'checking_identity', path: activePath, context: null });
 
     const identity = await readIdentity(identityAbort.signal);
     if (disposed || generation !== epoch) return;
