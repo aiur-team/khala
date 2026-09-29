@@ -105,11 +105,11 @@
 }
 
 .aiur-shell__theme-icon .moon,
-.aiur-shell[data-theme='light'] .aiur-shell__theme-icon .sun {
+[data-theme='light'] .aiur-shell__theme-icon .sun {
   display: none;
 }
 
-.aiur-shell[data-theme='light'] .aiur-shell__theme-icon .moon {
+[data-theme='light'] .aiur-shell__theme-icon .moon {
   display: block;
 }
 

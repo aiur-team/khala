@@ -12,6 +12,7 @@ import { createLocalChannelSettingsPort } from './channel-settings/ports';
 import { createHumanClient } from './composition/human-client';
 import { createHttpMakeExternalPort } from './composition/make-external-port';
 import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
+import { createLocalConversationIndex } from './composition/conversations';
 import { createHttpListeningPort } from './composition/listening-http';
 import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
@@ -52,10 +53,13 @@ if (requestSecret === null) {
   );
 } else {
   const ports = createLocalPorts({ origin: location.origin, requestSecret, limits: limits.value });
+  const conversations = createLocalConversationIndex({ origin: location.origin, requestSecret, limits: limits.value });
+  void conversations.refresh();
   const application = createHumanApplication({
     identity: ports.identity,
     device: ports.device,
     room: ports.room,
+    conversations,
     admission: ports.admission,
     participant: ports.participant,
     limits: ports.limits,
@@ -65,6 +69,7 @@ if (requestSecret === null) {
     history.pushState(null, '', path);
     routedPath = path;
     application.navigate(path);
+    void conversations.refresh();
   };
   const stop = {
     port: createHttpStopPort({ origin: location.origin, requestSecret }),
@@ -93,12 +98,14 @@ if (requestSecret === null) {
     if (path === routedPath) return;
     routedPath = path;
     application.navigate(path);
+    void conversations.refresh();
   };
   addEventListener('popstate', onPopState);
   addEventListener('pagehide', () => {
     removeEventListener('popstate', onPopState);
     mounted.dispose();
     application.dispose();
+    conversations.dispose();
     ports.dispose();
   }, { once: true });
 }

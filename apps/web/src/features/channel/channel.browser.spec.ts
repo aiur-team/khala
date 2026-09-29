@@ -30,7 +30,7 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.goto(url);
 
-    await page.getByRole('heading', { name: 'Release channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Release channel', level: 1 }).waitFor();
     await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('heading', { name: 'Connect Scout' }).waitFor();
     await page.getByText('Khala skill', { exact: true }).waitFor();

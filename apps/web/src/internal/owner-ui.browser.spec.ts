@@ -79,7 +79,7 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
 
     // The inbox navigation entry is a client navigation too, and its page survives direct load and reload.
     await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'same-document'; });
-    await page.locator('.conversation-list__item').click();
+    await page.locator('.conversation-list__item').first().click();
     await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('link', { name: /Channel requests/ }).click();
     await page.waitForURL(`${origin}/channel-requests`);
@@ -116,7 +116,7 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
     // Keyboard focus reaches the channel entry in the shared sidebar.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${origin}/channels/${channelId}`);
-    await page.locator('.conversation-list__item').focus();
+    await page.locator('.conversation-list__item').first().focus();
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('conversation-list__item')), true);
 
     assert.deepEqual(violations, []);

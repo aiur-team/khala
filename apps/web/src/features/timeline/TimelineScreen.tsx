@@ -285,7 +285,7 @@ export function TimelineScreen({
           You no longer have access to this conversation.
         </p>
       ) : null}
-      {evidence ? (
+      {evidence && (data.items.length > 0 || evidenceView.units.length > 0) ? (
         <>
           <EvidenceAccess status={evidenceView.status} onRetry={() => void evidence.refresh()} />
           <EvidenceAnnouncer text={evidenceView.announcement?.text ?? null} />

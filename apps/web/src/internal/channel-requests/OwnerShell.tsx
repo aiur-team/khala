@@ -8,8 +8,10 @@ import { ConversationList } from '../../ui/conversation';
 import type { HumanShellChrome } from '../../composition/human/screen';
 import type { HumanRouteContext } from '../../composition/human/application';
 import { CreateChannelDialog } from '../../composition/human/CreateChannelDialog';
+import { useConversationIndex } from '../../composition/human/ConversationIndexRoute';
 import type { LocalRouteCodec } from '../composition/routes';
 import aiurLogo from '../../landing/public/assets/aiur-logo.png';
+import { ThemeIcon } from '../../shell/icons';
 
 /** The loopback server has no notification stream, so the inbox is reread on this interval. */
 export const INBOX_POLL_MS = 5_000;
@@ -40,6 +42,8 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
   const [controller] = useState(createController);
   const route = routes.parse(chrome.path);
   const roomId = 'roomId' in route ? route.roomId : null;
+  const conversations = useConversationIndex(context);
+  const listed = conversations ?? (roomId ? [{ id: roomId, title: 'Channel', preview: null, timestamp: null, unreadCount: null }] : []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const drawer = useRef<HTMLDivElement>(null);
@@ -57,9 +61,9 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
       controller.dispose();
     };
   }, [controller]);
-  const themeAction = <button type="button" className="aiur-shell__icon-button" aria-label="Toggle color theme"
+  const themeAction = <button type="button" className="aiur-shell__theme-toggle aiur-shell__icon-button" aria-label="Toggle color theme"
     onClick={() => chrome.theme.onThemeChange(chrome.theme.theme === 'dark' ? 'light' : 'dark')}>
-    {chrome.theme.theme === 'dark' ? '☀' : '☾'}
+    <ThemeIcon />
   </button>;
   return <main className="khala-local-shell"><AiurShell mode="hosted-content" navigation={[]} theme={chrome.theme}
     collapsed={chrome.collapsed} onCollapsedChange={chrome.onCollapsedChange}
@@ -76,8 +80,9 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
       <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels"
         onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
       <div className="khala-local-sidebar__brand"><a className="aiur-shell__brand" href={routes.createPath()}><img src={aiurLogo} alt="" width="1215" height="1068" />KHALA</a>{themeAction}</div>
-      <ConversationList conversations={roomId ? [{ id: roomId, title: 'Channel', preview: null, timestamp: null, unreadCount: null }] : []}
+      <ConversationList conversations={listed}
         selectedId={route.kind === 'channel' ? roomId : null} query="" onQueryChange={() => undefined} showSearch={false}
+        status={conversations === undefined ? 'loading' : conversations === null ? 'error' : 'ready'}
         onSelect={id => { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); }}
         action={<button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel"
           onClick={() => { setDrawerOpen(false); setCreateOpen(true); }}>+</button>} />

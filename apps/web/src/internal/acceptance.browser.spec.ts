@@ -100,7 +100,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await page.goto(url);
     await page.waitForURL(`${origin}/channels/${channelId}`);
     await page.getByText('No messages yet.').waitFor();
-    await page.getByRole('heading', { name: 'Channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Channel', level: 1 }).waitFor();
     const channelText = await page.locator('body').innerText();
     assert.match(channelText, /channel/i);
     assert.doesNotMatch(channelText, /\broom\b/i, 'the UI says channel, never room');
@@ -136,7 +136,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
 
     // Exchange: Ada writes, Bea reads it exactly once and answers, and the owner sees both, attributed.
     await page.goto(channelUrl);
-    await page.getByRole('heading', { name: 'Channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Channel', level: 1 }).waitFor();
     assert.equal((await ada.send('Ada: hello Bea')).code, 0);
     assert.deepEqual(await bea.readAll(), ['Ada: hello Bea']);
     assert.deepEqual(await bea.readAll(), [], 'a read message is not delivered again');

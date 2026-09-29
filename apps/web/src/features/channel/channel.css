@@ -1,7 +1,7 @@
 /* Channel composition layout. Composition roots also load brand tokens and shell styles. */
 
 .channel-page .khala-page-frame{max-width:none}
-.channel-page .khala-page-frame__header{display:none}
+.channel-page .khala-page-frame__header{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .channel-page .khala-page-frame__body{min-width:0}
 .channel-page .conversation-layout{height:calc(100dvh - 130px);min-height:420px}
 .channel-page .conversation-thread__actions{justify-content:flex-end;gap:.5rem}

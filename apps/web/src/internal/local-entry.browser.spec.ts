@@ -115,8 +115,11 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await page.goto(`${origin}/__khala/bootstrap#credential=${fixture.bootstrap.credential}&channel=${channelId}`);
     await page.waitForURL(`${origin}/channels/${channelId}`);
     await page.getByText('No messages yet.').waitFor();
-    assert.equal(await page.getByRole('heading', { name: 'Channel' }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: 'One', level: 1 }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: 'One', level: 2 }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 1);
+    await page.locator('.conversation-list__item').first().waitFor();
+    assert.equal(await page.getByText('Delivery evidence unavailable').count(), 0, 'empty channels do not show a receipt error');
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
@@ -130,7 +133,7 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true, 'local chat fits the phone viewport');
     const channelsButton = page.getByRole('button', { name: 'Channels' });
     await channelsButton.click();
-    assert.equal(await page.locator('.conversation-list__item').isVisible(), true);
+    assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
     await page.getByRole('button', { name: 'Create channel' }).click();
     await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
     await page.keyboard.press('Escape');
@@ -196,12 +199,30 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       history.pushState(null, '', '/');
       dispatchEvent(new PopStateEvent('popstate'));
     });
+    await page.locator('.conversation-list__item').first().waitFor();
+    assert.equal(await page.locator('.conversation-list__item').count(), 2, 'both channels remain available from the home route');
     await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).waitFor();
     assert.doesNotMatch(await text(page), /Who can join|Copy link|Sign in/);
     await page.getByLabel('Channel name (optional)').fill('Scratch');
     await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).click();
     await page.waitForURL(/\/channels\/evt-/);
     await page.getByText('No messages yet.').waitFor();
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('.conversation-list__item').length === 3);
+    await page.locator('.conversation-list__item', { hasText: 'One' }).click();
+    await page.waitForURL(`${origin}/channels/${channelId}`);
+    await page.getByRole('heading', { name: 'One', level: 1 }).waitFor();
+    await page.locator('.conversation-list__item', { hasText: 'Scratch' }).click();
+    await page.waitForURL(/\/channels\/evt-/);
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
+    await page.evaluate(() => {
+      history.pushState(null, '', '/channel-requests');
+      dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
+    assert.equal(await page.locator('.conversation-list__item').count(), 3, 'the inbox route keeps the conversation list');
+    await page.locator('.conversation-list__item', { hasText: 'Scratch' }).click();
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
 
     // Transport loss: sending pauses with an announced reconnecting state and the draft is kept.
     await page.getByRole('textbox', { name: 'Message' }).fill('draft survives');

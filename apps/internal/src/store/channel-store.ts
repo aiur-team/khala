@@ -79,6 +79,8 @@ export type ChannelReadResult =
   | Readonly<{ kind: 'rejected'; code: 'not_found' | 'not_joined' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+export type ChannelListResult = Readonly<{ kind: 'done'; channels: readonly StoredChannel[] }> | Readonly<{ kind: 'unavailable' }>;
+
 export type RosterResult =
   | Readonly<{ kind: 'done'; participants: readonly ParticipantView[] }>
   | Readonly<{ kind: 'rejected'; code: 'not_found' }>
@@ -422,6 +424,7 @@ export interface ChannelStore {
     creatorDeviceId: DeviceId;
   }>): CreatedChannelLookup;
   channel(input: Readonly<{ channelId: RoomId; participantId: ParticipantId }>): ChannelReadResult;
+  listChannels(participantId: ParticipantId): ChannelListResult;
   roster(channelId: RoomId): RosterResult;
   participantForDevice(input: Readonly<{ channelId: RoomId; deviceId: DeviceId }>): ProvenanceResult;
   send(input: Readonly<{
@@ -707,6 +710,24 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           if (channel.kind === 'missing') return { kind: 'rejected', code: 'not_found' } as const;
           if (channel.kind === 'not_joined') return { kind: 'rejected', code: 'not_joined' } as const;
           return { kind: 'done', channel: channel.channel } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
+    listChannels(participantId) {
+      if (!isIdentifier(participantId)) return unavailable();
+      try {
+        return handle.read(db => {
+          const rows = db.prepare(`
+            SELECT c.channel_id, c.title, c.revision, m.membership
+            FROM channels c JOIN memberships m ON m.channel_id = c.channel_id
+            WHERE m.participant_id = ? AND m.membership = 'joined'
+            ORDER BY c.created_at DESC, c.channel_id
+          `).all(participantId) as unknown as ChannelRow[];
+          return { kind: 'done', channels: rows.map(row => ({
+            channelId: row.channel_id as RoomId, title: row.title,
+            membership: 'joined' as const, revision: String(row.revision),
+          })) } as const;
         });
       } catch { return unavailable(); }
     },

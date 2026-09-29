@@ -18,6 +18,7 @@ import type { BindingStopPort } from '../controls/stop-port';
 import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
 import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
+import { useConversationIndex } from '../../composition/human/ConversationIndexRoute';
 
 /** The binding Stop control's port and the channel URL a replacement agent joins with. */
 export type LocalStopCapability = Readonly<{
@@ -146,23 +147,25 @@ export function LocalRoom({
   requestsHref?: string;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
+  const conversations = useConversationIndex(context);
+  const title = conversations?.find(item => item.id === roomId)?.title ?? 'Channel';
   const evidence = useMemo(
     () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
     [evidencePort, roomId],
   );
-  useEffect(() => {
-    if (!evidence) return undefined;
-    const timer = setInterval(() => void evidence.refresh(), evidencePollMs);
-    return () => {
-      clearInterval(timer);
-      evidence.dispose();
-    };
-  }, [evidence, evidencePollMs]);
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  useEffect(() => {
+    if (!evidence) return undefined;
+    const timer = setInterval(() => { if (timeline.getSnapshot().items.length > 0) void evidence.refresh(); }, evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      evidence.dispose();
+    };
+  }, [evidence, evidencePollMs, timeline]);
   const channel = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
@@ -195,7 +198,7 @@ export function LocalRoom({
   // New or older rows may carry evidence already projected: reread with them.
   const items = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().items, () => timeline.getSnapshot().items);
   useEffect(() => {
-    void evidence?.refresh();
+    if (items.length > 0) void evidence?.refresh();
   }, [evidence, items]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
@@ -209,7 +212,7 @@ export function LocalRoom({
   return (
     <ChannelScreen
       embedded
-      title="Channel"
+      title={title}
       description="Local · Plaintext on this device"
       controller={channel}
       showPresence={false}
