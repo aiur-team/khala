@@ -42,7 +42,8 @@ export type McpCallCollaborators = Readonly<{
  * when the call names no session this server can act as; that call is then refused
  * `not_connected`.
  */
-export type McpSessionRoute = (meta: Readonly<Record<string, unknown>> | undefined, toolName: string) => Promise<McpCallCollaborators | null>;
+export type McpSessionRoute = (meta: Readonly<Record<string, unknown>> | undefined, toolName: string,
+  args: Readonly<Record<string, unknown>>) => Promise<McpCallCollaborators | null>;
 
 export type McpServerOptions = Readonly<{
   input: Readable;
@@ -179,7 +180,7 @@ async function callTool(
   if (tool === undefined) return failure(id, -32602, 'Invalid params');
   let collaborators: McpCallCollaborators | null;
   try {
-    collaborators = await context.route(meta, params.name);
+    collaborators = await context.route(meta, params.name, params.arguments);
   } catch (error) {
     // One session's failure refuses that call only; the server keeps serving every other session.
     return success(id, readToolFailure(cliErrorCode(error)).primaryResult);
