@@ -129,6 +129,7 @@ export function LocalRoom({
   context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
   onMakeExternal = () => undefined,
   settingsHref,
+  requestsHref,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
@@ -142,6 +143,7 @@ export function LocalRoom({
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
   settingsHref?: string;
+  requestsHref?: string;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
   const evidence = useMemo(
@@ -230,6 +232,7 @@ export function LocalRoom({
       renderControls={() => (
         <>
           {settingsHref ? <a href={settingsHref}>Channel discovery settings</a> : null}
+          {requestsHref ? <a href={requestsHref}>Channel requests</a> : null}
           {stop && stopController ? <details><summary>Stop agent delivery</summary><StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /></details> : null}
           <details><summary>More channel options</summary><MakeExternalEntry summary={journey} onOpen={onMakeExternal} /></details>
         </>

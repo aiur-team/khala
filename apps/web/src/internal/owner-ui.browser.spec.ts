@@ -65,6 +65,7 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
 
     // The settings link is a client navigation: the document is not reloaded.
     await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'same-document'; });
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('link', { name: 'Channel discovery settings' }).click();
     await page.waitForURL(`${origin}/channels/${channelId}/settings`);
     await page.getByRole('heading', { name: 'Channel discovery settings' }).waitFor();
@@ -78,6 +79,8 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
 
     // The inbox navigation entry is a client navigation too, and its page survives direct load and reload.
     await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'same-document'; });
+    await page.locator('.conversation-list__item').click();
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('link', { name: /Channel requests/ }).click();
     await page.waitForURL(`${origin}/channel-requests`);
     await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
@@ -86,7 +89,6 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
     await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
     await page.reload();
     await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
-    assert.equal(await page.getByRole('link', { name: /Channel requests/ }).getAttribute('aria-current'), 'page');
 
     // A selected request path loads the app rather than a server 404.
     const selected = await page.goto(`${origin}/channel-requests/${requestHandle}`);
@@ -104,18 +106,18 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
       await page.goto(`${origin}${route}`);
       await page.getByRole('heading', { level: 1 }).or(page.getByRole('heading').first()).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${route} overflows at 320px`);
-      for (const control of await page.locator('main button, main a[href]').all()) {
+      for (const control of await page.locator('.khala-content-main button, .khala-content-main a[href]').all()) {
         if (!(await control.isVisible())) continue;
         const box = await control.boundingBox();
         assert.ok(box && box.height >= 44 - 0.5 && box.width >= 44 - 0.5, `${route}: control ${JSON.stringify(box)} is under 44px (${await control.innerText()})`);
       }
     }
 
-    // Keyboard focus reaches the navigation entry and shows as focused.
+    // Keyboard focus reaches the channel entry in the shared sidebar.
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(`${origin}/channel-requests`);
-    await page.getByRole('link', { name: /Channel requests/ }).focus();
-    assert.equal(await page.evaluate(() => document.activeElement?.className), 'channel-requests-nav');
+    await page.goto(`${origin}/channels/${channelId}`);
+    await page.locator('.conversation-list__item').focus();
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('conversation-list__item')), true);
 
     assert.deepEqual(violations, []);
   } finally {

@@ -31,6 +31,7 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     await page.goto(url);
 
     await page.getByRole('heading', { name: 'Release channel' }).waitFor();
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('heading', { name: 'Connect Scout' }).waitFor();
     await page.getByText('Khala skill', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Copy install command' }).waitFor();
@@ -49,6 +50,7 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     await page.getByText('Batch-token return supported', { exact: true }).waitFor();
     assert.equal(await page.getByText('Read by the agent').count(), 0, 'context insertion is never labelled read');
     assert.equal(await page.getByRole('button', { name: 'Copy install command' }).count(), 0);
+    await page.getByRole('button', { name: 'Close details' }).click();
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
@@ -64,11 +66,13 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     await page.getByText('Sending…').waitFor();
     await page.getByText('Sending…').waitFor({ state: 'detached' });
     await page.getByText('Deployment is healthy.').waitFor();
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByText('Connection stale', { exact: true }).waitFor();
 
     // Reload to restore the disconnected fixture, then force clipboard denial
     // and verify the failure is visible and announced.
     await page.reload();
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByRole('button', { name: 'Copy install command' }).waitFor();
     await page.evaluate("Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: function () { return Promise.reject(new Error('clipboard denied')); } })");
     await page.getByRole('button', { name: 'Copy install command' }).click();

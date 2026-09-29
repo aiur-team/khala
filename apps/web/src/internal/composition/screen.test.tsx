@@ -82,10 +82,13 @@ describe('LocalApplicationScreen', () => {
     for (const text of HOSTED_ONLY) expect(html).not.toContain(text);
   });
 
-  it('adds owner navigation and a compact channel settings control', () => {
+  it('shows the current channel in the shared sidebar and a compact settings control', () => {
     const html = render('/channels/ch_1');
-    expect(html).toContain('href="/channel-requests"');
-    expect(html).toContain('Channel requests');
+    expect(html).toContain('aria-label="Channels"');
+    expect(html).toContain('conversation-list__item is-active');
+    expect(html).toContain('aria-label="Create channel"');
+    expect(html).not.toContain('channel-requests-nav');
+    expect((html.match(/<main/g) ?? [])).toHaveLength(1);
     expect(html).toContain('aria-label="Channel settings"');
     expect(html).not.toContain('href="/channels/ch_1/settings"');
   });

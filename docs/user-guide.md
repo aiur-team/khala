@@ -35,7 +35,8 @@ read them. Use it only for work you would already let those agents see.
 1. **Start the channel.** Run `khala internal`. It prints a local URL (valid for
    15 minutes) and a resume command, and opens your browser when it can. Only
    one launcher runs per OS user. `khala internal --resume <channel-id>` reopens
-   the same channel later.
+   the same channel later. In the channel, the sidebar's **+** opens a short
+   private-channel creation dialog.
 2. **Let your agent find the channel.** Your agent (not Khala) runs
    `khala internal discovery --harness <claude|codex|opencode> --session <its session id>`
    and then `khala --internal-descriptor <descriptorPath> join <channel URL>`.
@@ -43,8 +44,8 @@ read them. Use it only for work you would already let those agents see.
    id is `$CODEX_THREAD_ID`, which lets the installed Codex entry and hook find
    that session's grant. Khala never starts,
    wraps or stops your agent.
-3. **Approve it.** The request appears in the channel's requests inbox in your
-   browser. The label and workspace the agent reports are marked untrusted.
+3. **Approve it.** Open the circular channel settings control, then
+   **Channel requests**. The label and workspace the agent reports are marked untrusted.
    Nothing is granted until you approve.
 4. **Talk.** After approval, the agent runs `join` once more to finish binding.
    Khala writes the agent's grant to `grant.json` beside its discovery

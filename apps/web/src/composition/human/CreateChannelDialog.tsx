@@ -1,9 +1,11 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import type { HumanRouteContext } from './application';
+import type { CreateChannelMode } from '../../features/create-channel/controller';
 
-export function CreateChannelDialog({ context, onClose, onOpenRoom, returnFocus }: Readonly<{
+export function CreateChannelDialog({ context, mode = 'on_demand', onClose, onOpenRoom, returnFocus }: Readonly<{
   context: HumanRouteContext;
+  mode?: CreateChannelMode;
   onClose(): void;
   onOpenRoom(roomId: string): void;
   returnFocus?: () => void;
@@ -29,7 +31,7 @@ export function CreateChannelDialog({ context, onClose, onOpenRoom, returnFocus 
   return <div className="khala-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={dialog} role="dialog" aria-modal="true" aria-label="Create a channel" className="khala-dialog" onKeyDown={onKeyDown}>
       <button type="button" className="khala-dialog__close aiur-shell__icon-button" aria-label="Close" onClick={onClose}>×</button>
-      <CreateChannelScreen ports={context} mode="on_demand" onOpenRoom={onOpenRoom} />
+      <CreateChannelScreen ports={context} mode={mode} onOpenRoom={onOpenRoom} />
     </div>
   </div>;
 }

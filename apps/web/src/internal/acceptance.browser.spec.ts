@@ -23,7 +23,10 @@ const rowWith = (page: Page, text: string) => page.locator('.timeline__row:not(.
 
 /** The owner approves the one pending request from `agent` in the inbox, by keyboard only. */
 async function approveByKeyboard(page: Page, origin: string, agent: string, dialogName: RegExp | string, approve: string, subject?: string) {
-  await page.getByRole('link', { name: /Channel requests/ }).click();
+  if (new URL(page.url()).pathname !== '/channel-requests') {
+    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await page.getByRole('link', { name: /Channel requests/ }).click();
+  }
   await page.waitForURL(`${origin}/channel-requests`);
   const waiting = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: agent });
   const row = subject === undefined ? waiting : waiting.filter({ hasText: subject });

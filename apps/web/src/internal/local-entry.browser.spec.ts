@@ -126,6 +126,16 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       await page.screenshot({ path: path.join(screenshotDir, 'local-mobile.png'), fullPage: true });
       await page.setViewportSize({ width: 1440, height: 900 });
     }
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true, 'local chat fits the phone viewport');
+    const channelsButton = page.getByRole('button', { name: 'Channels' });
+    await channelsButton.click();
+    assert.equal(await page.locator('.conversation-list__item').isVisible(), true);
+    await page.getByRole('button', { name: 'Create channel' }).click();
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await channelsButton.evaluate(element => element === document.activeElement), true);
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     // Observe: two agents' messages arrive over the hint stream with their own attribution.
     assert.equal((await agentSend(fixture.bob.credential, 'from bob')).status, 201);
@@ -142,6 +152,8 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await composer.press('Enter');
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 0);
+    const ownMeta = await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).locator('.conversation-message__meta').innerText();
+    assert.equal((ownMeta.match(/\bYou\b/g) ?? []).length, 1, 'own messages show one You attribution');
 
     await composer.fill('first line');
     await composer.press('Shift+Enter');
@@ -184,10 +196,10 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       history.pushState(null, '', '/');
       dispatchEvent(new PopStateEvent('popstate'));
     });
-    await page.getByRole('button', { name: 'Create channel' }).waitFor();
+    await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).waitFor();
     assert.doesNotMatch(await text(page), /Who can join|Copy link|Sign in/);
     await page.getByLabel('Channel name (optional)').fill('Scratch');
-    await page.getByRole('button', { name: 'Create channel' }).click();
+    await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).click();
     await page.waitForURL(/\/channels\/evt-/);
     await page.getByText('No messages yet.').waitFor();
 

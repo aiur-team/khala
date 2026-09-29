@@ -9,7 +9,7 @@ export type ConversationSummary = Readonly<{
   unreadCount: number | null;
 }>;
 
-export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.', action }: Readonly<{
+export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.', action, showSearch = true }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
@@ -18,14 +18,15 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   status?: 'loading' | 'ready' | 'error';
   emptyLabel?: string;
   action?: ReactNode;
+  showSearch?: boolean;
 }>) {
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <aside className="conversation-list" aria-label="Conversations">
     <header className="conversation-list__head"><strong>Channels</strong><span>{conversations.length}</span>{action}</header>
-    <label className="conversation-list__search"><span className="sr-only">Search channels</span>
+    {showSearch ? <label className="conversation-list__search"><span className="sr-only">Search channels</span>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search channels" />
-    </label>
+    </label> : null}
     <div className="conversation-list__items">
       {status === 'loading' ? <p role="status">Loading conversations…</p> : null}
       {status === 'error' ? <p role="alert">Conversations are unavailable. Try reloading.</p> : null}
@@ -44,7 +45,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
 
 export function ChatThread({ title, onBack, children }: Readonly<{ title: string; onBack?: () => void; children: ReactNode }>) {
   return <section className="conversation-thread" aria-label="Conversation thread">
-    <header className="conversation-thread__head">{onBack ? <button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button> : null}<h1 dir="auto">{title}</h1></header>
+    <header className="conversation-thread__head">{onBack ? <button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button> : null}<h2 dir="auto">{title}</h2></header>
     <div className="conversation-thread__body">{children}</div>
   </section>;
 }
@@ -58,7 +59,7 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
     <span className="conversation-message__avatar" aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
     <div className="conversation-message__bubble">
       <header className="conversation-message__meta"><strong dir="auto">{author}</strong>
-        {kindLabel ? <span>{kindLabel}</span> : null}
+        {kindLabel && kindLabel !== author ? <span>{kindLabel}</span> : null}
         {time ? <time dateTime={time}>{new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}</time> : null}
         {status ? <span>{status}</span> : null}</header>
       <div className="conversation-message__content">{children}</div>
