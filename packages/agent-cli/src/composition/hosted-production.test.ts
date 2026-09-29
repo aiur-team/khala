@@ -10,7 +10,7 @@ import type { AgentClientPort } from '../cli/types.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
-  it('drives an approved native connect through exchange, redeem, durable resume and ready', async () => {
+  it.each(['connect', 'create'] as const)('activates %s from a simulated approved status and retries a lost redeem response', async mode => {
     const origin = 'https://khala.aiur.team';
     const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
     const principal = `agent_${signer.jkt}` as DiscoveryCredential['requester']['principal'];
@@ -40,6 +40,7 @@ describe('installed hosted connector factory', () => {
     let loseRedeemResponse = true;
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
+    let createApproved = false;
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } });
     const transport = (async (target: string | URL | Request, init?: RequestInit) => {
@@ -48,6 +49,9 @@ describe('installed hosted connector factory', () => {
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
       if (url.pathname === '/api/agent/channel-access/create')
         return reply({ v: 1, operationId: body?.operationId, outcome: 'pending_owner' });
+      if (url.pathname.endsWith('/status') && url.searchParams.get('operationKind') === 'create')
+        return reply({ v: 1, operationId: url.searchParams.get('operationId'),
+          outcome: createApproved ? 'approved' : 'pending_owner' });
       if (url.pathname.endsWith('/request') || url.pathname.endsWith('/status'))
         return reply(url.pathname === '/api/agent/channel-link/request'
           ? { v: 1, kind: 'request', operationId: body?.operationId, outcome: 'approved' }
@@ -122,20 +126,37 @@ describe('installed hosted connector factory', () => {
       .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
     expect(calls).toContain('/api/agent/channel-access/create');
     const link = `${origin}/join/inviteRef123`;
-    await opened.client.connect(link);
+    if (mode === 'connect') await opened.client.connect(link);
+    else {
+      expect(await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
+        .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
+      expect(calls).not.toContain('/api/agent/channel-access/exchange');
+      // The control composition tests own signed-in authorization. This transport
+      // supplies a synthetic approved status to exercise only the packaged client.
+      createApproved = true;
+      await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin });
+    }
     expect([...rows.values()].map(row => decodeActivationRecord(JSON.parse(row.record))?.phase)).toContain('admitted');
     expect(retained.size).toBe(1);
-    await opened.client.connect(link);
+    if (mode === 'connect') await opened.client.connect(link);
+    else await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin });
     expect([...retained.values()][0]).toMatchObject({ binding: { bindingId: 'bnd_1' },
       matrixSession: { deviceId: 'KHALA_device_1', accessToken: 'matrix-access-token' } });
     nativeAvailable = true;
-    expect(await opened.client.connect(link)).toMatchObject({ kind: 'connected', binding: { bindingId: 'bnd_1' } });
+    if (mode === 'connect') {
+      expect(await opened.client.connect(link)).toMatchObject({ kind: 'connected', binding: { bindingId: 'bnd_1' } });
+    } else {
+      expect(await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
+        .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'connected' } });
+    }
     expect(calls).toContain('/api/agent/channel-access/exchange');
     expect(calls).toContain('/api/agent/bootstrap/redeem');
     expect(calls).toContain('/api/agent/channel-access/resume');
     expect(calls).toContain('/api/agent/channel-access/ready');
     expect(calls.filter(path => path === '/api/agent/bootstrap/redeem')).toHaveLength(1);
-    expect(await opened.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+    if (mode === 'connect') {
+      expect(await opened.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+    }
     await opened.close();
   });
   it('accepts only an exact configured HTTPS origin', () => {
