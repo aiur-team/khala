@@ -19,6 +19,10 @@ before it can seek discovery credentials. That key approval is bound to the
 owner, not just the link used to find them: a separate owner consent can let
 the key holder list that owner's channels and request access or creation.
 Neither approval admits a device or grants message read/send access.
+The first `pending_owner` returned to a hosted agent can be this key candidate,
+before a channel-access journal row exists. Once the owner approves the key,
+the agent must repeat the original channel URL request with its original
+operation ID; channel-access status cannot find the request until then.
 
 An owner can revoke the approved key from its approval page. A replacement
 requires a new signed candidate and another owner approval. Reusing the same

@@ -121,6 +121,8 @@ describe('Codex detection', () => {
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.154.0', supported: true });
     version = 'codex-cli 0.157.1\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.1', supported: true });
+    version = 'codex-cli 0.158.0\n';
+    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.158.0', supported: true });
     version = 'codex-cli 0.157.0\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.0', supported: false });
     version = 'codex-cli 0.156.1\n';
@@ -275,6 +277,25 @@ describe('Codex setup on 0.154.0', () => {
     vi.restoreAllMocks();
     expect(await everythingButExecutorState()).toEqual(before);
     expect(states((await observe()).observation).mcp_entry).toBe('absent');
+  });
+});
+
+describe('Codex setup on 0.158.0', () => {
+  it('installs only the native skill, hooks and MCP entry, then restores the private home', async () => {
+    version = 'codex-cli 0.158.0\n';
+    const before = await everythingButExecutorState();
+    const planned = await executablePlan('setup');
+    expect(planned.operations.map(operation => operation.component)).toEqual(['skill', 'hooks', 'mcp_entry']);
+    expect((await run('setup')).kind).toBe('committed');
+    const after = await everythingButExecutorState();
+    expect(Object.keys(after).filter(key => after[key] !== before[key]).sort()).toEqual([
+      paths().codexHome, paths().config, paths().hooks, path.join(paths().codexHome, 'skills'),
+      path.dirname(paths().skill), paths().skill,
+    ].sort());
+    const { observation } = await observe();
+    expect(states(observation)).toEqual({ skill: 'ready', hooks: 'awaiting_hook_review', mcp_entry: 'ready' });
+    expect((await run('remove')).kind).toBe('committed');
+    expect(await everythingButExecutorState()).toEqual(before);
   });
 });
 
