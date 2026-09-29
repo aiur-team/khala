@@ -68,6 +68,8 @@ export {
   CHANNEL_ACCESS_EXCHANGE_PATH,
   CHANNEL_ACCESS_READY_PATH,
   CHANNEL_ACCESS_STATUS_PATH,
+  CHANNEL_ACCESS_RESUME_PATH,
   createHttpChannelAccessClient,
+  createHttpChannelAccessRedeem,
   createHttpChannelAccessStatus,
 } from './channel-access-http';

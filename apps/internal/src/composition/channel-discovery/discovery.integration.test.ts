@@ -1254,7 +1254,9 @@ describe('internal channel discovery', () => {
       await a.approve();
       expect(a.bindingRows()).toBe(0);
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
-      expect(a.calls).toEqual(['exchange', 'activate', 'ready']);
+      // The grant-free preflight checks for a committed activation before
+      // spending the one-use grant. A fresh request returns not redeemed.
+      expect(a.calls).toEqual(['activate', 'exchange', 'activate', 'ready']);
       expect(a.bindingRows()).toBe(1);
       const active = a.readGrant();
       expect(active).toMatchObject({ channelId, grantRef: expect.any(String), bindingId: expect.any(String), bindingCapability: expect.any(String) });

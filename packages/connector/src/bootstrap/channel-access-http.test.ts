@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import type {
   ChannelAccessReadiness,
   DiscoveryCredential,
@@ -6,13 +6,20 @@ import type {
   StableAgentPrincipal,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
-import { createHttpChannelAccessClient, createHttpChannelAccessStatus } from './channel-access-http';
+import { createHttpChannelAccessClient, createHttpChannelAccessRedeem, createHttpChannelAccessStatus } from './channel-access-http';
 import { createProofSigner } from './proof';
 
 const ORIGIN = 'https://khala.example';
 const T0 = Date.parse('2026-09-25T12:00:00Z');
 const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey, () => T0);
 const REQUESTER = 'principal_1' as StableAgentPrincipal;
+const credential = {
+  v: 1, credentialRef: 'credential_ref_1', audience: 'khala-channel-discovery',
+  requester: { principal: REQUESTER, origin: ORIGIN, proofKey: { algorithm: 'Ed25519', publicKey: signer.publicKey, thumbprint: signer.jkt }, sessionGeneration: 3 },
+  scopes: ['list_channels', 'request_channel_access', 'request_channel_create'],
+  expiresAt: new Date(T0 + 300_000).toISOString(),
+} as unknown as DiscoveryCredential;
+const credentialFor = () => credential;
 
 const REQUEST: GrantExchangeRequest = {
   v: 1,
@@ -49,7 +56,7 @@ function json(status: number, body: unknown): Response {
 describe('channel-access HTTP client', () => {
   it('posts the exchange to the exact origin with a fresh proof and passes the envelope through', async () => {
     const t = transport(() => json(200, ENVELOPE));
-    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], fetch: t.fetchStub });
+    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
     expect(await client.exchange(REQUEST)).toEqual({ kind: 'sealed', envelope: ENVELOPE });
     const [call] = t.calls;
     expect(call!.url).toBe(`${ORIGIN}/api/agent/channel-access/exchange?operation=op_access_1`);
@@ -57,6 +64,11 @@ describe('channel-access HTTP client', () => {
     const headers = call!.init.headers as Record<string, string>;
     expect(headers.origin).toBe(ORIGIN);
     expect(headers.dpop?.split('.')).toHaveLength(3);
+    expect(headers.authorization).toBe(`DPoP ${credential.credentialRef}`);
+    const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(claims).toMatchObject({ htm: 'POST', htu: call!.url,
+      ath: createHash('sha256').update(credential.credentialRef).digest('base64url'),
+      body_hash: createHash('sha256').update(call!.init.body as string).digest('base64url') });
     expect(JSON.parse(call!.init.body as string)).toEqual(REQUEST);
   });
 
@@ -71,18 +83,18 @@ describe('channel-access HTTP client', () => {
       [() => { throw new TypeError('connection reset after send'); }, { kind: 'unavailable' }],
     ] as const) {
       const t = transport(response);
-      const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], fetch: t.fetchStub });
+      const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
       expect(await client.exchange(REQUEST)).toEqual(expected);
     }
   });
 
   it('refuses an origin outside the configured allowlist without sending anything', async () => {
     const t = transport(() => json(200, ENVELOPE));
-    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], fetch: t.fetchStub });
+    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
     expect(await client.exchange({ ...REQUEST, origin: 'https://evil.example' })).toEqual({ kind: 'rejected', code: 'wrong_origin' });
     expect(await client.acknowledge({ ...READINESS, origin: 'https://evil.example' })).toBe('rejected');
     expect(t.calls).toHaveLength(0);
-    expect(() => createHttpChannelAccessClient({ signer, trustedOrigins: ['http://khala.example'] })).toThrow();
+    expect(() => createHttpChannelAccessClient({ signer, trustedOrigins: ['http://khala.example'], credential: credentialFor })).toThrow();
   });
 
   it('acknowledges readiness only on the exact acknowledgement body', async () => {
@@ -95,7 +107,7 @@ describe('channel-access HTTP client', () => {
       [() => { throw new TypeError('offline'); }, 'unavailable'],
     ] as const) {
       const t = transport(response);
-      const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], fetch: t.fetchStub });
+      const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
       expect(await client.acknowledge(READINESS)).toBe(expected);
       expect(t.calls[0]!.url).toBe(`${ORIGIN}/api/agent/channel-access/ready?operation=op_access_1`);
       expect(JSON.parse(t.calls[0]!.init.body as string)).toEqual(READINESS);
@@ -120,5 +132,61 @@ describe('channel-access HTTP client', () => {
     held = null;
     expect(await status.inspect({ operationId: 'op_access_1', origin: ORIGIN })).toBe('unavailable');
     expect(t.calls).toHaveLength(2);
+  });
+
+  it('fails closed on missing authority, 401, or a changed signed body', async () => {
+    const calls: string[] = [];
+    const fetchStub = (async (url: string, init: RequestInit) => {
+      calls.push(url);
+      const headers = init.headers as Record<string, string>;
+      const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+      const digest = createHash('sha256').update(String(init.body)).digest('base64url');
+      return claims.body_hash === digest && headers.authorization === `DPoP ${credential.credentialRef}`
+        ? json(200, ENVELOPE) : json(401, { v: 1, kind: 'rejected', code: 'auth_required' });
+    }) as typeof fetch;
+    const missing = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: () => null, fetch: fetchStub });
+    expect(await missing.exchange(REQUEST)).toEqual({ kind: 'unavailable' });
+    expect(calls).toHaveLength(0);
+    const modified = (async (url: string, init: RequestInit) => fetchStub(url,
+      { ...init, body: `${String(init.body)} ` })) as typeof fetch;
+    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: modified });
+    expect(await client.exchange(REQUEST)).toEqual({ kind: 'unavailable' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('posts grant-free resume with the exact binding tuple and signed body', async () => {
+    const t = transport(() => json(200, { binding: { v: 1, bindingId: 'bnd_1', ownerId: 'owner_1',
+      agentParticipantId: 'agent_1', deviceId: REQUEST.deviceId, harness: 'proof-key', sessionId: REQUESTER,
+      generation: 3 }, adapter_capability: { token: 'A'.repeat(43), token_type: 'DPoP',
+      scope: ['publish_own', 'receive_released', 'ack_delivery'], binding_id: 'bnd_1', generation: 3,
+      expires_at: T0 + 60_000 } }));
+    const client = createHttpChannelAccessRedeem({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
+    expect(await client.resume({ operationId: REQUEST.operationId, deviceId: REQUEST.deviceId,
+      origin: ORIGIN, bindingId: 'bnd_1' })).toMatchObject({ kind: 'admitted', binding: { bindingId: 'bnd_1' } });
+    expect(t.calls[0]!.url).toBe(`${ORIGIN}/api/agent/channel-access/resume?operation=op_access_1`);
+    expect(JSON.parse(t.calls[0]!.init.body as string)).toMatchObject({ requester: REQUESTER,
+      origin: ORIGIN, sessionGeneration: 3, deviceId: REQUEST.deviceId, bindingId: 'bnd_1',
+      proofKeyThumbprint: signer.jkt });
+    const headers = t.calls[0]!.init.headers as Record<string, string>;
+    const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(claims.body_hash).toBe(createHash('sha256').update(t.calls[0]!.init.body as string).digest('base64url'));
+  });
+
+  it('looks up a lost redeem response by operation with no binding ID and a body-bound proof', async () => {
+    const t = transport(() => json(409, { v: 1, kind: 'rejected', code: 'operation_mismatch' }));
+    const client = createHttpChannelAccessRedeem({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
+    expect(await client.resume({ operationId: REQUEST.operationId, deviceId: REQUEST.deviceId,
+      origin: ORIGIN })).toEqual({ kind: 'not_redeemed' });
+    const [call] = t.calls;
+    expect(call!.url).toBe(`${ORIGIN}/api/agent/channel-access/resume?operation=op_access_1`);
+    expect(JSON.parse(call!.init.body as string)).toEqual({ v: 1, operationId: REQUEST.operationId,
+      requester: REQUESTER, origin: ORIGIN, sessionGeneration: 3, deviceId: REQUEST.deviceId,
+      proofKeyThumbprint: signer.jkt });
+    const headers = call!.init.headers as Record<string, string>;
+    const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(headers.authorization).toBe(`DPoP ${credential.credentialRef}`);
+    expect(claims).toMatchObject({ htm: 'POST', htu: call!.url,
+      ath: createHash('sha256').update(credential.credentialRef).digest('base64url'),
+      body_hash: createHash('sha256').update(call!.init.body as string).digest('base64url') });
   });
 });

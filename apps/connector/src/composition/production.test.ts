@@ -6,15 +6,130 @@ import { describe, expect, it, vi } from 'vitest';
 import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createCapabilityRenewal } from './agent/capability-renewal';
+import { nativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
+import type { MatrixConnectorInput, MatrixConnectorSubstrate } from '../substrate/matrix';
 import { revocationStopId } from '../../../control/src/composition/human/revocation-cleanup';
 import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
-  it.each(['removed', 'unreported'] as const)(
-    'restarts a locally stopped binding only for cleanup when Matrix removal is %s', async removalState => {
+  it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
+    const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));
+    const session = { harness: 'codex' as const, sessionId: 'thread-active-1', workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const stateDirectory = path.join(sessionDirectory, 'state');
+    const appOrigin = 'https://khala.aiur.team';
+    const matrixUserId = '@active-agent:example';
+    const roomId = '!active:example';
+    const deviceId = 'DEVICE_ACTIVE';
+    const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
+    const send = vi.fn(async (clientTxnId: string, body: string) => {
+      if (!clientTxnId || !body) throw new Error('test send missing transaction or body');
+      return { eventId: '$sent:example' };
+    });
+    const opens: MatrixConnectorInput[] = [];
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      opens.push(options);
+      return { fingerprint: 'active-device-fingerprint',
+        devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
+          activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+        source: { authorize: async () => 'ok', listen: () => () => undefined, read },
+        send, trustPeer: async () => undefined, removeOwnDevice: async () => 'removed',
+        discardOutboundSession: async () => true, close: async () => undefined };
+    };
+    const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+    if (!limits.ok) throw new Error('test limits invalid');
+    let binding: SessionBinding;
+    const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
+      headers: { 'content-type': 'application/json' } });
+    try {
+      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+      const storage = await openConnectorStorage({ directory: stateDirectory, mode: 'create', limits: limits.value });
+      const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
+      const { signer } = await createBootstrapPersistence(storage);
+      binding = { v: 1, bindingId: 'binding-active-restart', ownerId: 'owner-active',
+        agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
+        deviceId, harness: 'proof-key', sessionId: `agent_${signer.jkt}`, generation: 0 } as SessionBinding;
+      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: 'active-device-fingerprint' }))
+        .toEqual({ kind: 'bound' });
+      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
+      expect(await createConnectorDispatchStorage(storage).applyEffectivePolicy({ binding,
+        policy: { version: 0, armedAt: 0, paused: false, expiresAt: null,
+          listening: { version: 0, requested: 'sync', effective: null, evidenceRevision: null } },
+      })).toEqual({ kind: 'applied' });
+      await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer })
+        .acceptInitial({ token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
+          scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000 });
+      await storage.close();
+      trust.close();
+      await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
+      await writeFile(path.join(sessionDirectory, 'matrix-reservation.json'), JSON.stringify({
+        operationId: 'approved-operation', deviceId }));
+      await writeFile(path.join(sessionDirectory, 'matrix-session.json'), JSON.stringify({
+        baseUrl: 'https://matrix.example', userId: matrixUserId, deviceId,
+        accessToken: 'exact-device-access-token', roomId, ownerUserId: '@owner:example',
+        ownerParticipantId: 'owner_participant',
+      }));
+      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith('/owner-mailbox/poll')) return reply({ v: 1,
+          bindingId: binding.bindingId, generation: 0, closing: false, entries: [] });
+        if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
+          devices: [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] });
+        if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
+        if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1' });
+        if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
+        throw new Error(`unexpected ${pathname}`);
+      }));
+      const input = { stateDirectory: directory, appOrigin,
+        browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
+        sessionInspection: () => ({ inspect: async () => ({ kind: 'verified' as const,
+          session: { harness: 'codex' as const, sessionId: session.sessionId, generation: 0 },
+          capabilities: nativeCliCapabilities('0.154.0', limits.value) }) }),
+        inspectHostedCodexHooks: async () => ({ ...nativeCliCapabilities('0.154.0', limits.value),
+          modes: { steer: { status: 'unknown', route: 'unproven', evidenceRef: null,
+            evidenceRevision: null, reason: 'unproven' },
+            sync: { status: 'proven', route: 'codex-hook', testedVersion: '0.154.0',
+              evidenceRef: 'hook-proof', evidenceRevision: 'hook-revision', reason: null },
+            async: { status: 'unknown', route: 'unproven', evidenceRef: null,
+              evidenceRevision: null, reason: 'unproven' } } }), resolveCodexExecutable: async () => null,
+        openBrowser: async () => undefined,
+        openInbox: async () => ({ enqueue: async () => 'appended' as const,
+          notifyListener: async () => 'notified' as const }) };
+      const first = await openProductionConnector(input);
+      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      expect(await first.status()).toMatchObject({ connected: true,
+        readiness: { prerequisites: { harness: 'ready' } } });
+      expect((await first.send({ bindingId: binding.bindingId, clientTxnId: 'first-send', body: 'before restart' })).kind)
+        .toBe('accepted');
+      await first.close();
+      const restarted = await openProductionConnector(input);
+      try {
+        await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(1));
+        expect(opens).toHaveLength(2);
+        expect(opens.map(value => value.deviceId)).toEqual([deviceId, deviceId]);
+        expect(await restarted.status()).toMatchObject({ connected: true,
+          readiness: { prerequisites: { harness: 'ready' } } });
+        expect((await restarted.send({ bindingId: binding.bindingId, clientTxnId: 'second-send', body: 'after restart' })).kind)
+          .toBe('accepted');
+        expect(send.mock.calls.map(call => call[1])).toEqual(['before restart', 'after restart']);
+      } finally { await restarted.close(); }
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    { removalState: 'removed', proofKey: false },
+    { removalState: 'unreported', proofKey: false },
+    { removalState: 'removed', proofKey: true },
+  ] as const)(
+    'restarts a locally stopped binding for cleanup with removal $removalState and proof key $proofKey', async ({ removalState, proofKey }) => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-revoked-restart-'));
     const session = { harness: 'codex' as const, sessionId: 'thread-revoked-1', workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
@@ -24,7 +139,7 @@ describe('installed hosted connector composition', () => {
     const appOrigin = 'https://khala.aiur.team';
     const matrixUserId = '@khala_agent:example';
     const roomId = '!revoked:example';
-    const binding = { v: 1, bindingId: 'binding-revoked-restart', ownerId: 'owner-revoked',
+    let binding = { v: 1, bindingId: 'binding-revoked-restart', ownerId: 'owner-revoked',
       agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
       deviceId: 'DEVICE_REVOKED', harness: session.harness, sessionId: session.sessionId,
       generation: 2 } as SessionBinding;
@@ -53,8 +168,9 @@ describe('installed hosted connector composition', () => {
       if (!limits.ok) throw new Error('test limits invalid');
       const storage = await openConnectorStorage({ directory: stateDirectory, mode: 'create', limits: limits.value });
       const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
-      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       const { signer } = await createBootstrapPersistence(storage);
+      if (proofKey) binding = { ...binding, harness: 'proof-key', sessionId: `agent_${signer.jkt}` };
+      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer,
         clock: () => Date.now() - 7_200_000 }).acceptInitial({
         token: 'C'.repeat(43), bindingId: binding.bindingId, generation: binding.generation,

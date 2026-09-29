@@ -50,6 +50,7 @@ export type AgentListOutput =
 
 export const ACCESS_REFUSAL_CODES = [
   'untrusted_origin', 'discovery_required', 'discovery_denied', 'invalid_request', 'operation_conflict', 'not_found', 'rate_limited',
+  'sponsor_link_required',
 ] as const;
 export type AccessRefusalCode = (typeof ACCESS_REFUSAL_CODES)[number];
 
@@ -76,7 +77,7 @@ export type AccessErrorCode = AccessRefusalCode | 'unavailable';
  * What the caller should do next. `reuse_operation_id` means the call may be
  * repeated only under the same operation ID; a new ID could create a second request.
  */
-export type AccessNextAction = 'repair_connector' | 'reuse_operation_id';
+export type AccessNextAction = 'repair_connector' | 'reuse_operation_id' | 'copy_your_link';
 /** The exact object printed by the access commands and returned by the access MCP tools. */
 export type AccessOutput =
   | Readonly<{ ok: true; v: 1; operationId: string; outcome: AccessRequestOutcome; next: AccessNextAction | null }>
