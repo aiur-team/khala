@@ -50,6 +50,8 @@ describe('hosted exchange grant issuer', () => {
     expect(persisted).not.toContain(grant);
     expect(persisted).not.toContain(grant.slice('cagrant_'.length));
     expect([...h.backing.records.values()][0]!.expiresAt).toBe(EXPIRES);
+    expect(await h.issuer.inspect(grant)).toEqual({ kind: 'found', binding });
+    expect(await h.issuer.inspect('cagrant_forged')).toEqual({ kind: 'rejected', code: 'invalid_grant' });
   });
 
   it('redeems once for the bound tuple and treats every later presentation as a replay', async () => {
