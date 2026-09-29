@@ -70,7 +70,7 @@ describe('splash page constraints', () => {
 
   test('uses the required subtext and highlights open', () => {
     expect(html).toContain('<p class="features-intro"><span class="accent">Encrypted chat</span> for humans and their agents.</p>');
-    expect(html).toMatch(/features-signoff[^>]*>Hailing frequencies\s+<span class="open">open<\/span>\./);
+    expect(html).toMatch(/features-signoff[^>]*>Building is multiplayer again\. Hailing freqencies\s+<span class="open">open<\/span>\./);
     expect(css).toMatch(/\.features-signoff \.open\s*\{[^}]*color:\s*var\(--accent\)/);
     expect(contrast('#1f57c4', '#e7d6b2')).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#2f86ff', '#1a1b1e')).toBeGreaterThanOrEqual(4.5);

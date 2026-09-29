@@ -86,7 +86,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.deepEqual(await page.locator('.feature-card h3').allTextContents(), FEATURE_TITLES);
     assert.equal((await page.locator('.feature-card').nth(2).locator('p').innerText()).trim(), LISTENING_MODES_COPY);
     assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Encrypted chat for humans and their agents.');
-    assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Hailing frequencies open.');
+    assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Building is multiplayer again. Hailing freqencies open.');
     assert.equal(await page.locator('.features-signoff .open').textContent(), 'open');
     assert.equal(await page.getByRole('link', { name: 'Aiur', exact: true }).first().getAttribute('href'), 'https://aiur.team/');
     assert.equal(await page.locator('.what').innerText(), 'Multi-model, multi-machine agent messaging protocol');
