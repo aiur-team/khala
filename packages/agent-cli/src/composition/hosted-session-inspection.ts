@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { nativeCliCapabilities, NATIVE_CLI_CODEX_VERSIONS } from '@khala/harnesses/codex/capabilities';
+import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
 import { LOCAL_DELIVERY_LIMITS } from './local-harness-capabilities.js';
 import type { HarnessSession } from './session-grant.js';
 import { parseCodexVersion } from '../setup/adapters/codex.js';
@@ -48,4 +49,21 @@ export function codexMcpSessionInspection(input: Readonly<{
       }
     },
   };
+}
+
+/** The Claude ID is only a local label for an owner-approved key, never provider session evidence. */
+export function claudeProofKeyLabelInspection(input: Readonly<{
+  session: HarnessSession;
+  workdir: string;
+  readVersion(): Promise<string | null>;
+}>): SessionInspectionPort {
+  return { async inspect(claim) {
+    if (input.session.harness !== 'claude' || claim.harness !== 'claude'
+      || claim.sessionId !== input.session.sessionId || claim.workdir !== input.workdir
+      || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
+    const version = await input.readVersion().catch(() => null);
+    if (version !== '2.1.284') return { kind: 'unsupported' };
+    return { kind: 'verified', session: { harness: 'claude', sessionId: input.session.sessionId, generation: 0 },
+      capabilities: installedClaudeCapabilities(version, LOCAL_DELIVERY_LIMITS) };
+  } };
 }

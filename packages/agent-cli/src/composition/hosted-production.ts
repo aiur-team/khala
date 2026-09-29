@@ -1,11 +1,15 @@
 import path from 'node:path';
-import type { BootstrapPorts, SessionClaim, SessionInspectionPort } from '@khala/connector/bootstrap/index';
+import { createChannelDiscoveryCredentialClient,
+  type BootstrapPorts, type ProofSigner, type SessionClaim, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import type { AgentClientPort, CliDependencies } from '../cli/types.js';
 import type { OpenGenerationInbox } from './delivering-inbox.js';
 import type { HarnessSession } from './session-grant.js';
 import { createConnectorBootstrapClient } from './bootstrap.js';
-import { codexMcpSessionInspection } from './hosted-session-inspection.js';
+import { claudeProofKeyLabelInspection, codexMcpSessionInspection } from './hosted-session-inspection.js';
+import { createHttpChannelListing } from './channel-listing.js';
+import { createHttpChannelAccess } from './channel-access.js';
+import { createProofKeyCandidateClient } from './proof-key-candidate.js';
 
 export const CANONICAL_APP_ORIGIN = 'https://khala.aiur.team';
 
@@ -34,6 +38,7 @@ type OpenProductionConnectorInput = Readonly<{
 }>;
 type ProductionConnector = Readonly<{
   ports: BootstrapPorts;
+  proofSigner?: ProofSigner;
   send: AgentClientPort['send'];
   status: AgentClientPort['status'];
   listChannels: AgentClientPort['listChannels'];
@@ -54,6 +59,7 @@ export function hostedSessionFactory(options: Readonly<{
   chromiumExecutablePath?: string;
   workdir: string;
   readVersion(): Promise<string | null>;
+  readClaudeVersion?(): Promise<string | null>;
   inspectHooks(): Promise<HarnessCapabilities | null>;
   resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
@@ -76,11 +82,33 @@ export function hostedSessionFactory(options: Readonly<{
       openBrowser: options.openBrowser,
       openInbox: options.openInbox,
     });
+    const requestSessions = session.harness === 'claude' && options.readClaudeVersion
+      ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir, readVersion: options.readClaudeVersion })
+      : connector.ports.sessions;
+    const discovery = connector.proofSigner ? createChannelDiscoveryCredentialClient({
+      signer: connector.proofSigner, sessions: requestSessions,
+      trustedOrigins: [options.appOrigin], openBrowser: options.openBrowser,
+      allowProofKeyLocalLabel: true,
+    }) : null;
+    const access = discovery && connector.proofSigner ? createHttpChannelAccess({
+      credentials: discovery, signer: connector.proofSigner, session: claim,
+      trustedOrigins: [options.appOrigin], defaultOrigin: options.appOrigin,
+      candidate: createProofKeyCandidateClient({
+        signer: connector.proofSigner, sessions: requestSessions,
+        origin: options.appOrigin, openBrowser: options.openBrowser,
+      }),
+    }) : null;
+    const listChannels = discovery && connector.proofSigner ? createHttpChannelListing({
+      credentials: discovery, signer: connector.proofSigner, session: claim,
+      trustedOrigins: [options.appOrigin], defaultOrigin: options.appOrigin,
+    }) : connector.listChannels;
     return {
       client: createConnectorBootstrapClient({
         ports: connector.ports, session: claim,
         send: connector.send, status: connector.status,
-        listChannels: connector.listChannels, listAgents: connector.listAgents,
+        listChannels, listAgents: connector.listAgents,
+        ...(access ? { requestChannelAccess: access.requestChannelAccess,
+          channelAccessStatus: access.channelAccessStatus } : {}),
         ...(connector.listeningMode ? { listeningMode: connector.listeningMode } : {}),
         ...(connector.listeningModeControl ? { listeningModeControl: connector.listeningModeControl } : {}),
       }),
