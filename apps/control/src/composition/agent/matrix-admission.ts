@@ -29,6 +29,7 @@ export type MatrixAgentAdmissionOptions = Readonly<{
 export type MatrixAgentAdmission = Readonly<{
   agents: AgentAdmissionPort;
   deviceSession: AgentDeviceSessionPort;
+  inspectAgentRoomMembership(ownerId: OwnerId, session: SessionRef, roomId: RoomId): Promise<'joined' | 'absent' | 'unavailable'>;
   publishedDeviceFingerprint(binding: SessionBinding): Promise<string | null>;
   publishedDeviceIdentityKey(binding: SessionBinding): Promise<string | null>;
   inspectPublishedDevice(binding: SessionBinding, expectedCurve25519: string): Promise<MatrixDeviceStatus>;
@@ -316,8 +317,15 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
       return observed === 'removed' || observed === 'replaced' ? observed : 'outcome_unknown';
     } catch { return attempted ? 'outcome_unknown' : 'unavailable'; }
   }
+  async function inspectAgentRoomMembership(ownerId: OwnerId, session: SessionRef, roomId: RoomId) {
+    try {
+      const identity = agentMatrixIdentity(ownerId, session, options.serverName);
+      const token = await login(identity.userId, password(identity.userId), `KHALA_JOIN_${digest(identity.userId).slice(0, 24)}`);
+      return token ? await member(roomId, identity.userId, token) : 'unavailable';
+    } catch { return 'unavailable'; }
+  }
   return {
-    agents, deviceSession,
+    agents, deviceSession, inspectAgentRoomMembership,
     removePublishedDeviceWithUIA, inspectPublishedDevice,
     publishedDeviceFingerprint: binding => publishedDeviceKey(binding, 'ed25519'),
     publishedDeviceIdentityKey: binding => publishedDeviceKey(binding, 'curve25519'),

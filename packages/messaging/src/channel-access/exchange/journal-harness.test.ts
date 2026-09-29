@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
+import sodium from 'libsodium-wrappers';
 import {
   type AuthPrincipal,
   type AuthorizedChannelRef,
@@ -116,6 +117,16 @@ export async function connectorRequest(overrides: Partial<GrantExchangeRequest> 
     expiresAt: new Date(nowMs + 60_000).toISOString(),
     ...overrides,
   };
+}
+
+/** Test-only opening of the real sealed exchange envelope. */
+export async function openTestEnvelope(ciphertext: string, publicKey: string, privateKey: string): Promise<unknown> {
+  await sodium.ready;
+  const opened = sodium.crypto_box_seal_open(
+    sodium.from_base64(ciphertext, sodium.base64_variants.URLSAFE_NO_PADDING),
+    sodium.from_base64(publicKey, sodium.base64_variants.URLSAFE_NO_PADDING),
+    sodium.from_base64(privateKey, sodium.base64_variants.URLSAFE_NO_PADDING));
+  return JSON.parse(sodium.to_string(opened)) as unknown;
 }
 
 describe('grant exchange control harness', () => {
