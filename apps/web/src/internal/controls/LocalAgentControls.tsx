@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { ListeningController } from './listening-controller';
-import { LISTENING_MODE_NAMES, modeOffered } from './listening-port';
+import { LISTENING_MODE_NAMES, grantableRoute, modeOffered } from './listening-port';
 
 export function LocalAgentControls({ controller }: Readonly<{ controller: ListeningController }>) {
   const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
@@ -44,12 +44,14 @@ export function LocalAgentControls({ controller }: Readonly<{ controller: Listen
       <details><summary>Mode and experimental details</summary>
         <p>Pause holds new messages; it does not stop work already in progress.</p>
         {LISTENING_MODE_NAMES.map(mode => <div key={mode}><strong>{mode}</strong>: {binding.support[mode].reason ?? binding.support[mode].status}
-          {binding.support[mode].route ? <button type="button" onClick={() => controller.requestGrant(binding.bindingId, mode)}>Review experimental route</button> : null}
+          {grantableRoute(binding, mode) ? <button type="button" onClick={() => controller.requestGrant(binding.bindingId, mode)}>Review experimental route</button> : null}
+          {binding.experimentalGrants.some(grant => grant.mode === mode) ? <button type="button" onClick={() => void controller.revokeGrant(binding.bindingId, mode)}>Revoke experimental route</button> : null}
         </div>)}
       </details>
       {view.confirmation?.bindingId === binding.bindingId ? <div role="group" aria-label="Confirm experimental route">
         <p>Enable {view.confirmation.route.mode} using {view.confirmation.route.route} on version {view.confirmation.route.harnessVersion} (evidence {view.confirmation.route.evidenceRevision})?</p>
         <p>{view.confirmation.missingProof}</p>
+        <p>This route is experimental; delivery for this version is not proved.</p>
         <button type="button" onClick={() => void controller.confirmGrant()}>Confirm experimental route</button>
         <button type="button" onClick={() => controller.cancelGrant()}>Cancel</button>
       </div> : null}

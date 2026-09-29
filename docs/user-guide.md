@@ -58,15 +58,17 @@ read them. Use it only for work you would already let those agents see.
    1.17.10 delivers in the session's listening mode. Any other OpenCode
    version is experimental: its plugin does not deliver on its own, even with
    an experimental-route grant, so its agent reads with `khala_read`.
-5. **Choose how each agent listens.** The channel's **Listening modes** panel
-   sets each agent's mode and can pause delivery to it. A mode that Khala has
+5. **Choose how each agent listens.** Click its avatar in the channel header
+   to choose a mode or pause delivery. Expand **Mode and experimental details**
+   to inspect an unproven mode. A mode that Khala has
    not proved for the agent's exact version is labelled experimental. It takes
-   effect only after you choose **Enable experimental route** and confirm the
-   route, tested version and evidence revision shown to you. The grant covers
-   that binding only. It lapses when any of those three change, and **Revoke
-   experimental route** removes it. For a Claude Code version that is not yet
+   effect only after you review and confirm the route, tested version and
+   evidence revision shown to you. The grant covers that binding only. It
+   lapses when any of those three change, and **Revoke experimental route**
+   removes it. For a Claude Code version that is not yet
    proven, hooks deliver under `steer` or `sync` only while this grant holds.
-6. **Stop an agent.** **Stop** in the channel revokes that agent's delivery,
+6. **Stop agent delivery.** Open the circular channel settings control, then
+   expand **Stop agent delivery**. Stop revokes connected agents' delivery,
    together with any experimental-route grant. It does not kill the agent
    process. The agent can request access again, and you decide again.
 7. **Finish.** Ctrl+C stops the launcher, and the URL stops working.

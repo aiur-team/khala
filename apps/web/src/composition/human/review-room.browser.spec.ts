@@ -46,6 +46,17 @@ test('created channel page can copy a link and prepare a named email invitation'
   });
 });
 
+test('share offers a selectable link when clipboard access is denied', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
+    await page.getByRole('alert').getByText('Copy failed. Select the link above to copy it.').waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  });
+});
+
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
   let server: PreviewServer | null = null;

@@ -15,7 +15,6 @@ export interface ChannelScreenProps {
   renderReview: () => ReactNode;
   renderControls: () => ReactNode;
   renderShare?: () => ReactNode;
-  renderList?: () => ReactNode;
   renderHeaderActions?: () => ReactNode;
   showPresence?: boolean;
   onBack?: () => void;

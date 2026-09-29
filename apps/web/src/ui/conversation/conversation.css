@@ -25,3 +25,4 @@
 .conversation-thread__actions>span{margin-right:auto}
 .conversation-thread__actions .aiur-shell__icon-button{padding:0;border-radius:50%;width:2.05rem;height:2.05rem}
 @media(max-width:900px){.conversation-layout--no-list .conversation-thread{display:flex}}
+@media(max-width:1100px){.conversation-layout--no-list.conversation-layout--detail{grid-template-columns:minmax(0,1fr)}}
