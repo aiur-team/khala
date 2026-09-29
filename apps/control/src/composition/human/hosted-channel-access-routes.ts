@@ -8,22 +8,28 @@ import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createChannelAccessHandlers, type ChannelAccessHandlerDependencies } from '../../channel-access/handler';
 import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import { composeChannelAccessExchange } from '../agent/channel-access-exchange';
+import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './production';
+import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
 
 /**
- * The hosted integration supplies these trusted ports. #42's native-session
- * authority must verify the exact current session, credential scope/expiry
- * and sender-bound proof; connector authentication must also verify the exact
- * device and proof key. Resolution and admission remain hosted concerns. An
- * invitation URL is never agent authentication or connector proof.
+ * The hosted integration supplies approved proof-key authority and fresh
+ * request-bound credential proof. Connector authentication separately verifies
+ * the current approved key, generation and device. An invitation URL is only
+ * a channel locator, never agent or connector authentication.
  */
 export type HostedChannelAccessPorts = Readonly<{
   authenticateAgent: ChannelAccessHandlerDependencies['authenticateAgent'];
-  authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
-  resolver(runtime: ProductionHumanRuntime): ChannelAccessResolutionPort;
-  provider: ChannelAdmissionProviderPort;
-  bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
+  requesterAuthority?: HostedAccessRequesterAuthority;
+  /** Controlled test override; production supplies the current requester authority. */
+  resolver?(runtime: ProductionHumanRuntime): ChannelAccessResolutionPort;
+  /** Controlled test override; production uses the hosted Matrix adapter. */
+  provider?: ChannelAdmissionProviderPort;
+  /** Required for real Matrix admission; checks the current owner/key/session approval at the effect boundary. */
+  admissionAuthority?: HostedAdmissionAuthority;
+  authenticateConnector?: GrantExchangeHandlerDependencies['authenticateConnector'];
+  bindings?: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
 }>;
 
 const unavailable = () => new Response(JSON.stringify({ v: 1, kind: 'unavailable' }), {
@@ -47,7 +53,10 @@ export function createHostedChannelAccessRoutes(
       .update(active.env.invitationHmacSecret).digest();
     const policy = createChannelAccessPolicy({ key });
     const journal = createChannelAccessStore({ store: active.store, policy, clock: active.clock });
-    const service = createChannelAccessService({ store: journal, resolver: ports.resolver(active), policy });
+    const resolver = ports.resolver?.(active) ?? (ports.requesterAuthority
+      ? createHostedChannelAccessResolver(active, ports.requesterAuthority) : null);
+    if (resolver === null) throw new Error('requester authority unavailable');
+    const service = createChannelAccessService({ store: journal, resolver, policy });
     const handlers = createChannelAccessHandlers({
       service, auth: active.auth,
       async authenticateAgent(request) {
@@ -60,16 +69,20 @@ export function createHostedChannelAccessRoutes(
         return result;
       },
     });
-    const exchange = composeChannelAccessExchange({
+    const authenticateConnector = ports.authenticateConnector;
+    const provider = ports.provider ?? (ports.admissionAuthority
+      ? createHostedChannelAdmissionProvider(active, dependencies, ports.admissionAuthority) : null);
+    if (authenticateConnector && ports.bindings && provider === null) throw new Error('admission authority unavailable');
+    const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
-      provider: ports.provider, bindings: ports.bindings,
+      provider, bindings: ports.bindings,
       async authenticateConnector(request) {
-        const result = await ports.authenticateConnector(request);
+        const result = await authenticateConnector(request);
         return result.kind === 'authenticated' && result.connector.origin !== active.env.publicAppOrigin
           ? { kind: 'rejected', code: 'forbidden' } : result;
       },
       clock: active.clock,
-    });
+    }) : [];
     return { handlers, exchange };
   }
   function lazy(path: string, methods: readonly string[], select: (composed: ReturnType<typeof compose>) => readonly RouteRegistration[]): RouteRegistration {
@@ -94,10 +107,10 @@ export function createHostedChannelAccessRoutes(
     lazy('/api/human/channel-access/decision', ['POST'], value => value.handlers.human),
     lazy('/api/human/channel-access/mute', ['POST'], value => value.handlers.human),
   ];
-  const exchange = [
+  const exchange = ports.authenticateConnector && ports.bindings ? [
     lazy('/api/agent/channel-access/exchange', ['POST'], value => value.exchange),
     lazy('/api/agent/channel-access/ready', ['POST'], value => value.exchange),
     lazy('/api/agent/channel-access/resume', ['POST'], value => value.exchange),
-  ];
+  ] : [];
   return Object.freeze({ human: Object.freeze(human), agent: Object.freeze(agent), exchange: Object.freeze(exchange) });
 }

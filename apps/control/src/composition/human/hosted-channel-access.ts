@@ -5,6 +5,7 @@ import { projectOwner } from '@khala/messaging/channel-access/journal/service';
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies } from './production';
+import { readHostedAccessTarget } from './hosted-channel-access-resolver';
 
 /** Owner inbox reads the durable journal using the same OIDC session and Blobs
  * namespace as the rest of hosted control. No agent authority is inferred here. */
@@ -37,7 +38,11 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
           // Hosted create authority has not been composed. Never display a row
           // as actionable unless its exact room is still owned by this owner.
           if (context.context.detail.kind !== 'access') return unavailable();
-          const room = decodeRoomId(context.context.detail.authorizedChannelRef);
+          const ref = context.context.detail.authorizedChannelRef;
+          const target = ref.startsWith('invitations.invite.') ? await readHostedAccessTarget(active, ref) : null;
+          if (ref.startsWith('invitations.invite.') && (target === null || target === 'unavailable'
+            || target.ownerId !== authentication.context.principal.ownerId)) return unavailable();
+          const room = decodeRoomId(target && target !== 'unavailable' ? target.roomId : ref);
           if (!room.ok) return unavailable();
           const authority = await active.matrix.inspectRoomAuthority(room.value);
           if (authority !== authentication.context.principal.ownerId) return unavailable();

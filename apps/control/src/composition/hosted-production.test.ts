@@ -8,6 +8,7 @@ import { createControlStore } from '../runtime/control-store';
 import { decodeChannelAccessOwnerProjection } from '@khala/contracts/messaging/index';
 import type { BlobsStoreLike } from '../runtime/control-store';
 import { createGateway } from '../runtime/handler';
+import { createDigests } from '../invitations/internal';
 import { registerHostedProductionRoutes } from './hosted-production';
 import type { HostedChannelAccessPorts } from './human/hosted-channel-access-routes';
 import { connectorRequest, DIGEST, DEVICE } from '@khala/messaging/channel-access/exchange/journal-harness.test';
@@ -57,6 +58,92 @@ function gateway(mode?: string, appOrigin = origin) {
 }
 
 describe('generated hosted production composition', () => {
+  it('uses live invite and Matrix owner checks for a staged request and decision', async () => {
+    const blobs = durableStores();
+    const now = Date.parse('2026-09-25T12:00:00Z');
+    const roomId = '!room:matrix.example.test';
+    const inviteRef = 'invite_12345678';
+    const digests = createDigests(env.INVITATION_HMAC_SECRET);
+    const control = createControlStore({ records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
+      operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`), clock: () => now });
+    const session = await createSession(control, () => new Uint8Array(32).fill(7), {
+      ownerId: 'owner_1' as never,
+      identity: { issuer: env.OIDC_ISSUER, subject: 'owner-one', verifiedEmail: 'one@example.test' },
+      expiresAtMs: now + 3600_000,
+    });
+    if (session.kind !== 'created') throw new Error('session unavailable');
+    expect((await control.compareAndSet({ key: digests.inviteKey(inviteRef), expectedRevision: null,
+      operationId: 'share_1', next: { value: { v: 1, roomId, creatorOwnerId: 'owner_1',
+        inviteRefDigest: digests.inviteRef(inviteRef), policyRevision: 1,
+        policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null,
+        lastAuthorizedOperationDigest: null }, expiresAt: null } })).kind).toBe('applied');
+    expect((await control.compareAndSet({ key: `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`,
+      expectedRevision: null, operationId: 'claim-room-owner',
+      next: { value: { v: 1, roomId, ownerId: 'owner_1' }, expiresAt: null } })).kind).toBe('applied');
+    const matrixFetch: typeof fetch = async (resource, init) => {
+      const path = new URL(String(resource)).pathname;
+      if (path === '/_matrix/client/v3/login') {
+        const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
+      }
+      if (path.includes('/state/m.room.member/')) return Response.json({ membership: 'join' });
+      return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+    };
+    const requester = { principal: `agent_${'a'.repeat(43)}` as never, origin,
+      proofKey: { algorithm: 'Ed25519' as const, publicKey: 'b'.repeat(43), thumbprint: 'a'.repeat(43) },
+      sessionGeneration: 2 };
+    const context = { v: 1 as const, principal: requester.principal, origin, sessionGeneration: 2,
+      sessionFingerprint: requester.proofKey.thumbprint, harness: 'proof-key',
+      displayLabel: null, workspaceLabel: null };
+    let inviteUnavailable = false;
+    const storeFor = (name: string): BlobsStoreLike => {
+      const store = blobs.storeFor(name);
+      return {
+        getWithMetadata: (key, options) => inviteUnavailable && key === digests.inviteKey(inviteRef)
+          ? Promise.reject(new Error('temporary Blobs failure')) : store.getWithMetadata(key, options),
+        setJSON: (key, data, options) => store.setJSON(key, data, options),
+      };
+    };
+    const channelAccess: HostedChannelAccessPorts = {
+      authenticateAgent: async () => ({ kind: 'authenticated', requester, context }),
+      requesterAuthority: {
+        inspect: async (_requester, ownerId) => ownerId === 'owner_1' ? 'current' : 'revoked',
+        inspectContext: async (_context, ownerId) => ownerId === 'owner_1' ? 'current' : 'revoked',
+        checkContext: async () => 'current',
+      },
+    };
+    const routes = () => createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: storeFor,
+      clock: () => now, fetch: matrixFetch, channelAccess,
+    }), absentPrefixes: [], appOrigin: origin });
+    const request = await routes()(new Request(`${origin}/api/agent/channel-access/request`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, kind: 'channel_url', operationId: 'op_real_target',
+        credentialRef: 'credential_1', channelUrl: `${origin}/join/${inviteRef}` }),
+    }));
+    expect(await request.json()).toEqual({ v: 1, operationId: 'op_real_target', outcome: 'pending_owner' });
+    const restarted = routes();
+    const ownerHeaders = { cookie: `${SESSION_COOKIE}=${session.token}` };
+    const inbox = await restarted(new Request(`${origin}/api/human/channel-access/inbox`, { headers: ownerHeaders }));
+    expect(inbox.status).toBe(200);
+    const listed = await inbox.json() as { requests: { requestHandle: string; revision: string }[] };
+    expect(listed.requests).toHaveLength(1);
+    const approve = () => restarted(new Request(`${origin}/api/human/channel-access/decision`, {
+      method: 'POST', headers: { ...ownerHeaders, origin, 'content-type': 'application/json',
+        'x-khala-csrf': csrfTokenFor(session.token) },
+      body: JSON.stringify({ v: 1, requestHandle: listed.requests[0]!.requestHandle,
+        expectedRevision: listed.requests[0]!.revision, decision: 'approve', operationId: 'owner_approve_1' }),
+    }));
+    inviteUnavailable = true;
+    expect((await approve()).status).toBe(503);
+    inviteUnavailable = false;
+    const decision = await approve();
+    expect(decision.status).toBe(200);
+    expect(await decision.json()).toMatchObject({ outcome: 'approved' });
+    expect((await restarted(new Request(`${origin}/api/agent/channel-access/exchange`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}',
+    }))).status).toBe(503);
+  });
   it('runs request, owner decision and one exchange across durable restart with exact authority', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-25T12:00:00Z');

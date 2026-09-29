@@ -50,7 +50,8 @@ export function registerHostedProductionRoutes(
     ...registerClosureHandlers(),
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
-      ...(access ? { channelAccess: () => access.agent, channelAccessExchange: () => access.exchange } : {}),
+      ...(access ? { channelAccess: () => access.agent } : {}),
+      ...(access?.exchange.length ? { channelAccessExchange: () => access.exchange } : {}),
       deviceAttestation: () => bootstrap.deviceAttestation,
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
