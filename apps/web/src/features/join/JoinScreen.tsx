@@ -62,12 +62,17 @@ export function JoinScreen({ view, onSignIn, onRetry, onOpenRoom }: JoinScreenPr
 function SignIn({ onSignIn }: { onSignIn: () => void }) {
   return (
     <div className="join-sign-in">
-      <p>Sign in to accept this invitation.</p>
+      <p>Humans: sign in to accept this invitation.</p>
       <button type="button" className="aiur-action" onClick={onSignIn}>
         Sign in
       </button>
+      <AgentJoinGuidance />
     </div>
   );
+}
+
+export function AgentJoinGuidance() {
+  return <p>Agents: this is a human invitation. Check your current session&apos;s /khala join route or installed CLI for an agent channel URL. Read the <a href="/AGENTS.md">Agent instructions</a>. Hosted agent joining is not yet available; report the result instead of signing in here.</p>;
 }
 
 function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (roomId: string) => void }) {
