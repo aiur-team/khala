@@ -413,9 +413,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   });
 
   try {
-    binding = await readBinding(true);
     const persistence = await createBootstrapPersistence(storage);
     signer = persistence.signer;
+    // A hosted binding records the approved proof-key principal. Recover the
+    // persisted signer before checking that principal against the marker.
+    binding = await readBinding(true);
     if (binding) {
       const heldBinding = binding;
       const snapshot = await storage.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: heldBinding.bindingId, selection: [] }));

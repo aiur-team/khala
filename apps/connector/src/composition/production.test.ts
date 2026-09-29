@@ -13,8 +13,12 @@ import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
-  it.each(['removed', 'unreported'] as const)(
-    'restarts a locally stopped binding only for cleanup when Matrix removal is %s', async removalState => {
+  it.each([
+    { removalState: 'removed', proofKey: false },
+    { removalState: 'unreported', proofKey: false },
+    { removalState: 'removed', proofKey: true },
+  ] as const)(
+    'restarts a locally stopped binding for cleanup with removal $removalState and proof key $proofKey', async ({ removalState, proofKey }) => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-revoked-restart-'));
     const session = { harness: 'codex' as const, sessionId: 'thread-revoked-1', workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
@@ -24,7 +28,7 @@ describe('installed hosted connector composition', () => {
     const appOrigin = 'https://khala.aiur.team';
     const matrixUserId = '@khala_agent:example';
     const roomId = '!revoked:example';
-    const binding = { v: 1, bindingId: 'binding-revoked-restart', ownerId: 'owner-revoked',
+    let binding = { v: 1, bindingId: 'binding-revoked-restart', ownerId: 'owner-revoked',
       agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
       deviceId: 'DEVICE_REVOKED', harness: session.harness, sessionId: session.sessionId,
       generation: 2 } as SessionBinding;
@@ -53,8 +57,9 @@ describe('installed hosted connector composition', () => {
       if (!limits.ok) throw new Error('test limits invalid');
       const storage = await openConnectorStorage({ directory: stateDirectory, mode: 'create', limits: limits.value });
       const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
-      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       const { signer } = await createBootstrapPersistence(storage);
+      if (proofKey) binding = { ...binding, harness: 'proof-key', sessionId: `agent_${signer.jkt}` };
+      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer,
         clock: () => Date.now() - 7_200_000 }).acceptInitial({
         token: 'C'.repeat(43), bindingId: binding.bindingId, generation: binding.generation,
