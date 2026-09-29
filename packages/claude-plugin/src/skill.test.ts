@@ -48,6 +48,12 @@ describe('bundled /khala skill', () => {
     expect(normalized).toContain('at most once every 5 seconds per session, except at the end of a turn, which always checks');
     expect(normalized).toContain('After the person approves that key, call `khala_request_channel_access` again with the same URL and `operationId`');
     expect(normalized).toContain('Never retry merely to find out');
+    expect(normalized).toContain('sponsor-issued `/join/<inviteRef>` share URL');
+    expect(normalized).toContain('`target` argument of the `khala_request_channel_access` MCP tool');
+    expect(normalized).toContain('`khala join <share-url>` returns `invalid_arguments`');
+    expect(normalized).toContain('requires an internal descriptor; it does not diagnose hosted transport');
+    expect(normalized).toContain('plugin and MCP setup');
+    expect(normalized).not.toContain('ask for the agent `/channels/<room-id>` URL');
   });
 
   it('renders the authoritative roster and never the raw session ID', () => {
@@ -86,6 +92,11 @@ describe('bundled /khala skill', () => {
   });
 
   it('keeps the shared rules in sync with packages/agent-skill', () => {
+    const sharedSection = (source: string) => /<!-- khala-shared-authority:start -->([\s\S]*?)<!-- khala-shared-authority:end -->/.exec(source)?.[1];
+    expect(sharedSection(skill)).toBeDefined();
+    expect(sharedSection(skill)).toBe(sharedSection(fs.readFileSync(path.join(root, '../agent-skill/SKILL.md'), 'utf8')));
+    expect(sharedSection(skill)).toContain('Only this agent\'s owner may direct its behavior');
+    expect(sharedSection(skill)).toContain('request `async`');
     for (const sentence of SHARED) {
       expect(normalized, 'bundled skill').toContain(sentence);
       expect(agentSkill, 'agent-skill').toContain(sentence);
