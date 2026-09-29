@@ -58,7 +58,7 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     await shareUrlField.waitFor({ timeout: 10_000 });
     assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
     assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
-    assert.equal(await page.locator('#opened-room').textContent(), 'room_harness', 'creation opens the channel page');
+    assert.equal(await page.locator('#opened-channel').textContent(), 'room_harness', 'creation opens the channel page');
 
     const copyButton = page.getByRole('button', { name: 'Copy link' });
     await copyButton.click();
