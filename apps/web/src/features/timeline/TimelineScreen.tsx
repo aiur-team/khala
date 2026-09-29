@@ -127,7 +127,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  composerPlaceholder = 'Write a message', unreadableActivity = false,
+  composerPlaceholder = '', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(

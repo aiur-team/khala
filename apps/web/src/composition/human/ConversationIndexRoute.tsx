@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ConversationLayout, ConversationList, type ConversationSummary } from '../../ui/conversation';
+import type { ConversationSummary } from '../../ui/conversation';
 import type { HumanRouteContext } from './application';
-import type { HumanRouteCodec } from './routes';
 
 export function useConversationIndex(context: HumanRouteContext) {
   const [items, setItems] = useState<readonly ConversationSummary[] | null | undefined>(undefined);
@@ -18,15 +17,8 @@ export function useConversationIndex(context: HumanRouteContext) {
   return items;
 }
 
-export function ConversationIndexRoute({ context, routes, navigate }: Readonly<{
-  context: HumanRouteContext;
-  routes: HumanRouteCodec;
-  navigate(path: string): void;
-}>) {
-  const [query, setQuery] = useState('');
-  const items = useConversationIndex(context);
-  return <ConversationLayout list={<ConversationList conversations={items ?? []} query={query} onQueryChange={setQuery}
-    emptyLabel="No encrypted conversations yet."
-    onSelect={id => { if (items?.some(item => item.id === id)) navigate(routes.roomPath(id)); }}
-    status={!context.conversations || items === null ? 'error' : items === undefined ? 'loading' : 'ready'} />} />;
+export function ConversationIndexRoute() {
+  return <section className="khala-empty-conversation" aria-label="No channel selected">
+    <p>Select a channel to read its messages.</p>
+  </section>;
 }

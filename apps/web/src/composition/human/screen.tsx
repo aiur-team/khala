@@ -60,6 +60,12 @@ function statusContent(snapshot: HumanApplicationSnapshot): ReactNode {
   }
 }
 
+function RouteLoading() {
+  return <section className="khala-route-loading" role="status" aria-label="Loading conversation">
+    <span /><span /><span />
+  </section>;
+}
+
 function ReadyRoute<Route>({ context, routes, renderRoute, attachCapabilities }: {
   context: HumanRouteContext;
   routes: HumanScreenRoutes<Route>;
@@ -92,6 +98,8 @@ export function HumanScreen<Route>({
     content = (
       <ReadyRoute context={snapshot.context} routes={routes} renderRoute={renderRoute} attachCapabilities={attachCapabilities} />
     );
+  } else if (snapshot.phase === 'navigating') {
+    content = <RouteLoading />;
   } else if (snapshot.phase === 'signed_out') {
     content = renderSignedOut(snapshot.path);
   } else if (snapshot.phase === 'unavailable' && snapshot.source === 'device'
@@ -113,7 +121,7 @@ export function HumanScreen<Route>({
     collapsed,
     onCollapsedChange: setCollapsed,
   };
-  if (snapshot.phase === 'ready' && renderReadyShell !== undefined) {
+  if ((snapshot.phase === 'ready' || snapshot.phase === 'navigating') && renderReadyShell !== undefined) {
     return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
   }
   const signedInAction = snapshot.phase === 'unavailable' && snapshot.source !== 'identity'

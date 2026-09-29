@@ -1,5 +1,25 @@
 /* Channel composition layout. Composition roots also load brand tokens and shell styles. */
 
+.channel-page .khala-page-frame{max-width:none}
+.channel-page .khala-page-frame__header{display:none}
+.channel-page .khala-page-frame__body{min-width:0}
+.channel-page .conversation-layout{height:calc(100dvh - 130px);min-height:420px}
+.channel-page .conversation-thread__actions{justify-content:flex-end;gap:.5rem}
+.channel-page .conversation-thread__actions>span{margin-right:auto}
+.channel-page .conversation-thread__actions .aiur-shell__icon-button{padding:0;width:2.05rem;height:2.05rem;border-radius:50%}
+.channel-share__more{position:absolute;right:0;top:2.5rem;z-index:5;width:min(22rem,80vw);padding:.6rem;background:var(--khala-fill-raised);border:1px solid var(--khala-line);border-radius:12px;box-shadow:0 10px 30px #0004}
+.channel-share__more{width:auto;padding:0;border:0;box-shadow:none;background:none}
+.channel-share__more summary{cursor:pointer;list-style:none;padding:.3rem .5rem}
+.channel-share__more[open]{width:min(22rem,80vw);padding:.6rem;border:1px solid var(--khala-line);box-shadow:0 10px 30px #0004;background:var(--khala-fill-raised)}
+.local-agent-controls{display:flex;align-items:center;gap:.25rem}
+.local-agent-controls__avatar{font-weight:700}
+.local-agent-controls__popover{position:absolute;right:4rem;top:5rem;z-index:10;width:min(21rem,85vw);max-height:70dvh;overflow:auto;padding:1rem;border:1px solid var(--khala-line);border-radius:14px;background:var(--khala-fill-raised);color:var(--khala-ink);box-shadow:0 12px 35px #0006}
+.local-agent-controls__popover>button:first-child{float:right}
+.local-agent-controls__popover h2{margin:.2rem 0;font-size:1.1rem}
+.local-agent-controls__popover fieldset{display:grid;gap:.5rem;margin:1rem 0}
+.local-agent-controls__popover details{margin-top:1rem}
+@media(max-width:959px){.channel-page .conversation-layout{height:calc(100dvh - 110px)}}
+
 .conversation-thread__body .timeline{height:100%;gap:0}
 .conversation-thread__body .timeline__list{flex:1;max-height:none;min-height:0;padding:1.1rem;gap:.25rem;background:var(--khala-fill)}
 .conversation-thread__body .timeline__row.conversation-message{align-self:flex-start;max-width:82%;border:0;border-radius:0;background:none;padding:0}

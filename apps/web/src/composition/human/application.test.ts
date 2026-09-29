@@ -300,6 +300,26 @@ describe('createHumanApplication', () => {
     expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', context: null });
   });
 
+  it('keeps the owner context mounted while navigating and exposes a later device failure', async () => {
+    const nextIdentity = deferred<IdentityState>();
+    let notify: (view: DeviceView) => void = () => undefined;
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValueOnce({ kind: 'signed_in', principal: alice }).mockImplementationOnce(() => nextIdentity.promise),
+      beginSignIn: vi.fn(),
+      signOut: vi.fn(),
+    };
+    const device = fakeDevice({ observe(listener) { notify = listener; return () => undefined; } });
+    const app = application(identity, device);
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+    const original = ready(app.getSnapshot());
+
+    app.navigate('/channels/second');
+    expect(app.getSnapshot()).toMatchObject({ phase: 'navigating', path: '/channels/second', context: original });
+    notify({ ...readyDevice(alice), state: 'failed', reason: 'initialization_failed' });
+    await eventually(() => expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', reason: 'initialization_failed' }));
+    nextIdentity.resolve({ kind: 'signed_in', principal: alice });
+  });
+
   it('does not publish ready when revocation follows activation before rendering', async () => {
     let notify: (view: DeviceView) => void = () => undefined;
     const identity: IdentityPort = {

@@ -17,3 +17,11 @@
 .fixture-messages{display:flex;flex:1;flex-direction:column;gap:.25rem;list-style:none;margin:0;padding:1.1rem;overflow:auto}
 .conversation-layout .sr-only,.conversation-composer .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .conversation-thread__body{display:flex;flex-direction:column}
+.conversation-thread__head h1{margin:0;font:inherit;font-weight:700}
+.conversation-layout--no-list{grid-template-columns:minmax(0,1fr)}
+.conversation-layout--no-list.conversation-layout--detail{grid-template-columns:minmax(0,1fr) 320px}
+.conversation-composer textarea{height:38px;line-height:1.35;resize:none}
+.conversation-thread__actions{justify-content:flex-end;gap:.5rem;padding:.45rem .85rem}
+.conversation-thread__actions>span{margin-right:auto}
+.conversation-thread__actions .aiur-shell__icon-button{padding:0;border-radius:50%;width:2.05rem;height:2.05rem}
+@media(max-width:900px){.conversation-layout--no-list .conversation-thread{display:flex}}

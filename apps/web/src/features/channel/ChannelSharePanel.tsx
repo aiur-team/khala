@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { AdmissionPort, RoomId } from '@khala/contracts/messaging/index';
 import { copyShareLink, type CopyResult } from '../../ui/share-link';
 
@@ -18,6 +18,8 @@ export function ChannelSharePanel({ admission, roomId, roomTitle, onCopy = copyS
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState(false);
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
 
   async function share(kind: 'link' | 'named_email', address?: string): Promise<string | null> {
     const current = kind === 'link' ? link : named;
@@ -47,6 +49,8 @@ export function ChannelSharePanel({ admission, roomId, roomTitle, onCopy = copyS
     if (!url) return;
     const result = await onCopy(url);
     setCopied(result.ok ? 'copied' : 'failed');
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    if (result.ok) copiedTimer.current = setTimeout(() => setCopied('idle'), 2200);
   }
 
   function submitEmail(event: FormEvent<HTMLFormElement>) {
@@ -59,12 +63,14 @@ export function ChannelSharePanel({ admission, roomId, roomTitle, onCopy = copyS
 
   const draft = named.url ? `mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(`Join ${roomTitle} on Khala`)}&body=${encodeURIComponent(`Join my encrypted Khala channel: ${named.url}`)}` : null;
   return <section className="channel-share" aria-label="Share channel">
-    <button type="button" onClick={() => void copy()} disabled={link.status === 'busy'}>Copy link</button>
-    {link.url ? <input aria-label="Channel link" readOnly value={link.url} onFocus={event => event.currentTarget.select()} /> : null}
+    <button type="button" className="aiur-shell__icon-button" aria-label="Copy channel invite link" title="Copy channel invite link" onClick={() => void copy()} disabled={link.status === 'busy'}>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="18" cy="19" r="2"/><path d="m8 11 8-5M8 13l8 5"/></svg>
+    </button>
+    {link.url && copied === 'failed' ? <input aria-label="Channel link" readOnly value={link.url} onFocus={event => event.currentTarget.select()} /> : null}
     {link.error ? <p role="alert">Could not prepare a link ({link.error}). Try again.</p> : null}
-    {copied === 'copied' ? <p role="status">Link copied.</p> : null}
+    {copied === 'copied' ? <p role="status">Copied</p> : null}
     {copied === 'failed' ? <p role="alert">Copy failed. Select the link above to copy it.</p> : null}
-    <form onSubmit={submitEmail}>
+    <details className="channel-share__more"><summary aria-label="More invite options" title="More invite options">⋯</summary><form onSubmit={submitEmail}>
       <label htmlFor="channel-invite-email">Invite by email</label>
       <input id="channel-invite-email" type="email" value={email} disabled={named.status === 'busy'} onChange={event => {
         setEmail(event.target.value); setEmailError(false); setNamed(fresh());
@@ -74,6 +80,6 @@ export function ChannelSharePanel({ admission, roomId, roomTitle, onCopy = copyS
     {emailError ? <p role="alert">Enter a valid email address.</p> : null}
     {named.error ? <p role="alert">Could not create the email invite ({named.error}). Try again.</p> : null}
     {named.url ? <><input aria-label="Email invite link" readOnly value={named.url} onFocus={event => event.currentTarget.select()} />
-      <a href={draft!}>Open email draft</a><p role="status">Invite prepared for {email.trim()}. Send the email from your mail app.</p></> : null}
+      <a href={draft!}>Open email draft</a><p role="status">Invite prepared for {email.trim()}. Send the email from your mail app.</p></> : null}</details>
   </section>;
 }

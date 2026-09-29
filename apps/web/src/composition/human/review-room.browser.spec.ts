@@ -26,9 +26,11 @@ declare global { interface Window {
 
 test('created channel page can copy a link and prepare a named email invitation', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
-    await page.getByRole('button', { name: 'Copy link' }).click();
-    await page.getByRole('textbox', { name: 'Channel link' }).waitFor();
-    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
+    await page.getByRole('status').getByText('Copied').waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'https://khala.example/join/invite_1');
+    await page.locator('.channel-share__more summary').click();
     await page.getByRole('textbox', { name: 'Invite by email' }).fill('friend@example.com');
     await page.getByRole('button', { name: 'Create email invite' }).click();
     await page.getByRole('link', { name: 'Open email draft' }).waitFor();
@@ -38,6 +40,7 @@ test('created channel page can copy a link and prepare a named email invitation'
       { roomId: 'room_1', policy: { v: 1, kind: 'named_email', email: 'friend@example.com', history: 'none' } },
     ]);
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'Close details' }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       'room sharing stays within the phone viewport');
   });
@@ -55,8 +58,9 @@ async function withRoomPage(path: string, run: (page: Page) => Promise<void>): P
       build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
       headless: true, args: ['--no-sandbox'] });
-    const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + path);
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await run(page);
   } finally {
     await browser?.close();
@@ -147,6 +151,7 @@ test('new binding and account stay current after older trust finishes out of ord
 
     // Route/account replacement discards the old route lease and trust cache.
     await page.evaluate(() => window.__switchReviewAccount());
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByText('Waiting for verified agent device trust.').waitFor();
     assert.equal(await page.getByText('To: Replaced identity').count(), 0);
     await page.evaluate(() => window.__releaseAccountTrust());
@@ -195,6 +200,7 @@ test('mounted controls discard an old generation and account while their status 
     const first = await page.evaluate(() => window.__controlCommands());
     assert.equal(first[0]?.expectedBindingGeneration, 1);
     await page.evaluate(() => window.__switchReviewAccount());
+    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByText('Other account agent').waitFor();
     await page.getByRole('button', { name: 'Request pause' }).waitFor();
     await page.getByRole('button', { name: 'Request pause' }).click();

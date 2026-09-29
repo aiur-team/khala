@@ -13,6 +13,8 @@ declare global { interface Window {
     inboxCount(): number;
     signOutCount(): number;
     stopCount(): number;
+    holdNavigation(): void;
+    releaseNavigation(): void;
   };
 } }
 
@@ -84,9 +86,25 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await button.waitFor();
     assert.equal(await button.isVisible(), true);
     const brand = page.getByRole('link', { name: 'KHALA' });
-    assert.equal(await brand.getAttribute('href'), '/new');
+    assert.equal(await brand.getAttribute('href'), '/conversations');
     assert.equal(await brand.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
     assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
+    const shell = await page.locator('.aiur-shell').elementHandle();
+    assert.ok(shell);
+    assert.equal(await page.locator('.conversation-list__item').count(), 2);
+    const createButton = page.getByRole('button', { name: 'Create channel' });
+    await createButton.click();
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Channel name (optional)' }).evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await createButton.evaluate(element => element === document.activeElement), true);
+    await page.evaluate(() => window.__lossHarness.holdNavigation());
+    await page.locator('.conversation-list__item', { hasText: 'Second channel' }).click();
+    await page.getByRole('status', { name: 'Loading conversation' }).waitFor();
+    assert.equal(await shell.evaluate(node => node.isConnected), true, 'the signed-in shell remains mounted');
+    assert.equal(await page.locator('.conversation-list__item').count(), 2, 'the channel list remains live during navigation');
+    await page.evaluate(() => window.__lossHarness.releaseNavigation());
+    await page.getByTestId('live-room').getByText('room_2').waitFor();
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       await mkdir(screenshotDir, { recursive: true });
@@ -95,6 +113,16 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await button.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    const channelsButton = page.getByRole('button', { name: 'Channels', exact: true });
+    await channelsButton.click();
+    assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
+    await createButton.click();
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await channelsButton.evaluate(element => element === document.activeElement), true);
+    await channelsButton.click();
+    await page.keyboard.press('Escape');
+    assert.equal(await channelsButton.getAttribute('aria-expanded'), 'false');
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'mobile.png'), fullPage: true });
 
     await button.click();
@@ -114,6 +142,12 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.getByRole('button', { name: 'Log out' }).waitFor();
     assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
     assert.equal(await page.locator('.khala-content-actions').count(), 1);
+    if (screenshotDir) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: join(screenshotDir, 'hosted-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: join(screenshotDir, 'hosted-mobile.png'), fullPage: true });
+    }
 
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=lost&logout');
     await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor();

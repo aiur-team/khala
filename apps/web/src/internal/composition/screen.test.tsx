@@ -82,11 +82,12 @@ describe('LocalApplicationScreen', () => {
     for (const text of HOSTED_ONLY) expect(html).not.toContain(text);
   });
 
-  it('adds owner navigation to the channel-requests inbox with a settings link on each channel', () => {
+  it('adds owner navigation and a compact channel settings control', () => {
     const html = render('/channels/ch_1');
     expect(html).toContain('href="/channel-requests"');
     expect(html).toContain('Channel requests');
-    expect(html).toContain('href="/channels/ch_1/settings"');
+    expect(html).toContain('aria-label="Channel settings"');
+    expect(html).not.toContain('href="/channels/ch_1/settings"');
   });
 
   it('renders the shared inbox and the shared settings panel on their own routes', () => {
@@ -122,7 +123,7 @@ describe('LocalApplicationScreen', () => {
 
   it('renders the channel with the viewer attribution and an initial load distinct from an empty channel', () => {
     const html = render('/channels/ch_1');
-    expect(html).toContain('Local channel');
+    expect(html).toContain('Local · Plaintext on this device');
     expect(html).toContain('Loading conversation…');
     expect(html).not.toContain('No messages yet.');
   });

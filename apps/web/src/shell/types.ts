@@ -28,6 +28,7 @@ export interface AiurShellProps {
   mode: ShellMode;
   brandHref?: string;
   navigation: NavigationItem[];
+  sidebar?: ReactNode;
   actions?: ReactNode;
   theme: ThemePort;
   collapsed: boolean;

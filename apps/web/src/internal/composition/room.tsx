@@ -9,7 +9,7 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
-import { ListeningControl } from '../controls/ListeningControl';
+import { LocalAgentControls } from '../controls/LocalAgentControls';
 import { createListeningController } from '../controls/listening-controller';
 import type { ListeningPort } from '../controls/listening-port';
 import { StopControl } from '../controls/StopControl';
@@ -62,8 +62,6 @@ export function TransportStatus({ state, roomId, onRetry }: {
   onRetry: () => void;
 }) {
   const terminal = useRef<HTMLHeadingElement | null>(null);
-  const everLive = useRef(false);
-  if (state.kind === 'live') everLive.current = true;
 
   // A state that needs the reader's action takes focus so it is never missed.
   useEffect(() => {
@@ -76,7 +74,7 @@ export function TransportStatus({ state, roomId, onRetry }: {
       message = 'Connecting to the local Khala server…';
       break;
     case 'live':
-      message = everLive.current ? 'Connected to the local Khala server.' : '';
+      message = '';
       break;
     case 'reconnecting':
       message = `Lost the connection to the local Khala server. Reconnecting (attempt ${state.attempt})…`;
@@ -130,6 +128,7 @@ export const EVIDENCE_POLL_MS = 5_000;
 export function LocalRoom({
   context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
   onMakeExternal = () => undefined,
+  settingsHref,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
@@ -142,6 +141,7 @@ export function LocalRoom({
   /** The Make-external journey port; without it the page offers no such action. */
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
+  settingsHref?: string;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
   const evidence = useMemo(
@@ -206,9 +206,12 @@ export function LocalRoom({
 
   return (
     <ChannelScreen
-      title="Local channel"
-      description="Messages are stored in plaintext on this computer."
+      embedded
+      title="Channel"
+      description="Local · Plaintext on this device"
       controller={channel}
+      showPresence={false}
+      renderHeaderActions={() => listeningController ? <LocalAgentControls controller={listeningController} /> : null}
       renderTimeline={() => (
         <>
           <TransportStatus state={state} roomId={roomId} onRetry={() => transport.retry()} />
@@ -226,9 +229,9 @@ export function LocalRoom({
       renderReview={() => null}
       renderControls={() => (
         <>
-          {listeningController ? <ListeningControl controller={listeningController} /> : null}
-          {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
-          <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
+          {settingsHref ? <a href={settingsHref}>Channel discovery settings</a> : null}
+          {stop && stopController ? <details><summary>Stop agent delivery</summary><StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /></details> : null}
+          <details><summary>More channel options</summary><MakeExternalEntry summary={journey} onOpen={onMakeExternal} /></details>
         </>
       )}
     />

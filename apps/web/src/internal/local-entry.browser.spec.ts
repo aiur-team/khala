@@ -115,7 +115,17 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await page.goto(`${origin}/__khala/bootstrap#credential=${fixture.bootstrap.credential}&channel=${channelId}`);
     await page.waitForURL(`${origin}/channels/${channelId}`);
     await page.getByText('No messages yet.').waitFor();
-    assert.equal(await page.getByRole('heading', { name: 'Local channel' }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: 'Channel' }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 1);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: path.join(screenshotDir, 'local-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: path.join(screenshotDir, 'local-mobile.png'), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
 
     // Observe: two agents' messages arrive over the hint stream with their own attribution.
     assert.equal((await agentSend(fixture.bob.credential, 'from bob')).status, 201);
@@ -126,10 +136,20 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.ok(rows.some(row => row.includes('Carol') && row.includes('from carol')), rows.join('\n'));
 
     // Send: the human's message is accepted and reconciled into the durable timeline.
-    await page.getByRole('textbox', { name: 'Message' }).fill('hello agents');
-    await page.getByRole('button', { name: 'Send' }).click();
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    assert.equal(await composer.getAttribute('placeholder'), '');
+    await composer.fill('hello agents');
+    await composer.press('Enter');
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 0);
+
+    await composer.fill('first line');
+    await composer.press('Shift+Enter');
+    assert.equal(await composer.inputValue(), 'first line\n');
+    await composer.fill('composing');
+    await composer.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })));
+    assert.equal(await composer.inputValue(), 'composing');
+    await composer.fill('');
 
     // An unknown outcome keeps its operation identity across a reload and resolves under it.
     await page.route('**/messages', route => route.abort('connectionreset'));
