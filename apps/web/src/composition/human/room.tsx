@@ -222,6 +222,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   refreshMs?: number;
 }) {
   const conversations = useConversationIndex(context);
+  const selectedConversation = conversations?.find(item => item.id === roomId);
   const [query, setQuery] = useState('');
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -267,11 +268,11 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   return (
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
-      title={conversations?.find(item => item.id === roomId)?.title ?? 'Encrypted conversation'}
+      title={selectedConversation?.title ?? 'Encrypted conversation'}
       description="Encrypted messages shared by admitted participants."
       controller={room}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
-        admission={context.admission} roomId={roomId} roomTitle={conversations?.find(item => item.id === roomId)?.title ?? 'Encrypted conversation'} /> : null}
+        admission={context.admission} roomId={roomId} roomTitle={selectedConversation?.title ?? 'Encrypted conversation'} /> : null}
       {...(context.conversations && routes && navigate ? {
         renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
           emptyLabel="No encrypted conversations yet."
@@ -282,7 +283,8 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
-          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel" />
+          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel"
+          unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}

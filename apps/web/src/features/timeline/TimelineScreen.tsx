@@ -36,6 +36,8 @@ export interface TimelineScreenProps {
   /** The owner's durable receipt evidence for this channel; absent means none is shown. */
   evidence?: ReceiptEvidenceController;
   composerPlaceholder?: string;
+  /** The room index has encrypted activity that this device cannot preview. */
+  unreadableActivity?: boolean;
 }
 
 /** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
@@ -125,7 +127,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  composerPlaceholder = 'Write a message',
+  composerPlaceholder = 'Write a message', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(
@@ -303,7 +305,9 @@ export function TimelineScreen({
           setAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
         }}
       >
-        {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">No messages yet.</li> : null}
+        {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">
+          {unreadableActivity ? 'Messages in this channel are unavailable on this device.' : 'No messages yet.'}
+        </li> : null}
         {data.items.map((item, index) => {
           const attribution = attributionFor(item.participant, viewer.ownerId);
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;

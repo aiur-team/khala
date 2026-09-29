@@ -168,6 +168,15 @@ describe('TimelineScreen', () => {
     expect(html).toContain('No messages yet');
   });
 
+  it('does not describe an encrypted room with unreadable activity as empty', () => {
+    const data = { phase: 'ready' as const, items: [], nextCursor: null, newMessageCount: 0 };
+    const html = renderToStaticMarkup(
+      <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} unreadableActivity />,
+    );
+    expect(html).toContain('Messages in this channel are unavailable on this device.');
+    expect(html).not.toContain('No messages yet');
+  });
+
   it('renders a load-earlier control only when a further page exists', () => {
     const withCursor = renderToStaticMarkup(
       <TimelineScreen
