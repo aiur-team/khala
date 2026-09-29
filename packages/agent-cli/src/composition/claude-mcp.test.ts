@@ -80,6 +80,25 @@ async function serve(
 }
 
 describe('Claude plugin MCP entry', () => {
+  it('uses the hosted create port for a target from this Claude session', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const approvalUrl = `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}`;
+    const requestChannelCreate = vi.fn(async () => ({ kind: 'handoff' as const, approvalUrl }));
+    const hostedSession = vi.fn(async () => ({
+      client: { ...createUnavailableClient(), requestChannelCreate },
+      inbox: async () => { throw new Error('create must not open inbox'); },
+      async close() {},
+    }));
+    const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
+      request(1, 'khala_create_channel', { title: 'Planning', operationId: 'op-create-1', target }),
+    ], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(responses[0]?.result?.structuredContent).toEqual({ ok: true, v: 1, operationId: 'op-create-1',
+      outcome: 'pending_owner', next: 'human_approve', approvalUrl });
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'claude', sessionId: 's-1' });
+    expect(requestChannelCreate).toHaveBeenCalledExactlyOnceWith({ title: 'Planning', operationId: 'op-create-1',
+      origin: null, target }, undefined);
+  });
+
   it('keeps an internally bound Claude session on its existing MCP route when a hosted factory is installed', async () => {
     const { adapter } = server();
     const client = inProcessClient(adapter, CREDENTIAL_A);
@@ -489,7 +508,7 @@ describe('Claude plugin channel tools', () => {
   });
 
   describe('join', () => {
-    const URL = 'https://khala.example/c/room-1';
+    const URL = 'http://localhost:4870/c/room-1';
 
     /**
      * A local server whose access port files each request for the session that made it. It

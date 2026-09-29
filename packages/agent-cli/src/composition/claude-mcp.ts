@@ -263,7 +263,8 @@ function sessionBound(tool: McpTool, entry: ClaudeAgentEntry, hostedChannels?: C
       const localRequest = requestOrigin?.startsWith('http:') ?? false;
       const hostedRequest = requestOrigin?.startsWith('https:') ?? false;
       let channels = internalChannels;
-      if (hostedChannels && (hostedRequest || (!localRequest && await hostedActive?.()))) {
+      const hostedCreate = tool.name === createChannelTool.name && typeof args.target === 'string';
+      if (hostedChannels && (hostedCreate || hostedRequest || (!localRequest && await hostedActive?.()))) {
         channels = tool.name === channelAccessStatusTool.name ? {
           ...hostedChannels,
           async status(input) {
@@ -345,10 +346,9 @@ export type ClaudeMcpServerOptions = Readonly<{
  */
 export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promise<void> {
   if (options.claude === undefined && options.hosted === undefined) throw new CliError('transport_unavailable');
-  // In hosted mode every callable channel operation is replaced by the hosted port.
   const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude ?? {} as ClaudeSessionClient, options.env),
     { ...(options.hosted ? { hosted: options.hosted } : {}),
-      ...(options.hosted && options.channels ? { channels: options.channels } : {}) });
+      ...(options.channels ? { channels: options.channels } : {}) });
   const unreachable = async (): Promise<never> => { throw new CliError('internal_error'); };
   await runMcpServer({
     input: options.input,

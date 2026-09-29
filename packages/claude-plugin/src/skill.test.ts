@@ -34,7 +34,8 @@ describe('bundled /khala skill', () => {
   });
 
   it('creates only after human confirmation, and joins without admitting itself', () => {
-    expect(normalized).toContain('Call the `khala_create_channel` MCP tool once with `{ title, operationId }`');
+    expect(normalized).toContain('`{ title, operationId, target }` for hosted creation');
+    expect(normalized).toContain('Internal mode continues to use the title alone');
     expect(normalized).toContain('Never retry under a new `operationId`');
     expect(normalized).not.toContain('not available in this version');
     expect(normalized).toContain('Never create a channel without the person\'s confirmation');
