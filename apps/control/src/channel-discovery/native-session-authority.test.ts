@@ -122,6 +122,8 @@ describe('durable native-session authority', () => {
     h.advance(5 * 60_000 + 1);
     expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) }))
       .toEqual({ kind: 'absent' });
+    expect(await h.authority.propose(request)).toEqual({ kind: 'unavailable' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: candidate.session })).toEqual({ kind: 'removed' });
     const fresh = fixture();
     const freshProposed = await fresh.authority.propose(request);
     if (freshProposed.kind !== 'pending_owner') throw new Error('candidate not recorded');
