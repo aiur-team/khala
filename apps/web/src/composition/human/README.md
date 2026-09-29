@@ -26,6 +26,13 @@ are released during logout, account switch, route replacement, or application
 shutdown. Re-entry creates a fresh attachment for the new route generation;
 an old generation must never regain a DOM listener or subscription.
 
+In the hosted browser, the focused tab requests the signed-in owner's device
+from another tab over BroadcastChannel. The current tab removes route and
+capability authority, closes its Matrix client and crypto store, and releases
+the Web Lock before the focused tab can open the store. An inactive tab keeps
+the signed-in shell and an inline retry control; focus resumes it. The channel
+message contains only the owner identifier and a tab nonce, never credentials.
+
 `screen.tsx` is the route-agnostic application screen: shell chrome, identity
 and device status, and the ready route. It imports no route feature and takes
 `renderRoute` and `renderSignedOut` from its host. `mount.tsx` binds the hosted

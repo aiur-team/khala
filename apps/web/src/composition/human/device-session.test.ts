@@ -97,4 +97,24 @@ describe('createHumanDeviceSession', () => {
     expect(device.stop).toHaveBeenCalledOnce();
     expect(session.current()).toBeNull();
   });
+
+  it('waits for a handoff stop before reacquiring after focus', async () => {
+    const device = fakeDevice();
+    let finishStop!: () => void;
+    device.stop.mockImplementationOnce(() => new Promise<undefined>(resolve => { finishStop = () => resolve(undefined); }));
+    const session = createHumanDeviceSession(device.port);
+    await session.ensureReady(alice);
+    device.ensureReady.mockClear();
+
+    const release = session.release();
+    const reacquire = session.ensureReady(alice);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(device.ensureReady).not.toHaveBeenCalled();
+
+    finishStop();
+    await release;
+    expect(await reacquire).toEqual(ok(ready));
+    expect(device.ensureReady).toHaveBeenCalledOnce();
+  });
 });

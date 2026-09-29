@@ -44,6 +44,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
   let activationAbort: AbortController | null = null;
   let disposed = false;
   let stopChain = Promise.resolve();
+  let stopPending: Promise<void> | null = null;
   const listeners = new Set<(view: DeviceView) => void>();
 
   const removeDeviceObserver = device.observe(view => {
@@ -54,8 +55,11 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
   });
 
   function stopSafely(): Promise<void> {
-    stopChain = stopChain.then(() => device.stop()).catch(() => undefined);
-    return stopChain;
+    const pending = stopChain.then(() => device.stop()).catch(() => undefined);
+    stopChain = pending;
+    stopPending = pending;
+    void pending.finally(() => { if (stopPending === pending) stopPending = null; });
+    return pending;
   }
 
   function ensureReady(requestedPrincipal: AuthPrincipal): Promise<DeviceActivation> {
@@ -76,6 +80,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
       principal: requestedPrincipal,
       promise: (async () => {
         if (replacingOwner) await stopSafely();
+        else if (stopPending) await stopPending;
         if (disposed || requestedEpoch !== epoch) return unavailable();
 
         ownerId = requestedPrincipal.ownerId;

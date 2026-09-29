@@ -1,6 +1,7 @@
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createHumanApplication } from './composition/human/application';
+import { createBrowserTabHandoff } from './composition/human/tab-handoff';
 import { createHumanBrowserApi } from './composition/human/browser-api';
 import { createOwnerCleanupConsumer } from './composition/human/cleanup-consumer';
 import { readHumanEntry } from './composition/human/entry';
@@ -91,7 +92,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     closure,
     ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,
-  }, { initialPath: entry.path });
+  }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
   cleanupConsumer = createOwnerCleanupConsumer({
     ownerId: () => {
       const snapshot = application.getSnapshot();
