@@ -38,6 +38,30 @@ let releaseLock: (() => void) | null = null;
 let lockComplete: Promise<unknown> | null = null;
 let timelineHandler: ((...args: unknown[]) => void) | null = null;
 let syncHandler: ((...args: unknown[]) => void) | null = null;
+let trustInFlight = false;
+let trustCompromised = false;
+
+function trustMarker(storeName: string): string { return `khala-matrix-trust-pending:${storeName}`; }
+
+function requireTrustReady(): void {
+  if (trustCompromised || (active && localStorage.getItem(trustMarker(active.storeName))))
+    throw new Error('matrix_trust_compromised');
+  if (trustInFlight) throw new Error('matrix_trust_pending');
+}
+
+async function invalidateCompromisedClient(): Promise<void> {
+  trustCompromised = true;
+  const matrix = client;
+  client = null;
+  active = null;
+  try {
+    if (matrix && timelineHandler) matrix.off(RoomEvent.Timeline, timelineHandler);
+    if (matrix && syncHandler) matrix.off(ClientEvent.Sync, syncHandler);
+    matrix?.stopClient();
+  } catch { /* The durable quarantine remains authoritative if shutdown fails. */ }
+  finally { releaseLock?.(); }
+  try { await lockComplete; } catch { /* The client is already gated. */ }
+}
 
 function failure(reason: unknown): BrowserEvent['failure'] {
   if (reason === 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID') return 'missing_keys';
@@ -61,6 +85,7 @@ async function syncReady(matrix: MatrixClient): Promise<void> {
 }
 
 async function eventFromWire(raw: Record<string, unknown>): Promise<BrowserEvent | null> {
+  requireTrustReady();
   const matrix = client;
   if (!matrix || !active) throw new Error('matrix_closed');
   const eventId = raw.event_id;
@@ -86,12 +111,15 @@ async function eventFromWire(raw: Record<string, unknown>): Promise<BrowserEvent
   if (matches.length !== 1) return placeholder('decrypt_failed');
   const device = matches[0]!;
   const status = await crypto.getDeviceVerificationStatus(sender, device.deviceId);
+  requireTrustReady();
   if (!status?.isVerified()) return placeholder('withheld_unverified', device.deviceId);
   return { eventId, roomId, senderUserId: sender, senderDeviceId: device.deviceId, body: event.getContent().body, failure: null };
 }
 
 window.khalaMatrix = {
   async open(input) {
+    if (trustCompromised || localStorage.getItem(trustMarker(input.storeName)))
+      throw new Error('matrix_trust_recovery_required');
     if (client || releaseLock) throw new Error('matrix_already_open');
     if (!input.storeName || !input.userId || !input.deviceId || !input.accessToken) throw new Error('matrix_invalid_input');
     let settled = false;
@@ -137,22 +165,41 @@ window.khalaMatrix = {
     return { fingerprint: (await client!.getCrypto()!.getOwnDeviceKeys()).ed25519, deviceId: input.deviceId };
   },
   async trustPeer(userId, deviceId, expectedEd25519) {
+    requireTrustReady();
     const crypto = client?.getCrypto();
-    if (!crypto) throw new Error('matrix_closed');
-    await trustExactPeer(
-      async () => (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId)?.getFingerprint() ?? null,
-      () => crypto.setDeviceVerified(userId, deviceId, true),
-      async () => {
-        await crypto.setDeviceVerified(userId, deviceId, false);
-        if ((await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified())
-          throw new Error('matrix_verification_rollback_failed');
-      },
-      expectedEd25519,
-    );
-    if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) throw new Error('matrix_verification_failed');
-    if (active) await crypto.forceDiscardSession(active.roomId);
+    const opened = active;
+    if (!crypto || !opened) throw new Error('matrix_closed');
+    const marker = trustMarker(opened.storeName);
+    let verificationPending = false;
+    trustInFlight = true;
+    try {
+      await trustExactPeer(
+        async () => (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId)?.getFingerprint() ?? null,
+        async () => {
+          localStorage.setItem(marker, '1');
+          verificationPending = true;
+          await crypto.setDeviceVerified(userId, deviceId, true);
+        },
+        async () => {
+          await crypto.setDeviceVerified(userId, deviceId, false);
+          if ((await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified())
+            throw new Error('matrix_verification_rollback_failed');
+          localStorage.removeItem(marker);
+          verificationPending = false;
+        },
+        expectedEd25519,
+      );
+      if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) throw new Error('matrix_verification_failed');
+      await crypto.forceDiscardSession(opened.roomId);
+      localStorage.removeItem(marker);
+      verificationPending = false;
+    } catch (error) {
+      if (verificationPending) await invalidateCompromisedClient();
+      throw error;
+    } finally { trustInFlight = false; }
   },
   async removeOwnDevice(expectedCurve25519) {
+    requireTrustReady();
     const matrix = client;
     const opened = active;
     const crypto = matrix?.getCrypto();
@@ -173,12 +220,14 @@ window.khalaMatrix = {
     }
   },
   async discardOutboundSession() {
+    requireTrustReady();
     const crypto = client?.getCrypto();
     if (!crypto || !active) return false;
     try { await crypto.forceDiscardSession(active.roomId); return true; }
     catch { return false; }
   },
   async authorize() {
+    requireTrustReady();
     if (!active) return 'unavailable';
     try {
       const response = await fetch(`${active.baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(active.roomId)}/state/m.room.member/${encodeURIComponent(active.userId)}`, {
@@ -192,6 +241,7 @@ window.khalaMatrix = {
     } catch { return 'unavailable'; }
   },
   async read(cursor, limit) {
+    requireTrustReady();
     if (!active || !client) throw new Error('matrix_closed');
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('matrix_invalid_limit');
     const query = new URLSearchParams({ timeout: '0', filter: JSON.stringify({ room: { rooms: [active.roomId], timeline: { limit } } }) });
@@ -201,6 +251,7 @@ window.khalaMatrix = {
     });
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'matrix_authority_lost' : 'matrix_unavailable');
     const body = await response.json() as { next_batch?: unknown; rooms?: { join?: Record<string, { timeline?: { events?: Record<string, unknown>[]; limited?: boolean } }> } };
+    requireTrustReady();
     if (typeof body.next_batch !== 'string') throw new Error('matrix_sync_invalid');
     const timeline = body.rooms?.join?.[active.roomId]?.timeline;
     const events: BrowserEvent[] = [];
@@ -211,10 +262,12 @@ window.khalaMatrix = {
     return { events, nextCursor: body.next_batch, limited: timeline?.limited === true };
   },
   async send(clientTxnId, body) {
+    requireTrustReady();
     if (!active || !client) throw new Error('matrix_closed');
     if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
       || new TextEncoder().encode(body).length > 64 * 1024) throw new Error('matrix_invalid_send');
     if (await this.authorize() !== 'ok') throw new Error('matrix_authority_lost');
+    requireTrustReady();
     const room = client.getRoom(active.roomId);
     if (!room?.hasEncryptionStateEvent()) throw new Error('matrix_room_not_encrypted');
     const response = await client.sendEvent(active.roomId, EventType.RoomMessage,
