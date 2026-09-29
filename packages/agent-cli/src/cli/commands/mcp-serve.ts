@@ -73,8 +73,13 @@ export const mcpServeCommand: CliCommand = {
         async active() {
           if (!validIdentifier(sessionId)) return false;
           if (!deps.hostedBindingPresent) return true;
-          try { return await deps.hostedBindingPresent({ harness: 'claude', sessionId }); }
-          catch { return true; } // Uncertain hosted state must not fall back to internal authority.
+          try {
+            if (await deps.hostedBindingPresent({ harness: 'claude', sessionId })) return true;
+            // No hosted binding is normal before the owner's approval. An exact
+            // internal session may still be bound; only that session keeps the
+            // internal tools. An unbound session needs hosted access to join.
+            return (await deps.claude?.status(sessionId, deps.signal))?.kind !== 'status';
+          } catch { return true; } // Uncertain state must not grant internal authority.
         },
         async status() {
           const selected = await held();

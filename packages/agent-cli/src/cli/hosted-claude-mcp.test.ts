@@ -9,6 +9,8 @@ import { runCli } from './app.js';
 import { openInbox } from './inbox.js';
 import type { CliDependencies } from './types.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
+import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
+import { hasProductionBinding } from '@khala/connector-app/composition/production';
 
 const SESSION = 'native-claude-571';
 const PROOF_SESSION = `agent_${'A'.repeat(43)}`;
@@ -24,7 +26,8 @@ function request(id: number, name: string, args: Record<string, unknown> = {}) {
   return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })}\n`;
 }
 
-async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: string[], sessionId = SESSION) {
+async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: string[], sessionId = SESSION,
+  prejoinRoot?: string) {
   const stdout = new PassThrough();
   let output = '';
   stdout.on('data', chunk => { output += String(chunk); });
@@ -34,6 +37,10 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
     stdin: Readable.from(calls), stdout, stderr: new PassThrough(),
     env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId },
     hostedSession: factory,
+    ...(prejoinRoot ? {
+      hostedBindingPresent: session => hasProductionBinding(prejoinRoot, { ...session, workdir: process.cwd() }),
+      claude: { status: async () => ({ kind: 'refused', code: 'session_not_bound' }) } as unknown as ClaudeSessionClient,
+    } : {}),
   });
   expect(code).toBe(0);
   return output.trim().split('\n').map(line => JSON.parse(line) as {
@@ -42,6 +49,36 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('uses hosted discovery and access before a binding file exists', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-prejoin-'));
+    try {
+      expect(await hasProductionBinding(root, { harness: 'claude', sessionId: SESSION,
+        workdir: process.cwd() })).toBe(false);
+      const requestAccess = vi.fn(async (input: { operationId: string }) => ({ kind: 'status' as const,
+        status: { v: 1, operationId: input.operationId, outcome: 'pending_owner' } }));
+      const accessStatus = vi.fn(async (input: { operationId: string }) => ({ kind: 'status' as const,
+        status: { v: 1, operationId: input.operationId, outcome: 'pending_owner' } }));
+      const listChannels = vi.fn(async () => ({ kind: 'unavailable' as const }));
+      const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+        client: { ...createUnavailableClient(), requestChannelAccess: requestAccess,
+          channelAccessStatus: accessStatus, listChannels },
+        inbox: async () => { throw new Error('prejoin must not open an inbox'); }, async close() {},
+      });
+      const result = await serve(factory, [
+        request(1, 'khala_request_channel_access', { target: 'https://khala.aiur.team/channels/room-571' }),
+        request(2, 'khala_channel_access_status', { operationId: 'operation-571' }),
+        request(3, 'khala_list_channels'), request(4, 'khala_status'), request(5, 'khala_read'),
+      ], SESSION, root);
+      expect(result[0]?.result.structuredContent).toMatchObject({ ok: true, outcome: 'pending_owner' });
+      expect(requestAccess).toHaveBeenCalledOnce();
+      expect(result[1]?.result.structuredContent).toMatchObject({ ok: true, outcome: 'pending_owner' });
+      expect(accessStatus).toHaveBeenCalledOnce();
+      expect(listChannels).toHaveBeenCalledOnce();
+      expect(result[3]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+      expect(result[4]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('scopes default hosted access operations to each Claude session', async () => {
     const operations: string[] = [];
     const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({

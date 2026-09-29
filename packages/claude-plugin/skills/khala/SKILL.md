@@ -136,5 +136,5 @@ nothing more:
 
 Then call the `khala_status` MCP tool. For an internal session, list its
 `support` for `steer`, `sync`, and `async` exactly as reported. For a hosted
-session, report its connected status or refusal code. Never claim a mode works
+session, report its connected status or refusal code. Report `unproven` as unproven. Never claim a mode works
 because it is listed here. This skill never changes the listening mode.
