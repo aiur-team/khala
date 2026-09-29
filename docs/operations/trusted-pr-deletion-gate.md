@@ -22,7 +22,8 @@ moved PR ref, or failed status post cannot produce success.
    its new status required. Existing `validate` and `deletion-guard` checks
    stay required throughout rollout.
 2. Create a dedicated GitHub App with **Commit statuses: Read and write** and
-   install it only on `aiur-team/khala`. Set repository variable
+   install it on exactly `aiur-team/aiur` and `aiur-team/khala`. Each workflow
+   mints a token scoped to its own repository. Set repository variable
    `KHALA_DELETION_GUARD_APP_CLIENT_ID` to its Client ID and repository secret
    `KHALA_DELETION_GUARD_APP_PRIVATE_KEY` to its private key. The workflow
    requests only `permission-statuses: write` for the installation token;
