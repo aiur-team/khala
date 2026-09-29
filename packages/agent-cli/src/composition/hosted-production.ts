@@ -112,6 +112,13 @@ export function hostedSessionFactory(options: Readonly<{
       credentials: discovery, signer: connector.proofSigner, session: claim,
       trustedOrigins: [options.appOrigin], defaultOrigin: options.appOrigin,
       ...(options.fetch ? { fetch: options.fetch } : {}),
+      beforeChannelRequest: async (input, credential) => {
+        if (!connector.channelAccess || !connector.proofSigner) return false;
+        return await journalChannelAccessRequest({ operationId: input.operationId,
+          requester: credential.requester.principal, origin: input.origin,
+          sessionGeneration: credential.requester.sessionGeneration },
+        { journal: connector.channelAccess.journal, signer: connector.proofSigner }) === 'journaled';
+      },
       candidate: createProofKeyCandidateClient({
         signer: connector.proofSigner, sessions: requestSessions,
         origin: options.appOrigin, openBrowser: options.openBrowser,
@@ -184,16 +191,6 @@ export function hostedSessionFactory(options: Readonly<{
         try { namedOrigin = new URL(input.target.channelUrl).origin; } catch { /* Access client reports invalid_link. */ }
       }
       const origin = input.origin ?? namedOrigin ?? options.appOrigin;
-      // A credential already in memory lets us make the operation durable before
-      // the service can accept the request. First-time candidate sign-in is
-      // handled by the access client and journaled as soon as it returns.
-      const currentCredential = discovery?.current();
-      if (currentCredential && activationPorts && origin === currentCredential.requester.origin) {
-        const journaled = await journalChannelAccessRequest({ operationId: input.operationId,
-          requester: currentCredential.requester.principal, origin,
-          sessionGeneration: currentCredential.requester.sessionGeneration }, activationPorts);
-        if (journaled !== 'journaled') return { kind: 'unavailable' };
-      }
       const result = await access.requestChannelAccess(input, signal);
       if (result.kind !== 'status') return result;
       const decoded = decodeAccessRequestStatus(result.status);
@@ -246,7 +243,7 @@ export function hostedSessionFactory(options: Readonly<{
         if (parsed?.kind !== 'channel_url') return { kind: 'refused' as const, code: 'invalid_link' as const };
         let target: URL;
         try { target = new URL(link); } catch { return { kind: 'refused' as const, code: 'invalid_link' as const }; }
-        if (!/^\/channels\/[^/]+$/.test(target.pathname)) return { kind: 'refused' as const, code: 'invalid_link' as const };
+        if (!/^\/join\/[A-Za-z0-9_-]{8,256}$/.test(target.pathname)) return { kind: 'refused' as const, code: 'invalid_link' as const };
         if (target.origin !== options.appOrigin) return { kind: 'refused' as const, code: 'untrusted_origin' as const };
         const operationId = createHash('sha256').update(JSON.stringify([
           'khala.hosted.channel-access.v1', link, claim.harness, claim.sessionId, claim.workdir,

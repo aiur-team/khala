@@ -3,9 +3,10 @@
 // only talks to an exact configured origin, and never follows redirects. The
 // response body is returned raw so the access service can decode it strictly.
 
+import { createHash } from 'node:crypto';
 import type { ChannelDiscoveryCredentialClient, ProofSigner, SessionClaim } from '@khala/connector/bootstrap/index';
 import { isAcceptableOrigin, readBounded } from '@khala/connector/bootstrap/discovery';
-import type { DiscoveryCredential } from '@khala/contracts/messaging/index';
+import { decodeAgentChannelLinkResult, type DiscoveryCredential } from '@khala/contracts/messaging/index';
 import type {
   AccessRefusalCode, ChannelAccessPort, ChannelAccessResult,
 } from '../cli/channels/types.js';
@@ -14,6 +15,7 @@ import { discard, redirectsOffOrigin } from './channel-listing.js';
 import type { CandidateOutcome } from './proof-key-candidate.js';
 
 export const CHANNEL_ACCESS_REQUEST_PATH = '/api/agent/channel-access/request';
+export const CHANNEL_LINK_REQUEST_PATH = '/api/agent/channel-link/request';
 export const CHANNEL_ACCESS_CREATE_PATH = '/api/agent/channel-access/create';
 export const CHANNEL_ACCESS_STATUS_PATH = '/api/agent/channel-access/status';
 const MAX_RESPONSE_BYTES = 4_096;
@@ -27,6 +29,7 @@ export type HttpChannelAccessOptions = Readonly<{
   trustedOrigins: readonly string[];
   defaultOrigin: string;
   candidate?: (input: Readonly<{ target: string; operationId: string; session: SessionClaim }>, signal?: AbortSignal) => Promise<CandidateOutcome>;
+  beforeChannelRequest?: (input: Readonly<{ operationId: string; origin: string }>, credential: DiscoveryCredential) => Promise<boolean>;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }>;
@@ -58,11 +61,14 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
     origin: string,
     signal: AbortSignal | undefined,
     build: (credential: DiscoveryCredential) => Readonly<{ target: URL; method: 'GET' | 'POST'; body?: unknown }>,
+    beforeSend?: (credential: DiscoveryCredential) => Promise<boolean>,
   ): Promise<ChannelAccessResult> {
     if (!trusted.has(origin)) return refused('untrusted_origin');
     const credential = await credentialFor(origin, signal);
     if ('kind' in credential) return credential;
+    if (beforeSend && !await beforeSend(credential)) return { kind: 'unavailable' };
     const { target, method, body } = build(credential);
+    const rawBody = body === undefined ? undefined : JSON.stringify(body);
     const timeout = AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
@@ -71,10 +77,11 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
         headers: {
           accept: 'application/json',
           authorization: `DPoP ${credential.credentialRef}`,
-          dpop: options.signer.proof(method, target.href, credential.credentialRef),
+          dpop: options.signer.proof(method, target.href, credential.credentialRef,
+            rawBody === undefined ? undefined : { bodyHash: createHash('sha256').update(rawBody).digest('base64url') }),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(rawBody === undefined ? {} : { body: rawBody }),
         redirect: 'manual',
         credentials: 'omit',
         signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
@@ -87,6 +94,16 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
       return redirectsOffOrigin(response, target) ? refused('untrusted_origin') : { kind: 'unavailable' };
     }
     if (response.status !== 200) {
+      if (response.status === 409 && target.pathname === CHANNEL_LINK_REQUEST_PATH) {
+        try {
+          const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
+          if (bytes !== null) {
+            const decoded = decodeAgentChannelLinkResult(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown);
+            if (decoded.ok && decoded.value.kind === 'use_your_link') return refused('sponsor_link_required');
+          }
+        } catch { /* A malformed refusal remains unavailable. */ }
+        return { kind: 'unavailable' };
+      }
       await discard(response);
       if (response.status === 401) {
         options.credentials.invalidate();
@@ -103,7 +120,14 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
     try {
       const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
       if (bytes === null) return { kind: 'unavailable' };
-      return { kind: 'status', status: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown };
+      const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+      if (target.pathname === CHANNEL_LINK_REQUEST_PATH) {
+        const decoded = decodeAgentChannelLinkResult(value);
+        return decoded.ok && decoded.value.kind === 'request'
+          ? { kind: 'status', status: { v: 1, operationId: decoded.value.operationId, outcome: decoded.value.outcome } }
+          : { kind: 'unavailable' };
+      }
+      return { kind: 'status', status: value };
     } catch {
       return { kind: 'unavailable' };
     }
@@ -128,12 +152,12 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
         if (candidate.kind !== 'approved') return { kind: 'unavailable' };
       }
       return call(origin, signal, credential => ({
-        target: new URL(CHANNEL_ACCESS_REQUEST_PATH, origin),
+        target: new URL(input.target.kind === 'channel_url' ? CHANNEL_LINK_REQUEST_PATH : CHANNEL_ACCESS_REQUEST_PATH, origin),
         method: 'POST',
         body: input.target.kind === 'listing_ref'
           ? { v: 1, kind: 'listing_ref', operationId: input.operationId, credentialRef: credential.credentialRef, listingRef: input.target.listingRef }
           : { v: 1, kind: 'channel_url', operationId: input.operationId, credentialRef: credential.credentialRef, channelUrl: input.target.channelUrl },
-      }));
+      }), credential => options.beforeChannelRequest?.({ operationId: input.operationId, origin }, credential) ?? Promise.resolve(true));
     },
     channelAccessStatus(input, signal) {
       return status(input, 'access', signal);
@@ -176,7 +200,7 @@ function originOf(url: string): string | null {
 }
 
 function isAgentChannelUrl(value: string): boolean {
-  try { return /^\/channels\/[^/]+$/.test(new URL(value).pathname); } catch { return false; }
+  try { return /^\/join\/[A-Za-z0-9_-]{8,256}$/.test(new URL(value).pathname); } catch { return false; }
 }
 
 function refused(code: AccessRefusalCode): ChannelAccessResult {

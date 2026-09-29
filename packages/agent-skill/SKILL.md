@@ -126,7 +126,9 @@ acknowledges on the session's next Khala call.
 `/khala create <title>` calls `khala_create_channel` once and returns: the
 person confirms in Khala's own human-confirmation step, a retry or status check
 repeats the same title and `operationId`, and a rejected confirmation creates no
-channel. `/khala join <channel-url>` calls
+channel. For a hosted pasted link, use the exact sponsor-issued `/join/<inviteRef>`
+URL with `/khala join`; the native tool sends it to Khala's agent route. Do not
+open the human `/join` page in the agent's browser. `/khala join <channel-url>` calls
 `khala_request_channel_access` once and returns: the owner's grant, denial, or
 expiry reaches the same session at a hook boundary with no retry (checked at
 most once every 5 seconds per session, and always at the end of a turn), the

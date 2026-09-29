@@ -45,7 +45,9 @@ describe('installed hosted connector factory', () => {
       calls.push(url.pathname);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
       if (url.pathname.endsWith('/request') || url.pathname.endsWith('/status'))
-        return reply({ v: 1, operationId: body?.operationId ?? url.searchParams.get('operationId'), outcome: 'approved' });
+        return reply(url.pathname === '/api/agent/channel-link/request'
+          ? { v: 1, kind: 'request', operationId: body?.operationId, outcome: 'approved' }
+          : { v: 1, operationId: body?.operationId ?? url.searchParams.get('operationId'), outcome: 'approved' });
       if (url.pathname.endsWith('/exchange')) {
         const exchange = body as unknown as GrantExchangeRequest;
         await sodium.ready;
@@ -103,7 +105,7 @@ describe('installed hosted connector factory', () => {
       async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
-    const link = `${origin}/channels/room-1`;
+    const link = `${origin}/join/inviteRef123`;
     expect(await opened.client.connect(link)).toEqual({ kind: 'unavailable' });
     expect(await opened.client.connect(link)).toEqual({ kind: 'unavailable' });
     nativeAvailable = true;
@@ -112,7 +114,7 @@ describe('installed hosted connector factory', () => {
     expect(calls).toContain('/api/agent/bootstrap/redeem');
     expect(calls).toContain('/api/agent/channel-access/resume');
     expect(calls).toContain('/api/agent/channel-access/ready');
-    expect(await opened.client.connect(`${origin}/join/inv_secret`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+    expect(await opened.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
     await opened.close();
   });
   it('accepts only an exact configured HTTPS origin', () => {

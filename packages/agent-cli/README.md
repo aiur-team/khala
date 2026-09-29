@@ -495,14 +495,21 @@ anything without the owner's approval of the displayed session.
 
 ## Channel access requests
 
-For a first hosted channel URL request, the connector signs a candidate with
-its own proof key. The signed-in owner of the resolved channel approves that
+For a first hosted channel URL request, pass the sponsor-issued
+`<origin>/join/<inviteRef>` link to the native join tool. The CLI sends it to
+`POST /api/agent/channel-link/request` with the exact discovery credential and
+a body-bound DPoP proof; it never browses the human join page. If the link
+belongs to another sponsor, the command reports `sponsor_link_required` with
+`next: "copy_your_link"`; the person joins in their own browser and then gives
+this agent their personal link. The connector signs a candidate with its own
+proof key. The signed-in owner of the resolved channel approves that
 key before the separate discovery consent. The session ID is a caller-supplied
 local label; key approval applies to that owner's channels, not just the link
 used to find them. The hosted native client can call request, status, exchange,
 redeem, resume, and ready with the approved proof key. A deployed, owner-approved
 Codex and Claude read/send proof is still required before calling the route
-production proven.
+production proven. A lost redeem response before the binding ID is persisted
+cannot currently be resumed by operation ID; #564 tracks that acceptance gap.
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
