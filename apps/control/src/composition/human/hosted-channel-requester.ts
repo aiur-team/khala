@@ -8,7 +8,7 @@ import type { GrantExchangeHandlerDependencies } from '../../channel-access/exch
 import type { HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { DiscoveryCredentialAuthorization, SessionRef } from '../../channel-discovery/bootstrap/handler';
 import { parseCredentialRef } from '../../channel-discovery/bootstrap/store';
-import { createHostedProofKeyAuthority } from '../hosted-proof-key-authority';
+import { createHostedProofKeyAuthority, resolveCreateTarget } from '../hosted-proof-key-authority';
 import type { ProductionHumanRuntime } from './production';
 import type { HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
 
@@ -75,7 +75,7 @@ export function createHostedChannelRequester(
     return ownerId !== undefined && record.ownerId !== ownerId ? 'revoked' : current(record);
   }
 
-  async function authenticate(request: Request, route: 'access' | 'sponsor'): Promise<HostedSponsorAuthentication> {
+  async function authenticate(request: Request, route: 'agent' | 'sponsor'): Promise<HostedSponsorAuthentication> {
     let url: URL;
     try { url = new URL(request.url); } catch { return { kind: 'rejected', code: 'forbidden' }; }
     const accessPath = request.method === 'POST' && url.pathname === '/api/agent/channel-access/request'
@@ -83,11 +83,27 @@ export function createHostedChannelRequester(
       && url.searchParams.getAll('operationKind').length === 1 && url.searchParams.get('operationKind') === 'access';
     const sponsorPath = request.method === 'POST' && url.pathname === '/api/agent/channel-link/request'
       && url.search === '';
-    if (!(route === 'access' ? accessPath : sponsorPath)) return { kind: 'rejected', code: 'forbidden' };
-    const authorization = await authorize(request, 'request_channel_access').catch(() => ({ kind: 'unavailable' as const }));
+    const createTargetToken = request.method === 'POST' && url.pathname === '/api/agent/channel-access/create'
+      && [...url.searchParams.keys()].join(',') === 'agent_create'
+      ? url.searchParams.get('agent_create') : null;
+    const createPath = request.method === 'POST' && url.pathname === '/api/agent/channel-access/create'
+      && (url.search === '' || createTargetToken !== null) || request.method === 'GET' && url.pathname === '/api/agent/channel-access/status'
+      && url.searchParams.getAll('operationKind').length === 1 && url.searchParams.get('operationKind') === 'create';
+    if (!(route === 'agent' ? accessPath || createPath : sponsorPath)) {
+      return { kind: 'rejected', code: 'forbidden' };
+    }
+    const authorization = await authorize(request, createPath ? 'request_channel_create' : 'request_channel_access')
+      .catch(() => ({ kind: 'unavailable' as const }));
     if (authorization.kind === 'unavailable') return { kind: 'unavailable' };
     if (authorization.kind === 'refused') return { kind: 'rejected',
       code: authorization.status === 401 ? 'auth_required' : 'forbidden' };
+    if (createTargetToken !== null) {
+      const target = new URL('/new', active.env.publicAppOrigin);
+      target.searchParams.set('agent_create', createTargetToken);
+      if (resolveCreateTarget(active, target.href) !== authorization.ownerId) {
+        return { kind: 'rejected', code: 'forbidden' };
+      }
+    }
     const requester = authorization.requester;
     if (requester.origin !== active.env.publicAppOrigin || !authorization.session
       || typeof authorization.authorityRevision !== 'string'
@@ -109,7 +125,7 @@ export function createHostedChannelRequester(
   }
 
   return {
-    authenticateAgent: request => authenticate(request, 'access'),
+    authenticateAgent: request => authenticate(request, 'agent'),
     authenticateSponsor: request => authenticate(request, 'sponsor'),
     async authenticateConnector(request) {
       let url: URL;
@@ -169,6 +185,16 @@ export function createHostedChannelRequester(
         deviceId: deviceId as never, proofKeyThumbprint: requester.proofKey.thumbprint } };
     },
     requesterAuthority: {
+      async resolveCreateOwner(requester) {
+        const held = requestApproval;
+        if (!held || held.requester.principal !== requester.principal
+          || held.requester.proofKey.thumbprint !== requester.proofKey.thumbprint
+          || held.requester.sessionGeneration !== requester.sessionGeneration) return 'revoked';
+        const verified = await current(held.record);
+        return verified === 'current'
+          ? { ownerId: held.record.ownerId, ownerRevision: held.context.sessionFingerprint }
+          : verified;
+      },
       async inspect(requester, ownerId) {
         const held = requestApproval;
         return held && held.record.ownerId === ownerId

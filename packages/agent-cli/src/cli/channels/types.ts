@@ -64,6 +64,7 @@ export type AccessStatusInput = Readonly<{ operationId: string; origin: string |
 // `status` stays `unknown` so the access service decodes it with the closed contract decoder.
 export type ChannelAccessResult =
   | Readonly<{ kind: 'status'; status: unknown }>
+  | Readonly<{ kind: 'handoff'; approvalUrl: string }>
   | Readonly<{ kind: 'refused'; code: AccessRefusalCode }>
   | Readonly<{ kind: 'unavailable' }>;
 

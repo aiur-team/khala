@@ -7,6 +7,8 @@ export type ConnectorBootstrapClientOptions = Readonly<{
   listChannels: AgentClientPort['listChannels']; listAgents: AgentClientPort['listAgents'];
   requestChannelAccess?: AgentClientPort['requestChannelAccess'];
   channelAccessStatus?: AgentClientPort['channelAccessStatus'];
+  requestChannelCreate?: AgentClientPort['requestChannelCreate'];
+  channelCreateStatus?: AgentClientPort['channelCreateStatus'];
   listeningMode?: AgentClientPort['listeningMode'];
   listeningModeControl?: AgentClientPort['listeningModeControl'];
 }>;
@@ -51,6 +53,8 @@ export function createConnectorBootstrapClient(options: ConnectorBootstrapClient
     listAgents: options.listAgents,
     ...(options.requestChannelAccess ? { requestChannelAccess: options.requestChannelAccess } : {}),
     ...(options.channelAccessStatus ? { channelAccessStatus: options.channelAccessStatus } : {}),
+    ...(options.requestChannelCreate ? { requestChannelCreate: options.requestChannelCreate } : {}),
+    ...(options.channelCreateStatus ? { channelCreateStatus: options.channelCreateStatus } : {}),
     ...(options.listeningMode ? { listeningMode: options.listeningMode } : {}),
     ...(options.listeningModeControl ? { listeningModeControl: options.listeningModeControl } : {}),
   };

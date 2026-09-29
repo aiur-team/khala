@@ -67,6 +67,43 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('creates an owner-scoped encrypted room and reconciles its operation marker', async () => {
+    const roomId = '!created:matrix.example.test' as RoomId;
+    let creates = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return json(200, { user_id: request.identifier.user, device_id: request.device_id,
+          access_token: 'control-token' });
+      }
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
+      if (path.endsWith('/createRoom')) {
+        creates += 1;
+        const request = JSON.parse(String(init?.body)) as { visibility: string; initial_state: readonly {
+          type: string; content: Record<string, string> }[] };
+        expect(request.visibility).toBe('private');
+        expect(request.initial_state).toContainEqual({ type: 'm.room.encryption', state_key: '',
+          content: { algorithm: 'm.megolm.v1.aes-sha2' } });
+        expect(request.initial_state).toContainEqual({ type: 'com.aiur.khala.create.v1', state_key: '',
+          content: { operation_id: 'create-key-1' } });
+        return json(200, { room_id: roomId });
+      }
+      if (path.endsWith('/joined_rooms')) return json(200, { joined_rooms: [roomId] });
+      if (path.endsWith('/state/com.aiur.khala.create.v1/')) return json(200, { operation_id: 'create-key-1' });
+      throw new Error(`unexpected request ${path}`);
+    });
+    const matrix = services(fetch);
+    const substrate = matrix.channelCreateFor(principal.ownerId);
+    expect(await substrate.createRoom({ operationId: 'create-key-1', title: 'Planning' }))
+      .toMatchObject({ kind: 'done', value: { roomId, title: 'Planning' } });
+    expect(await substrate.findCreatedRoom({ operationId: 'create-key-1' }))
+      .toMatchObject({ kind: 'found', room: { roomId } });
+    expect(await substrate.findCreatedRoom({ operationId: 'other-key' })).toEqual({ kind: 'unknown' });
+    expect(creates).toBe(1);
+    expect(await matrix.inspectRoomAuthority(roomId)).toBe(principal.ownerId);
+  });
+
   it('reuses one server-only control login across concurrent and repeated membership checks', async () => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let logins = 0;

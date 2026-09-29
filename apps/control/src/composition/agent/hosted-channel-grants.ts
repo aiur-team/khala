@@ -1,13 +1,16 @@
 import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
+import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journal';
 import type { ChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
-import type { ChannelAccessFulfillmentPort } from '@khala/contracts/messaging/index';
+import type { ChannelAccessFulfillmentPort, OwnerId } from '@khala/contracts/messaging/index';
 import type { PairingGrantPort } from '../../pairing/store';
 import { readHostedAccessTarget } from '../human/hosted-channel-access-resolver';
+import { readHostedCreatedTarget } from './hosted-created-target';
+import { roomFromHostedCreatedRef } from './channel-create';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
-import { recordChannelAccessBinding } from './channel-access-binding';
+import { findChannelAccessBinding, recordChannelAccessBinding, reserveChannelAccessIssuance } from './channel-access-binding';
 
 /** The bootstrap redeem route accepts a channel grant only after an exact
  * approved exchange, signed connector key, device, session and live sponsor
@@ -17,11 +20,15 @@ export function createHostedChannelGrantPort(deps: Readonly<{
   journal: Pick<ChannelAccessStore, 'inspectRequester'>;
   fulfillment: Pick<ChannelAccessFulfillmentPort, 'claimAccess' | 'updateAccess'>;
   admissionAuthority: HostedAdmissionAuthority;
+  createAuthority?: (access: GrantExchangeAuthority) => GrantExchangeAuthority;
 }>): PairingGrantPort {
   const { active } = deps;
   const issuer = createExchangeGrantIssuer({ store: active.store, clock: active.clock });
   const exchanges = exchangeJournal(active.store);
-  const authority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: active.clock });
+  const accessAuthority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: active.clock });
+  const authority = deps.createAuthority?.(accessAuthority) ?? accessAuthority;
+  const resolveTarget = (ref: string, ownerId: OwnerId) =>
+    roomFromHostedCreatedRef(ref) === null ? readHostedAccessTarget(active, ref) : readHostedCreatedTarget(active, ref, ownerId);
 
   return {
     async redeem(input) {
@@ -42,6 +49,12 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         || record.deviceId !== input.deviceId || record.sessionGeneration !== input.session.generation) {
         return { kind: 'invalid_grant' };
       }
+      // The issuance record is written before the first capability is returned.
+      // Refuse a completed operation before device provisioning can log in again.
+      // An absent record still permits recovery of a consumed, unissued grant.
+      const issued = await findChannelAccessBinding(active.store, binding);
+      if (issued.kind === 'unavailable') return { kind: 'unavailable' };
+      if (issued.kind === 'found') return { kind: 'replayed' };
       const live = await authority.authorize({ operationId: binding.operationId, requester: binding.requester,
         origin: binding.origin, sessionGeneration: binding.sessionGeneration,
         sessionFingerprint: record.sessionFingerprint, claimOperationId: `${loaded.stored.key}#claim` });
@@ -56,7 +69,7 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       });
       if (approval === 'unavailable') return { kind: 'unavailable' };
       if (approval !== 'current') return { kind: 'invalid_grant' };
-      const target = await readHostedAccessTarget(active, binding.channelRef);
+      const target = await resolveTarget(binding.channelRef, binding.ownerId);
       if (target === 'unavailable') return { kind: 'unavailable' };
       if (target === null || target.ownerId !== binding.ownerId) return { kind: 'invalid_grant' };
       const consumed = await issuer.redeem({ grant: input.grant, operationId: binding.operationId,
@@ -80,6 +93,16 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         claimFingerprint: record.sessionFingerprint, approvedAt: new Date(active.clock()).toISOString(),
         expiresAt: live.authorization.deadline,
       } };
+    },
+    async reserveIssue(input) {
+      const inspected = await issuer.inspect(input.grant);
+      if (inspected.kind === 'unavailable') return 'unavailable';
+      if (inspected.kind !== 'found' || inspected.binding.operationId !== input.operationId) return 'stale';
+      const loaded = await exchanges.load(inspected.binding);
+      if (loaded.kind === 'unavailable') return 'unavailable';
+      if (loaded.kind !== 'found' || loaded.stored.record.phase !== 'sealed') return 'stale';
+      return reserveChannelAccessIssuance(active.store, inspected.binding, input.bindingId,
+        loaded.stored.record.expiresAt, active.clock());
     },
     async markIssued(input) {
       // Binding and Matrix device setup happen after redemption. Recheck the
@@ -106,7 +129,7 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       });
       if (approval === 'unavailable') return 'unavailable';
       if (approval !== 'current') return 'replayed';
-      const target = await readHostedAccessTarget(active, binding.channelRef);
+      const target = await resolveTarget(binding.channelRef, binding.ownerId);
       if (target === 'unavailable') return 'unavailable';
       if (target === null || target.ownerId !== binding.ownerId || !input.matrixSession
         || input.matrixSession.deviceId !== binding.deviceId || input.matrixSession.roomId !== target.roomId) return 'replayed';
