@@ -252,13 +252,15 @@ commands never load the local client.
 
 The Codex and OpenCode MCP entries that `khala setup` installs run a bare
 `mcp-serve` with no option, and the installed Codex hook runs a bare
-`codex-hook`. One entry serves every session of its harness, so each call acts
-only as the session that makes it, through that session's own `grant.json`:
+`codex-hook`. One entry serves every session of its harness. The caller's
+session label selects local state; bound actions still require that state to
+hold a current `grant.json`:
 
 - Outside Claude mode (`KHALA_MCP_HARNESS=claude`), a bare `mcp-serve` reads
-  the session from each `tools/call`. Codex sends its thread as
+  a local session label from each `tools/call`. Codex normally supplies
   `_meta.threadId`, the same ID it exports to the agent's commands as
-  `CODEX_THREAD_ID`, so pass that ID to `khala internal discovery --harness
+  `CODEX_THREAD_ID`, but raw JSON-RPC callers can forge this field. It is
+  never hosted session authentication. Pass that ID to `khala internal discovery --harness
   codex --session`. The call then runs against
   `$XDG_STATE_HOME/khala/internal/discovery/<principal>/grant.json`, the
   principal that discovery derived from the same harness and session.
@@ -488,6 +490,13 @@ visible to other local processes that can list arguments. It cannot connect
 anything without the owner's approval of the displayed session.
 
 ## Channel access requests
+
+For a first hosted channel URL request, the connector signs a candidate with
+its own proof key. The signed-in owner of the resolved channel approves that
+key before the separate discovery consent. The session ID is a caller-supplied
+local label; key approval applies to that owner's channels, not just the link
+used to find them. Hosted request, status, grant exchange, and admission routes
+remain unavailable until their trusted provider adapters and live proof pass.
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
