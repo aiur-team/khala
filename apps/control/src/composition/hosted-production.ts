@@ -33,7 +33,6 @@ export function registerHostedProductionRoutes(
   const runtime = createProductionHumanRuntimeLoader(options);
   const proofKeyAuthority = createHostedProofKeyAuthorityRoutes(options);
   const discovery = createHostedDiscoveryBootstrap(options);
-  let access!: ReturnType<typeof createHostedChannelAccessRoutes>;
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
     externalGrants: {
@@ -51,7 +50,7 @@ export function registerHostedProductionRoutes(
       } catch { return 'deny'; }
     },
   });
-  access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
+  const access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
     hostedAuthority: active => createHostedChannelRequester(active, discovery.authorize),
     bindings: bootstrap.bindings,
   });
