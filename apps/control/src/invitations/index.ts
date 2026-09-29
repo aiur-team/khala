@@ -18,6 +18,7 @@ import { admitInvite } from './admit';
 import { inspectInvite } from './inspect';
 import { type Digests, createDigests, validateOrigin } from './internal';
 import type { AdmissionHistory, AdmissionPolicy } from './policy';
+import { personalLink } from './personal';
 import { revokeInvite, shareInvite } from './share';
 
 export type ShareInput = Readonly<{
@@ -96,6 +97,8 @@ export type AdmissionRuntime = AdmissionServiceOptions & Readonly<{ origin: stri
 
 export interface AdmissionService extends AdmissionPort {
   share(input: ShareInput, options?: CallOptions): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
+  /** Stable for one authenticated human and room; membership is rechecked on every call. */
+  personalLink(roomId: RoomId, options?: CallOptions): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
   revoke(
     input: Readonly<{ operationId: string; inviteRef: string }>,
     options?: CallOptions,
@@ -113,6 +116,7 @@ export function createAdmissionService(options: AdmissionServiceOptions): Admiss
   };
   return {
     share: (input, callOptions) => shareInvite(runtime, input, callOptions),
+    personalLink: (roomId, callOptions) => personalLink(runtime, roomId, callOptions),
     inspect: (inviteRef: string, callOptions?: CallOptions): Promise<InviteState> => inspectInvite(runtime, inviteRef, callOptions),
     admit: (
       input: Readonly<{ operationId: string; inviteRef: string; deviceId: DeviceId }>,

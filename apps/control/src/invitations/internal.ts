@@ -17,6 +17,8 @@ export type Digests = Readonly<{
   inviteKey(inviteRef: string): string;
   inviteRef(inviteRef: string): string;
   operation(operationId: string): string;
+  personal(ownerId: string, roomId: string, generation: number): string;
+  personalKey(ownerId: string, roomId: string): string;
   email(email: string): string;
 }>;
 
@@ -29,6 +31,8 @@ export function createDigests(secret: string | Uint8Array): Digests {
     inviteKey: inviteRef => `invitations.invite.${digest('invite-key', inviteRef)}`,
     inviteRef: inviteRef => digest('invite-reference', inviteRef),
     operation: operationId => digest('operation', operationId),
+    personal: (ownerId, roomId, generation) => `personal_${digest('personal-link', `${ownerId}\0${roomId}\0${generation}`)}`,
+    personalKey: (ownerId, roomId) => `invitations.personal.${digest('personal-pointer', `${ownerId}\0${roomId}`)}`,
     email: email => digest('named-email', email),
   };
 }
