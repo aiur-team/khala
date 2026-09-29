@@ -120,7 +120,8 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
   session_id: pending.sessionLabel })}">Review existing approval</a>` : '';
         const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Approve agent proof key</title></head><body>
 <h1>Approve this proof key?</h1>
-<p>Approving lets anyone holding the matching private key request discovery and access to this channel. It does not admit the agent, or allow reading or sending messages. Those steps need separate approval and proof.</p>
+<p>Approving recognizes this key for channels you own. Anyone holding its private key can ask you for discovery credentials that list your channels and request access or creation. This approval alone issues no credential, admits no device, and allows no message read or send.</p>
+<p>The channel link below identifies you as the current owner; this key approval is owner-wide, not limited to that one link.</p>
 <p>The named Codex or Claude session is a local label supplied by the requester. Khala cannot verify that provider thread exists.</p>
 <dl><dt>Channel link</dt><dd>${escapeHtml(pending.target)}</dd><dt>Proof key</dt><dd>${escapeHtml(pending.proofKeyThumbprint)}</dd>
 <dt>Harness label</dt><dd>${escapeHtml(pending.harnessLabel)}</dd><dt>Session label</dt><dd>${escapeHtml(pending.sessionLabel)}</dd>

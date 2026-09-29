@@ -89,7 +89,9 @@ returns 401 and an owner with no requests receives an empty 200 response.
 For stored requests, Control rechecks the recorded room owner and live Matrix
 membership before showing the row; unavailable or changed authority returns 503.
 The proof-key candidate and owner approval routes let the exact channel owner
-approve a signed connector key for discovery. A Codex thread ID or Claude
+approve a signed connector key for later discovery consent across that owner's
+channels. The link resolves the owner; it does not limit the approval to one
+channel. A Codex thread ID or Claude
 session ID is displayed only as a caller-supplied label. The owner can revoke
 an approval; discovery credentials are tied to that approval's revision.
 Channel-access request, decision, mute, exchange, readiness and resume still

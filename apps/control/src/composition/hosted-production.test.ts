@@ -136,7 +136,9 @@ describe('generated hosted production composition', () => {
     const ownerCookie = { cookie: `${SESSION_COOKIE}=${owner.token}` };
     const page = await route(new Request(approveUrl, { headers: ownerCookie }));
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('cannot verify that provider thread exists');
+    const consentText = await page.text();
+    expect(consentText).toContain('cannot verify that provider thread exists');
+    expect(consentText).toContain('owner-wide, not limited to that one link');
     const decide = (token: string) => route(new Request(`${origin}${PROOF_KEY_APPROVE_PATH}`, {
       method: 'POST', headers: { origin, cookie: `${SESSION_COOKIE}=${token}`, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ candidate: candidateId, csrf_token: csrfTokenFor(token), decision: 'approve' }),

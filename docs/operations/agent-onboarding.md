@@ -13,9 +13,10 @@ For a first hosted channel request, Khala treats a Codex thread ID or Claude
 session ID as a local label supplied by the caller. It does not prove the named
 provider session exists. The connector signs a candidate for the exact channel
 link with its own proof key. The resolved channel owner must approve that key
-before it can obtain discovery credentials. The approval page shows the key and
-explains that anyone holding it can request discovery and channel access; it
-does not admit a device or grant message read/send access.
+before it can seek discovery credentials. That key approval is bound to the
+owner, not just the link used to find them: a separate owner consent can let
+the key holder list that owner's channels and request access or creation.
+Neither approval admits a device or grants message read/send access.
 
 An owner can revoke the approved key from its approval page. A replacement
 requires a new signed candidate and another owner approval. Reusing the same
