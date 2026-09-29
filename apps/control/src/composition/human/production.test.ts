@@ -59,4 +59,25 @@ describe('createProductionHumanServiceLoader', () => {
     expect(services).toMatchObject({ auth: expect.any(Object), admission: expect.any(Object), messaging: expect.any(Object) });
     expect(await services!.auth.authenticateRequest(new Request('https://khala.aiur.team/api/human/me'))).toEqual({ kind: 'signed_out' });
   });
+
+  it('logs fixed auth and initialization stages without request or secret material', async () => {
+    const output: string[] = [];
+    const log = vi.spyOn(console, 'info').mockImplementation(value => { output.push(String(value)); });
+    try {
+      const load = createProductionHumanServiceLoader({ env, stores: () => emptyStore() });
+      const request = new Request('https://khala.aiur.team/api/human/me', {
+        headers: { cookie: '__Host-khala_session=private-cookie', 'x-nf-request-id': 'private-request-id' },
+      });
+      const services = await load(request);
+      expect(await services!.auth.authenticateRequest(request)).toEqual({ kind: 'signed_out' });
+      expect(output).toEqual(['{"component":"human","event":"authenticate","stage":"cookie_invalid"}']);
+
+      const broken = createProductionHumanServiceLoader({ env: {} });
+      await expect(broken(request)).rejects.toThrow('human runtime unavailable');
+      expect(output[1]).toBe('{"component":"human","event":"runtime","stage":"initialize_failed"}');
+      expect(output.join(' ')).not.toMatch(/private-cookie|private-request-id|oidc-secret|registration-secret/);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
