@@ -489,6 +489,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     };
     return {
       ports,
+      proofSigner: signer,
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
         if (closed || remoteDenied || deliveryStopped || !binding || !subscription || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
