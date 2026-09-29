@@ -6,6 +6,7 @@ import { createChannelAccessStore } from '@khala/messaging/channel-access/journa
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies } from './production';
 import { readHostedAccessTarget } from './hosted-channel-access-resolver';
+import { createHostedChannelRequester } from './hosted-channel-requester';
 
 /** Owner inbox reads the durable journal using the same OIDC session and Blobs
  * namespace as the rest of hosted control. No agent authority is inferred here. */
@@ -31,23 +32,36 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
         });
         const listed = await journal.listOwner({ ownerId: authentication.context.principal.ownerId });
         if (listed.kind !== 'found') return unavailable();
+        const requesterAuthority = createHostedChannelRequester(active).requesterAuthority;
         const requests = [];
         for (const item of listed.requests) {
           const context = await journal.readContext({ requestHandle: item.requestHandle });
           if (context.kind !== 'found' || context.context.ownerId !== authentication.context.principal.ownerId) return unavailable();
-          // Hosted create authority has not been composed. Never display a row
-          // as actionable unless its exact room is still owned by this owner.
+          // Hosted create authority has not been composed. The personal link's
+          // sponsor may be a joined human other than the room creator.
           if (context.context.detail.kind !== 'access') return unavailable();
           const ref = context.context.detail.authorizedChannelRef;
           const target = ref.startsWith('invitations.invite.') ? await readHostedAccessTarget(active, ref) : null;
           if (ref.startsWith('invitations.invite.') && (target === null || target === 'unavailable'
             || target.ownerId !== authentication.context.principal.ownerId)) return unavailable();
-          const room = decodeRoomId(target && target !== 'unavailable' ? target.roomId : ref);
-          if (!room.ok) return unavailable();
-          const authority = await active.matrix.inspectRoomAuthority(room.value);
-          if (authority !== authentication.context.principal.ownerId) return unavailable();
-          const membership = await active.matrix.inspectOwnerMembership(authority, room.value);
-          if (membership.kind !== 'joined') return unavailable();
+          if (ref.startsWith('invitations.invite.')) {
+            const held = context.context;
+            const current = await requesterAuthority.inspectContext({ v: 1,
+              principal: held.requester as never, origin: held.origin,
+              sessionGeneration: held.sessionGeneration, sessionFingerprint: held.sessionFingerprint,
+              harness: held.harness, displayLabel: held.requesterLabel, workspaceLabel: held.workspaceLabel,
+            }, authentication.context.principal.ownerId);
+            if (current === 'unavailable') return unavailable();
+            if (current === 'revoked') continue;
+          }
+          if (!ref.startsWith('invitations.invite.')) {
+            const room = decodeRoomId(ref);
+            if (!room.ok) return unavailable();
+            const authority = await active.matrix.inspectRoomAuthority(room.value);
+            if (authority !== authentication.context.principal.ownerId) return unavailable();
+            const membership = await active.matrix.inspectOwnerMembership(authority, room.value);
+            if (membership.kind !== 'joined') return unavailable();
+          }
           const decoded = decodeChannelAccessOwnerProjection(projectOwner(item));
           if (!decoded.ok) return unavailable();
           requests.push(decoded.value);

@@ -12,10 +12,11 @@ export type HostedAccessRequesterAuthority = Readonly<{
   checkContext(context: ChannelAccessRequesterContext): Promise<'current' | 'revoked' | 'unavailable'>;
 }>;
 
-export type HostedAccessTarget = Readonly<{ ownerId: OwnerId; roomId: RoomId; revision: string; key: string; inviteRefDigest: string }>;
+export type HostedAccessTarget = Readonly<{ ownerId: OwnerId; roomCreatorId: OwnerId; roomId: RoomId;
+  revision: string; key: string; inviteRefDigest: string }>;
 const REVISION_PREFIX = 'hosted-invite-v1:';
 
-/** Resolve only a durable, active invitation whose creator still owns the room. */
+/** Resolve a sponsor's live personal link; the room creator may be another human. */
 export async function readHostedAccessTarget(active: ProductionHumanRuntime, key: string): Promise<HostedAccessTarget | null | 'unavailable'> {
   if (!/^invitations\.invite\.[A-Za-z0-9_-]{43}$/u.test(key)) return null;
   const read = await active.store.read<JsonValue>(key);
@@ -28,11 +29,10 @@ export async function readHostedAccessTarget(active: ProductionHumanRuntime, key
   if (!room.ok) return null;
   const roomOwner = await active.matrix.inspectRoomAuthority(room.value);
   if (roomOwner === null) return 'unavailable';
-  if (roomOwner !== invite.creatorOwnerId) return null;
   const membership = await active.matrix.inspectOwnerMembership(invite.creatorOwnerId, room.value);
   if (membership.kind === 'unavailable') return 'unavailable';
   if (membership.kind !== 'joined') return null;
-  return { ownerId: invite.creatorOwnerId, roomId: room.value, key,
+  return { ownerId: invite.creatorOwnerId, roomCreatorId: roomOwner, roomId: room.value, key,
     revision: read.record.revision, inviteRefDigest: invite.inviteRefDigest };
 }
 

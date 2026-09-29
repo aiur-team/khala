@@ -53,7 +53,7 @@ describe('hosted channel-access resolver', () => {
     expect(await resolver.revalidateAccess({ ownerId: ownerId as never, channelRef: resolved.channelRef,
       targetRevision: resolved.targetRevision, requester: context })).toEqual({ kind: 'revoked' });
     approved = true;
-    roomOwner = 'owner_2';
+    roomOwner = null as never;
     expect(await resolver.resolveAccess(input, requester)).toEqual({ kind: 'unavailable' });
     roomOwner = ownerId;
     status = 'revoked';

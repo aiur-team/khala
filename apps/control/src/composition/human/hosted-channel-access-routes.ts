@@ -20,7 +20,12 @@ import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority 
  * a channel locator, never agent or connector authentication.
  */
 export type HostedChannelAccessPorts = Readonly<{
-  authenticateAgent: ChannelAccessHandlerDependencies['authenticateAgent'];
+  authenticateAgent?: ChannelAccessHandlerDependencies['authenticateAgent'];
+  /** Creates request-scoped signed discovery authority and its durable recheck port. */
+  hostedAuthority?: (runtime: ProductionHumanRuntime) => Readonly<{
+    authenticateAgent: ChannelAccessHandlerDependencies['authenticateAgent'];
+    requesterAuthority: HostedAccessRequesterAuthority;
+  }>;
   requesterAuthority?: HostedAccessRequesterAuthority;
   /** Controlled test override; production supplies the current requester authority. */
   resolver?(runtime: ProductionHumanRuntime): ChannelAccessResolutionPort;
@@ -53,14 +58,18 @@ export function createHostedChannelAccessRoutes(
       .update(active.env.invitationHmacSecret).digest();
     const policy = createChannelAccessPolicy({ key });
     const journal = createChannelAccessStore({ store: active.store, policy, clock: active.clock });
-    const resolver = ports.resolver?.(active) ?? (ports.requesterAuthority
-      ? createHostedChannelAccessResolver(active, ports.requesterAuthority) : null);
+    const hostedAuthority = ports.hostedAuthority?.(active);
+    const authenticateAgent = hostedAuthority?.authenticateAgent ?? ports.authenticateAgent;
+    const requesterAuthority = hostedAuthority?.requesterAuthority ?? ports.requesterAuthority;
+    if (!authenticateAgent) throw new Error('agent authentication unavailable');
+    const resolver = ports.resolver?.(active) ?? (requesterAuthority
+      ? createHostedChannelAccessResolver(active, requesterAuthority) : null);
     if (resolver === null) throw new Error('requester authority unavailable');
     const service = createChannelAccessService({ store: journal, resolver, policy });
     const handlers = createChannelAccessHandlers({
       service, auth: active.auth,
       async authenticateAgent(request) {
-        const result = await ports.authenticateAgent(request);
+        const result = await authenticateAgent(request);
         if (result.kind === 'authenticated'
           && (result.requester.origin !== active.env.publicAppOrigin
             || result.context.origin !== active.env.publicAppOrigin)) {
@@ -104,6 +113,7 @@ export function createHostedChannelAccessRoutes(
     lazy('/api/agent/channel-access/status', ['GET'], value => value.handlers.agent),
   ];
   const human = [
+    lazy('/api/human/channel-access/inbox', ['GET'], value => value.handlers.human),
     lazy('/api/human/channel-access/decision', ['POST'], value => value.handlers.human),
     lazy('/api/human/channel-access/mute', ['POST'], value => value.handlers.human),
   ];

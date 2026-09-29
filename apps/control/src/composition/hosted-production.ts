@@ -3,10 +3,13 @@ import { registerClosureHandlers } from '../channel-closure/production';
 import { createInviteEvidenceReader } from './agent/invite-evidence';
 import { createProductionBootstrapRoutes, type ProductionBootstrapDependencies } from './agent/production-bootstrap';
 import { registerAgentHandlers } from './agent/handlers';
-import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
+import { registerHumanHandlers } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
 import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
 import { createHostedChannelAccessRoutes, type HostedChannelAccessPorts } from './human/hosted-channel-access-routes';
+import { createHostedChannelRequester } from './human/hosted-channel-requester';
+import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
+import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'> & Readonly<{
   /** Supplied only after the exact native-session authority is available. */
@@ -28,6 +31,8 @@ export function registerHostedProductionRoutes(
     return Object.freeze([...registerHumanHandlers(), ...registerClosureHandlers(), ...registerAgentHandlers()]);
   }
   const runtime = createProductionHumanRuntimeLoader(options);
+  const proofKeyAuthority = createHostedProofKeyAuthorityRoutes(options);
+  const discovery = createHostedDiscoveryBootstrap(options);
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
     admissionPolicy: async ({ principal, inviteRef, session }) => {
@@ -41,22 +46,28 @@ export function registerHostedProductionRoutes(
       } catch { return 'deny'; }
     },
   });
-  const access = options.channelAccess ? createHostedChannelAccessRoutes(options, options.channelAccess) : null;
+  const access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
+    hostedAuthority: active => createHostedChannelRequester(active, discovery.authorize),
+  });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
-      channelAccess: () => [createHostedChannelAccessInbox(options), ...(access?.human ?? unavailableChannelAccessRoutes.slice(1))],
+      channelAccess: () => options.channelAccess ? access.human
+        : [createHostedChannelAccessInbox(options), ...access.human.slice(1)],
+      channelDiscoveryBootstrap: () => discovery.human,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),
+    ...proofKeyAuthority,
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
-      ...(access ? { channelAccess: () => access.agent } : {}),
-      ...(access?.exchange.length ? { channelAccessExchange: () => access.exchange } : {}),
+      channelAccess: () => access.agent,
+      ...(access.exchange.length ? { channelAccessExchange: () => access.exchange } : {}),
       deviceAttestation: () => bootstrap.deviceAttestation,
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
       revocationCleanup: () => bootstrap.revocationCleanup,
       roomSend: () => bootstrap.roomSend.agent,
+      channelDiscoveryBootstrap: () => discovery.agent,
     }),
   ]);
 }
