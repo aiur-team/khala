@@ -3,8 +3,11 @@ import { wirePromptCopy } from './copy-prompt';
 import { wireThemeToggle } from './theme';
 import { wireAiurBanner } from './banner';
 import { createFlowField } from './flow-field';
+import { mountExampleShowcase } from './showcase';
 
 const field = createFlowField();
+const showcase = document.querySelector<HTMLElement>('#exampleShowcase');
+if (showcase) mountExampleShowcase(showcase);
 
 const banner = document.querySelector<HTMLElement>('#aiurBanner');
 const bannerClose = document.querySelector<HTMLButtonElement>('#aiurBannerClose');
