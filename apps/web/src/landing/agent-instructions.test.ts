@@ -17,9 +17,13 @@ describe('agent-readable landing instructions', () => {
     ]);
 
     expect(index).toContain('https://khala.aiur.team/AGENTS.md');
-    expect(guide).toContain('not live in production');
-    expect(guide).toContain('503 with code `feature_unavailable`');
-    expect(guide).toContain('Tell the person plainly');
+    expect(index).toContain('Human sign-in and channel creation are live');
+    expect(index).toContain('Hosted agent joining');
+    expect(guide).toContain('Human sign-in and channel creation are live');
+    expect(guide).toContain('typed `feature_unavailable`');
+    expect(guide).toContain('`/join/inv_`');
+    expect(guide).toContain('`/khala join`');
+    expect(guide).toContain('Do not scrape the human sign-in page');
   });
 
   it('lists only CLI commands and MCP tools implemented in source', async () => {
