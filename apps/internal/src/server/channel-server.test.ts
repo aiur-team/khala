@@ -349,6 +349,21 @@ describe('credential authentication', () => {
 });
 
 describe('versioned channel API', () => {
+  it('lists every joined local channel for the human and refuses agent access', async () => {
+    const h = await start();
+    const session = await humanSession(h);
+    const path = '/api/v1/channels';
+    const before = await call(h.server.port, { path, headers: session });
+    expect(before.status).toBe(200);
+    expect(before.json.channels.map((item: { channelId: string }) => item.channelId)).toContain(channelId);
+    const created = await call(h.server.port, { method: 'POST', path, headers: session, body: { operationId: 'list-new', title: 'Second' } });
+    expect(created.status).toBe(201);
+    const after = await call(h.server.port, { path, headers: session });
+    expect(after.json.channels.map((item: { channelId: string }) => item.channelId)).toEqual(expect.arrayContaining([channelId, created.json.channel.channelId]));
+    expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(403);
+    expect((await call(h.server.port, { path })).status).toBe(401);
+  });
+
   it('lets only the human create channels with server-derived attribution and exact replay', async () => {
     const h = await start();
     const session = await humanSession(h);

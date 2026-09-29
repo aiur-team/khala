@@ -5,4 +5,4 @@ export {
   createHttpRoomSubstrate, isLoopbackOrigin, DEFAULT_RECONNECT_DELAYS_MS,
   type HttpRoomSubstrate, type HttpRoomSubstrateOptions, type LocalTransport, type LocalTransportState, type ReceiptEvidenceReply, type SessionRead,
 } from './substrate';
-export { API, REQUEST_SECRET_HEADER, REQUEST_SECRET_STORAGE_KEY, type LocalHuman } from './protocol';
+export { API, REQUEST_SECRET_HEADER, REQUEST_SECRET_STORAGE_KEY, decodeChannels, type LocalHuman } from './protocol';

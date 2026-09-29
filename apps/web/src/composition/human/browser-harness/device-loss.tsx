@@ -23,10 +23,12 @@ const hostedHarness = new URLSearchParams(location.search).has('hosted');
 let signedOut = false;
 let signOutCount = 0;
 let stopCount = 0;
+let releaseIdentity: (() => void) | null = null;
+let holdIdentity: Promise<void> | null = null;
 const listeners = new Set<(view: DeviceView) => void>();
 const view = (): DeviceView => ({ deviceId: `device_${principal.ownerId}` as never, state, generation: 1, reason });
 const identity: IdentityPort = {
-  async current() { return signedOut ? { kind: 'signed_out' } : { kind: 'signed_in', principal }; },
+  async current() { if (holdIdentity) { await holdIdentity; holdIdentity = null; } return signedOut ? { kind: 'signed_out' } : { kind: 'signed_in', principal }; },
   async beginSignIn() { return { kind: 'rejected', code: 'invalid_return_path' }; },
   async signOut() {
     signOutCount += 1;
@@ -43,11 +45,18 @@ const device: DevicePort = {
   async stop() { stopCount += 1; },
 };
 const routes = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
-const application = createHumanApplication({ identity, device, room: {} as never, admission: {} as never,
+const conversations = {
+  snapshot: () => [
+    { id: 'room_1', title: 'First channel', preview: 'First message', timestamp: null, unreadCount: null },
+    { id: 'room_2', title: 'Second channel', preview: 'Second message', timestamp: null, unreadCount: null },
+  ],
+  subscribe: () => () => undefined,
+};
+const application = createHumanApplication({ identity, device, room: {} as never, admission: {} as never, conversations,
   limits: {} as never }, { initialPath: '/channels/room_1' });
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
-    renderRoom={context => <p data-testid="live-room">Channel for {context.principal.ownerId}</p>}
+    renderRoom={(context, route) => <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}
     createChannelAccess={() => {
       inboxCount += 1;
       return createChannelAccessInboxController({ requests: createFakeJournal().port });
@@ -63,6 +72,9 @@ declare global { interface Window {
     inboxCount(): number;
     signOutCount(): number;
     stopCount(): number;
+    holdNavigation(): void;
+    releaseNavigation(): void;
+    navigate(path: string): void;
   };
 } }
 window.__lossHarness = {
@@ -83,4 +95,7 @@ window.__lossHarness = {
   inboxCount: () => inboxCount,
   signOutCount: () => signOutCount,
   stopCount: () => stopCount,
+  holdNavigation() { holdIdentity = new Promise(resolve => { releaseIdentity = resolve; }); },
+  releaseNavigation() { releaseIdentity?.(); releaseIdentity = null; },
+  navigate(path) { application.navigate(path); },
 };

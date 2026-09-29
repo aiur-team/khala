@@ -116,7 +116,7 @@ test('packaged local quickstart connects two exact sessions with owner approval'
       return route.abort();
     });
     await page.goto(report.url);
-    await page.getByRole('heading', { name: 'Local channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Channel', level: 1 }).waitFor();
 
     async function discover(harness, session, label) {
       const result = success(await command(bin, env, ['internal', 'discovery', '--harness', harness, '--session', session, '--label', label]));
@@ -141,6 +141,8 @@ test('packaged local quickstart connects two exact sessions with owner approval'
       assert.equal(refusalCode(refusedRead), 'not_connected');
     }
     for (const name of ['Ada', 'Bea']) {
+      await page.goto(channelUrl);
+      await page.getByRole('button', { name: 'Channel settings' }).click();
       await page.getByRole('link', { name: /Channel requests/ }).click();
       const row = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: name });
       await row.getByRole('button', { name: 'Review request' }).click();

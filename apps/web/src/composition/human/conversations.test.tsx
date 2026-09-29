@@ -20,7 +20,7 @@ describe('conversation index presentation', () => {
     expect(html).toContain('Older');
     expect(html).not.toContain('Newer');
     expect(html).not.toContain('Empty');
-    expect(html).toContain('Search conversations');
+    expect(html).toContain('Search channels');
   });
 
   test('does not call encrypted activity an empty conversation', () => {

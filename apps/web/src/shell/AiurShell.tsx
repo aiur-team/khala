@@ -1,17 +1,19 @@
 import type { AiurShellProps } from './types';
 import aiurLogo from '../landing/public/assets/aiur-logo.png';
+import { ThemeIcon } from './icons';
 
-export function AiurShell({ mode, brandHref = '/new', navigation, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
+export function AiurShell({ mode, brandHref = '/new', navigation, sidebar, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
   if (mode === 'hosted-content') {
     return (
-      <div className="khala-content-root" data-theme={theme.theme}>
-        {children}
+      <div className={`khala-content-root${sidebar ? ' khala-content-root--channels' : ''}`} data-theme={theme.theme}>
+        {sidebar ? <aside className="khala-content-sidebar" aria-label="Channels">{sidebar}</aside> : null}
+        <div className="khala-content-main">{children}</div>
       </div>
     );
   }
 
   return (
-    <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}`} data-theme={theme.theme}>
+    <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}${sidebar ? ' aiur-shell--channels' : ''}`} data-theme={theme.theme}>
       <header className="aiur-shell__topbar">
         <a className="aiur-shell__brand" href={brandHref}>
           <img src={aiurLogo} alt="" width="1215" height="1068" />
@@ -25,20 +27,13 @@ export function AiurShell({ mode, brandHref = '/new', navigation, actions, theme
             title="Toggle color theme"
             onClick={() => theme.onThemeChange(theme.theme === 'dark' ? 'light' : 'dark')}
           >
-            <span className="aiur-shell__theme-icon" aria-hidden="true">
-              <svg className="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-              </svg>
-              <svg className="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-              </svg>
-            </span>
+            <ThemeIcon />
           </button>
           {actions}
         </div>
       </header>
       <nav className="aiur-shell__nav" aria-label="Main navigation">
+        {sidebar}
         <button
           type="button"
           className="aiur-shell__nav-toggle aiur-shell__icon-button"
