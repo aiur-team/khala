@@ -455,7 +455,8 @@ async function activate(
   }
 
   const activation = await guard(
-    () => ports.devices.activate({ deviceId: record.deviceId!, binding, capability, operationId: record.operationId }),
+    () => ports.devices.activate({ deviceId: record.deviceId!, binding, capability, operationId: record.operationId,
+      ...(redeemed.matrixSession ? { matrixSession: redeemed.matrixSession } : {}) }),
     { kind: 'unavailable' } as const,
   );
   if (activation.kind === 'unavailable') return wait(unavailable());

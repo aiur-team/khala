@@ -491,8 +491,10 @@ For a first hosted channel URL request, the connector signs a candidate with
 its own proof key. The signed-in owner of the resolved channel approves that
 key before the separate discovery consent. The session ID is a caller-supplied
 local label; key approval applies to that owner's channels, not just the link
-used to find them. Hosted request, status, grant exchange, and admission routes
-remain unavailable until their trusted provider adapters and live proof pass.
+used to find them. The hosted native client can call request, status, exchange,
+redeem, resume, and ready with the approved proof key. A deployed, owner-approved
+Codex and Claude read/send proof is still required before calling the route
+production proven.
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
@@ -512,8 +514,12 @@ to file the separate access request. Nothing here grants access.
 operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 `expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
-`connected`, `repair_required`); `connected` appears only after the connector
-has activated the grant. Output is decoded with the closed
+`connected`, `repair_required`); the hosted native client attempts exchange,
+one-time redemption, Matrix device activation, and ready before reporting
+`connected`. This is scoped to the exact Codex or Claude MCP session; shell
+`khala connect` has no provider session to authenticate a hosted request.
+Production native read and send remain unproven until an owner-approved live
+session exercises both. Output is decoded with the closed
 `decodeAccessRequestStatus` decoder, so any extra field is reported as
 `unavailable` and not printed.
 

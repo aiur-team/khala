@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -11,6 +11,7 @@ import {
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { createMatrixBootstrapDevice } from '../substrate/bootstrap-device';
@@ -117,6 +118,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   const sessionDirectory = productionSessionDirectory(input.stateDirectory, input.session);
   const stateDirectory = path.join(sessionDirectory, 'state');
   const markerFile = path.join(sessionDirectory, 'current-binding.json');
+  const admissionFile = (operationId: string) => path.join(sessionDirectory,
+    `channel-access-${createHash('sha256').update(operationId).digest('hex')}.json`);
   await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
   let mode: 'create' | 'existing';
   try { mode = (await stat(stateDirectory)).isDirectory() ? 'existing' : 'create'; }
@@ -302,7 +305,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         return activeTrust.ensure();
       },
     });
-    if (next.harness === 'codex') {
+    if (input.session.harness === 'codex') {
       harness = createHostedCodexHarness({ binding: next, claim: input.session,
         sessionInspection: sessionInspector,
         current: async () => {
@@ -367,7 +370,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     }
     const decoded = decodeSessionBinding(value);
     if (!decoded.ok) throw new Error('production_binding_corrupt');
-    if (decoded.value.harness !== input.session.harness || decoded.value.sessionId !== input.session.sessionId) {
+    const providerSession = decoded.value.harness === input.session.harness
+      && decoded.value.sessionId === input.session.sessionId;
+    const approvedProofKey = decoded.value.harness === 'proof-key'
+      && signer !== null && decoded.value.sessionId === `agent_${signer.jkt}`;
+    if (!providerSession && !approvedProofKey) {
       throw new Error('production_binding_session_changed');
     }
     const local = await storage.ledger.transaction(tx => tx.readBinding(decoded.value.bindingId));
@@ -471,6 +478,48 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     return {
       ports,
       proofSigner: signer,
+      channelAccess: {
+        journal: createChannelAccessActivationStore(storage),
+        devices: ports.devices,
+        async admitted(operationId: string, value: Readonly<{ binding: SessionBinding; matrixSession: MatrixDeviceSession }>) {
+          if (!/^[A-Za-z0-9_-]{8,64}$/.test(operationId) || closed || remoteDenied
+            || !signer || value.binding.harness !== 'proof-key'
+            || value.binding.sessionId !== `agent_${signer.jkt}`
+            || value.binding.deviceId !== value.matrixSession.deviceId) throw new Error('channel_access_admission_invalid');
+          const file = admissionFile(operationId);
+          const temporary = `${file}.${randomUUID()}.tmp`;
+          try {
+            const handle = await open(temporary, 'wx', 0o600);
+            try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); } finally { await handle.close(); }
+            try { await link(temporary, file); } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+              const previous: unknown = JSON.parse(await readFile(file, 'utf8'));
+              if (JSON.stringify(previous) !== JSON.stringify(value)) throw new Error('channel_access_admission_conflict');
+            }
+            const directory = await open(sessionDirectory, 'r');
+            try { await directory.sync(); } finally { await directory.close(); }
+          } finally { await rm(temporary, { force: true }); }
+        },
+        async recovered(operationId: string) {
+          if (!/^[A-Za-z0-9_-]{8,64}$/.test(operationId) || closed || remoteDenied) return null;
+          let value: unknown;
+          try { value = JSON.parse(await readFile(admissionFile(operationId), 'utf8')); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+          if (!value || typeof value !== 'object' || !('binding' in value) || !('matrixSession' in value)) return null;
+          const record = value as { binding: unknown; matrixSession: MatrixDeviceSession };
+          const decoded = decodeSessionBinding(record.binding);
+          if (!decoded.ok || !signer || decoded.value.harness !== 'proof-key'
+            || decoded.value.sessionId !== `agent_${signer.jkt}`
+            || decoded.value.deviceId !== record.matrixSession?.deviceId) return null;
+          return { binding: decoded.value, matrixSession: record.matrixSession };
+        },
+        trust: { async initialize(next: SessionBinding) {
+          if (closed || remoteDenied || !binding || !sameSessionBinding(binding, next)) return { kind: 'failed' as const };
+          const state = await trust.read(next.bindingId);
+          if (!state || state.generation !== next.generation || !state.effective) return { kind: 'unavailable' as const };
+          return { kind: 'initialized' as const, mode: state.effective.mode, paused: state.effective.paused };
+        } },
+      },
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
         if (closed || remoteDenied || deliveryStopped || !binding || !subscription || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };

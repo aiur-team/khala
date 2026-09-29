@@ -112,6 +112,7 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
   return {
     async requestChannelAccess(input, signal) {
       const named = input.target.kind === 'channel_url' ? originOf(input.target.channelUrl) : null;
+      if (input.target.kind === 'channel_url' && !isAgentChannelUrl(input.target.channelUrl)) return refused('invalid_request');
       // A channel URL names its own service; a conflicting `--origin` is refused, not followed.
       if (input.target.kind === 'channel_url' && (named === null || (input.origin !== null && input.origin !== named))) {
         return refused('untrusted_origin');
@@ -172,6 +173,10 @@ const STATUS_REFUSALS: ReadonlyMap<number, AccessRefusalCode> = new Map([
 
 function originOf(url: string): string | null {
   try { return new URL(url).origin; } catch { return null; }
+}
+
+function isAgentChannelUrl(value: string): boolean {
+  try { return /^\/channels\/[^/]+$/.test(new URL(value).pathname); } catch { return false; }
 }
 
 function refused(code: AccessRefusalCode): ChannelAccessResult {

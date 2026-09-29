@@ -11,7 +11,7 @@ export type ProofSigner = Readonly<{
   /** The raw 32-byte Ed25519 public key (`x`), unpadded base64url. Never secret. */
   publicKey: string;
   /** A fresh single-use proof for exactly this method and URL. */
-  proof(method: string, url: string, accessToken?: string, extra?: Readonly<{ nonce: string; bodyHash: string }>): string;
+  proof(method: string, url: string, accessToken?: string, extra?: Readonly<{ nonce?: string; bodyHash: string }>): string;
 }>;
 
 type PublicJwk = Readonly<{ kty: 'OKP'; crv: 'Ed25519'; x: string }>;
@@ -36,7 +36,7 @@ export function createProofSigner(privateKey: KeyObject, clock: () => number = D
       };
       if (accessToken !== undefined) claims.ath = createHash('sha256').update(accessToken).digest('base64url');
       if (extra) {
-        claims.nonce = extra.nonce;
+        if (extra.nonce !== undefined) claims.nonce = extra.nonce;
         claims.body_hash = extra.bodyHash;
       }
       const input = `${header}.${encode(claims)}`;

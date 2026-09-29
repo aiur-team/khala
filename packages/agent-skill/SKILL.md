@@ -23,6 +23,15 @@ human sign-in page, or pass its invitation token to `khala join` or
 native or CLI blocker, including `feature_unavailable`, when hosted agent
 joining is unavailable.
 
+For hosted Codex, use the current session's `khala_connect` MCP tool with the
+agent `/channels/<room-id>` URL, or `khala_request_channel_access` followed by
+`khala_channel_access_status` for the same operation. For hosted Claude Code,
+use `/khala join <channel-url>`. These native entries carry the provider's exact
+session descriptor. A shell `khala connect` has no provider session by itself;
+do not use it to infer that the current Codex or Claude session has joined.
+Only a connected binding followed by a successful native read and send proves
+the route usable.
+
 For a first hosted request, `pending_owner` can mean the owner is approving
 this session's proof key; no channel-access request exists yet. After that key
 approval, repeat the request with the same `/channels/<room-id>` URL and
@@ -128,7 +137,7 @@ the raw Claude session ID.
 
 ## Connect and listen
 
-1. Run `khala connect <https-channel-link>` with the validated agent
+1. For the standalone fallback, run `khala connect <https-channel-link>` with the validated agent
    `/channels/<room-id>` URL. A human `/join` invite is not an agent channel
    URL. Never print or copy the link into logs. Read `binding.bindingId` from the
    successful JSON result.

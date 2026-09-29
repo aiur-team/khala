@@ -3,19 +3,23 @@
 // bounded JSON read. The sealed envelope passes through unopened; activation
 // decodes it again. Response bodies and transport errors are never logged.
 
+import { createHash } from 'node:crypto';
 import {
   type AccessRequestOutcome,
   type DiscoveryCredential,
   type GrantExchangeRejection,
   decodeAccessRequestStatus,
 } from '@khala/contracts/messaging/index';
-import type { ChannelAccessExchangeClient, ChannelAccessStatusPort, ExchangeOutcome } from './channel-access-activation';
+import type { ChannelAccessExchangeClient, ChannelAccessRedeemPort, ChannelAccessStatusPort, ExchangeOutcome } from './channel-access-activation';
 import { isAcceptableOrigin, readBounded } from './discovery';
 import type { ProofSigner } from './proof';
+import { createHttpAdmission, parseChannelAccessAdmission } from './loopback';
+import type { OwnershipGrant } from './ports';
 
 export const CHANNEL_ACCESS_EXCHANGE_PATH = '/api/agent/channel-access/exchange';
 export const CHANNEL_ACCESS_READY_PATH = '/api/agent/channel-access/ready';
 export const CHANNEL_ACCESS_STATUS_PATH = '/api/agent/channel-access/status';
+export const CHANNEL_ACCESS_RESUME_PATH = '/api/agent/channel-access/resume';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 32_768;
@@ -28,6 +32,8 @@ export type ChannelAccessHttpOptions = Readonly<{
   signer: ProofSigner;
   /** Exact configured service origins. The journaled origin must be one of them. */
   trustedOrigins: readonly string[];
+  /** The live owner-approved discovery credential; never persisted by this client. */
+  credential(): DiscoveryCredential | null;
   fetch?: typeof fetch;
 }>;
 
@@ -47,7 +53,7 @@ export function createHttpChannelAccessClient(options: ChannelAccessHttpOptions)
     async exchange(request): Promise<ExchangeOutcome> {
       const target = url(request.origin, CHANNEL_ACCESS_EXCHANGE_PATH, request.operationId);
       if (target === null) return { kind: 'rejected', code: 'wrong_origin' };
-      const reply = await send(transport, 'POST', target, request.origin, { dpop: options.signer.proof('POST', target) }, request);
+      const reply = await protectedPost(options, transport, target, request.origin, request);
       // A lost response is retried; the service returns the same stored envelope.
       if (reply.kind === 'failed') return { kind: 'unavailable' };
       if (reply.status === 200 && reply.body !== null) return { kind: 'sealed', envelope: reply.body };
@@ -58,7 +64,7 @@ export function createHttpChannelAccessClient(options: ChannelAccessHttpOptions)
     async acknowledge(readiness) {
       const target = url(readiness.origin, CHANNEL_ACCESS_READY_PATH, readiness.operationId);
       if (target === null) return 'rejected';
-      const reply = await send(transport, 'POST', target, readiness.origin, { dpop: options.signer.proof('POST', target) }, readiness);
+      const reply = await protectedPost(options, transport, target, readiness.origin, readiness);
       if (reply.kind === 'failed') return 'unavailable';
       if (reply.status === 200 && isExact(reply.body, { v: 1, kind: 'acknowledged' })) return 'acknowledged';
       const code = rejectionCode(reply);
@@ -66,6 +72,60 @@ export function createHttpChannelAccessClient(options: ChannelAccessHttpOptions)
       return code === null ? 'unavailable' : 'rejected';
     },
   });
+}
+
+/** Redeems the sealed grant once, then resumes the same admitted binding by operation ID. */
+export function createHttpChannelAccessRedeem(options: ChannelAccessHttpOptions): ChannelAccessRedeemPort {
+  const trusted = trustedSet(options.trustedOrigins);
+  const transport = options.fetch ?? fetch;
+  return {
+    async redeem(input) {
+      const credential = options.credential();
+      if (!trusted.has(input.origin) || !credentialMatches(credential, input.origin, options.signer)) return { kind: 'unavailable' };
+      const grant: OwnershipGrant = {
+        method: 'loopback-browser-v1', expiresAt: Number.MAX_SAFE_INTEGER,
+        secret: input.grant,
+        redeem: `${input.origin}/api/agent/bootstrap/redeem`,
+        deviceId: input.deviceId,
+        session: { harness: 'proof-key', sessionId: credential.requester.principal,
+          generation: credential.requester.sessionGeneration },
+      } as OwnershipGrant;
+      return createHttpAdmission({ signer: options.signer, fetch: transport }).redeem({ grant, operationId: input.operationId });
+    },
+    async resume(input) {
+      if (!trusted.has(input.origin)) return { kind: 'unavailable' };
+      const target = `${input.origin}${CHANNEL_ACCESS_RESUME_PATH}?${new URLSearchParams({ operation: input.operationId })}`;
+      const credential = options.credential();
+      if (!credentialMatches(credential, input.origin, options.signer)) return { kind: 'unavailable' };
+      const reply = await protectedPost(options, transport, target, input.origin, {
+        v: 1, operationId: input.operationId, requester: credential.requester.principal,
+        origin: input.origin, sessionGeneration: credential.requester.sessionGeneration,
+        deviceId: input.deviceId, bindingId: input.bindingId, proofKeyThumbprint: options.signer.jkt,
+      });
+      if (reply.kind === 'failed') return { kind: 'outcome_unknown' };
+      if (reply.status === 409) return { kind: 'refused', code: 'binding_conflict' };
+      if (reply.status === 410) return { kind: 'refused', code: 'binding_revoked' };
+      if (reply.status !== 200) return reply.status >= 500 ? { kind: 'unavailable' } : { kind: 'refused', code: 'admission_denied' };
+      // Use the same strict capability and Matrix-session parser as bootstrap redeem.
+      return parseChannelAccessAdmission(reply.body);
+    },
+  };
+}
+
+function credentialMatches(credential: DiscoveryCredential | null, origin: string, signer: ProofSigner): credential is DiscoveryCredential {
+  return credential !== null && credential.requester.origin === origin
+    && credential.requester.proofKey.thumbprint === signer.jkt;
+}
+
+async function protectedPost(options: ChannelAccessHttpOptions, transport: typeof fetch, target: string, origin: string, body: unknown): Promise<Reply> {
+  const credential = options.credential();
+  if (!credentialMatches(credential, origin, options.signer)) return { kind: 'failed' };
+  const raw = JSON.stringify(body);
+  return send(transport, 'POST', target, origin, {
+    authorization: `DPoP ${credential.credentialRef}`,
+    dpop: options.signer.proof('POST', target, credential.credentialRef,
+      { bodyHash: createHash('sha256').update(raw).digest('base64url') }),
+  }, raw);
 }
 
 /**
@@ -133,7 +193,7 @@ async function send(
         ...(method === 'POST' ? { 'content-type': 'application/json', origin } : {}),
         ...headers,
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
       redirect: 'error',
       credentials: 'omit',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
