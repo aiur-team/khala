@@ -84,6 +84,22 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.locator('.timeline__row--pending', { hasText: 'a deliberate repeat' }).waitFor({ state: 'detached' });
     assert.equal(await page.locator('.timeline__row', { hasText: 'a deliberate repeat' }).count(), 2);
 
+    // Acknowledgment can precede sync. Two identical accepted sends must keep
+    // separate local rows until each exact event arrives, without a txn ID.
+    await composer.fill('__defer_sync repeated text');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__defer_sync repeated text' }).getByText('Sent').waitFor();
+    await composer.fill('__defer_sync repeated text');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 2);
+    await page.evaluate(() => (window as unknown as { __timelineHarness: { releaseNextSend: () => void } }).__timelineHarness.releaseNextSend());
+    await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 1);
+    assert.equal(await page.locator('.timeline__row', { hasText: '__defer_sync repeated text' }).count(), 2,
+      'the second accepted local echo survives the first identical event');
+    await page.evaluate(() => (window as unknown as { __timelineHarness: { releaseNextSend: () => void } }).__timelineHarness.releaseNextSend());
+    await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 0);
+    assert.equal(await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__defer_sync repeated text' }).count(), 2);
+
     // A draft is sent trimmed, but its acceptance is recognized against the
     // reader's untrimmed text too: trailing whitespace alone must not leave a
     // stale draft behind once that exact send has reconciled.

@@ -64,9 +64,10 @@ const room = {
     }
     if (original !== null && original !== clientTxnId) return { kind: 'rejected', code: 'operation_mismatch' };
     const sent = item(clientTxnId, content.body, 'c');
-    items.push(sent);
+    const deferSync = content.body.startsWith('__defer_sync');
+    if (!deferSync) items.push(sent);
     sessionStorage.setItem('khala.test.send.confirmed', JSON.stringify({ clientTxnId, body: content.body }));
-    for (const listener of roomListeners) listener(snapshot);
+    if (!deferSync) for (const listener of roomListeners) listener(snapshot);
     return { kind: 'ok', value: { clientTxnId, state: 'accepted', eventRef: sent.ref } };
   },
 } as unknown as RoomPort;

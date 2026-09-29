@@ -129,6 +129,20 @@ test('mounted human room keeps one confirmed message after reload', { timeout: 9
   });
 });
 
+test('mounted human room reconciles an acknowledged send after reload when sync omits its transaction', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__defer_sync acknowledged before reload');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__defer_sync acknowledged before reload' }).getByText('Sent').waitFor();
+    await page.waitForFunction(() => Object.keys(sessionStorage).some(key => key.startsWith('khala.pending-send.v2:')
+      && sessionStorage.getItem(key)?.includes('eventId')));
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__defer_sync acknowledged before reload' }).waitFor();
+    await page.locator('.timeline__row--pending', { hasText: '__defer_sync acknowledged before reload' }).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.timeline__row', { hasText: '__defer_sync acknowledged before reload' }).count(), 1);
+  });
+});
+
 test('replacement device cannot see or retry the prior device pending send', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
     await page.getByRole('textbox', { name: 'Message' }).fill('__reload_pending prior device');
