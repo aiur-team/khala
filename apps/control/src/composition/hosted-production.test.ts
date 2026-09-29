@@ -60,6 +60,21 @@ function gateway(mode?: string, appOrigin = origin) {
 }
 
 describe('generated hosted production composition', () => {
+  it('bounds anonymous proof-key challenges before allocating durable records', async () => {
+    const blobs = durableStores();
+    const now = Date.parse('2026-09-28T12:00:00Z');
+    const control = createControlStore({ records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
+      operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`), clock: () => now });
+    expect((await control.compareAndSet({ key: `channel-discovery:hosted-attempts:${Math.floor(now / 60_000)}`,
+      expectedRevision: null, operationId: 'exhaust-budget',
+      next: { value: 300, expiresAt: new Date(now + 120_000).toISOString() } })).kind).toBe('applied');
+    const route = createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor, clock: () => now,
+    }), absentPrefixes: [], appOrigin: origin });
+    const challenge = await route(new Request(`${origin}${PROOF_KEY_CHALLENGE_PATH}?jkt=${'A'.repeat(43)}`));
+    expect(challenge.status).toBe(429);
+    expect(await challenge.json()).toEqual({ kind: 'limited' });
+  });
   it('does not authenticate a claimed native thread without a discovery credential', async () => {
     const discovery = createHostedDiscoveryBootstrap({ env, stores });
     const request = new Request(`${origin}/api/agent/channel-access/request`, {

@@ -5,6 +5,7 @@ import { LOGIN_PATH } from '../auth/callback';
 import { createDigests } from '../invitations/internal';
 import { readInviteRecord } from '../invitations/policy';
 import { createNativeSessionAuthority, type NativeSessionAuthority } from '../channel-discovery/native-session-authority';
+import { reserveHostedDiscoveryAttempt } from './hosted-discovery-budget';
 import type { RouteRegistration } from '../runtime/handler';
 import { inviteFromShareLink } from './agent/production-bootstrap';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './human/production';
@@ -75,10 +76,13 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
       catch { return json(503, { kind: 'unavailable' }); }
     };
   return Object.freeze([
-    { path: PROOF_KEY_CHALLENGE_PATH, methods: ['GET'], handle: safe(async (request, _active, authority) => {
+    { path: PROOF_KEY_CHALLENGE_PATH, methods: ['GET'], handle: safe(async (request, active, authority) => {
       const url = new URL(request.url);
       const keys = [...url.searchParams.keys()];
       if (keys.length !== 1 || keys[0] !== 'jkt') return json(400, { kind: 'rejected' });
+      if (!ID.test(url.searchParams.get('jkt')!)) return json(400, { kind: 'rejected' });
+      const budget = await reserveHostedDiscoveryAttempt(active);
+      if (budget !== 'reserved') return json(budget === 'limited' ? 429 : 503, { kind: budget });
       const result = await authority.challenge(url.searchParams.get('jkt')!);
       return json(result.kind === 'issued' ? 200 : result.kind === 'rejected' ? 400 : 503, result);
     }) },
@@ -86,6 +90,8 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
       if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return json(400, { kind: 'rejected' });
       const body = candidateBody(await request.json().catch(() => null));
       if (!body) return json(400, { kind: 'rejected' });
+      const budget = await reserveHostedDiscoveryAttempt(active);
+      if (budget !== 'reserved') return json(budget === 'limited' ? 429 : 503, { kind: budget });
       const result = await authority.propose({ ...body, proof: request.headers.get('dpop') });
       if (!('candidateId' in result)) return json(result.kind === 'rejected' ? 403 : 503, result);
       return json(result.kind === 'approved' ? 200 : 202,
