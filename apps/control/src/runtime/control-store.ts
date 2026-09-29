@@ -36,6 +36,8 @@ export type ControlStoreDeps = Readonly<{
   records: BlobsStoreLike;
   operations: BlobsStoreLike;
   clock: TrustedClock;
+  /** A fixed category only; never expose keys or adapter errors. */
+  diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'other'; stage: 'record_corrupt' | 'read_error' }>) => void;
 }>;
 
 type StoredEnvelope = Readonly<{ operationId: string; value: JsonValue; expiresAt: string | null }>;
@@ -116,6 +118,11 @@ function sameLedgerEntry(data: unknown, key: string, digest: string): boolean {
 
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
+  const readDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error') => {
+    const scope = key.startsWith('auth.session.v1.') ? 'session'
+      : key.startsWith('invitations.invite.') ? 'invitation' : 'other';
+    try { deps.diagnostic?.({ scope, stage }); } catch { /* Diagnostics never change store outcomes. */ }
+  };
 
   async function readLive<T extends JsonValue>(key: string): Promise<{
     raw: { data: unknown; etag?: string } | null;
@@ -191,9 +198,10 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       try {
         const { live, corrupt } = await readLive<T>(key);
         if (live) return { kind: 'record', record: live };
-        if (corrupt) return { kind: 'unavailable' };
+        if (corrupt) { readDiagnostic(key, 'record_corrupt'); return { kind: 'unavailable' }; }
         return { kind: 'absent' };
       } catch {
+        readDiagnostic(key, 'read_error');
         return { kind: 'unavailable' };
       }
     },

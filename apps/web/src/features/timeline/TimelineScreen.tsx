@@ -16,6 +16,7 @@ import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
+import { ChatComposer, ChatMessage } from '../../ui/conversation';
 
 export interface TimelineScreenProps {
   controller: TimelineController;
@@ -34,6 +35,9 @@ export interface TimelineScreenProps {
   pendingStore?: PendingSendStore;
   /** The owner's durable receipt evidence for this channel; absent means none is shown. */
   evidence?: ReceiptEvidenceController;
+  composerPlaceholder?: string;
+  /** The room index has encrypted activity that this device cannot preview. */
+  unreadableActivity?: boolean;
 }
 
 /** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
@@ -123,6 +127,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  composerPlaceholder = 'Write a message', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(
@@ -233,7 +238,11 @@ export function TimelineScreen({
     if (!body || !canCompose || sendBlocked) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
-    setPendingList(list => [...list, { clientTxnId, content, phase: 'pending' }]);
+    const next = [...pendingList, { clientTxnId, content, phase: 'pending' as const }];
+    // Persist before starting Matrix I/O: a reload can interrupt the request
+    // before React's passive effect has saved the newly visible local row.
+    pendingStore?.save(next);
+    setPendingList(next);
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     setPendingList(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
@@ -251,7 +260,8 @@ export function TimelineScreen({
   // submit the same text again under a fresh `clientTxnId`, duplicating a
   // send that may already have gone through (AE2). Only Retry — which reuses
   // the original `clientTxnId` — may resolve it.
-  const anySendUnresolved = pendingList.some(entry => entry.phase !== 'accepted');
+  const visiblePending = pendingList.filter(entry => !isReconciled(entry, data.items));
+  const anySendUnresolved = visiblePending.some(entry => entry.phase !== 'accepted');
 
   return (
     <section className="timeline" aria-label="Conversation">
@@ -295,8 +305,10 @@ export function TimelineScreen({
           setAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
         }}
       >
-        {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">No messages yet.</li> : null}
-        {data.items.map(item => {
+        {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">
+          {unreadableActivity ? 'Messages in this channel are unavailable on this device.' : 'No messages yet.'}
+        </li> : null}
+        {data.items.map((item, index) => {
           const attribution = attributionFor(item.participant, viewer.ownerId);
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
           const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
@@ -308,16 +320,9 @@ export function TimelineScreen({
                   <EvidenceGroup unit={unit} status={evidenceView.status} />
                 </li>
               ))}
-              <li data-event-id={item.ref.eventId} className="timeline__row">
-                <header className="timeline__row-header">
-                  <span className="timeline__author" dir="auto">
-                    {resolveDisplayName(item.participant)}
-                  </span>
-                  <span className="timeline__kind">{ownershipLabel(attribution)}</span>
-                  <time className="timeline__timestamp" dateTime={item.receivedAt}>
-                    {item.receivedAt}
-                  </time>
-                </header>
+              <ChatMessage id={item.ref.eventId} author={resolveDisplayName(item.participant)} time={item.receivedAt}
+                mine={attribution.isViewerOwned} grouped={index > 0 && data.items[index - 1]?.participant.participantId === item.participant.participantId}
+                kindLabel={ownershipLabel(attribution)} className="timeline__row">
                 {isReadableItem(item) ? (
                   <>
                     <div className="timeline__body">{renderMessageContent(item.content)}</div>
@@ -344,19 +349,14 @@ export function TimelineScreen({
                     </a>
                   );
                 })}
-              </li>
+              </ChatMessage>
             </Fragment>
           );
         })}
-        {pendingList.map(entry => (
-          <li key={entry.clientTxnId} className="timeline__row timeline__row--pending" aria-live="polite">
-            <header className="timeline__row-header">
-              <span className="timeline__author" dir="auto">
-                {resolveDisplayName(viewer)}
-              </span>
-              <span className="timeline__kind">{ownershipLabel(attributionFor(viewer, viewer.ownerId, { isLocalEcho: true }))}</span>
-              <span className="timeline__send-state">{sendStateLabel(entry.phase)}</span>
-            </header>
+        {visiblePending.map(entry => (
+          <ChatMessage key={entry.clientTxnId} id={entry.clientTxnId} author={resolveDisplayName(viewer)} mine live
+            kindLabel={ownershipLabel(attributionFor(viewer, viewer.ownerId, { isLocalEcho: true }))}
+            status={sendStateLabel(entry.phase)} className="timeline__row timeline__row--pending">
             <div className="timeline__body">{renderMessageContent(entry.content)}</div>
             {entry.phase === 'outcome_unknown' ? (
               <button type="button" disabled={sendBlocked} onClick={() => void handleRetry(entry)}>
@@ -368,7 +368,7 @@ export function TimelineScreen({
                 Retry
               </button>
             ) : null}
-          </li>
+          </ChatMessage>
         ))}
       </ol>
       {!atLatest && data.newMessageCount > 0 ? (
@@ -384,36 +384,11 @@ export function TimelineScreen({
           {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
         </button>
       ) : null}
-      <form
-        className="timeline__composer"
-        onSubmit={event => {
-          event.preventDefault();
-          void handleSend();
-        }}
-      >
-        <label htmlFor="timeline-draft" className="timeline__composer-label">
-          Message
-        </label>
-        <textarea
-          id="timeline-draft"
-          className="timeline__composer-input"
-          value={draft}
-          onChange={event => setDraft(event.currentTarget.value)}
-          disabled={!canCompose}
-        />
-        <button
-          type="submit"
-          disabled={!canCompose || !draft.trim() || anySendUnresolved || sendBlocked}
-          aria-describedby={sendBlocked ? 'timeline-send-blocked' : undefined}
-        >
-          Send
-        </button>
-        {sendBlocked ? (
-          <p id="timeline-send-blocked" className="timeline__status">
-            {sendBlockedReason}
-          </p>
-        ) : null}
-      </form>
+      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
+        placeholder={composerPlaceholder}
+        disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
+        {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
+      {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
     </section>
   );
 }

@@ -69,7 +69,10 @@ calls them, and Codex names that session `$CODEX_THREAD_ID`. Always pass that
 exact ID when you find an internal channel:
 `khala internal discovery --harness codex --session "$CODEX_THREAD_ID"`, then
 `khala --internal-descriptor <descriptorPath> join <channel-url>` with the
-`descriptorPath` from the discovery output. Never omit `--session` or pass a
+`descriptorPath` from the discovery output. Once `join` returns `connected`,
+use its `grantDescriptorPath` as `--internal-descriptor` for later CLI `status`,
+`send`, `read`, and `listen` calls. The discovery descriptor cannot read or send.
+Never omit `--session` or pass a
 different session ID: the installed entry then finds no grant for your session
 and refuses every call with `not_connected`, and the hook stays silent.
 
