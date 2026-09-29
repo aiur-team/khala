@@ -75,6 +75,20 @@ test('public showcase stays local and works across themes and widths', { timeout
         }
         await pane.getByRole('button', { name: 'Design' }).click();
         assert.equal(await thread.getByText('The smaller layout keeps the back control visible.').isVisible(), true);
+        const positions = await pane.locator('.fixture-messages .conversation-message').evaluateAll(nodes => nodes.map(node => {
+          const message = node.getBoundingClientRect();
+          const bubble = node.querySelector('.conversation-message__bubble')!.getBoundingClientRect();
+          const style = getComputedStyle(node.querySelector('.conversation-message__bubble')!);
+          return { left: message.left, right: message.right, bubbleLeft: bubble.left, bubbleRight: bubble.right,
+            radius: style.borderRadius, fontSize: getComputedStyle(node.querySelector('.conversation-message__content')!).fontSize };
+        }));
+        assert.equal(positions.length, 3);
+        assert.ok(positions[0]!.right > positions[1]!.right, `${theme} ${width}: owner message aligns right`);
+        assert.ok(positions[1]!.left < positions[0]!.left, `${theme} ${width}: peer message aligns left`);
+        assert.ok(positions[2]!.left < positions[0]!.left, `${theme} ${width}: agent message aligns left`);
+        assert.ok(positions.every(position => position.bubbleLeft >= dimensions.left && position.bubbleRight <= dimensions.right), `${theme} ${width}: bubbles fit the frame`);
+        assert.equal(positions[0]!.radius, '6px', `${theme} ${width}: shared Dashboard card radius`);
+        assert.equal(positions[0]!.fontSize, '13.12px', `${theme} ${width}: shared Dashboard message type size`);
         const details = pane.getByRole('button', { name: 'Participants and agents' });
         assert.equal(await details.evaluate(node => node.closest('.conversation-thread__head') !== null), true);
         assert.equal(await details.evaluate(node => Math.round(node.getBoundingClientRect().width)), 44);
@@ -105,9 +119,16 @@ test('public showcase stays local and works across themes and widths', { timeout
     await pane.getByRole('textbox', { name: 'Message' }).fill('An Enter note');
     await pane.getByRole('textbox', { name: 'Message' }).press('Enter');
     assert.equal(await pane.getByText('An Enter note').isVisible(), true);
+    await pane.getByRole('textbox', { name: 'Message' }).fill('First line');
+    await pane.getByRole('textbox', { name: 'Message' }).press('Shift+Enter');
+    assert.equal(await pane.getByRole('textbox', { name: 'Message' }).inputValue(), 'First line\n');
+    await pane.getByRole('textbox', { name: 'Message' }).fill('A second local note');
+    await pane.getByRole('button', { name: 'Send message' }).click();
+    assert.match(await pane.getByText('A second local note').locator('xpath=ancestor::li').getAttribute('class') ?? '', /conversation-message--mine/);
     await page.reload();
     assert.equal(await page.getByText('A local note').count(), 0, 'local text is not persisted');
     assert.equal(await page.getByText('An Enter note').count(), 0, 'Enter text is not persisted');
+    assert.equal(await page.getByText('A second local note').count(), 0, 'local text is not persisted');
     assert.deepEqual(calls, [], 'no chat or auth requests');
     assert.deepEqual(errors, [], 'no browser errors');
     await context.close();
