@@ -31,6 +31,28 @@ These are simulated transport and composition checks. They do not establish
 an installed CLI process restart, a real Matrix login count, native read/send,
 or a deployed exact-session run.
 
+## Packaged CLI preflight blocker (2026-09-29)
+
+The workspace build at `65060d5a3a311474b5f98d753b5820736fcd252f` was
+packed and installed into a private temporary prefix. The tarball SHA-256 was
+`03233ea5407e5cbfb0b910589642b0618d7828f60d984999966df7847906564a`.
+A fresh installed `khala mcp-serve` process received one
+`khala_channel_access_status` call for a disposable operation label. Its first
+structured result was `{"ok":false,"v":1,"error":"unavailable","next":"reuse_operation_id"}`;
+the private state directory remained empty. No hosted request or redemption
+occurred.
+
+The process ran as UID 1000, while the sandbox presents `/` and `/home` as UID
+65534. The connector's `openConnectorStorage` ancestor ownership check rejects
+this filesystem view with `unsafe_path`, including for a unique `/tmp` store.
+This is a controlled installed-client **blocker receipt**, not a lost-response
+recovery receipt. The storage guard must remain intact; the full run needs a
+filesystem view with valid ancestor ownership or an Executor-run fixture.
+
+The separate hosted native same-operation stage-two `unavailable` after a
+successful proof-key approval belongs to #592. It must be resolved before a
+production read/send receipt can be claimed here.
+
 ## Remaining acceptance
 
 1. Run a controlled installed CLI/native session with only the pre-redeem
