@@ -76,6 +76,7 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
         method,
         headers: {
           accept: 'application/json',
+          ...(method === 'POST' ? { origin } : {}),
           authorization: `DPoP ${credential.credentialRef}`,
           dpop: options.signer.proof(method, target.href, credential.credentialRef,
             rawBody === undefined ? undefined : { bodyHash: createHash('sha256').update(rawBody).digest('base64url') }),
