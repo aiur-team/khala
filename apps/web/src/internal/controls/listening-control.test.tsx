@@ -116,6 +116,23 @@ describe('listening controller and control', () => {
     };
   }
 
+  it('keeps loaded agents visible and reports a failed binding refresh, then clears the error on recovery', async () => {
+    const base = fakePort([provenCodexEntry()]);
+    let unavailable = false;
+    const controller = createListeningController({
+      ...base,
+      list: channelId => unavailable ? Promise.resolve({ kind: 'failed' as const, reason: 'unavailable' as const }) : base.list(channelId),
+    }, 'ch_1');
+    await controller.refresh();
+    expect(controller.getView()).toMatchObject({ phase: 'ready', bindings: [expect.objectContaining({ displayName: 'Ada' })] });
+    unavailable = true;
+    await controller.refresh();
+    expect(controller.getView()).toMatchObject({ phase: 'ready', bindings: [expect.objectContaining({ displayName: 'Ada' })], failure: 'unavailable', notice: '' });
+    unavailable = false;
+    await controller.refresh();
+    expect(controller.getView()).toMatchObject({ phase: 'ready', failure: null });
+  });
+
   it('grants an experimental route only after the owner confirms its exact evidence, and revokes it', async () => {
     const port = fakePort([experimentalClaudeEntry()]);
     const controller = createListeningController(port, 'ch_1');

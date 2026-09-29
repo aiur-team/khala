@@ -68,6 +68,7 @@ export type HumanApplicationSnapshot =
   | EmptySnapshot<'initializing_device'>
   | EmptySnapshot<'signed_out'>
   | EmptySnapshot<'disposed'>
+  | Readonly<{ phase: 'navigating'; path: string; context: HumanRouteContext }>
   | Readonly<{
       phase: 'unavailable';
       path: string;
@@ -164,8 +165,10 @@ export function createHumanApplication(
     // Route-owned subscriptions and pending feature authority end as soon as a
     // navigation starts. The device stays leased until identity is known, so a
     // same-owner route change can reuse it without a second SDK/store.
+    const previous = snapshot.phase === 'ready' || snapshot.phase === 'navigating' ? snapshot.context : null;
     deactivateRoute();
-    setSnapshot({ phase: 'checking_identity', path: activePath, context: null });
+    setSnapshot(previous ? { phase: 'navigating', path: activePath, context: previous }
+      : { phase: 'checking_identity', path: activePath, context: null });
 
     const identity = await readIdentity(identityAbort.signal);
     if (disposed || generation !== epoch) return;
@@ -179,7 +182,7 @@ export function createHumanApplication(
       return;
     }
 
-    setSnapshot({ phase: 'initializing_device', path: activePath, context: null });
+    if (!previous) setSnapshot({ phase: 'initializing_device', path: activePath, context: null });
     const result = await deviceSession.ensureReady(identity.principal);
     if (disposed || generation !== epoch) return;
 
@@ -241,7 +244,7 @@ export function createHumanApplication(
   }
 
   const removeDeviceListener = deviceSession.subscribe(view => {
-    if (disposed || snapshot.phase !== 'ready' || view.state === 'ready') return;
+    if (disposed || (snapshot.phase !== 'ready' && snapshot.phase !== 'navigating') || view.state === 'ready') return;
     epoch += 1;
     identityAbort?.abort();
     deactivateRoute();

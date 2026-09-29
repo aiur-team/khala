@@ -127,7 +127,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  composerPlaceholder = 'Write a message', unreadableActivity = false,
+  composerPlaceholder = '', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(
@@ -285,7 +285,7 @@ export function TimelineScreen({
           You no longer have access to this conversation.
         </p>
       ) : null}
-      {evidence ? (
+      {evidence && (data.items.length > 0 || evidenceView.units.length > 0) ? (
         <>
           <EvidenceAccess status={evidenceView.status} onRetry={() => void evidence.refresh()} />
           <EvidenceAnnouncer text={evidenceView.announcement?.text ?? null} />

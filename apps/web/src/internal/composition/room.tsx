@@ -9,7 +9,7 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
-import { ListeningControl } from '../controls/ListeningControl';
+import { LocalAgentControls } from '../controls/LocalAgentControls';
 import { createListeningController } from '../controls/listening-controller';
 import type { ListeningPort } from '../controls/listening-port';
 import { StopControl } from '../controls/StopControl';
@@ -18,6 +18,7 @@ import type { BindingStopPort } from '../controls/stop-port';
 import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
 import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
+import { useConversationIndex } from '../../composition/human/ConversationIndexRoute';
 
 /** The binding Stop control's port and the channel URL a replacement agent joins with. */
 export type LocalStopCapability = Readonly<{
@@ -62,8 +63,6 @@ export function TransportStatus({ state, roomId, onRetry }: {
   onRetry: () => void;
 }) {
   const terminal = useRef<HTMLHeadingElement | null>(null);
-  const everLive = useRef(false);
-  if (state.kind === 'live') everLive.current = true;
 
   // A state that needs the reader's action takes focus so it is never missed.
   useEffect(() => {
@@ -76,7 +75,7 @@ export function TransportStatus({ state, roomId, onRetry }: {
       message = 'Connecting to the local Khala server…';
       break;
     case 'live':
-      message = everLive.current ? 'Connected to the local Khala server.' : '';
+      message = '';
       break;
     case 'reconnecting':
       message = `Lost the connection to the local Khala server. Reconnecting (attempt ${state.attempt})…`;
@@ -130,6 +129,8 @@ export const EVIDENCE_POLL_MS = 5_000;
 export function LocalRoom({
   context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
   onMakeExternal = () => undefined,
+  settingsHref,
+  requestsHref,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
@@ -142,25 +143,29 @@ export function LocalRoom({
   /** The Make-external journey port; without it the page offers no such action. */
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
+  settingsHref?: string;
+  requestsHref?: string;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
+  const conversations = useConversationIndex(context);
+  const title = conversations?.find(item => item.id === roomId)?.title ?? 'Channel';
   const evidence = useMemo(
     () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
     [evidencePort, roomId],
   );
-  useEffect(() => {
-    if (!evidence) return undefined;
-    const timer = setInterval(() => void evidence.refresh(), evidencePollMs);
-    return () => {
-      clearInterval(timer);
-      evidence.dispose();
-    };
-  }, [evidence, evidencePollMs]);
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  useEffect(() => {
+    if (!evidence) return undefined;
+    const timer = setInterval(() => { if (timeline.getSnapshot().items.length > 0) void evidence.refresh(); }, evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      evidence.dispose();
+    };
+  }, [evidence, evidencePollMs, timeline]);
   const channel = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
@@ -193,7 +198,7 @@ export function LocalRoom({
   // New or older rows may carry evidence already projected: reread with them.
   const items = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().items, () => timeline.getSnapshot().items);
   useEffect(() => {
-    void evidence?.refresh();
+    if (items.length > 0) void evidence?.refresh();
   }, [evidence, items]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
@@ -206,9 +211,12 @@ export function LocalRoom({
 
   return (
     <ChannelScreen
-      title="Local channel"
-      description="Messages are stored in plaintext on this computer."
+      embedded
+      title={title}
+      description="Local · Plaintext on this device"
       controller={channel}
+      showPresence={false}
+      renderHeaderActions={() => listeningController ? <LocalAgentControls controller={listeningController} /> : null}
       renderTimeline={() => (
         <>
           <TransportStatus state={state} roomId={roomId} onRetry={() => transport.retry()} />
@@ -226,9 +234,10 @@ export function LocalRoom({
       renderReview={() => null}
       renderControls={() => (
         <>
-          {listeningController ? <ListeningControl controller={listeningController} /> : null}
-          {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
-          <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
+          {settingsHref ? <a href={settingsHref}>Channel discovery settings</a> : null}
+          {requestsHref ? <a href={requestsHref}>Channel requests</a> : null}
+          {stop && stopController ? <details><summary>Stop agent delivery</summary><StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /></details> : null}
+          <details><summary>More channel options</summary><MakeExternalEntry summary={journey} onOpen={onMakeExternal} /></details>
         </>
       )}
     />

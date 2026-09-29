@@ -17,7 +17,6 @@ import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
-import { ConversationList } from '../../ui/conversation';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
@@ -223,7 +222,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
 }) {
   const conversations = useConversationIndex(context);
   const selectedConversation = conversations?.find(item => item.id === roomId);
-  const [query, setQuery] = useState('');
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
@@ -270,21 +268,13 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
-      description="Encrypted messages shared by admitted participants."
       controller={room}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId} roomTitle={selectedConversation?.title ?? 'Encrypted conversation'} /> : null}
-      {...(context.conversations && routes && navigate ? {
-        renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
-          emptyLabel="No encrypted conversations yet."
-          onQueryChange={setQuery} status={conversations ? 'ready' : 'error'}
-          onSelect={id => { if (conversations?.some(item => item.id === id)) navigate(routes.roomPath(id)); }} />,
-        onBack: () => navigate(routes.conversationsPath()),
-      } : {})}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
-          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel"
+          {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}

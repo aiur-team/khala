@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import './conversation.css';
 
 export type ConversationSummary = Readonly<{
@@ -9,7 +9,7 @@ export type ConversationSummary = Readonly<{
   unreadCount: number | null;
 }>;
 
-export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.' }: Readonly<{
+export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.', action, showSearch = true }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
@@ -17,14 +17,16 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   onSelect(id: string): void;
   status?: 'loading' | 'ready' | 'error';
   emptyLabel?: string;
+  action?: ReactNode;
+  showSearch?: boolean;
 }>) {
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <aside className="conversation-list" aria-label="Conversations">
-    <header className="conversation-list__head"><strong>Conversations</strong><span>{conversations.length}</span></header>
-    <label className="conversation-list__search"><span className="sr-only">Search conversations</span>
+    <header className="conversation-list__head"><strong>Channels</strong><span>{conversations.length}</span>{action}</header>
+    {showSearch ? <label className="conversation-list__search"><span className="sr-only">Search channels</span>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search conversations" />
-    </label>
+      <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search channels" />
+    </label> : null}
     <div className="conversation-list__items">
       {status === 'loading' ? <p role="status">Loading conversations…</p> : null}
       {status === 'error' ? <p role="alert">Conversations are unavailable. Try reloading.</p> : null}
@@ -41,9 +43,9 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   </aside>;
 }
 
-export function ChatThread({ title, onBack, children }: Readonly<{ title: string; onBack(): void; children: ReactNode }>) {
+export function ChatThread({ title, onBack, children }: Readonly<{ title: string; onBack?: () => void; children: ReactNode }>) {
   return <section className="conversation-thread" aria-label="Conversation thread">
-    <header className="conversation-thread__head"><button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button><strong dir="auto">{title}</strong></header>
+    <header className="conversation-thread__head">{onBack ? <button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button> : null}<h2 dir="auto">{title}</h2></header>
     <div className="conversation-thread__body">{children}</div>
   </section>;
 }
@@ -57,7 +59,7 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
     <span className="conversation-message__avatar" aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
     <div className="conversation-message__bubble">
       <header className="conversation-message__meta"><strong dir="auto">{author}</strong>
-        {kindLabel ? <span>{kindLabel}</span> : null}
+        {kindLabel && kindLabel !== author ? <span>{kindLabel}</span> : null}
         {time ? <time dateTime={time}>{new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}</time> : null}
         {status ? <span>{status}</span> : null}</header>
       <div className="conversation-message__content">{children}</div>
@@ -65,12 +67,39 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
   </li>;
 }
 
-export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId, placeholder = 'Write a message' }: Readonly<{
+export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId, placeholder = '' }: Readonly<{
   value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string; placeholder?: string;
 }>) {
+  const input = useRef<HTMLTextAreaElement>(null);
+  const fitDraft = useCallback(() => {
+    const textarea = input.current;
+    if (!textarea) return;
+    textarea.style.height = '38px';
+    const needed = textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight;
+    textarea.style.height = `${Math.max(38, Math.min(needed, 140))}px`;
+    textarea.style.overflowY = needed > 140 ? 'auto' : 'hidden';
+  }, []);
+  useLayoutEffect(() => { fitDraft(); }, [fitDraft, value]);
+  useEffect(() => {
+    const textarea = input.current;
+    if (!textarea || typeof ResizeObserver === 'undefined') return;
+    let width = textarea.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (textarea.clientWidth === width) return;
+      width = textarea.clientWidth;
+      fitDraft();
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [fitDraft]);
   return <form className="conversation-composer" onSubmit={event => { event.preventDefault(); onSend(); }}>
     <label className="sr-only" htmlFor="conversation-draft">Message</label>
-    <textarea id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder} />
+    <textarea ref={input} id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder}
+      onKeyDown={event => {
+        if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+        event.preventDefault();
+        if (!disabled && !sendDisabled && value.trim()) onSend();
+      }} />
     <button type="submit" disabled={disabled || sendDisabled || !value.trim()} aria-describedby={sendDescriptionId} aria-label="Send message">↑</button>
   </form>;
 }
@@ -109,9 +138,9 @@ export function ParticipantDetail({ name, children, onClose }: Readonly<{ name: 
 }
 
 export function ConversationLayout({ list, thread, detail, inThread = false }: Readonly<{
-  list: ReactNode; thread?: ReactNode; detail?: ReactNode; inThread?: boolean;
+  list?: ReactNode; thread?: ReactNode; detail?: ReactNode; inThread?: boolean;
 }>) {
-  return <div className={`conversation-layout${inThread ? ' conversation-layout--thread' : ''}${detail ? ' conversation-layout--detail' : ''}`}>
+  return <div className={`conversation-layout${inThread ? ' conversation-layout--thread' : ''}${detail ? ' conversation-layout--detail' : ''}${list ? '' : ' conversation-layout--no-list'}`}>
     {list}{thread ?? <section className="conversation-thread conversation-thread--empty" aria-label="Conversation thread"><p>Select a conversation to read its messages.</p></section>}{detail}
   </div>;
 }

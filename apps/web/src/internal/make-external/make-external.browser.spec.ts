@@ -149,6 +149,8 @@ async function press(page: Page, name: string, key = 'Enter'): Promise<void> {
 }
 
 async function openJourney(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Channel settings' }).click();
+  await page.getByText('More channel options').click();
   await page.getByRole('button', { name: 'Make external' }).waitFor();
   await page.getByRole('button', { name: 'Make external' }).focus();
   await page.keyboard.press('Enter');
@@ -222,6 +224,8 @@ test('carry history end to end: keyboard only, lost responses, reload, commit an
     // The old channel reference no longer leads to a writable channel.
     await press(page, 'View this read-only channel');
     await page.waitForURL(`${run.origin}/channels/${channelId}`);
+    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await page.getByText('More channel options').click();
     await page.getByText('This channel moved to an external channel and is read-only.').waitFor();
     await page.getByText('This channel is read-only. Its conversation continues in the external channel.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Make external' }).count(), 0);
@@ -249,6 +253,8 @@ test('a failed sign-in and a cancel before creation change nothing', { timeout: 
     await arrive(page, 'Confirm the external channel');
     await press(page, 'Cancel');
     await page.waitForURL(`${run.origin}/channels/${channelId}`);
+    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await page.getByText('More channel options').click();
     await page.getByRole('button', { name: 'Make external' }).waitFor();
     assert.equal(provider.creates.length, 0);
     assert.equal(run.send('still active'), true);
