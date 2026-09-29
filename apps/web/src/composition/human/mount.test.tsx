@@ -22,6 +22,7 @@ function application(snapshot: HumanApplicationSnapshot): HumanApplicationHandle
     getSnapshot: () => snapshot,
     subscribe: () => () => undefined,
     navigate: vi.fn(),
+    retryDevice: vi.fn(),
     signOut: vi.fn(),
     dispose: vi.fn(),
   };
@@ -73,6 +74,30 @@ describe('HumanApplicationScreen', () => {
     );
     expect(unavailable).toContain('unavailable');
     expect(unavailable).not.toContain('Create a chat');
+  });
+
+  it('keeps inactive and timed-out device states in the signed-in shell with retry', async () => {
+    const channelAccess = await channelAccessController();
+    for (const snapshot of [
+      { phase: 'inactive', path: '/channels/room_1', context: null } as const,
+      { phase: 'unavailable', source: 'device', reason: 'lease_unavailable', retryable: true,
+        path: '/channels/room_1', context: null } as const,
+    ]) {
+      const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)} identity={identity}
+        routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />);
+      expect(html).toContain('khala-owner-shell');
+      if (snapshot.phase === 'inactive') expect(html).toContain('Channels are paused in this tab.');
+      expect(html).toContain('Try again in this tab');
+      expect(html).not.toContain('Account and device status');
+      expect(html).toContain('aria-label="Log out"');
+      expect(html).not.toContain('live room');
+    }
+    const storageFailure = renderToStaticMarkup(<HumanApplicationScreen application={application({
+      phase: 'unavailable', source: 'device', reason: 'storage_unavailable', retryable: true,
+      path: '/channels/room_1', context: null,
+    })} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />);
+    expect(storageFailure).not.toContain('other tab');
+    expect(storageFailure).toContain('storage_unavailable');
   });
 
   it('shows CLI guidance for a signed-out human invitation without exposing its token', async () => {

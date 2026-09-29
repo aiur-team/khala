@@ -161,7 +161,7 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
   application: HumanApplicationHandle;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
-  phase: 'checking_identity' | 'initializing_device' | 'unavailable';
+  phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable';
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -184,8 +184,8 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
     <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels"
       onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
     <ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
-      showSearch={false} status={phase === 'unavailable' ? 'ready' : 'loading'}
-      emptyLabel="Channels are unavailable on this device."
+      showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
+      emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
       action={<button type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" disabled>+</button>} />
   </div>;
   const actions = phase === 'checking_identity' ? null
