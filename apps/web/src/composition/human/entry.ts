@@ -13,7 +13,7 @@ export type HumanEntry = Readonly<{
 /**
  * Reads the boot-time shell mode from `?mount=` and strips it from the path
  * handed to the router, so the parameter never makes a route unmatchable.
- * The create route has no query parameters. Canonicalize it before routing and
+ * The legacy `/new` entry has no query parameters. Canonicalize it before routing and
  * remove any OAuth response parameters that a browser or redirect carried there.
  * Anything other than an exact `hosted-content` value boots standalone.
  */

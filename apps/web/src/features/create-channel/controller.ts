@@ -135,7 +135,7 @@ export function createCreateChannelController(
 
   async function attemptShare(): Promise<void> {
     // Hosted and private channels are ready after creation. Hosted sharing is
-    // handled on the channel page when the owner chooses Copy or email invite.
+    // handled by the channel page's copy-link action.
     if (mode !== 'shared') {
       setPhase('ready');
       return;
