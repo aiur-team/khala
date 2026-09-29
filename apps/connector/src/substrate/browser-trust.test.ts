@@ -28,13 +28,16 @@ async function openedBrowser(fingerprints: Array<string | null>, rollbackFails =
   fake.created = 0;
   const listeners = new Map<string, Set<(state: SyncState) => void>>();
   const published = [...fingerprints];
+  const storage = new Map<string, string>();
   let verified = false;
+  let markerAtVerify: string | null = null;
   const getUserDeviceInfo = vi.fn(async () => {
     const fingerprint = published.length > 1 ? published.shift() : published[0];
     return new Map([['@owner:example', new Map(fingerprint === null ? []
       : [['OWNER_DEVICE', { getFingerprint: () => fingerprint }]])]]);
   });
   const setDeviceVerified = vi.fn(async (_userId: string, _deviceId: string, value: boolean) => {
+    if (value) markerAtVerify = storage.get('khala-matrix-trust-pending:test') ?? null;
     if (!value && rollbackFails) throw new Error('sdk_rollback_failed');
     verified = value;
   });
@@ -65,7 +68,6 @@ async function openedBrowser(fingerprints: Array<string | null>, rollbackFails =
   vi.stubGlobal('window', globalThis);
   vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown,
     callback: (lock: object) => Promise<void>) => callback({}) } });
-  const storage = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => { storage.set(key, value); },
     removeItem: (key: string) => { storage.delete(key); } });
@@ -73,7 +75,8 @@ async function openedBrowser(fingerprints: Array<string | null>, rollbackFails =
   const api = (globalThis as unknown as { khalaMatrix: BrowserApi }).khalaMatrix;
   await api.open(openInput);
   return { api, getUserDeviceInfo, setDeviceVerified, setTrustCrossSignedDevices,
-    getDeviceVerificationStatus: crypto.getDeviceVerificationStatus, storage, stopClient };
+    getDeviceVerificationStatus: crypto.getDeviceVerificationStatus, storage, stopClient,
+    markerAtVerify: () => markerAtVerify };
 }
 
 describe('connector browser device trust', () => {
@@ -106,11 +109,12 @@ describe('connector browser device trust', () => {
   });
 
   it('quarantines the persisted store and active API when rollback fails', async () => {
-    const { api, storage, stopClient, getDeviceVerificationStatus } =
+    const { api, storage, stopClient, getDeviceVerificationStatus, markerAtVerify } =
       await openedBrowser(['owner-key', 'attacker-key'], true);
     try {
       await expect(api.trustPeer('@owner:example', 'OWNER_DEVICE', 'owner-key'))
         .rejects.toThrow('matrix_verification_rollback_failed');
+      expect(markerAtVerify()).toBe('1');
       expect((await getDeviceVerificationStatus()).isVerified()).toBe(true);
       expect(storage.get('khala-matrix-trust-pending:test')).toBe('1');
       await expect(api.read(null, 1)).rejects.toThrow('matrix_trust_compromised');
