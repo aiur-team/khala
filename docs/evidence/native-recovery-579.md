@@ -47,7 +47,16 @@ The process ran as UID 1000, while the sandbox presents `/` and `/home` as UID
 this filesystem view with `unsafe_path`, including for a unique `/tmp` store.
 This is a controlled installed-client **blocker receipt**, not a lost-response
 recovery receipt. The storage guard must remain intact; the full run needs a
-filesystem view with valid ancestor ownership or an Executor-run fixture.
+filesystem view with valid ancestor ownership.
+
+The same tarball was then installed in a disposable Playwright container with
+container-owned `/state` and networking disabled. A fresh Claude MCP entry
+returned the same typed `unavailable` status for the disposable operation,
+but created `ledger.sqlite` and `trust.sqlite` under its exact session state
+directory. This confirms the storage guard accepts the container filesystem.
+No discovery credential was available in that isolated preflight, and no
+redeem request was sent. The container can host a later controlled fixture;
+its status result is not evidence of a recovery failure.
 
 The separate hosted native same-operation stage-two `unavailable` after a
 successful proof-key approval belongs to #592. It must be resolved before a
