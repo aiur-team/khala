@@ -34,7 +34,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
         <span className="conversation-list__avatar" aria-hidden="true">{item.title.trim().slice(0, 1).toLocaleUpperCase()}</span>
         <span className="conversation-list__copy"><span className="conversation-list__top"><strong dir="auto">{item.title}</strong>
           {item.timestamp ? <time dateTime={item.timestamp}>{new Date(item.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</time> : null}</span>
-          <span className="conversation-list__preview" dir="auto">{item.preview ?? 'No messages yet'}</span></span>
+          <span className="conversation-list__preview" dir="auto">{item.preview ?? (item.timestamp ? 'Message unavailable on this device' : 'No messages yet')}</span></span>
         {item.unreadCount ? <span className="conversation-list__unread" aria-label={`${item.unreadCount} unread notifications`}>{item.unreadCount}</span> : null}
       </button>)}
     </div>
@@ -48,12 +48,20 @@ export function ChatThread({ title, onBack, children }: Readonly<{ title: string
   </section>;
 }
 
-export function ChatMessage({ id, author, time, mine = false, children }: Readonly<{
-  id: string; author: string; time: string; mine?: boolean; children: ReactNode;
+export function ChatMessage({ id, author, time, mine = false, grouped = false, live = false, kindLabel, status, className = '', children }: Readonly<{
+  id: string; author: string; time?: string; mine?: boolean; grouped?: boolean;
+  live?: boolean;
+  kindLabel?: string; status?: string; className?: string; children: ReactNode;
 }>) {
-  return <li data-event-id={id} className={`timeline__row${mine ? ' timeline__row--mine' : ''}`}>
-    <header className="timeline__row-header"><strong className="timeline__author" dir="auto">{author}</strong><time dateTime={time}>{new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}</time></header>
-    <div className="timeline__body">{children}</div>
+  return <li data-event-id={id} aria-live={live ? 'polite' : undefined} className={`conversation-message${mine ? ' conversation-message--mine' : ''}${grouped ? ' conversation-message--grouped' : ''} ${className}`.trim()}>
+    <span className="conversation-message__avatar" aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
+    <div className="conversation-message__bubble">
+      <header className="conversation-message__meta"><strong dir="auto">{author}</strong>
+        {kindLabel ? <span>{kindLabel}</span> : null}
+        {time ? <time dateTime={time}>{new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}</time> : null}
+        {status ? <span>{status}</span> : null}</header>
+      <div className="conversation-message__content">{children}</div>
+    </div>
   </li>;
 }
 

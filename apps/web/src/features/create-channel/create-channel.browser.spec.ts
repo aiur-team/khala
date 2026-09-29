@@ -38,8 +38,8 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     await titleField.waitFor();
     await titleField.focus();
 
-    // The selected supported policy is carried to admission unchanged.
-    assert.equal(await page.getByText('Reading messages from before joining is currently unavailable.').isVisible(), true);
+    assert.equal(await page.getByText('Who can join from this link?').count(), 0);
+    assert.equal(await page.getByText('Reading messages from before joining is currently unavailable.').count(), 0);
 
     const submit = page.getByRole('button', { name: 'Create channel' });
     await submit.waitFor();
@@ -58,6 +58,7 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     await shareUrlField.waitFor({ timeout: 10_000 });
     assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
     assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
+    assert.equal(await page.locator('#opened-room').textContent(), 'room_harness', 'creation opens the channel page');
 
     const copyButton = page.getByRole('button', { name: 'Copy link' });
     await copyButton.click();

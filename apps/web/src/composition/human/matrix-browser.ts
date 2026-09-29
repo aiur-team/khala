@@ -117,9 +117,9 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
     .map(candidate => {
       const summary = roomSummary(candidate, limits);
       const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
-        event.getType() === EventType.RoomMessage && !event.isDecryptionFailure()
-        && typeof event.getClearContent()?.body === 'string');
-      const body = latest?.getClearContent()?.body;
+        event.getType() === EventType.RoomMessage || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure());
+      const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
+        ? latest.getClearContent()?.body : null;
       const unread = candidate.getUnreadNotificationCount();
       return {
         id: summary.roomId,

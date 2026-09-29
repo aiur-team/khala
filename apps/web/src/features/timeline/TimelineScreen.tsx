@@ -16,7 +16,7 @@ import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
-import { ChatComposer } from '../../ui/conversation';
+import { ChatComposer, ChatMessage } from '../../ui/conversation';
 
 export interface TimelineScreenProps {
   controller: TimelineController;
@@ -304,7 +304,7 @@ export function TimelineScreen({
         }}
       >
         {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">No messages yet.</li> : null}
-        {data.items.map(item => {
+        {data.items.map((item, index) => {
           const attribution = attributionFor(item.participant, viewer.ownerId);
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
           const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
@@ -316,16 +316,9 @@ export function TimelineScreen({
                   <EvidenceGroup unit={unit} status={evidenceView.status} />
                 </li>
               ))}
-              <li data-event-id={item.ref.eventId} className={`timeline__row${attribution.isViewerOwned ? ' timeline__row--mine' : ''}`}>
-                <header className="timeline__row-header">
-                  <span className="timeline__author" dir="auto">
-                    {resolveDisplayName(item.participant)}
-                  </span>
-                  <span className="timeline__kind">{ownershipLabel(attribution)}</span>
-                  <time className="timeline__timestamp" dateTime={item.receivedAt}>
-                    {item.receivedAt}
-                  </time>
-                </header>
+              <ChatMessage id={item.ref.eventId} author={resolveDisplayName(item.participant)} time={item.receivedAt}
+                mine={attribution.isViewerOwned} grouped={index > 0 && data.items[index - 1]?.participant.participantId === item.participant.participantId}
+                kindLabel={ownershipLabel(attribution)} className="timeline__row">
                 {isReadableItem(item) ? (
                   <>
                     <div className="timeline__body">{renderMessageContent(item.content)}</div>
@@ -352,19 +345,14 @@ export function TimelineScreen({
                     </a>
                   );
                 })}
-              </li>
+              </ChatMessage>
             </Fragment>
           );
         })}
         {visiblePending.map(entry => (
-          <li key={entry.clientTxnId} className="timeline__row timeline__row--pending" aria-live="polite">
-            <header className="timeline__row-header">
-              <span className="timeline__author" dir="auto">
-                {resolveDisplayName(viewer)}
-              </span>
-              <span className="timeline__kind">{ownershipLabel(attributionFor(viewer, viewer.ownerId, { isLocalEcho: true }))}</span>
-              <span className="timeline__send-state">{sendStateLabel(entry.phase)}</span>
-            </header>
+          <ChatMessage key={entry.clientTxnId} id={entry.clientTxnId} author={resolveDisplayName(viewer)} mine live
+            kindLabel={ownershipLabel(attributionFor(viewer, viewer.ownerId, { isLocalEcho: true }))}
+            status={sendStateLabel(entry.phase)} className="timeline__row timeline__row--pending">
             <div className="timeline__body">{renderMessageContent(entry.content)}</div>
             {entry.phase === 'outcome_unknown' ? (
               <button type="button" disabled={sendBlocked} onClick={() => void handleRetry(entry)}>
@@ -376,7 +364,7 @@ export function TimelineScreen({
                 Retry
               </button>
             ) : null}
-          </li>
+          </ChatMessage>
         ))}
       </ol>
       {!atLatest && data.newMessageCount > 0 ? (

@@ -5,12 +5,11 @@ link in shared mode. The owner writes messages in the ordinary channel timeline
 after creation. Private mode opens the channel directly and never calls the
 admission port.
 
-The controller validates the title and any named email before creation. The
-admission choice defaults to a link whose members see messages from admission
-forward. Production currently rejects full-history links with
-`history_unavailable`; the screen therefore presents that choice as unavailable.
-The encrypted history policy needs a verified key transfer before it can be
-enabled.
+The create screen asks only for an optional title. Its default share link
+admits members from admission forward. The channel page offers Copy link and
+a named-email invite, which prepares a restricted link and opens an email draft
+for the owner to send. Full-history admission still requires verified key
+transfer and is not offered.
 
 ## Operation identity
 

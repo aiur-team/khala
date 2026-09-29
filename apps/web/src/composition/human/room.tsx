@@ -15,6 +15,7 @@ import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
+import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 import { ConversationList } from '../../ui/conversation';
 import { useConversationIndex } from './ConversationIndexRoute';
@@ -269,6 +270,8 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       title={conversations?.find(item => item.id === roomId)?.title ?? 'Encrypted conversation'}
       description="Encrypted messages shared by admitted participants."
       controller={room}
+      renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
+        admission={context.admission} roomId={roomId} roomTitle={conversations?.find(item => item.id === roomId)?.title ?? 'Encrypted conversation'} /> : null}
       {...(context.conversations && routes && navigate ? {
         renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
           emptyLabel="No encrypted conversations yet."

@@ -112,8 +112,10 @@ function Harness() {
         Simulate sign-out
       </button>
       <output id="policy-log" hidden />
+      <output id="opened-room" hidden />
       <CreateChannelScreen
         ports={signedIn ? signedInPorts : signedOutPorts}
+        onOpenRoom={roomId => { document.getElementById('opened-room')!.textContent = roomId; }}
         onCopyShareLink={async shareUrl => {
           logCopy(shareUrl);
           return { ok: true };

@@ -22,4 +22,10 @@ describe('conversation index presentation', () => {
     expect(html).not.toContain('Empty');
     expect(html).toContain('Search conversations');
   });
+
+  test('does not call encrypted activity an empty conversation', () => {
+    const html = renderToStaticMarkup(<ConversationList conversations={items} query="" onQueryChange={vi.fn()} onSelect={vi.fn()} status="ready" />);
+    expect(html).toContain('Message unavailable on this device');
+    expect(html).toContain('No messages yet');
+  });
 });

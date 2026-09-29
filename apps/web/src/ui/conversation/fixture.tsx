@@ -19,7 +19,7 @@ export function ConversationFixture() {
     list={<ConversationList conversations={conversations} selectedId={selected} query={query} onQueryChange={setQuery}
       onSelect={id => { setSelected(id); setInThread(true); }} status="ready" />}
     thread={<ChatThread title={current.title} onBack={() => setInThread(false)}>
-      <div className="channel-screen__chat-actions"><span>Encrypted conversation</span><button type="button" onClick={() => setDetail(true)}>Conversation details</button></div>
+      <div className="conversation-thread__actions"><span>Encrypted conversation</span><button type="button" onClick={() => setDetail(true)}>Conversation details</button></div>
       <ol className="fixture-messages" aria-label="Messages">
         <ChatMessage id="one" author="Alex" time="2026-09-28T12:00:00.000Z">Can we review the conversation layout?</ChatMessage>
         <ChatMessage id="two" author="Mira" time="2026-09-28T12:06:00.000Z">The list and thread look good in both themes.</ChatMessage>

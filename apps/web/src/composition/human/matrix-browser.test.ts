@@ -81,7 +81,9 @@ describe('Matrix browser safety boundaries', () => {
     } as unknown as MatrixClient;
     const notify = vi.fn();
     const dispose = subscribeConversationIndex(client, () => current, notify);
-    expect(projectJoinedEncryptedRooms(client, limits.value)[0]?.preview).toBeNull();
+    expect(projectJoinedEncryptedRooms(client, limits.value)[0]).toMatchObject({
+      preview: null, timestamp: '2026-09-28T12:00:00.000Z',
+    });
     expect(decryptListeners.size).toBe(1);
     notify.mockClear();
     decrypted = true;
