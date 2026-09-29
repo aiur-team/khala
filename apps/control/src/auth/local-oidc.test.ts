@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { createLocalOidcClient, localOidcEnabled } from './local-oidc';
 
-const local = { KHALA_LOCAL_AUTH: 'enabled', NODE_ENV: 'development', PUBLIC_APP_ORIGIN: 'http://localhost:8888' };
+const local = { KHALA_LOCAL_AUTH: 'enabled', NODE_ENV: 'development', PUBLIC_APP_ORIGIN: 'http://localhost:8888', PUBLIC_HOMESERVER_ORIGIN: 'http://127.0.0.1:8008' };
 
 describe('local OIDC gate', () => {
-  it('opens only for explicit development on a loopback app origin', () => {
+  it('opens only for explicit development with loopback app and homeserver origins', () => {
     expect(localOidcEnabled(local)).toBe(true);
+    expect(localOidcEnabled({ ...local, PUBLIC_APP_ORIGIN: 'http://127.0.0.1:8888', PUBLIC_HOMESERVER_ORIGIN: 'http://localhost:8008' })).toBe(true);
     expect(localOidcEnabled({ ...local, KHALA_LOCAL_AUTH: undefined })).toBe(false);
     for (const env of [
       { ...local, NODE_ENV: 'production' },
       { ...local, PUBLIC_APP_ORIGIN: 'https://khala.aiur.team' },
       { ...local, PUBLIC_APP_ORIGIN: 'http://example.com' },
+      { ...local, PUBLIC_HOMESERVER_ORIGIN: 'https://matrix.example.com' },
+      { ...local, PUBLIC_HOMESERVER_ORIGIN: 'http://localhost:8008/path' },
     ]) expect(() => localOidcEnabled(env)).toThrow();
   });
 

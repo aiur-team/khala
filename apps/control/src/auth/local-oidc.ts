@@ -2,16 +2,21 @@ import type { OidcClient } from './provider';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+function requireLoopbackOrigin(value: string | undefined, name: string): void {
+  let origin: URL;
+  try { origin = new URL(value ?? ''); }
+  catch { throw new Error(`KHALA_LOCAL_AUTH requires a loopback ${name}`); }
+  if (!['http:', 'https:'].includes(origin.protocol) || !LOOPBACK.has(origin.hostname) || origin.origin !== value) {
+    throw new Error(`KHALA_LOCAL_AUTH requires a loopback ${name}`);
+  }
+}
+
 /** An explicit local-only provider. The regular login binding, session store and CSRF checks still apply. */
 export function localOidcEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
   if (env.KHALA_LOCAL_AUTH !== 'enabled') return false;
   if (env.NODE_ENV !== 'development') throw new Error('KHALA_LOCAL_AUTH requires NODE_ENV=development');
-  let origin: URL;
-  try { origin = new URL(env.PUBLIC_APP_ORIGIN ?? ''); }
-  catch { throw new Error('KHALA_LOCAL_AUTH requires a loopback PUBLIC_APP_ORIGIN'); }
-  if (!LOOPBACK.has(origin.hostname) || origin.origin !== env.PUBLIC_APP_ORIGIN) {
-    throw new Error('KHALA_LOCAL_AUTH requires a loopback PUBLIC_APP_ORIGIN');
-  }
+  requireLoopbackOrigin(env.PUBLIC_APP_ORIGIN, 'PUBLIC_APP_ORIGIN');
+  requireLoopbackOrigin(env.PUBLIC_HOMESERVER_ORIGIN, 'PUBLIC_HOMESERVER_ORIGIN');
   return true;
 }
 
