@@ -37,7 +37,7 @@ export type ControlStoreDeps = Readonly<{
   operations: BlobsStoreLike;
   clock: TrustedClock;
   /** A fixed category only; never expose keys or adapter errors. */
-  diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'other'; stage: 'record_corrupt' | 'read_error' }>) => void;
+  diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'other'; stage: 'record_corrupt' | 'read_error'; httpStatus?: number }>) => void;
 }>;
 
 type StoredEnvelope = Readonly<{ operationId: string; value: JsonValue; expiresAt: string | null }>;
@@ -118,10 +118,14 @@ function sameLedgerEntry(data: unknown, key: string, digest: string): boolean {
 
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
-  const readDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error') => {
+  const readDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error', error?: unknown) => {
     const scope = key.startsWith('auth.session.v1.') ? 'session'
       : key.startsWith('invitations.invite.') ? 'invitation' : 'other';
-    try { deps.diagnostic?.({ scope, stage }); } catch { /* Diagnostics never change store outcomes. */ }
+    const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
+    const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+      ? status : undefined;
+    try { deps.diagnostic?.({ scope, stage, ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    catch { /* Diagnostics never change store outcomes. */ }
   };
 
   async function readLive<T extends JsonValue>(key: string): Promise<{
@@ -200,8 +204,8 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
         if (live) return { kind: 'record', record: live };
         if (corrupt) { readDiagnostic(key, 'record_corrupt'); return { kind: 'unavailable' }; }
         return { kind: 'absent' };
-      } catch {
-        readDiagnostic(key, 'read_error');
+      } catch (error) {
+        readDiagnostic(key, 'read_error', error);
         return { kind: 'unavailable' };
       }
     },

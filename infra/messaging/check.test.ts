@@ -179,6 +179,7 @@ test('renders the shipped template with registration, federation and URL preview
   assert.match(rendered, /^enable_registration: false$/m);
   assert.match(rendered, /^enable_registration_without_verification: false$/m);
   assert.match(rendered, /^registration_shared_secret: "registration-secret-with-more-than-32-bytes"$/m);
+  assert.match(rendered, /^rc_login:\n  address:\n    per_second: 1\n    burst_count: 30\n  account:\n    per_second: 0\.5\n    burst_count: 20$/m);
   assert.match(rendered, /^url_preview_enabled: false$/m);
   assert.match(rendered, /^federation_domain_whitelist: \[\]$/m);
   assert.match(rendered, /names: \[client\]/);
