@@ -24,15 +24,16 @@ test('owner form POST carries the exact Origin without leaking its candidate URL
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const origin = `http://127.0.0.1:${address.port}`;
-  const browser = await chromium.launch({ headless: true });
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
   try {
+    browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto(`${origin}/approve?candidate=private-capability`);
     await page.getByRole('button', { name: 'Approve key' }).click();
     await assert.doesNotReject(page.getByText('approved').waitFor());
     assert.deepEqual(received, { origin, referer: `${origin}/` });
   } finally {
-    await browser.close();
+    await browser?.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
