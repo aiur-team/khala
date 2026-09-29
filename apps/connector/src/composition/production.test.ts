@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { nativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import type { MatrixConnectorInput, MatrixConnectorSubstrate } from '../substrate/matrix';
@@ -54,9 +55,13 @@ describe('installed hosted connector composition', () => {
       binding = { v: 1, bindingId: 'binding-active-restart', ownerId: 'owner-active',
         agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
         deviceId, harness: 'proof-key', sessionId: `agent_${signer.jkt}`, generation: 0 } as SessionBinding;
-      expect(await storage.bindDeviceIdentity({ deviceId, fingerprint: 'active-device-fingerprint' }))
+      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: 'active-device-fingerprint' }))
         .toEqual({ kind: 'bound' });
       expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
+      expect(await createConnectorDispatchStorage(storage).applyEffectivePolicy({ binding,
+        policy: { version: 0, armedAt: 0, paused: false, expiresAt: null,
+          listening: { version: 0, requested: 'sync', effective: null, evidenceRevision: null } },
+      })).toEqual({ kind: 'applied' });
       await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer })
         .acceptInitial({ token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
           scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000 });

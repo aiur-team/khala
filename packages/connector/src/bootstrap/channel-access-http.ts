@@ -100,9 +100,13 @@ export function createHttpChannelAccessRedeem(options: ChannelAccessHttpOptions)
       const reply = await protectedPost(options, transport, target, input.origin, {
         v: 1, operationId: input.operationId, requester: credential.requester.principal,
         origin: input.origin, sessionGeneration: credential.requester.sessionGeneration,
-        deviceId: input.deviceId, bindingId: input.bindingId, proofKeyThumbprint: options.signer.jkt,
+        deviceId: input.deviceId, ...(input.bindingId ? { bindingId: input.bindingId } : {}),
+        proofKeyThumbprint: options.signer.jkt,
       });
       if (reply.kind === 'failed') return { kind: 'outcome_unknown' };
+      if (reply.status === 409 && isExact(reply.body, { v: 1, kind: 'rejected', code: 'operation_mismatch' })) {
+        return { kind: 'not_redeemed' };
+      }
       if (reply.status === 409) return { kind: 'refused', code: 'binding_conflict' };
       if (reply.status === 410) return { kind: 'refused', code: 'binding_revoked' };
       if (reply.status !== 200) return reply.status >= 500 ? { kind: 'unavailable' } : { kind: 'refused', code: 'admission_denied' };

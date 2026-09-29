@@ -171,4 +171,22 @@ describe('channel-access HTTP client', () => {
     const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
     expect(claims.body_hash).toBe(createHash('sha256').update(t.calls[0]!.init.body as string).digest('base64url'));
   });
+
+  it('looks up a lost redeem response by operation with no binding ID and a body-bound proof', async () => {
+    const t = transport(() => json(409, { v: 1, kind: 'rejected', code: 'operation_mismatch' }));
+    const client = createHttpChannelAccessRedeem({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
+    expect(await client.resume({ operationId: REQUEST.operationId, deviceId: REQUEST.deviceId,
+      origin: ORIGIN })).toEqual({ kind: 'not_redeemed' });
+    const [call] = t.calls;
+    expect(call!.url).toBe(`${ORIGIN}/api/agent/channel-access/resume?operation=op_access_1`);
+    expect(JSON.parse(call!.init.body as string)).toEqual({ v: 1, operationId: REQUEST.operationId,
+      requester: REQUESTER, origin: ORIGIN, sessionGeneration: 3, deviceId: REQUEST.deviceId,
+      proofKeyThumbprint: signer.jkt });
+    const headers = call!.init.headers as Record<string, string>;
+    const claims = JSON.parse(Buffer.from(headers.dpop!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(headers.authorization).toBe(`DPoP ${credential.credentialRef}`);
+    expect(claims).toMatchObject({ htm: 'POST', htu: call!.url,
+      ath: createHash('sha256').update(credential.credentialRef).digest('base64url'),
+      body_hash: createHash('sha256').update(call!.init.body as string).digest('base64url') });
+  });
 });
