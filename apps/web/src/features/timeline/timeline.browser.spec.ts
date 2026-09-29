@@ -70,15 +70,27 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     const composer = page.getByRole('textbox', { name: 'Message' });
     await composer.fill('a fresh reply from the browser test');
     await page.getByRole('button', { name: 'Send' }).click();
-    await page.getByText('a fresh reply from the browser test').waitFor();
-    assert.equal(await page.getByText('a fresh reply from the browser test').count(), 1, 'exactly one row for the reconciled send');
+    await page.locator('.timeline__row', { hasText: 'a fresh reply from the browser test' }).first().waitFor();
+    await page.locator('.timeline__row--pending', { hasText: 'a fresh reply from the browser test' }).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.timeline__row', { hasText: 'a fresh reply from the browser test' }).count(), 1, 'exactly one row for the reconciled send');
+
+    // Two deliberate sends with identical bytes have distinct transactions
+    // and events. Neither may be collapsed by matching message content.
+    await composer.fill('a deliberate repeat');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: 'a deliberate repeat' }).waitFor({ state: 'detached' });
+    await composer.fill('a deliberate repeat');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: 'a deliberate repeat' }).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.timeline__row', { hasText: 'a deliberate repeat' }).count(), 2);
 
     // A draft is sent trimmed, but its acceptance is recognized against the
     // reader's untrimmed text too: trailing whitespace alone must not leave a
     // stale draft behind once that exact send has reconciled.
     await composer.fill('a padded reply   ');
     await page.getByRole('button', { name: 'Send' }).click();
-    await page.getByText('a padded reply').waitFor();
+    await page.locator('.timeline__row--pending', { hasText: 'a padded reply' }).waitFor({ state: 'detached' });
+    await page.waitForFunction(() => (document.querySelector('#conversation-draft') as HTMLTextAreaElement)?.value === '');
     assert.strictEqual(await composer.inputValue(), '', 'trailing whitespace does not block the draft from clearing on reconciliation');
 
     // outcome_unknown resolves through the same transaction, not a fresh send.
@@ -110,8 +122,8 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // may resolve a definite failure, never a fresh Send with new bytes.
     assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true, 'Send is disabled while a send has failed');
     await page.getByRole('button', { name: 'Retry' }).click();
-    await page.getByText('__fail_once please retry').waitFor();
-    assert.equal(await page.getByText('__fail_once please retry').count(), 1, 'retrying a failed send does not duplicate the message');
+    await page.locator('.timeline__row--pending', { hasText: '__fail_once please retry' }).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.timeline__row', { hasText: '__fail_once please retry' }).count(), 1, 'retrying a failed send does not duplicate the message');
     assert.equal(await page.getByText('Not delivered').count(), 0, 'the failed row clears once the retry is accepted');
     await composer.fill('a new message once everything is resolved');
     assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), false, 'Send re-enables once every send is resolved');

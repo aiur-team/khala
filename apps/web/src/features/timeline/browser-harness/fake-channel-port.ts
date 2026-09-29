@@ -66,7 +66,7 @@ export function createFakeChannelPort() {
     send: async ({ clientTxnId, content }): Promise<OperationResult<SendState, ChannelRejection>> => {
       if (outcomeUnknownTxns.has(clientTxnId)) {
         outcomeUnknownTxns.delete(clientTxnId);
-        const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+        const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
         listeners.forEach(listener => listener(currentSnapshot()));
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
@@ -77,7 +77,7 @@ export function createFakeChannelPort() {
       }
       if (failOnceTxns.has(clientTxnId)) {
         failOnceTxns.delete(clientTxnId);
-        const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+        const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
         listeners.forEach(listener => listener(currentSnapshot()));
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
@@ -86,7 +86,9 @@ export function createFakeChannelPort() {
         failOnceTxns.add(clientTxnId);
         return { kind: 'rejected', code: 'invalid_request' };
       }
-      const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+      // A Matrix sync from the server can omit unsigned.transaction_id even
+      // though the send acknowledgment named the exact event.
+      const item = makeItem(clientTxnId, alice, content.body);
       recent = [...recent, item];
       listeners.forEach(listener => listener(currentSnapshot()));
       return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });

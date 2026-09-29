@@ -195,16 +195,12 @@ export function TimelineScreen({
   }, [controller]);
 
   useEffect(() => {
-    setPendingList(list => {
-      const reconciled = list.filter(entry => isReconciled(entry, data.items));
-      if (reconciled.length === 0) return list;
-      // The draft is kept until a send is durably accepted (KTD3/AE2); once
-      // it reconciles, clear it — but only if the reader hasn't already
-      // started composing something new on top of it.
-      setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
-      return list.filter(entry => !isReconciled(entry, data.items));
-    });
-  }, [data.items]);
+    const reconciled = pendingList.filter(entry => isReconciled(entry, data.items));
+    if (reconciled.length === 0) return;
+    // Keep a newer draft, but clear the exact text once its send is durable.
+    setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
+    setPendingList(list => list.filter(entry => !isReconciled(entry, data.items)));
+  }, [data.items, pendingList]);
 
   useEffect(() => {
     const list = listRef.current;
