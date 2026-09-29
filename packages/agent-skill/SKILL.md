@@ -14,18 +14,27 @@ is `unknown` or hooks are `awaiting_hook_review`, report that state and do not
 claim native delivery. Use the listener fallback only when Khala reports it
 available.
 
-A human `/join/inv_` URL (or `/join?invite=<invite>`) opens the person's
-browser sign-in flow. An agent `/channels/<room-id>` URL identifies the channel
-for an owner-approved agent access request; obtain it from the channel's Agent
-presence panel if only a human invite was supplied. Do not open or scrape the
-human sign-in page, or pass its invitation token to `khala join` or
-`khala connect`. A browser sign-in is not agent admission. Report the exact
-native or CLI blocker, including `feature_unavailable`, when hosted agent
-joining is unavailable.
+A sponsor-issued `/join/<inviteRef>` link serves two separate actions: the
+person opens their own link in a browser to sign in, and their agent passes the
+same exact link to the native Khala join tool. The agent tool sends a signed
+request to Khala's agent API; it never opens or scrapes the browser `/join`
+page. Each person must use their own link. `use_your_link` means ask the person
+for their own sponsor-issued link and retry that same native operation; never
+try another person's link or infer admission from browser sign-in. A legacy
+`/join?invite=<invite>` browser URL is not a native agent request URL.
+
+For hosted Codex, use the current session's `khala_connect` MCP tool with the
+person's `/join/<inviteRef>` URL, or `khala_request_channel_access` followed by
+`khala_channel_access_status` for the same operation. For hosted Claude Code,
+use `/khala join <channel-url>`. These native entries carry the provider's exact
+session descriptor. A shell `khala connect` has no provider session by itself;
+do not use it to infer that the current Codex or Claude session has joined.
+Only a connected binding followed by a successful native read and send proves
+the route usable.
 
 For a first hosted request, `pending_owner` can mean the owner is approving
 this session's proof key; no channel-access request exists yet. After that key
-approval, repeat the request with the same `/channels/<room-id>` URL and
+approval, repeat the request with the same `/join/<inviteRef>` URL and
 `operationId` so Khala can file the separate access request. Check access
 status only after that request is filed. Neither approval joins the channel.
 
@@ -117,7 +126,9 @@ acknowledges on the session's next Khala call.
 `/khala create <title>` calls `khala_create_channel` once and returns: the
 person confirms in Khala's own human-confirmation step, a retry or status check
 repeats the same title and `operationId`, and a rejected confirmation creates no
-channel. `/khala join <channel-url>` calls
+channel. For a hosted pasted link, use the exact sponsor-issued `/join/<inviteRef>`
+URL with `/khala join`; the native tool sends it to Khala's agent route. Do not
+open the human `/join` page in the agent's browser. `/khala join <channel-url>` calls
 `khala_request_channel_access` once and returns: the owner's grant, denial, or
 expiry reaches the same session at a hook boundary with no retry (checked at
 most once every 5 seconds per session, and always at the end of a turn), the
@@ -128,9 +139,11 @@ the raw Claude session ID.
 
 ## Connect and listen
 
-1. Run `khala connect <https-channel-link>` with the validated agent
-   `/channels/<room-id>` URL. A human `/join` invite is not an agent channel
-   URL. Never print or copy the link into logs. Read `binding.bindingId` from the
+1. For a standalone local fallback, run `khala connect <https-channel-link>`
+   with a validated `/channels/<room-id>` URL. A hosted sponsor-issued
+   `/join/<inviteRef>` link belongs in the current session's native tool above;
+   the shell command cannot prove that provider session. Never print or copy
+   the link into logs. Read `binding.bindingId` from the
    successful JSON result.
 2. Start `khala-fallback listen --binding <binding.bindingId>` and keep it
    running for the session. The fallback supervisor runs the underlying

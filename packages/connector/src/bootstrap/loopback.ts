@@ -127,17 +127,22 @@ export function createHttpAdmission(options: HttpAdmissionOptions): BootstrapAdm
       }
       if (status === 429 || status === 503) return { kind: 'unavailable' };
       if (status !== 200) return status >= 500 ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'admission_denied' };
-      const body = response.body as { binding?: unknown; adapter_capability?: unknown; matrix_session?: unknown } | null;
-      if (!body || typeof body.binding !== 'object' || body.binding === null) return { kind: 'outcome_unknown' };
-      const capability = readCapability(body.adapter_capability);
-      // Anything but exactly the adapter scope is refused, never used.
-      if (capability === null) return { kind: 'refused', code: 'admission_denied' };
-      const matrixSession = body.matrix_session === undefined ? undefined : readMatrixSession(body.matrix_session);
-      if (body.matrix_session !== undefined && matrixSession === null) return { kind: 'refused', code: 'admission_denied' };
-      // The orchestrator decodes and checks the binding, and the capability against it.
-      return { kind: 'admitted', binding: body.binding as never, capability, ...(matrixSession ? { matrixSession } : {}) };
+      return parseChannelAccessAdmission(response.body);
     },
   };
+}
+
+/** Shared strict response parser for grant redemption and grant-free resume. */
+export function parseChannelAccessAdmission(value: unknown): AdmissionOutcome {
+  const body = value as { binding?: unknown; adapter_capability?: unknown; matrix_session?: unknown } | null;
+  if (!body || typeof body.binding !== 'object' || body.binding === null) return { kind: 'outcome_unknown' };
+  const capability = readCapability(body.adapter_capability);
+  // Anything but exactly the adapter scope is refused, never used.
+  if (capability === null) return { kind: 'refused', code: 'admission_denied' };
+  const matrixSession = body.matrix_session === undefined ? undefined : readMatrixSession(body.matrix_session);
+  if (body.matrix_session !== undefined && matrixSession === null) return { kind: 'refused', code: 'admission_denied' };
+  // The orchestrator decodes and checks the binding, and the capability against it.
+  return { kind: 'admitted', binding: body.binding as never, capability, ...(matrixSession ? { matrixSession } : {}) };
 }
 
 function readMatrixSession(value: unknown): MatrixDeviceSession | null {

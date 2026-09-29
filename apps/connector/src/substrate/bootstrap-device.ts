@@ -102,7 +102,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
         try {
           const fixed = await reserved(activation.operationId);
           if (fixed.deviceId !== activation.deviceId || activation.binding.deviceId !== fixed.deviceId
-            || activation.matrixSession?.deviceId !== fixed.deviceId) return { kind: 'failed', reason: 'capability_rejected' };
+            || (activation.matrixSession && activation.matrixSession.deviceId !== fixed.deviceId)) return { kind: 'failed', reason: 'capability_rejected' };
           const active = await ready(activation.matrixSession);
           const inner = await active.devices.reserve(activation.operationId);
           if (inner.kind !== 'reserved' || inner.deviceId !== fixed.deviceId) return { kind: 'failed', reason: 'initialization_failed' };
