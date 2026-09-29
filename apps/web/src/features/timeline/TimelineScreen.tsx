@@ -208,8 +208,6 @@ export function TimelineScreen({
   useEffect(() => {
     const reconciled = pendingList.filter(entry => isReconciled(entry, data.items));
     if (reconciled.length === 0) return;
-    // Keep a newer draft, but clear the exact text once its send is durable.
-    setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
     updatePending(list => list.filter(entry => !isReconciled(entry, data.items)));
   }, [data.items, pendingList, updatePending]);
 
@@ -242,10 +240,12 @@ export function TimelineScreen({
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || !canCompose || sendBlocked) return;
+    if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
+      entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
     updatePending(list => [...list, { clientTxnId, content, phase: 'pending' as const }]);
+    setDraft('');
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
@@ -258,7 +258,7 @@ export function TimelineScreen({
   }
 
   const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => item.participant), viewer]);
-  // A `failed` or `outcome_unknown` send keeps its draft text on screen, but
+  // A `failed` or `outcome_unknown` send keeps its body in the pending row, but
   // Send must stay disabled while it's unresolved: otherwise the reader could
   // submit the same text again under a fresh `clientTxnId`, duplicating a
   // send that may already have gone through (AE2). Only Retry — which reuses

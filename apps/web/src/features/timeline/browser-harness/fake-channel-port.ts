@@ -50,6 +50,8 @@ export function createFakeChannelPort() {
   const outcomeUnknownTxns = new Set<string>();
   const failOnceTxns = new Set<string>();
   const deferredSync: TimelineItem[] = [];
+  let delayNext = false;
+  let releaseDelayed: (() => void) | undefined;
 
   function currentSnapshot(): ChannelSnapshot {
     return {
@@ -65,6 +67,10 @@ export function createFakeChannelPort() {
     prepareIntro: async () => ok([]),
     resumeIntro: async () => ok([]),
     send: async ({ clientTxnId, content }): Promise<OperationResult<SendState, ChannelRejection>> => {
+      if (delayNext) {
+        delayNext = false;
+        await new Promise<void>(resolve => { releaseDelayed = resolve; });
+      }
       if (outcomeUnknownTxns.has(clientTxnId)) {
         outcomeUnknownTxns.delete(clientTxnId);
         const item = makeItem(clientTxnId, alice, content.body);
@@ -115,6 +121,11 @@ export function createFakeChannelPort() {
     port,
     roomId,
     viewer: alice,
+    delayNextSend() { delayNext = true; },
+    releaseDelayedSend() {
+      releaseDelayed?.();
+      releaseDelayed = undefined;
+    },
     releaseNextSend() {
       const item = deferredSync.shift();
       if (!item) return;
