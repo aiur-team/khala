@@ -46,6 +46,14 @@ export type ClaudeToolOptions = Readonly<{
   /** The command ID for each `khala_mode_set` call; a fresh one per call, so a new call is never a replay. */
   newCommandId?: () => string;
   now?: () => Date;
+  hosted?: Readonly<{
+    active(): Promise<boolean>;
+    send(message: string): Promise<Outcome>;
+    read(): Promise<Outcome>;
+    status(): Promise<Outcome>;
+    roster(): Promise<Outcome>;
+  }>;
+  channels?: ChannelToolsPort;
 }>;
 
 /**
@@ -57,6 +65,7 @@ export type ClaudeToolOptions = Readonly<{
 export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: ClaudeToolOptions = {}): ToolRegistry {
   const newCommandId = options.newCommandId ?? randomUUID;
   const now = options.now ?? (() => new Date());
+  const hostedActive = async () => options.hosted !== undefined && await options.hosted.active();
 
   const sendTool: McpTool = {
     name: SEND_TOOL_NAME,
@@ -74,7 +83,8 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       if (!onlyKeys(args, ['message']) || typeof args.message !== 'string' || args.message.length === 0
         || Buffer.byteLength(args.message) > MAX_SEND_BYTES) return failure(id, -32602, 'Invalid params');
       if (notification) return success(id, {});
-      return success(id, toolResult(await guard(() => entry.send(args.message as string))));
+      return success(id, toolResult(await guard(async () => await hostedActive()
+        ? options.hosted!.send(args.message as string) : entry.send(args.message as string))));
     },
   };
 
@@ -89,7 +99,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
       // A notification has no response on which a batch could be delivered.
       if (notification) return success(id, {});
-      const outcome = await guard(() => entry.read());
+      const outcome = await guard(async () => await hostedActive() ? options.hosted!.read() : entry.read());
       if (outcome.kind === 'batch') return success(id, toolResult({ kind: 'batch', batch: outcome.text }));
       return success(id, toolResult(outcome));
     },
@@ -99,13 +109,15 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     name: STATUS_TOOL_NAME,
     definition: () => ({
       name: STATUS_TOOL_NAME,
-      description: 'Report this Claude session\'s requested and effective listening mode and the per-mode support its harness capabilities have evidenced. Unevidenced modes read "unproven". It changes no mode and carries no channel content.',
+      description: options.hosted
+        ? 'Report this exact Claude MCP session\'s approved hosted channel status, or its internal listening mode when no hosted binding is held. It changes nothing and carries no channel content.'
+        : 'Report this Claude session\'s requested and effective listening mode and the per-mode support its harness capabilities have evidenced. Unevidenced modes read "unproven". It changes no mode and carries no channel content.',
       inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
     }),
     async call(args, { id, notification }) {
       if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
       if (notification) return success(id, {});
-      return success(id, toolResult(await guard(() => entry.mode())));
+      return success(id, toolResult(await guard(async () => await hostedActive() ? options.hosted!.status() : entry.mode())));
     },
   };
 
@@ -120,7 +132,8 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     async call(args, { id, notification }) {
       if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
       if (notification) return success(id, {});
-      return success(id, toolResult(await guard(() => entry.mode())));
+      return success(id, toolResult(await guard(async () => await hostedActive()
+        ? Promise.resolve({ kind: 'refused', code: 'unavailable' }) : entry.mode())));
     },
   };
 
@@ -148,6 +161,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       }
       // A notification has no response on which a mode result could be reported, so it changes nothing.
       if (notification) return success(id, {});
+      if (await hostedActive()) return success(id, toolResult({ kind: 'refused', code: 'unavailable' }));
       let outcome: Awaited<ReturnType<ClaudeAgentEntry['setMode']>>;
       try {
         outcome = await entry.setMode({
@@ -173,7 +187,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     async call(args, { id, notification }) {
       if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
       if (notification) return success(id, {});
-      const outcome = await guard(() => entry.roster());
+      const outcome = await guard(async () => await hostedActive() ? options.hosted!.roster() : entry.roster());
       if (outcome.kind === 'roster') {
         const agents = decodeRoster(outcome.roster);
         return success(id, listingResult(agents === null ? { ok: false, error: 'unavailable' } : { ok: true, v: 1, agents }));
@@ -189,7 +203,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     // A create retry under the same operation ID reads that request's current state, so the
     // plugin's frozen tool set needs no separate create-status tool.
     ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool, createChannelTool]
-      .map(tool => sessionBound(withoutBatchToken(tool), entry)),
+      .map(tool => sessionBound(withoutBatchToken(tool), entry, options.channels, hostedActive)),
   ]);
 }
 
@@ -232,15 +246,17 @@ function withoutBatchToken(tool: McpTool): McpTool {
  * session and a grant can bind no other. Without a valid session ID the call is
  * refused before any port runs. No argument can name a session or a binding.
  */
-function sessionBound(tool: McpTool, entry: ClaudeAgentEntry): McpTool {
-  const channels = sessionChannels(entry);
+function sessionBound(tool: McpTool, entry: ClaudeAgentEntry, hostedChannels?: ChannelToolsPort,
+  hostedActive?: () => Promise<boolean>): McpTool {
+  const internalChannels = sessionChannels(entry);
   return {
     name: tool.name,
     definition: tool.definition,
-    call(args, context) {
+    async call(args, context) {
       if (entry.session === null && !context.notification) {
-        return Promise.resolve(success(context.id, toolResult({ kind: 'refused', code: 'session_missing' })));
+        return success(context.id, toolResult({ kind: 'refused', code: 'session_missing' }));
       }
+      const channels = hostedChannels && await hostedActive?.() ? hostedChannels : internalChannels;
       return tool.call(args, { ...context, channels });
     },
   };
@@ -278,7 +294,7 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
   };
 }
 
-function sessionOperationId(session: string | null, operationId: string): string {
+export function sessionOperationId(session: string | null, operationId: string): string {
   return createHash('sha256').update(JSON.stringify(['khala.claude.access.v1', session, operationId])).digest('base64url').slice(0, 32);
 }
 
@@ -290,6 +306,7 @@ export type ClaudeMcpServerOptions = Readonly<{
   claude: ClaudeSessionClient | undefined;
   /** The composed discovery and access port behind `khala_list_channels` and the access tools. */
   channels?: ChannelToolsPort | undefined;
+  hosted?: ClaudeToolOptions['hosted'];
   env: Readonly<Record<string, string | undefined>>;
   input: Readable;
   output: Writable;
@@ -301,8 +318,11 @@ export type ClaudeMcpServerOptions = Readonly<{
  * lock: the local Khala server resolves this session's binding on every call.
  */
 export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promise<void> {
-  if (options.claude === undefined) throw new CliError('transport_unavailable');
-  const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude, options.env));
+  if (options.claude === undefined && options.hosted === undefined) throw new CliError('transport_unavailable');
+  // In hosted mode every callable channel operation is replaced by the hosted port.
+  const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude ?? {} as ClaudeSessionClient, options.env),
+    { ...(options.hosted ? { hosted: options.hosted } : {}),
+      ...(options.hosted && options.channels ? { channels: options.channels } : {}) });
   const unreachable = async (): Promise<never> => { throw new CliError('internal_error'); };
   await runMcpServer({
     input: options.input,

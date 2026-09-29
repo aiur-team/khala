@@ -1,10 +1,11 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { BatchInbox } from '../inbox.js';
-import { isClaudeMcpEntry, runClaudeMcpServer } from '../../composition/claude-mcp.js';
+import { isClaudeMcpEntry, runClaudeMcpServer, sessionOperationId } from '../../composition/claude-mcp.js';
 import { CLAUDE_SESSION_ENV } from '../../composition/claude-agent.js';
 import { deliveringInbox, type DeliveringInbox } from '../../composition/delivering-inbox.js';
 import { ListeningModeOperation } from '../../composition/listening-mode.js';
 import { ReadOperation, sameHeldBinding } from '../../composition/read.js';
+import { renderInboxBatchWithoutToken } from '../../mcp/result-postprocessor.js';
 import { type SessionGrants, harnessSessionFromMeta } from '../../composition/session-grant.js';
 import {
   postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
@@ -50,8 +51,78 @@ export const mcpServeCommand: CliCommand = {
           return opened?.client.channelAccessStatus?.(input, signal) ?? { kind: 'unavailable' };
         },
       };
+      let retainedToken: string | undefined;
+      let sessionBinding: SessionBinding | null = null;
+      const held = async () => {
+        const opened = await open();
+        if (!opened || !validIdentifier(sessionId)) return null;
+        const status = publicStatus(await opened.client.status(deps.signal));
+        const binding = status.binding;
+        const storedSession = opened.client.storedSessionId?.('claude', sessionId) ?? sessionId;
+        if (!status.connected || binding === null || !['claude', 'proof-key'].includes(binding.harness)
+          || binding.sessionId !== storedSession) return null;
+        if (sessionBinding !== null && !sameHeldBinding(sessionBinding, binding)) return null;
+        sessionBinding = binding;
+        return { opened, binding };
+      };
+      const current = async (binding: SessionBinding) => {
+        const selected = await held();
+        return selected !== null && sameHeldBinding(binding, selected.binding);
+      };
+      const hostedTools = {
+        async active() {
+          if (!validIdentifier(sessionId)) return false;
+          if (!deps.hostedBindingPresent) return true;
+          try { return await deps.hostedBindingPresent({ harness: 'claude', sessionId }); }
+          catch { return true; } // Uncertain hosted state must not fall back to internal authority.
+        },
+        async status() {
+          const selected = await held();
+          return selected === null ? { kind: 'refused', code: 'not_connected' }
+            : { kind: 'status', connected: true };
+        },
+        async send(message: string) {
+          const selected = await held();
+          if (selected === null) return { kind: 'refused', code: 'not_connected' };
+          const result = await new SendService(selected.opened.client).send(message, selected.binding.bindingId, undefined, deps.signal);
+          // A changed binding after the call cannot prove whether the send committed.
+          return await current(selected.binding) ? result : { kind: 'outcome_unknown' };
+        },
+        async read() {
+          const selected = await held();
+          if (selected === null) return { kind: 'refused', code: 'not_connected' };
+          const inbox = await selected.opened.inbox(selected.binding.bindingId, selected.binding.generation);
+          const consumer = callScopedConsumer(inbox, { signal: deps.signal, explicitRead: true });
+          const read = new ReadOperation({ heldBinding: selected.binding, consumer,
+            currentBinding: async () => (await held())?.binding ?? null });
+          let result: Awaited<ReturnType<typeof read.read>>;
+          try {
+            result = await read.read({ bindingId: selected.binding.bindingId, maxBytes: 65_536,
+              ...(retainedToken === undefined ? {} : { acknowledgeToken: retainedToken }) });
+          } catch (error) {
+            if (error instanceof CliError && error.code === 'binding_not_held') {
+              return { kind: 'refused', code: 'binding_not_held' };
+            }
+            throw error;
+          }
+          if (result.kind === 'empty') return { kind: 'empty' };
+          const text = renderInboxBatchWithoutToken(result.batch);
+          if (!await current(selected.binding)) return { kind: 'refused', code: 'binding_not_held' };
+          retainedToken = result.batch.token;
+          return { kind: 'batch', text };
+        },
+        async roster() {
+          const selected = await held();
+          if (selected === null) return { kind: 'refused', code: 'session_not_bound' };
+          const roster = await selected.opened.client.listAgents({ bindingId: selected.binding.bindingId }, deps.signal);
+          return roster.kind === 'listed' ? { kind: 'roster', roster: roster.roster }
+            : { kind: 'refused', code: 'unavailable' };
+        },
+      };
       try {
-        await runClaudeMcpServer({ claude: deps.claude, channels: composeChannelTools(channelsClient),
+        await runClaudeMcpServer({ claude: deps.claude,
+          channels: composeChannelTools(channelsClient, id => sessionOperationId(sessionId ?? null, id)),
+          hosted: deps.hostedSession ? hostedTools : undefined,
           env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
       } finally { await (hosted as Hosted | null)?.close(); }
       return 0;
