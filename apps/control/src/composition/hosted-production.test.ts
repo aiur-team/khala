@@ -311,6 +311,18 @@ describe('generated hosted production composition', () => {
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
       clock: () => now, fetch: matrixFetch,
     }).authorize);
+    const sponsorPath = `${origin}/api/agent/channel-link/request`;
+    const sponsor = await signedRequester.authenticateSponsor(new Request(sponsorPath, { method: 'POST',
+      headers: { origin, authorization: `DPoP ${credential.credential.credentialRef}`,
+        dpop: signedProof('POST', sponsorPath, credential.credential.credentialRef) },
+    }));
+    expect(sponsor.kind).toBe('authenticated');
+    if (sponsor.kind === 'authenticated') expect(sponsor.sponsorOwnerId).toBe('owner_1');
+    expect((await signedRequester.authenticateSponsor(new Request(sponsorPath, { method: 'POST' }))).kind)
+      .toBe('rejected');
+    expect((await signedRequester.authenticateSponsor(new Request(`${sponsorPath}?owner=owner_2`, {
+      method: 'POST',
+    }))).kind).toBe('rejected');
     const authenticated = await signedRequester.authenticateAgent(new Request(statusPath, { headers: {
       authorization: `DPoP ${credential.credential.credentialRef}`,
       dpop: signedProof('GET', statusPath, credential.credential.credentialRef),

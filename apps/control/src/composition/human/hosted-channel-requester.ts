@@ -12,6 +12,9 @@ import type { HostedAccessRequesterAuthority } from './hosted-channel-access-res
 type ApprovalContext = Readonly<{ v: 1; ownerId: OwnerId; principal: string; origin: string;
   session: SessionRef; proofKeyThumbprint: string; authorityRevision: string }>;
 const FINGERPRINT = /^[A-Za-z0-9_-]{43}$/u;
+export type HostedSponsorAuthentication =
+  | Exclude<AgentChannelAccessAuthentication, { kind: 'authenticated' }>
+  | (Extract<AgentChannelAccessAuthentication, { kind: 'authenticated' }> & Readonly<{ sponsorOwnerId: OwnerId }>);
 
 function fingerprint(record: ApprovalContext): string {
   return createHash('sha256').update(JSON.stringify(['khala.hosted.channel-access.context.v1', record]))
@@ -26,6 +29,8 @@ export function createHostedChannelRequester(
     = async () => ({ kind: 'unavailable' }),
 ): Readonly<{
   authenticateAgent(request: Request): Promise<AgentChannelAccessAuthentication>;
+  /** Exact signed credential and sponsor for #532's personal-link request route. */
+  authenticateSponsor(request: Request): Promise<HostedSponsorAuthentication>;
   requesterAuthority: HostedAccessRequesterAuthority;
   admissionAuthority: HostedAdmissionAuthority;
 }> {
@@ -66,38 +71,42 @@ export function createHostedChannelRequester(
     return ownerId !== undefined && record.ownerId !== ownerId ? 'revoked' : current(record);
   }
 
+  async function authenticate(request: Request, route: 'access' | 'sponsor'): Promise<HostedSponsorAuthentication> {
+    let url: URL;
+    try { url = new URL(request.url); } catch { return { kind: 'rejected', code: 'forbidden' }; }
+    const accessPath = request.method === 'POST' && url.pathname === '/api/agent/channel-access/request'
+      || request.method === 'GET' && url.pathname === '/api/agent/channel-access/status'
+      && url.searchParams.getAll('operationKind').length === 1 && url.searchParams.get('operationKind') === 'access';
+    const sponsorPath = request.method === 'POST' && url.pathname === '/api/agent/channel-link/request'
+      && url.search === '';
+    if (!(route === 'access' ? accessPath : sponsorPath)) return { kind: 'rejected', code: 'forbidden' };
+    const authorization = await authorize(request, 'request_channel_access').catch(() => ({ kind: 'unavailable' as const }));
+    if (authorization.kind === 'unavailable') return { kind: 'unavailable' };
+    if (authorization.kind === 'refused') return { kind: 'rejected',
+      code: authorization.status === 401 ? 'auth_required' : 'forbidden' };
+    const requester = authorization.requester;
+    if (requester.origin !== active.env.publicAppOrigin || !authorization.session
+      || typeof authorization.authorityRevision !== 'string'
+      || requester.principal !== `agent_${requester.proofKey.thumbprint}`) return { kind: 'rejected', code: 'forbidden' };
+    const record: ApprovalContext = { v: 1, ownerId: authorization.ownerId,
+      principal: requester.principal, origin: requester.origin, session: authorization.session,
+      proofKeyThumbprint: requester.proofKey.thumbprint, authorityRevision: authorization.authorityRevision };
+    const digest = fingerprint(record);
+    const written = await settleWrite<JsonValue>(store, { key: key(digest), expectedRevision: null,
+      operationId: `hosted-channel-access-context:${digest}`, next: { value: record, expiresAt: null } });
+    if (written.kind !== 'applied' && !(written.kind === 'conflict' && written.current
+      && sameJsonValue(written.current.value, record))) return { kind: 'unavailable' };
+    const context: ChannelAccessRequesterContext = { v: 1, principal: requester.principal,
+      origin: requester.origin, sessionGeneration: requester.sessionGeneration,
+      sessionFingerprint: digest, harness: authorization.session.harness,
+      displayLabel: null, workspaceLabel: null };
+    requestApproval = { requester, context, record };
+    return { kind: 'authenticated', requester, context, sponsorOwnerId: authorization.ownerId };
+  }
+
   return {
-    async authenticateAgent(request) {
-      let url: URL;
-      try { url = new URL(request.url); } catch { return { kind: 'rejected', code: 'forbidden' }; }
-      const action = request.method === 'POST' && url.pathname === '/api/agent/channel-access/request'
-        || request.method === 'GET' && url.pathname === '/api/agent/channel-access/status'
-        && url.searchParams.getAll('operationKind').length === 1 && url.searchParams.get('operationKind') === 'access'
-          ? 'request_channel_access' : null;
-      if (action === null) return { kind: 'rejected', code: 'forbidden' };
-      const authorization = await authorize(request, action).catch(() => ({ kind: 'unavailable' as const }));
-      if (authorization.kind === 'unavailable') return { kind: 'unavailable' };
-      if (authorization.kind === 'refused') return { kind: 'rejected',
-        code: authorization.status === 401 ? 'auth_required' : 'forbidden' };
-      const requester = authorization.requester;
-      if (requester.origin !== active.env.publicAppOrigin || !authorization.session
-        || typeof authorization.authorityRevision !== 'string'
-        || requester.principal !== `agent_${requester.proofKey.thumbprint}`) return { kind: 'rejected', code: 'forbidden' };
-      const record: ApprovalContext = { v: 1, ownerId: authorization.ownerId,
-        principal: requester.principal, origin: requester.origin, session: authorization.session,
-        proofKeyThumbprint: requester.proofKey.thumbprint, authorityRevision: authorization.authorityRevision };
-      const digest = fingerprint(record);
-      const written = await settleWrite<JsonValue>(store, { key: key(digest), expectedRevision: null,
-        operationId: `hosted-channel-access-context:${digest}`, next: { value: record, expiresAt: null } });
-      if (written.kind !== 'applied' && !(written.kind === 'conflict' && written.current
-        && sameJsonValue(written.current.value, record))) return { kind: 'unavailable' };
-      const context: ChannelAccessRequesterContext = { v: 1, principal: requester.principal,
-        origin: requester.origin, sessionGeneration: requester.sessionGeneration,
-        sessionFingerprint: digest, harness: authorization.session.harness,
-        displayLabel: null, workspaceLabel: null };
-      requestApproval = { requester, context, record };
-      return { kind: 'authenticated', requester, context };
-    },
+    authenticateAgent: request => authenticate(request, 'access'),
+    authenticateSponsor: request => authenticate(request, 'sponsor'),
     requesterAuthority: {
       async inspect(requester, ownerId) {
         const held = requestApproval;
