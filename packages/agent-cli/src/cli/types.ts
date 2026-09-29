@@ -164,6 +164,14 @@ export type CliDependencies = Readonly<{
   }>>;
   /** Read-only exact-session fence before an ordinary tool or hook resumes hosted state. */
   hostedBindingPresent?: (session: HarnessSession) => Promise<boolean>;
+  /** Trusted native-session composition opens a provisional hosted channel. */
+  provisionalOpen?: () => Promise<
+    | Readonly<{ kind: 'provisional'; claimUrl: string; expiresAt: string }>
+    | Readonly<{ kind: 'claimed' }>
+    | Readonly<{ kind: 'blocked'; step: 'native_session' | 'hosted_route' | 'credentials'; code: string }>
+  >;
+  /** Exact deployment origin against which the human claim URL is checked. */
+  provisionalOrigin?: string;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;

@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { runCli } from '../app.js';
 import type { BatchInbox } from '../inbox.js';
-import type { AgentClientPort } from '../types.js';
+import type { AgentClientPort, CliDependencies } from '../types.js';
 import { PAGE, disconnectedStatus, listingClient } from './fixtures/listing.js';
 
 function streams() {
@@ -17,6 +17,35 @@ async function run(argv: readonly string[], client: AgentClientPort) {
   const code = await runCli(argv, { client, inbox: unusedInbox, ...io });
   return { code, stdout: io.output(), stderr: io.error() };
 }
+
+describe('khala channels open', () => {
+  async function open(provisionalOpen?: CliDependencies['provisionalOpen'], provisionalOrigin = 'https://khala.aiur.team') {
+    const io = streams();
+    const code = await runCli(['channels', 'open'], { client: listingClient(), inbox: unusedInbox,
+      ...io, provisionalOrigin, ...(provisionalOpen ? { provisionalOpen } : {}) });
+    return { code, output: JSON.parse(io.output()) as Record<string, unknown> };
+  }
+
+  it('returns one exact-origin human claim URL', async () => {
+    expect(await open(async () => ({ kind: 'provisional',
+      claimUrl: 'https://khala.aiur.team/claim/token', expiresAt: '2026-09-29T00:00:00Z' })))
+      .toEqual({ code: 0, output: { ok: true, kind: 'provisional',
+        claimUrl: 'https://khala.aiur.team/claim/token', expiresAt: '2026-09-29T00:00:00Z' } });
+  });
+
+  it('reports the exact blocked step when native support is absent', async () => {
+    expect(await open()).toEqual({ code: 4, output: { ok: false, kind: 'blocked',
+      step: 'native_session', code: 'native_session_unavailable' } });
+  });
+
+  it('refuses a foreign or malformed claim URL', async () => {
+    for (const claimUrl of ['https://evil.example/claim/token', 'http://khala.aiur.team/claim/token',
+      'https://user@khala.aiur.team/claim/token']) {
+      expect(await open(async () => ({ kind: 'provisional', claimUrl, expiresAt: '2026-09-29T00:00:00Z' })))
+        .toEqual({ code: 4, output: { ok: false, kind: 'blocked', step: 'hosted_route', code: 'invalid_response' } });
+    }
+  });
+});
 
 describe('khala channels list', () => {
   it('prints one strictly decoded page with untrusted titles normalized', async () => {

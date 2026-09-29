@@ -19,6 +19,7 @@ export const channelsCommand: CliCommand = {
   name: 'channels',
   async run(args, deps) {
     const [subcommand, ...rest] = args;
+    if (subcommand === 'open') return openProvisional(rest, deps);
     if (subcommand === 'request-access') return requestAccess(rest, deps);
     if (subcommand === 'create') return createChannel(rest, deps);
     if (subcommand === 'create-status') return createChannelStatus(rest, deps);
@@ -34,6 +35,40 @@ export const channelsCommand: CliCommand = {
     return listingExitCode(output);
   },
 };
+
+/** Starts once for the verified calling session; no session identity is accepted from argv. */
+async function openProvisional(args: readonly string[], deps: CliDependencies): Promise<number> {
+  if (args.length !== 0) throw new CliError('invalid_arguments');
+  if (!deps.provisionalOpen) {
+    await write(deps.stdout, JSON.stringify({ ok: false, kind: 'blocked', step: 'native_session',
+      code: 'native_session_unavailable' }) + '\n');
+    return 4;
+  }
+  let result: Awaited<ReturnType<NonNullable<CliDependencies['provisionalOpen']>>>;
+  try { result = await deps.provisionalOpen(); }
+  catch { result = { kind: 'blocked', step: 'hosted_route', code: 'unavailable' }; }
+  if (result.kind === 'provisional') {
+    const parsed = URL.canParse(result.claimUrl) ? new URL(result.claimUrl) : null;
+    if (parsed?.protocol !== 'https:' || parsed.origin !== deps.provisionalOrigin
+      || parsed.username || parsed.password || !Number.isFinite(Date.parse(result.expiresAt))) {
+      await write(deps.stdout, JSON.stringify({ ok: false, kind: 'blocked', step: 'hosted_route',
+        code: 'invalid_response' }) + '\n');
+      return 4;
+    }
+    await write(deps.stdout, JSON.stringify({ ok: true, kind: 'provisional',
+      claimUrl: result.claimUrl, expiresAt: result.expiresAt }) + '\n');
+    return 0;
+  }
+  if (result.kind === 'claimed') {
+    await write(deps.stdout, JSON.stringify({ ok: true, kind: 'claimed' }) + '\n');
+    return 0;
+  }
+  const step = ['native_session', 'hosted_route', 'credentials'].includes(result.step)
+    ? result.step : 'hosted_route';
+  const code = /^[a-z][a-z0-9_]{0,63}$/.test(result.code) ? result.code : 'unavailable';
+  await write(deps.stdout, JSON.stringify({ ok: false, kind: 'blocked', step, code }) + '\n');
+  return 4;
+}
 
 /** `khala agents list --channel <held-channel>` */
 export const agentsCommand: CliCommand = {

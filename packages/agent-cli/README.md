@@ -15,6 +15,7 @@ khala status [--check]
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
+khala channels open
 khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]
 khala channels access-status --operation <id> [--origin <trusted-origin>]
 khala agents list --channel <held-binding-id>
@@ -60,6 +61,15 @@ npx @aiur/khala status
 The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
 inside this workspace, under the opt-in `khala-source` condition; a consumer of
 the published package cannot resolve them.
+
+`khala channels open` is the provisional hosted-channel entry point. It takes no
+session identity or claim URL from arguments. The installed native-session
+composition must verify the calling Codex or Claude session before the command
+returns one same-origin HTTPS claim URL for the human. Until that composition is
+available, it exits 4 with a JSON `blocked` result naming the missing step
+(`native_session`, `hosted_route`, or `credentials`); retrying after that step is
+available is safe for the same session. A provisional result is not a connected
+binding and gives the agent no owner authority.
 
 `node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
 release gate. It packs the package as npm would publish it, then refuses the
