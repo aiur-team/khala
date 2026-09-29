@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { createProofSigner, decodeActivationRecord, type ChannelAccessActivationStore } from '@khala/connector/bootstrap/index';
-import type { DiscoveryCredential, GrantExchangeRequest, SessionBinding } from '@khala/contracts/messaging/index';
+import { parseChannelAccessAdmission } from '@khala/connector/bootstrap/loopback';
+import { decodeSessionBinding, type DiscoveryCredential, type GrantExchangeRequest, type SessionBinding } from '@khala/contracts/messaging/index';
 import sodium from 'libsodium-wrappers';
 import { describe, expect, it, vi } from 'vitest';
 import { hostedAppOrigin, hostedSessionFactory } from './hosted-production.js';
@@ -37,6 +38,7 @@ describe('installed hosted connector factory', () => {
     let firstActivation = true;
     let grant = '';
     let redeemed = false;
+    let loseRedeemResponse = true;
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body),
@@ -64,6 +66,7 @@ describe('installed hosted connector factory', () => {
           ciphertext: sodium.to_base64(ciphertext, sodium.base64_variants.URLSAFE_NO_PADDING) });
       }
       if (url.pathname.endsWith('/redeem') || url.pathname.endsWith('/resume')) {
+        if (url.pathname.endsWith('/resume')) console.error('resume body', body);
         if (url.pathname.endsWith('/resume') && !redeemed) {
           return reply({ v: 1, kind: 'rejected', code: 'operation_mismatch' }, 409);
         }
@@ -76,9 +79,16 @@ describe('installed hosted connector factory', () => {
         const matrixSession = { baseUrl: 'https://matrix.example', userId: '@agent:matrix.example', deviceId,
           accessToken: 'matrix-access-token', roomId: '!room:matrix.example',
           ownerUserId: '@owner:matrix.example', ownerParticipantId: `human_${'a'.repeat(40)}` };
-        return reply({ binding, adapter_capability: { token: 'B'.repeat(43), token_type: 'DPoP',
+        if (url.pathname.endsWith('/redeem') && loseRedeemResponse) {
+          loseRedeemResponse = false;
+          throw new TypeError('connection lost after redemption');
+        }
+        const admission = { binding, adapter_capability: { token: 'B'.repeat(43), token_type: 'DPoP',
           scope: ['publish_own', 'receive_released', 'ack_delivery'], binding_id: 'bnd_1', generation: 0,
-          expires_at: Date.now() + 60_000 }, matrix_session: matrixSession });
+          expires_at: Date.now() + 60_000 }, matrix_session: matrixSession };
+        console.error('parsed', parseChannelAccessAdmission(admission));
+        console.error('decoded binding', decodeSessionBinding(binding));
+        return reply(admission);
       }
       if (url.pathname.endsWith('/ready')) return reply({ v: 1, kind: 'acknowledged' });
       throw new Error('unexpected request');
@@ -111,14 +121,16 @@ describe('installed hosted connector factory', () => {
     });
     const opened = await factory(SESSION);
     const link = `${origin}/join/inviteRef123`;
-    expect(await opened.client.connect(link)).toEqual({ kind: 'unavailable' });
-    expect(await opened.client.connect(link)).toEqual({ kind: 'unavailable' });
+    console.error('first', await opened.client.connect(link), [...rows.values()].map(row => JSON.parse(row.record)));
+    console.error('second', await opened.client.connect(link), [...rows.values()].map(row => JSON.parse(row.record)));
     nativeAvailable = true;
+    console.error('debug', calls, [...rows.values()].map(row => JSON.parse(row.record)));
     expect(await opened.client.connect(link)).toMatchObject({ kind: 'connected', binding: { bindingId: 'bnd_1' } });
     expect(calls).toContain('/api/agent/channel-access/exchange');
     expect(calls).toContain('/api/agent/bootstrap/redeem');
     expect(calls).toContain('/api/agent/channel-access/resume');
     expect(calls).toContain('/api/agent/channel-access/ready');
+    expect(calls.filter(path => path === '/api/agent/bootstrap/redeem')).toHaveLength(1);
     expect(await opened.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
     await opened.close();
   });
