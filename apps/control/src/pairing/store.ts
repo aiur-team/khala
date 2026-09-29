@@ -82,7 +82,7 @@ export interface PairingGrantPort {
     | Readonly<{ kind: 'unavailable' }>
   >;
   /** Durably records that the spending operation is about to mint its capability; a retry is then refused. */
-  markIssued(input: Readonly<{ grant: string; operationId: string }>): Promise<'applied' | 'replayed' | 'unavailable'>;
+  markIssued(input: Readonly<{ grant: string; operationId: string; bindingId: string }>): Promise<'applied' | 'replayed' | 'unavailable'>;
 }
 
 export interface PairingStore {

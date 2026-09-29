@@ -18,6 +18,8 @@ import type {
 import type { AdapterAction, AdapterCapabilities } from '../../agent-bootstrap/handler';
 import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import type { ExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
+import { findChannelAccessBinding } from './channel-access-binding';
+import type { ControlStore } from '@khala/contracts/messaging/index';
 
 /** The part of the exchange record resume reads; the composition root supplies the journal. */
 export type ResumableExchange = Readonly<{
@@ -28,6 +30,7 @@ export type ResumableExchange = Readonly<{
   sessionFingerprint: string;
   deviceId: DeviceId;
   proofKeyThumbprint: string;
+  providerOperationId: string;
   expiresAt: string;
   phase: 'bound' | 'admitting' | 'admitted' | 'sealed' | 'acknowledged' | 'closed';
   closed: 'expired' | 'closed' | null;
@@ -50,7 +53,7 @@ export type ChannelAccessResumeRequest = Readonly<{
   origin: string;
   sessionGeneration: number;
   deviceId: DeviceId;
-  bindingId: string;
+  bindingId?: string;
   /** Must be the thumbprint of the key the exchange was bound to. */
   proofKeyThumbprint: string;
 }>;
@@ -74,6 +77,8 @@ export function createChannelAccessResumeService(deps: Readonly<{
   authority: GrantExchangeAuthority;
   issuer: Pick<ExchangeGrantIssuer, 'wasRedeemed'>;
   bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
+  store: ControlStore;
+  approval?: (record: ResumableExchange, ownerId: string, channelRef: string) => Promise<'current' | 'revoked' | 'unavailable'>;
   clock: TrustedClock;
 }>): ChannelAccessResumeService {
   const { journal } = deps;
@@ -120,15 +125,36 @@ export function createChannelAccessResumeService(deps: Readonly<{
       || authorization.sessionFingerprint !== record.sessionFingerprint) return rejected('closed');
     if (deps.clock() >= Date.parse(authorization.deadline)) return rejected('expired');
 
+    const mapped = await safe(() => findChannelAccessBinding(deps.store, record));
+    if (mapped === null || mapped.kind === 'unavailable') return unavailable();
+    if (mapped.kind !== 'found') return rejected('operation_mismatch');
+    const issued = mapped.value.operation;
+    if (issued.sessionGeneration !== record.sessionGeneration || issued.deviceId !== record.deviceId
+      || issued.proofKeyThumbprint !== record.proofKeyThumbprint || issued.ownerId !== authorization.ownerId
+      || issued.channelRef !== authorization.channelRef || (input.bindingId && input.bindingId !== mapped.value.bindingId)) {
+      return rejected('operation_mismatch');
+    }
+    const currentApproval = deps.approval;
+    if (currentApproval) {
+      const approval = await safe(() => currentApproval(record, authorization.ownerId, authorization.channelRef));
+      if (approval === null || approval === 'unavailable') return unavailable();
+      if (approval !== 'current') return rejected('closed');
+    }
+    const bindingId = mapped.value.bindingId;
+
     const resumed = await safe(() => deps.bindings.resumeAdapterCapability({
-      bindingId: input.bindingId,
+      bindingId,
       ownerId: authorization.ownerId,
       deviceId: record.deviceId,
       generation: record.sessionGeneration,
       jkt: record.proofKeyThumbprint,
+      expectedSession: { harness: 'proof-key', sessionId: record.requester },
     }));
     if (resumed === null || resumed.kind === 'unavailable') return unavailable();
     if (resumed.kind === 'refused') return rejected(resumed.code === 'binding_revoked' ? 'closed' : 'operation_mismatch');
+    if (resumed.binding.bindingId !== bindingId || resumed.binding.harness !== 'proof-key'
+      || resumed.binding.sessionId !== record.requester || resumed.binding.generation !== record.sessionGeneration
+      || resumed.binding.deviceId !== record.deviceId) return rejected('operation_mismatch');
     return { kind: 'ok', value: { binding: resumed.binding, capability: resumed.capability } };
   }
 

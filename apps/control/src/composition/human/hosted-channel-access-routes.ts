@@ -13,7 +13,7 @@ import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } f
 import type { PairingGrantPort } from '../../pairing/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './production';
-import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
+import { createHostedChannelAccessResolver, readHostedAccessTarget, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
 
 /**
  * The hosted integration supplies approved proof-key authority and fresh
@@ -91,6 +91,17 @@ export function createHostedChannelAccessRoutes(
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
+      ...(admissionAuthority ? { approval: async (record, ownerId, channelRef) => {
+        const result = await admissionAuthority.current({
+          providerOperationId: record.providerOperationId, ownerId: ownerId as never,
+          channelRef: channelRef as never, requester: record.requester,
+          sessionGeneration: record.sessionGeneration, sessionFingerprint: record.sessionFingerprint,
+          deviceId: record.deviceId, history: 'none',
+        });
+        if (result !== 'current') return result;
+        const target = await readHostedAccessTarget(active, channelRef as never);
+        return target === 'unavailable' ? 'unavailable' : target?.ownerId === ownerId ? 'current' : 'revoked';
+      } } : {}),
       async authenticateConnector(request) {
         const result = await authenticateConnector(request);
         return result.kind === 'authenticated' && result.connector.origin !== active.env.publicAppOrigin
