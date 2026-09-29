@@ -394,7 +394,7 @@ function matchesRequester(requester: DiscoveryRequester, context: ChannelAccessR
     && requester.sessionGeneration === context.sessionGeneration;
 }
 
-function projectOwner(input: ChannelAccessOwnerProjection): ContractOwnerProjection {
+export function projectOwner(input: ChannelAccessOwnerProjection): ContractOwnerProjection {
   return {
     v: 1,
     requestHandle: input.requestHandle as ContractOwnerProjection['requestHandle'],

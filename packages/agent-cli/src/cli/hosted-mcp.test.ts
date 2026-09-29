@@ -44,6 +44,22 @@ async function serve(requests: readonly ReturnType<typeof call>[], hostedSession
 }
 
 describe('installed hosted MCP routing', () => {
+  it('does not turn a claimed MCP thread into unbound channel-access authority', async () => {
+    const hostedSession = vi.fn(async () => ({
+      client: createUnavailableClient(),
+      inbox: async () => { throw new Error('no binding'); },
+      async close() {},
+    }));
+    const hostedBindingPresent = vi.fn(async () => false);
+    const replies = await serve([
+      // Any process can write a provider-shaped thread ID to MCP stdio.
+      call(1, 'khala_request_channel_access', { threadId: THREAD },
+        { target: 'https://khala.aiur.team/channels/room-one' }),
+    ], hostedSession, hostedBindingPresent);
+    expect(replies[0]?.result.structuredContent).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: THREAD });
+  });
+
   it('pairs only the provider-named Codex session, never an unbound read or unnamed session', async () => {
     const close = vi.fn(async () => undefined);
     const pair = vi.fn(async () => ({ kind: 'pending' as const, reason: 'approval_timeout' as const }));

@@ -2,6 +2,7 @@ import { decodeRoomId, type ChannelAccessRequestHandle, type RoomId } from '@kha
 import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../../features/join/location';
 
 export type HumanRoute =
+  | Readonly<{ kind: 'conversations'; path: string }>
   | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
@@ -11,6 +12,7 @@ export type HumanRoute =
 export interface HumanRouteCodec extends RouteCodec {
   parse(location: string): HumanRoute;
   createPath(): string;
+  conversationsPath(): string;
   joinPath(inviteRef: string): string;
   roomPath(roomId: string): string;
   channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string;
@@ -53,6 +55,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   // The site root belongs to the public landing page (netlify.toml), so the
   // application's create route lives one segment below the base path.
   const createPath = () => `${base}/new`;
+  const conversationsPath = () => `${base}/conversations`;
   const joinRoot = `${base}/join`;
   const roomsRoot = `${base}/channels/`;
   const channelRequestsRoot = `${base}/channel-requests`;
@@ -88,6 +91,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     const requestedPath = `${parsed.pathname}${parsed.search}`;
     if (parsed.origin !== origin || parsed.username || parsed.password) return notFound(requestedPath);
     if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'create', path: createPath() };
+    if (parsed.pathname === conversationsPath() && parsed.search === '') return { kind: 'conversations', path: conversationsPath() };
     if (parsed.pathname === joinRoot) {
       const decoded = parseJoinLocation(parsed.href);
       if ('error' in decoded) return notFound(requestedPath);
@@ -142,6 +146,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   return {
     parse,
     createPath,
+    conversationsPath,
     joinPath,
     roomPath,
     channelRequestsPath,

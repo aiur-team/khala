@@ -3,24 +3,31 @@ import { registerClosureHandlers } from '../channel-closure/production';
 import { createInviteEvidenceReader } from './agent/invite-evidence';
 import { createProductionBootstrapRoutes, type ProductionBootstrapDependencies } from './agent/production-bootstrap';
 import { registerAgentHandlers } from './agent/handlers';
-import { registerHumanHandlers } from './human/handlers';
+import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
+import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
+import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
+import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
 
 /**
  * The generated Netlify function calls this exact composition root. The
- * product's visible owner-consent choice is still pending: absence or any
- * unrecognized mode leaves bootstrap and device attestation unavailable.
+ * The production Khala site has opted into explicit browser consent. Other
+ * origins still require the exact mode; an explicit invalid mode fails closed.
  */
 export function registerHostedProductionRoutes(
   options: HostedProductionOptions = {},
 ): readonly RouteRegistration[] {
   const env = options.env ?? process.env;
-  if (env.KHALA_ADMISSION_MODE !== 'explicit_browser_consent') {
+  const admissionMode = env.KHALA_ADMISSION_MODE
+    ?? (env.PUBLIC_APP_ORIGIN === 'https://khala.aiur.team' ? 'explicit_browser_consent' : undefined);
+  if (admissionMode !== 'explicit_browser_consent') {
     return Object.freeze([...registerHumanHandlers(), ...registerClosureHandlers(), ...registerAgentHandlers()]);
   }
   const runtime = createProductionHumanRuntimeLoader(options);
+  const proofKeyAuthority = createHostedProofKeyAuthorityRoutes(options);
+  const discovery = createHostedDiscoveryBootstrap(options);
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
     admissionPolicy: async ({ principal, inviteRef, session }) => {
@@ -36,9 +43,12 @@ export function registerHostedProductionRoutes(
   });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
+      channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
+      channelDiscoveryBootstrap: () => discovery.human,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),
+    ...proofKeyAuthority,
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
       deviceAttestation: () => bootstrap.deviceAttestation,
@@ -46,6 +56,7 @@ export function registerHostedProductionRoutes(
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
       revocationCleanup: () => bootstrap.revocationCleanup,
       roomSend: () => bootstrap.roomSend.agent,
+      channelDiscoveryBootstrap: () => discovery.agent,
     }),
   ]);
 }

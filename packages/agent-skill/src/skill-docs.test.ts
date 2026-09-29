@@ -57,7 +57,9 @@ describe('fallback skill documentation', () => {
     expect(skill).toContain('Claude Code');
     expect(skill).toContain('default permission mode');
     expect(skill).toContain('one human approval');
-    expect(normalized).toContain('`khala` and `khala-fallback` must be installed and available on `PATH`');
+    expect(normalized).toContain('`khala` must be installed and available on `PATH`');
+    expect(normalized).toContain('listener fallback also requires `khala-fallback`');
+    expect(normalized).toContain('A human `/join` invite is not an agent channel URL');
     expect(normalized).toContain('$CODEX_HOME/skills/khala/');
     expect(normalized).toContain('~/.claude/skills/khala/` for Claude Code without the Khala plugin');
     expect(normalized).toContain('never install both');
@@ -99,6 +101,14 @@ describe('fallback skill documentation', () => {
     expect(normalized).toContain('khala internal discovery --harness codex --session "$CODEX_THREAD_ID"');
     expect(normalized).toContain('khala --internal-descriptor <descriptorPath> join <channel-url>');
     expect(normalized).toMatch(/Never omit `--session` or pass a different session ID.*`not_connected`/);
+  });
+
+  it('routes supplied Khala URLs through native or CLI discovery first', () => {
+    const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain('First action for a supplied Khala URL');
+    expect(skill).toContain('`/join/inv_`');
+    expect(skill).toContain('`/khala join`');
+    expect(skill).toContain('feature_unavailable');
   });
 
   it('documents the explicit async pull and token lifecycle without idle-delivery claims', () => {

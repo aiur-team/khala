@@ -1,6 +1,7 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { BatchInbox } from '../inbox.js';
 import { isClaudeMcpEntry, runClaudeMcpServer } from '../../composition/claude-mcp.js';
+import { CLAUDE_SESSION_ENV } from '../../composition/claude-agent.js';
 import { deliveringInbox, type DeliveringInbox } from '../../composition/delivering-inbox.js';
 import { ListeningModeOperation } from '../../composition/listening-mode.js';
 import { ReadOperation, sameHeldBinding } from '../../composition/read.js';
@@ -19,13 +20,40 @@ import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
 import type { AgentClientPort, CliCommand, CliDependencies } from '../types.js';
+import { validIdentifier } from '../validation.js';
 
 export const mcpServeCommand: CliCommand = {
   name: 'mcp-serve',
   async run(args, deps) {
     if (args.length !== 0) throw new CliError('invalid_arguments');
     if (isClaudeMcpEntry(deps.env)) {
-      await runClaudeMcpServer({ claude: deps.claude, channels: composeChannelTools(deps.client), env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
+      const sessionId = deps.env?.[CLAUDE_SESSION_ENV];
+      type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
+      let hosted: Hosted | null = null;
+      const open = async () => {
+        if (!validIdentifier(sessionId) || !deps.hostedSession) return null;
+        if (hosted === null) hosted = await deps.hostedSession({ harness: 'claude', sessionId });
+        return hosted;
+      };
+      const channelsClient: AgentClientPort = {
+        ...deps.client,
+        async listChannels(input, signal) {
+          const opened = await open();
+          return opened ? opened.client.listChannels(input, signal) : { kind: 'unavailable' };
+        },
+        async requestChannelAccess(input, signal) {
+          const opened = await open();
+          return opened?.client.requestChannelAccess?.(input, signal) ?? { kind: 'unavailable' };
+        },
+        async channelAccessStatus(input, signal) {
+          const opened = await open();
+          return opened?.client.channelAccessStatus?.(input, signal) ?? { kind: 'unavailable' };
+        },
+      };
+      try {
+        await runClaudeMcpServer({ claude: deps.claude, channels: composeChannelTools(channelsClient),
+          env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
+      } finally { await (hosted as Hosted | null)?.close(); }
       return 0;
     }
     if (deps.sessionGrants !== undefined) {
@@ -44,11 +72,16 @@ export const mcpServeCommand: CliCommand = {
   },
 };
 
+const PREJOIN_TOOLS = new Set([
+  PAIR_TOOL_NAME, CONNECT_TOOL_NAME,
+  'khala_list_channels', 'khala_request_channel_access', 'khala_channel_access_status',
+]);
+
 /**
- * The installed entry's server: every tool call runs as the session its `_meta` names,
- * through that session's own `grant.json`, and a call naming no session, or a session
- * holding no binding, is refused `not_connected`. Each session's client and delivery
- * open once and stop with the server.
+ * The installed entry routes by the caller-supplied `_meta` local label. That
+ * label never authenticates a hosted request: prejoin actions require the
+ * connector's signed key and the owner's separate approval. Read/send still
+ * require a current binding. Each client and delivery stops with the server.
  */
 async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants): Promise<void> {
   if (!deps.internalClient || !deps.internalDelivery) throw new CliError('internal_unavailable');
@@ -96,14 +129,14 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
         if (deps.hostedSession === undefined) return null;
         let entry = hosted.get(session.sessionId);
         if (entry === undefined) {
-          if (toolName !== PAIR_TOOL_NAME && toolName !== CONNECT_TOOL_NAME
+          if (!PREJOIN_TOOLS.has(toolName)
             && deps.hostedBindingPresent && !await deps.hostedBindingPresent(session)) return null;
           entry = { opened: await deps.hostedSession(session), bound: null };
           hosted.set(session.sessionId, entry);
         }
         const hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
         if (!hostedStatus.connected || hostedStatus.binding === null) {
-          return toolName === PAIR_TOOL_NAME || toolName === CONNECT_TOOL_NAME
+          return PREJOIN_TOOLS.has(toolName)
             ? pairingCollaborators(entry.opened.client) : null;
         }
         if (hostedStatus.binding.harness !== session.harness || hostedStatus.binding.sessionId !== session.sessionId) return null;

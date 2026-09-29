@@ -30,7 +30,8 @@ const AUDIENCE = 'khala-channel-discovery' as const;
 export type SessionRef = Readonly<{ harness: string; sessionId: string; generation: number }>;
 
 export type SessionAuthorityResult =
-  | Readonly<{ kind: 'verified'; principal: StableAgentPrincipal; currentGeneration: number }>
+  | Readonly<{ kind: 'verified'; principal: StableAgentPrincipal; currentGeneration: number;
+    proofKeyThumbprint: string; authorityRevision?: string }>
   | Readonly<{ kind: 'removed' | 'rebound' | 'unavailable' }>;
 
 export interface DiscoverySessionAuthority {
@@ -111,6 +112,7 @@ type CredentialRecord = {
   scopes: DiscoveryScope[];
   jkt: string;
   publicKey: string;
+  authorityRevision: string | null;
   secretDigest: string;
   expiresAt: string;
 };
@@ -155,7 +157,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
     if (auth.kind === 'signed_out') return signIn(params);
     const authority = await inspect(auth.context.principal.ownerId, params.session);
     if (authority.kind === 'unavailable') return json(503, 'feature_unavailable');
-    if (authority.kind !== 'verified') return json(403, 'access_denied');
+    if (authority.kind !== 'verified' || !safeEqual(authority.proofKeyThumbprint, params.jkt)) return json(403, 'access_denied');
     return consentPage(params, authority.principal, auth.context.csrfToken);
   }
 
@@ -175,7 +177,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
 
     const authority = await inspect(auth.context.principal.ownerId, params.session);
     if (authority.kind === 'unavailable') return json(503, 'feature_unavailable');
-    if (authority.kind !== 'verified') return json(403, 'access_denied');
+    if (authority.kind !== 'verified' || !safeEqual(authority.proofKeyThumbprint, params.jkt)) return json(403, 'access_denied');
     const source = await trustedSource(deps, request);
     if (source === null) return json(503, 'feature_unavailable');
     const operationId = `consent-${randomToken(deps.random, 16)}`;
@@ -251,10 +253,11 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       if (checked.kind !== 'valid') return proofResponse(checked);
       const authority = await inspect(pending.ownerId as OwnerId, session);
       if (authority.kind === 'unavailable') return json(503, 'feature_unavailable');
-      if (authority.kind !== 'verified' || authority.principal !== pending.principal) return json(401, 'invalid_grant');
+      if (authority.kind !== 'verified' || authority.principal !== pending.principal
+        || !safeEqual(authority.proofKeyThumbprint, pending.jkt)) return json(401, 'invalid_grant');
       const issued = await issueCredential({
         ownerId: pending.ownerId as OwnerId, principal: authority.principal, session, origin: pending.origin,
-        jkt: pending.jkt, publicKey: checked.publicKey,
+        jkt: pending.jkt, publicKey: checked.publicKey, authorityRevision: authority.authorityRevision ?? null,
       });
       if (issued === null) return json(503, 'feature_unavailable');
       success = true;
@@ -286,7 +289,9 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       if (checked.publicKey !== held.publicKey) return json(401, 'invalid_proof');
       const authority = await inspect(held.ownerId as OwnerId, session);
       if (authority.kind === 'unavailable') return json(503, 'feature_unavailable');
-      if (authority.kind !== 'verified' || authority.principal !== held.principal) return json(401, 'invalid_grant');
+      if (authority.kind !== 'verified' || authority.principal !== held.principal
+        || !safeEqual(authority.proofKeyThumbprint, held.jkt)
+        || (authority.authorityRevision ?? null) !== held.authorityRevision) return json(401, 'invalid_grant');
 
       const secret = randomToken(deps.random, 32);
       const expiresAt = new Date(deps.clock() + CREDENTIAL_TTL_MS).toISOString();
@@ -306,6 +311,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
 
   async function issueCredential(input: Readonly<{
     ownerId: OwnerId; principal: StableAgentPrincipal; session: SessionRef; origin: string; jkt: string; publicKey: string;
+    authorityRevision: string | null;
   }>): Promise<DiscoveryCredential | null> {
     const slot = randomToken(deps.random, 32);
     const secret = randomToken(deps.random, 32);
@@ -313,6 +319,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
     const record: CredentialRecord = {
       ownerId: input.ownerId, principal: input.principal, ...input.session, origin: input.origin, audience: AUDIENCE,
       scopes: [...CHANNEL_DISCOVERY_SCOPES], jkt: input.jkt, publicKey: input.publicKey,
+      authorityRevision: input.authorityRevision,
       secretDigest: digestDiscoverySecret('credential', secret), expiresAt,
     };
     const written = await settleWrite<JsonValue>(store, {
@@ -415,7 +422,9 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       if (checked.publicKey !== held.publicKey) return refused('proof_key_mismatch');
       const authority = await inspect(held.ownerId as OwnerId, { harness: held.harness, sessionId: held.sessionId, generation: held.generation });
       if (authority.kind === 'unavailable') return { kind: 'unavailable' };
-      if (authority.kind !== 'verified' || authority.principal !== held.principal) return refused('invalid_credential');
+      if (authority.kind !== 'verified' || authority.principal !== held.principal
+        || !safeEqual(authority.proofKeyThumbprint, held.jkt)
+        || (authority.authorityRevision ?? null) !== held.authorityRevision) return refused('invalid_credential');
       return {
         kind: 'authorized', action: action as DiscoveryScope, ownerId: held.ownerId as OwnerId,
         requester: makeRequester(held),
@@ -560,8 +569,9 @@ function consentPage(params: AuthorizeParams, stablePrincipal: StableAgentPrinci
     .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name!)}" value="${escapeHtml(value!)}">`).join('');
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorize channel discovery</title></head><body>
 <h1>Authorize channel discovery?</h1>
-<p>This lets this verified agent list channels, request access, and request channel creation. It does not join or create a channel.</p>
-<dl><dt>Agent</dt><dd>${escapeHtml(stablePrincipal)}</dd><dt>Harness</dt><dd>${escapeHtml(params.session.harness)}</dd><dt>Session</dt><dd>${escapeHtml(params.session.sessionId)}</dd></dl>
+<p>You are authorizing the holder of this proof key to list channels, request access, and request channel creation. Anyone with the matching private key can use that authority until it is revoked. This does not join or create a channel.</p>
+<p>The session shown below is a label supplied by the local client. Khala cannot verify that the named Codex or Claude thread exists.</p>
+<dl><dt>Agent</dt><dd>${escapeHtml(stablePrincipal)}</dd><dt>Proof key</dt><dd>${escapeHtml(params.jkt)}</dd><dt>Harness label</dt><dd>${escapeHtml(params.session.harness)}</dd><dt>Session label</dt><dd>${escapeHtml(params.session.sessionId)}</dd></dl>
 <ul><li>List channels</li><li>Request access</li><li>Request channel creation</li></ul>
 <form method="post" action="${AUTHORIZE_PATH}">${fields}<button type="submit" name="decision" value="allow">Authorize</button>
 <button type="submit" name="decision" value="deny">Cancel</button></form></body></html>`;

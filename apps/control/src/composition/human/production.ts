@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { createAuthService } from '../../auth/index';
+import { createAuthService, type AuthDiagnostic } from '../../auth/index';
 import { createOidcClient } from '../../auth/oidc';
 import { createLocalOidcClient, localOidcEnabled } from '../../auth/local-oidc';
 import { createAdmissionService } from '../../invitations/index';
+import type { ShareDiagnosticStage } from '../../invitations/index';
 import { createControlStore, type BlobsStoreLike } from '../../runtime/control-store';
 import { localBlobStores } from '../../runtime/local-blob-store';
 import { readHumanServerEnv } from '../../runtime/env';
@@ -13,6 +14,12 @@ import { createMatrixHumanServices } from './matrix';
 const SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
 const LOGIN_TTL_MS = 10 * 60 * 1_000;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+
+function productionDiagnostic(event: 'runtime' | AuthDiagnostic['event'] | 'share', stage: string, httpStatus?: number): void {
+  // The stage is selected from finite internal codes. Never include a request,
+  // exception, identity, cookie, room, operation or invitation value.
+  console.info(JSON.stringify({ component: 'human', event, stage, ...(httpStatus === undefined ? {} : { httpStatus }) }));
+}
 
 export type ProductionHumanDependencies = Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
@@ -37,22 +44,34 @@ export type ProductionHumanRuntime = Readonly<{
 export function createProductionHumanServiceLoader(dependencies: ProductionHumanDependencies = {}): LoadHumanServices {
   const loadRuntime = createProductionHumanRuntimeLoader(dependencies);
   return async function load(request: Request): Promise<HumanHandlerServices> {
-    const active = loadRuntime();
-    return {
-      auth: active.auth,
-      admission: createAdmissionService({
-        store: active.store,
-        identity: active.auth.identityFor(request),
-        authority: active.matrix.authority,
-        gateway: active.matrix.gateway,
-        clock: active.clock,
-        origin: active.env.publicAppOrigin,
-        allowedOrigins: [active.env.publicAppOrigin],
-        secret: active.env.invitationHmacSecret,
-        inviteLifetimeMs: INVITE_TTL_MS,
-      }),
-      messaging: active.matrix.sessions,
-    };
+    let active: ProductionHumanRuntime;
+    try {
+      active = loadRuntime();
+    } catch {
+      productionDiagnostic('runtime', 'initialize_failed');
+      throw new Error('human runtime unavailable');
+    }
+    try {
+      return {
+        auth: active.auth,
+        admission: createAdmissionService({
+          store: active.store,
+          identity: active.auth.identityFor(request),
+          authority: active.matrix.authority,
+          gateway: active.matrix.gateway,
+          clock: active.clock,
+          origin: active.env.publicAppOrigin,
+          allowedOrigins: [active.env.publicAppOrigin],
+          secret: active.env.invitationHmacSecret,
+          inviteLifetimeMs: INVITE_TTL_MS,
+          diagnostic: (stage: ShareDiagnosticStage) => productionDiagnostic('share', stage),
+        }),
+        messaging: active.matrix.sessions,
+      };
+    } catch {
+      productionDiagnostic('runtime', 'admission_initialize_failed');
+      throw new Error('human admission unavailable');
+    }
   };
 }
 
@@ -68,10 +87,18 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
     const clock = dependencies.clock ?? (() => Date.now());
     const random = dependencies.random ?? (bytes => randomBytes(bytes));
     const storeFor = dependencies.stores ?? (localAuth ? localBlobStores : (name => getStore(name) as unknown as BlobsStoreLike));
+    // Netlify supplies a short-lived Blobs credential in the invocation context.
+    // A warm function retains this runtime, so retain the adapter but bind the
+    // SDK store at each operation instead of capturing an expired credential.
+    const contextualStore = (name: string): BlobsStoreLike => ({
+      getWithMetadata: (key, options) => storeFor(name).getWithMetadata(key, options),
+      setJSON: (key, data, options) => storeFor(name).setJSON(key, data, options),
+    });
     const store = createControlStore({
-      records: storeFor(`${env.controlStateNamespace}-records`),
-      operations: storeFor(`${env.controlStateNamespace}-operations`),
+      records: contextualStore(`${env.controlStateNamespace}-records`),
+      operations: contextualStore(`${env.controlStateNamespace}-operations`),
       clock,
+      diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
     });
     const matrix = createMatrixHumanServices({
       homeserverOrigin: env.publicHomeserverOrigin,
@@ -103,6 +130,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       allowInsecureLoopback: localAuth,
       log: entry => {
         if (entry.event === 'callback') console.warn('Khala auth callback', JSON.stringify({ stage: entry.code }));
+        else productionDiagnostic(entry.event, entry.code);
       },
     });
     runtime = { auth, store, matrix, env, clock };

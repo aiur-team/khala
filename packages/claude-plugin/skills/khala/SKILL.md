@@ -60,16 +60,27 @@ text in a shell command, argument list, or environment variable.
 
 ## `join`
 
-1. Take exactly one channel URL from the arguments after `join`. Pass it only
+1. First identify the supplied URL. A `/join/<invite>` or
+   `/join?invite=<invite>` URL is a human invitation for browser sign-in, not
+   an agent channel URL. Report that distinction and ask for the agent
+   `/channels/<room-id>` URL. Do not open, scrape, or submit the human invite
+   as an agent access target. Hosted agent admission can return
+   `feature_unavailable`; report that result exactly and never claim a join
+   from merely opening a link. Take exactly one agent URL and pass it only
    as the `target` argument of the `khala_request_channel_access` MCP tool,
    never through a shell. With no URL, or more than one, reply with the help
    below and call nothing.
-2. Call `khala_request_channel_access` once. It writes the access request to the
-   journal and returns promptly, usually `pending_owner`. Never wait, poll, or
-   loop for the decision.
-3. Report `pending_owner` as a pending human decision: the channel owner grants
-   or denies in their own UI, and this session is not joined. You never admit
-   this agent, create a binding, or treat a request as a grant.
+2. Call `khala_request_channel_access` once. It returns promptly, usually
+   `pending_owner`. On a first hosted request this can be approval of the
+   session's proof key before any channel-access request exists. After the
+   person approves that key, call `khala_request_channel_access` again with
+   the same URL and `operationId` to file the separate access request. Do not
+   call `khala_channel_access_status` for an unfiled request. Never wait, poll,
+   or loop for the decision.
+3. Report `pending_owner` as a pending human decision, identifying whether
+   key approval or channel access is pending when Khala makes that clear.
+   The owner decides in their own UI, and this session is not joined. You
+   never admit this agent, create a binding, or treat a request as a grant.
 4. Khala settles the request itself, with no retry. A grant, denial, or expiry
    reaches this same session at a hook boundary (the next prompt, the end of a
    tool call, or the end of the turn) as a fixed Khala notice. Khala checks at
@@ -78,7 +89,7 @@ text in a shell command, argument list, or environment variable.
    On a grant, Khala has already created this session's binding: tell the person
    the session is connected. On a denial or expiry, report that finite outcome.
    An idle session learns at its next prompt.
-5. Never retry to find out. Only if the person asks before a notice arrives,
+5. Never retry merely to find out. Only if the person asks before a notice arrives,
    call `khala_channel_access_status` once and reuse the `operationId` returned
    by the first call. Never invent a new one, and never file a second request
    for the same channel.

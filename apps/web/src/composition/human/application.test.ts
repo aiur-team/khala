@@ -199,6 +199,76 @@ describe('createHumanApplication', () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it('signs out once, releases the route and device, and fences stale device work', async () => {
+    const deviceResult = deferred<Awaited<ReturnType<DevicePort['ensureReady']>>>();
+    const logoutResult = deferred<Awaited<ReturnType<IdentityPort['signOut']>>>();
+    const signOut = vi.fn(() => logoutResult.promise);
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(),
+      signOut,
+    };
+    const stop = vi.fn(async () => undefined);
+    const app = application(identity, fakeDevice({ ensureReady: vi.fn(() => deviceResult.promise), stop }));
+    await eventually(() => expect(app.getSnapshot().phase).toBe('initializing_device'));
+
+    const first = app.signOut();
+    const second = app.signOut();
+    expect(first).toBe(second);
+    expect(signOut).toHaveBeenCalledOnce();
+    logoutResult.resolve(ok(null));
+    await expect(first).resolves.toEqual(ok(null));
+    expect(app.getSnapshot()).toMatchObject({ phase: 'signed_out', path: '/new', context: null });
+    deviceResult.resolve(ok(readyDevice(alice)));
+    await settleStaleContinuations();
+    expect(app.getSnapshot().phase).toBe('signed_out');
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the signed-in route and operation identity available after a failed logout', async () => {
+    const signOut = vi.fn()
+      .mockResolvedValueOnce({ kind: 'outcome_unknown', operationId: 'ignored' })
+      .mockResolvedValueOnce(ok(null));
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(),
+      signOut,
+    };
+    const app = application(identity, fakeDevice());
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+
+    expect((await app.signOut()).kind).toBe('outcome_unknown');
+    expect(app.getSnapshot().phase).toBe('ready');
+    await app.signOut();
+    expect(signOut.mock.calls[0]![0]).toBe(signOut.mock.calls[1]![0]);
+    expect(app.getSnapshot().phase).toBe('signed_out');
+  });
+
+  it('disposes the signed-in route before publishing signed out and starts the next account cleanly', async () => {
+    const events: string[] = [];
+    const identity: IdentityPort = {
+      current: vi.fn()
+        .mockResolvedValueOnce({ kind: 'signed_in', principal: alice })
+        .mockResolvedValueOnce({ kind: 'signed_in', principal: bob }),
+      beginSignIn: vi.fn(),
+      signOut: vi.fn(async () => ok(null)),
+    };
+    const device = fakeDevice({ stop: vi.fn(async () => { events.push('stop'); }) });
+    const app = application(identity, device, context => {
+      events.push(`activate:${context.principal.ownerId}`);
+      return () => { events.push(`dispose:${context.principal.ownerId}`); };
+    });
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+
+    await app.signOut();
+    expect(app.getSnapshot().phase).toBe('signed_out');
+    expect(events).toEqual([`activate:${alice.ownerId}`, `dispose:${alice.ownerId}`, 'stop']);
+
+    app.navigate('/channels/bob');
+    await eventually(() => expect(ready(app.getSnapshot()).principal.ownerId).toBe(bob.ownerId));
+    expect(events).toEqual([`activate:${alice.ownerId}`, `dispose:${alice.ownerId}`, 'stop', `activate:${bob.ownerId}`]);
+  });
+
   it('keeps identity unavailability distinct from an authenticated signed-out state', async () => {
     const identity: IdentityPort = {
       current: vi.fn()

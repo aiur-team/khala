@@ -398,6 +398,7 @@ describe('createInternalClient', () => {
     const { server, file, grant } = await launch();
     const client = createInternalClient({ descriptorPath: file });
     const url = `${server.origin}/channels/${CHANNEL}`;
+    expect(client.joinedGrantDescriptorPath?.()).toBeNull();
     expect(await client.requestAccess!(`${server.origin}/channels/ch_other`)).toEqual({ kind: 'refused', code: 'invalid_link' });
     expect(await client.requestAccess!(url)).toEqual({ kind: 'refused', code: 'discovery_required' });
     expect(server.log).toEqual([]);
@@ -414,6 +415,7 @@ describe('createInternalClient', () => {
     const { server } = launched;
     const discoveryFile = issueDiscovery(launched);
     const client = createInternalClient({ descriptorPath: discoveryFile });
+    expect(client.joinedGrantDescriptorPath?.()).toBe(path.join(path.dirname(discoveryFile), 'grant.json'));
     const url = `${server.origin}/channels/${CHANNEL}`;
     expect(await client.status()).toMatchObject({ connected: false, route: 'unknown' });
     expect(await client.send({ bindingId: null, clientTxnId: 'txn-00001', body: 'x' })).toMatchObject({ kind: 'refused', code: 'not_connected' });

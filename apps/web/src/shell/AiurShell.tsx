@@ -1,6 +1,7 @@
 import type { AiurShellProps } from './types';
+import aiurLogo from '../landing/public/assets/aiur-logo.png';
 
-export function AiurShell({ mode, navigation, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
+export function AiurShell({ mode, brandHref = '/new', navigation, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
   if (mode === 'hosted-content') {
     return (
       <div className="khala-content-root" data-theme={theme.theme}>
@@ -12,9 +13,11 @@ export function AiurShell({ mode, navigation, actions, theme, collapsed, onColla
   return (
     <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}`} data-theme={theme.theme}>
       <header className="aiur-shell__topbar">
-        <span className="aiur-shell__brand">Khala</span>
+        <a className="aiur-shell__brand" href={brandHref}>
+          <img src={aiurLogo} alt="" width="1215" height="1068" />
+          <span>KHALA</span>
+        </a>
         <div className="aiur-shell__actions">
-          {actions}
           <button
             type="button"
             className="aiur-shell__theme-toggle aiur-shell__icon-button"
@@ -32,6 +35,7 @@ export function AiurShell({ mode, navigation, actions, theme, collapsed, onColla
               </svg>
             </span>
           </button>
+          {actions}
         </div>
       </header>
       <nav className="aiur-shell__nav" aria-label="Main navigation">

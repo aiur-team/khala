@@ -41,7 +41,7 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is three self-contained files plus the internal browser bundle. `scripts/bundle.mjs` (run by
+`@aiur/khala` is not published to npm yet. Use the [source install in the primary quickstart](../../README.md#open-a-local-channel-with-two-existing-agents). The release tarball contains three self-contained files plus the internal browser bundle. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
 including the workspace connector and contracts, into `dist/khala.js`. It
 bundles the internal application's composition entry
@@ -50,12 +50,7 @@ bundles the internal application's composition entry
 no other command loads the local store, server, or `node:sqlite`. It bundles
 the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
 `@aiur/khala/opencode` export. It copies the web build's `apps/web/dist/internal-web/` (building it with `pnpm --filter @khala/web build:internal` when absent) to `dist/internal-web/`, which `khala internal` serves. The tarball carries only those files, this README and `package.json`; it declares no
-runtime dependencies, so installing it fetches nothing and runs no lifecycle
-script. On Node 22.23.2 or later:
-
-```text
-npx @aiur/khala status
-```
+runtime dependencies, so installing the local tarball fetches nothing and runs no consumer lifecycle script. On Node 22.23.2 or later, the installed `khala status` command runs without setup.
 
 The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
 inside this workspace, under the opt-in `khala-source` condition; a consumer of
@@ -88,6 +83,8 @@ a trusted publisher bound to that workflow file and its `npm-publish`
 environment before the first release.
 
 ## Internal mode
+
+For the shortest two-agent manual path, start with the [local quickstart](../../README.md#open-a-local-channel-with-two-existing-agents).
 
 `khala internal` starts one local channel server for the operator and nothing
 else. It never starts, wraps, signals, or stops an agent CLI; agent sessions you
@@ -247,13 +244,15 @@ commands never load the local client.
 
 The Codex and OpenCode MCP entries that `khala setup` installs run a bare
 `mcp-serve` with no option, and the installed Codex hook runs a bare
-`codex-hook`. One entry serves every session of its harness, so each call acts
-only as the session that makes it, through that session's own `grant.json`:
+`codex-hook`. One entry serves every session of its harness. The caller's
+session label selects local state; bound actions still require that state to
+hold a current `grant.json`:
 
 - Outside Claude mode (`KHALA_MCP_HARNESS=claude`), a bare `mcp-serve` reads
-  the session from each `tools/call`. Codex sends its thread as
+  a local session label from each `tools/call`. Codex normally supplies
   `_meta.threadId`, the same ID it exports to the agent's commands as
-  `CODEX_THREAD_ID`, so pass that ID to `khala internal discovery --harness
+  `CODEX_THREAD_ID`, but raw JSON-RPC callers can forge this field. It is
+  never hosted session authentication. Pass that ID to `khala internal discovery --harness
   codex --session`. The call then runs against
   `$XDG_STATE_HOME/khala/internal/discovery/<principal>/grant.json`, the
   principal that discovery derived from the same harness and session.
@@ -277,14 +276,18 @@ only as the session that makes it, through that session's own `grant.json`:
   `not_connected`.
 - `join <channel-url>` accepts only `<origin>/channels/<channelId>` on the
   running origin. With a discovery descriptor, it files a channel-access request
-  as that agent and prints `{"ok":true,"kind":"access","outcome":...}` without
+  as that exact agent session and prints `{"ok":true,"kind":"access","outcome":...}` without
   waiting. A retry reads the same request, and `unavailable` never starts a new
   one. After a `denied`, `expired` or `revoked` answer (Stop revokes), the next
   `join` files a fresh request instead of repeating the old answer, up to 16
   times per channel and descriptor generation. After that, or when a rotated
   descriptor is refused with `discovery_required`, run `khala internal
-  discovery` again. The
-  launch's transport capability names no agent, so `join` with `active.json`
+  discovery` again. The channel owner must approve before a grant is written.
+  A human invite (`/join/<invite>` or `/join?invite=<invite>`) belongs in the browser and is
+  rejected as an agent join target. If discovery returns `not_running`, the
+  owner has not started `khala internal` on that machine; no descriptor or
+  request was issued. The launch's transport capability names no agent, so
+  `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests
   inbox. Once it is approved, the next `join` finishes the binding: it
@@ -297,6 +300,9 @@ only as the session that makes it, through that session's own `grant.json`:
   one OS user can both join one channel as separate bindings. No grant is
   copied into `active.json`, which stays transport-only. A
   `grant.json` left from an earlier launch is replaced on the next `join`.
+  A connected `join` prints `grantDescriptorPath`, the path to pass as
+  `--internal-descriptor` for later CLI `status`, `send`, `read` and `listen`.
+  The discovery `descriptor.json` remains unjoined for those commands.
   Stop removes the grant from every `grant.json` whose
   binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash
@@ -481,6 +487,13 @@ anything without the owner's approval of the displayed session.
 
 ## Channel access requests
 
+For a first hosted channel URL request, the connector signs a candidate with
+its own proof key. The signed-in owner of the resolved channel approves that
+key before the separate discovery consent. The session ID is a caller-supplied
+local label; key approval applies to that owner's channels, not just the link
+used to find them. Hosted request, status, grant exchange, and admission routes
+remain unavailable until their trusted provider adapters and live proof pass.
+
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
 for a channel URL; there is no second join or admission path. The argument is a
@@ -489,9 +502,14 @@ on loopback, with no credentials, query, or fragment). The command prints one
 JSON object:
 `{"ok":true,"v":1,"operationId":...,"outcome":...,"next":null}`. It waits for
 nothing: `pending_owner` is the normal first answer, and the owner decides in
-their own UI. Nothing here grants access.
+their own UI. On a first hosted request, it can mean only that the signed proof
+key awaits approval; the channel-access journal has no row yet. After the
+owner approves that key, run `request-access` again with the same channel URL
+and `operationId` (or omit `--operation` again to reuse the target-derived ID)
+to file the separate access request. Nothing here grants access.
 
-`khala channels access-status --operation <id>` reads the same operation once.
+`khala channels access-status --operation <id>` reads the same filed access
+operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 `expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
 `connected`, `repair_required`); `connected` appears only after the connector
@@ -653,7 +671,7 @@ its footprint cannot be declared up front.
 
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
-| 2.1.283 | supported | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies clean, populated, hardened, and upgraded homes through the executor and asserts that the changed files equal the planned paths. |
+| 2.1.283, 2.1.284 | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies the planned footprint in private homes. Route proof remains exact-version: 2.1.284 is experimental pending a live model read/send. |
 | any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
@@ -718,7 +736,7 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0 | Supported |
+| 0.154.0, 0.157.1, 0.158.0 | Supported setup; native delivery claims remain exact-version and route-specific |
 | Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter

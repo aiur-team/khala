@@ -26,6 +26,7 @@ export interface PageFrameModel {
 
 export interface AiurShellProps {
   mode: ShellMode;
+  brandHref?: string;
   navigation: NavigationItem[];
   actions?: ReactNode;
   theme: ThemePort;

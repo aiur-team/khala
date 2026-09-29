@@ -63,6 +63,35 @@ function access(origin: string, held = credentials(credential(origin)), extra: P
 }
 
 describe('HTTP channel access', () => {
+  it('resubmits the same channel request after proof-key approval before checking access status', async () => {
+    const posted: unknown[] = [];
+    const origin = await loopback(async (request, response) => {
+      posted.push(await readBody(request));
+      json(response, 200, { v: 1, operationId: 'op-1', outcome: 'pending_owner' });
+    });
+    const held = credentials(null);
+    held.authorize.mockImplementation(async () => ({ kind: 'authorized', credential: credential(origin) }));
+    const candidate = vi.fn()
+      .mockResolvedValueOnce({ kind: 'pending_owner', candidateId: 'candidate-1', approveUrl: `${origin}/approve` })
+      .mockResolvedValueOnce({ kind: 'approved', candidateId: 'candidate-1', approveUrl: `${origin}/approve` });
+    const port = access(origin, held, { candidate });
+    const request = { target: { kind: 'channel_url' as const, channelUrl: `${origin}/channels/room-1` },
+      operationId: 'op-1', origin: null };
+
+    await expect(port.requestChannelAccess(request)).resolves.toEqual({ kind: 'status', status: {
+      v: 1, operationId: 'op-1', outcome: 'pending_owner',
+    } });
+    expect(posted).toEqual([]);
+    expect(held.authorize).not.toHaveBeenCalled();
+
+    await expect(port.requestChannelAccess(request)).resolves.toEqual({ kind: 'status', status: {
+      v: 1, operationId: 'op-1', outcome: 'pending_owner',
+    } });
+    expect(candidate).toHaveBeenCalledTimes(2);
+    expect(posted).toEqual([{ v: 1, kind: 'channel_url', operationId: 'op-1',
+      credentialRef: 'credential-ref-1', channelUrl: request.target.channelUrl }]);
+  });
+
   it('posts a listing-ref request with the operation ID and a DPoP-bound credential', async () => {
     const seen: { request: IncomingMessage; body: unknown }[] = [];
     const origin = await loopback(async (request, response) => {
