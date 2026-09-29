@@ -6,6 +6,7 @@ import {
   CREDENTIAL_A, CREDENTIAL_B, authenticator, batch, directory, fakeServices, memoryState, type FakeServices,
 } from '../fixtures/claude.js';
 import type { AgentClientPort } from '../cli/types.js';
+import type { CliDependencies } from '../cli/types.js';
 import { CLAUDE_MCP_HARNESS_ENV } from './claude-mcp.js';
 import { createClaudeSessionAdapter, type ClaudeSessionAccess, type ClaudeSessionAdapter } from './claude-session.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
@@ -56,6 +57,7 @@ async function serve(
   lines: string[],
   env: Record<string, string | undefined> = { CLAUDE_CODE_SESSION_ID: 's-1' },
   port: Partial<AgentClientPort> = {},
+  hostedSession?: CliDependencies['hostedSession'],
 ) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -71,12 +73,32 @@ async function serve(
     stdin: Readable.from([lines.map(line => `${line}\n`).join('')]), stdout, stderr,
     env: { [CLAUDE_MCP_HARNESS_ENV]: 'claude', ...env },
     ...(claude === undefined ? {} : { claude }),
+    ...(hostedSession === undefined ? {} : { hostedSession }),
   });
   const responses = out.split('\n').filter(Boolean).map(line => JSON.parse(line) as Response);
   return { code, out, err, responses, inbox, status };
 }
 
 describe('Claude plugin MCP entry', () => {
+  it('uses the hosted create port for a target from this Claude session', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const approvalUrl = `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}`;
+    const requestChannelCreate = vi.fn(async () => ({ kind: 'handoff' as const, approvalUrl }));
+    const hostedSession = vi.fn(async () => ({
+      client: { ...createUnavailableClient(), requestChannelCreate },
+      inbox: async () => { throw new Error('create must not open inbox'); },
+      async close() {},
+    }));
+    const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
+      request(1, 'khala_create_channel', { title: 'Planning', operationId: 'op-create-1', target }),
+    ], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(responses[0]?.result?.structuredContent).toEqual({ ok: true, v: 1, operationId: 'op-create-1',
+      outcome: 'pending_owner', next: 'human_approve', approvalUrl });
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'claude', sessionId: 's-1' });
+    expect(requestChannelCreate).toHaveBeenCalledExactlyOnceWith({ title: 'Planning', operationId: 'op-create-1',
+      origin: null, target }, undefined);
+  });
+
   it('advertises the session-bound, discovery and create tools, none taking a binding or token', async () => {
     const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
       JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),

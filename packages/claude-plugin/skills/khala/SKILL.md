@@ -46,14 +46,20 @@ text in a shell command, argument list, or environment variable.
 
 ## `create`
 
-1. Take the proposed title from the arguments after `create`; if there is none,
-   ask for one and call nothing. Choose one `operationId` and keep it.
-2. Call the `khala_create_channel` MCP tool once with `{ title, operationId }`.
-   It only asks: the result is usually `pending_owner`, and it never carries a
+1. Take the proposed title from the arguments after `create`; if it is missing,
+   ask for it and call nothing. For hosted creation, also require the exact
+   owner-issued `/new?agent_create=` link; ask for it if missing. Internal mode
+   continues to use the title alone. Choose one `operationId` and keep it; for
+   a hosted link it must be 8–128 URL-safe characters.
+2. Call the `khala_create_channel` MCP tool once with `{ title, operationId }`
+   in internal mode or `{ title, operationId, target }` for hosted creation.
+   The hosted first result carries an approval URL for the person to approve this
+   session's proof key. After that approval, repeat the same hosted call to file
+   the separate creation request. It never carries a
    channel. Never create a channel without the person's confirmation: the
    confirmation happens in Khala's own human-confirmation step, and you may not
    answer it for them. Never create a channel any other way.
-3. To check on it, call `khala_create_channel` again with the same title and
+3. To check on it, call `khala_create_channel` again with the same title, optional target and
    `operationId`: that reads the same request and files no second one. Never
    retry under a new `operationId`. If the person rejects or lets
    the confirmation lapse, say that no channel was created, and never retry.

@@ -26,7 +26,8 @@ function call(id: number, name: string, meta: Record<string, unknown> | undefine
 }
 
 async function serve(requests: readonly ReturnType<typeof call>[], hostedSession: NonNullable<CliDependencies['hostedSession']>,
-  hostedBindingPresent?: NonNullable<CliDependencies['hostedBindingPresent']>) {
+  hostedBindingPresent?: NonNullable<CliDependencies['hostedBindingPresent']>,
+  internalClient: NonNullable<CliDependencies['internalClient']> = async () => createUnavailableClient()) {
   const stdout = new PassThrough(); const stderr = new PassThrough(); let output = '';
   stdout.on('data', chunk => { output += String(chunk); });
   const stdin = Readable.from([requests.map(request => `${JSON.stringify(request)}\n`).join('')]);
@@ -35,7 +36,7 @@ async function serve(requests: readonly ReturnType<typeof call>[], hostedSession
     inbox: async () => { throw new Error('unbound route must not open inbox'); },
     stdin, stdout, stderr,
     sessionGrants: session => `/unbound/${session.harness}/${session.sessionId}/grant.json`,
-    internalClient: async () => createUnavailableClient(),
+    internalClient,
     internalDelivery: async () => unavailableDelivery,
     hostedSession,
     ...(hostedBindingPresent ? { hostedBindingPresent } : {}),
@@ -44,6 +45,50 @@ async function serve(requests: readonly ReturnType<typeof call>[], hostedSession
 }
 
 describe('installed hosted MCP routing', () => {
+  it('routes a create target only through the named hosted session', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const approvalUrl = `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}`;
+    const requestChannelCreate = vi.fn(async () => ({ kind: 'handoff' as const, approvalUrl }));
+    const hostedSession = vi.fn(async () => ({
+      client: { ...createUnavailableClient(), requestChannelCreate },
+      inbox: async () => { throw new Error('unbound create must not open inbox'); },
+      async close() {},
+    }));
+    const replies = await serve([
+      call(1, 'khala_create_channel', undefined, { title: 'Planning', operationId: 'op-create-1', target }),
+      call(2, 'khala_create_channel', { threadId: THREAD }, { title: 'Planning', operationId: 'op-create-1', target }),
+    ], hostedSession);
+    expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+    expect(replies[1]?.result.structuredContent).toEqual({ ok: true, v: 1, operationId: 'op-create-1',
+      outcome: 'pending_owner', next: 'human_approve', approvalUrl });
+    expect(requestChannelCreate).toHaveBeenCalledExactlyOnceWith({ title: 'Planning', operationId: 'op-create-1',
+      origin: null, target }, undefined);
+  });
+
+  it('does not send a hosted create target to an existing internal binding', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const requestChannelCreate = vi.fn(async () => ({ kind: 'handoff' as const,
+      approvalUrl: `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}` }));
+    const internalCreate = vi.fn(async () => ({ kind: 'status' as const,
+      status: { v: 1, operationId: 'op-create-1', outcome: 'pending_owner' } }));
+    const hostedSession = vi.fn(async () => ({
+      client: { ...createUnavailableClient(), requestChannelCreate },
+      inbox: async () => { throw new Error('no hosted binding'); },
+      async close() {},
+    }));
+    const decoded = decodeSessionBinding({ v: 1, bindingId: 'internal-binding', ownerId: 'owner-1',
+      agentParticipantId: 'agent-1', deviceId: 'KHALADEV1', harness: 'codex', sessionId: THREAD, generation: 0 });
+    if (!decoded.ok) throw new Error('invalid binding fixture');
+    const replies = await serve([call(1, 'khala_create_channel', { threadId: THREAD },
+      { title: 'Planning', operationId: 'op-create-1', target })], hostedSession, undefined,
+    async () => ({ ...createUnavailableClient(), requestChannelCreate: internalCreate,
+      async status() { return { v: 1, connected: true, binding: decoded.value,
+        route: 'native_cli_queue', sourceCursor: null }; } }));
+    expect(replies[0]?.result.structuredContent).toMatchObject({ next: 'human_approve' });
+    expect(requestChannelCreate).toHaveBeenCalledOnce();
+    expect(internalCreate).not.toHaveBeenCalled();
+  });
+
   it('does not turn a claimed MCP thread into unbound channel-access authority', async () => {
     const hostedSession = vi.fn(async () => ({
       client: createUnavailableClient(),

@@ -46,6 +46,7 @@ export type ClaudeToolOptions = Readonly<{
   /** The command ID for each `khala_mode_set` call; a fresh one per call, so a new call is never a replay. */
   newCommandId?: () => string;
   now?: () => Date;
+  channels?: ChannelToolsPort;
 }>;
 
 /**
@@ -189,7 +190,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     // A create retry under the same operation ID reads that request's current state, so the
     // plugin's frozen tool set needs no separate create-status tool.
     ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool, createChannelTool]
-      .map(tool => sessionBound(withoutBatchToken(tool), entry)),
+      .map(tool => sessionBound(withoutBatchToken(tool), entry, options.channels)),
   ]);
 }
 
@@ -232,8 +233,8 @@ function withoutBatchToken(tool: McpTool): McpTool {
  * session and a grant can bind no other. Without a valid session ID the call is
  * refused before any port runs. No argument can name a session or a binding.
  */
-function sessionBound(tool: McpTool, entry: ClaudeAgentEntry): McpTool {
-  const channels = sessionChannels(entry);
+function sessionBound(tool: McpTool, entry: ClaudeAgentEntry, hosted?: ChannelToolsPort): McpTool {
+  const channels = sessionChannels(entry, hosted);
   return {
     name: tool.name,
     definition: tool.definition,
@@ -247,7 +248,7 @@ function sessionBound(tool: McpTool, entry: ClaudeAgentEntry): McpTool {
 }
 
 /** The discovery and access port for one session, over the session client. */
-function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
+function sessionChannels(entry: ClaudeAgentEntry, hosted?: ChannelToolsPort): ChannelToolsPort {
   const raw = async (run: () => Promise<{ kind: string; result?: unknown }>) => {
     const outcome = await run();
     return outcome.kind === 'access' ? outcome.result : { kind: 'unavailable' };
@@ -272,7 +273,10 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
       : access.request(input)),
     status: input => access.status(input),
     // A create intent names no target, so the caller's operation ID is used as given.
-    createChannel: input => create.request(input),
+    createChannel: input => input.target
+      ? hosted?.createChannel(input) ?? Promise.resolve({ ok: false as const, v: 1 as const,
+        operationId: input.operationId, error: 'unavailable' as const, next: 'reuse_operation_id' as const })
+      : create.request(input),
     // Not registered here: a create retry under the same operation ID reads its state.
     createChannelStatus: async () => { throw new CliError('internal_error'); },
   };
@@ -302,7 +306,8 @@ export type ClaudeMcpServerOptions = Readonly<{
  */
 export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promise<void> {
   if (options.claude === undefined) throw new CliError('transport_unavailable');
-  const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude, options.env));
+  const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude, options.env),
+    options.channels ? { channels: options.channels } : {});
   const unreachable = async (): Promise<never> => { throw new CliError('internal_error'); };
   await runMcpServer({
     input: options.input,

@@ -204,6 +204,10 @@ describe('internal descriptor create port', () => {
     expect(await port.requestChannelCreate({ title: 'T', operationId: 'op-1', origin: 'https://khala.aiur.team' }))
       .toEqual({ kind: 'refused', code: 'untrusted_origin' });
     expect(requestCreate).not.toHaveBeenCalled();
+    expect(await port.requestChannelCreate({ title: 'T', operationId: 'op-1', origin: null,
+      target: `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}` }))
+      .toEqual({ kind: 'refused', code: 'invalid_request' });
+    expect(requestCreate).not.toHaveBeenCalled();
     const conflict = createInternalChannelCreate(discovery({ requestCreate: async () => ({ kind: 'refused', status: 409 }) }));
     expect(await conflict.requestChannelCreate({ title: 'T', operationId: 'op-1', origin: null })).toEqual({ kind: 'refused', code: 'operation_conflict' });
     const gone = createInternalChannelCreate(discovery({ requestCreate: async () => ({ kind: 'discovery_required' }) }));

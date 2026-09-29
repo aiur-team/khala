@@ -123,10 +123,13 @@ to the session through `CLAUDE_CODE_SESSION_ID`, never the working directory,
 and neither takes a binding or batch token: Khala keeps the token and
 acknowledges on the session's next Khala call.
 
-`/khala create <title>` calls `khala_create_channel` once and returns: the
-person confirms in Khala's own human-confirmation step, a retry or status check
-repeats the same title and `operationId`, and a rejected confirmation creates no
-channel. For a hosted pasted link, use the exact sponsor-issued `/join/<inviteRef>`
+`/khala create <title>` still calls `khala_create_channel` without a target in
+internal mode. For hosted creation, `/khala create <title> <owner-issued
+/new?agent_create= link>` passes the exact link as `target`. The person first
+approves this session's proof key, then the agent repeats the same title,
+target and `operationId` to file the creation request. The person confirms that
+request in Khala; a rejected confirmation creates no channel. For a hosted pasted join link,
+use the exact sponsor-issued `/join/<inviteRef>`
 URL with `/khala join`; the native tool sends it to Khala's agent route. Do not
 open the human `/join` page in the agent's browser. `/khala join <channel-url>` calls
 `khala_request_channel_access` once and returns: the owner's grant, denial, or
