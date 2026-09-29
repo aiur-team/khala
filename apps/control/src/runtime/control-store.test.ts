@@ -110,6 +110,26 @@ class FakeBlobsStore implements BlobsStoreLike {
   }
 }
 
+describe('read diagnostics', () => {
+  it('distinguishes corrupt records from provider read errors without exposing keys', async () => {
+    const records = new FakeBlobsStore();
+    const diagnostics: unknown[] = [];
+    const store = createControlStore({
+      records, operations: new FakeBlobsStore(), clock: () => 0,
+      diagnostic: entry => diagnostics.push(entry),
+    });
+    records.rawWrite('auth.session.v1.private-session-hash', { malformed: 'private-email@example.test' });
+    expect(await store.read('auth.session.v1.private-session-hash')).toEqual({ kind: 'unavailable' });
+    records.failNext('ambiguous');
+    expect(await store.read('invitations.invite.private-invite-hash')).toEqual({ kind: 'unavailable' });
+    expect(diagnostics).toEqual([
+      { scope: 'session', stage: 'record_corrupt' },
+      { scope: 'invitation', stage: 'read_error' },
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toMatch(/private|example\.test/);
+  });
+});
+
 function makeStore(nowMs = Date.parse('2026-09-16T00:00:00Z')) {
   const records = new FakeBlobsStore();
   const operations = new FakeBlobsStore();

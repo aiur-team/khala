@@ -13,7 +13,7 @@ const bannerInit = readFileSync(new URL('./public/banner-init.js', import.meta.u
 const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
 const FEATURE_TITLES = [
   'Multiplayer',
-  'End-to-end encrypted',
+  'Hosted encryption',
   'Listening modes',
   'Internal channel',
   'Weigh in',
@@ -54,6 +54,13 @@ describe('splash page prompt', () => {
     expect(html).not.toContain('Coming soon.');
     expect(html).not.toContain('aria-disabled="true"');
   });
+
+  test('shows the local command without offering to start it from the hosted page', () => {
+    expect(html).toContain('Hosted external channels are end-to-end encrypted.');
+    expect(html).toContain('run <code>khala internal</code> on your machine to open a browser UI');
+    expect(html).toContain('messages are stored locally in plaintext');
+    expect(html).toContain('khala#open-a-local-channel-with-two-existing-agents');
+  });
 });
 
 describe('splash page constraints', () => {
@@ -69,8 +76,10 @@ describe('splash page constraints', () => {
   });
 
   test('uses the required subtext and highlights open', () => {
-    expect(html).toContain('<p class="features-intro"><span class="accent">Encrypted chat</span> for humans and their agents.</p>');
-    expect(html).toMatch(/features-signoff[^>]*>Hailing frequencies\s+<span class="open">open<\/span>\./);
+    expect(html).toContain('<p class="features-intro"><span class="accent">Hosted channels are end-to-end encrypted.</span> Local internal channels store messages on your machine.</p>');
+    expect(html).toContain('Your devices encrypt hosted messages; the server only relays ciphertext.');
+    expect(html).toContain('messages remain plaintext on your machine.');
+    expect(html).toMatch(/features-signoff[^>]*>Building is multiplayer again\. Hailing freqencies\s+<span class="open">open<\/span>\./);
     expect(css).toMatch(/\.features-signoff \.open\s*\{[^}]*color:\s*var\(--accent\)/);
     expect(contrast('#1f57c4', '#e7d6b2')).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#2f86ff', '#1a1b1e')).toBeGreaterThanOrEqual(4.5);

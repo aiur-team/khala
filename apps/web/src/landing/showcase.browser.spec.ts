@@ -1,0 +1,89 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { build, preview, type PreviewServer } from 'vite';
+import { chromium, type Browser } from '@playwright/test';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const configFile = join(here, '../../vite.landing.config.mjs');
+
+test('public showcase stays local and works across themes and widths', { timeout: 120_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-showcase-dist-'));
+  // Chromium's singleton socket has a short path limit.
+  const profile = await mkdtemp(join('/tmp', 'ks546-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ configFile, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ configFile, build: { outDir }, preview: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: profile } });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    const calls: string[] = [];
+    page.on('request', request => { if (/\/(api|_matrix|auth)\//.test(new URL(request.url()).pathname)) calls.push(request.url()); });
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(server.resolvedUrls!.local[0]!);
+    const pane = page.locator('#exampleShowcase');
+    const list = pane.getByRole('complementary', { name: 'Conversations' });
+    const thread = pane.getByRole('region', { name: 'Conversation thread' });
+    assert.equal(await page.locator('.showcase-section').evaluate(node => node.previousElementSibling?.classList.contains('stage')), true);
+    assert.equal(await page.locator('.showcase-section').evaluate(node => node.nextElementSibling?.classList.contains('feature-section')), true);
+    assert.equal(await page.getByRole('link', { name: 'Open the real Khala app' }).getAttribute('href'), '/new');
+    assert.equal(await pane.getByText('EXAMPLE · LOCAL ONLY').count(), 1);
+
+    for (const theme of ['light', 'dark'] as const) {
+      if (theme === 'dark') await page.getByRole('button', { name: 'Dark mode' }).click();
+      assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
+      for (const width of [1440, 1100, 900, 760, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        const dimensions = await page.locator('.showcase-window').evaluate(node => {
+          const box = node.getBoundingClientRect();
+          return { width: box.width, height: box.height, left: box.left, right: box.right };
+        });
+        const overlap = await page.evaluate(() => document.querySelector('.stage')!.getBoundingClientRect().bottom - document.querySelector('.showcase-window')!.getBoundingClientRect().top);
+        assert.ok(overlap >= 63 && overlap <= 105, `${theme} ${width}: hero overlap`);
+        assert.ok(dimensions.width <= Math.min(1000, width), `${theme} ${width}: width`);
+        assert.ok(dimensions.height >= 420 && dimensions.height <= 660, `${theme} ${width}: height`);
+        assert.ok(dimensions.left >= 0 && dimensions.right <= width, `${theme} ${width}: frame in viewport`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} ${width}: no overflow`);
+        if (width <= 900) {
+          await pane.getByRole('button', { name: 'All conversations' }).click();
+          assert.equal(await list.isVisible(), true);
+        }
+        await pane.getByRole('button', { name: /Design · example/ }).click();
+        assert.equal(await thread.getByText('The smaller layout keeps the back control visible.').isVisible(), true);
+        const details = pane.locator('.conversation-thread__actions button');
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await details.press('Enter');
+        assert.equal(await details.getAttribute('aria-expanded'), 'true');
+        assert.equal(await pane.locator('.showcase-app__participants').getByText('Jordan’s agent').isVisible(), true);
+        await pane.getByText('Agent participation').click();
+        assert.equal(await pane.getByText('This preview is local and has no connected agents.').isVisible(), true);
+        await pane.getByRole('button', { name: 'Close details' }).click();
+        assert.equal(await details.getAttribute('aria-expanded'), 'false');
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await pane.getByRole('button', { name: 'All conversations' }).click();
+    assert.equal(await list.isVisible(), true);
+    await pane.getByRole('button', { name: /Handoff · example/ }).click();
+    assert.equal(await thread.getByText('I’ve outlined the next steps for both owners.').isVisible(), true);
+    await pane.getByRole('textbox', { name: 'Message' }).fill('A local note');
+    await pane.getByRole('button', { name: 'Send message' }).click();
+    assert.equal(await pane.getByText('A local note').isVisible(), true);
+    await page.reload();
+    assert.equal(await page.getByText('A local note').count(), 0, 'local text is not persisted');
+    assert.deepEqual(calls, [], 'no chat or auth requests');
+    assert.deepEqual(errors, [], 'no browser errors');
+    await context.close();
+  } finally {
+    await browser?.close();
+    await server?.httpServer.close();
+    await rm(outDir, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});

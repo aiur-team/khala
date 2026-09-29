@@ -10,14 +10,15 @@ import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRe
 import type { ChannelAccessInboxController } from '../../features/channel-access/controller';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import { createJoinController } from '../../features/join/controller';
-import { JoinScreen } from '../../features/join/JoinScreen';
+import { AgentJoinGuidance, JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
 import type { HumanApplicationHandle, HumanRouteContext } from './application';
 import { attachHumanCapabilities, registerHumanCapabilities, type HumanCapability } from './capabilities';
 import type { HumanRoute, HumanRouteCodec } from './routes';
 import { HumanScreen, type HumanShellChrome } from './screen';
+import { ConversationIndexRoute } from './ConversationIndexRoute';
 
-export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>) => ReactNode;
+export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
 
 export type HumanApplicationScreenProps = Readonly<{
   application: HumanApplicationHandle;
@@ -66,9 +67,10 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   );
 }
 
-function SignInPanel({ identity, path, navigateExternal }: {
+function SignInPanel({ identity, path, isJoin, navigateExternal }: {
   identity: IdentityPort;
   path: string;
+  isJoin: boolean;
   navigateExternal: (url: string) => void;
 }) {
   const [signInFailed, setSignInFailed] = useState(false);
@@ -84,6 +86,7 @@ function SignInPanel({ identity, path, navigateExternal }: {
     <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
       <Panel>
         <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
+        {isJoin ? <><p>Humans: sign in to accept this invitation.</p><AgentJoinGuidance /></> : null}
         {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}
       </Panel>
     </KhalaPageFrame>
@@ -169,6 +172,8 @@ function OwnerShell({ application, createController, routes, chrome, children }:
     <AiurShell
       mode={chrome.mode}
       navigation={[
+        { id: 'khala', label: 'Conversations', href: routes.conversationsPath(), current: route.kind === 'conversations' || route.kind === 'channel' },
+        { id: 'new-channel', label: 'New channel', href: routes.createPath(), current: route.kind === 'create' },
         {
           id: 'channel-requests',
           label: 'Channel requests',
@@ -209,16 +214,18 @@ export function HumanApplicationScreen({
 }: HumanApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: HumanRoute): ReactNode => {
     switch (route.kind) {
+      case 'conversations':
+        return <ConversationIndexRoute key={`${context.principal.ownerId}:${context.deviceView.generation}`} context={context} routes={routes} navigate={navigateRoute} />;
       case 'create':
         return (
           <KhalaPageFrame model={{ title: 'Khala', description: 'Create a private channel and share its link.', labelledBy: 'khala-create-title' }}>
-            <CreateChannelScreen ports={context} onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
+            <CreateChannelScreen ports={context} mode="on_demand" onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
           </KhalaPageFrame>
         );
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'channel':
-        return renderRoom(context, route);
+        return renderRoom(context, route, navigateRoute, routes);
       case 'channel_requests':
         return <ChannelRequestsRoute selectedHandle={route.selectedHandle} />;
       case 'not_found':
@@ -248,7 +255,7 @@ export function HumanApplicationScreen({
       routes={routes}
       mode={mode}
       renderRoute={renderRoute}
-      renderSignedOut={path => <SignInPanel identity={identity} path={path} navigateExternal={navigateExternal} />}
+      renderSignedOut={path => <SignInPanel identity={identity} path={path} isJoin={routes.parse(path).kind === 'join'} navigateExternal={navigateExternal} />}
       renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}

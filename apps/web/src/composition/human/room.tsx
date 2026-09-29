@@ -15,7 +15,12 @@ import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
+import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
+import { ConversationList } from '../../ui/conversation';
+import { useConversationIndex } from './ConversationIndexRoute';
+import type { HumanRouteCodec } from './routes';
+import { createHumanPendingSendStore } from './pending-send-store';
 
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 type ReviewRoomId = Parameters<HumanRoomRenderer>[1]['roomId'];
@@ -35,8 +40,9 @@ const unavailablePresence: ChannelUiPort = {
   async installCommand() { throw new Error('agent onboarding unavailable'); },
 };
 
-export const renderHumanRoom: HumanRoomRenderer = (context, route) => (
-  <HumanRoom context={context} roomId={route.roomId} />
+export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, routes) => (
+  <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
+    {...(navigate && routes ? { navigate, routes } : {})} />
 );
 
 /** Production room renderer with the authenticated owner mailbox attached. */
@@ -44,7 +50,8 @@ export function createHumanRoomRenderer(review: ReviewClient, capability: Review
   trustBinding: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000,
   controls?: ControlsCapability): HumanRoomRenderer {
-  return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review}
+  return (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
+    {...(navigate && routes ? { navigate, routes } : {})} review={review}
     capability={capability} trustBinding={trustBinding} refreshMs={refreshMs}
     {...(controls ? { controls } : {})} />;
 }
@@ -202,9 +209,11 @@ function HumanReview({ context, roomId, review, capability, trustBinding, refres
     capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, review, capability, trustBinding, refreshMs = 5_000, controls }: {
+function HumanRoom({ context, roomId, navigate, routes, review, capability, trustBinding, refreshMs = 5_000, controls }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
+  navigate?: (path: string) => void;
+  routes?: HumanRouteCodec;
   review?: ReviewClient;
   capability?: ReviewCapability;
   controls?: ControlsCapability;
@@ -212,16 +221,24 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
     binding: OwnerReviewBinding) => Promise<boolean>;
   refreshMs?: number;
 }) {
+  const conversations = useConversationIndex(context);
+  const selectedConversation = conversations?.find(item => item.id === roomId);
+  const [query, setQuery] = useState('');
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  const deviceId = context.device.current().deviceId;
+  const pendingStore = useMemo(() => deviceId === null ? undefined
+    : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
+  [context.principal.ownerId, deviceId, roomId]);
   const room = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
   const recovery = useMemo(() => createBrowserRecoveryPort({
     principal: context.principal, identity: context.identity, device: context.device,
+    ...(context.room.observeEntries ? { historyEntries: { roomId, observeEntries: context.room.observeEntries } } : {}),
     resumeStore: sessionResumeStore(context.principal.ownerId, roomId),
     ...(context.closure ? { closure: context.closure(roomId) } : {}),
     ...(context.revocation ? { revocation: context.revocation(roomId) } : {}),
@@ -232,6 +249,15 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
     recovery.dispose();
   }, [room, timeline, recovery]);
   const viewer = context.participant?.() ?? null;
+  if (context.conversations && conversations === undefined) {
+    return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
+  }
+  if (context.conversations && conversations === null) {
+    return <Panel heading="Conversation unavailable"><p role="alert">Channel access could not be checked. Try reloading.</p></Panel>;
+  }
+  if (context.conversations && conversations && !conversations.some(item => item.id === roomId)) {
+    return <Panel heading="Conversation unavailable"><p role="alert">You no longer have access to this encrypted conversation.</p></Panel>;
+  }
   if (viewer === null) {
     return (
       <Panel heading="Conversation unavailable">
@@ -242,11 +268,24 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
 
   return (
     <ChannelScreen
-      title="Khala conversation"
+      embedded={Boolean(context.conversations && routes && navigate)}
+      title={selectedConversation?.title ?? 'Encrypted conversation'}
       description="Encrypted messages shared by admitted participants."
       controller={room}
+      renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
+        admission={context.admission} roomId={roomId} roomTitle={selectedConversation?.title ?? 'Encrypted conversation'} /> : null}
+      {...(context.conversations && routes && navigate ? {
+        renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
+          emptyLabel="No encrypted conversations yet."
+          onQueryChange={setQuery} status={conversations ? 'ready' : 'error'}
+          onSelect={id => { if (conversations?.some(item => item.id === id)) navigate(routes.roomPath(id)); }} />,
+        onBack: () => navigate(routes.conversationsPath()),
+      } : {})}
       renderTimeline={() => (
-        <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} />
+        <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel"
+          unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}

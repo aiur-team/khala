@@ -71,18 +71,25 @@ export async function createSession(
   return write.kind === 'applied' ? { kind: 'created', token, principal } : { kind: 'unavailable' };
 }
 
-export async function lookupSession(store: ControlStore, cookieHeader: string | null, nowMs: number): Promise<SessionLookup> {
+export type SessionLookupStage = 'cookie_absent' | 'cookie_invalid' | 'record_absent' | 'store_unavailable' | 'record_invalid' | 'session_revoked' | 'session_expired';
+
+export async function lookupSession(
+  store: ControlStore, cookieHeader: string | null, nowMs: number,
+  diagnostic?: (stage: SessionLookupStage) => void,
+): Promise<SessionLookup> {
   const token = readCookie(cookieHeader, SESSION_COOKIE);
-  if (token === null || !TOKEN.test(token)) return { kind: 'signed_out' };
+  if (token === null) { diagnostic?.('cookie_absent'); return { kind: 'signed_out' }; }
+  if (!TOKEN.test(token)) { diagnostic?.('cookie_invalid'); return { kind: 'signed_out' }; }
   const read = await store.read<SessionRecord>(sessionKey(token));
-  if (read.kind === 'unavailable') return { kind: 'unavailable' };
-  if (read.kind === 'absent') return { kind: 'signed_out' };
+  if (read.kind === 'unavailable') { diagnostic?.('store_unavailable'); return { kind: 'unavailable' }; }
+  if (read.kind === 'absent') { diagnostic?.('record_absent'); return { kind: 'signed_out' }; }
   const session = read.record.value;
   // A record that no longer decodes is corrupt state, not a signed-out user.
   const principal = principalOf(session);
-  if (!principal || typeof session.revoked !== 'boolean') return { kind: 'unavailable' };
+  if (!principal || typeof session.revoked !== 'boolean') { diagnostic?.('record_invalid'); return { kind: 'unavailable' }; }
   // The store enforces expiry too; checking here keeps an adapter clock skew from extending a session.
-  if (session.revoked || !(nowMs < Date.parse(session.expiresAt))) return { kind: 'signed_out' };
+  if (session.revoked) { diagnostic?.('session_revoked'); return { kind: 'signed_out' }; }
+  if (!(nowMs < Date.parse(session.expiresAt))) { diagnostic?.('session_expired'); return { kind: 'signed_out' }; }
   return { kind: 'authenticated', principal, token, record: read.record };
 }
 

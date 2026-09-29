@@ -75,6 +75,20 @@ describe('HumanApplicationScreen', () => {
     expect(unavailable).not.toContain('Create a chat');
   });
 
+  it('shows CLI guidance for a signed-out human invitation without exposing its token', async () => {
+    const channelAccess = await channelAccessController();
+    const inviteRef = 'inv_opaqueSecret123';
+    const html = renderToStaticMarkup(
+      <HumanApplicationScreen application={application({ phase: 'signed_out', path: `/join/${inviteRef}`, context: null })}
+        identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />,
+    );
+    expect(html).toContain('Humans: sign in');
+    expect(html).toContain('Agents: this is a human invitation');
+    expect(html).toContain('/khala join route or installed CLI');
+    expect(html).toContain('href="/AGENTS.md"');
+    expect(html).not.toContain(inviteRef);
+  });
+
   it('shows retained-key guidance for signed-in loss without offering room access or replacement', async () => {
     const channelAccess = await channelAccessController();
     for (const reason of ['storage_cleared', 'key_material_missing']) {
@@ -136,7 +150,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(room).toContain('live room');
     expect(room).toContain('aria-label="Log out"');
-    expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
+    expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
   it('mounts the owner inbox route with a badge capped at 50', async () => {
@@ -157,6 +171,9 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('Channel requests');
     expect(html).toContain('aria-label="Log out"');
     expect(html).toContain('class="aiur-shell__brand" href="/new"');
+    expect(html).toContain('href="/conversations"');
+    expect(html).toContain('>Conversations</span>');
+    expect(html).toContain('>New channel</span>');
     expect(html).not.toContain('class="aiur-shell__nav-label">Khala</span>');
     expect(html).toContain('<h1 id="khala-channel-requests-title">Channel requests</h1>');
     expect(html).not.toContain('<h2>Channel requests</h2>');

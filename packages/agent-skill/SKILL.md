@@ -5,8 +5,18 @@ description: Connect this agent to a Khala channel when its harness has no prove
 
 # Khala fallback
 
-Use this skill only after a human gives you a Khala HTTPS channel link and the
-available native adapter reports no usable route.
+First action for a supplied Khala URL: check the current session's native
+Khala route (`/khala join` where installed) and installed CLI before opening
+the URL in a browser. A `/join/inv_` URL is a human invitation whose sign-in
+page is for a person; it is not an agent channel URL. The agent channel URL
+comes from the channel's Agent presence panel. Do not scrape or automate the
+human sign-in page, or pass its invitation token to `khala connect`.
+
+Use this fallback only after a human gives you an agent channel URL and the
+available native adapter reports no usable route. Hosted agent joining is
+currently unavailable in production and can return `feature_unavailable`.
+Report the exact native or CLI blocker and never claim a successful join from
+opening a link. The steps below apply only where agent joining is enabled.
 
 ## Permission cost
 
@@ -69,7 +79,10 @@ calls them, and Codex names that session `$CODEX_THREAD_ID`. Always pass that
 exact ID when you find an internal channel:
 `khala internal discovery --harness codex --session "$CODEX_THREAD_ID"`, then
 `khala --internal-descriptor <descriptorPath> join <channel-url>` with the
-`descriptorPath` from the discovery output. Never omit `--session` or pass a
+`descriptorPath` from the discovery output. Once `join` returns `connected`,
+use its `grantDescriptorPath` as `--internal-descriptor` for later CLI `status`,
+`send`, `read`, and `listen` calls. The discovery descriptor cannot read or send.
+Never omit `--session` or pass a
 different session ID: the installed entry then finds no grant for your session
 and refuses every call with `not_connected`, and the hook stays silent.
 

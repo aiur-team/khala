@@ -7,6 +7,7 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import type { ApprovalCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 
 declare global { interface Window {
+  __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
   __roomReviewCommand: () => ApprovalCommand | null;
   __allowReviewTrust: () => void;
   __reviewLookupCount: () => number;
@@ -22,6 +23,25 @@ declare global { interface Window {
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
 } }
+
+test('created channel page can copy a link and prepare a named email invitation', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('button', { name: 'Copy link' }).click();
+    await page.getByRole('textbox', { name: 'Channel link' }).waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.getByRole('textbox', { name: 'Invite by email' }).fill('friend@example.com');
+    await page.getByRole('button', { name: 'Create email invite' }).click();
+    await page.getByRole('link', { name: 'Open email draft' }).waitFor();
+    assert.match((await page.getByRole('link', { name: 'Open email draft' }).getAttribute('href')) ?? '', /friend%40example.com/);
+    assert.deepEqual(await page.evaluate(() => window.__shareRequests()), [
+      { roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'none' } },
+      { roomId: 'room_1', policy: { v: 1, kind: 'named_email', email: 'friend@example.com', history: 'none' } },
+    ]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
+      'room sharing stays within the phone viewport');
+  });
+});
 
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
@@ -59,6 +79,51 @@ test('mounted human room reviews only the selected event for its active binding'
     assert.equal(sent?.bindingId, 'binding_1');
     assert.deepEqual(sent?.selection.map(value => value.eventId), ['event_b']);
     assert.equal(await page.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').count(), 1);
+  });
+});
+
+test('mounted human room restores an in-flight send after reload and reconciles one row', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__reload_pending room send');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending room send' }).getByText('Sending…').waitFor();
+    const transaction = await page.evaluate(() => sessionStorage.getItem('khala.test.send.pending-txn'));
+    assert.ok(transaction);
+    await page.reload();
+    const restored = page.locator('.timeline__row--pending', { hasText: '__reload_pending room send' });
+    await restored.getByText('Delivery unknown').waitFor();
+    await restored.getByRole('button', { name: 'Check delivery' }).click();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__reload_pending room send' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: '__reload_pending room send' }).count(), 1);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('khala.test.send.pending-txn')), transaction);
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__reload_pending room send' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: '__reload_pending room send' }).count(), 1);
+  });
+});
+
+test('mounted human room keeps one confirmed message after reload', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('confirmed before reload');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'confirmed before reload' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: 'confirmed before reload' }).count(), 1);
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'confirmed before reload' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: 'confirmed before reload' }).count(), 1);
+  });
+});
+
+test('replacement device cannot see or retry the prior device pending send', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__reload_pending prior device');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending prior device' }).getByText('Sending…').waitFor();
+    await page.evaluate(() => window.__switchReviewDevice());
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending prior device' }).waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('button', { name: 'Check delivery' }).count(), 0);
+    await page.getByRole('textbox', { name: 'Message' }).fill('new device draft');
+    assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), false);
   });
 });
 

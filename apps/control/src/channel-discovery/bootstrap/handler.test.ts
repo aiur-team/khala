@@ -65,6 +65,8 @@ function scriptedTokenLimiter(
 function setup(overrides: Overrides = {}) {
   let now = T0;
   const clock = () => now;
+  const key = connectorKey(clock);
+  let authorityKey = key.jkt;
   const store = fakeStore(clock);
   const inspected: string[] = [];
   const limiterCalls: string[] = [];
@@ -79,7 +81,8 @@ function setup(overrides: Overrides = {}) {
       async inspect(input) {
         inspected.push(`${input.ownerId}:${input.session.harness}:${input.session.sessionId}:${input.session.generation}`);
         return authority === 'verified'
-          ? { kind: 'verified', principal: 'agent_stable_b' as StableAgentPrincipal, currentGeneration: input.session.generation }
+          ? { kind: 'verified', principal: 'agent_stable_b' as StableAgentPrincipal,
+            currentGeneration: input.session.generation, proofKeyThumbprint: authorityKey }
           : { kind: authority };
       },
     },
@@ -98,7 +101,6 @@ function setup(overrides: Overrides = {}) {
   };
   const handlers = createChannelDiscoveryBootstrapHandlers(deps);
   const route = (path: string) => [...handlers.human, ...handlers.agent].find(item => item.path === path)!;
-  const key = connectorKey(clock);
   const verifier = randomBytes(32).toString('base64url');
   const params = (extra: Record<string, string> = {}) => new URLSearchParams({
     redirect_uri: REDIRECT_URI, state: 'state-0123456789abcdef', code_challenge: createHash('sha256').update(verifier).digest('base64url'),
@@ -140,10 +142,30 @@ function setup(overrides: Overrides = {}) {
     new Request(requestUrl, { method: 'POST', headers: { authorization: `DPoP ${credentialRef}`, dpop: proof } }), action,
   );
   return { store, key, route, params, consent, decide, code, exchange, credential, refresh, authorize, handlers, inspected, limiterCalls,
-    advance(ms: number) { now += ms; }, setAuthority(next: typeof authority) { authority = next; } };
+    advance(ms: number) { now += ms; }, setAuthority(next: typeof authority) { authority = next; },
+    setProofKey(next: string) { authorityKey = next; } };
 }
 
 describe('channel discovery owner consent', () => {
+  it('rejects a proof key outside the approved native session authority', async () => {
+    const h = setup({ sessionAuthority: { async inspect(input) {
+      return { kind: 'verified', principal: 'agent_stable_b' as StableAgentPrincipal,
+        currentGeneration: input.session.generation, proofKeyThumbprint: 'B'.repeat(43) };
+    } } });
+    expect((await h.consent()).status).toBe(403);
+    expect((await h.decide()).status).toBe(403);
+    expect(h.store.records.size).toBe(0);
+  });
+
+  it('stops an issued discovery credential when native proof-key authority changes', async () => {
+    const h = setup();
+    const credential = await h.credential();
+    expect((await h.authorize(credential.credentialRef)).kind).toBe('authorized');
+    h.setProofKey('C'.repeat(43));
+    expect(await h.authorize(credential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    expect((await h.refresh(credential.credentialRef)).status).toBe(401);
+  });
+
   it('renders informed, no-store consent without creating channel authority', async () => {
     const h = setup();
     const response = await h.consent();

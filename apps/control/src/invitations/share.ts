@@ -16,28 +16,32 @@ export async function shareInvite(
   options?: CallOptions,
   expectedOwnerId?: string,
 ): Promise<OperationResult<ShareGrant, AdmissionRejection>> {
+  const diagnostic = (stage: Parameters<NonNullable<AdmissionRuntime['diagnostic']>>[0]) => {
+    try { runtime.diagnostic?.(stage); } catch { /* Diagnostics never change share outcomes. */ }
+  };
   const identity = await currentPrincipal(runtime.identity, options);
-  if (identity === 'auth_required') return rejected('auth_required');
-  if (identity === 'unavailable') return unavailable();
+  if (identity === 'auth_required') { diagnostic('identity_required'); return rejected('auth_required'); }
+  if (identity === 'unavailable') { diagnostic('identity_unavailable'); return unavailable(); }
   if (expectedOwnerId !== undefined && identity.principal.ownerId !== expectedOwnerId) return rejected('identity_mismatch');
   const policy = storePolicy(input.policy, runtime.digests);
-  if (!policy) return rejected('forbidden');
+  if (!policy) { diagnostic('policy_invalid'); return rejected('forbidden'); }
   let authority: 'allowed' | 'forbidden' | 'unavailable';
   try {
     authority = await runtime.authority.canShare({ principal: identity.principal, roomId: input.roomId }, options);
   } catch {
+    diagnostic('authority_error');
     return unavailable();
   }
-  if (authority === 'forbidden') return rejected('forbidden');
-  if (authority === 'unavailable') return unavailable();
+  if (authority === 'forbidden') { diagnostic('authority_forbidden'); return rejected('forbidden'); }
+  if (authority === 'unavailable') { diagnostic('authority_unavailable'); return unavailable(); }
 
   const inviteRef = runtime.digests.token(input.operationId);
   const key = runtime.digests.inviteKey(inviteRef);
   const existing = await safeRead<InviteRecord>(runtime.store, key, options);
-  if (existing.kind === 'unavailable') return unavailable();
+  if (existing.kind === 'unavailable') { diagnostic('invite_read_unavailable'); return unavailable(); }
   if (existing.kind === 'record') {
     const invite = readInviteRecord(existing.record.value);
-    if (!invite) return unavailable();
+    if (!invite) { diagnostic('invite_record_invalid'); return unavailable(); }
     return sameShare(invite, identity.principal.ownerId, input.roomId, policy, runtime, inviteRef)
       ? ok(grant(runtime, inviteRef, invite.expiresAt))
       : rejected('operation_mismatch');
@@ -66,9 +70,9 @@ export async function shareInvite(
       ? ok(grant(runtime, inviteRef, invite.expiresAt))
       : rejected('operation_mismatch');
   }
-  if (write.kind === 'operation_mismatch' || write.kind === 'conflict') return rejected('operation_mismatch');
-  if (write.kind === 'unavailable') return unavailable();
-  if (write.kind === 'outcome_unknown') return outcomeUnknown(input.operationId);
+  if (write.kind === 'operation_mismatch' || write.kind === 'conflict') { diagnostic('invite_write_mismatch'); return rejected('operation_mismatch'); }
+  if (write.kind === 'unavailable') { diagnostic('invite_write_unavailable'); return unavailable(); }
+  if (write.kind === 'outcome_unknown') { diagnostic('invite_write_unknown'); return outcomeUnknown(input.operationId); }
   const stored = write.record.value;
   if (!sameShare(stored, identity.principal.ownerId, input.roomId, policy, runtime, inviteRef)) return rejected('operation_mismatch');
   return ok(grant(runtime, inviteRef, expiresAt));
