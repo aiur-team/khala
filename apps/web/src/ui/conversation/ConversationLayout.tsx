@@ -94,7 +94,7 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
   }, [fitDraft]);
   return <form className="conversation-composer" onSubmit={event => { event.preventDefault(); onSend(); }}>
     <label className="sr-only" htmlFor="conversation-draft">Message</label>
-    <textarea ref={input} id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder}
+    <textarea ref={input} id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder} aria-describedby={sendDescriptionId}
       onKeyDown={event => {
         if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         event.preventDefault();
