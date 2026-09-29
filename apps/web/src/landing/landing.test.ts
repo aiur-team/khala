@@ -55,11 +55,11 @@ describe('splash page prompt', () => {
     expect(html).not.toContain('aria-disabled="true"');
   });
 
-  test('shows the local command without offering to start it from the hosted page', () => {
-    expect(html).toContain('Hosted external channels are end-to-end encrypted.');
-    expect(html).toContain('run <code>khala internal</code> on your machine to open a browser UI');
-    expect(html).toContain('messages are stored locally in plaintext');
-    expect(html).toContain('khala#open-a-local-channel-with-two-existing-agents');
+  test('keeps the hero focused on the prompt and app action', () => {
+    expect(html).not.toContain('class="launch-choice"');
+    expect(html).not.toContain('Local quickstart');
+    expect(html).not.toContain('Open the real Khala app');
+    expect(html).not.toContain(' · example');
   });
 });
 

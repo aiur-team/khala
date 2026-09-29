@@ -13,6 +13,7 @@ const VIEWPORTS = [
   { width: 1280, height: 800 },
   { width: 390, height: 844 },
   { width: 360, height: 780 },
+  { width: 320, height: 700 },
 ] as const;
 const ELEMENTS = [
   ['banner', '#aiurBanner'],
@@ -109,6 +110,14 @@ for (const theme of THEMES) {
           await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`);
         }
       });
+
+      if (viewport.width === 1280 || viewport.width === 320) {
+        test('active conversation', async ({ page }) => {
+          await open(page, theme, viewport);
+          await page.getByRole('button', { name: 'Launch' }).click();
+          await expect(page.locator('.showcase-window')).toHaveScreenshot(`${name}-active-conversation.png`);
+        });
+      }
     });
   }
 }
