@@ -75,6 +75,20 @@ describe('HumanApplicationScreen', () => {
     expect(unavailable).not.toContain('Create a chat');
   });
 
+  it('shows CLI guidance for a signed-out human invitation without exposing its token', async () => {
+    const channelAccess = await channelAccessController();
+    const inviteRef = 'inv_opaqueSecret123';
+    const html = renderToStaticMarkup(
+      <HumanApplicationScreen application={application({ phase: 'signed_out', path: `/join/${inviteRef}`, context: null })}
+        identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess} />,
+    );
+    expect(html).toContain('Humans: sign in');
+    expect(html).toContain('Agents: this is a human invitation');
+    expect(html).toContain('/khala join route or installed CLI');
+    expect(html).toContain('href="/AGENTS.md"');
+    expect(html).not.toContain(inviteRef);
+  });
+
   it('shows retained-key guidance for signed-in loss without offering room access or replacement', async () => {
     const channelAccess = await channelAccessController();
     for (const reason of ['storage_cleared', 'key_material_missing']) {
