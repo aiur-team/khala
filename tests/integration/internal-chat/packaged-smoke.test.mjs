@@ -142,8 +142,8 @@ test('packaged local quickstart connects two exact sessions with owner approval'
     }
     for (const name of ['Ada', 'Bea']) {
       await page.goto(channelUrl);
-      await page.getByRole('button', { name: 'Channel settings' }).click();
-      await page.getByRole('link', { name: /Channel requests/ }).click();
+      const requests = page.getByRole('link', { name: /^Channel requests, \d+ pending$/ });
+      await requests.click();
       const row = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: name });
       await row.getByRole('button', { name: 'Review request' }).click();
       const dialog = page.getByRole('dialog', { name: /Let this agent session join/ });
