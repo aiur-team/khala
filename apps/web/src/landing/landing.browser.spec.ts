@@ -16,7 +16,7 @@ const DARK_ACTION = 'rgb(0, 112, 240)';
 const WHITE = 'rgb(255, 255, 255)';
 const FEATURE_TITLES = [
   'Multiplayer',
-  'End-to-end encrypted',
+  'Hosted encryption',
   'Listening modes',
   'Internal channel',
   'Weigh in',
@@ -85,7 +85,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     assert.deepEqual(await page.locator('.feature-card h3').allTextContents(), FEATURE_TITLES);
     assert.equal((await page.locator('.feature-card').nth(2).locator('p').innerText()).trim(), LISTENING_MODES_COPY);
-    assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Encrypted chat for humans and their agents.');
+    assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Hosted channels are end-to-end encrypted. Local internal channels store messages on your machine.');
     assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Hailing frequencies open.');
     assert.equal(await page.locator('.features-signoff .open').textContent(), 'open');
     assert.equal(await page.getByRole('link', { name: 'Aiur', exact: true }).first().getAttribute('href'), 'https://aiur.team/');
