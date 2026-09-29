@@ -169,13 +169,19 @@ describe('HTTP channel access', () => {
   });
 
   it('sends a channel URL to the service it names, and refuses a conflicting --origin', async () => {
-    const seen: { url: string | undefined; body: unknown; raw: string; proof: string | undefined }[] = [];
+    const seen: { url: string | undefined; body: unknown; raw: string; proof: string | undefined;
+      origin: string | undefined }[] = [];
     const origin = await loopback(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const raw = Buffer.concat(chunks).toString();
       seen.push({ url: request.url, body: JSON.parse(raw) as unknown, raw,
-        proof: Array.isArray(request.headers.dpop) ? undefined : request.headers.dpop });
+        proof: Array.isArray(request.headers.dpop) ? undefined : request.headers.dpop,
+        origin: request.headers.origin });
+      if (request.headers.origin !== origin) {
+        json(response, 403, { code: 'forbidden_origin' });
+        return;
+      }
       json(response, 200, { v: 1, kind: 'request', operationId: 'op-1', outcome: 'pending_owner' });
     });
     const channelUrl = `${origin}/join/inviteRef123`;
@@ -183,6 +189,7 @@ describe('HTTP channel access', () => {
     await expect(port.requestChannelAccess({ target: { kind: 'channel_url', channelUrl }, operationId: 'op-1', origin: null }))
       .resolves.toMatchObject({ kind: 'status' });
     expect(seen[0]).toMatchObject({ url: CHANNEL_LINK_REQUEST_PATH,
+      origin,
       body: { v: 1, kind: 'channel_url', operationId: 'op-1', credentialRef: 'credential-ref-1', channelUrl } });
     const claims = JSON.parse(Buffer.from(seen[0]!.proof!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
     expect(claims).toMatchObject({ htm: 'POST', htu: `${origin}${CHANNEL_LINK_REQUEST_PATH}`,
