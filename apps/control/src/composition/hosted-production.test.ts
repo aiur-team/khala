@@ -304,6 +304,19 @@ describe('generated hosted production composition', () => {
     }
   });
 
+  it('composes local room-send routes only behind explicit development and loopback origins', async () => {
+    const local = { ...env, PUBLIC_APP_ORIGIN: 'http://localhost:8888',
+      PUBLIC_HOMESERVER_ORIGIN: 'http://127.0.0.1:8008', MATRIX_SERVER_NAME: 'localhost',
+      NODE_ENV: 'development', KHALA_LOCAL_AUTH: 'enabled', KHALA_ADMISSION_MODE: 'explicit_browser_consent' };
+    const routes = registerHostedProductionRoutes({ env: local, stores });
+    const ready = routes.find(route => route.path === '/api/human/room-send/ready');
+    expect(ready).toBeDefined();
+    expect((await ready!.handle(new Request('http://localhost:8888/api/human/room-send/ready', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }))).status).toBe(400);
+    expect(() => registerHostedProductionRoutes({ env: { ...local, NODE_ENV: 'production' }, stores })).toThrow(/NODE_ENV/);
+  });
+
   it('binds the real descriptor and explicit browser consent routes only in the exact mode', async () => {
     const route = gateway('explicit_browser_consent');
     const descriptor = await route(new Request(`${origin}/api/agent/bootstrap/descriptor?link=${encodeURIComponent(`${origin}/join/inv_abcdefgh`)}`));

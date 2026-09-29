@@ -35,10 +35,10 @@ if (!target) throw new Error('missing Khala application mount');
 // A deployment without its public origins renders an explicit unavailable
 // screen; throwing here would leave the visitor a blank page.
 const config = readHostedConfig(import.meta.env);
-if (config.ok) startHostedApplication(target, config.appOrigin, config.homeserverOrigin);
+if (config.ok) startHostedApplication(target, config.appOrigin, config.homeserverOrigin, config.localDev);
 else mountHostedUnavailable(target, config.missing);
 
-function startHostedApplication(target: Element, appOrigin: string, homeserverOrigin: string): void {
+function startHostedApplication(target: Element, appOrigin: string, homeserverOrigin: string, localDev: boolean): void {
   const decodedLimits = decodeContentLimits({
     maxBodyBytes: 32_768,
     maxDisplayNameBytes: 255,
@@ -49,11 +49,11 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   const entry = readHumanEntry(location);
   if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
 
-  const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
-  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
-  const controlsClient = createOwnerMailboxControlsClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value, allowInsecureLoopback: localDev });
+  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
+  const controlsClient = createOwnerMailboxControlsClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
   const controlsCapability = registerControls({ client: controlsClient, bindingFor: () => null });
-  const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
   const deliveryLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
   if (!deliveryLimits.ok) throw new Error('invalid review limits');
   const reviewCapability = registerReview({ client: review.review, limits: deliveryLimits.value, bindingFor: () => null });
@@ -103,7 +103,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   });
   const unsubscribeCleanup = application.subscribe(() => { void cleanupConsumer?.poll(); });
   cleanupConsumer.start();
-  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
+  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });
   const createChannelAccess = () => createChannelAccessInboxController({ requests: api.channelAccess });
   const mounted = mountKhalaContent({
     target,

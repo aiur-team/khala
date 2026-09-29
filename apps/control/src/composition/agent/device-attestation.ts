@@ -17,6 +17,7 @@ export type DeviceAttestation = Readonly<{
 
 export type DeviceAttestationDependencies = Readonly<{
   origin: string;
+  allowInsecureLoopback?: boolean;
   store: ControlStore;
   capabilities: Pick<AdapterCapabilities, 'authorize' | 'lookupBinding'>;
   publishedFingerprint(binding: SessionBinding): Promise<string | null>;
@@ -73,7 +74,9 @@ export function createDeviceAttestationRoutes(deps: DeviceAttestationDependencie
   lookup(binding: SessionBinding): Promise<DeviceAttestation | null>;
 }> {
   const origin = new URL(deps.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== deps.origin) throw new Error('attestation origin must be exact HTTPS');
+  const loopback = deps.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || loopback) || origin.origin !== deps.origin) throw new Error('attestation origin must be exact HTTPS');
 
   async function active(binding: SessionBinding): Promise<boolean> {
     const result = await deps.capabilities.lookupBinding(binding.bindingId);
