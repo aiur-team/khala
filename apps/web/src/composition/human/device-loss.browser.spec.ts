@@ -219,6 +219,10 @@ test('owner conversation shell fills desktop and phone with conditional request 
       await mkdir(screenshotDir, { recursive: true });
       await page.screenshot({ path: join(screenshotDir, 'human-desktop.png') });
     }
+    await page.getByRole('link', { name: 'Channel care' }).click();
+    await page.getByRole('heading', { name: 'Channel care' }).waitFor();
+    await page.evaluate(() => window.__lossHarness.navigate('/channels/room_1'));
+    await title.getByText('First channel').waitFor();
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     assert.equal(await page.locator('.aiur-shell').getAttribute('data-theme'), 'light');
     await page.getByRole('button', { name: 'Toggle color theme' }).click();

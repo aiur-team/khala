@@ -36,29 +36,6 @@ const port: ChannelUiPort = {
 
 const controller = createChannelController(port, { roomId, generation: 1 });
 
-function connectScout(): void {
-  snapshot = {
-    generation: 1,
-    agents: [{
-      participantId: scoutId,
-      displayName: 'Scout',
-      ownerDisplayName: 'Mira',
-      connection: 'connected',
-      routeLabel: 'Codex CLI',
-      lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-18T14:31:19.880Z' },
-      acknowledgement: 'batch_token_next_call',
-    }],
-  };
-  for (const listener of listeners) listener(snapshot);
-  setTimeout(() => {
-    snapshot = {
-      ...snapshot,
-      agents: snapshot.agents.map(agent => ({ ...agent, connection: 'stale' as const })),
-    };
-    for (const listener of listeners) listener(snapshot);
-  }, 1_000);
-}
-
 function Harness() {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<readonly Readonly<{ body: string; pending: boolean }>[]>([
@@ -90,18 +67,6 @@ function Harness() {
           ))}
           <label>Message <textarea value={draft} onChange={event => setDraft(event.currentTarget.value)} /></label>
           <button type="button" onClick={sendMessage}>Send message</button>
-        </section>
-      )}
-      renderReview={() => (
-        <section aria-label="Pending release">
-          <h2>Pending release</h2>
-          <p>No pending messages.</p>
-        </section>
-      )}
-      renderControls={() => (
-        <section aria-label="Agent controls">
-          <h2>Agent controls</h2>
-          <button type="button" onClick={connectScout}>Simulate agent connection</button>
         </section>
       )}
     />

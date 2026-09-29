@@ -17,8 +17,6 @@ describe('ChannelScreen', () => {
         description="Humans and agents working together."
         controller={controller}
         renderTimeline={() => <div data-slot="timeline">Timeline slot</div>}
-        renderReview={() => <div data-slot="review">Review slot</div>}
-        renderControls={() => <div data-slot="controls">Controls slot</div>}
       />,
     );
 
@@ -27,8 +25,6 @@ describe('ChannelScreen', () => {
     expect(html).toContain('Timeline slot');
     expect(html).not.toContain('aria-label="Channel details"');
     expect(html).not.toContain('conversation-detail');
-    expect(html).not.toContain('Review slot');
-    expect(html).not.toContain('Controls slot');
     expect(html).not.toContain('Agent presence');
   });
 });

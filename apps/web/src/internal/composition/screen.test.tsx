@@ -82,7 +82,7 @@ describe('LocalApplicationScreen', () => {
     for (const text of HOSTED_ONLY) expect(html).not.toContain(text);
   });
 
-  it('shows the current channel in the shared sidebar and a compact settings control', () => {
+  it('keeps local controls in local tools while the shared sidebar stays minimal', () => {
     const html = render('/channels/ch_1');
     expect(html).toContain('aria-label="Channels"');
     expect(html).toContain('conversation-list__item is-active');
@@ -90,7 +90,8 @@ describe('LocalApplicationScreen', () => {
     expect(html).not.toContain('channel-requests-nav');
     expect((html.match(/<main/g) ?? [])).toHaveLength(1);
     expect(html).not.toContain('aria-label="Channel details"');
-    expect(html).not.toContain('href="/channels/ch_1/settings"');
+    expect(html).toContain('<summary>Local tools</summary>');
+    expect(html).toContain('href="/channels/ch_1/settings"');
   });
 
   it('renders the shared inbox and the shared settings panel on their own routes', () => {

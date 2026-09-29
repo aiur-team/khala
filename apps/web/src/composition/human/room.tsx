@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
+import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
 import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
@@ -48,11 +49,12 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, rou
 export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability,
   trustBinding: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000,
-  controls?: ControlsCapability): HumanRoomRenderer {
-  return (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
+  controls?: ControlsCapability): HumanRoomRenderer & { tools: HumanRoomRenderer } {
+  const render = (toolsOnly: boolean): HumanRoomRenderer => (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
     {...(navigate && routes ? { navigate, routes } : {})} review={review}
     capability={capability} trustBinding={trustBinding} refreshMs={refreshMs}
-    {...(controls ? { controls } : {})} />;
+    {...(controls ? { controls } : {})} toolsOnly={toolsOnly} />;
+  return Object.assign(render(false), { tools: render(true) });
 }
 
 function ControlsForBinding({ context, roomId, capability, binding }: {
@@ -208,7 +210,7 @@ export function HumanReview({ context, roomId, review, capability, trustBinding,
     capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, navigate, routes, review, capability, trustBinding, refreshMs = 5_000, controls }: {
+function HumanRoom({ context, roomId, navigate, routes, review, capability, trustBinding, refreshMs = 5_000, controls, toolsOnly = false }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   navigate?: (path: string) => void;
@@ -219,6 +221,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   trustBinding?: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>;
   refreshMs?: number;
+  toolsOnly?: boolean;
 }) {
   const conversations = useConversationIndex(context);
   const selectedConversation = conversations?.find(item => item.id === roomId);
@@ -247,6 +250,12 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     recovery.dispose();
   }, [room, timeline, recovery]);
   const viewer = context.participant?.() ?? null;
+  const toolsRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!toolsOnly) return;
+    const heading = toolsRoot.current?.querySelector('h1');
+    if (heading) { heading.tabIndex = -1; heading.focus(); }
+  }, [roomId, toolsOnly]);
   if (context.conversations && conversations === undefined) {
     return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
   }
@@ -264,6 +273,19 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     );
   }
 
+  if (toolsOnly) {
+    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'khala-channel-care-title' }}>
+      {routes ? <a href={routes.roomPath(roomId)} onClick={navigate ? event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); navigate(routes.roomPath(roomId));
+      } : undefined}>Back to conversation</a> : null}
+      <HumanReview context={context} roomId={roomId} review={review} capability={capability}
+        trustBinding={trustBinding} refreshMs={refreshMs} />
+      <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
+      <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
+    </KhalaPageFrame></div>;
+  }
+
   return (
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
@@ -276,14 +298,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
-      )}
-      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
-        trustBinding={trustBinding} refreshMs={refreshMs} />}
-      renderControls={() => (
-        <>
-          <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
-          <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
-        </>
       )}
     />
   );

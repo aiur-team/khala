@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -38,6 +38,24 @@ test('created channel page has one share action that copies a working link', { t
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       'room sharing stays within the phone viewport');
+  });
+});
+
+test('channel care route mounts recipient review and recovery outside the chat', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?tools', async page => {
+    const care = page.getByRole('main', { name: 'Channel care route' });
+    await care.getByRole('heading', { name: 'Channel care' }).waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
+    await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
+    await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await page.locator('.conversation-thread__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-mobile.png'), fullPage: true });
+    }
   });
 });
 

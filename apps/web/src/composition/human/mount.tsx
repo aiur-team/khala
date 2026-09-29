@@ -31,6 +31,8 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
+  /** Separate channel-care page; the conversation itself has no settings control. */
+  renderChannelTools?: HumanRoomRenderer;
   createChannelAccess: () => ChannelAccessInboxController;
   capabilities?: readonly HumanCapability[];
 }>;
@@ -156,19 +158,20 @@ function LogoutAction({ application, routes, mode }: {
   </>;
 }
 
-function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, children }: {
+function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, hasChannelTools, children }: {
   application: HumanApplicationHandle;
   createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
   context: HumanRouteContext;
   navigateRoute(path: string): void;
+  hasChannelTools: boolean;
   children: ReactNode;
 }) {
   const [controller] = useState(createController);
   const route = routes.parse(chrome.path);
   const conversations = useConversationIndex(context);
-  const selectedTitle = route.kind === 'channel'
+  const selectedTitle = route.kind === 'channel' || route.kind === 'channel_tools'
     ? conversations?.find(item => item.id === route.roomId)?.title ?? 'Encrypted conversation'
     : route.kind === 'channel_requests' ? 'Channel requests' : 'Channels';
   const channelTitle = route.kind === 'channel' ? selectedTitle : undefined;
@@ -191,13 +194,16 @@ function OwnerShell({ application, createController, routes, chrome, context, na
   const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
   const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
   const sidebar = <>
-    <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
+    <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' || route.kind === 'channel_tools' ? route.roomId : null}
       query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
       action={<><ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()} current={route.kind === 'channel_requests'}
         onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
         <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button></>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
+    {hasChannelTools && (route.kind === 'channel' || route.kind === 'channel_tools') ? <a className="khala-sidebar__channel-tools" href={routes.channelToolsPath(route.roomId)}
+      aria-current={route.kind === 'channel_tools' ? 'page' : undefined}
+      onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); setDrawerOpen(false); navigateRoute(routes.channelToolsPath(route.roomId)); }}>Channel care</a> : null}
   </>;
   return (
     <AiurShell
@@ -245,6 +251,7 @@ export function HumanApplicationScreen({
   navigateExternal = url => globalThis.location?.assign(url),
   navigateRoute = path => application.navigate(path),
   renderRoom,
+  renderChannelTools,
   createChannelAccess,
   capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
@@ -258,6 +265,10 @@ export function HumanApplicationScreen({
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'channel':
         return renderRoom(context, route, navigateRoute, routes);
+      case 'channel_tools':
+        return renderChannelTools ? renderChannelTools(context,
+          { kind: 'channel', path: routes.roomPath(route.roomId), roomId: route.roomId }, navigateRoute, routes)
+          : <Panel heading="Channel care unavailable"><p>This channel care page is unavailable.</p></Panel>;
       case 'channel_requests':
         return <ChannelRequestsRoute selectedHandle={route.selectedHandle} />;
       case 'not_found':
@@ -276,7 +287,7 @@ export function HumanApplicationScreen({
   // shell renders only for a ready snapshot, so agent/discovery credential
   // routes never see owner-only inbox chrome.
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => (
-    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
+    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute} hasChannelTools={Boolean(renderChannelTools)}>
       {children}
     </OwnerShell>
   );

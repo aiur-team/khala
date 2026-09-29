@@ -11,8 +11,6 @@ export interface ChannelScreenProps {
   theme?: ThemeChoice;
   controller: ChannelController;
   renderTimeline: () => ReactNode;
-  renderReview: () => ReactNode;
-  renderControls: () => ReactNode;
   renderShare?: () => ReactNode;
   renderHeaderActions?: () => ReactNode;
   showPresence?: boolean;

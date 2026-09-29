@@ -12,6 +12,8 @@ describe('createHumanRouteCodec', () => {
     expect(codec.parse('https://khala.aiur.team/')).toEqual({ kind: 'not_found', path: '/' });
     expect(codec.parse('/join?invite=invite_1')).toEqual({ kind: 'join', path: '/join?invite=invite_1', inviteRef: 'invite_1' });
     expect(codec.parse('/channels/room_1')).toEqual({ kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
+    expect(codec.channelToolsPath('room_1')).toBe('/channels/room_1/tools');
+    expect(codec.parse('/channels/room_1/tools')).toEqual({ kind: 'channel_tools', path: '/channels/room_1/tools', roomId: 'room_1' });
   });
 
   test('maps the owner inbox and request deep links to the same route', () => {
@@ -41,6 +43,7 @@ describe('createHumanRouteCodec', () => {
     expect(based.conversationsPath()).toBe('/khala/conversations');
     expect(based.joinPath('invite 1')).toBe('/khala/join?invite=invite%201');
     expect(based.roomPath('room_1')).toBe('/khala/channels/room_1');
+    expect(based.channelToolsPath('room_1')).toBe('/khala/channels/room_1/tools');
     expect(based.channelRequestsPath()).toBe('/khala/channel-requests');
     expect(based.parse('/khala/channels/room_1')).toEqual({ kind: 'channel', path: '/khala/channels/room_1', roomId: 'room_1' });
   });

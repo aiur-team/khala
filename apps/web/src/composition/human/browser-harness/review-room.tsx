@@ -1,9 +1,15 @@
 import { createRoot } from 'react-dom/client';
+import '../../../brand/fonts.css';
+import '../../../brand/tokens.css';
+import '../../../shell/shell.css';
+import '../../../ui/conversation/conversation.css';
+import '../../../features/channel/channel.css';
+import '../../../features/recovery/recovery.css';
 import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
   type PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
-import { createHumanRoomRenderer, HumanControls, HumanReview } from '../room';
+import { createHumanRoomRenderer } from '../room';
 import { registerReview } from '../../review/register';
 import { registerControls } from '../../controls/register';
 import '../../../features/review/review.css';
@@ -190,11 +196,10 @@ const refreshMs = race || controlsEnabled ? 75 : 5_000;
 const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const root = createRoot(document.getElementById('app')!);
-const testSurface = (currentContext: HumanRouteContext) => <>{renderer(currentContext, route)}
-  <aside aria-label="Deferred channel tools"><HumanReview context={currentContext} roomId={roomId} review={review}
-    capability={capability} trustBinding={trustBinding} refreshMs={refreshMs} />
-    {controlsEnabled ? <HumanControls context={currentContext} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} /> : null}
-  </aside></>;
+const toolsRoute = new URLSearchParams(location.search).has('tools');
+const testSurface = (currentContext: HumanRouteContext) => toolsRoute
+  ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Channel care route">{renderer.tools(currentContext, route)}</main></div>
+  : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
 root.render(testSurface(context));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;

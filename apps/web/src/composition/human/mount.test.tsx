@@ -155,6 +155,26 @@ describe('HumanApplicationScreen', () => {
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
+  it('opens channel care as a separate route without adding a chat settings control', async () => {
+    const channelAccess = await channelAccessController(0);
+    const context = readyContext('/channels/room_1');
+    const renderChannelTools = vi.fn(() => <p>Recovery and recipient review</p>);
+    const props = { identity, routes, renderRoom, renderChannelTools, createChannelAccess: () => channelAccess, capabilities: [] };
+    const room = renderToStaticMarkup(<HumanApplicationScreen {...props}
+      application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)} />);
+    expect(room).toContain('href="/channels/room_1/tools"');
+    expect(room).toContain('Channel care');
+    expect(room).not.toContain('Channel settings');
+    expect(room).not.toContain('Channel requests, 0 pending');
+    const toolsContext = readyContext('/channels/room_1/tools');
+    const tools = renderToStaticMarkup(<HumanApplicationScreen {...props}
+      application={application({ phase: 'ready', path: toolsContext.path, context: toolsContext } as HumanApplicationSnapshot)} />);
+    expect(tools).toContain('Recovery and recipient review');
+    expect(tools).toContain('aria-current="page"');
+    expect(renderChannelTools).toHaveBeenCalledWith(toolsContext,
+      { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
+  });
+
   it('mounts the owner inbox route with a badge capped at 50', async () => {
     const channelAccess = await channelAccessController(60);
     const context = readyContext('/channel-requests');

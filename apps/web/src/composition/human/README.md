@@ -47,7 +47,8 @@ ends the route and Matrix device lease before showing sign-in at `/new`.
 
 The site root `/` belongs to the public landing page (`netlify.toml`), so the
 application routes live below it: `/new` creates a channel, `/join?invite=…`
-admits a shared link, and `/channels/<id>` opens a channel. The SPA entry reads
+admits a shared link, `/channels/<id>` opens a channel, and
+`/channels/<id>/tools` opens channel care from the sidebar. The SPA entry reads
 an optional `?mount=hosted-content` parameter to boot without standalone chrome,
 then strips it before routing; any other value boots standalone.
 
@@ -57,7 +58,8 @@ owner and participant ID. It then matches the event's claimed Ed25519 key to a
 Matrix device ID. A missing mapping or key match fails closed; sender strings
 and display names never become owner authority.
 
-The hosted channel room also mounts the recovery panel. Closure appears only
+The separate channel care page mounts recipient review, agent controls, and the
+recovery panel. Closure appears only
 when the protected control API returns a capability for the signed-in owner and
 current channel. A partial result means local cleanup is still unconfirmed;
 the panel keeps the operation identity for inspection. Closure never promises

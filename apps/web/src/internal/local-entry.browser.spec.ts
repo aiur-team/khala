@@ -118,12 +118,26 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.equal(await page.getByRole('heading', { name: 'One', level: 1 }).count(), 1);
     assert.equal(await page.getByRole('heading', { name: 'One', level: 2 }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
+    const localTools = page.locator('.local-channel-tools');
+    await localTools.locator('summary').first().click();
+    await localTools.getByRole('link', { name: 'Channel discovery settings' }).waitFor();
+    assert.equal(await localTools.getByRole('link', { name: 'Channel requests' }).count(), 0);
+    const stopSummary = localTools.locator('summary').filter({ hasText: 'Stop agent delivery' });
+    await stopSummary.click();
+    await localTools.getByRole('button', { name: 'Stop agent delivery' }).waitFor();
+    await stopSummary.click();
+    await localTools.getByText('Conversion options are unavailable.').waitFor();
+    assert.equal(await localTools.locator('details').count(), 1);
     await page.locator('.conversation-list__item').first().waitFor();
     assert.equal(await page.getByText('Delivery evidence unavailable').count(), 0, 'empty channels do not show a receipt error');
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true });
       await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: path.join(screenshotDir, 'local-desktop-tools.png'), fullPage: true });
+    }
+    await localTools.locator('summary').first().click();
+    if (screenshotDir) {
       await page.screenshot({ path: path.join(screenshotDir, 'local-desktop.png'), fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: path.join(screenshotDir, 'local-mobile.png'), fullPage: true });

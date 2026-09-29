@@ -6,6 +6,7 @@ export type HumanRoute =
   | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
+  | Readonly<{ kind: 'channel_tools'; path: string; roomId: RoomId }>
   | Readonly<{ kind: 'channel_requests'; path: string; selectedHandle: ChannelAccessRequestHandle | null }>
   | Readonly<{ kind: 'not_found'; path: string }>;
 
@@ -15,6 +16,7 @@ export interface HumanRouteCodec extends RouteCodec {
   conversationsPath(): string;
   joinPath(inviteRef: string): string;
   roomPath(roomId: string): string;
+  channelToolsPath(roomId: string): string;
   channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string;
 }
 
@@ -74,6 +76,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     if (!decoded.ok) throw new Error('invalid channel identifier');
     return `${roomsRoot}${encodeURIComponent(decoded.value)}`;
   }
+  const channelToolsPath = (roomId: string) => `${roomPath(roomId)}/tools`;
 
   function channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string {
     if (requestHandle == null) return channelRequestsRoot;
@@ -114,7 +117,8 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       }
     }
     if (parsed.pathname.startsWith(roomsRoot) && !parsed.search) {
-      const encoded = parsed.pathname.slice(roomsRoot.length);
+      const tools = parsed.pathname.endsWith('/tools');
+      const encoded = parsed.pathname.slice(roomsRoot.length, tools ? -'/tools'.length : undefined);
       if (!encoded || encoded.includes('/')) return notFound(requestedPath);
       let raw: string;
       try {
@@ -124,7 +128,9 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       }
       const decoded = decodeRoomId(raw);
       if (!decoded.ok) return notFound(requestedPath);
-      return { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
+      return tools
+        ? { kind: 'channel_tools', path: channelToolsPath(decoded.value), roomId: decoded.value }
+        : { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
     }
     if (parsed.pathname === channelRequestsRoot && !parsed.search) {
       return { kind: 'channel_requests', path: channelRequestsRoot, selectedHandle: null };
@@ -149,6 +155,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     conversationsPath,
     joinPath,
     roomPath,
+    channelToolsPath,
     channelRequestsPath,
     parseJoinLocation(location: string): ReturnType<RouteCodec['parseJoinLocation']> {
       const route = parse(location);

@@ -7,6 +7,7 @@ import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
 import { ChannelScreen } from '../../../features/channel/ChannelScreen';
 import { ChannelSharePanel } from '../../../features/channel/ChannelSharePanel';
+import { KhalaPageFrame } from '../../../shell/KhalaPageFrame';
 import { ChatComposer, ChatMessage } from '../../../ui/conversation';
 import '../../../brand/tokens.css';
 import '../../../brand/fonts.css';
@@ -64,11 +65,14 @@ function VisualRoom() {
     renderTimeline={() => <><ul className="fixture-messages"><ChatMessage id="hello" author="Alice">A shared place for the release.</ChatMessage></ul>
       <ChatComposer value="" onChange={() => {}} onSend={() => {}} /></>}
     renderShare={() => <ChannelSharePanel roomId={'room_1' as never} admission={{ share: async () => ({ kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null } }) }} />}
-    renderReview={() => null} renderControls={() => null} />;
+    />;
 }
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
     renderRoom={(context, route) => visualHarness ? <VisualRoom /> : <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}
+    {...(visualHarness ? { renderChannelTools: () => <div className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'visual-channel-care-title' }}>
+      <p>Recipient review, agent controls, and recovery are available here.</p>
+    </KhalaPageFrame></div> } : {})}
     createChannelAccess={() => {
       inboxCount += 1;
       const journal = createFakeJournal();
