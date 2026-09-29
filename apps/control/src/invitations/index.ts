@@ -82,7 +82,15 @@ export type AdmissionServiceOptions = Readonly<{
   secret: string | Uint8Array;
   /** Business expiry retained in the record so inspection can distinguish it from revocation. */
   inviteLifetimeMs: number | null;
+  /** Fixed stage codes only; no room, owner, operation or invitation data. */
+  diagnostic?: (stage: ShareDiagnosticStage) => void;
 }>;
+
+export type ShareDiagnosticStage =
+  | 'identity_required' | 'identity_unavailable' | 'policy_invalid'
+  | 'authority_forbidden' | 'authority_unavailable' | 'authority_error'
+  | 'invite_read_unavailable' | 'invite_record_invalid'
+  | 'invite_write_unavailable' | 'invite_write_unknown' | 'invite_write_mismatch';
 
 export type AdmissionRuntime = AdmissionServiceOptions & Readonly<{ origin: string; digests: Digests }>;
 

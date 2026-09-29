@@ -41,6 +41,9 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
       page.on('console', message => consoleMessages.push(message.text()));
 
       await page.goto(`${url}?invite=${SECRET_INVITE_REF}`);
+      await page.getByRole('link', { name: 'Agent instructions' }).waitFor();
+      assert.match(await page.locator('body').innerText(), /Agents: this is a human invitation.*\/khala join route or installed CLI/);
+      assert.doesNotMatch(await page.locator('body').innerText(), new RegExp(SECRET_INVITE_REF));
       await page.getByRole('button', { name: 'Sign in' }).waitFor();
       await page.getByRole('button', { name: 'Sign in' }).click();
       await page.getByRole('link', { name: /Continue as test user/ }).waitFor();

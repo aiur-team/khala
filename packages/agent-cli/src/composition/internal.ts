@@ -190,6 +190,10 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     // The internal server binds a session by its digest, never the harness's own ID.
     storedSessionId: internalSessionDigest,
 
+    joinedGrantDescriptorPath() {
+      return discoverySelection().kind === 'selected' ? activationPaths(options.descriptorPath).grantPath : null;
+    },
+
     async status(signal) {
       const descriptor = current();
       // A discovery descriptor is an unjoined agent: it holds no binding by construction.

@@ -36,6 +36,25 @@ describe('share', () => {
     expect(() => harness({ origin: 'https://evil.example.test' })).toThrow(/allowlisted/);
   });
 
+  it('reports only fixed share stages when Matrix authority or invite storage fails', async () => {
+    const secret = 'room-!private:example.test invite-private owner-private@example.test';
+    const stages: string[] = [];
+    const denied = harness({
+      authority: { async canShare() { throw new Error(secret); } },
+      diagnostic: stage => stages.push(stage),
+    });
+    expect((await denied.service.share({ operationId: secret, roomId: ROOM_ID })).kind).toBe('unavailable');
+    expect(stages).toEqual(['authority_error']);
+
+    const unavailable = harness({
+      authority: { async canShare() { return 'unavailable'; } },
+      diagnostic: stage => stages.push(stage),
+    });
+    expect((await unavailable.service.share({ operationId: secret, roomId: ROOM_ID })).kind).toBe('unavailable');
+    expect(stages).toEqual(['authority_error', 'authority_unavailable']);
+    expect(JSON.stringify(stages)).not.toContain(secret);
+  });
+
   it('stores a named restriction without storing the email', async () => {
     const h = harness();
     const result = await h.service.share({

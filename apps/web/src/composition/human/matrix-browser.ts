@@ -3,6 +3,7 @@ import {
   Direction,
   EventType,
   MatrixEvent,
+  MatrixEventEvent,
   MsgType,
   Preset,
   Room,
@@ -41,6 +42,7 @@ import {
 } from '@khala/messaging/browser-device/index';
 import {
   createRoomService,
+  type ChannelService,
   type RoomJournal,
   type CreateLookup,
   type RoomSubstrate,
@@ -51,6 +53,8 @@ import {
 } from '@khala/messaging/rooms/index';
 import { createBrowserRoomJournal } from './room-journal';
 import type { BrowserSendFence, BrowserSendProof } from './browser-api';
+import { sortConversations, type ConversationIndexPort } from './conversations';
+import type { ConversationSummary } from '../../ui/conversation';
 
 const CREATE_EVENT = 'com.aiur.khala.create.v1';
 
@@ -105,6 +109,61 @@ function roomSummary(room: Room, limits: ContentLimits): RoomSummary {
   const withoutUntrustedTitle = decodeRoomSummary({ ...base, title: null }, limits);
   if (withoutUntrustedTitle.ok) return withoutUntrustedTitle.value;
   throw new Error('Matrix room metadata is invalid');
+}
+
+/** Only local, joined encrypted rooms enter the owner conversation index. */
+export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms'>, limits: ContentLimits): readonly ConversationSummary[] {
+  return sortConversations(client.getRooms()
+    .filter(candidate => candidate.getMyMembership() === 'join' && candidate.hasEncryptionStateEvent())
+    .map(candidate => {
+      const summary = roomSummary(candidate, limits);
+      const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
+        event.getType() === EventType.RoomMessage || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure());
+      const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
+        ? latest.getClearContent()?.body : null;
+      const unread = candidate.getUnreadNotificationCount();
+      return {
+        id: summary.roomId,
+        title: summary.title ?? 'Encrypted conversation',
+        preview: typeof body === 'string' ? body : null,
+        timestamp: latest ? new Date(latest.getTs()).toISOString() : null,
+        unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
+      };
+    }));
+}
+
+/** Rebinds decrypt listeners as sync adds or removes events; all callbacks share the session fence. */
+export function subscribeConversationIndex(client: Pick<MatrixClient, 'getRooms' | 'on' | 'off'>,
+  isCurrent: () => boolean, listener: () => void): () => void {
+  const observed = new Set<MatrixEvent>();
+  let disposed = false;
+  const onDecrypted = () => { if (!disposed && isCurrent()) listener(); };
+  const bindEvents = () => {
+    const available = new Set(client.getRooms()
+      .filter(room => room.getMyMembership() === 'join' && room.hasEncryptionStateEvent())
+      .flatMap(room => room.getLiveTimeline().getEvents()));
+    for (const event of observed) {
+      if (!available.has(event)) { event.off(MatrixEventEvent.Decrypted, onDecrypted); observed.delete(event); }
+    }
+    for (const event of available) {
+      if (!observed.has(event)) { event.on(MatrixEventEvent.Decrypted, onDecrypted); observed.add(event); }
+    }
+  };
+  const publish = () => {
+    if (disposed || !isCurrent()) return;
+    try { bindEvents(); } catch { /* Snapshot reports unavailable without crashing the route. */ }
+    listener();
+  };
+  client.on(RoomEvent.Timeline, publish);
+  client.on(ClientEvent.Sync, publish);
+  publish();
+  return () => {
+    disposed = true;
+    client.off(RoomEvent.Timeline, publish);
+    client.off(ClientEvent.Sync, publish);
+    for (const event of observed) event.off(MatrixEventEvent.Decrypted, onDecrypted);
+    observed.clear();
+  };
 }
 
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
@@ -280,14 +339,17 @@ class MatrixSubstrate implements RoomSubstrate {
     if (rooms.length === 0) return;
     const count = Math.min(rooms.length, 4);
     for (let offset = 0; offset < count; offset++) {
+      if (this.runtime.active?.client !== client) break;
       const room = rooms[(this.pollCursor + offset) % rooms.length]!;
       const proof: BrowserSendProof = { roomId: room.roomId as RoomId, deviceId, matrixAccessToken };
       const hold = await this.sendFence.inspect(proof);
-      if (!hold || this.runtime.active?.client !== client) continue;
+      if (this.runtime.active?.client !== client) break;
+      if (!hold) continue;
       const receipt = `${room.roomId}:${hold.operationId}:${hold.epoch}:${deviceId}`;
       if (this.rotationReceipts.has(receipt)) continue;
       try {
         await crypto.forceDiscardSession(room.roomId);
+        if (this.runtime.active?.client !== client) break;
         if (await this.sendFence.rotation(proof, hold.operationId, hold.epoch)) this.rotationReceipts.add(receipt);
       } catch { /* An offline SDK remains pending until the next poll. */ }
     }
@@ -513,7 +575,8 @@ class MatrixSubstrate implements RoomSubstrate {
 
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
-  room: RoomPort;
+  room: RoomPort & Pick<ChannelService, 'observeEntries'>;
+  conversations: ConversationIndexPort;
   participant(): ParticipantView | null;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
@@ -542,7 +605,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
       return input.credentials.resolve(principal, signal);
     },
   };
-  const device = createBrowserDeviceService({
+  const browserDevice = createBrowserDeviceService({
     identity: input.identity,
     credentials: credentialSource,
     stores: createIndexedDbStoreFactory(),
@@ -553,6 +616,16 @@ export function createMatrixBrowserPorts(input: Readonly<{
   const substrate = new MatrixSubstrate(runtime, input.limits, input.participants, input.sendFence);
   const journals = new Map<OwnerId, RoomJournal>();
   let current: { ownerId: OwnerId; generation: number; service: ReturnType<typeof createRoomService> } | null = null;
+  const device: DevicePort = {
+    ...browserDevice,
+    async stop() {
+      await browserDevice.stop();
+      current?.service.stop();
+      current = null;
+      journals.clear();
+      runtime.principalByOwner.clear();
+    },
+  };
 
   function service(): ReturnType<typeof createRoomService> | null {
     const active = runtime.active;
@@ -576,7 +649,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     return next;
   }
 
-  const room: RoomPort = {
+  const room: RoomPort & Pick<ChannelService, 'observeEntries'> = {
     create: (value, options) => service()?.create(value, options) ?? Promise.resolve(unavailable()),
     prepareIntro: (value, options) => service()?.prepareIntro(value, options) ?? Promise.resolve(unavailable()),
     resumeIntro: (value, options) => service()?.resumeIntro(value, options) ?? Promise.resolve(unavailable()),
@@ -585,10 +658,28 @@ export function createMatrixBrowserPorts(input: Readonly<{
     observe(roomId, listener) {
       return service()?.observe(roomId, listener) ?? (() => undefined);
     },
+    observeEntries(roomId, listener) {
+      return service()?.observeEntries(roomId, listener) ?? (() => undefined);
+    },
+  };
+
+  const conversations: ConversationIndexPort = {
+    snapshot(ownerId, generation) {
+      const active = runtime.active;
+      const view = device.current();
+      if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready' || view.generation !== generation || active.generation !== generation) return null;
+      try { return projectJoinedEncryptedRooms(active.client, input.limits); } catch { return null; }
+    },
+    subscribe(ownerId, generation, listener) {
+      const active = runtime.active;
+      if (!active || active.principal.ownerId !== ownerId || active.generation !== generation) return () => undefined;
+      return subscribeConversationIndex(active.client,
+        () => runtime.active === active && device.current().generation === generation, listener);
+    },
   };
 
   return {
-    device, room, participant: () => runtime.active?.actor ?? null,
+    device, room, conversations, participant: () => runtime.active?.actor ?? null,
     roomPresent(ownerId, roomId) {
       const active = runtime.active;
       return active?.principal.ownerId === ownerId && active.client.getRoom(roomId) !== null;
