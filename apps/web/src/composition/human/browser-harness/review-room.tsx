@@ -70,7 +70,13 @@ const room = {
     return { kind: 'ok', value: { clientTxnId, state: 'accepted', eventRef: sent.ref } };
   },
 } as unknown as RoomPort;
+const shareRequests: Array<{ roomId: string; policy: { kind: string; email?: string } }> = [];
 const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
+  admission: { async share(input: { roomId: string; policy: { kind: string; email?: string } }) {
+    shareRequests.push({ roomId: input.roomId, policy: input.policy });
+    return { kind: 'ok' as const, value: { inviteRef: `invite_${shareRequests.length}`,
+      shareUrl: `https://khala.example/join/invite_${shareRequests.length}`, expiresAt: null } };
+  } },
   participant: () => ({ participantId: 'human_1', ownerId: 'owner_1', kind: 'human', displayName: 'Owner', deviceIds: [] }),
   identity: { current: async () => ({ kind: 'signed_in', principal: { ownerId: 'owner_1' } }) },
   device: { current: () => ({ state: 'ready', deviceId: 'device_1', generation: 1 }), observe: () => () => undefined },
@@ -102,6 +108,7 @@ const replacementTrust = new Promise<void>(resolve => { allowReplacement = resol
 let allowAccount: (() => void) | null = null;
 const accountTrust = new Promise<void>(resolve => { allowAccount = resolve; });
 declare global { interface Window {
+  __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
   __roomReviewCommand: () => ApprovalCommand | null;
   __allowReviewTrust: () => void;
   __reviewLookupCount: () => number;
@@ -118,6 +125,7 @@ declare global { interface Window {
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
 } }
+window.__shareRequests = () => shareRequests;
 window.__roomReviewCommand = () => command;
 window.__allowReviewTrust = () => allowTrust?.();
 window.__reviewLookupCount = () => lookupCount;

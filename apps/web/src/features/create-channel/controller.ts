@@ -7,9 +7,10 @@ type JournalPorts = Pick<CreateChannelPorts, 'room' | 'admission' | 'limits'>;
 
 /**
  * `shared` (hosted) ends by minting a share link through the admission port.
- * `private` omits admission entirely and completes once the channel exists.
+ * `on_demand` opens the hosted channel without minting an invite; its channel
+ * page mints one only when the owner asks to share. `private` omits admission.
  */
-export type CreateChannelMode = 'shared' | 'private';
+export type CreateChannelMode = 'shared' | 'on_demand' | 'private';
 
 /** Which in-flight step `retry()` resumes; never exposed on the view. */
 type PendingStep = 'create' | 'share' | null;
@@ -133,9 +134,9 @@ export function createCreateChannelController(
   }
 
   async function attemptShare(): Promise<void> {
-    // A private channel is complete once it exists; the
-    // admission port is never called, so no share link can be minted.
-    if (mode === 'private') {
+    // Hosted and private channels are ready after creation. Hosted sharing is
+    // handled on the channel page when the owner chooses Copy or email invite.
+    if (mode !== 'shared') {
       setPhase('ready');
       return;
     }

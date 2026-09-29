@@ -79,6 +79,22 @@ describe('createCreateChannelController in private mode', () => {
   });
 });
 
+describe('createCreateChannelController in on-demand share mode', () => {
+  it('opens the hosted channel without minting a link before the owner asks to share', async () => {
+    const create = vi.fn().mockResolvedValue(ok(CHANNEL));
+    const admission = fakeAdmissionPort();
+    const controller = createCreateChannelController(
+      { room: fakeChannelPort({ create }), admission, limits: LIMITS },
+      { createId: makeCreateId(), mode: 'on_demand' },
+    );
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+    expect(controller.getView()).toMatchObject({ roomId: ROOM_ID, shareUrl: null, errorCode: null });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(admission.share).not.toHaveBeenCalled();
+  });
+});
+
 describe('createCreateChannelController', () => {
   it('creates an unnamed channel directly and shares it without preparing introductions', async () => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
