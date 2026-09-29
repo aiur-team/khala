@@ -62,6 +62,38 @@ test('mounted human room reviews only the selected event for its active binding'
   });
 });
 
+test('mounted human room restores an in-flight send after reload and reconciles one row', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__reload_pending room send');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__reload_pending room send' }).getByText('Sending…').waitFor();
+    const transaction = await page.evaluate(() => sessionStorage.getItem('khala.test.send.pending-txn'));
+    assert.ok(transaction);
+    await page.reload();
+    const restored = page.locator('.timeline__row--pending', { hasText: '__reload_pending room send' });
+    await restored.getByText('Delivery unknown').waitFor();
+    await restored.getByRole('button', { name: 'Check delivery' }).click();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__reload_pending room send' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: '__reload_pending room send' }).count(), 1);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('khala.test.send.pending-txn')), transaction);
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__reload_pending room send' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: '__reload_pending room send' }).count(), 1);
+  });
+});
+
+test('mounted human room keeps one confirmed message after reload', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('confirmed before reload');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'confirmed before reload' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: 'confirmed before reload' }).count(), 1);
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'confirmed before reload' }).waitFor();
+    assert.equal(await page.locator('.timeline__row', { hasText: 'confirmed before reload' }).count(), 1);
+  });
+});
+
 test('new binding and account stay current after older trust finishes out of order', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?race=1', async page => {
     await page.getByText('Waiting for verified agent device trust.').waitFor();
