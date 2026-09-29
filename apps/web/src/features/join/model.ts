@@ -14,6 +14,7 @@ export type JoinPhase =
   | 'joined'
   | 'expired'
   | 'revoked'
+  | 'invalid_link'
   | 'wrong_account'
   | 'unavailable';
 

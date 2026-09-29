@@ -23,6 +23,7 @@
 .conversation-thread__body .timeline__body{margin-top:.2rem}
 .channel-share{position:relative;display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;min-width:0}
 .channel-share input{max-width:100%;min-width:0;border:1px solid var(--khala-line);border-radius:.45rem;background:var(--khala-fill);color:var(--khala-ink);padding:.4rem}
+.channel-share__hint{max-width:min(28rem,100%);font-size:.75rem;line-height:1.35;overflow-wrap:anywhere}
 .channel-share form{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 .channel-share p{margin:0;font-size:.75rem}
 .channel-share a{color:var(--khala-accent)}

@@ -4,16 +4,32 @@ import type {
   AdmissionPort, DeviceId, DevicePort, DeviceView, IdentityPort, IdentityState, InviteState, OwnerId, RoomId,
 } from '@khala/contracts/messaging/index';
 import { ok, unavailable } from '@khala/contracts/messaging/index';
-import { createJoinController } from '../controller';
-import { JoinScreen } from '../JoinScreen';
-import { parseJoinLocation } from '../location';
-import type { JoinPorts } from '../ports';
+import { createJoinController } from '../../../features/join/controller';
+import { JoinScreen } from '../../../features/join/JoinScreen';
+import { ChannelSharePanel } from '../../../features/channel/ChannelSharePanel';
+import { parseJoinLocation } from '../../../features/join/location';
+import { createHumanRouteCodec } from '../routes';
+import type { JoinPorts } from '../../../features/join/ports';
 
 // Synthetic harness only: no real OAuth provider, no real admission service.
 // Everything routes through `?page=oauth-mock` on the same origin so browser
 // back/forward and viewport tests exercise real navigation without a network.
 
 const params = new URLSearchParams(window.location.search);
+const ownerFromUrl = params.get('owner');
+if (ownerFromUrl) localStorage.setItem('khala.test.owner', ownerFromUrl);
+const signedInOwner = ownerFromUrl ?? localStorage.getItem('khala.test.owner');
+const routeCodec = createHumanRouteCodec({ origin: window.location.origin, basePath: '/', allowInsecureLoopback: true });
+
+function PersonalShare({ owner, email }: { owner: string; email: string }) {
+  return <ChannelSharePanel admission={{ share: async () => unavailable() }} roomId={'room_1' as RoomId}
+    sponsor={email} channelLinks={{ personal: async () => ({ v: 1, kind: 'personal_link',
+      shareUrl: `${window.location.origin}/join/${owner}`, expiresAt: null }) }} />;
+}
+
+function CreatedRoom() {
+  return <main><h1>Test channel</h1><PersonalShare owner={signedInOwner ?? 'signed_out'} email={params.get('email') ?? `${signedInOwner}@example.test`} /></main>;
+}
 
 function readyDevice(): DeviceView {
   return { deviceId: 'device_1' as DeviceId, state: 'ready', generation: 1, reason: null };
@@ -33,21 +49,22 @@ function OAuthMock() {
 }
 
 function JoinRoute() {
-  const identityState: IdentityState = params.get('identity') === 'signed_in'
+  const identityState: IdentityState = params.get('identity') === 'signed_in' || signedInOwner !== null
     ? {
       kind: 'signed_in',
       principal: {
         v: 1,
-        ownerId: 'owner_1' as OwnerId,
+        ownerId: (signedInOwner ?? 'owner_1') as OwnerId,
         providerIssuer: 'https://issuer.example',
         providerSubject: 'sub_1',
-        verifiedEmail: params.get('email') ?? 'a.fairly.long.verified.person@a-long-workspace-example.example',
+        verifiedEmail: params.get('email') ?? (signedInOwner
+          ? `${signedInOwner}@example.test` : 'a.fairly.long.verified.person@a-long-workspace-example.example'),
         sessionExpiresAt: '2099-01-01T00:00:00Z',
       },
     }
     : { kind: 'signed_out' };
 
-  const inviteState = (params.get('state') as InviteState | null) ?? 'eligible';
+  const inviteState = (params.get('state') as InviteState | 'invalid_link' | null) ?? 'eligible';
   const deviceReady = params.get('device') !== 'failed';
 
   const [ports] = useState<JoinPorts>(() => ({
@@ -69,10 +86,16 @@ function JoinRoute() {
     } satisfies DevicePort,
     admission: {
       share: async () => unavailable(),
-      inspect: async () => inviteState,
+      inspect: async () => inviteState === 'invalid_link' ? 'unavailable' : inviteState,
       admit: async () => ok({ outcome: 'joined' as const, room: { roomId: 'room_1' as RoomId, title: null, membership: 'joined' as const, revision: 'r1' } }),
     } satisfies AdmissionPort,
-    codec: { parseJoinLocation },
+    channelLinks: {
+      resolve: async () => ({ v: 1, kind: inviteState === 'eligible' ? 'join_required'
+        : inviteState === 'already_joined' ? 'joined' : inviteState === 'identity_mismatch' ? 'forbidden'
+          : inviteState === 'auth_required' ? 'auth_required' : inviteState }),
+    },
+    codec: { parseJoinLocation: location => location.startsWith('/join/')
+      ? routeCodec.parseJoinLocation(location) : parseJoinLocation(location) },
     navigate: url => {
       window.location.href = url;
     },
@@ -86,8 +109,10 @@ function JoinRoute() {
     controller.start(`${window.location.pathname}${window.location.search}`);
   }, [controller]);
 
-  return <JoinScreen view={view} onSignIn={() => void controller.signIn()} onRetry={() => controller.retry()} />;
+  return <><JoinScreen view={view} onSignIn={() => void controller.signIn()} onRetry={() => controller.retry()} />
+    {view.phase === 'joined' ? <PersonalShare owner={identityState.kind === 'signed_in' ? identityState.principal.ownerId : 'signed_out'}
+      email={view.email ?? 'Member'} /> : null}</>;
 }
 
 const root = createRoot(document.getElementById('root')!);
-root.render(params.get('page') === 'oauth-mock' ? <OAuthMock /> : <JoinRoute />);
+root.render(params.get('page') === 'oauth-mock' ? <OAuthMock /> : params.has('create') ? <CreatedRoom /> : <JoinRoute />);

@@ -52,6 +52,7 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
     identity: context.identity,
     device: context.device,
     admission: context.admission,
+    ...(context.channelLinks ? { channelLinks: context.channelLinks } : {}),
     codec: routes,
     navigate: navigateExternal,
   }), [context, navigateExternal, routes]);
