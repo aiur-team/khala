@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { chromium } from '@playwright/test';
+import { DISCOVERY_CONSENT_FORM_HEADERS } from '../channel-discovery/bootstrap/handler';
 import { OWNER_FORM_HEADERS } from './hosted-proof-key-authority';
 
-test('owner form POST carries the exact Origin without leaking its candidate URL', async () => {
+for (const [name, headers] of [
+  ['proof-key owner forms', OWNER_FORM_HEADERS],
+  ['discovery consent form', DISCOVERY_CONSENT_FORM_HEADERS],
+] as const) test(`${name} POST carries exact Origin without leaking the query`, async () => {
   let received: { origin: string | undefined; referer: string | undefined } | null = null;
   const server = createServer((request, response) => {
     if (request.method === 'POST') {
@@ -14,7 +18,7 @@ test('owner form POST carries the exact Origin without leaking its candidate URL
       return;
     }
     response.writeHead(200, {
-      ...OWNER_FORM_HEADERS,
+      ...headers,
       'content-type': 'text/html; charset=utf-8',
       'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     });
