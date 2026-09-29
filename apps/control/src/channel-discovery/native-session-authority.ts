@@ -34,7 +34,7 @@ type AuthorityRecord = Readonly<{ v: 2; ownerId: OwnerId; target: string;
 export type ProposalResult = Readonly<{ kind: 'pending_owner' | 'approved'; candidateId: string; operationId: string }>
   | Readonly<{ kind: 'rejected' | 'unavailable' }>;
 export type ApprovalResult = Readonly<{ kind: 'approved' }> | Readonly<{ kind: 'absent' | 'forbidden' | 'conflict' | 'unavailable' }>;
-export type CurrentApproval = Readonly<{ kind: 'active'; proofKeyThumbprint: string; generation: number }>
+export type CurrentApproval = Readonly<{ kind: 'active'; target: string; proofKeyThumbprint: string; generation: number }>
   | Readonly<{ kind: 'absent' | 'unavailable' }>;
 export type RevocationResult = Readonly<{ kind: 'revoked' }> | Readonly<{ kind: 'absent' | 'conflict' | 'unavailable' }>;
 export type CandidateView = Readonly<{ kind: 'pending'; target: string; proofKeyThumbprint: string; harnessLabel: string;
@@ -184,7 +184,8 @@ export function createNativeSessionAuthority(ports: NativeSessionAuthorityPorts)
       if (read.kind !== 'record') return { kind: 'absent' };
       if (!isAuthority(read.record.value) || read.record.value.ownerId !== input.principal.ownerId) return { kind: 'unavailable' };
       return read.record.value.status === 'active'
-        ? { kind: 'active', proofKeyThumbprint: read.record.value.candidate.proofKeyThumbprint,
+        ? { kind: 'active', target: read.record.value.target,
+          proofKeyThumbprint: read.record.value.candidate.proofKeyThumbprint,
           generation: read.record.value.candidate.session.generation }
         : { kind: 'absent' };
     },

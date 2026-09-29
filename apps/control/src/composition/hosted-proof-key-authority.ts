@@ -159,7 +159,8 @@ ${replace}
         const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Revoke agent proof key</title></head><body>
 <h1>Revoke this proof key?</h1>
 <p>Revocation stops discovery credentials for this approval. A replacement key needs a new signed request and your approval; reusing the same key also needs a higher generation. It does not revoke a separately admitted Matrix device.</p>
-<dl><dt>Proof key</dt><dd>${escapeHtml(current.proofKeyThumbprint)}</dd><dt>Harness label</dt><dd>${escapeHtml(harness)}</dd>
+<dl><dt>Channel link</dt><dd>${escapeHtml(current.target)}</dd>
+<dt>Proof key</dt><dd>${escapeHtml(current.proofKeyThumbprint)}</dd><dt>Harness label</dt><dd>${escapeHtml(harness)}</dd>
 <dt>Session label</dt><dd>${escapeHtml(sessionId)}</dd><dt>Generation</dt><dd>${current.generation}</dd></dl>
 <form method="post" action="${PROOF_KEY_REVOKE_PATH}"><input type="hidden" name="harness" value="${escapeHtml(harness)}">
 <input type="hidden" name="session_id" value="${escapeHtml(sessionId)}">
