@@ -57,7 +57,7 @@ async function serve(
   lines: string[],
   env: Record<string, string | undefined> = { CLAUDE_CODE_SESSION_ID: 's-1' },
   port: Partial<AgentClientPort> = {},
-  hostedSession?: CliDependencies['hostedSession'],
+  hostedSession?: NonNullable<CliDependencies['hostedSession']>,
 ) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -73,7 +73,7 @@ async function serve(
     stdin: Readable.from([lines.map(line => `${line}\n`).join('')]), stdout, stderr,
     env: { [CLAUDE_MCP_HARNESS_ENV]: 'claude', ...env },
     ...(claude === undefined ? {} : { claude }),
-    ...(hostedSession === undefined ? {} : { hostedSession }),
+    ...(hostedSession === undefined ? {} : { hostedSession, hostedBindingPresent: async () => false }),
   });
   const responses = out.split('\n').filter(Boolean).map(line => JSON.parse(line) as Response);
   return { code, out, err, responses, inbox, status };
@@ -99,6 +99,78 @@ describe('Claude plugin MCP entry', () => {
       origin: null, target }, undefined);
   });
 
+  it('keeps an internally bound Claude session on its existing MCP route when a hosted factory is installed', async () => {
+    const { adapter } = server();
+    const client = inProcessClient(adapter, CREDENTIAL_A);
+    const send = vi.fn(client.send);
+    const listChannels = vi.fn(client.listChannels);
+    const hostedSession = vi.fn(async () => { throw new Error('internal binding must not open hosted connector'); });
+    const { responses } = await serve({ ...client, send, listChannels }, [request(1, 'khala_send', { message: 'internal' }),
+      request(2, 'khala_status'), request(3, 'khala_list_channels')], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(responses[0]!.result!.structuredContent).toMatchObject({ kind: 'accepted' });
+    expect(responses[1]!.result!.structuredContent).toMatchObject({ kind: 'mode' });
+    expect(send).toHaveBeenCalledOnce();
+    expect(listChannels).toHaveBeenCalledOnce();
+    expect(hostedSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps a new local Claude access request on the internal route before its binding exists', async () => {
+    const client = inProcessClient(server().adapter, CREDENTIAL_A);
+    const requestAccess = vi.fn(async (_sessionId: string, input: { operationId: string }) =>
+      ({ kind: 'access' as const, result: { kind: 'status' as const,
+        status: { v: 1, operationId: input.operationId, outcome: 'pending_owner' } } }));
+    const accessStatus = vi.fn(async (_sessionId: string, input: { operationId: string }) =>
+      ({ kind: 'access' as const, result: { kind: 'status' as const,
+        status: { v: 1, operationId: input.operationId, outcome: 'connected' } } }));
+    const hostedSession = vi.fn(async () => ({ client: createUnavailableClient(),
+      inbox: async () => { throw new Error('unbound'); }, async close() {} }));
+    const { responses } = await serve({ ...client, status: async () => ({ kind: 'refused', code: 'session_not_bound' }),
+      read: async () => ({ kind: 'refused', code: 'session_not_bound' }), requestAccess, accessStatus },
+    [request(1, 'khala_request_channel_access',
+      { target: 'http://127.0.0.1:4870/channels/ch_local' }),
+    request(2, 'khala_channel_access_status', { operationId: 'op-12345678' }), request(3, 'khala_read')],
+    { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(responses[0]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(responses[1]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'connected' });
+    expect(responses[2]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(requestAccess).toHaveBeenCalledOnce();
+    expect(accessStatus).toHaveBeenCalledOnce();
+    expect(hostedSession).not.toHaveBeenCalled();
+
+    const restarted = await serve({ ...client, status: async () => ({ kind: 'refused', code: 'session_not_bound' }),
+      accessStatus }, [request(1, 'khala_channel_access_status', { operationId: 'op-12345678' })],
+    { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(restarted.responses[0]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'connected' });
+    expect(hostedSession).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit hosted target recover from an invalid or earlier local request', async () => {
+    const client = inProcessClient(server().adapter, CREDENTIAL_A);
+    const local = vi.fn(async (_sessionId: string, input: { operationId: string }) =>
+      ({ kind: 'access' as const, result: { kind: 'status' as const,
+        status: { v: 1, operationId: input.operationId, outcome: 'pending_owner' } } }));
+    const remote = vi.fn(async (input: { operationId: string }) =>
+      ({ kind: 'status' as const, status: { v: 1, operationId: input.operationId, outcome: 'pending_owner' } }));
+    const remoteList = vi.fn(async () => ({ kind: 'unavailable' as const }));
+    const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(), requestChannelAccess: remote,
+      listChannels: remoteList },
+      inbox: async () => { throw new Error('unbound'); }, async close() {} }));
+    const { responses } = await serve({ ...client, status: async () => ({ kind: 'refused', code: 'session_not_bound' }),
+      requestAccess: local }, [
+      request(1, 'khala_request_channel_access', { target: 'http://localhost:4870/channels/local', extra: true }),
+      request(2, 'khala_request_channel_access', { target: 'https://khala.example/c/hosted' }),
+      request(3, 'khala_request_channel_access', { target: 'http://localhost:4870/channels/local' }),
+      request(4, 'khala_list_channels', { origin: 'https://khala.example' }),
+      request(5, 'khala_request_channel_access', { target: 'https://khala.example/c/hosted' }),
+      request(6, 'khala_request_channel_access', { target: 'ref-hosted', origin: 'https://khala.example' }),
+    ], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    expect(responses[0]!.error).toEqual({ code: -32602, message: 'Invalid params' });
+    expect(responses.filter(response => response.id !== 1 && response.id !== 4)
+      .map(response => response.result!.structuredContent.ok)).toEqual([true, true, true, true]);
+    expect(local).toHaveBeenCalledOnce();
+    expect(remote).toHaveBeenCalledTimes(3);
+    expect(remoteList).toHaveBeenCalledOnce();
+  });
   it('advertises the session-bound, discovery and create tools, none taking a binding or token', async () => {
     const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
       JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
@@ -436,7 +508,7 @@ describe('Claude plugin channel tools', () => {
   });
 
   describe('join', () => {
-    const URL = 'https://khala.example/c/room-1';
+    const URL = 'http://localhost:4870/c/room-1';
 
     /**
      * A local server whose access port files each request for the session that made it. It

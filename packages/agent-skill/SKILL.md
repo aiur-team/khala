@@ -26,8 +26,12 @@ try another person's link or infer admission from browser sign-in. A legacy
 For hosted Codex, use the current session's `khala_connect` MCP tool with the
 person's `/join/<inviteRef>` URL, or `khala_request_channel_access` followed by
 `khala_channel_access_status` for the same operation. For hosted Claude Code,
-use `/khala join <channel-url>`. These native entries carry the provider's exact
-session descriptor. A shell `khala connect` has no provider session by itself;
+use `/khala join <channel-url>` and then the plugin's `khala_status`,
+`khala_read`, and `khala_send` MCP tools. The Claude MCP server uses its local
+session label with the retained owner-approved proof-key binding; a typed
+`not_connected` result means the native route has not been admitted. These
+native entries carry the provider's exact session descriptor. A shell
+`khala connect` has no provider session by itself;
 do not use it to infer that the current Codex or Claude session has joined.
 Only a connected binding followed by a successful native read and send proves
 the route usable.
