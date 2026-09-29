@@ -42,6 +42,27 @@ describe('createProductionHumanServiceLoader', () => {
     }
   });
 
+  it('rebinds the Blobs client after its execution credential changes', async () => {
+    let activeCredential = 'expired';
+    const stores = vi.fn((name: string): BlobsStoreLike => {
+      void name;
+      const boundCredential = activeCredential;
+      return {
+        getWithMetadata: async () => {
+          if (boundCredential === 'expired') throw Object.assign(new Error('expired'), { status: 401 });
+          return null;
+        },
+        setJSON: async () => ({ modified: true, etag: '1' }),
+      };
+    });
+    const runtime = createProductionHumanRuntimeLoader({ env, stores })();
+
+    expect(await runtime.store.read('auth.session.v1.any')).toEqual({ kind: 'unavailable' });
+    activeCredential = 'fresh';
+    expect(await runtime.store.read('auth.session.v1.any')).toEqual({ kind: 'absent' });
+    expect(stores).toHaveBeenCalledWith('khala-production-records');
+  });
+
   it('logs only a fixed callback stage when the production store cannot read the login', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
@@ -61,7 +82,7 @@ describe('createProductionHumanServiceLoader', () => {
     }
   });
 
-  it('constructs no SDK/store resources until a request executes', async () => {
+  it('does not bind a Blobs credential until a store operation executes', async () => {
     const stores = vi.fn((name: string) => {
       void name;
       return emptyStore();
@@ -71,12 +92,10 @@ describe('createProductionHumanServiceLoader', () => {
     expect(stores).not.toHaveBeenCalled();
     const services = await load(new Request('https://khala.aiur.team/api/human/me'));
 
-    expect(stores.mock.calls.map(([name]) => name)).toEqual([
-      'khala-production-records',
-      'khala-production-operations',
-    ]);
+    expect(stores).not.toHaveBeenCalled();
     expect(services).toMatchObject({ auth: expect.any(Object), admission: expect.any(Object), messaging: expect.any(Object) });
     expect(await services!.auth.authenticateRequest(new Request('https://khala.aiur.team/api/human/me'))).toEqual({ kind: 'signed_out' });
+    expect(stores).not.toHaveBeenCalled();
   });
 
   it('logs fixed auth and initialization stages without request or secret material', async () => {

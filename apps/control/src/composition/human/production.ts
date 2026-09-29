@@ -83,9 +83,16 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
     const clock = dependencies.clock ?? (() => Date.now());
     const random = dependencies.random ?? (bytes => randomBytes(bytes));
     const storeFor = dependencies.stores ?? (name => getStore(name) as unknown as BlobsStoreLike);
+    // Netlify supplies a short-lived Blobs credential in the invocation context.
+    // A warm function retains this runtime, so retain the adapter but bind the
+    // SDK store at each operation instead of capturing an expired credential.
+    const contextualStore = (name: string): BlobsStoreLike => ({
+      getWithMetadata: (key, options) => storeFor(name).getWithMetadata(key, options),
+      setJSON: (key, data, options) => storeFor(name).setJSON(key, data, options),
+    });
     const store = createControlStore({
-      records: storeFor(`${env.controlStateNamespace}-records`),
-      operations: storeFor(`${env.controlStateNamespace}-operations`),
+      records: contextualStore(`${env.controlStateNamespace}-records`),
+      operations: contextualStore(`${env.controlStateNamespace}-operations`),
       clock,
       diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
     });

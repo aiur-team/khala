@@ -64,7 +64,8 @@ describe('production bootstrap route composition', () => {
       v: 1, invite: 'inv_abcdefgh', methods: ['loopback-browser-v1'],
       authorize: `${origin}/api/human/agent-bootstrap/authorize`,
     });
-    expect(stores).toHaveBeenCalledTimes(2);
+    // Descriptor discovery must not capture a request-scoped Blobs credential.
+    expect(stores).not.toHaveBeenCalled();
     expect(agents.inspect).not.toHaveBeenCalled();
     expect(agents.admit).not.toHaveBeenCalled();
     expect(policy).not.toHaveBeenCalled();
