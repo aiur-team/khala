@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import './conversation.css';
 
 export type ConversationSummary = Readonly<{
@@ -70,9 +70,17 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
 export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId, placeholder = '' }: Readonly<{
   value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string; placeholder?: string;
 }>) {
+  const input = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const textarea = input.current;
+    if (!textarea) return;
+    textarea.style.height = '38px';
+    textarea.style.height = `${Math.max(38, Math.min(textarea.scrollHeight, 140))}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 140 ? 'auto' : 'hidden';
+  }, [value]);
   return <form className="conversation-composer" onSubmit={event => { event.preventDefault(); onSend(); }}>
     <label className="sr-only" htmlFor="conversation-draft">Message</label>
-    <textarea id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder}
+    <textarea ref={input} id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder}
       onKeyDown={event => {
         if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         event.preventDefault();

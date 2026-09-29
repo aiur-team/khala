@@ -133,6 +133,9 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true, 'local chat fits the phone viewport');
     const channelsButton = page.getByRole('button', { name: 'Channels' });
     await channelsButton.click();
+    const channelsDialog = page.getByRole('dialog', { name: 'Channels' });
+    await channelsDialog.waitFor();
+    assert.equal(await channelsDialog.getAttribute('aria-modal'), 'true', 'the mobile drawer hides background controls from modal navigation');
     assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
     await page.getByRole('button', { name: 'Create channel' }).click();
     await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
@@ -151,6 +154,16 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     // Send: the human's message is accepted and reconciled into the durable timeline.
     const composer = page.getByRole('textbox', { name: 'Message' });
     assert.equal(await composer.getAttribute('placeholder'), '');
+    const oneLineHeight = await composer.evaluate(element => element.clientHeight);
+    await composer.fill('first line\nsecond line\nthird line');
+    const threeLineSize = await composer.evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight, inline: element.style.height }));
+    assert.ok(threeLineSize.height > oneLineHeight && threeLineSize.scroll <= threeLineSize.height + 2,
+      'three lines are fully visible without scrolling');
+    await composer.fill(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLTextAreaElement>('#conversation-draft');
+      return input !== null && input.clientHeight <= 138 && input.scrollHeight > input.clientHeight + 2;
+    });
     await composer.fill('hello agents');
     await composer.press('Enter');
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).waitFor();

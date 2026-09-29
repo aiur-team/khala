@@ -67,7 +67,9 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
   </button>;
   return <main className="khala-local-shell"><AiurShell mode="hosted-content" navigation={[]} theme={chrome.theme}
     collapsed={chrome.collapsed} onCollapsedChange={chrome.onCollapsedChange}
-    sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`} onKeyDown={event => {
+    sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
+      role={drawerOpen ? 'dialog' : undefined} aria-modal={drawerOpen || undefined} aria-label={drawerOpen ? 'Channels' : undefined}
+      onKeyDown={event => {
       if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
       if (event.key !== 'Tab' || !drawerOpen) return;
       const focusable = [...(drawer.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href]') ?? [])]

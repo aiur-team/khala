@@ -20,7 +20,7 @@
 .conversation-thread__head h2{margin:0;font:inherit;font-weight:700}
 .conversation-layout--no-list{grid-template-columns:minmax(0,1fr)}
 .conversation-layout--no-list.conversation-layout--detail{grid-template-columns:minmax(0,1fr) 320px}
-.conversation-composer textarea{height:38px;line-height:1.35;resize:none}
+.conversation-composer textarea{box-sizing:border-box;height:38px;line-height:1.35;resize:none;overflow-y:hidden}
 .conversation-thread__actions{justify-content:flex-end;gap:.5rem;padding:.45rem .85rem}
 .conversation-thread__actions>span{margin-right:auto}
 .conversation-thread__actions .aiur-shell__icon-button{padding:0;border-radius:50%;width:2.05rem;height:2.05rem}

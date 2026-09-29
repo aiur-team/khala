@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { ListeningController } from './listening-controller';
+import { FAILURE_TEXT } from './listening-controller';
 import { LISTENING_MODE_NAMES, grantableRoute, modeOffered } from './listening-port';
 
 export function LocalAgentControls({ controller }: Readonly<{ controller: ListeningController }>) {
@@ -55,8 +56,8 @@ export function LocalAgentControls({ controller }: Readonly<{ controller: Listen
         <button type="button" onClick={() => void controller.confirmGrant()}>Confirm experimental route</button>
         <button type="button" onClick={() => controller.cancelGrant()}>Cancel</button>
       </div> : null}
-      {view.notice ? <p role="status">{view.notice}</p> : null}
-      {view.failure ? <p role="alert">{view.notice}</p> : null}
+      {view.failure ? <p role="alert">{view.notice || `Agent settings could not be refreshed. ${FAILURE_TEXT[view.failure]}`}</p>
+        : view.notice ? <p role="status">{view.notice}</p> : null}
     </div> : null}
   </div>;
 }

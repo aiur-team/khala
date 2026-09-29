@@ -76,6 +76,20 @@ test('ListeningControl: a supported mode is chosen by keyboard, unproven modes s
     await page.setViewportSize({ width: 320, height: 800 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 0, `no horizontal overflow at 320px (got ${overflow})`);
+
+    // An agent-list refresh failure leaves the loaded avatar and controls available,
+    // and the open settings popover announces the actual failure reason.
+    await page.getByRole('button', { name: 'Ada settings' }).click();
+    const agentSettings = page.getByRole('dialog', { name: 'Ada settings' });
+    await page.evaluate(async () => {
+      const harness = window as unknown as { __failList: boolean; __refresh(): Promise<void> };
+      harness.__failList = true;
+      await harness.__refresh();
+    });
+    const alert = agentSettings.getByRole('alert');
+    await alert.waitFor();
+    assert.match(await alert.innerText(), /could not be refreshed.*could not reach the local server/i);
+    assert.equal(await page.getByRole('button', { name: 'Ada settings' }).count(), 1);
   } finally {
     await browser?.close();
     await server?.close();
