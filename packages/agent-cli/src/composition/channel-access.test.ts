@@ -6,7 +6,8 @@ import {
   type ChannelDiscoveryCredentialClient, createProofSigner,
 } from '@khala/connector/bootstrap/index';
 import type { DiscoveryCredential } from '@khala/contracts/messaging/index';
-import { CHANNEL_ACCESS_REQUEST_PATH, CHANNEL_ACCESS_STATUS_PATH, CHANNEL_LINK_REQUEST_PATH, createHttpChannelAccess } from './channel-access.js';
+import { CHANNEL_ACCESS_CREATE_PATH, CHANNEL_ACCESS_REQUEST_PATH, CHANNEL_ACCESS_STATUS_PATH,
+  CHANNEL_LINK_REQUEST_PATH, createHttpChannelAccess } from './channel-access.js';
 
 const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
 const session = { harness: 'codex', sessionId: 'session-1', workdir: '/workspace' };
@@ -63,6 +64,32 @@ function access(origin: string, held = credentials(credential(origin)), extra: P
 }
 
 describe('HTTP channel access', () => {
+  it('waits for exact-session approval before sending a hosted create intent', async () => {
+    const posted: unknown[] = [];
+    const origin = await loopback(async (request, response) => {
+      expect(request.url).toBe(`${CHANNEL_ACCESS_CREATE_PATH}?agent_create=owner_1.${'B'.repeat(43)}`);
+      posted.push(await readBody(request));
+      json(response, 200, { v: 1, operationId: 'op-create', outcome: 'pending_owner' });
+    });
+    const held = credentials(null);
+    held.authorize.mockImplementation(async () => ({ kind: 'authorized', credential: credential(origin) }));
+    const approvalUrl = `${origin}/api/human/channel-discovery/authority/approve?candidate=${'A'.repeat(43)}`;
+    const candidate = vi.fn()
+      .mockResolvedValueOnce({ kind: 'pending_owner', candidateId: 'candidate-1', approveUrl: approvalUrl })
+      .mockResolvedValueOnce({ kind: 'approved', candidateId: 'candidate-1', approveUrl: approvalUrl });
+    const port = access(origin, held, { candidate });
+    const input = { title: 'Planning', operationId: 'op-create', origin: null,
+      target: `${origin}/new?agent_create=owner_1.${'B'.repeat(43)}` };
+    expect(await port.requestChannelCreate(input)).toEqual({ kind: 'handoff', approvalUrl });
+    expect(posted).toEqual([]);
+    expect(held.authorize).not.toHaveBeenCalled();
+    expect(await port.requestChannelCreate(input)).toEqual({ kind: 'status', status: {
+      v: 1, operationId: 'op-create', outcome: 'pending_owner',
+    } });
+    expect(posted).toEqual([{ v: 1, operationId: 'op-create', credentialRef: 'credential-ref-1',
+      origin, proposedTitle: 'Planning' }]);
+  });
+
   it('resubmits the same channel request after proof-key approval before checking access status', async () => {
     const posted: unknown[] = [];
     const origin = await loopback(async (request, response) => {

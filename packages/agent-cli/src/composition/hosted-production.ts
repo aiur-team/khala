@@ -231,11 +231,36 @@ export function hostedSessionFactory(options: Readonly<{
             ? { kind: 'status', status: { v: 1, operationId: input.operationId, outcome: 'repair_required' } }
           : { kind: 'status', status: { v: 1, operationId: input.operationId, outcome: 'connecting' } };
     };
+    const requestChannelCreate: NonNullable<AgentClientPort['requestChannelCreate']> = async (input, signal) => {
+      if (!access) return { kind: 'unavailable' };
+      const result = await access.requestChannelCreate(input, signal);
+      return result.kind === 'status' ? activateCreateStatus(result, input.operationId, input.origin ?? options.appOrigin) : result;
+    };
+    const channelCreateStatus: NonNullable<AgentClientPort['channelCreateStatus']> = async (input, signal) => {
+      if (!access) return { kind: 'unavailable' };
+      const result = await access.channelCreateStatus(input, signal);
+      return result.kind === 'status' ? activateCreateStatus(result, input.operationId, input.origin ?? options.appOrigin) : result;
+    };
+    async function activateCreateStatus(result: Awaited<ReturnType<typeof requestChannelCreate>>,
+      operationId: string, origin: string): Promise<Awaited<ReturnType<typeof requestChannelCreate>>> {
+      if (result.kind !== 'status') return result;
+      const decoded = decodeAccessRequestStatus(result.status);
+      if (!decoded.ok || decoded.value.operationId !== operationId) return { kind: 'unavailable' };
+      if (!['approved', 'connecting', 'connected', 'repair_required'].includes(decoded.value.outcome)) return result;
+      const activated = await advance(operationId, origin);
+      if (!activated || activated.kind === 'unavailable' || activated.kind === 'blocked') return { kind: 'unavailable' };
+      return activated.kind === 'connected' && await nativeReady(activated.binding)
+        ? { kind: 'status', status: { v: 1, operationId, outcome: 'connected' } }
+        : activated.kind === 'closed'
+          ? { kind: 'status', status: { v: 1, operationId, outcome: activated.outcome } }
+          : { kind: 'status', status: { v: 1, operationId,
+            outcome: activated.kind === 'repair_required' ? 'repair_required' : 'connecting' } };
+    }
     const client = createConnectorBootstrapClient({
       ports: connector.ports, session: claim,
       send: connector.send, status: connector.status,
       listChannels, listAgents: connector.listAgents,
-      ...(access ? { requestChannelAccess, channelAccessStatus } : {}),
+      ...(access ? { requestChannelAccess, channelAccessStatus, requestChannelCreate, channelCreateStatus } : {}),
       ...(connector.listeningMode ? { listeningMode: connector.listeningMode } : {}),
       ...(connector.listeningModeControl ? { listeningModeControl: connector.listeningModeControl } : {}),
     });

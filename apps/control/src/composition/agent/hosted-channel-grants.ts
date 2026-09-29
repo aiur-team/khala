@@ -1,10 +1,13 @@
 import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
+import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journal';
 import type { ChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
-import type { ChannelAccessFulfillmentPort } from '@khala/contracts/messaging/index';
+import type { ChannelAccessFulfillmentPort, OwnerId } from '@khala/contracts/messaging/index';
 import type { PairingGrantPort } from '../../pairing/store';
 import { readHostedAccessTarget } from '../human/hosted-channel-access-resolver';
+import { readHostedCreatedTarget } from './hosted-created-target';
+import { roomFromHostedCreatedRef } from './channel-create';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
 import { recordChannelAccessBinding } from './channel-access-binding';
@@ -17,11 +20,15 @@ export function createHostedChannelGrantPort(deps: Readonly<{
   journal: Pick<ChannelAccessStore, 'inspectRequester'>;
   fulfillment: Pick<ChannelAccessFulfillmentPort, 'claimAccess' | 'updateAccess'>;
   admissionAuthority: HostedAdmissionAuthority;
+  createAuthority?: (access: GrantExchangeAuthority) => GrantExchangeAuthority;
 }>): PairingGrantPort {
   const { active } = deps;
   const issuer = createExchangeGrantIssuer({ store: active.store, clock: active.clock });
   const exchanges = exchangeJournal(active.store);
-  const authority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: active.clock });
+  const accessAuthority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: active.clock });
+  const authority = deps.createAuthority?.(accessAuthority) ?? accessAuthority;
+  const resolveTarget = (ref: string, ownerId: OwnerId) =>
+    roomFromHostedCreatedRef(ref) === null ? readHostedAccessTarget(active, ref) : readHostedCreatedTarget(active, ref, ownerId);
 
   return {
     async redeem(input) {
@@ -56,7 +63,7 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       });
       if (approval === 'unavailable') return { kind: 'unavailable' };
       if (approval !== 'current') return { kind: 'invalid_grant' };
-      const target = await readHostedAccessTarget(active, binding.channelRef);
+      const target = await resolveTarget(binding.channelRef, binding.ownerId);
       if (target === 'unavailable') return { kind: 'unavailable' };
       if (target === null || target.ownerId !== binding.ownerId) return { kind: 'invalid_grant' };
       const consumed = await issuer.redeem({ grant: input.grant, operationId: binding.operationId,
@@ -106,7 +113,7 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       });
       if (approval === 'unavailable') return 'unavailable';
       if (approval !== 'current') return 'replayed';
-      const target = await readHostedAccessTarget(active, binding.channelRef);
+      const target = await resolveTarget(binding.channelRef, binding.ownerId);
       if (target === 'unavailable') return 'unavailable';
       if (target === null || target.ownerId !== binding.ownerId || !input.matrixSession
         || input.matrixSession.deviceId !== binding.deviceId || input.matrixSession.roomId !== target.roomId) return 'replayed';

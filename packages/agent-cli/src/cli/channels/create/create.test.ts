@@ -49,6 +49,27 @@ async function mcpCall(agent: AgentClientPort, name: string, args: Record<string
 }
 
 describe('khala channels create', () => {
+  it('prints the exact human approval URL for a signed-in creation target', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const approvalUrl = `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}`;
+    const requestChannelCreate = vi.fn<NonNullable<AgentClientPort['requestChannelCreate']>>(
+      async () => ({ kind: 'handoff', approvalUrl }));
+    const result = await cli(client({ requestChannelCreate }), ['channels', 'create', '--title', 'Planning',
+      '--operation', 'op-create-1', '--target', target]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ ok: true, v: 1, operationId: 'op-create-1',
+      outcome: 'pending_owner', next: 'human_approve', approvalUrl });
+    expect(requestChannelCreate).toHaveBeenCalledWith({ title: 'Planning', operationId: 'op-create-1',
+      origin: null, target }, undefined);
+  });
+
+  it('rejects an operation ID too short for native-session approval', async () => {
+    const result = await cli(client(), ['channels', 'create', '--title', 'Planning',
+      '--operation', 'op-1', '--target', `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`]);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toBe('');
+  });
+
   it('reports pending_owner without a channel, binding, grant, or membership', async () => {
     const requestChannelCreate = vi.fn<NonNullable<AgentClientPort['requestChannelCreate']>>(async input => status('pending_owner', input.operationId));
     const result = await cli(client({ requestChannelCreate }), ['channels', 'create', '--title', 'Planning', '--operation', 'op-1']);

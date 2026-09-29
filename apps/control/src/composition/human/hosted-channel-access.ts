@@ -10,7 +10,8 @@ import { createHostedChannelRequester } from './hosted-channel-requester';
 
 /** Owner inbox reads the durable journal using the same OIDC session and Blobs
  * namespace as the rest of hosted control. No agent authority is inferred here. */
-export function createHostedChannelAccessInbox(dependencies: ProductionHumanDependencies): RouteRegistration {
+export function createHostedChannelAccessInbox(dependencies: ProductionHumanDependencies,
+  reconcileCreate?: (requestHandle: string) => Promise<void>): RouteRegistration {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   return Object.freeze({
     path: '/api/human/channel-access/inbox',
@@ -41,10 +42,38 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
         for (const item of listed.requests) {
           const context = await journal.readContext({ requestHandle: item.requestHandle });
           if (context.kind !== 'found' || context.context.ownerId !== authentication.context.principal.ownerId) return unavailable();
-          // Hosted create authority has not been composed. The personal link's
-          // sponsor may be a joined human other than the room creator.
-          if (context.context.detail.kind !== 'access') return unavailable();
-          const ref = context.context.detail.authorizedChannelRef;
+          const held = context.context;
+          if (held.detail.kind === 'create') {
+            if (held.detail.ownerRevision !== held.sessionFingerprint) {
+              if (!await reconcileStale(held)) return unavailable();
+              continue;
+            }
+            const current = await requesterAuthority.inspectContext({
+              v: 1, principal: held.requester as never, origin: held.origin,
+              sessionGeneration: held.sessionGeneration,
+              sessionFingerprint: held.sessionFingerprint,
+              harness: held.harness, displayLabel: held.requesterLabel,
+              workspaceLabel: held.workspaceLabel,
+            }, authentication.context.principal.ownerId);
+            if (current === 'unavailable') return unavailable();
+            if (current === 'revoked') {
+              if (!await reconcileStale(held)) return unavailable();
+              continue;
+            }
+            if (held.outcome === 'approved' || held.outcome === 'connecting') {
+              await reconcileCreate?.(held.requestHandle);
+            }
+            const latest = await journal.listOwner({ ownerId: authentication.context.principal.ownerId });
+            if (latest.kind !== 'found') return unavailable();
+            const refreshed = latest.requests.find(row => row.requestHandle === item.requestHandle);
+            if (!refreshed) continue;
+            const decoded = decodeChannelAccessOwnerProjection(projectOwner(refreshed));
+            if (!decoded.ok) return unavailable();
+            requests.push(decoded.value);
+            continue;
+          }
+          // The personal link's sponsor may be a joined human other than the room creator.
+          const ref = held.detail.authorizedChannelRef;
           const target = ref.startsWith('invitations.invite.') ? await readHostedAccessTarget(active, ref) : null;
           if (target === 'unavailable') return unavailable();
           // A revoked/expired personal link or departed sponsor can leave an
