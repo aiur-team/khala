@@ -19,6 +19,7 @@ export const channelsCommand: CliCommand = {
   name: 'channels',
   async run(args, deps) {
     const [subcommand, ...rest] = args;
+    if (subcommand === 'open') return openHostedHandoff(rest, deps);
     if (subcommand === 'request-access') return requestAccess(rest, deps);
     if (subcommand === 'create') return createChannel(rest, deps);
     if (subcommand === 'create-status') return createChannelStatus(rest, deps);
@@ -34,6 +35,25 @@ export const channelsCommand: CliCommand = {
     return listingExitCode(output);
   },
 };
+
+/** Gives the human the hosted sign-in/create path; this performs no room operation. */
+async function openHostedHandoff(args: readonly string[], deps: CliDependencies): Promise<number> {
+  if (args.length !== 0) throw new CliError('invalid_arguments');
+  const origin = deps.hostedOrigin;
+  if (!origin || !URL.canParse(origin)) {
+    await write(deps.stdout, JSON.stringify({ ok: false, kind: 'blocked', step: 'hosted_origin' }) + '\n');
+    return 4;
+  }
+  const parsed = new URL(origin);
+  if (parsed.protocol !== 'https:' || parsed.origin !== origin || parsed.username || parsed.password
+    || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    await write(deps.stdout, JSON.stringify({ ok: false, kind: 'blocked', step: 'hosted_origin' }) + '\n');
+    return 4;
+  }
+  await write(deps.stdout, JSON.stringify({ ok: true, kind: 'human_handoff',
+    url: `${origin}/new`, next: 'human_sign_in_before_creation' }) + '\n');
+  return 0;
+}
 
 /** `khala agents list --channel <held-channel>` */
 export const agentsCommand: CliCommand = {
