@@ -7,6 +7,32 @@ const origin = 'https://khala.aiur.team';
 const target = `${origin}/join/inv_abcdefgh`;
 
 describe('native proof-key candidate client', () => {
+  it('reports only a fixed stage and HTTP status when the approved-candidate retry fails', async () => {
+    const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
+    const sessions = { async inspect() { return { kind: 'verified',
+      session: { harness: 'claude', sessionId: 'private-session', generation: 0 }, capabilities: {} }; } } as unknown as SessionInspectionPort;
+    const events: unknown[] = [];
+    const paths: string[] = [];
+    const client = createProofKeyCandidateClient({ signer, sessions, origin,
+      diagnostic: event => events.push(event),
+      fetch: (async input => {
+        const pathname = new URL(String(input)).pathname;
+        paths.push(pathname);
+        return pathname.endsWith('/challenge')
+          ? Response.json({ kind: 'issued', nonce: 'N'.repeat(43) })
+          : Response.json({ kind: 'unavailable' }, { status: 503 });
+      }) as typeof fetch,
+    });
+    expect(await client({ target, operationId: 'same-operation',
+      session: { harness: 'claude', sessionId: 'private-session', workdir: '/workspace' } }))
+      .toEqual({ kind: 'unavailable' });
+    expect(paths).toEqual(['/api/agent/channel-discovery/authority/challenge',
+      '/api/agent/channel-discovery/authority/candidate']);
+    expect(events).toEqual([{ stage: 'candidate', result: 'unavailable', httpStatus: 503 }]);
+    expect(JSON.stringify(events)).not.toContain('private-session');
+    expect(JSON.stringify(events)).not.toContain('inv_abcdefgh');
+  });
+
   it('keeps two local agent labels and keys distinct for the same channel and operation', async () => {
     const seen: Array<{ sessionId: string; publicKey: string; operationId: string; target: string }> = [];
     const transport: typeof fetch = async (input, init) => {

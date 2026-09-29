@@ -18,6 +18,8 @@ import { claudeProofKeyLabelInspection, codexMcpSessionInspection } from './host
 import { createHttpChannelListing } from './channel-listing.js';
 import { createHttpChannelAccess } from './channel-access.js';
 import { createProofKeyCandidateClient } from './proof-key-candidate.js';
+import type { CandidateDiagnostic } from './proof-key-candidate.js';
+import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/channel-discovery';
 
 export const CANONICAL_APP_ORIGIN = 'https://khala.aiur.team';
 
@@ -81,6 +83,8 @@ export function hostedSessionFactory(options: Readonly<{
   openInbox: OpenGenerationInbox;
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
+  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' }>
+    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -106,6 +110,7 @@ export function hostedSessionFactory(options: Readonly<{
       signer: connector.proofSigner, sessions: requestSessions,
       trustedOrigins: [options.appOrigin], openBrowser: options.openBrowser,
       allowProofKeyLocalLabel: true,
+      diagnostic: event => options.diagnostic?.({ component: 'discovery_credential', ...event }),
       ...(options.fetch ? { fetch: options.fetch } : {}),
     }) : null);
     const access = discovery && connector.proofSigner ? createHttpChannelAccess({
@@ -122,6 +127,8 @@ export function hostedSessionFactory(options: Readonly<{
       candidate: createProofKeyCandidateClient({
         signer: connector.proofSigner, sessions: requestSessions,
         origin: options.appOrigin, openBrowser: options.openBrowser,
+        diagnostic: event => options.diagnostic?.({ component: 'proof_key_candidate', ...event }),
+        ...(options.fetch ? { fetch: options.fetch } : {}),
       }),
     }) : null;
     const listChannels = discovery && connector.proofSigner ? createHttpChannelListing({

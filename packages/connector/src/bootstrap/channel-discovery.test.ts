@@ -105,6 +105,23 @@ function harness(overrides: Readonly<{
 }
 
 describe('createChannelDiscoveryCredentialClient', () => {
+  it('reports a browser-launch failure before token exchange without exposing the consent URL', async () => {
+    const events: unknown[] = [];
+    const calls: string[] = [];
+    const client = createChannelDiscoveryCredentialClient({ signer,
+      sessions: { async inspect() { return { kind: 'verified', session: SESSION, capabilities: CAPABILITIES }; } },
+      trustedOrigins: [ORIGIN], allowProofKeyLocalLabel: true,
+      openBrowser: async () => { throw new Error('private browser detail'); },
+      fetch: (async input => { calls.push(String(input)); throw new Error('must not exchange'); }) as typeof fetch,
+      diagnostic: event => events.push(event), clock: () => T0,
+    });
+    expect(await client.authorize({ origin: ORIGIN, session: CLAIM })).toEqual({ kind: 'unavailable' });
+    expect(calls).toEqual([]);
+    expect(events).toEqual([{ stage: 'browser_launch', result: 'unavailable' }]);
+    expect(JSON.stringify(events)).not.toContain('private browser detail');
+    expect(JSON.stringify(events)).not.toContain('thread-existing-b');
+  });
+
   it('inspects first, uses fixed endpoints and exchanges PKCE plus DPoP for a strict credential', async () => {
     const seen: URL[] = [];
     const pages: string[] = [];
