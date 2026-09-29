@@ -20,6 +20,9 @@ describe('human pending-send store', () => {
     const entry = { clientTxnId: 'txn_123', content: { v: 1 as const, kind: 'text' as const, body: 'pending body' }, phase: 'pending' as const };
     createHumanPendingSendStore(owner, device, room, disk).save([entry]);
     expect(createHumanPendingSendStore(owner, device, room, disk).load()).toEqual([entry]);
+    const accepted = { ...entry, phase: 'accepted' as const, eventId: '$matrix-event' as never };
+    createHumanPendingSendStore(owner, device, room, disk).save([accepted]);
+    expect(createHumanPendingSendStore(owner, device, room, disk).load()).toEqual([accepted]);
     expect(createHumanPendingSendStore('owner_b' as OwnerId, device, room, disk).load()).toEqual([]);
     expect(createHumanPendingSendStore(owner, 'device_b' as DeviceId, room, disk).load()).toEqual([]);
     expect(createHumanPendingSendStore(owner, device, 'room_b' as RoomId, disk).load()).toEqual([]);

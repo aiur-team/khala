@@ -43,7 +43,7 @@ const items = [item('event_a', 'Withheld A', 'a'), item('event_b', 'Approved B',
 const confirmed = sessionStorage.getItem('khala.test.send.confirmed');
 if (confirmed) {
   const { clientTxnId, body } = JSON.parse(confirmed) as { clientTxnId: string; body: string };
-  items.push(item(clientTxnId, body, 'c', clientTxnId));
+  items.push(item(clientTxnId, body, 'c'));
 }
 const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1',
   room: { roomId, title: 'Test channel', membership: 'joined', revision: 'room_1' }, items };
@@ -69,10 +69,11 @@ const room = {
       return new Promise<never>(() => {});
     }
     if (original !== null && original !== clientTxnId) return { kind: 'rejected', code: 'operation_mismatch' };
-    const sent = item(clientTxnId, content.body, 'c', clientTxnId);
-    items.push(sent);
+    const sent = item(clientTxnId, content.body, 'c');
+    const deferSync = content.body.startsWith('__defer_sync');
+    if (!deferSync) items.push(sent);
     sessionStorage.setItem('khala.test.send.confirmed', JSON.stringify({ clientTxnId, body: content.body }));
-    for (const listener of roomListeners) listener(snapshot);
+    if (!deferSync) for (const listener of roomListeners) listener(snapshot);
     return { kind: 'ok', value: { clientTxnId, state: 'accepted', eventRef: sent.ref } };
   },
 } as unknown as RoomPort;

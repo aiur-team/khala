@@ -49,6 +49,7 @@ export function createFakeChannelPort() {
   const listeners = new Set<(snapshot: ChannelSnapshot) => void>();
   const outcomeUnknownTxns = new Set<string>();
   const failOnceTxns = new Set<string>();
+  const deferredSync: TimelineItem[] = [];
 
   function currentSnapshot(): ChannelSnapshot {
     return {
@@ -66,7 +67,7 @@ export function createFakeChannelPort() {
     send: async ({ clientTxnId, content }): Promise<OperationResult<SendState, ChannelRejection>> => {
       if (outcomeUnknownTxns.has(clientTxnId)) {
         outcomeUnknownTxns.delete(clientTxnId);
-        const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+        const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
         listeners.forEach(listener => listener(currentSnapshot()));
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
@@ -77,7 +78,7 @@ export function createFakeChannelPort() {
       }
       if (failOnceTxns.has(clientTxnId)) {
         failOnceTxns.delete(clientTxnId);
-        const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+        const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
         listeners.forEach(listener => listener(currentSnapshot()));
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
@@ -86,7 +87,13 @@ export function createFakeChannelPort() {
         failOnceTxns.add(clientTxnId);
         return { kind: 'rejected', code: 'invalid_request' };
       }
-      const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+      // A Matrix sync from the server can omit unsigned.transaction_id even
+      // though the send acknowledgment named the exact event.
+      const item = makeItem(clientTxnId, alice, content.body);
+      if (content.body.startsWith('__defer_sync')) {
+        deferredSync.push(item);
+        return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
+      }
       recent = [...recent, item];
       listeners.forEach(listener => listener(currentSnapshot()));
       return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
@@ -108,6 +115,12 @@ export function createFakeChannelPort() {
     port,
     roomId,
     viewer: alice,
+    releaseNextSend() {
+      const item = deferredSync.shift();
+      if (!item) return;
+      recent = [...recent, item];
+      listeners.forEach(listener => listener(currentSnapshot()));
+    },
     pushLiveMessage(body: string) {
       const item = makeItem(`live_${recent.length}`, agent, body);
       recent = [...recent, item];

@@ -12,8 +12,10 @@ function isPendingSend(value: unknown): value is PendingSend {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const entry = value as Record<string, unknown>;
   const content = entry.content;
-  return Object.keys(entry).sort().join(',') === 'clientTxnId,content,phase'
+  const keys = Object.keys(entry).sort().join(',');
+  return (keys === 'clientTxnId,content,phase' || keys === 'clientTxnId,content,eventId,phase')
     && typeof entry.clientTxnId === 'string' && /^txn_[A-Za-z0-9-]{1,128}$/u.test(entry.clientTxnId)
+    && (entry.eventId === undefined || (entry.phase === 'accepted' && typeof entry.eventId === 'string' && entry.eventId.length > 0))
     && ['pending', 'accepted', 'failed', 'outcome_unknown'].includes(String(entry.phase))
     && typeof content === 'object' && content !== null && !Array.isArray(content)
     && (content as Record<string, unknown>).v === 1

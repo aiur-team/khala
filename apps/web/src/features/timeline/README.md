@@ -44,7 +44,9 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 - **`send.ts`** sends each draft under a caller-owned `clientTxnId` and
   resolves a `failed` or `outcome_unknown` result by re-sending the *same*
   transaction — never a fresh send with new bytes. `TimelineScreen.tsx` shows
-  a Retry/Check-delivery action for either state.
+  a Retry/Check-delivery action for either state. An accepted send also keeps
+  its acknowledged event ID until the timeline shows that exact event, since
+  a Matrix sync can omit the transaction ID.
 - **`controller.ts`** reports a history/pagination failure as `unavailable`
   (nothing loaded yet) or `partial` (some data already known but the
   transcript is known-incomplete) — missing history is never rendered as an
