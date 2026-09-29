@@ -14,10 +14,12 @@ export async function shareInvite(
   runtime: AdmissionRuntime,
   input: ShareInput,
   options?: CallOptions,
+  expectedOwnerId?: string,
 ): Promise<OperationResult<ShareGrant, AdmissionRejection>> {
   const identity = await currentPrincipal(runtime.identity, options);
   if (identity === 'auth_required') return rejected('auth_required');
   if (identity === 'unavailable') return unavailable();
+  if (expectedOwnerId !== undefined && identity.principal.ownerId !== expectedOwnerId) return rejected('identity_mismatch');
   const policy = storePolicy(input.policy, runtime.digests);
   if (!policy) return rejected('forbidden');
   let authority: 'allowed' | 'forbidden' | 'unavailable';

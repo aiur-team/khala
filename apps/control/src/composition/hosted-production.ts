@@ -6,6 +6,7 @@ import { registerAgentHandlers } from './agent/handlers';
 import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
 import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
+import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
 
@@ -40,6 +41,7 @@ export function registerHostedProductionRoutes(
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
       channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
+      channelLink: () => createHostedHumanChannelLinkRoutes(options),
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),
