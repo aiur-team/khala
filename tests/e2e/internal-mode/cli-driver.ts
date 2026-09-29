@@ -162,7 +162,10 @@ export function createExternalCli(options: Options): ExternalCli {
 
     async join(channelUrl) {
       const result = await cli(['join', channelUrl]);
-      const outcome = (JSON.parse(result.stdout || result.stderr) as { outcome?: string; error?: string });
+      const outcome = (JSON.parse(result.stdout || result.stderr) as { outcome?: string; error?: string; grantDescriptorPath?: string });
+      if (outcome.outcome === 'connected' && outcome.grantDescriptorPath !== grantPath) {
+        throw new Error('connected join did not return this session\'s grant descriptor path');
+      }
       return outcome.outcome ?? `error:${outcome.error}`;
     },
 
