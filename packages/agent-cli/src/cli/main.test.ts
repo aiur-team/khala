@@ -3,8 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HARNESS_IDS } from '../setup/types.js';
+import { nativeShellCreateClient } from './main.js';
+import { createUnavailableClient } from '../composition/unavailable.js';
 
 const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
 const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
@@ -15,6 +17,27 @@ const sqliteExperimentalWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is 
 const withoutSqliteWarning = (stderr: string): string => stderr.replace(sqliteExperimentalWarning, '');
 
 describe('bundled CLI entrypoint', () => {
+  it('selects the exact native Codex session for hosted creation and closes it', async () => {
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const request = { title: 'Planning', operationId: 'op-create-1', origin: null, target };
+    const requestChannelCreate = vi.fn(async () => ({ kind: 'handoff' as const,
+      approvalUrl: `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}` }));
+    const close = vi.fn(async () => undefined);
+    const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(), requestChannelCreate },
+      inbox: async () => { throw new Error('no binding'); }, close }));
+    const native = nativeShellCreateClient('thread-1', hostedSession);
+    expect(await native.client.requestChannelCreate?.(request)).toMatchObject({ kind: 'handoff' });
+    expect(await native.client.requestChannelCreate?.({ ...request, target: null }))
+      .toEqual({ kind: 'refused', code: 'invalid_request' });
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: 'thread-1' });
+    expect(requestChannelCreate).toHaveBeenCalledExactlyOnceWith(request, undefined);
+    await native.close();
+    expect(close).toHaveBeenCalledOnce();
+    const missing = nativeShellCreateClient(undefined, hostedSession);
+    expect(await missing.client.requestChannelCreate?.(request)).toEqual({ kind: 'refused', code: 'discovery_required' });
+    expect(hostedSession).toHaveBeenCalledOnce();
+  });
+
   it('filters only Node’s known SQLite warning from child stderr', () => {
     const sqlite = '(node:1234) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
       + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
@@ -42,6 +65,20 @@ describe('bundled CLI entrypoint', () => {
     expect(result.status).toBe(2);
     expect(result.stdout).toBe('');
     expect(JSON.parse(withoutSqliteWarning(result.stderr))).toEqual({ ok: false, error: 'invalid_arguments' });
+  });
+
+  it('refuses hosted create from an installed shell without a native session', () => {
+    const state = fs.mkdtempSync(path.join(temporaryDirectory, 'create-state-'));
+    const env: NodeJS.ProcessEnv = { ...process.env, XDG_STATE_HOME: state };
+    delete env.CODEX_THREAD_ID;
+    const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'channels', 'create', '--title', 'Planning',
+      '--operation', 'op-create-1', '--target', target], { encoding: 'utf8', env });
+    expect(result.status).toBe(3);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: false, v: 1, error: 'discovery_required',
+      operationId: 'op-create-1', next: null });
+    expect(withoutSqliteWarning(result.stderr)).toBe('');
+    expect(fs.readdirSync(state)).toEqual([]);
   });
 
   it('composes the Claude session client over the internal runtime descriptor', () => {

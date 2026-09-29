@@ -196,9 +196,9 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
-/khala create <title>
-              calls khala_create_channel once and returns pending; the owner
-              confirms in Khala, and a retry under the same operationId reports the answer
+/khala create <title> [owner-issued-link]
+              uses target for hosted creation and title alone for internal mode;
+              the owner approves the proof key and request for hosted creation
 /khala join <channel-url>
               calls khala_request_channel_access once and returns pending; after the
               owner decides, the next hook boundary activates an approval for this

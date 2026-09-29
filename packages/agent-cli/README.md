@@ -65,14 +65,20 @@ If the configured hosted origin is missing or invalid, it exits 4 with
 later still requires an exact supported native session and the human's approval.
 
 After sign-in, the person can copy an owner-bound agent creation link from
-`/new`. In the exact supported native session, run
+`/new`. A Codex agent command with its inherited `CODEX_THREAD_ID` can run
 `khala channels create --title <title> --operation <stable-id> --target '<agent-creation-link>'`.
+The native Codex or Claude MCP session can call `khala_create_channel` with
+`{ title, operationId, target }`, where `target` is that exact link.
 The operation ID for an agent creation link must be 8–128 URL-safe characters and reused on retry.
 The first call returns an `approvalUrl` for the human to approve that session's
-proof key; repeat the same command and operation ID after approval to file the
+proof key; repeat the same tool call, target and operation ID after approval to file the
 separate channel request. Only the human's subsequent inbox approval creates
 the hosted room. A retry keeps the same operation ID. Another person's link
-cannot transfer room ownership to this agent.
+cannot transfer room ownership to this agent. A shell without the native Codex
+thread label reports `discovery_required` without a hosted request.
+The label alone is not authentication: the connector inspects the installed
+harness and exact session, and the human must approve its proof key and the
+separate creation request.
 
 `node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
 release gate. It packs the package as npm would publish it, then refuses the
