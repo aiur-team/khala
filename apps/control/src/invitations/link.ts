@@ -1,9 +1,9 @@
 import type {
-  AuthPrincipal, ChannelAccessRequesterContext, ControlStore, DiscoveryRequester, RoomId,
+  ChannelAccessRequesterContext, ControlStore, DiscoveryRequester, OwnerId, RoomId,
 } from '@khala/contracts/messaging/index';
 import type { GatewayInspection } from './index';
 import { createDigests, safeRead } from './internal';
-import { policyAllows, readInviteRecord } from './policy';
+import { readInviteRecord } from './policy';
 
 /** The only share URL accepted by browser and native-agent resolution. */
 export function inviteFromShareLink(url: URL, origin: string): string | null {
@@ -30,10 +30,10 @@ export async function resolveAgentChannelLink(input: Readonly<{
   store: ControlStore;
   secret: string;
   clock: () => number;
-  sponsor: AuthPrincipal;
+  sponsorOwnerId: OwnerId;
   requester: DiscoveryRequester;
   context: ChannelAccessRequesterContext;
-  inspectMembership(principal: AuthPrincipal, roomId: RoomId): Promise<GatewayInspection>;
+  inspectMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
 }>): Promise<AgentLinkResolution> {
   if (input.requester.principal !== input.context.principal
     || input.requester.origin !== input.context.origin
@@ -51,10 +51,12 @@ export async function resolveAgentChannelLink(input: Readonly<{
   if (!invite || invite.inviteRefDigest !== digests.inviteRef(inviteRef)) return { kind: 'unavailable' };
   if (invite.status === 'revoked') return { kind: 'revoked' };
   if (invite.expiresAt !== null && input.clock() >= Date.parse(invite.expiresAt)) return { kind: 'expired' };
-  if (invite.creatorOwnerId !== input.sponsor.ownerId) return { kind: 'use_your_link' };
-  if (!policyAllows(invite.policy, input.sponsor, digests)) return { kind: 'forbidden' };
+  if (invite.creatorOwnerId !== input.sponsorOwnerId) return { kind: 'use_your_link' };
+  // A native credential proves a sponsor owner ID, not a browser principal or
+  // verified email. Personal agent links never carry named-email or history policy.
+  if (invite.policy.kind !== 'link' || invite.policy.history !== 'none') return { kind: 'forbidden' };
   let membership: GatewayInspection;
-  try { membership = await input.inspectMembership(input.sponsor, invite.roomId); }
+  try { membership = await input.inspectMembership(input.sponsorOwnerId, invite.roomId); }
   catch { return { kind: 'unavailable' }; }
   if (membership.kind === 'unavailable') return { kind: 'unavailable' };
   if (membership.kind !== 'joined') return { kind: 'forbidden' };

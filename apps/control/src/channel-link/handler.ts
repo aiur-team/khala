@@ -1,7 +1,7 @@
 import {
   decodeChannelAccessRequest, decodeRoomId,
-  type AccessRequestStatus, type AuthPrincipal, type ChannelAccessRequesterContext,
-  type DiscoveryRequester, type RoomId,
+  type AccessRequestStatus, type ChannelAccessRequesterContext,
+  type DiscoveryRequester, type OwnerId, type RoomId,
 } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth';
 import type { AdmissionService } from '../invitations';
@@ -15,7 +15,7 @@ export const HUMAN_CHANNEL_LINK_PERSONAL_PATH = '/api/human/channel-link/persona
 export const AGENT_CHANNEL_LINK_REQUEST_PATH = '/api/agent/channel-link/request';
 
 export type AgentLinkAuthentication =
-  | Readonly<{ kind: 'authenticated'; credentialRef: string; sponsor: AuthPrincipal; requester: DiscoveryRequester; context: ChannelAccessRequesterContext }>
+  | Readonly<{ kind: 'authenticated'; credentialRef: string; sponsorOwnerId: OwnerId; requester: DiscoveryRequester; context: ChannelAccessRequesterContext }>
   | Readonly<{ kind: 'rejected'; code: 'auth_required' | 'forbidden' }>
   | Readonly<{ kind: 'unavailable' }>;
 
@@ -28,11 +28,11 @@ export function createChannelLinkHandlers(deps: Readonly<{
   admissionFor(request: Request): AdmissionService;
   agent?: Readonly<{
     authenticate(request: Request): Promise<AgentLinkAuthentication>;
-    inspectMembership(principal: AuthPrincipal, roomId: RoomId): Promise<GatewayInspection>;
+    inspectMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
     /** Must recheck the invite revision before creating the journal row. */
     submitAccess(input: Readonly<{
       operationId: string; credentialRef: string; channelUrl: string;
-      roomId: RoomId; inviteRevision: string; sponsor: AuthPrincipal;
+      roomId: RoomId; inviteRevision: string; sponsorOwnerId: OwnerId;
       requester: DiscoveryRequester; context: ChannelAccessRequesterContext;
     }>): Promise<AccessRequestStatus>;
   }>;
@@ -88,7 +88,7 @@ export function createChannelLinkHandlers(deps: Readonly<{
     if (access.credentialRef !== auth.credentialRef) return result(403, 'forbidden');
     const resolved = await resolveAgentChannelLink({
       channelUrl: access.channelUrl, origin: deps.origin, store: deps.store,
-      secret: deps.secret, clock: deps.clock, sponsor: auth.sponsor,
+      secret: deps.secret, clock: deps.clock, sponsorOwnerId: auth.sponsorOwnerId,
       requester: auth.requester, context: auth.context, inspectMembership: agent.inspectMembership,
     });
     if (resolved.kind === 'use_your_link') return json(409, {
@@ -98,7 +98,7 @@ export function createChannelLinkHandlers(deps: Readonly<{
     const submitted = await safe(() => agent.submitAccess({
       operationId: access.operationId, credentialRef: access.credentialRef,
       channelUrl: access.channelUrl, roomId: resolved.roomId, inviteRevision: resolved.revision,
-      sponsor: auth.sponsor, requester: auth.requester, context: auth.context,
+      sponsorOwnerId: auth.sponsorOwnerId, requester: auth.requester, context: auth.context,
     }));
     if (!submitted) return result(503, 'unavailable');
     return json(200, { v: 1, kind: 'request', operationId: submitted.operationId, outcome: submitted.outcome });

@@ -16,7 +16,7 @@ Version 1 routes:
 `use_your_link` carries `action: "join_in_browser_then_copy_your_link"`. A native
 session presenting somebody else's link cannot make a pending request. The
 browser may still join through that link as its own authenticated principal.
-The agent route accepts a sponsor and requester only from trusted authentication;
+The agent route accepts a sponsor owner ID and requester only from trusted authentication;
 its `submitAccess` port must recheck the exact invite revision while creating
 the channel-access journal row. Approval and admission remain separate.
 For A's room and B's personal link, A remains the room authority while B is the

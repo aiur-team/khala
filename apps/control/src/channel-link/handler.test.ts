@@ -41,9 +41,9 @@ function setup() {
     admissionFor: () => h.service,
     agent: {
       authenticate: async () => authenticated
-        ? { kind: 'authenticated', credentialRef: 'credential_b', sponsor: agent, requester, context }
+        ? { kind: 'authenticated', credentialRef: 'credential_b', sponsorOwnerId: agent.ownerId, requester, context }
         : { kind: 'rejected', code: 'auth_required' },
-      inspectMembership: async (person, room) => h.memberships.get(person.ownerId)?.roomId === room
+      inspectMembership: async (ownerId, room) => h.memberships.get(ownerId)?.roomId === room
         ? { kind: 'joined', historyReady: true } : { kind: 'absent' },
       async submitAccess(input) {
         submitted.push(input);

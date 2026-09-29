@@ -22,8 +22,8 @@ describe('personal channel links', () => {
     if (a.kind !== 'ok') return;
     const resolve = (url: string, sponsor = principal(), native = context) => resolveAgentChannelLink({
       channelUrl: url, origin: ORIGIN, store: h.store.store, secret: SECRET,
-      clock: () => Date.parse('2026-09-18T12:00:00Z'), sponsor, requester, context: native,
-      inspectMembership: (person, roomId) => h.memberships.get(person.ownerId)?.roomId === roomId
+      clock: () => Date.parse('2026-09-18T12:00:00Z'), sponsorOwnerId: sponsor.ownerId, requester, context: native,
+      inspectMembership: (ownerId, roomId) => h.memberships.get(ownerId)?.roomId === roomId
         ? Promise.resolve({ kind: 'joined', historyReady: true }) : Promise.resolve({ kind: 'absent' }),
     });
     expect(await resolve(a.value.shareUrl)).toMatchObject({ kind: 'resolved', roomId: ROOM_ID });
@@ -53,7 +53,7 @@ describe('personal channel links', () => {
     if (link.kind !== 'ok') return;
     const resolve = (url: string, now: number) => resolveAgentChannelLink({
       channelUrl: url, origin: ORIGIN, store: h.store.store, secret: SECRET, clock: () => now,
-      sponsor: principal(), requester, context,
+      sponsorOwnerId: principal().ownerId, requester, context,
       inspectMembership: async () => ({ kind: 'joined', historyReady: true }),
     });
     expect(await resolve(link.value.shareUrl.replace(ORIGIN, 'https://evil.example'), 0)).toEqual({ kind: 'invalid_link' });
@@ -70,5 +70,19 @@ describe('personal channel links', () => {
     if (replacement.kind === 'ok' && afterExpiry.kind === 'ok') {
       expect(afterExpiry.value.shareUrl).not.toBe(replacement.value.shareUrl);
     }
+  });
+
+  it('does not turn a history-enabled human share into an agent request', async () => {
+    const h = harness();
+    h.memberships.set(principal().ownerId, { roomId: ROOM_ID, title: 'Room', membership: 'joined', revision: 'm1' });
+    const shared = await h.service.share({ operationId: 'human-history', roomId: ROOM_ID,
+      policy: { v: 1, kind: 'link', history: 'full' } });
+    expect(shared.kind).toBe('ok');
+    if (shared.kind !== 'ok') return;
+    expect(await resolveAgentChannelLink({
+      channelUrl: shared.value.shareUrl, origin: ORIGIN, store: h.store.store, secret: SECRET,
+      clock: () => Date.parse('2026-09-18T12:00:00Z'), sponsorOwnerId: principal().ownerId,
+      requester, context, inspectMembership: async () => ({ kind: 'joined', historyReady: true }),
+    })).toEqual({ kind: 'forbidden' });
   });
 });
