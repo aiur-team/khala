@@ -224,7 +224,7 @@
 .khala-owner-shell .aiur-shell__topbar{padding:0;justify-content:flex-start}
 .khala-owner-shell .aiur-shell__brand-section{flex:none;width:260px;box-sizing:border-box;padding:0 .8rem;border-right:1px solid var(--khala-line);align-self:stretch}
 .khala-owner-shell .aiur-shell__title{padding:0 1.25rem}
-.khala-owner-shell .aiur-shell__content{padding:0;min-height:0;overflow:hidden}
+.khala-owner-shell .aiur-shell__content{padding:0;min-height:0;overflow:auto}
 .khala-owner-shell .aiur-shell__content>.channel-tools-page{height:100%}
 .khala-owner-shell .channel-page,.khala-owner-shell .channel-page .khala-page-frame{height:100%;max-width:none;margin:0}
 .khala-owner-shell .channel-page .khala-page-frame__header{display:none}
@@ -232,7 +232,7 @@
 .khala-owner-shell .channel-page .conversation-layout{height:100%;min-height:0;border:0;border-radius:0}
 .khala-owner-shell .channel-page .conversation-thread__head{display:none}
 .khala-owner-shell.khala-content-root{height:100dvh}
-.khala-owner-shell .khala-content-main{min-height:0;overflow:hidden;padding:0}
+.khala-owner-shell .khala-content-main{min-height:0;overflow:auto;padding:0}
 .khala-owner-shell .khala-content-actions{height:4rem;box-sizing:border-box;border-bottom:1px solid var(--khala-line)}
 .khala-owner-shell .khala-content-main>.channel-page{height:calc(100dvh - 4rem)}
 .khala-owner-shell .khala-content-main>.channel-tools-page{height:calc(100dvh - 4rem)}
@@ -306,6 +306,7 @@
   .khala-owner-shell .khala-content-main>.channel-page{height:calc(100dvh - 3.5rem)}
   .khala-owner-shell .khala-content-main>.channel-tools-page{height:calc(100dvh - 3.5rem)}
   .khala-owner-shell .khala-content-main>.khala-mobile-bar{height:3.5rem;box-sizing:border-box;margin:0;padding:0 .75rem;border-bottom:1px solid var(--khala-line)}
+  .khala-owner-shell .khala-content-main{height:100dvh}
   .khala-owner-shell .khala-mobile-bar>h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .aiur-shell--channels{grid-template-columns:minmax(0,1fr);grid-template-rows:4rem 1fr}
   .aiur-shell--channels .aiur-shell__nav{position:fixed;top:0;bottom:0;left:0;z-index:20;width:min(80vw,300px);display:block;overflow:auto;visibility:hidden;transform:translateX(-105%);background:var(--khala-fill-raised);box-shadow:0 10px 40px #0006;transition:transform .2s ease}

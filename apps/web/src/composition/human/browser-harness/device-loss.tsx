@@ -26,6 +26,7 @@ let inboxCount = 0;
 const logoutHarness = new URLSearchParams(location.search).has('logout');
 const hostedHarness = new URLSearchParams(location.search).has('hosted');
 const visualHarness = new URLSearchParams(location.search).has('visual');
+const longRequestsHarness = new URLSearchParams(location.search).has('long-requests');
 let signedOut = false;
 let signOutCount = 0;
 let stopCount = 0;
@@ -76,7 +77,11 @@ createRoot(document.getElementById('app')!).render(
     createChannelAccess={() => {
       inboxCount += 1;
       const journal = createFakeJournal();
-      if (visualHarness) {
+      if (longRequestsHarness) {
+        for (let index = 1; index <= 50; index += 1) {
+          journal.submit({ kind: 'access', title: `Channel ${index}`, fingerprint: `agent-${index}` });
+        }
+      } else if (visualHarness) {
         journal.submit({ kind: 'access', title: 'First channel', fingerprint: 'agent-one' });
         journal.submit({ kind: 'create', title: 'New channel', fingerprint: 'agent-two' });
       }
