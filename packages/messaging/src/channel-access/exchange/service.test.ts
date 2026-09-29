@@ -5,7 +5,7 @@ import {
   validateSealedGrantPayload,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
-import { CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS, CHANNEL_ACCESS_GRANT_LIFETIME_MS, createGrantExchangeService } from './service';
+import { CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS, CHANNEL_ACCESS_GRANT_LIFETIME_MS, createGrantExchangeService, type GrantExchangeDiagnostic } from './service';
 import {
   CHANNEL,
   DEADLINE,
@@ -32,12 +32,14 @@ async function harness() {
   const authority = fakeAuthority();
   const provider = fakeProvider();
   const issuer = fakeIssuer();
+  const diagnostics: GrantExchangeDiagnostic[] = [];
   const service = createGrantExchangeService({
     store: backing.store,
     authority: authority.port,
     provider: provider.port,
     issuer: issuer.port,
     clock: () => now,
+    diagnostic: event => diagnostics.push(event),
   });
   const keys = await connectorKeys();
   const port = service.forConnector({ sessionFingerprint: FINGERPRINT });
@@ -46,6 +48,7 @@ async function harness() {
     authority,
     provider,
     issuer,
+    diagnostics,
     service,
     keys,
     port,
@@ -120,10 +123,12 @@ describe('channel-access grant exchange', () => {
     const h = await harness();
     h.provider.behavior.admit.push('commit_then_lose');
     expect(await h.exchange()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(h.diagnostics).toEqual([{ stage: 'admission_admit', result: 'unavailable' }]);
     expect(h.provider.applied.size).toBe(1);
     expect(h.issuer.minted).toHaveLength(0);
 
     const envelope = envelopeOf(await h.exchange());
+    expect(h.diagnostics.at(-1)).toEqual({ stage: 'complete', result: 'ok' });
     expect(h.provider.admits).toHaveLength(1);
     expect(h.provider.reconciles).toHaveLength(1);
     expect(h.issuer.minted).toHaveLength(1);
