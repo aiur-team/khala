@@ -607,13 +607,17 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       tracker.redemption = next;
       return 'applied';
     };
-    return finishRedeem(held, tracker, saveRedemption);
+    return finishRedeem(held, tracker, saveRedemption,
+      grants.reserveIssue ? bindingId => safeCall(() => grants.reserveIssue!({
+        grant: presented.grant, operationId: presented.operationId, bindingId,
+      })) : undefined);
   }
 
   async function finishRedeem(
     held: GrantRecord,
     tracker: { redemption: Redemption | null },
     saveRedemption: (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => Promise<string>,
+    reserveIssue?: (bindingId: string) => Promise<'applied' | 'pending' | 'stale' | 'unavailable' | null>,
   ): Promise<Response> {
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
@@ -685,6 +689,15 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const indexed = await ownerRooms.activate(bound.binding, address.roomId);
     if (indexed.kind === 'closed') return json(403, { code: 'admission_denied' });
     if (indexed.kind !== 'ok') return json(503, { code: 'unavailable' });
+
+    // Claim the one external Matrix login before calling its non-transactional API.
+    // A concurrent retry, or an uncertain prior login, fails closed here.
+    if (reserveIssue) {
+      const reserved = await reserveIssue(bound.binding.bindingId);
+      if (reserved === 'pending') return json(503, { code: 'unavailable' });
+      if (reserved === 'stale') return json(401, { code: 'grant_replayed' });
+      if (reserved !== 'applied') return json(503, { code: 'unavailable' });
+    }
 
     const matrixSession = deps.agentDeviceSession
       ? await safeCall(() => deps.agentDeviceSession!.issue(bound.binding, address.roomId))
