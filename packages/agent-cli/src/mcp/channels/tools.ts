@@ -22,7 +22,7 @@ export type ChannelToolsPort = Pick<ChannelListingService, 'listChannels' | 'lis
   & Pick<ChannelAccessService, 'request' | 'status'>
   & Readonly<{ createChannel: ChannelCreateService['request']; createChannelStatus: ChannelCreateService['status'] }>;
 
-export function composeChannelTools(client: AgentClientPort): ChannelToolsPort {
+export function composeChannelTools(client: AgentClientPort, scopeDefaultOperationId?: (id: string) => string): ChannelToolsPort {
   const listing = new ChannelListingService(client);
   const access = new ChannelAccessService(client);
   const create = new ChannelCreateService(client);
@@ -32,7 +32,8 @@ export function composeChannelTools(client: AgentClientPort): ChannelToolsPort {
     // A request under the target's default operation asks again after the owner's Stop; an
     // operation the caller named is its own and is read as given.
     request: (input, signal) => (input.operationId === defaultOperationId(input.target)
-      ? access.requestAgain(input, signal) : access.request(input, signal)),
+      ? access.requestAgain({ ...input, operationId: scopeDefaultOperationId?.(input.operationId) ?? input.operationId }, signal)
+      : access.request(input, signal)),
     status: (input, signal) => access.status(input, signal),
     createChannel: (input, signal) => create.request(input, signal),
     createChannelStatus: (input, signal) => create.status(input, signal),
