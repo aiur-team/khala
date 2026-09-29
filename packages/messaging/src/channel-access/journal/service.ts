@@ -66,6 +66,17 @@ export function createChannelAccessService(deps: Readonly<{
     if (!matchesRequester(requester, context)) return unavailableStatus(input.operationId);
     const resolved = await safe(() => deps.resolver.resolveAccess(input, requester, options));
     if (!resolved || resolved.kind !== 'resolved') return unavailableStatus(input.operationId);
+    // The locator may be revoked or rotated while resolution is in flight.
+    // Check its exact revision again immediately before writing the journal.
+    const beforeCreate = await safe(() => deps.resolver.revalidateAccess({
+      ownerId: resolved.ownerId,
+      channelRef: resolved.channelRef,
+      targetRevision: resolved.targetRevision,
+      requester: context,
+    }, options));
+    if (!beforeCreate || beforeCreate.kind !== 'current'
+      || beforeCreate.ownerId !== resolved.ownerId
+      || beforeCreate.targetRevision !== resolved.targetRevision) return unavailableStatus(input.operationId);
     const targetFingerprint = deps.policy.digest('binding', [
       ['channelRef', resolved.channelRef],
     ]);
@@ -79,6 +90,17 @@ export function createChannelAccessService(deps: Readonly<{
       },
     }, options));
     if (!created || created.kind !== 'accepted') return unavailableStatus(input.operationId);
+    // The invite and journal are separate durable records. If rotation wins
+    // after the preflight check, suppress the new row before notifications.
+    const held = await safe(() => deps.store.readContext({ requestHandle: created.requestHandle }, options));
+    if (!held || held.kind !== 'found') return unavailableStatus(input.operationId);
+    const afterCreate = await revalidate(deps, held.context, options);
+    if (afterCreate !== 'current') {
+      if (afterCreate === 'revoked') {
+        await revokeConfirmed(deps.store, held.context, `submit-${input.operationId}`, options);
+      }
+      return unavailableStatus(input.operationId);
+    }
     await flushNotifications(resolved.ownerId, options);
     return { v: 1, operationId: input.operationId, outcome: created.outcome };
   }

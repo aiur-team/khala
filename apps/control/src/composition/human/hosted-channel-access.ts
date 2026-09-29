@@ -42,8 +42,11 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
           if (context.context.detail.kind !== 'access') return unavailable();
           const ref = context.context.detail.authorizedChannelRef;
           const target = ref.startsWith('invitations.invite.') ? await readHostedAccessTarget(active, ref) : null;
-          if (ref.startsWith('invitations.invite.') && (target === null || target === 'unavailable'
-            || target.ownerId !== authentication.context.principal.ownerId)) return unavailable();
+          if (target === 'unavailable') return unavailable();
+          // A revoked/expired personal link or departed sponsor can leave an
+          // older journal row behind. It must not hide other pending requests.
+          if (ref.startsWith('invitations.invite.')
+            && (target === null || target.ownerId !== authentication.context.principal.ownerId)) continue;
           if (ref.startsWith('invitations.invite.')) {
             const held = context.context;
             const current = await requesterAuthority.inspectContext({ v: 1,
@@ -56,11 +59,13 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
           }
           if (!ref.startsWith('invitations.invite.')) {
             const room = decodeRoomId(ref);
-            if (!room.ok) return unavailable();
+            if (!room.ok) continue;
             const authority = await active.matrix.inspectRoomAuthority(room.value);
-            if (authority !== authentication.context.principal.ownerId) return unavailable();
+            if (authority === null) return unavailable();
+            if (authority !== authentication.context.principal.ownerId) continue;
             const membership = await active.matrix.inspectOwnerMembership(authority, room.value);
-            if (membership.kind !== 'joined') return unavailable();
+            if (membership.kind === 'unavailable') return unavailable();
+            if (membership.kind !== 'joined') continue;
           }
           const decoded = decodeChannelAccessOwnerProjection(projectOwner(item));
           if (!decoded.ok) return unavailable();

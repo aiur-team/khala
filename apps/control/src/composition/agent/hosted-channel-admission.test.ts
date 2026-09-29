@@ -65,7 +65,8 @@ describe('hosted Matrix channel admission', () => {
     } as const;
     const provider = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort);
     const request = { providerOperationId: 'provider_1', ownerId: ownerId as never, channelRef: key as never,
-      requester: `agent_${'a'.repeat(43)}` as never, sessionGeneration: 2, deviceId: 'DEVICE_1' as never,
+      requester: `agent_${'a'.repeat(43)}` as never, sessionGeneration: 2,
+      sessionFingerprint: 'b'.repeat(43), deviceId: 'DEVICE_1' as never,
       history: 'none' as const };
     expect(await provider.reconcile(request)).toEqual({ kind: 'not_applied' });
     expect(await provider.admit(request)).toEqual({ kind: 'admitted', membership: 'joined' });

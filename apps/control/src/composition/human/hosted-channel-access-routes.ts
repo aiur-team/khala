@@ -25,6 +25,7 @@ export type HostedChannelAccessPorts = Readonly<{
   hostedAuthority?: (runtime: ProductionHumanRuntime) => Readonly<{
     authenticateAgent: ChannelAccessHandlerDependencies['authenticateAgent'];
     requesterAuthority: HostedAccessRequesterAuthority;
+    admissionAuthority?: HostedAdmissionAuthority;
   }>;
   requesterAuthority?: HostedAccessRequesterAuthority;
   /** Controlled test override; production supplies the current requester authority. */
@@ -79,8 +80,9 @@ export function createHostedChannelAccessRoutes(
       },
     });
     const authenticateConnector = ports.authenticateConnector;
-    const provider = ports.provider ?? (ports.admissionAuthority
-      ? createHostedChannelAdmissionProvider(active, dependencies, ports.admissionAuthority) : null);
+    const admissionAuthority = hostedAuthority?.admissionAuthority ?? ports.admissionAuthority;
+    const provider = ports.provider ?? (admissionAuthority
+      ? createHostedChannelAdmissionProvider(active, dependencies, admissionAuthority) : null);
     if (authenticateConnector && ports.bindings && provider === null) throw new Error('admission authority unavailable');
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,

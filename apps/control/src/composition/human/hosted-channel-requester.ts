@@ -3,6 +3,7 @@ import { sameJsonValue, type ChannelAccessRequesterContext, type DiscoveryReques
   type JsonValue, type OwnerId } from '@khala/contracts/messaging/index';
 import { guardStore, settleWrite } from '../../auth/store';
 import type { AgentChannelAccessAuthentication } from '../../channel-access/handler';
+import type { HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { DiscoveryCredentialAuthorization, SessionRef } from '../../channel-discovery/bootstrap/handler';
 import { createHostedProofKeyAuthority } from '../hosted-proof-key-authority';
 import type { ProductionHumanRuntime } from './production';
@@ -26,6 +27,7 @@ export function createHostedChannelRequester(
 ): Readonly<{
   authenticateAgent(request: Request): Promise<AgentChannelAccessAuthentication>;
   requesterAuthority: HostedAccessRequesterAuthority;
+  admissionAuthority: HostedAdmissionAuthority;
 }> {
   const store = guardStore(active.store);
   const authority = createHostedProofKeyAuthority(active);
@@ -107,6 +109,28 @@ export function createHostedChannelRequester(
       },
       inspectContext,
       checkContext: context => inspectContext(context),
+    },
+    admissionAuthority: {
+      async current(input) {
+        if (!FINGERPRINT.test(input.sessionFingerprint)) return 'revoked';
+        const held = await store.read<JsonValue>(key(input.sessionFingerprint));
+        if (held.kind === 'unavailable') return 'unavailable';
+        if (held.kind !== 'record' || !held.record.value || typeof held.record.value !== 'object'
+          || Array.isArray(held.record.value)) return 'revoked';
+        const record = held.record.value as unknown as ApprovalContext;
+        if (record.v !== 1 || typeof record.ownerId !== 'string'
+          || typeof record.principal !== 'string' || typeof record.origin !== 'string'
+          || !record.session || typeof record.session !== 'object'
+          || typeof record.session.harness !== 'string' || typeof record.session.sessionId !== 'string'
+          || !Number.isSafeInteger(record.session.generation)
+          || typeof record.proofKeyThumbprint !== 'string'
+          || typeof record.authorityRevision !== 'string'
+          || fingerprint(record) !== input.sessionFingerprint || record.ownerId !== input.ownerId
+          || record.principal !== input.requester || record.origin !== active.env.publicAppOrigin
+          || record.session.generation !== input.sessionGeneration
+          || record.proofKeyThumbprint !== input.requester.slice('agent_'.length)) return 'revoked';
+        return current(record);
+      },
     },
   };
 }

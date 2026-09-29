@@ -11,6 +11,8 @@ import { createGateway } from '../runtime/handler';
 import { createDigests } from '../invitations/internal';
 import { registerHostedProductionRoutes } from './hosted-production';
 import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
+import { createHostedChannelRequester } from './human/hosted-channel-requester';
+import { createProductionHumanRuntimeLoader } from './human/production';
 import { thumbprint } from '../agent-bootstrap/proof';
 import { PROOF_KEY_APPROVE_PATH, PROOF_KEY_CANDIDATE_PATH, PROOF_KEY_CHALLENGE_PATH,
   PROOF_KEY_REVOKE_PATH } from './hosted-proof-key-authority';
@@ -237,6 +239,27 @@ describe('generated hosted production composition', () => {
     }));
     expect(accessRequest.status).toBe(200);
     expect(await accessRequest.json()).toMatchObject({ outcome: 'pending_owner' });
+    // A stale row must not make the sponsor's entire inbox unavailable.
+    const staleInviteRef = 'inv_stale_b';
+    const staleInviteKey = digests.inviteKey(staleInviteRef);
+    const staleInvite = { v: 1, roomId, creatorOwnerId: 'owner_1',
+      inviteRefDigest: digests.inviteRef(staleInviteRef), policyRevision: 1,
+      policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null,
+      lastAuthorizedOperationDigest: null };
+    expect((await control.compareAndSet({ key: staleInviteKey, expectedRevision: null,
+      operationId: 'create-stale-link', next: { value: staleInvite, expiresAt: null } })).kind).toBe('applied');
+    const staleRequest = await route(new Request(requestPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${credential.credential.credentialRef}`,
+        dpop: signedProof('POST', requestPath, credential.credential.credentialRef) },
+      body: JSON.stringify({ v: 1, kind: 'channel_url', operationId: 'b-agent-stale',
+        credentialRef: credential.credential.credentialRef, channelUrl: `${origin}/join/${staleInviteRef}` }),
+    }));
+    expect(await staleRequest.json()).toMatchObject({ outcome: 'pending_owner' });
+    const staleRecord = await control.read(staleInviteKey);
+    if (staleRecord.kind !== 'record') throw new Error('stale invite missing');
+    expect((await control.compareAndSet({ key: staleInviteKey, expectedRevision: staleRecord.record.revision,
+      operationId: 'revoke-stale-link', next: { value: { ...staleInvite, status: 'revoked' }, expiresAt: null } })).kind)
+      .toBe('applied');
     const restarted = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
       clock: () => now, fetch: matrixFetch,
@@ -273,6 +296,28 @@ describe('generated hosted production composition', () => {
     } }));
     expect(status.status).toBe(200);
     expect(await status.json()).toMatchObject({ outcome: 'approved' });
+    const active = createProductionHumanRuntimeLoader({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      clock: () => now, fetch: matrixFetch,
+    })();
+    const signedRequester = createHostedChannelRequester(active, createHostedDiscoveryBootstrap({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      clock: () => now, fetch: matrixFetch,
+    }).authorize);
+    const authenticated = await signedRequester.authenticateAgent(new Request(statusPath, { headers: {
+      authorization: `DPoP ${credential.credential.credentialRef}`,
+      dpop: signedProof('GET', statusPath, credential.credential.credentialRef),
+    } }));
+    expect(authenticated.kind).toBe('authenticated');
+    if (authenticated.kind !== 'authenticated') throw new Error('signed requester missing');
+    const admission = { providerOperationId: 'proof-bound-admission', ownerId: 'owner_1' as never,
+      channelRef: digests.inviteKey(inviteRef) as never, requester: authenticated.context.principal,
+      sessionGeneration: authenticated.context.sessionGeneration,
+      sessionFingerprint: authenticated.context.sessionFingerprint, deviceId: 'DEVICE_B' as never,
+      history: 'none' as const };
+    expect(await signedRequester.admissionAuthority.current(admission)).toBe('current');
+    expect(await signedRequester.admissionAuthority.current({ ...admission, ownerId: 'owner_2' as never }))
+      .toBe('revoked');
     const revokeUrl = `${origin}${PROOF_KEY_REVOKE_PATH}?${new URLSearchParams({ harness: 'codex', session_id: 'caller-label' })}`;
     const revokePage = await route(new Request(revokeUrl, { headers: ownerCookie }));
     expect(revokePage.status).toBe(200);
@@ -284,6 +329,7 @@ describe('generated hosted production composition', () => {
       body: revokeBody,
     }))).status).toBe(200);
     expect((await route(new Request(revokeUrl, { headers: ownerCookie }))).status).toBe(404);
+    expect(await signedRequester.admissionAuthority.current(admission)).toBe('revoked');
     const afterRevocation = await restarted(new Request(statusPath, { headers: {
       authorization: `DPoP ${credential.credential.credentialRef}`,
       dpop: signedProof('GET', statusPath, credential.credential.credentialRef),
@@ -605,7 +651,7 @@ describe('generated hosted production composition', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ kind: 'ok', requests: [{ detail: { title: 'Owner one room' } }] });
     membershipJoined = false;
-    expect((await route(new Request(inbox, { headers }))).status).toBe(503);
+    expect(await (await route(new Request(inbox, { headers }))).json()).toMatchObject({ kind: 'ok', requests: [] });
     membershipJoined = true;
     const authorityKey = `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
     const currentAuthority = await control.read(authorityKey);
@@ -615,7 +661,7 @@ describe('generated hosted production composition', () => {
       operationId: 'move-room-owner',
       next: { value: { v: 1, roomId, ownerId: 'owner_2' }, expiresAt: null },
     })).kind).toBe('applied');
-    expect((await route(new Request(inbox, { headers }))).status).toBe(503);
+    expect(await (await route(new Request(inbox, { headers }))).json()).toMatchObject({ kind: 'ok', requests: [] });
     const other = await createSession(control, () => new Uint8Array(32).fill(8), {
       ownerId: 'owner_2' as never,
       identity: { issuer: env.OIDC_ISSUER, subject: 'owner-two', verifiedEmail: 'two@example.test' },

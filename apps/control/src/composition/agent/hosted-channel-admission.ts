@@ -20,7 +20,8 @@ function sessionFor(input: ChannelAdmissionRequest): SessionRef | null {
 function claim(input: ChannelAdmissionRequest, roomId: string) {
   const key = `hosted-channel-admission.v1.${createHash('sha256').update(input.providerOperationId).digest('base64url')}`;
   const value = { v: 1, ownerId: input.ownerId, roomId, requester: input.requester,
-    sessionGeneration: input.sessionGeneration, deviceId: input.deviceId };
+    sessionGeneration: input.sessionGeneration, sessionFingerprint: input.sessionFingerprint,
+    deviceId: input.deviceId };
   return { key, value };
 }
 
