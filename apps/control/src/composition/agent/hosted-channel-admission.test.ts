@@ -5,7 +5,7 @@ import { hostedCreatedChannelRef } from './channel-create';
 import type { ProductionHumanRuntime } from '../human/production';
 
 describe('hosted Matrix channel admission', () => {
-  it('joins only for a current sponsor membership and reconciles a durable retry', async () => {
+  it.each(['owner_login', 'registration'] as const)('recovers a claimed admission after %s fails before agent account creation', async initialFailure => {
     const origin = 'https://khala.aiur.team';
     const roomId = '!room:matrix.example.test';
     const ownerId = 'owner_1';
@@ -13,7 +13,12 @@ describe('hosted Matrix channel admission', () => {
     const key = createDigests(secret).inviteKey('invite_12345678');
     let roomOwner = ownerId;
     let sponsorJoined = true;
+    let matrixOwnerJoined = true;
     let joined = false;
+    let accountExists = false;
+    let ownerLoginDenied = false;
+    let failOnce = true;
+    let membershipFailure: number | null = null;
     const claims = new Map<string, { value: unknown; revision: string }>();
     const runtime = {
       env: { publicAppOrigin: origin, publicHomeserverOrigin: 'https://matrix.example.test',
@@ -48,14 +53,40 @@ describe('hosted Matrix channel admission', () => {
       const path = new URL(String(resource)).pathname;
       if (path === '/_matrix/client/v3/login') {
         const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        if (body.identifier.user.includes('khala_a_') && !accountExists) {
+          return Response.json({ errcode: 'M_FORBIDDEN' }, { status: 403 });
+        }
+        if (!body.identifier.user.includes('khala_a_') && ownerLoginDenied) {
+          return Response.json({ errcode: 'M_FORBIDDEN' }, { status: 403 });
+        }
+        if (!body.identifier.user.includes('khala_a_') && initialFailure === 'owner_login' && failOnce) {
+          failOnce = false;
+          return Response.json({ errcode: 'M_LIMIT_EXCEEDED' }, { status: 429 });
+        }
         return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
       }
       if (path.includes('/state/m.room.member/')) {
+        if (path.includes('khala_a_') && membershipFailure !== null) {
+          return Response.json({ errcode: 'M_FORBIDDEN' }, { status: membershipFailure });
+        }
         if (path.includes('khala_a_')) return joined
           ? Response.json({ membership: 'join' }) : Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
-        return Response.json({ membership: 'join' });
+        return Response.json({ membership: matrixOwnerJoined ? 'join' : 'leave' });
       }
-      if (path.includes('/profile/')) return Response.json({ displayname: 'Agent' });
+      if (path.includes('/profile/')) {
+        return accountExists ? Response.json({ displayname: 'Agent' })
+          : Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+      }
+      if (path === '/_synapse/admin/v1/register') {
+        if (initialFailure === 'registration' && failOnce) {
+          failOnce = false;
+          return Response.json({ errcode: 'M_UNKNOWN' }, { status: 503 });
+        }
+        if (init?.method !== 'POST') return Response.json({ nonce: 'test-nonce' });
+        const body = JSON.parse(String(init.body)) as { username: string };
+        accountExists = true;
+        return Response.json({ user_id: `@${body.username}:matrix.example.test` });
+      }
       if (path.endsWith('/invite')) return Response.json({});
       if (path.includes('/join/')) { joined = true; return Response.json({ room_id: roomId }); }
       return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
@@ -70,9 +101,40 @@ describe('hosted Matrix channel admission', () => {
       sessionFingerprint: 'b'.repeat(43), deviceId: 'DEVICE_1' as never,
       history: 'none' as const };
     expect(await provider.reconcile(request)).toEqual({ kind: 'not_applied' });
-    expect(await provider.admit(request)).toEqual({ kind: 'admitted', membership: 'joined' });
+    expect(await provider.admit(request)).toEqual({ kind: 'unavailable' });
+    expect(claims.size).toBe(1);
+    expect(accountExists).toBe(false);
+    expect(joined).toBe(false);
+    const callsAfterFailure = fetcher.mock.calls.length;
+    approved = false;
+    expect(await provider.reconcile(request)).toEqual({ kind: 'rejected' });
+    expect(fetcher.mock.calls.length).toBe(callsAfterFailure);
+    approved = true;
+    for (const status of [200, 403, 404, 503]) {
+      membershipFailure = status;
+      expect(await provider.reconcile(request)).toEqual({ kind: 'unavailable' });
+      expect(accountExists).toBe(false);
+      expect(joined).toBe(false);
+    }
+    membershipFailure = null;
+    matrixOwnerJoined = false;
+    const targetReads = () => fetcher.mock.calls.filter(([resource]) => {
+      const path = new URL(String(resource)).pathname;
+      return path.includes('/state/m.room.member/') && path.includes('khala_a_');
+    }).length;
+    const targetReadsBefore = targetReads();
+    expect(await provider.reconcile(request)).toEqual({ kind: 'unavailable' });
+    expect(targetReads()).toBe(targetReadsBefore);
+    matrixOwnerJoined = true;
     const restarted = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort);
+    expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'joined' });
     expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'already_joined' });
+    expect(claims.size).toBe(1);
+    ownerLoginDenied = true;
+    expect(await restarted.reconcile(request)).toEqual({ kind: 'unavailable' });
+    ownerLoginDenied = false;
+    expect(fetcher.mock.calls.filter(([resource, init]) => new URL(String(resource)).pathname.includes('/join/')
+      && init?.method === 'POST')).toHaveLength(1);
     expect(await provider.admit({ ...request, deviceId: 'DEVICE_2' as never })).toEqual({ kind: 'unavailable' });
     approved = false;
     expect(await provider.reconcile(request)).toEqual({ kind: 'rejected' });

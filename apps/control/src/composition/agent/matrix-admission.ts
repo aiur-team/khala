@@ -320,8 +320,19 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
   async function inspectAgentRoomMembership(ownerId: OwnerId, session: SessionRef, roomId: RoomId) {
     try {
       const identity = agentMatrixIdentity(ownerId, session, options.serverName);
-      const token = await login(identity.userId, password(identity.userId), `KHALA_JOIN_${digest(identity.userId).slice(0, 24)}`);
-      return token ? await member(roomId, identity.userId, token) : 'unavailable';
+      // The account may not exist yet: admission persists its claim before
+      // registration. Inspect membership as the joined owner so an agent login
+      // failure cannot strand reconciliation or be mistaken for non-application.
+      const ownerUser = humanUserId(ownerId);
+      const token = await login(ownerUser, humanPassword(ownerId), controlDevice(ownerId));
+      if (!token || await member(roomId, ownerUser, token) !== 'joined') return 'unavailable';
+      const result = await call(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(identity.userId)}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (result.status === 404 && result.body?.errcode === 'M_NOT_FOUND') return 'absent';
+      if (result.status !== 200) return 'unavailable';
+      return result.body?.membership === 'join' ? 'joined'
+        : ['leave', 'ban', 'invite', 'knock'].includes(String(result.body?.membership)) ? 'absent' : 'unavailable';
     } catch { return 'unavailable'; }
   }
   return {
