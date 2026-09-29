@@ -162,11 +162,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
-    resolveParticipants: async userIds => {
+    resolveParticipants: async (userIds, targetParticipantIds) => {
       if (!binding || !signer || closed || remoteDenied || deliveryStopped) return null;
       const session = await matrixSession();
       return createAgentParticipantLookup({ appOrigin: input.appOrigin, binding, roomId: session.roomId,
-        signer, capability: () => capabilityFor(binding!).ensure() })(userIds);
+        signer, capability: () => capabilityFor(binding!).ensure() })(userIds, targetParticipantIds);
     },
     onRename: async event => {
       if (!binding || closed || remoteDenied || deliveryStopped) return false;

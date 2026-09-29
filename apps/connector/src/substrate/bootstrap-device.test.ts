@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMatrixBootstrapDevice } from './bootstrap-device';
 import type { MatrixConnectorInput, MatrixConnectorSubstrate } from './matrix';
 
@@ -41,7 +41,8 @@ describe('Matrix endpoint credential and device fence', () => {
         discardOutboundSession: async () => true, close: async () => undefined,
       };
     };
-    const options = { stateDirectory: state, profileDirectory: path.join(state, 'crypto'), open };
+    const resolveParticipants = vi.fn(async () => new Map());
+    const options = { stateDirectory: state, profileDirectory: path.join(state, 'crypto'), open, resolveParticipants };
     const first = createMatrixBootstrapDevice(options);
     const fixed = await first.devices.reserve('operation-123');
     expect(fixed.kind).toBe('reserved');
@@ -57,6 +58,8 @@ describe('Matrix endpoint credential and device fence', () => {
     expect(first.fingerprint()).toBe('signed-ed25519-fingerprint');
     expect(opens[0]?.participantIdFor('@owner:example')).toBe(session.ownerParticipantId);
     expect(opens[0]?.participantIdFor('@stranger:example')).toBeNull();
+    await opens[0]?.resolveParticipants?.(['@owner:example'], ['agent_departed']);
+    expect(resolveParticipants).toHaveBeenCalledWith(['@owner:example'], ['agent_departed']);
     const credential = path.join(state, 'matrix-session.json');
     expect(JSON.parse(await readFile(credential, 'utf8'))).toEqual(session);
     expect((await stat(credential)).mode & 0o777).toBe(0o600);

@@ -14,7 +14,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
   browserBundleDirectory?: string;
   browserDriverDirectory?: string;
   open?: typeof openMatrixConnectorSubstrate;
-  resolveParticipants?: (userIds: readonly string[]) => Promise<ReadonlyMap<string, ResolvedAgentParticipant> | null>;
+  resolveParticipants?: (userIds: readonly string[], targetParticipantIds: readonly string[]) => Promise<ReadonlyMap<string, ResolvedAgentParticipant> | null>;
   onRename?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onRename'];
 }>): Readonly<{
   devices: ConnectorDevicePort;
