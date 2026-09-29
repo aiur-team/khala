@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
@@ -16,6 +16,15 @@ import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
+  let chromiumFixtureDirectory: string;
+  let chromiumExecutablePath: string;
+  beforeAll(async () => {
+    chromiumFixtureDirectory = await mkdtemp(path.join(os.tmpdir(), 'khala-test-chromium-'));
+    chromiumExecutablePath = path.join(chromiumFixtureDirectory, 'chromium');
+    await writeFile(chromiumExecutablePath, '#!/bin/sh\nprintf "Chromium 153.0.0.0\\n"\n', { mode: 0o700 });
+  });
+  afterAll(async () => { await rm(chromiumFixtureDirectory, { recursive: true, force: true }); });
+
   it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));
     const session = { harness: 'codex' as const, sessionId: 'thread-active-1', workdir: '/project' };
@@ -86,7 +95,7 @@ describe('installed hosted connector composition', () => {
         if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
         throw new Error(`unexpected ${pathname}`);
       }));
-      const input = { stateDirectory: directory, appOrigin,
+      const input = { stateDirectory: directory, appOrigin, chromiumExecutablePath,
         browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
         sessionInspection: () => ({ inspect: async () => ({ kind: 'verified' as const,
           session: { harness: 'codex' as const, sessionId: session.sessionId, generation: 0 },
@@ -144,7 +153,7 @@ describe('installed hosted connector composition', () => {
       deviceId: 'DEVICE_REVOKED', harness: session.harness, sessionId: session.sessionId,
       generation: 2 } as SessionBinding;
     const revokeId = revocationStopId('revocation-restart', binding.bindingId);
-    const input = { stateDirectory: directory, appOrigin,
+    const input = { stateDirectory: directory, appOrigin, chromiumExecutablePath,
       browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session,
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
       inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
@@ -230,7 +239,7 @@ describe('installed hosted connector composition', () => {
     try {
       expect(await hasProductionBinding(directory, first)).toBe(false);
       expect(await readdir(directory)).toEqual([]);
-      const opened = await openProductionConnector({ stateDirectory: directory,
+      const opened = await openProductionConnector({ stateDirectory: directory, chromiumExecutablePath,
         appOrigin: 'https://khala.aiur.team', browserBundleDirectory: path.join(directory, 'substrate-browser'),
         session: first, sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
         inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
@@ -272,7 +281,7 @@ describe('installed hosted connector composition', () => {
   });
   it('pins one durable proof key to the same provider-named native session across restart', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-hosted-production-'));
-    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team', chromiumExecutablePath,
       browserBundleDirectory: path.join(directory, 'substrate-browser'),
       session: { harness: 'codex', sessionId: 'thread-owned-1', workdir: '/project' },
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
