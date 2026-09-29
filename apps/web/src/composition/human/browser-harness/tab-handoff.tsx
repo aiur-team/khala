@@ -18,10 +18,6 @@ const params = new URLSearchParams(location.search);
 const initialPath = params.get('path') ?? '/new';
 history.replaceState(null, '', initialPath);
 const tabId = crypto.randomUUID();
-let focused = true;
-// Headless Chromium reports hasFocus() for both pages in one context. The test
-// controls this one browser API while exercising the real handoff adapter.
-Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => focused });
 let stopGate: Promise<void> | null = null;
 let releaseStop: (() => void) | null = null;
 let releaseSync: (() => void) | null = null;
@@ -72,7 +68,6 @@ declare global { interface Window { __tabHandoff: {
   holdStop(): void;
   releaseStop(): void;
   releaseSync(): void;
-  setFocused(value: boolean): void;
   overlap(): boolean;
 }; } }
 window.__tabHandoff = {
@@ -81,6 +76,5 @@ window.__tabHandoff = {
   holdStop() { stopGate = new Promise(resolve => { releaseStop = resolve; }); },
   releaseStop() { releaseStop?.(); releaseStop = null; stopGate = null; },
   releaseSync() { releaseSync?.(); releaseSync = null; },
-  setFocused(value) { focused = value; },
   overlap: () => localStorage.getItem('overlapping-generations') === 'true',
 };

@@ -203,7 +203,7 @@ export function createHumanApplication(
       // while this tab remains focused and activation is still pending.
       requestTimer = setInterval(() => {
         if (!disposed && generation === epoch && handoff.isFocused()) handoff.request(identity.principal.ownerId);
-      }, 500);
+      }, 200);
     }
     const result = await deviceSession.ensureReady(identity.principal).finally(() => {
       if (requestTimer) clearInterval(requestTimer);
@@ -296,6 +296,9 @@ export function createHumanApplication(
     void deviceSession.release();
   }, () => {
     if (disposed) return;
+    if (snapshot.phase === 'initializing_device' && signedInOwner) {
+      options.tabHandoff?.request(signedInOwner);
+    }
     if (snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
       && snapshot.reason === 'lease_unavailable') void synchronize(path);
   });
