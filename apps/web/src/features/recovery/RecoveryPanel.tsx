@@ -66,10 +66,20 @@ const HISTORY_PRESENTATION: Record<RecoveryView['history'], Readonly<{
     tone: 'positive',
     message: 'This device can decrypt the available channel history.',
   },
+  policy_limited: {
+    label: 'History access depends on policy',
+    tone: 'neutral',
+    message: 'Messages from before this device joined depend on the channel admission policy. No missing keys have been observed in this channel.',
+  },
   partial: {
     label: 'History partially available',
     tone: 'caution',
-    message: 'Some earlier messages remain unavailable because this device does not have every historical key.',
+    message: 'Some received messages remain unavailable because this device is missing their decryption keys.',
+  },
+  decrypt_failed: {
+    label: 'Some messages could not be decrypted',
+    tone: 'caution',
+    message: 'This device received messages it could not decrypt. The cause has not been identified as missing keys.',
   },
   unavailable: {
     label: 'History keys unavailable',
@@ -260,7 +270,7 @@ function RecoveryPanelContent({
         <StatusBadge tone={DEVICE_TONE[view.deviceState]} label={DEVICE_LABEL[view.deviceState]} />
         <StatusBadge tone={history.tone} label={history.label} />
       </div>
-      <p id={historyDescriptionId} className="recovery-panel__history-note" role={view.history === 'available' ? 'note' : 'alert'}>
+      <p id={historyDescriptionId} className="recovery-panel__history-note" role={view.history === 'available' || view.history === 'policy_limited' ? 'note' : 'alert'}>
         {history.message}
       </p>
 

@@ -8,6 +8,7 @@ import {
   type RevocationPort, type RoomId, outcomeUnknown, rejected, sameProviderIdentity, unavailable,
 } from '@khala/contracts/messaging/index';
 import { createRecoveryService } from '@khala/messaging/recovery/index';
+import type { ChannelEntriesView } from '@khala/messaging/channels/index';
 import type {
   HistoryAvailability, RecoveryConnection, RecoveryOperationReference, RecoveryPorts, RecoveryResumeStore, RecoverySnapshot,
   RecoveryUiPort, RevocationCapability,
@@ -41,6 +42,11 @@ export type BrowserRecoveryDeps = Readonly<{
   closure?: BrowserClosure;
   resumeStore?: RecoveryResumeStore;
   connection?: () => RecoveryConnection;
+  /** Room-scoped entries expose observed decrypt failures, including missing keys. */
+  historyEntries?: Readonly<{
+    roomId: RoomId;
+    observeEntries(roomId: RoomId, listener: (view: ChannelEntriesView) => void): () => void;
+  }>;
 }>;
 
 export type BrowserRecoveryPorts = RecoveryPorts & Readonly<{
@@ -53,11 +59,14 @@ export type BrowserRecoveryPorts = RecoveryPorts & Readonly<{
 const PENDING: RecoveryCapabilities = { modes: [], unavailableReason: 'device_not_ready' };
 
 /**
- * P14 recovers nothing, so a device never has `available` history: a ready device holds only what
- * arrived after its own admission.
+ * Readiness cannot prove complete history. Only a room entry that failed decryption
+ * can establish a missing-key or other decrypt-failure state.
  */
-function historyOf(device: DeviceView): HistoryAvailability {
-  return device.state === 'ready' ? 'partial' : 'unavailable';
+function historyOf(device: DeviceView, observed: 'missing_key' | 'decryption_failed' | null): HistoryAvailability {
+  if (device.state !== 'ready') return 'unavailable';
+  if (observed === 'missing_key') return 'partial';
+  if (observed === 'decryption_failed') return 'decrypt_failed';
+  return 'policy_limited';
 }
 
 export function memoryResumeStore(): RecoveryResumeStore {
@@ -123,6 +132,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   let revocationTargets: readonly RevocationCapability[] = [];
   let generation = 0;
   let disposed = false;
+  let observedHistory: { generation: number; failure: 'missing_key' | 'decryption_failed' | null } | null = null;
   let snapshot: RecoverySnapshot = build();
 
   function matchesOwner(state: IdentityState): boolean {
@@ -145,7 +155,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     return {
       identity,
       device,
-      history: historyOf(device),
+      history: historyOf(device, observedHistory?.generation === device.generation ? observedHistory.failure : null),
       connection: deps.connection?.() ?? 'unknown',
       recovery,
       revocationTargets: matchesOwner(identity) ? revocationTargets : [],
@@ -213,6 +223,15 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     void refresh();
   });
 
+  const stopObservingEntries = deps.historyEntries?.observeEntries(deps.historyEntries.roomId, view => {
+    if (view.generation !== deps.device.current().generation) return;
+    const failure = view.entries.some(entry => entry.kind === 'unavailable' && entry.reason === 'missing_key')
+      ? 'missing_key'
+      : view.entries.some(entry => entry.kind === 'unavailable') ? 'decryption_failed' : null;
+    observedHistory = { generation: view.generation, failure };
+    publish();
+  }) ?? (() => {});
+
   const ui: RecoveryUiPort = {
     snapshot: () => snapshot,
     subscribe(listener, signal) {
@@ -275,6 +294,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       disposed = true;
       generation += 1;
       stopObserving();
+      stopObservingEntries();
       listeners.clear();
     },
   };

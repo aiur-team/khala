@@ -15,7 +15,7 @@ import type {
   ClosureCapability, ClosureConsequences, ClosureFailureReason, ClosureRequest, ClosureStatus, ClosureRejection, ClosureUnavailableReason,
 } from '@khala/contracts/messaging/index';
 
-export type HistoryAvailability = 'available' | 'partial' | 'unavailable';
+export type HistoryAvailability = 'available' | 'policy_limited' | 'partial' | 'decrypt_failed' | 'unavailable';
 export type RecoveryConnection = 'online' | 'offline' | 'unknown';
 
 export type RevocationCapability = RevocationSubject & Readonly<{

@@ -75,7 +75,7 @@ describe('createBrowserRecoveryPort', () => {
     first.clear();
     expect(first.load()).toBeNull();
   });
-  it('shows a signed-in device as partial history with recovery refused under P14', async () => {
+  it('does not claim missing historical keys for a ready device without observed decrypt failures', async () => {
     const device = fakeDevice(ready);
     const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port });
     await settled();
@@ -83,7 +83,7 @@ describe('createBrowserRecoveryPort', () => {
     expect(ports.ui.snapshot()).toMatchObject({
       identity: { kind: 'signed_in' },
       device: ready,
-      history: 'partial',
+      history: 'policy_limited',
       recovery: { modes: [], unavailableReason: 'unsupported_substrate' },
       revocationTargets: [],
       closure: null,
@@ -92,6 +92,34 @@ describe('createBrowserRecoveryPort', () => {
     expect(await ports.ui.beginRecovery({ operationId: 'recover-b-1', mode: 'backup' }, provideSecret))
       .toEqual({ kind: 'rejected', code: 'unsupported_mode' });
     expect(provideSecret).not.toHaveBeenCalled();
+  });
+
+  it('reports observed missing keys, clears them after decryption, and keeps other failures distinct', async () => {
+    const device = fakeDevice(ready);
+    let onEntries: ((view: { generation: number; entries: readonly { kind: 'unavailable'; reason: string }[] }) => void) | undefined;
+    const stop = vi.fn();
+    const roomId = 'room_1' as never;
+    const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port,
+      historyEntries: { roomId, observeEntries: (_roomId, listener) => {
+        onEntries = listener as typeof onEntries;
+        return stop;
+      } },
+    });
+    expect(ports.ui.snapshot().history).toBe('policy_limited');
+    onEntries?.({ generation: 1, entries: [{ kind: 'unavailable', reason: 'missing_key' }] });
+    expect(ports.ui.snapshot().history).toBe('partial');
+    onEntries?.({ generation: 1, entries: [{ kind: 'unavailable', reason: 'decryption_failed' }] });
+    expect(ports.ui.snapshot().history).toBe('decrypt_failed');
+    onEntries?.({ generation: 1, entries: [] });
+    expect(ports.ui.snapshot().history).toBe('policy_limited');
+    onEntries?.({ generation: 0, entries: [{ kind: 'unavailable', reason: 'missing_key' }] });
+    expect(ports.ui.snapshot().history).toBe('policy_limited');
+    device.emit({ ...ready, generation: 2, state: 'lost', reason: 'storage_cleared' });
+    expect(ports.ui.snapshot().history).toBe('unavailable');
+    device.emit({ ...ready, generation: 3 });
+    expect(ports.ui.snapshot().history).toBe('policy_limited');
+    ports.dispose();
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it('keeps a device without keys unavailable, and a signed-out owner without targets', async () => {
@@ -119,7 +147,7 @@ describe('createBrowserRecoveryPort', () => {
     const text = JSON.stringify(observation);
 
     expect(observation).toEqual({
-      operationId: 'revoke-b-2', operation: 'revocation', deviceState: 'ready', history: 'partial',
+      operationId: 'revoke-b-2', operation: 'revocation', deviceState: 'ready', history: 'policy_limited',
       recoveryUnavailable: 'unsupported_substrate', allowedActions: [],
     });
     for (const forbidden of [SECRET_CANARY, principal.verifiedEmail, principal.providerSubject, 'owner_b']) {
