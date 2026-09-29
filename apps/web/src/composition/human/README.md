@@ -36,17 +36,21 @@ bundle never reaches join, recovery, the Matrix adapter or the control API.
 The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.
-The owner shell links the top logo and KHALA wordmark to `/new`. The selected
+The owner shell links the top logo and KHALA wordmark to `/conversations`. The selected
 channel fills the main pane and its title appears in the top navigation. The
 sidebar header shows a request count before create only while requests are
 pending. Signed-in owners can switch themes and log out from the topbar (or the
 content edge in hosted mode). Successful logout
 ends the route and Matrix device lease before showing sign-in at `/new`.
+After sign-in, the channel index shell appears while the device initializes.
+Its channel and create controls stay unavailable until the device is ready;
+recoverable device errors show a retry in the index. `/new` also opens the
+index; only the `+` action opens channel creation.
 
 ## Routes and entry
 
 The site root `/` belongs to the public landing page (`netlify.toml`), so the
-application routes live below it: `/new` creates a channel, `/join?invite=…`
+application routes live below it: `/new` opens the signed-in index, `/join?invite=…`
 admits a shared link, `/channels/<id>` opens a channel, and
 `/channels/<id>/tools` opens channel care from the sidebar. The SPA entry reads
 an optional `?mount=hosted-content` parameter to boot without standalone chrome,

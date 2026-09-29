@@ -15,6 +15,7 @@ declare global { interface Window {
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
+    releaseDevice(): void;
     navigate(path: string): void;
   };
 } }
@@ -100,7 +101,8 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.keyboard.press('Escape');
     assert.equal(await createButton.evaluate(element => element === document.activeElement), true);
     await page.evaluate(() => window.__lossHarness.navigate('/new'));
-    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await page.getByRole('region', { name: 'No channel selected' }).waitFor();
+    assert.equal(await page.getByRole('dialog', { name: 'Create a channel' }).count(), 0);
     await page.evaluate(() => window.__lossHarness.navigate('/conversations'));
     await page.getByRole('dialog', { name: 'Create a channel' }).waitFor({ state: 'detached' });
     await page.evaluate(() => window.__lossHarness.holdNavigation());
@@ -172,6 +174,79 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.getByRole('button', { name: 'Sign in' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(scratch, { recursive: true, force: true });
+    await rm(browserProfile, { recursive: true, force: true });
+  }
+});
+
+test('signed-in index remains visible while device initializes and fails', { timeout: 90_000 }, async () => {
+  const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-device-pending-'));
+  const browserProfile = await mkdtemp(join('/tmp', 'khala-device-pending-profile-'));
+  let server: PreviewServer | null = null;
+  let browser: Browser | null = null;
+  try {
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
+    await build({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist'), emptyOutDir: true,
+        rollupOptions: { input: join(import.meta.dirname, 'browser-harness/device-loss.html') } }, logLevel: 'error' });
+    server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
+    for (const width of [1440, 320]) {
+      const page = await browser.newPage({ viewport: { width, height: 700 } });
+      await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&hold-device&fail-device&logout');
+      await page.getByRole('region', { name: 'Channel status' }).getByText('Getting this device ready…').waitFor();
+      if (width <= 959) {
+        const channels = page.getByRole('button', { name: 'Channels', exact: true });
+        await channels.click();
+        assert.equal(await page.getByRole('button', { name: 'Close channels' }).evaluate(node => node === document.activeElement), true);
+        await page.keyboard.press('Escape');
+        assert.equal(await channels.evaluate(node => node === document.activeElement), true);
+        await channels.press('Enter');
+      }
+      assert.equal(await page.locator('.khala-owner-shell').count(), 1);
+      assert.equal(await page.getByText('Account and device status').count(), 0);
+      assert.equal(await page.getByRole('dialog', { name: 'Create a channel' }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
+      assert.equal(await page.getByTestId('live-room').count(), 0);
+      assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
+      if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
+      if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-pending-${width}.png`) });
+      await page.evaluate(() => window.__lossHarness.releaseDevice());
+      await page.getByRole('region', { name: 'Channel status' }).getByText('device_unavailable').waitFor();
+      assert.equal(await page.locator('.khala-owner-shell').count(), 1);
+      if (width <= 959) await page.getByRole('button', { name: 'Channels', exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
+      assert.equal(await page.getByTestId('live-room').count(), 0);
+      assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
+      if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
+      if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-unavailable-${width}.png`) });
+      const retry = page.getByRole('button', { name: 'Try again' });
+      await retry.focus();
+      assert.equal(await retry.evaluate(node => node === document.activeElement), true);
+      await retry.press('Enter');
+      await page.waitForFunction(() => window.__lossHarness.activationCount() === 2);
+      assert.equal(await page.getByText('Account and device status').count(), 0);
+      assert.equal(await page.locator('.khala-owner-shell').count(), 1);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+      await page.close();
+    }
+    const readyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await readyPage.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&hold-device&logout');
+    await readyPage.getByRole('region', { name: 'Channel status' }).waitFor();
+    await readyPage.evaluate(() => window.__lossHarness.releaseDevice());
+    await readyPage.locator('.conversation-list__item').first().waitFor();
+    assert.equal(await readyPage.getByRole('dialog', { name: 'Create a channel' }).count(), 0);
+    const create = readyPage.getByRole('button', { name: 'Create channel' });
+    assert.equal(await create.isEnabled(), true);
+    await create.click();
+    await readyPage.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await readyPage.close();
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

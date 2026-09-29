@@ -100,7 +100,9 @@ describe('HumanApplicationScreen', () => {
           identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess}
         />,
       );
-      expect(html).toContain('>Device keys unavailable</h1>');
+      expect(html).toContain('>Device keys unavailable</h2>');
+      expect(html).toContain('khala-owner-shell');
+      expect(html).not.toContain('Account and device status');
       expect(html).toContain('earlier history cannot be recovered');
       expect(html).toContain('fresh authorized admission');
       expect(html).toContain('open Khala there');
@@ -118,6 +120,39 @@ describe('HumanApplicationScreen', () => {
     expect(revoked).not.toContain('original keys');
     expect(revoked).toContain('revoked_by_owner');
     expect(revoked).toContain('aria-label="Log out"');
+  });
+
+  it('shows a gated channel index during device initialization and recoverable failure', async () => {
+    const createChannelAccess = vi.fn(() => { throw new Error('inbox must wait for device readiness'); });
+    for (const snapshot of [
+      { phase: 'initializing_device', path: '/new', context: null } as const,
+      { phase: 'unavailable', source: 'device', reason: 'device_unavailable', retryable: true,
+        path: '/new', context: null } as const,
+    ]) {
+      renderRoom.mockClear();
+      const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)} identity={identity}
+        routes={routes} renderRoom={renderRoom} createChannelAccess={createChannelAccess} mode="standalone" />);
+      expect(html).toContain('khala-owner-shell');
+      expect(html).toContain('aria-label="Conversations"');
+      expect(html).toContain('aria-label="Create channel" title="Create channel" disabled');
+      expect(html).toContain('aria-label="Log out"');
+      expect(html).not.toContain('Account and device status');
+      expect(html).not.toContain('Create a channel');
+      expect(renderRoom).not.toHaveBeenCalled();
+    }
+    expect(createChannelAccess).not.toHaveBeenCalled();
+  });
+
+  it('keeps identity checking in a neutral shell without owner actions', () => {
+    const createChannelAccess = vi.fn();
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({
+      phase: 'checking_identity', path: '/new', context: null,
+    })} identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={createChannelAccess} />);
+    expect(html).toContain('khala-owner-shell');
+    expect(html).toContain('Checking your sign-in…');
+    expect(html).not.toContain('Account and device status');
+    expect(html).not.toContain('aria-label="Log out"');
+    expect(createChannelAccess).not.toHaveBeenCalled();
   });
 
   it('keeps standalone chrome out of a host-content mount', async () => {

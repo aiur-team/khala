@@ -233,6 +233,8 @@
 .khala-owner-shell .channel-page .conversation-thread__head{display:none}
 .khala-owner-shell.khala-content-root{height:100dvh}
 .khala-owner-shell .khala-content-main{min-height:0;overflow:auto;padding:0}
+.khala-device-status{padding:clamp(1rem,3vw,2rem);color:var(--khala-ink-muted)}
+.khala-device-status [role='alert']{color:var(--khala-ink)}
 .khala-owner-shell .khala-content-actions{height:4rem;box-sizing:border-box;border-bottom:1px solid var(--khala-line)}
 .khala-owner-shell .khala-content-main>.channel-page{height:calc(100dvh - 4rem)}
 .khala-owner-shell .khala-content-main>.channel-tools-page{height:calc(100dvh - 4rem)}

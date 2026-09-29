@@ -100,13 +100,11 @@ function SignInPanel({ identity, path, isJoin, navigateExternal }: {
 
 function LostDevicePanel() {
   return (
-    <KhalaPageFrame model={{ title: 'Device keys unavailable', labelledBy: 'khala-device-loss' }}>
-      <Panel>
+      <Panel heading="Device keys unavailable">
         <p role="alert">Khala cannot open this device's encrypted messages or channels with the keys available here.</p>
         <p>If you still have a device or browser profile with its original keys, open Khala there to read its history. This browser profile cannot regain keys by retrying this page.</p>
         <p>If every device's keys are gone, earlier history cannot be recovered. Access from a new device requires a fresh authorized admission; this screen cannot grant one.</p>
       </Panel>
-    </KhalaPageFrame>
   );
 }
 
@@ -159,6 +157,51 @@ function LogoutAction({ application, routes, mode }: {
   </>;
 }
 
+function PendingOwnerShell({ application, routes, chrome, phase, children }: {
+  application: HumanApplicationHandle;
+  routes: HumanRouteCodec;
+  chrome: HumanShellChrome;
+  phase: 'checking_identity' | 'initializing_device' | 'unavailable';
+  children: ReactNode;
+}) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerButton = useRef<HTMLButtonElement>(null);
+  const drawerClose = useRef<HTMLButtonElement>(null);
+  const drawer = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
+  const sidebar = <div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
+    role={drawerOpen ? 'dialog' : undefined} aria-modal={drawerOpen || undefined} aria-label={drawerOpen ? 'Channels' : undefined}
+    onKeyDown={event => {
+      if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
+      if (event.key !== 'Tab' || !drawerOpen) return;
+      const focusable = [...(drawer.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]') ?? [])]
+        .filter(element => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }}>
+    <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels"
+      onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
+    <ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
+      showSearch={false} status={phase === 'unavailable' ? 'ready' : 'loading'}
+      emptyLabel="Channels are unavailable on this device."
+      action={<button type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" disabled>+</button>} />
+  </div>;
+  const actions = phase === 'checking_identity' ? null
+    : <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
+  const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
+  return <AiurShell mode={chrome.mode} className="khala-owner-shell" brandHref={routes.conversationsPath()}
+    navigation={[]} sidebar={sidebar} actions={actions} theme={chrome.theme}
+    collapsed={chrome.collapsed} onCollapsedChange={chrome.onCollapsedChange}>
+    {chrome.mode === 'hosted-content' ? <div className="khala-content-actions"><div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
+    <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels"
+      aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><span>Channels</span>
+      {chrome.mode === 'hosted-content' ? hostedActions : null}</div>
+    {children}
+  </AiurShell>;
+}
+
 function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, hasChannelTools, children }: {
   application: HumanApplicationHandle;
   createController: () => ChannelAccessInboxController;
@@ -177,7 +220,7 @@ function OwnerShell({ application, createController, routes, chrome, context, na
     : route.kind === 'channel_requests' ? 'Channel requests' : 'Channels';
   const channelTitle = route.kind === 'channel' ? selectedTitle : undefined;
   const [query, setQuery] = useState('');
-  const [creating, setCreating] = useState(route.kind === 'create');
+  const [creating, setCreating] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerButton = useRef<HTMLButtonElement>(null);
   const drawerClose = useRef<HTMLButtonElement>(null);
@@ -186,7 +229,7 @@ function OwnerShell({ application, createController, routes, chrome, context, na
   const restoreCreateFocus = useCallback(() => {
     (window.matchMedia('(max-width: 959px)').matches ? drawerButton.current : createButton.current)?.focus();
   }, []);
-  useEffect(() => { setCreating(route.kind === 'create'); }, [chrome.path, route.kind]);
+  useEffect(() => { setCreating(false); }, [chrome.path]);
   useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
   useEffect(() => {
     controller.start();
@@ -304,6 +347,8 @@ export function HumanApplicationScreen({
       renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}
+      renderPendingShell={(chrome, phase, children) => <PendingOwnerShell application={application} routes={routes}
+        chrome={chrome} phase={phase}>{children}</PendingOwnerShell>}
       renderSignedInAction={shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
     />
   );
