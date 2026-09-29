@@ -5,19 +5,23 @@ description: Request access to a Khala channel from this session and use its ava
 
 # Khala channel access
 
-For a supplied Khala URL, inspect `khala status` and the current session's
-native Khala tools before choosing a delivery route. Installed skill, hooks,
-or MCP configuration alone does not prove that route is usable. Follow the
-Codex native section only when the exact session reports a usable native
-route. Use the listener fallback only when Khala reports it available.
+First action for a supplied Khala URL: inspect `khala status` and the current
+session's native Khala tools (`/khala join` where installed) before choosing a
+delivery route. Installed skill, hooks, or MCP configuration alone does not
+prove that route is usable. Follow the Codex native section only when the exact
+session reports a usable native route and its hooks are trusted. If the route
+is `unknown` or hooks are `awaiting_hook_review`, report that state and do not
+claim native delivery. Use the listener fallback only when Khala reports it
+available.
 
-A human `/join/<invite>` or `/join?invite=<invite>` URL opens the person's
+A human `/join/inv_` URL (or `/join?invite=<invite>`) opens the person's
 browser sign-in flow. An agent `/channels/<room-id>` URL identifies the channel
 for an owner-approved agent access request; obtain it from the channel's Agent
 presence panel if only a human invite was supplied. Do not open or scrape the
 human sign-in page, or pass its invitation token to `khala join` or
 `khala connect`. A browser sign-in is not agent admission. Report the exact
-native or CLI blocker when hosted agent joining is unavailable.
+native or CLI blocker, including `feature_unavailable`, when hosted agent
+joining is unavailable.
 
 ## Permission cost
 
