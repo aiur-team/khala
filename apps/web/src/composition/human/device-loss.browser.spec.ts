@@ -219,7 +219,12 @@ test('owner conversation shell fills desktop and phone with conditional request 
       await mkdir(screenshotDir, { recursive: true });
       await page.screenshot({ path: join(screenshotDir, 'human-desktop.png') });
     }
-    await page.getByRole('link', { name: 'Channel care' }).click();
+    const channelCare = page.getByRole('link', { name: 'Channel care' });
+    assert.equal(await channelCare.getAttribute('title'), 'Channel care');
+    assert.equal((await channelCare.innerText()).trim(), '');
+    await channelCare.focus();
+    assert.equal(await channelCare.evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Enter');
     await page.getByRole('heading', { name: 'Channel care' }).waitFor();
     await page.evaluate(() => window.__lossHarness.navigate('/channels/room_1'));
     await title.getByText('First channel').waitFor();
@@ -231,6 +236,8 @@ test('owner conversation shell fills desktop and phone with conditional request 
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
     await page.getByRole('button', { name: 'Channels' }).click();
     await page.waitForTimeout(250);
+    assert.equal(await channelCare.isVisible(), true);
+    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-care.png') });
     await requests.focus();
     assert.equal(await requests.evaluate(node => node === document.activeElement), true);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-requests.png') });

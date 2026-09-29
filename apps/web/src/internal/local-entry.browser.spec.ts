@@ -119,7 +119,14 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.equal(await page.getByRole('heading', { name: 'One', level: 2 }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     const localTools = page.locator('.local-channel-tools');
-    await localTools.locator('summary').first().click();
+    const toolsToggle = localTools.locator('summary').first();
+    assert.equal(await toolsToggle.getAttribute('aria-label'), 'Local tools');
+    assert.equal(await toolsToggle.getAttribute('title'), 'Local tools');
+    assert.equal((await toolsToggle.innerText()).trim(), '');
+    await toolsToggle.focus();
+    assert.equal(await toolsToggle.evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await localTools.getAttribute('open'), '');
     await localTools.getByRole('link', { name: 'Channel discovery settings' }).waitFor();
     assert.equal(await localTools.getByRole('link', { name: 'Channel requests' }).count(), 0);
     const stopSummary = localTools.locator('summary').filter({ hasText: 'Stop agent delivery' });
@@ -136,7 +143,9 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: path.join(screenshotDir, 'local-desktop-tools.png'), fullPage: true });
     }
-    await localTools.locator('summary').first().click();
+    await toolsToggle.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await localTools.getAttribute('open'), null);
     if (screenshotDir) {
       await page.screenshot({ path: path.join(screenshotDir, 'local-desktop.png'), fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });

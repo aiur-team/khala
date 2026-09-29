@@ -163,7 +163,9 @@ describe('HumanApplicationScreen', () => {
     const room = renderToStaticMarkup(<HumanApplicationScreen {...props}
       application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)} />);
     expect(room).toContain('href="/channels/room_1/tools"');
-    expect(room).toContain('Channel care');
+    expect(room).toContain('aria-label="Channel care"');
+    expect(room).toContain('title="Channel care"');
+    expect(room).not.toContain('>Channel care</a>');
     expect(room).not.toContain('Channel settings');
     expect(room).not.toContain('Channel requests, 0 pending');
     const toolsContext = readyContext('/channels/room_1/tools');

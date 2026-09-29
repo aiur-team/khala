@@ -4,6 +4,7 @@ import type { ChannelAccessRequestHandle, IdentityPort } from '@khala/contracts/
 import { AiurShell, ThemeToggle } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
+import { ChannelCareIcon } from '../../shell/icons';
 import type { ShellMode } from '../../shell/types';
 import { ChannelRequestsInbox } from '../../features/channel-access/ChannelRequestsInbox';
 import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRequestsNavEntry';
@@ -201,9 +202,10 @@ function OwnerShell({ application, createController, routes, chrome, context, na
         onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
         <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button></>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
-    {hasChannelTools && (route.kind === 'channel' || route.kind === 'channel_tools') ? <a className="khala-sidebar__channel-tools" href={routes.channelToolsPath(route.roomId)}
+    {hasChannelTools && (route.kind === 'channel' || route.kind === 'channel_tools') ? <a className="khala-sidebar__channel-tools aiur-shell__icon-button" href={routes.channelToolsPath(route.roomId)}
+      aria-label="Channel care" title="Channel care"
       aria-current={route.kind === 'channel_tools' ? 'page' : undefined}
-      onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); setDrawerOpen(false); navigateRoute(routes.channelToolsPath(route.roomId)); }}>Channel care</a> : null}
+      onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); setDrawerOpen(false); navigateRoute(routes.channelToolsPath(route.roomId)); }}><ChannelCareIcon /></a> : null}
   </>;
   return (
     <AiurShell
