@@ -22,6 +22,8 @@ function setup() {
   let now = T0;
   const clock = () => now;
   const store = fakeStore(clock);
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const x = createPublicKey(privateKey).export({ format: 'jwk' }).x!;
   let authority: 'verified' | 'rebound' | 'removed' = 'verified';
   let generation = SESSION.generation;
   const bootstrap = createChannelDiscoveryBootstrapHandlers({
@@ -32,7 +34,8 @@ function setup() {
     sessionAuthority: {
       async inspect() {
         return authority === 'verified'
-          ? { kind: 'verified', principal: 'agent_b' as StableAgentPrincipal, currentGeneration: generation }
+          ? { kind: 'verified', principal: 'agent_b' as StableAgentPrincipal,
+            currentGeneration: generation, proofKeyThumbprint: thumbprint(x) }
           : { kind: authority };
       },
     },
@@ -49,8 +52,6 @@ function setup() {
     principals: { inspect: async () => ({ kind: 'known', agentOwnerId: 'owner_b' as OwnerId, currentGeneration: generation }) },
   });
 
-  const { privateKey } = generateKeyPairSync('ed25519');
-  const x = createPublicKey(privateKey).export({ format: 'jwk' }).x!;
   function proof(method: string, url: string, accessToken?: string) {
     const header = Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'dpop+jwt', jwk: { kty: 'OKP', crv: 'Ed25519', x } })).toString('base64url');
     const claims: Record<string, unknown> = { htm: method, htu: url, iat: Math.floor(clock() / 1000), jti: randomBytes(16).toString('base64url') };
