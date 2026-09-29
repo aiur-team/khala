@@ -28,7 +28,7 @@ export class ChannelCreateService {
 
   async request(input: CreateRequestInput, signal?: AbortSignal): Promise<CreateOutput> {
     const call = this.#client.requestChannelCreate;
-    return this.#settle(input.operationId, call === undefined ? null : () => call.call(this.#client, input, signal));
+    return this.#settle(input.operationId, call === undefined ? null : () => call.call(this.#client, input, signal), input.target);
   }
 
   async status(input: CreateStatusInput, signal?: AbortSignal): Promise<CreateOutput> {
@@ -36,11 +36,26 @@ export class ChannelCreateService {
     return this.#settle(input.operationId, call === undefined ? null : () => call.call(this.#client, input, signal));
   }
 
-  async #settle(operationId: string, call: (() => Promise<ChannelAccessResult>) | null): Promise<CreateOutput> {
+  async #settle(operationId: string, call: (() => Promise<ChannelAccessResult>) | null,
+    target?: string | null): Promise<CreateOutput> {
     if (call === null) return failure('unavailable', operationId);
     let result: unknown;
     try { result = await call(); } catch { return failure('unavailable', operationId); }
     if (!plainObject(result)) return failure('unavailable', operationId);
+    if (result.kind === 'handoff' && target && typeof result.approvalUrl === 'string') {
+      let approval: URL;
+      let targetUrl: URL;
+      try { approval = new URL(result.approvalUrl); targetUrl = new URL(target); }
+      catch { return failure('unavailable', operationId); }
+      if (approval.origin !== targetUrl.origin || approval.username || approval.password || approval.hash
+        || approval.pathname !== '/api/human/channel-discovery/authority/approve'
+        || [...approval.searchParams.keys()].join(',') !== 'candidate'
+        || !/^[A-Za-z0-9_-]{43}$/u.test(approval.searchParams.get('candidate') ?? '')) {
+        return failure('unavailable', operationId);
+      }
+      return { ok: true, v: 1, operationId, outcome: 'pending_owner', next: 'human_approve',
+        approvalUrl: approval.href };
+    }
     if (result.kind === 'refused' && typeof result.code === 'string'
       && (ACCESS_REFUSAL_CODES as readonly string[]).includes(result.code)) {
       return failure(result.code as AccessRefusalCode, operationId);

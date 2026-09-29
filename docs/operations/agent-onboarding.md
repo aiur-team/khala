@@ -19,6 +19,13 @@ before it can seek discovery credentials. That key approval is bound to the
 owner, not just the link used to find them: a separate owner consent can let
 the key holder list that owner's channels and request access or creation.
 Neither approval admits a device or grants message read/send access.
+For agent-led creation before any room exists, the signed-in human opens `/new`
+and copies their owner-bound agent creation link. The exact native session files
+a signed proof-key candidate against that link; a different signed-in account
+cannot approve it. After key approval, the same create operation enters the
+owner's channel-request inbox. Only the owner's second, explicit decision may
+create an encrypted Matrix room. Unknown Matrix creation outcomes reconcile by
+the operation marker and never prove absence from a missing joined-room snapshot.
 The first `pending_owner` returned to a hosted agent can be this key candidate,
 before a channel-access journal row exists. Once the owner approves the key,
 the agent must repeat the original channel URL request with its original

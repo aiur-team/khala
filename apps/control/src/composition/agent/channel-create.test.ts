@@ -13,9 +13,8 @@ import { describe, expect, it } from 'vitest';
 import type { MutationAuthorization } from '../../auth';
 import type { VerifiedExchangeConnector } from '../../channel-access/exchange/handler';
 import { createChannelAccessHandlers } from '../../channel-access/handler';
-import { channelKey } from '../../channel-discovery/catalog';
 import { composeChannelAccessExchange } from './channel-access-exchange';
-import { hostedChannelCreateAdapter } from './channel-create';
+import { hostedChannelCreateAdapter, hostedCreatedChannelRef, roomFromHostedCreatedRef } from './channel-create';
 
 const DEVICE = 'device_agent_1' as VerifiedExchangeConnector['deviceId'];
 const hosted: HarnessAdapter = (substrate, clock) => hostedChannelCreateAdapter({ substrate, clock });
@@ -224,7 +223,7 @@ describe('composed human-confirmed channel creation', () => {
 });
 
 describe('hosted channel-create adapter', () => {
-  it('references the hosted channel the way hosted discovery does', async () => {
+  it('returns a server-only reference that admission can resolve', async () => {
     const h = createHarness({ adapter: hosted });
     await h.submit();
     await h.approve();
@@ -232,6 +231,9 @@ describe('hosted channel-create adapter', () => {
 
     expect(fulfilled.kind).toBe('created');
     if (fulfilled.kind !== 'created') return;
-    expect(fulfilled.channelRef).toBe(channelKey([...h.fake.rooms.values()][0]!.roomId));
+    const roomId = [...h.fake.rooms.values()][0]!.roomId;
+    expect(fulfilled.channelRef).toBe(hostedCreatedChannelRef(roomId));
+    expect(roomFromHostedCreatedRef(fulfilled.channelRef)).toBe(roomId);
+    expect(roomFromHostedCreatedRef(`${fulfilled.channelRef}a`)).toBeNull();
   });
 });

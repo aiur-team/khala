@@ -46,6 +46,8 @@ describe('installed hosted connector factory', () => {
       const url = new URL(String(target));
       calls.push(url.pathname);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      if (url.pathname === '/api/agent/channel-access/create')
+        return reply({ v: 1, operationId: body?.operationId, outcome: 'pending_owner' });
       if (url.pathname.endsWith('/request') || url.pathname.endsWith('/status'))
         return reply(url.pathname === '/api/agent/channel-link/request'
           ? { v: 1, kind: 'request', operationId: body?.operationId, outcome: 'approved' }
@@ -116,6 +118,9 @@ describe('installed hosted connector factory', () => {
       async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
+    expect(await opened.client.requestChannelCreate?.({ title: 'Planning', operationId: 'create_123', origin }))
+      .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
+    expect(calls).toContain('/api/agent/channel-access/create');
     const link = `${origin}/join/inviteRef123`;
     await opened.client.connect(link);
     expect([...rows.values()].map(row => decodeActivationRecord(JSON.parse(row.record))?.phase)).toContain('admitted');
