@@ -15,6 +15,7 @@ declare global {
   interface Window {
     __timelineHarness: {
       pushLiveMessage: (body: string) => void;
+      releaseNextSend: () => void;
       bumpGeneration: () => void;
       revokeMembership: () => void;
     };
@@ -22,6 +23,7 @@ declare global {
 }
 window.__timelineHarness = {
   pushLiveMessage: harness.pushLiveMessage,
+  releaseNextSend: harness.releaseNextSend,
   bumpGeneration: harness.bumpGeneration,
   revokeMembership: harness.revokeMembership,
 };
