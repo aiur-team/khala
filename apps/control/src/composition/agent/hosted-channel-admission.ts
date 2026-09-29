@@ -4,6 +4,8 @@ import type { ChannelAdmissionProviderPort, ChannelAdmissionRequest } from '@kha
 import { pairingInviteRef, type SessionRef } from '../../agent-bootstrap/handler';
 import { createMatrixAgentAdmission } from './matrix-admission';
 import { readHostedAccessTarget } from '../human/hosted-channel-access-resolver';
+import { readHostedCreatedTarget } from './hosted-created-target';
+import { roomFromHostedCreatedRef } from './channel-create';
 import type { ProductionHumanDependencies, ProductionHumanRuntime } from '../human/production';
 
 /** Rechecks the persisted owner/key/session approval, including its revision. */
@@ -57,7 +59,9 @@ export function createHostedChannelAdmissionProvider(
   async function inspect(input: ChannelAdmissionRequest) {
     const session = sessionFor(input);
     if (session === null || input.history !== 'none') return null;
-    const target = await readHostedAccessTarget(active, input.channelRef);
+    const target = roomFromHostedCreatedRef(input.channelRef) === null
+      ? await readHostedAccessTarget(active, input.channelRef)
+      : await readHostedCreatedTarget(active, input.channelRef, input.ownerId);
     return target === 'unavailable' ? 'unavailable'
       : target !== null && target.ownerId === input.ownerId ? { target, session } : null;
   }

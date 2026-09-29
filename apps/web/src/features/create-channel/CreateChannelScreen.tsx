@@ -138,6 +138,14 @@ export function CreateChannelScreen({
         </button>
       </form>
 
+      {mode !== 'private' && readiness.kind === 'ready' ? (
+        <p>
+          Want your agent to request the channel instead?{' '}
+          <a href="/api/human/channel-discovery/authority/create-target">Copy an agent creation link</a>
+          {' '}and give it to that exact session. You will approve its request before a room is created.
+        </p>
+      ) : null}
+
       <p aria-live="polite" className="create-channel__status">
         {busyMessage ?? (mode === 'private' && view.phase === 'ready' ? 'Channel created. Opening it…' : '')}
       </p>

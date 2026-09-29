@@ -10,6 +10,10 @@ export type HostedAccessRequesterAuthority = Readonly<{
   inspect(requester: DiscoveryRequester, ownerId: OwnerId): Promise<'current' | 'revoked' | 'unavailable'>;
   inspectContext(context: ChannelAccessRequesterContext, ownerId: OwnerId): Promise<'current' | 'revoked' | 'unavailable'>;
   checkContext(context: ChannelAccessRequesterContext): Promise<'current' | 'revoked' | 'unavailable'>;
+  /** The owner explicitly approved this exact key and native session before a create intent is accepted. */
+  resolveCreateOwner?(requester: DiscoveryRequester): Promise<Readonly<{
+    ownerId: OwnerId; ownerRevision: string;
+  }> | 'revoked' | 'unavailable'>;
 }>;
 
 export type HostedAccessTarget = Readonly<{ ownerId: OwnerId; roomCreatorId: OwnerId; roomId: RoomId;
@@ -40,6 +44,7 @@ export async function readHostedAccessTarget(active: ProductionHumanRuntime, key
 export function createHostedChannelAccessResolver(
   active: ProductionHumanRuntime,
   authority: HostedAccessRequesterAuthority,
+  enableCreate = false,
 ): ChannelAccessResolutionPort {
   const digests = createDigests(active.env.invitationHmacSecret);
 
@@ -69,7 +74,13 @@ export function createHostedChannelAccessResolver(
       return { kind: 'resolved', ownerId: target.ownerId, channelRef: target.key as never,
         targetRevision: revision(target), title: 'Channel' };
     },
-    async resolveCreate() { return { kind: 'unavailable' }; },
+    async resolveCreate(_input, requester) {
+      if (!enableCreate) return { kind: 'unavailable' };
+      const owner = await authority.resolveCreateOwner?.(requester) ?? 'revoked';
+      return typeof owner === 'object'
+        ? { kind: 'resolved', ownerId: owner.ownerId, ownerRevision: owner.ownerRevision }
+        : { kind: 'unavailable' };
+    },
     async revalidateAccess(input) {
       const decoded = parseRevision(input.targetRevision);
       if (decoded === null) return { kind: 'revoked' };
@@ -82,7 +93,14 @@ export function createHostedChannelAccessResolver(
         targetRevision: input.targetRevision, title: 'Channel' }
         : { kind: requester === 'revoked' ? 'revoked' : 'unavailable' };
     },
-    async revalidateCreate() { return { kind: 'revoked' }; },
+    async revalidateCreate(input) {
+      if (!enableCreate) return { kind: 'revoked' };
+      if (input.ownerRevision !== input.requester.sessionFingerprint) return { kind: 'revoked' };
+      const current = await authority.inspectContext(input.requester, input.ownerId);
+      return current === 'current'
+        ? { kind: 'current', ownerId: input.ownerId, ownerRevision: input.ownerRevision }
+        : { kind: current };
+    },
     async currentAccessOwner(channelRef, owner) {
       const target = await readHostedAccessTarget(active, channelRef);
       if (target === 'unavailable') return { kind: 'unavailable' };

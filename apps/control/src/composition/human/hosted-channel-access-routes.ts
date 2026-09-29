@@ -4,10 +4,12 @@ import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-acce
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
 import { createChannelAccessService } from '@khala/messaging/channel-access/journal/service';
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
+import { composeChannelCreate } from '@khala/messaging/channel-create/compose';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createChannelAccessHandlers, type ChannelAccessHandlerDependencies } from '../../channel-access/handler';
 import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import { composeChannelAccessExchange } from '../agent/channel-access-exchange';
+import { hostedMatrixChannelCreateAdapter } from '../agent/channel-create';
 import { createHostedChannelGrantPort } from '../agent/hosted-channel-grants';
 import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { PairingGrantPort } from '../../pairing/store';
@@ -70,7 +72,8 @@ export function createHostedChannelAccessRoutes(
   dependencies: ProductionHumanDependencies,
   ports: HostedChannelAccessPorts,
 ): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[];
-  exchange: readonly RouteRegistration[]; grants: PairingGrantPort }> {
+  exchange: readonly RouteRegistration[]; grants: PairingGrantPort;
+  reconcileCreate(requestHandle: string): Promise<void> }> {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   function compose() {
     const active = runtime();
@@ -78,12 +81,19 @@ export function createHostedChannelAccessRoutes(
     const authenticateAgent = hostedAuthority?.authenticateAgent ?? ports.authenticateAgent;
     const requesterAuthority = hostedAuthority?.requesterAuthority ?? ports.requesterAuthority;
     if (!authenticateAgent) throw new Error('agent authentication unavailable');
+    const createEnabled = requesterAuthority?.resolveCreateOwner !== undefined
+      && typeof active.matrix.channelCreateFor === 'function';
     const resolver = ports.resolver?.(active) ?? (requesterAuthority
-      ? createHostedChannelAccessResolver(active, requesterAuthority) : null);
+      ? createHostedChannelAccessResolver(active, requesterAuthority, createEnabled) : null);
     if (resolver === null) throw new Error('requester authority unavailable');
     const { journal, service } = createHostedAccessState(active, resolver);
+    const create = createEnabled ? composeChannelCreate({
+      store: active.store, journal,
+      service, adapter: hostedMatrixChannelCreateAdapter({ matrix: active.matrix, clock: active.clock }),
+      clock: active.clock,
+    }) : null;
     const handlers = createChannelAccessHandlers({
-      service, auth: active.auth,
+      service: create ? { ...service, decisions: create.decisions } : service, auth: active.auth,
       async authenticateAgent(request) {
         const result = await authenticateAgent(request);
         if (result.kind === 'authenticated'
@@ -102,6 +112,7 @@ export function createHostedChannelAccessRoutes(
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
+      ...(create ? { authority: create.exchangeAuthority } : {}),
       async authenticateConnector(request) {
         const result = await authenticateConnector(request);
         return result.kind === 'authenticated' && result.connector.origin !== active.env.publicAppOrigin
@@ -110,8 +121,9 @@ export function createHostedChannelAccessRoutes(
       clock: active.clock,
     }) : [];
     const grants = admissionAuthority && authenticateConnector && ports.bindings
-      ? createHostedChannelGrantPort({ active, journal, fulfillment: service.fulfillment, admissionAuthority }) : null;
-    return { handlers, exchange, grants };
+      ? createHostedChannelGrantPort({ active, journal, fulfillment: service.fulfillment, admissionAuthority,
+        ...(create ? { createAuthority: create.exchangeAuthority } : {}) }) : null;
+    return { handlers, exchange, grants, create };
   }
   function lazy(path: string, methods: readonly string[], select: (composed: ReturnType<typeof compose>) => readonly RouteRegistration[]): RouteRegistration {
     return Object.freeze({
@@ -152,5 +164,9 @@ export function createHostedChannelAccessRoutes(
     },
   };
   return Object.freeze({ human: Object.freeze(human), agent: Object.freeze(agent),
-    exchange: Object.freeze(exchange), grants });
+    exchange: Object.freeze(exchange), grants,
+    async reconcileCreate(requestHandle: string) {
+      try { await compose().create?.workflow.fulfill(requestHandle); } catch { /* retry through the inbox */ }
+    },
+  });
 }

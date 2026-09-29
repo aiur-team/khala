@@ -141,6 +141,27 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
     // the owner's approval, not this call, is what creates a channel.
     requestChannelCreate(input, signal) {
       const origin = input.origin ?? options.defaultOrigin;
+      if (input.target !== undefined && input.target !== null) {
+        let target: URL;
+        try { target = new URL(input.target); } catch { return Promise.resolve(refused('untrusted_origin')); }
+        if (target.origin !== origin || target.pathname !== '/new' || target.hash
+          || [...target.searchParams.keys()].join(',') !== 'agent_create') {
+          return Promise.resolve(refused('untrusted_origin'));
+        }
+        if (!options.candidate) return Promise.resolve({ kind: 'unavailable' as const });
+        return options.candidate({ target: input.target, operationId: input.operationId,
+          session: options.session }, signal).then(candidate => {
+          if (candidate.kind === 'pending_owner') return { kind: 'handoff' as const,
+            approvalUrl: candidate.approveUrl };
+          if (candidate.kind === 'rejected') return refused('discovery_denied');
+          if (candidate.kind !== 'approved') return { kind: 'unavailable' as const };
+          return call(origin, signal, credential => ({
+            target: createTargetPath(origin, target), method: 'POST',
+            body: { v: 1, operationId: input.operationId, credentialRef: credential.credentialRef,
+              origin, proposedTitle: input.title },
+          }));
+        });
+      }
       return call(origin, signal, credential => ({
         target: new URL(CHANNEL_ACCESS_CREATE_PATH, origin),
         method: 'POST',
@@ -172,6 +193,12 @@ const STATUS_REFUSALS: ReadonlyMap<number, AccessRefusalCode> = new Map([
 
 function originOf(url: string): string | null {
   try { return new URL(url).origin; } catch { return null; }
+}
+
+function createTargetPath(origin: string, source: URL): URL {
+  const endpoint = new URL(CHANNEL_ACCESS_CREATE_PATH, origin);
+  endpoint.searchParams.set('agent_create', source.searchParams.get('agent_create')!);
+  return endpoint;
 }
 
 function refused(code: AccessRefusalCode): ChannelAccessResult {

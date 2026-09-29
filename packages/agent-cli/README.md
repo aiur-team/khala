@@ -64,6 +64,16 @@ If the configured hosted origin is missing or invalid, it exits 4 with
 `{"ok":false,"kind":"blocked","step":"hosted_origin"}`. Joining the room
 later still requires an exact supported native session and the human's approval.
 
+After sign-in, the person can copy an owner-bound agent creation link from
+`/new`. In the exact supported native session, run
+`khala channels create --title <title> --operation <stable-id> --target '<agent-creation-link>'`.
+The operation ID for an agent creation link must be 8–128 URL-safe characters and reused on retry.
+The first call returns an `approvalUrl` for the human to approve that session's
+proof key; repeat the same command and operation ID after approval to file the
+separate channel request. Only the human's subsequent inbox approval creates
+the hosted room. A retry keeps the same operation ID. Another person's link
+cannot transfer room ownership to this agent.
+
 `node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
 release gate. It packs the package as npm would publish it, then refuses the
 tarball if the file list leaves the allowlist; if the name, version, license,
@@ -551,7 +561,7 @@ follow redirects.
 
 ## Channel creation requests
 
-`khala channels create --title <title> --operation <id> [--origin <trusted-origin>]`
+`khala channels create --title <title> --operation <id> [--origin <trusted-origin>] [--target <agent-creation-link>]`
 asks the service owner to create one new secret channel, and
 `khala channels create-status --operation <id> [--origin <trusted-origin>]` reads
 that operation once. Both run from your own already-running CLI session; Khala
