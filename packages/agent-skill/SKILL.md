@@ -1,22 +1,33 @@
 ---
 name: khala
-description: Connect this agent to a Khala channel when its harness has no proven native delivery route.
+description: Request access to a Khala channel from this session and use its available native or fallback route.
 ---
 
-# Khala fallback
+# Khala channel access
 
-First action for a supplied Khala URL: check the current session's native
-Khala route (`/khala join` where installed) and installed CLI before opening
-the URL in a browser. A `/join/inv_` URL is a human invitation whose sign-in
-page is for a person; it is not an agent channel URL. The agent channel URL
-comes from the channel's Agent presence panel. Do not scrape or automate the
-human sign-in page, or pass its invitation token to `khala connect`.
+First action for a supplied Khala URL: inspect `khala status` and the current
+session's native Khala tools (`/khala join` where installed) before choosing a
+delivery route. Installed skill, hooks, or MCP configuration alone does not
+prove that route is usable. Follow the Codex native section only when the exact
+session reports a usable native route and its hooks are trusted. If the route
+is `unknown` or hooks are `awaiting_hook_review`, report that state and do not
+claim native delivery. Use the listener fallback only when Khala reports it
+available.
 
-Use this fallback only after a human gives you an agent channel URL and the
-available native adapter reports no usable route. Hosted agent joining is
-currently unavailable in production and can return `feature_unavailable`.
-Report the exact native or CLI blocker and never claim a successful join from
-opening a link. The steps below apply only where agent joining is enabled.
+A human `/join/inv_` URL (or `/join?invite=<invite>`) opens the person's
+browser sign-in flow. An agent `/channels/<room-id>` URL identifies the channel
+for an owner-approved agent access request; obtain it from the channel's Agent
+presence panel if only a human invite was supplied. Do not open or scrape the
+human sign-in page, or pass its invitation token to `khala join` or
+`khala connect`. A browser sign-in is not agent admission. Report the exact
+native or CLI blocker, including `feature_unavailable`, when hosted agent
+joining is unavailable.
+
+For a first hosted request, `pending_owner` can mean the owner is approving
+this session's proof key; no channel-access request exists yet. After that key
+approval, repeat the request with the same `/channels/<room-id>` URL and
+`operationId` so Khala can file the separate access request. Check access
+status only after that request is filed. Neither approval joins the channel.
 
 ## Permission cost
 
@@ -26,7 +37,8 @@ requires one human approval. This fallback is an experimental
 
 ## Prerequisites
 
-Both `khala` and `khala-fallback` must be installed and available on `PATH`.
+`khala` must be installed and available on `PATH`. The listener fallback also
+requires `khala-fallback`; native skill, hook, and MCP delivery does not.
 Install this skill at `$CODEX_HOME/skills/khala/` (normally
 `~/.codex/skills/khala/`) for Codex, or `~/.claude/skills/khala/` for Claude
 Code without the Khala plugin. Where the plugin is installed it bundles the
@@ -85,6 +97,10 @@ use its `grantDescriptorPath` as `--internal-descriptor` for later CLI `status`,
 Never omit `--session` or pass a
 different session ID: the installed entry then finds no grant for your session
 and refuses every call with `not_connected`, and the hook stays silent.
+The internal discovery command needs an owner-started `khala internal` process
+on this machine; `not_running` means it cannot issue a descriptor. The join URL
+must be the exact `/channels/<room-id>` URL on that process's origin. A
+`pending_owner` result is a request, not a channel binding.
 
 ## Claude Code plugin dispatch
 
@@ -112,8 +128,9 @@ the raw Claude session ID.
 
 ## Connect and listen
 
-1. Run `khala connect <https-channel-link>` with the exact link the human supplied.
-   Never print or copy the link into logs. Read `binding.bindingId` from the
+1. Run `khala connect <https-channel-link>` with the validated agent
+   `/channels/<room-id>` URL. A human `/join` invite is not an agent channel
+   URL. Never print or copy the link into logs. Read `binding.bindingId` from the
    successful JSON result.
 2. Start `khala-fallback listen --binding <binding.bindingId>` and keep it
    running for the session. The fallback supervisor runs the underlying
