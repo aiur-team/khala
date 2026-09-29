@@ -2,9 +2,26 @@
 
 The native agent surface is still gated on G-SUBSTRATE. The adapters, selection,
 dispatch, and presence projections below are implemented and tested as library
-composition, but production control discovery still returns `503 feature_unavailable`.
+composition, but production hosted channel listing and access still return
+`503 feature_unavailable`.
 There is no operator-facing setting for `allowExperimentalAgentListener` yet,
 and production does not enable the experimental fallback.
+
+## Hosted channel request identity
+
+For a first hosted channel request, Khala treats a Codex thread ID or Claude
+session ID as a local label supplied by the caller. It does not prove the named
+provider session exists. The connector signs a candidate for the exact channel
+link with its own proof key. The resolved channel owner must approve that key
+before it can obtain discovery credentials. The approval page shows the key and
+explains that anyone holding it can request discovery and channel access; it
+does not admit a device or grant message read/send access.
+
+An owner can revoke the approved key from its approval page. A replacement
+requires a new signed candidate and another owner approval. Reusing the same
+key also requires a higher generation. The hosted channel-access request and exchange routes remain
+unavailable until connector authentication, target resolution, Matrix
+admission/resume, and live end-to-end verification are connected.
 
 After that gate closes, Khala will connect an agent to one channel through the
 `khala` CLI. In that live flow, the channel's Agent presence panel is the source of

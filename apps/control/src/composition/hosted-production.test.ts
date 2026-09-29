@@ -9,9 +9,11 @@ import { decodeChannelAccessOwnerProjection } from '@khala/contracts/messaging/i
 import type { BlobsStoreLike } from '../runtime/control-store';
 import { createGateway } from '../runtime/handler';
 import { registerHostedProductionRoutes } from './hosted-production';
+import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
 import { createDigests } from '../invitations/internal';
 import { thumbprint } from '../agent-bootstrap/proof';
-import { PROOF_KEY_APPROVE_PATH, PROOF_KEY_CANDIDATE_PATH, PROOF_KEY_CHALLENGE_PATH } from './hosted-proof-key-authority';
+import { PROOF_KEY_APPROVE_PATH, PROOF_KEY_CANDIDATE_PATH, PROOF_KEY_CHALLENGE_PATH,
+  PROOF_KEY_REVOKE_PATH } from './hosted-proof-key-authority';
 
 const origin = 'https://khala.aiur.team';
 const env = {
@@ -58,6 +60,16 @@ function gateway(mode?: string, appOrigin = origin) {
 }
 
 describe('generated hosted production composition', () => {
+  it('does not authenticate a claimed native thread without a discovery credential', async () => {
+    const discovery = createHostedDiscoveryBootstrap({ env, stores });
+    const request = new Request(`${origin}/api/agent/channel-access/request`, {
+      method: 'POST', headers: { origin, 'x-khala-session-id': 'forged-thread', 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, operationId: 'op-forged' }),
+    });
+    expect(await discovery.authenticateAgent(request)).toEqual({ kind: 'rejected', code: 'auth_required' });
+    const gatewayRoute = gateway('explicit_browser_consent');
+    expect((await gatewayRoute(request)).status).toBe(503);
+  });
   it('requires a signed challenged key and the exact owner before making discovery authority available', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-28T12:00:00Z');
@@ -141,6 +153,17 @@ describe('generated hosted production composition', () => {
     }));
     expect(approved.status).toBe(200);
     expect(await approved.json()).toMatchObject({ kind: 'approved', candidateId });
+    const revokeUrl = `${origin}${PROOF_KEY_REVOKE_PATH}?${new URLSearchParams({ harness: 'codex', session_id: 'caller-label' })}`;
+    const revokePage = await route(new Request(revokeUrl, { headers: ownerCookie }));
+    expect(revokePage.status).toBe(200);
+    expect(await revokePage.text()).toContain(jkt);
+    const revokeBody = new URLSearchParams({ harness: 'codex', session_id: 'caller-label', proof_jkt: jkt,
+      generation: '0', csrf_token: csrfTokenFor(owner.token), decision: 'revoke' });
+    expect((await route(new Request(`${origin}${PROOF_KEY_REVOKE_PATH}`, {
+      method: 'POST', headers: { origin, ...ownerCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: revokeBody,
+    }))).status).toBe(200);
+    expect((await route(new Request(revokeUrl, { headers: ownerCookie }))).status).toBe(404);
   });
   it('authenticates the durable owner inbox across a composition restart without leaking another owner', async () => {
     const blobs = durableStores();

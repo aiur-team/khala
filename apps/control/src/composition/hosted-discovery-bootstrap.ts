@@ -5,6 +5,9 @@ import { createChannelDiscoveryBootstrapHandlers, AUTHORIZE_PATH, TOKEN_PATH,
   type DiscoveryCredentialAuthorization, type DiscoveryAttemptLimiter } from '../channel-discovery/bootstrap/handler';
 import type { RouteRegistration } from '../runtime/handler';
 import { createHostedProofKeyAuthority } from './hosted-proof-key-authority';
+import type { AgentChannelAccessAuthentication } from '../channel-access/handler';
+import { AGENT_CHANNEL_ACCESS_CREATE_PATH, AGENT_CHANNEL_ACCESS_REQUEST_PATH,
+  AGENT_CHANNEL_ACCESS_STATUS_PATH } from '../channel-access/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies,
   type ProductionHumanRuntime } from './human/production';
 
@@ -67,12 +70,36 @@ export function createHostedDiscoveryBootstrap(dependencies: ProductionHumanDepe
       } catch { return unavailable(); }
     },
   });
+  const authorize = async (request: Request, action: string): Promise<DiscoveryCredentialAuthorization> => {
+    try { return await compose().credentials.authorize(request, action); }
+    catch { return { kind: 'unavailable' }; }
+  };
   return {
     human: Object.freeze([lazy(AUTHORIZE_PATH, ['GET', 'POST'], 'human')]),
     agent: Object.freeze([lazy(TOKEN_PATH, ['POST'], 'agent')]),
-    async authorize(request: Request, action: string): Promise<DiscoveryCredentialAuthorization> {
-      try { return await compose().credentials.authorize(request, action); }
-      catch { return { kind: 'unavailable' }; }
+    authorize,
+    /** Channel-access routes may use this only after their resolver and admission ports are ready. */
+    async authenticateAgent(request: Request): Promise<AgentChannelAccessAuthentication> {
+      let url: URL;
+      try { url = new URL(request.url); } catch { return { kind: 'rejected', code: 'forbidden' }; }
+      const action = request.method === 'POST' && url.pathname === AGENT_CHANNEL_ACCESS_REQUEST_PATH
+        ? 'request_channel_access' : request.method === 'POST' && url.pathname === AGENT_CHANNEL_ACCESS_CREATE_PATH
+          ? 'request_channel_create' : request.method === 'GET' && url.pathname === AGENT_CHANNEL_ACCESS_STATUS_PATH
+            ? url.searchParams.get('operationKind') === 'create' ? 'request_channel_create' : 'request_channel_access'
+            : null;
+      if (action === null) return { kind: 'rejected', code: 'forbidden' };
+      const result = await authorize(request, action);
+      if (result.kind === 'unavailable') return { kind: 'unavailable' };
+      if (result.kind === 'refused') return { kind: 'rejected',
+        code: result.status === 401 ? 'auth_required' : 'forbidden' };
+      const requester = result.requester;
+      return { kind: 'authenticated', requester, context: {
+        v: 1, principal: requester.principal, origin: requester.origin,
+        sessionGeneration: requester.sessionGeneration,
+        // The key is the durable identity. Provider session strings are caller labels.
+        sessionFingerprint: requester.proofKey.thumbprint,
+        harness: 'proof-key', displayLabel: null, workspaceLabel: null,
+      } };
     },
   };
 }

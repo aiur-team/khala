@@ -205,7 +205,8 @@ export function createNativeSessionAuthority(ports: NativeSessionAuthorityPorts)
       const written = await settleWrite<JsonValue>(store, {
         key: authorityKey, expectedRevision: read.record.revision,
         operationId: `revoke-proof-key:${randomBytes(16).toString('base64url')}`,
-        next: { value: { ...current, status: 'revoked' }, expiresAt: null },
+        next: { value: { v: 2, ownerId: current.ownerId, target: current.target,
+          candidate: current.candidate, status: 'revoked' }, expiresAt: null },
       });
       if (written.kind === 'applied') return { kind: 'revoked' };
       if (written.kind === 'conflict') return { kind: 'conflict' };
@@ -234,10 +235,12 @@ export function createNativeSessionAuthority(ports: NativeSessionAuthorityPorts)
         const held = prior.record.value;
         if (held.status === 'active') return { kind: held.target === candidate.target
           && sameCandidate(held.candidate, candidate.candidate) ? 'approved' : 'conflict' };
-        // A fresh owner approval may replace a revoked key. Reusing the same key
-        // requires a higher generation so old short-lived credentials stay dead.
-        if (held.candidate.proofKeyThumbprint === candidate.candidate.proofKeyThumbprint
-          && candidate.candidate.session.generation <= held.candidate.session.generation) return { kind: 'conflict' };
+        // Reusing the same key requires a new generation. Discovery credentials
+        // also bind this record's revision, so a different key can replace it at
+        // the same generation without reviving a prior approval's credentials.
+        if (candidate.candidate.session.generation < held.candidate.session.generation
+          || (candidate.candidate.session.generation === held.candidate.session.generation
+            && candidate.candidate.proofKeyThumbprint === held.candidate.proofKeyThumbprint)) return { kind: 'conflict' };
       }
       const written = await settleWrite<JsonValue>(store, {
         key: authorityKey, expectedRevision: prior.kind === 'record' ? prior.record.revision : null,
@@ -262,7 +265,8 @@ export function createNativeSessionAuthority(ports: NativeSessionAuthorityPorts)
       const candidate = read.record.value.candidate;
       if (candidate.session.generation !== input.session.generation) return { kind: 'rebound' };
       return { kind: 'verified', principal: candidate.principal,
-        currentGeneration: candidate.session.generation, proofKeyThumbprint: candidate.proofKeyThumbprint };
+        currentGeneration: candidate.session.generation, proofKeyThumbprint: candidate.proofKeyThumbprint,
+        authorityRevision: read.record.revision };
     },
   };
 

@@ -30,7 +30,8 @@ const AUDIENCE = 'khala-channel-discovery' as const;
 export type SessionRef = Readonly<{ harness: string; sessionId: string; generation: number }>;
 
 export type SessionAuthorityResult =
-  | Readonly<{ kind: 'verified'; principal: StableAgentPrincipal; currentGeneration: number; proofKeyThumbprint: string }>
+  | Readonly<{ kind: 'verified'; principal: StableAgentPrincipal; currentGeneration: number;
+    proofKeyThumbprint: string; authorityRevision?: string }>
   | Readonly<{ kind: 'removed' | 'rebound' | 'unavailable' }>;
 
 export interface DiscoverySessionAuthority {
@@ -111,6 +112,7 @@ type CredentialRecord = {
   scopes: DiscoveryScope[];
   jkt: string;
   publicKey: string;
+  authorityRevision: string | null;
   secretDigest: string;
   expiresAt: string;
 };
@@ -255,7 +257,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
         || !safeEqual(authority.proofKeyThumbprint, pending.jkt)) return json(401, 'invalid_grant');
       const issued = await issueCredential({
         ownerId: pending.ownerId as OwnerId, principal: authority.principal, session, origin: pending.origin,
-        jkt: pending.jkt, publicKey: checked.publicKey,
+        jkt: pending.jkt, publicKey: checked.publicKey, authorityRevision: authority.authorityRevision ?? null,
       });
       if (issued === null) return json(503, 'feature_unavailable');
       success = true;
@@ -288,7 +290,8 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       const authority = await inspect(held.ownerId as OwnerId, session);
       if (authority.kind === 'unavailable') return json(503, 'feature_unavailable');
       if (authority.kind !== 'verified' || authority.principal !== held.principal
-        || !safeEqual(authority.proofKeyThumbprint, held.jkt)) return json(401, 'invalid_grant');
+        || !safeEqual(authority.proofKeyThumbprint, held.jkt)
+        || (authority.authorityRevision ?? null) !== held.authorityRevision) return json(401, 'invalid_grant');
 
       const secret = randomToken(deps.random, 32);
       const expiresAt = new Date(deps.clock() + CREDENTIAL_TTL_MS).toISOString();
@@ -308,6 +311,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
 
   async function issueCredential(input: Readonly<{
     ownerId: OwnerId; principal: StableAgentPrincipal; session: SessionRef; origin: string; jkt: string; publicKey: string;
+    authorityRevision: string | null;
   }>): Promise<DiscoveryCredential | null> {
     const slot = randomToken(deps.random, 32);
     const secret = randomToken(deps.random, 32);
@@ -315,6 +319,7 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
     const record: CredentialRecord = {
       ownerId: input.ownerId, principal: input.principal, ...input.session, origin: input.origin, audience: AUDIENCE,
       scopes: [...CHANNEL_DISCOVERY_SCOPES], jkt: input.jkt, publicKey: input.publicKey,
+      authorityRevision: input.authorityRevision,
       secretDigest: digestDiscoverySecret('credential', secret), expiresAt,
     };
     const written = await settleWrite<JsonValue>(store, {
@@ -418,7 +423,8 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       const authority = await inspect(held.ownerId as OwnerId, { harness: held.harness, sessionId: held.sessionId, generation: held.generation });
       if (authority.kind === 'unavailable') return { kind: 'unavailable' };
       if (authority.kind !== 'verified' || authority.principal !== held.principal
-        || !safeEqual(authority.proofKeyThumbprint, held.jkt)) return refused('invalid_credential');
+        || !safeEqual(authority.proofKeyThumbprint, held.jkt)
+        || (authority.authorityRevision ?? null) !== held.authorityRevision) return refused('invalid_credential');
       return {
         kind: 'authorized', action: action as DiscoveryScope, ownerId: held.ownerId as OwnerId,
         requester: makeRequester(held),

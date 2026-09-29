@@ -109,4 +109,48 @@ describe('owner-approved proof-key authority', () => {
     h.advance(5 * 60_000 + 1);
     expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'absent' });
   });
+
+  it('requires explicit owner revocation before a new key or generation can replace an approval', async () => {
+    const h = fixture();
+    const first = await h.authority.propose(await h.submit());
+    if (first.kind !== 'pending_owner') throw new Error('first candidate missing');
+    expect(await h.authority.approve({ candidateId: first.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    const firstApproval = await h.authority.inspect({ ownerId: OWNER, session: SESSION });
+    if (firstApproval.kind !== 'verified') throw new Error('first approval missing');
+    const second = await h.authority.propose(await h.submit(h.second));
+    if (second.kind !== 'pending_owner') throw new Error('second candidate missing');
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'conflict' });
+    const held = { principal: principal(OWNER), harness: SESSION.harness, sessionId: SESSION.sessionId,
+      proofKeyThumbprint: h.first.jkt, generation: 0 };
+    expect(await h.authority.revoke({ ...held, proofKeyThumbprint: h.second.jkt })).toEqual({ kind: 'conflict' });
+    expect(await h.authority.revoke({ ...held, principal: principal(OTHER) })).toEqual({ kind: 'absent' });
+    expect(await h.authority.revoke(held)).toEqual({ kind: 'revoked' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'removed' });
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    const replacement = await h.authority.inspect({ ownerId: OWNER, session: SESSION });
+    expect(replacement).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.second.jkt,
+    });
+    if (replacement.kind !== 'verified') throw new Error('replacement missing');
+    expect(replacement.authorityRevision).not.toBe(firstApproval.authorityRevision);
+    expect(await h.authority.revoke({ ...held, proofKeyThumbprint: h.second.jkt })).toEqual({ kind: 'revoked' });
+    expect(await h.authority.approve({ candidateId: second.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'conflict' });
+    const nextGeneration = { ...SESSION, generation: 1 };
+    const third = await h.authority.propose(await h.submit(h.second, nextGeneration));
+    if (third.kind !== 'pending_owner') throw new Error('new generation missing');
+    expect(await h.authority.approve({ candidateId: third.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'rebound' });
+    expect(await h.authority.inspect({ ownerId: OWNER, session: nextGeneration })).toMatchObject({
+      kind: 'verified', proofKeyThumbprint: h.second.jkt, currentGeneration: 1,
+    });
+  });
+
+  it('invalidates a prior approval when the exact room owner changes', async () => {
+    const h = fixture();
+    const proposed = await h.authority.propose(await h.submit());
+    if (proposed.kind !== 'pending_owner') throw new Error('candidate missing');
+    expect(await h.authority.approve({ candidateId: proposed.candidateId, principal: principal(OWNER) })).toEqual({ kind: 'approved' });
+    h.setRoomOwner(OTHER);
+    expect(await h.authority.inspect({ ownerId: OWNER, session: SESSION })).toEqual({ kind: 'removed' });
+  });
 });

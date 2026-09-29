@@ -20,9 +20,9 @@ export async function readInstalledCodexVersion(environment: SetupEnvironment): 
 }
 
 /**
- * The installed Codex MCP host supplies `_meta.threadId` on each call. The host
- * pins that identity for this connector instance; a channel claim cannot select
- * another thread or workdir. The durable connector owns generation allocation.
+ * `_meta.threadId` is caller-controlled JSON-RPC data. This check binds only a
+ * local label to this connector instance; it makes no provider identity claim.
+ * Hosted authority requires a separate owner-approved proof key.
  */
 export function codexMcpSessionInspection(input: Readonly<{
   session: HarnessSession;

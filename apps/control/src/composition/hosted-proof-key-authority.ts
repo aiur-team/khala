@@ -12,6 +12,7 @@ import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, t
 export const PROOF_KEY_CHALLENGE_PATH = '/api/agent/channel-discovery/authority/challenge';
 export const PROOF_KEY_CANDIDATE_PATH = '/api/agent/channel-discovery/authority/candidate';
 export const PROOF_KEY_APPROVE_PATH = '/api/human/channel-discovery/authority/approve';
+export const PROOF_KEY_REVOKE_PATH = '/api/human/channel-discovery/authority/revoke';
 const ID = /^[A-Za-z0-9_-]{43}$/u;
 const BASE = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
 
@@ -109,6 +110,14 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
         if (!candidateId || !ID.test(candidateId)) return json(400, { kind: 'invalid_request' });
         const pending = await authority.pending({ candidateId, principal: auth.context.principal });
         if (pending.kind !== 'pending') return json(pending.kind === 'unavailable' ? 503 : pending.kind === 'absent' ? 404 : 403, pending);
+        const current = await authority.current({ principal: auth.context.principal,
+          harness: pending.harnessLabel, sessionId: pending.sessionLabel });
+        if (current.kind === 'unavailable') return json(503, current);
+        const replace = current.kind === 'active' && (current.proofKeyThumbprint !== pending.proofKeyThumbprint
+          || current.generation !== pending.generation)
+          ? `<p>This local label already has an approved key. Revoke it before approving a replacement. Reusing the same key requires a higher generation.</p>
+<a href="${PROOF_KEY_REVOKE_PATH}?${new URLSearchParams({ harness: pending.harnessLabel,
+  session_id: pending.sessionLabel })}">Review existing approval</a>` : '';
         const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Approve agent proof key</title></head><body>
 <h1>Approve this proof key?</h1>
 <p>Approving lets anyone holding the matching private key request discovery and access to this channel. It does not admit the agent, or allow reading or sending messages. Those steps need separate approval and proof.</p>
@@ -116,6 +125,7 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
 <dl><dt>Channel link</dt><dd>${escapeHtml(pending.target)}</dd><dt>Proof key</dt><dd>${escapeHtml(pending.proofKeyThumbprint)}</dd>
 <dt>Harness label</dt><dd>${escapeHtml(pending.harnessLabel)}</dd><dt>Session label</dt><dd>${escapeHtml(pending.sessionLabel)}</dd>
 <dt>Generation</dt><dd>${pending.generation}</dd></dl>
+${replace}
 <form method="post" action="${PROOF_KEY_APPROVE_PATH}"><input type="hidden" name="candidate" value="${candidateId}">
 <input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
 <button type="submit" name="decision" value="approve">Approve key</button>
@@ -134,6 +144,44 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
       const result = await authority.approve({ candidateId, principal: auth.context.principal });
       return json(result.kind === 'approved' ? 200 : result.kind === 'unavailable' ? 503
         : result.kind === 'absent' ? 404 : 403, result);
+    }) },
+    { path: PROOF_KEY_REVOKE_PATH, methods: ['GET', 'POST'], handle: safe(async (request, active, authority) => {
+      const auth = await active.auth.authenticateRequest(request);
+      if (auth.kind === 'unavailable') return json(503, { kind: 'unavailable' });
+      if (auth.kind !== 'authenticated') return json(401, { kind: 'sign_in_required' });
+      if (request.method === 'GET') {
+        const query = new URL(request.url).searchParams;
+        if ([...query.keys()].sort().join(',') !== 'harness,session_id') return json(400, { kind: 'invalid_request' });
+        const harness = query.get('harness')!;
+        const sessionId = query.get('session_id')!;
+        const current = await authority.current({ principal: auth.context.principal, harness, sessionId });
+        if (current.kind !== 'active') return json(current.kind === 'unavailable' ? 503 : 404, current);
+        const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Revoke agent proof key</title></head><body>
+<h1>Revoke this proof key?</h1>
+<p>Revocation stops discovery credentials for this approval. A replacement key needs a new signed request and your approval; reusing the same key also needs a higher generation. It does not revoke a separately admitted Matrix device.</p>
+<dl><dt>Proof key</dt><dd>${escapeHtml(current.proofKeyThumbprint)}</dd><dt>Harness label</dt><dd>${escapeHtml(harness)}</dd>
+<dt>Session label</dt><dd>${escapeHtml(sessionId)}</dd><dt>Generation</dt><dd>${current.generation}</dd></dl>
+<form method="post" action="${PROOF_KEY_REVOKE_PATH}"><input type="hidden" name="harness" value="${escapeHtml(harness)}">
+<input type="hidden" name="session_id" value="${escapeHtml(sessionId)}">
+<input type="hidden" name="proof_jkt" value="${escapeHtml(current.proofKeyThumbprint)}">
+<input type="hidden" name="generation" value="${current.generation}">
+<input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
+<button type="submit" name="decision" value="revoke">Revoke key</button></form></body></html>`;
+        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+          'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
+      }
+      if (checkMutationOrigin(request, active.env.publicAppOrigin) !== 'ok') return json(403, { kind: 'forbidden' });
+      if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/x-www-form-urlencoded')) return json(400, { kind: 'invalid_request' });
+      const form = new URLSearchParams(await request.text());
+      if ([...form.keys()].sort().join(',') !== 'csrf_token,decision,generation,harness,proof_jkt,session_id') return json(400, { kind: 'invalid_request' });
+      const rawGeneration = form.get('generation');
+      if (!csrfMatches(form.get('csrf_token') ?? '', auth.context.csrfToken)
+        || form.get('decision') !== 'revoke' || !rawGeneration || !/^\d+$/u.test(rawGeneration)) return json(403, { kind: 'forbidden' });
+      const result = await authority.revoke({ principal: auth.context.principal, harness: form.get('harness') ?? '',
+        sessionId: form.get('session_id') ?? '', proofKeyThumbprint: form.get('proof_jkt') ?? '',
+        generation: Number(rawGeneration) });
+      return json(result.kind === 'revoked' ? 200 : result.kind === 'unavailable' ? 503
+        : result.kind === 'absent' ? 404 : 409, result);
     }) },
   ] satisfies RouteRegistration[]);
 }
