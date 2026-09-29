@@ -65,6 +65,14 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
   </li>;
 }
 
+/** An ordered, attributed event in the conversation rather than a chat bubble. */
+export function ChatSystemEvent({ id, actor, children }: Readonly<{ id: string; actor: string; children: ReactNode }>) {
+  return <li data-event-id={id} className="conversation-system-event">
+    <span className="conversation-system-event__text" dir="auto">{children}</span>
+    <span className="conversation-system-event__actor" dir="auto">Changed by {actor}</span>
+  </li>;
+}
+
 export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId, placeholder = 'Write a message' }: Readonly<{
   value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string; placeholder?: string;
 }>) {

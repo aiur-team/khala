@@ -5,12 +5,18 @@ import type { ThemeChoice } from '../../shell/types';
 import { AgentPresencePanel } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
 import { ChatThread, ConversationLayout, ParticipantDetail } from '../../ui/conversation';
+import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 
 export interface ChannelScreenProps {
   title: string;
   description?: string;
   theme?: ThemeChoice;
   controller: ChannelController;
+  viewerOwnerId?: OwnerId;
+  currentNames?: ReadonlyMap<ParticipantId, string>;
+  namesPending?: boolean;
+  renameAgent?: (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
+  renameScope?: string;
   renderTimeline: () => ReactNode;
   renderReview: () => ReactNode;
   renderControls: () => ReactNode;
@@ -23,7 +29,8 @@ export interface ChannelScreenProps {
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
 export type RoomScreenProps = ChannelScreenProps;
 
-export function ChannelScreen({ title, description, theme = 'dark', controller, renderTimeline, renderReview, renderControls, renderShare, renderList, onBack, embedded = false }: ChannelScreenProps) {
+export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, currentNames, namesPending, renameAgent, renameScope,
+  renderTimeline, renderReview, renderControls, renderShare, renderList, onBack, embedded = false }: ChannelScreenProps) {
   const [detailOpen, setDetailOpen] = useState(false);
   const content = (
       <KhalaPageFrame model={{ title, ...(description ? { description } : {}), labelledBy: 'khala-channel-title' }}>
@@ -31,10 +38,14 @@ export function ChannelScreen({ title, description, theme = 'dark', controller, 
           <div className="conversation-thread__actions"><span>{description}</span>{renderShare?.()}<button type="button" onClick={() => setDetailOpen(true)}>Details and controls</button></div>
           {renderTimeline()}
         </ChatThread>} detail={detailOpen ? <ParticipantDetail name={title} onClose={() => setDetailOpen(false)}>
-          <AgentPresencePanel controller={controller} />{renderControls()}{renderReview()}
+          <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})}
+            {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})}
+            {...(renameAgent ? { renameAgent } : {})} {...(renameScope ? { renameScope } : {})} />{renderControls()}{renderReview()}
         </ParticipantDetail> : undefined} /> : <div className="channel-screen">
           <aside className="channel-screen__presence" aria-label="Channel agents">
-            <AgentPresencePanel controller={controller} />
+            <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})}
+              {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})}
+              {...(renameAgent ? { renameAgent } : {})} {...(renameScope ? { renameScope } : {})} />
             {renderShare?.()}
             <div className="channel-screen__controls">{renderControls()}</div>
           </aside>

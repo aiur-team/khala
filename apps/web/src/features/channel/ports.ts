@@ -1,5 +1,5 @@
 import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
-import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 
 export type AgentConnectionState = 'connected' | 'stale' | 'offline' | 'unknown';
 
@@ -10,6 +10,8 @@ export type AgentPresenceReceipt = Readonly<{
 
 export type AgentPresence = Readonly<{
   participantId: ParticipantId;
+  /** Server-attested owner binding; absent on older status sources, which cannot authorize edits. */
+  ownerId?: OwnerId;
   displayName: string;
   ownerDisplayName: string;
   /** Current state after composition applies subscription liveness and receipt evidence, including bounded stale expiry. */

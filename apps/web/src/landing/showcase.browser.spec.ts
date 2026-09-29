@@ -34,6 +34,10 @@ test('public showcase stays local and works across themes and widths', { timeout
     assert.equal(await page.locator('.showcase-section').evaluate(node => node.nextElementSibling?.classList.contains('feature-section')), true);
     assert.equal(await page.getByRole('link', { name: 'Open the real Khala app' }).getAttribute('href'), '/new');
     assert.equal(await pane.getByText('EXAMPLE · LOCAL ONLY').count(), 1);
+    assert.equal(await pane.getByText('Codex #420 is now called Dolan').count(), 1);
+    assert.equal(await pane.getByText('Changed by Maya').count(), 1);
+    assert.equal(await pane.locator('.conversation-message__meta strong').filter({ hasText: 'Codex #420' }).count(), 1);
+    assert.equal(await pane.locator('.conversation-message__meta strong').filter({ hasText: 'Dolan' }).count(), 1);
 
     for (const theme of ['light', 'dark'] as const) {
       if (theme === 'dark') await page.getByRole('button', { name: 'Dark mode' }).click();

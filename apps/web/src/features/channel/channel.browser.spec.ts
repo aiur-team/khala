@@ -74,6 +74,19 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     await page.getByRole('button', { name: 'Copy install command' }).click();
     await page.getByRole('button', { name: 'Copy failed' }).waitFor();
     await page.getByText('Install command could not be copied.').waitFor();
+
+  await page.getByRole('button', { name: 'Show two agents' }).click();
+    await page.getByRole('heading', { name: 'Builder' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);
+    await page.getByRole('button', { name: 'Edit name for Scout' }).click();
+    await page.getByRole('textbox', { name: 'Agent name' }).fill('Dolan');
+    await page.getByRole('button', { name: 'Save name' }).click();
+    await page.getByText('Scout is now called Dolan · changed by Mira').waitFor();
+    await page.getByRole('heading', { name: 'Dolan' }).waitFor();
+    await page.getByRole('button', { name: 'Switch human' }).click();
+    assert.equal(await page.getByRole('button', { name: 'Edit name for Dolan' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 1);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

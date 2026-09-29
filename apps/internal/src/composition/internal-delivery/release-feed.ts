@@ -64,14 +64,23 @@ function release(
 ): AgentRelease | null {
   const releaseId = internalReleaseId(binding, event.eventId);
   const ref = eventRef(event);
-  const encode = (content: StoredEvent['content']) => encodeReleasePayload({
+  if (event.content.kind === 'agent_rename') {
+    const payload = new TextEncoder().encode(JSON.stringify(['khala.agent-rename.v1',
+      ref.roomId, ref.eventId, ref.authorParticipantId, event.content.agentParticipantId, event.content.body]));
+    if (payload.byteLength > maxPayloadBytes) return null;
+    return { releaseId, events: [ref], payload,
+      payloadDigest: `sha256:${createHash('sha256').update(payload).digest('hex')}`,
+      releasedAt: event.receivedAt, wake: false };
+  }
+  const textContent = event.content;
+  const encode = (content: typeof textContent) => encodeReleasePayload({
     releaseId,
     bindingId: binding.bindingId as BindingId,
     generation: binding.generation,
     policyVersion: INTERNAL_POLICY_VERSION,
     items: [{ ref, content }],
   });
-  let encoded = encode(event.content);
+  let encoded = encode(textContent);
   // Measured on the escaped bytes, not the body: control characters expand sixfold.
   if (encoded.ok && encoded.bytes.byteLength > maxPayloadBytes) {
     encoded = encode({ v: 1, kind: 'text', body: OVERSIZED_PLACEHOLDER_BODY });

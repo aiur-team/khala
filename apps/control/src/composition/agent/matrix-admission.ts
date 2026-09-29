@@ -9,6 +9,7 @@ import {
 } from '../../agent-bootstrap/handler';
 import { matchesInviteEvidence } from './invite-evidence';
 import { ownerMatrixUserId } from '../human/matrix-identity';
+import { createAgentIdentityDirectory } from './identity-directory';
 
 type Fetch = typeof globalThis.fetch;
 
@@ -75,6 +76,7 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
     throw new Error('Matrix registration ingress token must be at least 32 characters');
   }
   const transport = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const identities = createAgentIdentityDirectory(options.store);
   const password = (userId: string) => createHmac('sha256', options.passwordDerivationSecret)
     .update('khala-matrix-agent-password-v1\0').update(userId).digest('base64url');
   const humanPassword = (ownerId: OwnerId) => createHmac('sha256', options.passwordDerivationSecret)
@@ -193,6 +195,9 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
           });
           if (joined.status !== 200 || joined.body?.room_id !== roomId) return { kind: 'outcome_unknown', operationId: input.operationId };
         }
+        if (!await identities.remember({ v: 1, roomId, matrixUserId: identity.userId,
+          participantId: identity.participantId, ownerId: input.ownerId, harness: input.session.harness }))
+          return { kind: 'outcome_unknown', operationId: input.operationId };
         return { kind: 'ok', value: { agentParticipantId: identity.participantId, roomId } };
       } catch { return { kind: 'outcome_unknown', operationId: input.operationId }; }
     },

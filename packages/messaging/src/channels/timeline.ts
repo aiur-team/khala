@@ -63,7 +63,7 @@ export async function toEntry(roomId: RoomId, event: SubstrateEvent): Promise<Re
       participant: event.participant,
       clientTxnId: event.clientTxnId,
       receivedAt: event.receivedAt,
-    },
+    } as TimelineItem,
   };
 }
 
@@ -135,7 +135,7 @@ export class ChannelProjection {
       if (!this.remote.has(item.eventRef.eventId)) {
         this.remote.set(item.eventRef.eventId, {
           kind: 'message',
-          item: { ref: item.eventRef, content: item.content, participant: this.self, clientTxnId: item.clientTxnId, receivedAt: this.now() },
+          item: { ref: item.eventRef, content: item.content, participant: this.self, clientTxnId: item.clientTxnId, receivedAt: this.now() } as TimelineItem,
         });
       }
     } else if (![...this.remote.values()].some(entry => entry.kind === 'message' && entry.item.clientTxnId === item.clientTxnId)) {

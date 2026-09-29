@@ -14,6 +14,9 @@ const DEFAULT_PAGE_SIZE = 50;
 export type TimelineData = Readonly<{
   phase: TimelinePhase;
   items: readonly TimelineItem[];
+  /** Complete allowed history when the background name replay reaches its boundary. */
+  nameHistory?: readonly TimelineItem[];
+  namesReady?: boolean;
   nextCursor: string | null;
   newMessageCount: number;
   /** `null` until the first channel snapshot arrives. `revoked`/`left` means the viewer can no longer read or send live. */
@@ -26,6 +29,8 @@ export interface TimelineController {
   subscribe(listener: () => void): () => void;
   /** Prepends one older page. A no-op once `dispose()` has run. */
   loadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null>;
+  /** Reads the permitted history for stable agent-name attribution without expanding visible pages. */
+  scanNameHistory?(): Promise<void>;
   /** Tells the controller whether the reader is scrolled to the newest item. */
   setReaderAtLatest(atLatest: boolean): void;
   /** Idempotent; unsubscribes the channel observer exactly once. */
@@ -41,6 +46,7 @@ export function createTimelineController(
   const { generation } = options;
 
   let older: readonly TimelineItem[] = [];
+  let hiddenOlder: readonly TimelineItem[] = [];
   let recent: readonly TimelineItem[] = [];
   let nextCursor: string | null = null;
   let phase: TimelinePhase = 'loading';
@@ -48,6 +54,8 @@ export function createTimelineController(
   let readerAtLatest = true;
   let disposed = false;
   let membership: ChannelMembership | null = null;
+  let namesReady = false;
+  let hasInitialPage = false;
   // Set on a failed history read, cleared only by a *successful* one — a live
   // snapshot arriving in between must not paper over a known history gap by
   // reporting `ready` (order-independent: forbidden-then-snapshot and
@@ -71,7 +79,14 @@ export function createTimelineController(
 
   function getSnapshot(): TimelineData {
     if (!dataDirty && cachedData) return cachedData;
-    cachedData = { phase, items: mergedItems(), nextCursor, newMessageCount, membership };
+    const nameHistoryIds = new Set<string>();
+    const nameHistory = [...hiddenOlder, ...older, ...recent].filter(item => {
+      if (nameHistoryIds.has(item.ref.eventId)) return false;
+      nameHistoryIds.add(item.ref.eventId);
+      return true;
+    });
+    cachedData = { phase, items: mergedItems(), nameHistory, namesReady,
+      nextCursor: hiddenOlder.length > 0 ? 'cached' : nextCursor, newMessageCount, membership };
     dataDirty = false;
     return cachedData;
   }
@@ -121,7 +136,7 @@ export function createTimelineController(
   function loadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null> {
     if (disposed) return Promise.resolve(null);
     if (inFlightLoadOlder) return inFlightLoadOlder;
-    const request = performLoadOlder().finally(() => {
+    const request = (scanInFlight ? scanInFlight.then(() => performLoadOlder()) : performLoadOlder()).finally(() => {
       inFlightLoadOlder = null;
     });
     inFlightLoadOlder = request;
@@ -129,6 +144,14 @@ export function createTimelineController(
   }
 
   async function performLoadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null> {
+    if (hiddenOlder.length > 0) {
+      const reveal = hiddenOlder.slice(-pageSize);
+      hiddenOlder = hiddenOlder.slice(0, -reveal.length);
+      older = [...reveal, ...older];
+      itemsDirty = true;
+      notify();
+      return null;
+    }
     const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
     if (disposed) return null;
     if (result.kind !== 'ok') {
@@ -144,6 +167,7 @@ export function createTimelineController(
     }
     const knownIds = new Set([...older, ...recent].map(item => item.ref.eventId));
     const additions = result.value.items.filter(item => !knownIds.has(item.ref.eventId));
+    hasInitialPage = true;
     older = [...additions, ...older];
     nextCursor = result.value.nextCursor;
     historyDegraded = null;
@@ -151,6 +175,41 @@ export function createTimelineController(
     itemsDirty = true;
     notify();
     return result;
+  }
+
+  let scanInFlight: Promise<void> | null = null;
+
+  function scanNameHistory(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (scanInFlight) return scanInFlight;
+    const run = (async () => {
+      if (inFlightLoadOlder) await inFlightLoadOlder;
+      if (!hasInitialPage) return;
+      while (!disposed && nextCursor !== null) {
+        const requestedCursor = nextCursor;
+        const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
+        if (disposed) return;
+        if (result.kind !== 'ok') {
+          historyDegraded = degradedPhase();
+          phase = historyDegraded;
+          notify();
+          return;
+        }
+        if (result.value.nextCursor === requestedCursor) {
+          historyDegraded = degradedPhase();
+          phase = historyDegraded;
+          notify();
+          return;
+        }
+        const known = new Set([...hiddenOlder, ...older, ...recent].map(item => item.ref.eventId));
+        hiddenOlder = [...result.value.items.filter(item => !known.has(item.ref.eventId)), ...hiddenOlder];
+        nextCursor = result.value.nextCursor;
+        notify();
+      }
+      if (!disposed) { namesReady = true; notify(); }
+    })();
+    scanInFlight = run.finally(() => { scanInFlight = null; });
+    return scanInFlight;
   }
 
   function setReaderAtLatest(atLatest: boolean): void {
@@ -168,5 +227,5 @@ export function createTimelineController(
     disposeObserve();
   }
 
-  return { getSnapshot, subscribe, loadOlder, setReaderAtLatest, dispose };
+  return { getSnapshot, subscribe, loadOlder, scanNameHistory, setReaderAtLatest, dispose };
 }

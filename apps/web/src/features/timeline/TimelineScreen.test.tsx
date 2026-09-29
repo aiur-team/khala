@@ -11,7 +11,7 @@ function participant(id: string, kind: 'human' | 'agent', displayName: string) {
   return { participantId: id as ParticipantId, kind, ownerId: `owner_${id}` as OwnerId, displayName, deviceIds: [] as DeviceId[] };
 }
 
-function item(eventId: string, author: ReturnType<typeof participant>, body: string): TimelineItem {
+function item(eventId: string, author: ReturnType<typeof participant>, body: string): Extract<TimelineItem, { content: { kind: 'text' } }> {
   return {
     ref: {
       v: 1,
@@ -43,6 +43,32 @@ const viewer = participant('viewer', 'human', 'Viewer');
 const noopSendPort: Pick<ChannelPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
 
 describe('TimelineScreen', () => {
+  it('renders a verified rename once between historical and later agent bylines', () => {
+    const bot = { ...participant('bot', 'agent', 'Codex #420'), ownerId: viewer.ownerId };
+    const changed = { ...item('E2', viewer, ''), content: {
+      v: 1 as const, kind: 'agent_rename' as const, agentParticipantId: bot.participantId, body: 'Dolan',
+    } } satisfies TimelineItem;
+    const data = { phase: 'ready' as const, items: [item('E1', bot, 'before'), changed, item('E3', bot, 'after')],
+      nextCursor: null, newMessageCount: 0 };
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(html.indexOf('Codex #420')).toBeLessThan(html.indexOf('is now called Dolan'));
+    expect(html.indexOf('is now called Dolan')).toBeLessThan(html.indexOf('>Dolan<'));
+    expect(html.match(/conversation-system-event__text/g)).toHaveLength(1);
+    expect(html).toContain('Changed by Viewer');
+  });
+
+  it('shows a rename before the target agent has sent a message when the roster owns it', () => {
+    const target = 'agent_quiet' as ParticipantId;
+    const change = { ...item('E1', viewer, ''), content: {
+      v: 1 as const, kind: 'agent_rename' as const, agentParticipantId: target, body: 'Dolan',
+    } } satisfies TimelineItem;
+    const html = renderToStaticMarkup(<TimelineScreen
+      controller={fakeController({ phase: 'ready', items: [change], nextCursor: null, newMessageCount: 0 })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      extraParticipants={[{ participantId: target, ownerId: viewer.ownerId, kind: 'agent', initialName: 'Codex #420' }]} />);
+    expect(html).toContain('Codex #420 is now called Dolan');
+  });
+
   it('renders live rows through the shared avatar and grouped bubble component', () => {
     const alice = participant('alice', 'human', 'Alice');
     const data = { phase: 'ready' as const, items: [item('E1', alice, 'first'), item('E2', alice, 'second')], nextCursor: null, newMessageCount: 0 };

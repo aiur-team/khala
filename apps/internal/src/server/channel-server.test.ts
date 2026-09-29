@@ -99,6 +99,24 @@ const bearer = (credential: string) => ({ authorization: `Bearer ${credential}` 
 const message = (body: string, clientTxnId = `txn-${body}`) => ({ clientTxnId, content: { v: 1, kind: 'text', body } });
 
 describe('browser bootstrap exchange', () => {
+  it('allows only the owning human to append an idempotent agent rename', async () => {
+    const h = await start();
+    const human = await humanSession(h);
+    const route = `/api/v1/channels/${channelId}/messages`;
+    const change = { clientTxnId: 'txn-rename-bob', content: {
+      v: 1, kind: 'agent_rename', agentParticipantId: bob.participantId, body: 'Dolan',
+    } };
+    expect((await call(h.server.port, { method: 'POST', path: route,
+      headers: bearer(h.fixture.bob.credential), body: change })).status).toBe(403);
+    const first = await call(h.server.port, { method: 'POST', path: route, headers: human, body: change });
+    expect(first.status).toBe(201);
+    expect((await call(h.server.port, { method: 'POST', path: route, headers: human, body: change })).status).toBe(200);
+    expect((await call(h.server.port, { method: 'POST', path: route, headers: human,
+      body: { ...change, clientTxnId: 'txn-rename-human', content: { ...change.content, agentParticipantId: 'participant-alice' } } })).status).toBe(403);
+    const timeline = await call(h.server.port, { path: `/api/v1/channels/${channelId}/timeline?limit=10`, headers: human });
+    expect(timeline.json.events.filter((event: { content: { kind: string } }) => event.content.kind === 'agent_rename')).toHaveLength(1);
+  });
+
   it('exchanges once for a host-only HttpOnly cookie, a separate request secret and the channel route', async () => {
     const h = await start();
     const reply = await exchange(h);

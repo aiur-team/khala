@@ -66,7 +66,7 @@ type ActiveClient = Readonly<{
   generation: number;
 }>;
 type ParticipantResolver = Readonly<{
-  resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
+  resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null>;
 }>;
 
 function credentials(value: unknown): MatrixCredentials | null {
@@ -118,7 +118,8 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
     .map(candidate => {
       const summary = roomSummary(candidate, limits);
       const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
-        event.getType() === EventType.RoomMessage || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure());
+        (event.getType() === EventType.RoomMessage && event.getContent().msgtype === MsgType.Text)
+        || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure());
       const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
         ? latest.getClearContent()?.body : null;
       const unread = candidate.getUnreadNotificationCount();
@@ -433,10 +434,12 @@ class MatrixSubstrate implements RoomSubstrate {
       }
       let response: Awaited<ReturnType<typeof client.sendEvent>>;
       try {
-        response = await client.sendEvent(input.roomId, EventType.RoomMessage, {
-          msgtype: MsgType.Text,
-          body: input.content.body,
-        }, input.clientTxnId);
+        const payload = input.content.kind === 'agent_rename'
+            ? { msgtype: MsgType.Notice, body: input.content.body,
+                'com.khala.agent_participant_id': input.content.agentParticipantId }
+            : { msgtype: MsgType.Text, body: input.content.body };
+        response = await client.sendEvent(input.roomId, EventType.RoomMessage,
+          payload as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
       } catch (error) {
         await this.sendFence.finish(proof, acquired.permitId, { kind: 'unknown' });
         return effectFailure(error);
@@ -473,7 +476,13 @@ class MatrixSubstrate implements RoomSubstrate {
     }
     if (event.getType() !== EventType.RoomMessage) return null;
     const rawContent = event.getContent();
-    const content = decodeMessageContent({ v: 1, kind: 'text', body: rawContent.body }, this.limits);
+    if (rawContent.msgtype !== MsgType.Text && rawContent.msgtype !== MsgType.Notice) return null;
+    if (rawContent.msgtype === MsgType.Notice && typeof rawContent['com.khala.agent_participant_id'] !== 'string') return null;
+    const content = decodeMessageContent(rawContent.msgtype === MsgType.Notice
+      && typeof rawContent['com.khala.agent_participant_id'] === 'string'
+      ? { v: 1, kind: 'agent_rename', body: rawContent.body,
+          agentParticipantId: rawContent['com.khala.agent_participant_id'] }
+      : { v: 1, kind: 'text', body: rawContent.body }, this.limits);
     if (!content.ok) return null;
     if (authorDeviceId === null) return null;
     const transactionId = event.getUnsigned().transaction_id;
@@ -488,9 +497,9 @@ class MatrixSubstrate implements RoomSubstrate {
     };
   }
 
-  private async events(events: readonly MatrixEvent[]): Promise<readonly SubstrateEvent[]> {
+  private async events(events: readonly MatrixEvent[], roomId: RoomId): Promise<readonly SubstrateEvent[]> {
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
-    const mappings = await this.participants.resolve(senders);
+    const mappings = await this.participants.resolve(senders, undefined, roomId);
     const crypto = this.active().client.getCrypto();
     if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
     const devices = await crypto.getUserDeviceInfo(senders, true);
@@ -533,7 +542,7 @@ class MatrixSubstrate implements RoomSubstrate {
         hasMore = await this.active().client.paginateEventTimeline(timeline, { backwards: true, limit: input.limit });
         source = timeline.getEvents().filter(event => !previous.has(event.getId()));
       }
-      const page = await this.events(source);
+      const page = await this.events(source, input.roomId);
       return {
         kind: 'done',
         value: {
@@ -555,7 +564,7 @@ class MatrixSubstrate implements RoomSubstrate {
     let publishEpoch = 0;
     const publish = () => {
       const epoch = ++publishEpoch;
-      void this.events(room.getLiveTimeline().getEvents()).then(events => {
+      void this.events(room.getLiveTimeline().getEvents(), roomId).then(events => {
         if (!disposed && epoch === publishEpoch) {
           listener({ generation: active.generation, room: roomSummary(room, this.limits), events });
         }
@@ -578,6 +587,7 @@ export type MatrixBrowserPorts = Readonly<{
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
   participant(): ParticipantView | null;
+  roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
   /** Detect a sync race that restored a room after local cleanup resolved. */
@@ -680,6 +690,18 @@ export function createMatrixBrowserPorts(input: Readonly<{
 
   return {
     device, room, conversations, participant: () => runtime.active?.actor ?? null,
+    async roomParticipants(roomId, signal) {
+      const active = runtime.active;
+      if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;
+      try {
+        const joined = await active.client.getJoinedRoomMembers(roomId);
+        if (signal?.aborted || runtime.active !== active) return null;
+        const userIds = Object.keys(joined.joined);
+        const mapping = await input.participants.resolve(userIds, signal, roomId);
+        if (!mapping || !userIds.every(userId => mapping.has(userId)) || signal?.aborted || runtime.active !== active) return null;
+        return userIds.map(userId => mapping.get(userId)!).filter(Boolean);
+      } catch { return null; }
+    },
     roomPresent(ownerId, roomId) {
       const active = runtime.active;
       return active?.principal.ownerId === ownerId && active.client.getRoom(roomId) !== null;

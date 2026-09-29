@@ -48,6 +48,7 @@ export function registerHostedProductionRoutes(
       deviceAttestation: () => bootstrap.deviceAttestation,
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
+      participantDirectory: () => bootstrap.participantDirectory,
       revocationCleanup: () => bootstrap.revocationCleanup,
       roomSend: () => bootstrap.roomSend.agent,
     }),

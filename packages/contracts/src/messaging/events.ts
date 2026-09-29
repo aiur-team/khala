@@ -7,6 +7,7 @@ import {
 } from './decode';
 import { type DeviceId, type EventId, type ParticipantId, type RoomId, readId } from './ids';
 import { type ParticipantView, readParticipantView } from './identity';
+import { validateAgentName } from './agent-names';
 
 /**
  * Reference to one authored, immutable event. An edit is another event with another
@@ -22,8 +23,10 @@ export type EventRef = Readonly<{
   contentDigest: string;
 }>;
 
-/** Text message content. The body is retained exactly as authored. */
-export type MessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
+/** Authored content. Rename metadata remains inside the encrypted room event. */
+export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
+export type AgentRenameContent = Readonly<{ v: 1; kind: 'agent_rename'; agentParticipantId: ParticipantId; body: string }>;
+export type MessageContent = TextMessageContent | AgentRenameContent;
 
 /**
  * Finite public reasons a timeline event's content cannot be shown. Never a free-text
@@ -70,7 +73,15 @@ export type UnavailableEventRef = Readonly<{
 export type TimelineItem =
   | Readonly<{
       ref: EventRef;
-      content: MessageContent;
+      content: TextMessageContent;
+      participant: ParticipantView;
+      clientTxnId: string | null;
+      /** UTC RFC 3339, local receipt time; not an ordering authority. */
+      receivedAt: string;
+    }>
+  | Readonly<{
+      ref: EventRef;
+      content: AgentRenameContent;
       participant: ParticipantView;
       clientTxnId: string | null;
       /** UTC RFC 3339, local receipt time; not an ordering authority. */
@@ -108,7 +119,14 @@ export function isContentDigest(value: string): boolean {
  * `digestMessageContent` for a total result.
  */
 export function encodeMessageContent(content: MessageContent): Uint8Array {
-  if (content.v !== 1 || content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
+  if (content.v !== 1) throw new TypeError('unsupported message content version or kind');
+  if (content.kind === 'agent_rename') {
+    const participant = decodeWith(() => readId<'ParticipantId'>(content.agentParticipantId, 'agentParticipantId'));
+    const name = validateAgentName(content.body);
+    if (!participant.ok || !name.ok || name.name !== content.body) throw new TypeError('invalid agent rename content');
+    return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.agentParticipantId, content.body]));
+  }
+  if (content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
   const body = decodeWith(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
   if (!body.ok) throw new TypeError(`invalid message content: ${body.error.path} ${body.error.code}`);
   return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
@@ -184,6 +202,16 @@ export function decodeMessageContent(input: unknown, limits: ContentLimits): Dec
 }
 
 export function readMessageContent(input: unknown, path: string, limits: ContentLimits): MessageContent {
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)
+    && (input as Record<string, unknown>).kind === 'agent_rename') {
+    const r = object(input, path, ['v', 'kind', 'agentParticipantId', 'body']);
+    const v = version(r.field('v'), r.at('v'));
+    const kind = literal(r.field('kind'), r.at('kind'), ['agent_rename']);
+    const agentParticipantId = readId<'ParticipantId'>(r.field('agentParticipantId'), r.at('agentParticipantId'));
+    const name = validateAgentName(r.field('body'));
+    if (!name.ok || name.name !== r.field('body')) fail(r.at('body'), 'invalid_value');
+    return { v, kind, agentParticipantId, body: name.name };
+  }
   const r = object(input, path, ['v', 'kind', 'body']);
   return {
     v: version(r.field('v'), r.at('v')),

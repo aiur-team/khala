@@ -6,6 +6,8 @@ import {
   type MessageContent, type OwnerId, type ParticipantId, type ParticipantView,
   type RoomId, encodeMessageContent,
 } from '@khala/contracts/messaging/index';
+import { decodeParticipantId } from '@khala/contracts/messaging/ids';
+import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
@@ -220,9 +222,16 @@ export function decodeCanonical(bytes: Uint8Array, expectedDigest: string): Mess
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     const raw: unknown = JSON.parse(text);
-    if (!Array.isArray(raw) || raw.length !== 3 || raw[0] !== MESSAGE_ENCODING_V1
-      || raw[1] !== 'text' || typeof raw[2] !== 'string') return null;
-    const content: MessageContent = { v: 1, kind: 'text', body: raw[2] };
+    if (!Array.isArray(raw) || raw[0] !== MESSAGE_ENCODING_V1) return null;
+    let content: MessageContent;
+    if (raw.length === 3 && raw[1] === 'text' && typeof raw[2] === 'string') {
+      content = { v: 1, kind: 'text', body: raw[2] };
+    } else if (raw.length === 4 && raw[1] === 'agent_rename') {
+      const target = decodeParticipantId(raw[2]);
+      const name = validateAgentName(raw[3]);
+      if (!target.ok || !name.ok || name.name !== raw[3]) return null;
+      content = { v: 1, kind: 'agent_rename', agentParticipantId: target.value, body: name.name };
+    } else return null;
     return sameBytes(encodeMessageContent(content), bytes) ? content : null;
   } catch {
     return null;
@@ -802,7 +811,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             cause?.rootId ?? null, cause?.depth ?? null,
             authorBinding?.bindingId ?? null, authorBinding?.generation ?? null,
           );
-          db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
+          if (input.content.kind === 'text') db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
             SELECT ?, b.binding_id, b.generation, m.version FROM bindings b
             JOIN memberships member ON member.participant_id = b.participant_id AND member.channel_id = ?
             JOIN discovery_activations admission ON admission.binding_id = b.binding_id

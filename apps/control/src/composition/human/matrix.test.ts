@@ -5,6 +5,7 @@ import { createMatrixHumanServices } from './matrix';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
+import { createAgentIdentityDirectory } from '../agent/identity-directory';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import { ensureMessagingAccount } from '../../auth/provisioning';
 
@@ -372,6 +373,8 @@ describe('Matrix room sender inventory', () => {
     await bindings.putParticipant({ ownerId: binding.ownerId, roomId: room, agentParticipantId: binding.agentParticipantId,
       expectedBindingId: null, record: { binding, revokedGeneration: null, capability: null } });
     await createOwnerRoomIndex(store).activate(binding, room);
+    await createAgentIdentityDirectory(store).remember({ v: 1, roomId: room, matrixUserId: identity.userId,
+      participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
     const joined: Record<string, unknown> = { [user]: {}, [other]: {}, [identity.userId]: {} };
     const keys: Record<string, Record<string, unknown>> = {
       [user]: { WEB_OFFLINE: device(user, 'WEB_OFFLINE') },
@@ -391,6 +394,8 @@ describe('Matrix room sender inventory', () => {
         return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'private-roster-token' });
       }
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer private-roster-token');
+      if (path.includes('/state/m.room.member/')) return denied ? json(403, { errcode: 'M_FORBIDDEN' })
+        : json(200, { membership: 'join' });
       if (path.endsWith('/joined_members')) {
         expect(decodeURIComponent(path)).toContain(room);
         membershipReads++;
@@ -411,6 +416,21 @@ describe('Matrix room sender inventory', () => {
       changeMembers: () => { mutateMembership = true; },
       onQuery: (callback: () => Promise<void>) => { afterQuery = callback; } };
   }
+  it('resolves an agent with its indexed owner only for a joined human', async () => {
+    const f = await fixture();
+    const result = await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId]);
+    expect(result).toMatchObject({ kind: 'ok', participants: [
+      { matrixUserId: user, ownerId: principal.ownerId },
+      { matrixUserId: f.identity.userId, kind: 'agent', ownerId: principal.ownerId,
+        participantId: f.identity.participantId },
+    ] });
+    delete f.joined[f.identity.userId];
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', participantId: f.identity.participantId }] });
+    f.deny();
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toEqual({ kind: 'forbidden' });
+  });
   it('includes offline browser devices from every owner and the exact indexed connector, without tokens', async () => {
     const f = await fixture();
     const result = await f.matrix.inspectRoomSenderDevices(principal.ownerId, room);

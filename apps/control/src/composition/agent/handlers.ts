@@ -5,12 +5,14 @@ import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from './owner-device-proof';
 import { REVOCATION_CLEANUP_PATH, REVOCATION_RESULT_PATH } from '../human/revocation-cleanup';
 import { createLazyRoomSendRoutes } from '../human/room-send-routes';
+import { AGENT_PARTICIPANTS_PATH } from './participant-directory';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
   generation: number;
   agents: readonly Readonly<{
     participantId: string;
+    ownerId?: string;
     displayName: string;
     ownerDisplayName: string;
     connection: 'connected' | 'stale' | 'offline' | 'unknown';
@@ -44,6 +46,7 @@ export type AgentHandlerDependencies = Readonly<{
   channelDiscovery?: () => readonly RouteRegistration[];
   /** Connector-only grant exchange from `composeChannelAccessExchange`. */
   channelAccessExchange?: () => readonly RouteRegistration[];
+  participantDirectory?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -63,6 +66,10 @@ const unavailableStatus: RouteRegistration = Object.freeze({
   async handle() {
     return json(503, { code: 'feature_unavailable' });
   },
+});
+const unavailableParticipants: RouteRegistration = Object.freeze({
+  path: AGENT_PARTICIPANTS_PATH, methods: Object.freeze(['POST']),
+  async handle() { return json(503, { code: 'feature_unavailable' }); },
 });
 
 const unavailableBootstrapRoutes = Object.freeze([
@@ -159,6 +166,7 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
     generation: snapshot.generation,
     agents: snapshot.agents.map(agent => ({
       participantId: agent.participantId,
+      ...(agent.ownerId ? { ownerId: agent.ownerId } : {}),
       displayName: agent.displayName,
       ownerDisplayName: agent.ownerDisplayName,
       connection: agent.connection,
@@ -176,6 +184,7 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
   if (!dependencies) return Object.freeze([
     unavailableStatus,
+    unavailableParticipants,
     ...unavailableBootstrapRoutes,
     ...unavailableDeviceAttestationRoutes,
     ...unavailableOwnerMailboxRoutes().agent,
@@ -203,6 +212,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
   });
   return Object.freeze([
     status,
+    ...(dependencies.participantDirectory?.() ?? [unavailableParticipants]),
     ...(dependencies.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies.deviceAttestation?.() ?? unavailableDeviceAttestationRoutes),
     ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),

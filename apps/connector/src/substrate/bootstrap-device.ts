@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ParticipantId } from '@khala/contracts/messaging/index';
+import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 import type { ConnectorDevicePort, MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { openMatrixConnectorSubstrate, type MatrixConnectorSubstrate } from './matrix';
 
@@ -13,6 +14,8 @@ export function createMatrixBootstrapDevice(input: Readonly<{
   browserBundleDirectory?: string;
   browserDriverDirectory?: string;
   open?: typeof openMatrixConnectorSubstrate;
+  resolveParticipants?: (userIds: readonly string[]) => Promise<ReadonlyMap<string, ResolvedAgentParticipant> | null>;
+  onRename?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onRename'];
 }>): Readonly<{
   devices: ConnectorDevicePort;
   fingerprint(): string | null;
@@ -83,6 +86,8 @@ export function createMatrixBootstrapDevice(input: Readonly<{
       profileDirectory: input.profileDirectory,
       participantIdFor: userId => userId === candidate.userId ? agentParticipantId
         : userId === candidate.ownerUserId ? candidate.ownerParticipantId as ParticipantId : null,
+      ...(input.resolveParticipants ? { resolveParticipants: input.resolveParticipants } : {}),
+      ...(input.onRename ? { onRename: input.onRename } : {}),
       ...(input.chromiumExecutablePath ? { chromiumExecutablePath: input.chromiumExecutablePath } : {}),
       ...(input.browserBundleDirectory ? { browserBundleDirectory: input.browserBundleDirectory } : {}),
       ...(input.browserDriverDirectory ? { browserDriverDirectory: input.browserDriverDirectory } : {}),

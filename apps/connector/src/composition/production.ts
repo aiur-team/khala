@@ -34,6 +34,8 @@ import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowle
 import type { HarnessPort } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
+import { createAgentParticipantLookup } from './agent/participant-directory';
+import { renameDelivery } from './agent/rename-delivery';
 import type { AgentListeningModeSetInput } from '@khala/connector/agent/listening-mode';
 
 function productionLimits() {
@@ -144,9 +146,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         || acknowledgement.bindingId !== bindingId || acknowledgement.generation !== generation) {
         throw new Error('acknowledgement_binding_mismatch');
       }
+      const releases = acknowledgement.releaseIds.filter(releaseId => !/^rename_[0-9a-f]{64}$/u.test(releaseId));
+      if (releases.length === 0) return;
       const result = await acknowledgementRecorder.recordBatchAcknowledgement({
         principal: { bindingId: binding.bindingId, generation: binding.generation },
-        releaseIds: acknowledgement.releaseIds as never,
+        releaseIds: releases as never,
       });
       if (result.kind === 'refused') throw new Error('acknowledgement_refused');
     },
@@ -158,6 +162,21 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
+    resolveParticipants: async userIds => {
+      if (!binding || !signer || closed || remoteDenied || deliveryStopped) return null;
+      const session = await matrixSession();
+      return createAgentParticipantLookup({ appOrigin: input.appOrigin, binding, roomId: session.roomId,
+        signer, capability: () => capabilityFor(binding!).ensure() })(userIds);
+    },
+    onRename: async event => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      try {
+        const inbox = await openHostedInbox(binding.bindingId, binding.generation);
+        const result = await inbox.enqueue(renameDelivery(binding, event));
+        if (result === 'appended') await inbox.notifyListener('released').catch(() => 'unavailable' as const);
+        return true;
+      } catch { return false; }
+    },
   });
   let closed = false;
   let binding: SessionBinding | null = null;

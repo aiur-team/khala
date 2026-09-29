@@ -4,6 +4,7 @@ import {
   type HarnessCapabilities,
   OPENCODE_PLUGIN_ROUTE_LABEL,
   type ParticipantId,
+  type OwnerId,
   type SessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
@@ -16,6 +17,7 @@ export type AgentPresenceSnapshot = Readonly<{
   generation: number;
   agents: readonly Readonly<{
     participantId: ParticipantId;
+    ownerId?: OwnerId;
     displayName: string;
     ownerDisplayName: string;
     connection: PresenceConnection;
@@ -120,6 +122,7 @@ export function createAgentPresenceSource(
         generation: binding.generation,
         agents: [{
           participantId: binding.agentParticipantId,
+          ownerId: binding.ownerId,
           displayName: identity.displayName,
           ownerDisplayName: identity.ownerDisplayName,
           connection: connection(current, lastReceipt, now(), staleAfterMs),

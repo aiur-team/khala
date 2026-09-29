@@ -789,6 +789,18 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
+    if (content.value.kind === 'agent_rename') {
+      const rename = content.value;
+      const roster = store.roster(params.channelId as RoomId);
+      const target = roster.kind === 'done'
+        ? roster.participants.find(participant => participant.participantId === rename.agentParticipantId)
+        : null;
+      if (principal?.kind !== 'human' || !target || target.kind !== 'agent'
+        || target.ownerId !== principal.human.ownerId) {
+        fail(response, failure(403, 'forbidden'));
+        return;
+      }
+    }
     const author = actor(principal!);
     const clientTxnId = body.clientTxnId;
     // A send blocked on its body while Stop ran can never commit once Stop has reported success.
@@ -808,7 +820,8 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       // An idle TUI may never call a Khala MCP tool. Peer arrivals pass the
       // local admitted-peer budget under the recipient's Stop barrier before a
       // content-free native notice; a human arrival has its existing route.
-      if (result.kind === 'stored' && (principal?.kind === 'human' || principal?.kind === 'binding')
+      if (result.kind === 'stored' && content.value.kind === 'text'
+        && (principal?.kind === 'human' || principal?.kind === 'binding')
         && options.stop?.activatedBindings && options.bindingModes?.idleWake && options.bindingModes.idleSession) {
         try {
           const bindings = options.stop.activatedBindings(params.channelId as RoomId);

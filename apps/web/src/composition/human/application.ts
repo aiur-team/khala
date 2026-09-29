@@ -38,6 +38,8 @@ export interface HumanApplicationPorts {
   readonly limits: ContentLimits;
   /** Authenticated participant mapping supplied by the live messaging adapter. */
   readonly participant?: () => ParticipantView | null;
+  /** Joined Matrix members resolved through the authenticated participant directory. */
+  readonly roomParticipants?: (roomId: RoomId, signal?: AbortSignal) => Promise<readonly ParticipantView[] | null>;
   readonly closure?: (roomId: RoomId) => ChannelClosureContext;
   readonly revocation?: (roomId: RoomId) => RevocationPort & Readonly<{
     targets(): Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {

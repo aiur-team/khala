@@ -267,7 +267,8 @@ describe('admission route handlers', () => {
         publishedFingerprint: null,
       },
     }));
-    const state = services({ messaging: { issue, resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })) } });
+    const state = services({ messaging: { issue, resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })),
+      resolveRoomParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })) } });
     const registrations = createHumanHandlers(async () => state);
 
     const response = await route(registrations, MATRIX_SESSION_PATH).handle(request(MATRIX_SESSION_PATH, {
@@ -293,6 +294,7 @@ describe('admission route handlers', () => {
     const state = services({ messaging: {
       issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
       resolveParticipants,
+      resolveRoomParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })),
     } });
     const registrations = createHumanHandlers(async () => state);
 
@@ -303,6 +305,18 @@ describe('admission route handlers', () => {
     expect(response.status).toBe(200);
     expect(resolveParticipants).toHaveBeenCalledWith([userId]);
     expect(await body(response)).toMatchObject({ participants: [{ matrixUserId: userId, ownerId: principal.ownerId }] });
+  });
+
+  it('scopes agent participant lookup to the authenticated human and room', async () => {
+    const resolveRoomParticipants = vi.fn(async () => ({ kind: 'forbidden' as const }));
+    const state = services({ messaging: { issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
+      resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })), resolveRoomParticipants } });
+    const registrations = createHumanHandlers(async () => state);
+    const response = await route(registrations, MATRIX_PARTICIPANTS_PATH).handle(request(MATRIX_PARTICIPANTS_PATH, {
+      method: 'POST', body: JSON.stringify({ userIds: ['@khala_a_x:matrix.example.test'], roomId: 'room_1' }),
+    }));
+    expect(response.status).toBe(403);
+    expect(resolveRoomParticipants).toHaveBeenCalledWith(principal.ownerId, 'room_1', ['@khala_a_x:matrix.example.test']);
   });
 
   it('authenticates inspection and maps dependency failures to finite unavailable responses', async () => {

@@ -6,6 +6,7 @@ import {
 } from '@khala/contracts/delivery/index';
 import {
   decodeParticipantId,
+  decodeOwnerId,
   type ParticipantId,
   type RoomId,
 } from '@khala/contracts/messaging/ids';
@@ -37,6 +38,7 @@ const LEGACY_AGENT_KEYS = [
   'participantId', 'displayName', 'ownerDisplayName', 'connection', 'routeLabel', 'lastReceipt', 'installCommand',
 ] as const;
 const AGENT_KEYS = [...LEGACY_AGENT_KEYS, 'acknowledgement'] as const;
+const OWNED_AGENT_KEYS = [...AGENT_KEYS, 'ownerId'] as const;
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -80,13 +82,15 @@ function decodeSnapshot(value: unknown): Readonly<{
   }
   const commands: { participantId: ParticipantId; command: string }[] = [];
   const agents: AgentPresence[] = value.agents.map(raw => {
-    if (!object(raw) || !(exactKeys(raw, AGENT_KEYS) || exactKeys(raw, LEGACY_AGENT_KEYS))) {
+    if (!object(raw) || !(exactKeys(raw, AGENT_KEYS) || exactKeys(raw, LEGACY_AGENT_KEYS)
+      || exactKeys(raw, OWNED_AGENT_KEYS))) {
       throw new TypeError('invalid_agent_status');
     }
     const participant = decodeParticipantId(raw.participantId);
+    const owner = Object.hasOwn(raw, 'ownerId') ? decodeOwnerId(raw.ownerId) : null;
     const lastReceipt = receipt(raw.lastReceipt);
     const support = acknowledgement(raw);
-    if (!participant.ok || !visibleText(raw.displayName) || !visibleText(raw.ownerDisplayName)
+    if (!participant.ok || (owner !== null && !owner.ok) || !visibleText(raw.displayName) || !visibleText(raw.ownerDisplayName)
       || typeof raw.connection !== 'string' || !(CONNECTIONS as readonly string[]).includes(raw.connection)
       || !visibleText(raw.routeLabel) || lastReceipt === undefined || support === undefined
       || !visibleText(raw.installCommand)) {
@@ -95,6 +99,7 @@ function decodeSnapshot(value: unknown): Readonly<{
     commands.push({ participantId: participant.value, command: raw.installCommand });
     return {
       participantId: participant.value,
+      ...(owner?.ok ? { ownerId: owner.value } : {}),
       displayName: raw.displayName,
       ownerDisplayName: raw.ownerDisplayName,
       connection: raw.connection as AgentConnectionState,

@@ -196,6 +196,18 @@ describe('createHumanBrowserApi', () => {
     });
   });
 
+  it('resolves agent identity inside an authenticated room scope', async () => {
+    const userId = '@khala_a_test:matrix.example.test';
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: [{ matrixUserId: userId,
+        participantId: 'agent_420', ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' }] }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    const participants = await api.participants.resolve([userId], undefined, 'room_1' as RoomId);
+    expect(participants?.get(userId)).toMatchObject({ kind: 'agent', participantId: 'agent_420', ownerId: 'owner_bob' });
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ userIds: [userId], roomId: 'room_1' }));
+  });
+
   it('binds the channel-request inbox and decisions to human-cookie routes', async () => {
     const requestHandle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
     const projection = {

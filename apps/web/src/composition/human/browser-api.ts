@@ -79,7 +79,7 @@ export type HumanBrowserApi = Readonly<{
   admission: AdmissionPort;
   credentials: CredentialSource;
   participants: Readonly<{
-    resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
+    resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
   channelAccess: ChannelAccessInboxPort;
   closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
@@ -317,19 +317,20 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   };
 
   const participants = {
-    async resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null> {
+    async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null> {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
-      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds }, signal);
+      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds, ...(roomId ? { roomId } : {}) }, signal);
       if (response === null || response.status !== 200) return null;
       const envelope = await jsonObject(response);
       if (envelope === null || !hasExactKeys(envelope, ['participants']) || !Array.isArray(envelope.participants)) return null;
       const resolved = new Map<string, ParticipantView>();
       for (const value of envelope.participants) {
-        if (!isObject(value) || !hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName'])
+        if (!isObject(value) || !(hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName'])
+          || hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName', 'kind']))
           || typeof value.matrixUserId !== 'string') return null;
         const participant = decodeParticipantView({
           participantId: value.participantId,
-          kind: 'human',
+          kind: value.kind ?? 'human',
           ownerId: value.ownerId,
           displayName: value.displayName,
           deviceIds: [],

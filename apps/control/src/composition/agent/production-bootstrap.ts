@@ -19,6 +19,7 @@ import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoom
 import { createDeviceAdmissionRoutes, createLazyDeviceAdmissionRoutes } from '../human/device-admission-routes';
 import { senderIdFor } from '../human/room-send-fence';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
+import { AGENT_PARTICIPANTS_PATH, createAgentParticipantDirectoryRoute } from './participant-directory';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -137,6 +138,9 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
     });
+    const participantDirectory = createAgentParticipantDirectoryRoute({
+      store: active.store, capabilities: bootstrap.capabilities, sessions: active.matrix.sessions,
+    });
     const revocation = createOwnerRevocationRoutes({
       auth: active.auth, store: active.store, capabilities: bootstrap.capabilities,
       deviceIdentityKey: binding => matrixAgents.publishedDeviceIdentityKey(binding),
@@ -190,7 +194,8 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       currentPosition: async () => null,
       distributionReady: async () => false,
     });
-    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup, roomSend, deviceAdmission };
+    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, participantDirectory,
+      revocation, revocationCleanup, roomSend, deviceAdmission };
   };
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
@@ -198,6 +203,8 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
     ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),
+    participantDirectory: [{ path: AGENT_PARTICIPANTS_PATH, methods: ['POST'],
+      handle: (request: Request) => compose().participantDirectory.handle(request) }],
     revocation: createLazyOwnerRevocationRoutes(() => compose().revocation),
     revocationCleanup: createLazyAgentRevocationCleanupRoutes(() => compose().revocationCleanup),
     roomSend: {

@@ -56,6 +56,44 @@ function fakeChannelPort(pages: Record<string, TimelineItem[]> = {}): { port: Ch
 const room = { roomId, title: null, membership: 'joined' as const, revision: 'rev_1' };
 
 describe('createTimelineController', () => {
+  it('scans older history for name replay without expanding visible pagination', async () => {
+    const port: Pick<ChannelPort, 'observe' | 'timeline'> = {
+      observe: () => () => {},
+      timeline: async ({ cursor }) => cursor === null
+        ? ok({ items: [item('E3', 'alice', 'third'), item('E4', 'alice', 'fourth')], nextCursor: 'C1', snapshotRevision: 'rev_1' })
+        : ok({ items: [item('E1', 'alice', 'first'), item('E2', 'alice', 'second')], nextCursor: null, snapshotRevision: 'rev_1' }),
+    };
+    const controller = createTimelineController(port as ChannelPort, roomId, { generation: 1, pageSize: 2 });
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(controller.getSnapshot().items.map(entry => entry.ref.eventId)).toEqual(['E3', 'E4']);
+    expect(controller.getSnapshot().nameHistory?.map(entry => entry.ref.eventId)).toEqual(['E1', 'E2', 'E3', 'E4']);
+    expect(controller.getSnapshot().namesReady).toBe(true);
+    expect(controller.getSnapshot().nextCursor).not.toBeNull();
+    await controller.loadOlder();
+    expect(controller.getSnapshot().items.map(entry => entry.ref.eventId)).toEqual(['E1', 'E2', 'E3', 'E4']);
+    expect(controller.getSnapshot().nextCursor).toBeNull();
+    controller.dispose();
+  });
+
+  it('stops a name scan when history repeats its cursor', async () => {
+    let reads = 0;
+    const port: Pick<ChannelPort, 'observe' | 'timeline'> = {
+      observe: () => () => {},
+      timeline: async ({ cursor }) => {
+        reads++;
+        return ok({ items: [item('E1', 'alice', 'first')], nextCursor: cursor ?? 'C1', snapshotRevision: 'rev_1' });
+      },
+    };
+    const controller = createTimelineController(port as ChannelPort, roomId, { generation: 1 });
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(reads).toBe(2);
+    expect(controller.getSnapshot().phase).toBe('partial');
+    expect(controller.getSnapshot().namesReady).toBe(false);
+    controller.dispose();
+  });
+
   it('merges an older page and a later live snapshot by event ID, rendering shared items once', async () => {
     const { port, emit } = fakeChannelPort({ first: [item('E1', 'alice', 'first'), item('E2', 'alice', 'second')] });
     const controller = createTimelineController(port, roomId, { generation: 1 });

@@ -1430,6 +1430,28 @@ describe('internal channel discovery', () => {
         const status = await createInternalClient({ descriptorPath: file }).status();
         expect(status).toMatchObject({ connected: true, binding: { bindingId: grants[index]!.bindingId } });
       }
+
+      const send = (headers: Record<string, string>, clientTxnId: string, content: Record<string, unknown>) =>
+        call(a.w.server.port, { method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers,
+          body: { clientTxnId, content } });
+      const targetId = `participant_${a.agent.principal}`;
+      expect((await send(a.w.human, 'txn-before-name', { v: 1, kind: 'text', body: 'before rename' })).status).toBe(201);
+      const rename = { v: 1, kind: 'agent_rename', agentParticipantId: targetId, body: 'Dolan' };
+      expect((await send(a.w.human, 'txn-name', rename)).status).toBe(201);
+      expect((await send(a.w.human, 'txn-name', rename)).status).toBe(200);
+      expect((await send(bearer(grants[1]!.bindingCapability!), 'txn-not-owner-name', rename)).status).toBe(403);
+      expect((await send(a.w.human, 'txn-after-name', { v: 1, kind: 'text', body: 'after rename' })).status).toBe(201);
+      for (const grant of grants) {
+        const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`,
+          headers: bearer(grant.bindingCapability!) });
+        expect(timeline.status).toBe(200);
+        const events = timeline.json.events as Array<{ content: { kind: string; body: string }; participant: { participantId: string } }>;
+        expect(events.map(event => event.content.body).filter(body => body === 'Dolan')).toEqual(['Dolan']);
+        expect(events.findIndex(event => event.content.body === 'before rename')).toBeLessThan(events.findIndex(event => event.content.body === 'Dolan'));
+        expect(events.findIndex(event => event.content.body === 'Dolan')).toBeLessThan(events.findIndex(event => event.content.body === 'after rename'));
+        expect(events.find(event => event.content.body === 'Dolan')?.participant.participantId)
+          .toBe(events.find(event => event.content.body === 'before rename')?.participant.participantId);
+      }
     });
 
     // Wrong-implementation test (#407): an installed entry that falls back to `active.json`
