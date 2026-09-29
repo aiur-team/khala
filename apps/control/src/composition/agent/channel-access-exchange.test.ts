@@ -28,6 +28,7 @@ async function setup() {
   const caller = { proofKeyThumbprint: body.proofKey.thumbprint, authenticated: true };
   const resumed: unknown[] = [];
   const bindingState = { revoked: false };
+  const approvalState: { current: 'current' | 'revoked' | 'unavailable' } = { current: 'current' };
   const binding = {
     v: 1, bindingId: 'bnd_1', ownerId: 'owner_1', agentParticipantId: 'agent_1',
     deviceId: DEVICE, harness: 'proof-key', sessionId: requester.principal, generation: 3,
@@ -57,6 +58,7 @@ async function setup() {
       fulfillment: journal.service.fulfillment,
       provider,
       bindings,
+      approval: async () => approvalState.current,
       clock: journal.clock,
       authenticateConnector: async () => (caller.authenticated ? {
         kind: 'authenticated',
@@ -79,6 +81,7 @@ async function setup() {
     caller,
     resumed,
     bindingState,
+    approvalState,
     /** The connector redeems the sealed grant once; only this records that the operation was admitted. */
     async redeemed() {
       const issuer = createExchangeGrantIssuer({ store: journal.backing.store, clock: journal.clock });
@@ -98,7 +101,11 @@ async function setup() {
         proofKeyThumbprint: bound.proofKeyThumbprint,
       });
       expect(redeemed.kind).toBe('redeemed');
-      expect(await recordChannelAccessBinding(journal.backing.store, bound, binding.bindingId)).toBe('applied');
+      expect(await recordChannelAccessBinding(journal.backing.store, bound, binding.bindingId, {
+        baseUrl: 'https://matrix.example.test', userId: '@agent:matrix.example.test',
+        deviceId: DEVICE, accessToken: 'original-matrix-token', roomId: '!room:matrix.example.test',
+        ownerUserId: '@owner:matrix.example.test', ownerParticipantId: 'human_owner',
+      }, new Date(journal.clock() + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS).toISOString())).toBe('applied');
     },
     resume: (overrides: Record<string, unknown> = {}) => route('/api/agent/channel-access/resume').handle(new Request(
       `${requester.origin}/api/agent/channel-access/resume?operation=op_access_1`,
@@ -231,9 +238,12 @@ describe('composed channel-access resume by operation', () => {
     const second = await h.resume();
     expect(first.status).toBe(200);
     expect(first.headers.get('cache-control')).toBe('no-store');
-    const a = await first.json() as { binding: unknown; adapter_capability: Record<string, unknown> };
+    const a = await first.json() as { binding: unknown; adapter_capability: Record<string, unknown>;
+      matrix_session: { accessToken: string; deviceId: string } };
     const b = await second.json() as typeof a;
     expect(a.binding).toEqual(b.binding);
+    expect(a.matrix_session).toEqual(b.matrix_session);
+    expect(a.matrix_session).toMatchObject({ accessToken: 'original-matrix-token', deviceId: DEVICE });
     expect(a.binding).toMatchObject({ bindingId: 'bnd_1', deviceId: DEVICE, generation: 3 });
     expect(a.adapter_capability).toMatchObject({
       token_type: 'DPoP', scope: ['publish_own', 'receive_released', 'ack_delivery'], binding_id: 'bnd_1', generation: 3,
@@ -283,6 +293,15 @@ describe('composed channel-access resume by operation', () => {
     expect((await (await setup()).resume()).status).toBe(409);
   });
 
+  it('fails closed when an admitted operation loses its exact binding record', async () => {
+    const h = await admitted();
+    const key = [...h.journal.backing.records.keys()].find(value => value.startsWith('channel-access-operation-binding/'));
+    expect(key).toBeDefined();
+    h.journal.backing.records.delete(key!);
+    expect((await h.resume()).status).toBe(409);
+    expect(h.resumed).toHaveLength(0);
+  });
+
   it('refuses a body that disagrees with the authenticated connector', async () => {
     const h = await admitted();
     for (const override of [{ deviceId: 'device_other' }, { sessionGeneration: 4 }, { origin: 'https://evil.example' }]) {
@@ -320,6 +339,11 @@ describe('composed channel-access resume by operation', () => {
     const refused = await binding.resume();
     expect(refused.status).toBe(410);
     expect((await refused.json() as { code: string }).code).toBe('closed');
+
+    const approval = await admitted();
+    approval.approvalState.current = 'revoked';
+    expect((await approval.resume()).status).toBe(410);
+    expect(approval.resumed).toHaveLength(0);
   });
 
   it('has nothing to resume once readiness was acknowledged', async () => {

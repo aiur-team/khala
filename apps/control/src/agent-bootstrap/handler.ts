@@ -595,12 +595,12 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     // The store already made the spend durable; admission and binding converge on stable
     // operation ids, so a retry resumes here without a second spend.
     const tracker: { redemption: Redemption | null } = { redemption: { operationId: presented.operationId, admitted: null, issued: false } };
-    const saveRedemption = async (next: Redemption, bindingId?: string) => {
+    const saveRedemption = async (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => {
       if (next.issued) {
         if (!bindingId) return 'unavailable';
         // The store spends the issuance too, so a later retry cannot mint a second capability.
         const marked = await safeCall(() => grants.markIssued({ grant: presented.grant, operationId: presented.operationId,
-          bindingId }));
+          bindingId, ...(matrixSession === undefined ? {} : { matrixSession }) }));
         if (marked === 'replayed') return 'conflict';
         if (marked !== 'applied') return 'unavailable';
       }
@@ -613,7 +613,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   async function finishRedeem(
     held: GrantRecord,
     tracker: { redemption: Redemption | null },
-    saveRedemption: (next: Redemption, bindingId?: string) => Promise<string>,
+    saveRedemption: (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => Promise<string>,
   ): Promise<Response> {
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
@@ -700,7 +700,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       { code: pinned === 'conflict' ? 'binding_conflict' : 'unavailable' });
 
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
-    const spent = await saveRedemption({ ...tracker.redemption!, issued: true }, bound.binding.bindingId);
+    const spent = await saveRedemption({ ...tracker.redemption!, issued: true }, bound.binding.bindingId, matrixSession);
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
     if (spent !== 'applied') return json(503, { code: 'unavailable' });
     const capability = await issueCapability(ownerId, address.roomId, bound.binding, held.jkt);

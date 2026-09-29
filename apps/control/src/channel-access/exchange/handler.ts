@@ -167,7 +167,7 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
       .resume(body, { signal: request.signal }));
     if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
     if (result.kind === 'rejected') return mapRejection(result.code);
-    const { binding, capability } = result.value;
+    const { binding, capability, matrixSession } = result.value;
     return json(200, {
       binding,
       adapter_capability: {
@@ -178,6 +178,7 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
         generation: binding.generation,
         expires_at: capability.expiresAt,
       },
+      matrix_session: matrixSession,
     });
   }
 

@@ -15,7 +15,7 @@ import type {
   StableAgentPrincipal,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
-import type { AdapterAction, AdapterCapabilities } from '../../agent-bootstrap/handler';
+import type { AdapterAction, AdapterCapabilities, AgentMatrixSession } from '../../agent-bootstrap/handler';
 import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import type { ExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { findChannelAccessBinding } from './channel-access-binding';
@@ -61,6 +61,7 @@ export type ChannelAccessResumeRequest = Readonly<{
 export type ResumedChannelAccess = Readonly<{
   binding: SessionBinding;
   capability: Readonly<{ token: string; scope: readonly AdapterAction[]; expiresAt: number }>;
+  matrixSession: AgentMatrixSession;
 }>;
 
 export type ChannelAccessResumeResult = OperationResult<ResumedChannelAccess, GrantExchangeRejection>;
@@ -78,7 +79,8 @@ export function createChannelAccessResumeService(deps: Readonly<{
   issuer: Pick<ExchangeGrantIssuer, 'wasRedeemed'>;
   bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
   store: ControlStore;
-  approval?: (record: ResumableExchange, ownerId: string, channelRef: string) => Promise<'current' | 'revoked' | 'unavailable'>;
+  approval?: (record: ResumableExchange, ownerId: string, channelRef: string,
+    matrixSession: AgentMatrixSession) => Promise<'current' | 'revoked' | 'unavailable'>;
   clock: TrustedClock;
 }>): ChannelAccessResumeService {
   const { journal } = deps;
@@ -134,9 +136,11 @@ export function createChannelAccessResumeService(deps: Readonly<{
       || issued.channelRef !== authorization.channelRef || (input.bindingId && input.bindingId !== mapped.value.bindingId)) {
       return rejected('operation_mismatch');
     }
+    const matrixSession = mapped.value.matrixSession;
+    if (matrixSession.deviceId !== record.deviceId || !matrixSession.accessToken) return rejected('operation_mismatch');
     const currentApproval = deps.approval;
     if (currentApproval) {
-      const approval = await safe(() => currentApproval(record, authorization.ownerId, authorization.channelRef));
+      const approval = await safe(() => currentApproval(record, authorization.ownerId, authorization.channelRef, matrixSession));
       if (approval === null || approval === 'unavailable') return unavailable();
       if (approval !== 'current') return rejected('closed');
     }
@@ -155,7 +159,7 @@ export function createChannelAccessResumeService(deps: Readonly<{
     if (resumed.binding.bindingId !== bindingId || resumed.binding.harness !== 'proof-key'
       || resumed.binding.sessionId !== record.requester || resumed.binding.generation !== record.sessionGeneration
       || resumed.binding.deviceId !== record.deviceId) return rejected('operation_mismatch');
-    return { kind: 'ok', value: { binding: resumed.binding, capability: resumed.capability } };
+    return { kind: 'ok', value: { binding: resumed.binding, capability: resumed.capability, matrixSession } };
   }
 
   return Object.freeze({
