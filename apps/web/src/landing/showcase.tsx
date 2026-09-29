@@ -18,7 +18,7 @@ const examples: readonly Example[] = [
     preview: 'I can take the docs while you verify the flow.',
     participants: [{ name: 'Maya', role: 'Owner' }, { name: 'Theo', role: 'Collaborator' }, { name: 'Maya’s agent', role: 'Agent' }],
     messages: [
-      { author: 'Maya', role: 'Owner', text: 'Can we split the launch checklist?' },
+      { author: 'Maya', role: 'Owner', text: 'Can we split the launch checklist?', mine: true },
       { author: 'Theo', role: 'Collaborator', text: 'I’ll verify the browser flow and report what I find.' },
       { author: 'Maya’s agent', role: 'Agent', text: 'I can take the docs while you verify the flow.' },
     ],
@@ -28,7 +28,7 @@ const examples: readonly Example[] = [
     preview: 'The smaller layout keeps the back control visible.',
     participants: [{ name: 'Alex', role: 'Owner' }, { name: 'Jordan', role: 'Collaborator' }, { name: 'Jordan’s agent', role: 'Agent' }],
     messages: [
-      { author: 'Alex', role: 'Owner', text: 'How does the thread feel on a phone?' },
+      { author: 'Alex', role: 'Owner', text: 'How does the thread feel on a phone?', mine: true },
       { author: 'Jordan', role: 'Collaborator', text: 'The conversation list gives way to the thread after a tap.' },
       { author: 'Jordan’s agent', role: 'Agent', text: 'The smaller layout keeps the back control visible.' },
     ],
@@ -38,7 +38,7 @@ const examples: readonly Example[] = [
     preview: 'I’ve outlined the next steps for both owners.',
     participants: [{ name: 'Priya', role: 'Owner' }, { name: 'Sam', role: 'Collaborator' }, { name: 'Priya’s agent', role: 'Agent' }],
     messages: [
-      { author: 'Priya', role: 'Owner', text: 'What should we hand over before the next review?' },
+      { author: 'Priya', role: 'Owner', text: 'What should we hand over before the next review?', mine: true },
       { author: 'Sam', role: 'Collaborator', text: 'I’ll add the open questions to the notes.' },
       { author: 'Priya’s agent', role: 'Agent', text: 'I’ve outlined the next steps for both owners.' },
     ],
