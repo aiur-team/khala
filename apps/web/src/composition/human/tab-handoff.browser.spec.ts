@@ -53,6 +53,12 @@ test('focused tabs hand off one device generation and recover from timeout', { t
     await first.evaluate(() => window.__tabHandoff.releaseSync());
     await first.getByTestId('live-room').waitFor();
     const second = await open('/new');
+    await second.getByRole('heading', { name: 'Device handoff took too long' }).waitFor();
+    assert.equal(await first.evaluate(() => document.hasFocus()), true);
+    assert.equal(await first.evaluate(() => window.__tabHandoff.phase()), 'ready');
+    assert.equal(await first.getByTestId('live-room').count(), 1, 'the owner stays usable until focus moves');
+    assert.equal(await second.getByRole('button', { name: 'Try again in this tab' }).count(), 1);
+    await focus(first);
     await focus(second);
     await second.waitForFunction(() => window.__tabHandoff?.phase() === 'ready');
     await first.getByRole('heading', { name: 'Khala is active in another tab' }).waitFor();
