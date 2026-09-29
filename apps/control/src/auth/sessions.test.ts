@@ -26,6 +26,11 @@ describe('authenticateRequest', () => {
     expect(await h.service.authenticateRequest(request('/'))).toEqual({ kind: 'signed_out' });
     expect(await h.service.authenticateRequest(request('/', { cookies: ['__Host-khala_session=short'] }))).toEqual({ kind: 'signed_out' });
     expect(await h.service.authenticateRequest(request('/', { cookies: [`__Host-khala_session=${'A'.repeat(43)}`] }))).toEqual({ kind: 'signed_out' });
+    expect(h.logs).toEqual([
+      { event: 'authenticate', code: 'cookie_absent', requestId: null },
+      { event: 'authenticate', code: 'cookie_invalid', requestId: null },
+      { event: 'authenticate', code: 'record_absent', requestId: null },
+    ]);
   });
 
   it('treats an expired session as signed out', async () => {
@@ -62,6 +67,10 @@ describe('authenticateRequest', () => {
     expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'unavailable' });
     h.store.inject('read', 'throw');
     expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'unavailable' });
+    expect(h.logs).toEqual([
+      { event: 'authenticate', code: 'store_unavailable', requestId: null },
+      { event: 'authenticate', code: 'store_unavailable', requestId: null },
+    ]);
     expect(JSON.stringify(h.logs)).not.toContain('secret-cookie-value');
   });
 

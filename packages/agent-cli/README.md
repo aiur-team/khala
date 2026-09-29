@@ -41,7 +41,7 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is three self-contained files plus the internal browser bundle. `scripts/bundle.mjs` (run by
+`@aiur/khala` is not published to npm yet. Use the [source install in the primary quickstart](../../README.md#open-a-local-channel-with-two-existing-agents). The release tarball contains three self-contained files plus the internal browser bundle. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
 including the workspace connector and contracts, into `dist/khala.js`. It
 bundles the internal application's composition entry
@@ -50,12 +50,7 @@ bundles the internal application's composition entry
 no other command loads the local store, server, or `node:sqlite`. It bundles
 the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
 `@aiur/khala/opencode` export. It copies the web build's `apps/web/dist/internal-web/` (building it with `pnpm --filter @khala/web build:internal` when absent) to `dist/internal-web/`, which `khala internal` serves. The tarball carries only those files, this README and `package.json`; it declares no
-runtime dependencies, so installing it fetches nothing and runs no lifecycle
-script. On Node 22.23.2 or later:
-
-```text
-npx @aiur/khala status
-```
+runtime dependencies, so installing the local tarball fetches nothing and runs no consumer lifecycle script. On Node 22.23.2 or later, the installed `khala status` command runs without setup.
 
 The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
 inside this workspace, under the opt-in `khala-source` condition; a consumer of
@@ -88,6 +83,8 @@ a trusted publisher bound to that workflow file and its `npm-publish`
 environment before the first release.
 
 ## Internal mode
+
+For the shortest two-agent manual path, start with the [local quickstart](../../README.md#open-a-local-channel-with-two-existing-agents).
 
 `khala internal` starts one local channel server for the operator and nothing
 else. It never starts, wraps, signals, or stops an agent CLI; agent sessions you

@@ -29,7 +29,9 @@ describe('AiurShell standalone', () => {
     expect((html.match(/<nav/g) ?? []).length).toBe(1);
     expect((html.match(/<main/g) ?? []).length).toBe(1);
     expect(html).toContain('<main class="aiur-shell__content" aria-label="Khala"');
-    expect(html).toContain('class="aiur-shell__brand">Khala</span>');
+    expect(html).toContain('class="aiur-shell__brand" href="/new"');
+    expect(html).toContain('<span>KHALA</span>');
+    expect(html).toContain('alt="" width="1215" height="1068"');
     expect(html).not.toContain('>AIUR<');
   });
 
@@ -115,7 +117,7 @@ describe('AiurShell standalone', () => {
       navigation: [{ ...navigation[0]!, content: <a href="/requests">Requests <span>0</span></a> }],
     });
     expect(html).toContain('<a href="/requests">Requests <span>0</span></a>');
-    expect((html.match(/<a /g) ?? []).length).toBe(1);
+    expect((html.match(/<a /g) ?? []).length).toBe(2); // Brand and the feature-owned link.
   });
 });
 

@@ -25,15 +25,20 @@ const accountBinding = { ...newBinding, agentParticipantId: 'Other account agent
 let activeBinding = oldBinding;
 let lookupCount = 0;
 const digest = (character: string) => `sha256:${character.repeat(64)}`;
-const item = (id: string, body: string, character: string): TimelineItem => ({
+const item = (id: string, body: string, character: string, clientTxnId: string | null = null): TimelineItem => ({
   ref: { v: 1, roomId, eventId: id as never, authorParticipantId: 'peer_agent' as never,
     authorDeviceId: 'peer_device' as never, contentDigest: digest(character) },
   content: { v: 1, kind: 'text', body },
   participant: { participantId: 'peer_agent' as never, kind: 'agent', ownerId: 'peer_owner' as never,
     displayName: 'Peer agent', deviceIds: ['peer_device' as never] },
-  clientTxnId: null, receivedAt: '2026-09-27T00:00:00Z',
+  clientTxnId, receivedAt: '2026-09-27T00:00:00Z',
 });
 const items = [item('event_a', 'Withheld A', 'a'), item('event_b', 'Approved B', 'b')];
+const confirmed = sessionStorage.getItem('khala.test.send.confirmed');
+if (confirmed) {
+  const { clientTxnId, body } = JSON.parse(confirmed) as { clientTxnId: string; body: string };
+  items.push(item(clientTxnId, body, 'c', clientTxnId));
+}
 const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1',
   room: { roomId, title: 'Test channel', membership: 'joined', revision: 'room_1' }, items };
 let command: ApprovalCommand | null = null;
@@ -43,9 +48,27 @@ const controlCommands: PolicySetCommand[] = [];
 let allowOldStatus: (() => void) | null = null;
 const oldStatus = new Promise<void>(resolve => { allowOldStatus = resolve; });
 let oldStatusReturned = false;
+const roomListeners = new Set<(value: ChannelSnapshot) => void>();
 const room = {
-  observe(_roomId: unknown, listener: (value: ChannelSnapshot) => void) { queueMicrotask(() => listener(snapshot)); return () => undefined; },
+  observe(_roomId: unknown, listener: (value: ChannelSnapshot) => void) {
+    roomListeners.add(listener);
+    queueMicrotask(() => listener(snapshot));
+    return () => roomListeners.delete(listener);
+  },
   async timeline() { return { kind: 'ok', value: { items, nextCursor: null, generation: 1 } }; },
+  async send({ clientTxnId, content }: { clientTxnId: string; content: { body: string } }) {
+    const original = sessionStorage.getItem('khala.test.send.pending-txn');
+    if (content.body.startsWith('__reload_pending') && original === null) {
+      sessionStorage.setItem('khala.test.send.pending-txn', clientTxnId);
+      return new Promise<never>(() => {});
+    }
+    if (original !== null && original !== clientTxnId) return { kind: 'rejected', code: 'operation_mismatch' };
+    const sent = item(clientTxnId, content.body, 'c', clientTxnId);
+    items.push(sent);
+    sessionStorage.setItem('khala.test.send.confirmed', JSON.stringify({ clientTxnId, body: content.body }));
+    for (const listener of roomListeners) listener(snapshot);
+    return { kind: 'ok', value: { clientTxnId, state: 'accepted', eventRef: sent.ref } };
+  },
 } as unknown as RoomPort;
 const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
   participant: () => ({ participantId: 'human_1', ownerId: 'owner_1', kind: 'human', displayName: 'Owner', deviceIds: [] }),
@@ -89,6 +112,7 @@ declare global { interface Window {
   __oldTrustReturned: () => boolean;
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
+  __switchReviewDevice: () => void;
   __releaseAccountTrust: () => void;
   __controlCommands: () => readonly PolicySetCommand[];
   __releaseOldStatus: () => void;
@@ -167,5 +191,11 @@ window.__switchReviewAccount = () => {
     participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
   controlsAttachment = controls.attach(nextContext);
+  root.render(renderer(nextContext, route));
+};
+window.__switchReviewDevice = () => {
+  const nextContext = { ...context, generation: 2,
+    device: { ...context.device, current: () => ({ state: 'ready', deviceId: 'device_2', generation: 2 }),
+      observe: () => () => undefined } } as unknown as HumanRouteContext;
   root.render(renderer(nextContext, route));
 };
