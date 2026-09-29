@@ -15,6 +15,7 @@ declare global { interface Window {
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
+    navigate(path: string): void;
   };
 } }
 
@@ -98,6 +99,10 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     assert.equal(await page.getByRole('textbox', { name: 'Channel name (optional)' }).evaluate(element => element === document.activeElement), true);
     await page.keyboard.press('Escape');
     assert.equal(await createButton.evaluate(element => element === document.activeElement), true);
+    await page.evaluate(() => window.__lossHarness.navigate('/new'));
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await page.evaluate(() => window.__lossHarness.navigate('/conversations'));
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor({ state: 'detached' });
     await page.evaluate(() => window.__lossHarness.holdNavigation());
     await page.locator('.conversation-list__item', { hasText: 'Second channel' }).click();
     await page.getByRole('status', { name: 'Loading conversation' }).waitFor();
@@ -121,6 +126,12 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.keyboard.press('Escape');
     assert.equal(await channelsButton.evaluate(element => element === document.activeElement), true);
     await channelsButton.click();
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.locator('.khala-sidebar').evaluate(element => element.contains(document.activeElement)), true);
+    for (let i = 0; i < 8; i += 1) {
+      await page.keyboard.press('Tab');
+      assert.equal(await page.locator('.khala-sidebar').evaluate(element => element.contains(document.activeElement)), true);
+    }
     await page.keyboard.press('Escape');
     assert.equal(await channelsButton.getAttribute('aria-expanded'), 'false');
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'mobile.png'), fullPage: true });

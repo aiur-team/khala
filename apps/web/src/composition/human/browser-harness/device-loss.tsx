@@ -74,6 +74,7 @@ declare global { interface Window {
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
+    navigate(path: string): void;
   };
 } }
 window.__lossHarness = {
@@ -96,4 +97,5 @@ window.__lossHarness = {
   stopCount: () => stopCount,
   holdNavigation() { holdIdentity = new Promise(resolve => { releaseIdentity = resolve; }); },
   releaseNavigation() { releaseIdentity?.(); releaseIdentity = null; },
+  navigate(path) { application.navigate(path); },
 };

@@ -173,11 +173,12 @@ function OwnerShell({ application, createController, routes, chrome, context, na
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerButton = useRef<HTMLButtonElement>(null);
   const drawerClose = useRef<HTMLButtonElement>(null);
+  const drawer = useRef<HTMLDivElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
   const restoreCreateFocus = useCallback(() => {
     (window.matchMedia('(max-width: 959px)').matches ? drawerButton.current : createButton.current)?.focus();
   }, []);
-  useEffect(() => { if (route.kind === 'create') setCreating(true); }, [route.kind]);
+  useEffect(() => { setCreating(route.kind === 'create'); }, [chrome.path, route.kind]);
   useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
   useEffect(() => {
     controller.start();
@@ -197,8 +198,17 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       mode={chrome.mode}
       navigation={[]}
       brandHref={routes.conversationsPath()}
-      sidebar={<div className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
-        onKeyDown={event => { if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); } }}>
+      sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
+        onKeyDown={event => {
+          if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
+          if (event.key !== 'Tab' || !drawerOpen) return;
+          const focusable = [...(drawer.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') ?? [])]
+            .filter(element => element.getClientRects().length > 0);
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }}>
         <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels" onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
         {sidebar}</div>}
       actions={actions}

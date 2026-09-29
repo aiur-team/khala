@@ -6,7 +6,7 @@ export function AiurShell({ mode, brandHref = '/new', navigation, sidebar, actio
     return (
       <div className={`khala-content-root${sidebar ? ' khala-content-root--channels' : ''}`} data-theme={theme.theme}>
         {sidebar ? <aside className="khala-content-sidebar" aria-label="Channels">{sidebar}</aside> : null}
-        <main className="khala-content-main">{children}</main>
+        <div className="khala-content-main">{children}</div>
       </div>
     );
   }
