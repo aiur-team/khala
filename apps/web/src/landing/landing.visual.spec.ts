@@ -111,7 +111,7 @@ for (const theme of THEMES) {
         }
       });
 
-      if (viewport.width === 1280 || viewport.width === 320) {
+      if (viewport.width === 1280 || viewport.width === 390 || viewport.width === 320) {
         test('active conversation', async ({ page }) => {
           await open(page, theme, viewport);
           await page.getByRole('button', { name: 'Launch' }).click();
