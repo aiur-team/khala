@@ -32,6 +32,8 @@ const DOCUMENTED_INVOCATIONS: Readonly<Record<string, readonly string[]>> = {
   mode: ['mode', 'get'],
   internal: ['internal', 'discovery', '--harness', 'codex', '--session', 'codex-thread-id'],
   join: ['--internal-descriptor', '/khala/discovery/descriptor.json', 'join', 'http://127.0.0.1:4000/c/channel'],
+  setup: ['setup', '--dry-run'],
+  remove: ['remove', '--dry-run'],
 };
 
 async function invokeCli(command: string) {
@@ -78,10 +80,10 @@ describe('fallback skill documentation', () => {
     const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
     const documentedCommands = [...skill.matchAll(/`khala (?:--internal-descriptor <[^>]+> )?([a-z][a-z-]*)(?:\s|`)/g)]
       .map(match => match[1]!)
-      .filter((command, index, commands) => commands.indexOf(command) === index)
+      .filter((command, index, commands) => command !== 'leave' && commands.indexOf(command) === index)
       .sort();
 
-    expect(documentedCommands).toEqual(['codex-hook', 'connect', 'internal', 'join', 'listen', 'mode', 'read', 'send', 'status']);
+    expect(documentedCommands).toEqual(['codex-hook', 'connect', 'internal', 'join', 'listen', 'mode', 'read', 'remove', 'send', 'setup', 'status']);
     for (const command of documentedCommands) {
       const result = await invokeCli(command);
       expect(result.error, `documented command "${command}" was rejected by runCli`).not.toContain('invalid_arguments');
@@ -90,6 +92,7 @@ describe('fallback skill documentation', () => {
     const unknown = await invokeCli('not-a-real-command');
     expect(unknown.exitCode).toBe(2);
     expect(JSON.parse(unknown.error)).toEqual({ ok: false, error: 'invalid_arguments' });
+    expect((await invokeCli('leave')).error).toContain('invalid_arguments');
   });
 
   it('tells Codex agents to discover and join as their own session', () => {
