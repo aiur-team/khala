@@ -4,7 +4,8 @@ The native agent surface is still gated on G-SUBSTRATE. The adapters, selection,
 dispatch, and presence projections below are implemented and tested as library
 composition, but production hosted channel listing and device admission still
 have separate integration gates. Signed channel-access request/status and
-owner decision/mute now use the hosted Control journal.
+owner decision/mute, exchange, redemption, readiness and resume use the hosted
+Control journal and durable binding store.
 There is no operator-facing setting for `allowExperimentalAgentListener` yet,
 and production does not enable the experimental fallback.
 
@@ -21,10 +22,11 @@ Neither approval admits a device or grants message read/send access.
 
 An owner can revoke the approved key from its approval page. A replacement
 requires a new signed candidate and another owner approval. Reusing the same
-key also requires a higher generation. The hosted channel-access exchange,
-readiness, resume and device redemption routes remain unavailable until
-request-bound connector/device authentication and durable binding activation
-are connected and verified end to end.
+key also requires a higher generation. The hosted exchange requires fresh DPoP
+proof bound to the exact JSON device claim. Its sealed one-use grant redeems
+through the same durable bootstrap binding service; readiness is acknowledged
+only after activation. Native CLI activation and a live model read/send proof
+remain separate integration gates.
 
 After that gate closes, Khala will connect an agent to one channel through the
 `khala` CLI. In that live flow, the channel's Agent presence panel is the source of

@@ -5,7 +5,7 @@ import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journ
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
 import { projectOwner } from '@khala/messaging/channel-access/journal/service';
 import { createControlStore } from '../runtime/control-store';
-import { decodeChannelAccessOwnerProjection } from '@khala/contracts/messaging/index';
+import { decodeChannelAccessOwnerProjection, deriveOkpKeyThumbprint } from '@khala/contracts/messaging/index';
 import type { BlobsStoreLike } from '../runtime/control-store';
 import { createGateway } from '../runtime/handler';
 import { createDigests } from '../invitations/internal';
@@ -17,7 +17,7 @@ import { thumbprint } from '../agent-bootstrap/proof';
 import { PROOF_KEY_APPROVE_PATH, PROOF_KEY_CANDIDATE_PATH, PROOF_KEY_CHALLENGE_PATH,
   PROOF_KEY_REVOKE_PATH } from './hosted-proof-key-authority';
 import type { HostedChannelAccessPorts } from './human/hosted-channel-access-routes';
-import { connectorRequest, DIGEST, DEVICE } from '@khala/messaging/channel-access/exchange/journal-harness.test';
+import { connectorRequest as exchangeRequest, openTestEnvelope, DIGEST, DEVICE } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 
 const origin = 'https://khala.aiur.team';
 const env = {
@@ -127,14 +127,26 @@ describe('generated hosted production composition', () => {
       expiresAtMs: now + 3600_000,
     });
     if (owner.kind !== 'created' || other.kind !== 'created') throw new Error('owner sessions unavailable');
+    let agentJoined = false;
     const matrixFetch: typeof fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === '/_matrix/client/v3/login') {
         const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
         return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
       }
-      return path.includes('/state/m.room.member/') ? Response.json({ membership: 'join' })
-        : Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+      if (path.startsWith('/_matrix/client/v3/profile/')) return Response.json({});
+      if (path.includes('/state/m.room.member/')) {
+        const member = decodeURIComponent(path.split('/').at(-1)!);
+        return member.startsWith('@khala_a_') && !agentJoined
+          ? Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 })
+          : Response.json({ membership: 'join' });
+      }
+      if (path.endsWith('/invite')) return Response.json({});
+      if (path.startsWith('/_matrix/client/v3/join/')) {
+        agentJoined = true;
+        return Response.json({ room_id: roomId });
+      }
+      return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
     };
     const route = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
@@ -200,10 +212,11 @@ describe('generated hosted production composition', () => {
     expect(consentResponse.status).toBe(303);
     const code = new URL(consentResponse.headers.get('location')!).searchParams.get('code');
     expect(code).toBeTruthy();
-    const signedProof = (method: 'GET' | 'POST', target: string, token?: string) => {
+    const signedProof = (method: 'GET' | 'POST', target: string, token?: string, bodyHash?: string) => {
       const claims = { htm: method, htu: target, iat: Math.floor(now / 1000),
         jti: randomBytes(16).toString('base64url'),
-        ...(token ? { ath: createHash('sha256').update(token).digest('base64url') } : {}) };
+        ...(token ? { ath: createHash('sha256').update(token).digest('base64url') } : {}),
+        ...(bodyHash ? { body_hash: bodyHash } : {}) };
       const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');
       return `${header}.${encoded}.${sign(null, Buffer.from(`${header}.${encoded}`), privateKey).toString('base64url')}`;
     };
@@ -323,6 +336,87 @@ describe('generated hosted production composition', () => {
     expect((await signedRequester.authenticateSponsor(new Request(`${sponsorPath}?owner=owner_2`, {
       method: 'POST',
     }))).kind).toBe('rejected');
+    const exchangePath = `${origin}/api/agent/channel-access/exchange?operation=b-agent-request`;
+    const connectorBody = JSON.stringify({ deviceId: 'DEVICE_B' });
+    const connectorProof = (body: string, path = exchangePath) => signedProof('POST', path,
+      credential.credential.credentialRef, createHash('sha256').update(body).digest('base64url'));
+    const connectorRequest = (body: string, proof: string, path = exchangePath) => new Request(path, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json',
+        authorization: `DPoP ${credential.credential.credentialRef}`, dpop: proof }, body });
+    const connectorAuth = await signedRequester.authenticateConnector(
+      connectorRequest(connectorBody, connectorProof(connectorBody)));
+    expect(connectorAuth).toMatchObject({ kind: 'authenticated', connector: {
+      requester: `agent_${jkt}`, deviceId: 'DEVICE_B', proofKeyThumbprint: jkt,
+    } });
+    expect((await signedRequester.authenticateConnector(connectorRequest(
+      JSON.stringify({ deviceId: 'DEVICE_OTHER' }), connectorProof(connectorBody)))).kind).toBe('rejected');
+    expect((await signedRequester.authenticateConnector(new Request(exchangePath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json' }, body: connectorBody,
+    }))).kind).toBe('rejected');
+    // The generated hosted route now reaches the real exchange handler with
+    // the same signed connector authority, including after a process restart.
+    expect((await restarted(connectorRequest(connectorBody, connectorProof(connectorBody)))).status).toBe(400);
+    expect((await restarted(new Request(exchangePath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json' }, body: connectorBody,
+    }))).status).toBe(401);
+    const boxPair = generateKeyPairSync('x25519');
+    const boxJwk = boxPair.privateKey.export({ format: 'jwk' });
+    const boxThumbprint = await deriveOkpKeyThumbprint({ algorithm: 'X25519',
+      publicKey: boxJwk.x!, thumbprint: '' });
+    if (!boxThumbprint.ok) throw new Error('box thumbprint unavailable');
+    const exchangeBody = await exchangeRequest({
+      operationId: 'b-agent-request', requester: `agent_${jkt}` as never, origin,
+      proofKey: { algorithm: 'Ed25519', publicKey: x, thumbprint: jkt },
+      encryptionKey: { algorithm: 'X25519', publicKey: boxJwk.x!, thumbprint: boxThumbprint.thumbprint },
+      deviceId: 'DEVICE_B' as never, sessionGeneration: 0,
+    }, now);
+    const liveBody = JSON.stringify(exchangeBody);
+    const liveExchange = await restarted(connectorRequest(liveBody, connectorProof(liveBody)));
+    expect(liveExchange.status).toBe(200);
+    const envelope = await liveExchange.json() as { ciphertext: string };
+    const { grant } = await openTestEnvelope(envelope.ciphertext, boxJwk.x!, boxJwk.d!) as { grant: string };
+    const redeemPath = `${origin}/api/agent/bootstrap/redeem`;
+    const redeemBody = (deviceId: string) => JSON.stringify({ operation_id: 'b-agent-request',
+      harness: 'proof-key', session_id: `agent_${jkt}`, generation: 0, device_id: deviceId });
+    const wrongDevice = await restarted(new Request(redeemPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
+        dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_OTHER'),
+    }));
+    expect(wrongDevice.status).toBe(401);
+    const redeemed = await restarted(new Request(redeemPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
+        dpop: signedProof('POST', redeemPath, grant) },
+      body: redeemBody('DEVICE_B'),
+    }));
+    expect(redeemed.status).toBe(200);
+    const activated = await redeemed.json() as { binding: { bindingId: string }; adapter_capability: { token: string } };
+    expect(activated.binding.bindingId).toMatch(/^bnd_/);
+    const readProofPath = `${origin}/api/agent/owner-device-proof/lookup`;
+    const readProof = await restarted(new Request(readProofPath, { headers: {
+      authorization: `DPoP ${activated.adapter_capability.token}`,
+      dpop: signedProof('GET', readProofPath, activated.adapter_capability.token),
+    } }));
+    expect(readProof.status).toBe(200);
+    expect(await readProof.json()).toMatchObject({ v: 1, roomId, devices: [] });
+    const replay = await restarted(new Request(redeemPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
+        dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_B'),
+    }));
+    expect(replay.status).toBe(401);
+    const resumePath = `${origin}/api/agent/channel-access/resume?operation=b-agent-request`;
+    const resumeBody = JSON.stringify({ v: 1, operationId: 'b-agent-request', requester: `agent_${jkt}`,
+      origin, sessionGeneration: 0, deviceId: 'DEVICE_B', bindingId: activated.binding.bindingId,
+      proofKeyThumbprint: jkt });
+    const resumed = await restarted(connectorRequest(resumeBody, connectorProof(resumeBody, resumePath), resumePath));
+    expect(resumed.status).toBe(200);
+    expect(await resumed.json()).toMatchObject({ binding: { bindingId: activated.binding.bindingId } });
+    const readyPath = `${origin}/api/agent/channel-access/ready?operation=b-agent-request`;
+    const readyBody = JSON.stringify({ v: 1, operationId: 'b-agent-request', requester: `agent_${jkt}`,
+      origin, sessionGeneration: 0, deviceId: 'DEVICE_B', proofKeyThumbprint: jkt,
+      recipientKeyThumbprint: boxThumbprint.thumbprint });
+    const ready = await restarted(connectorRequest(readyBody, connectorProof(readyBody, readyPath), readyPath));
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual({ v: 1, kind: 'acknowledged' });
     const authenticated = await signedRequester.authenticateAgent(new Request(statusPath, { headers: {
       authorization: `DPoP ${credential.credential.credentialRef}`,
       dpop: signedProof('GET', statusPath, credential.credential.credentialRef),
@@ -480,7 +574,7 @@ describe('generated hosted production composition', () => {
       v: 1 as const, principal: requester.principal, origin, sessionGeneration: 3,
       sessionFingerprint: DIGEST, harness: 'codex', displayLabel: 'Build agent', workspaceLabel: 'Khala',
     };
-    const exchangeBody = await connectorRequest({ origin }, now);
+    const exchangeBody = await exchangeRequest({ origin }, now);
     const admitted = new Set<string>();
     const ports: HostedChannelAccessPorts = {
       authenticateAgent: async request => request.headers.get('authorization') === 'Bearer exact-test-session'

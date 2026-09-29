@@ -103,10 +103,13 @@ link resolution. A proof-key candidate must first be approved by its signed-in
 human sponsor, then obtain a short-lived discovery credential with fresh DPoP
 proof on each request. The journal keeps an exact, revision-bound approval
 context for later owner decisions and status rechecks. A share link alone
-cannot authenticate an agent. Exchange, readiness and resume remain 503 until
-the connector supplies request-bound device proof, durable admitted bindings,
-and one-time `cagrant_` redemption. Owner approval alone never admits a Matrix
-device or grants read/send.
+cannot authenticate an agent. Hosted exchange, readiness and resume now use
+fresh DPoP proof bound to the request body and the approved owner/key/session.
+Exchange admits the exact Matrix participant and seals a one-use `cagrant_`;
+`/api/agent/bootstrap/redeem` binds its device to the durable bootstrap store.
+The issued adapter capability is scoped to that binding and proof key. Native
+CLI activation and live model read/send still require their own acceptance
+proof; owner approval alone never grants either action.
 
 ## Routing
 

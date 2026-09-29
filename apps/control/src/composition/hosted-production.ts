@@ -33,8 +33,13 @@ export function registerHostedProductionRoutes(
   const runtime = createProductionHumanRuntimeLoader(options);
   const proofKeyAuthority = createHostedProofKeyAuthorityRoutes(options);
   const discovery = createHostedDiscoveryBootstrap(options);
+  let access!: ReturnType<typeof createHostedChannelAccessRoutes>;
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
+    externalGrants: {
+      redeem: input => access.grants.redeem(input),
+      markIssued: input => access.grants.markIssued(input),
+    },
     admissionPolicy: async ({ principal, inviteRef, session }) => {
       if (!session.harness || !session.sessionId || !Number.isSafeInteger(session.generation)) return 'deny';
       try {
@@ -46,8 +51,9 @@ export function registerHostedProductionRoutes(
       } catch { return 'deny'; }
     },
   });
-  const access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
+  access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
     hostedAuthority: active => createHostedChannelRequester(active, discovery.authorize),
+    bindings: bootstrap.bindings,
   });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,

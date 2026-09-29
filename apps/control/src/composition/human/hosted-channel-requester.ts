@@ -2,9 +2,12 @@ import { createHash } from 'node:crypto';
 import { sameJsonValue, type ChannelAccessRequesterContext, type DiscoveryRequester,
   type JsonValue, type OwnerId } from '@khala/contracts/messaging/index';
 import { guardStore, settleWrite } from '../../auth/store';
+import { checkProof } from '../../agent-bootstrap/proof';
 import type { AgentChannelAccessAuthentication } from '../../channel-access/handler';
+import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import type { HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { DiscoveryCredentialAuthorization, SessionRef } from '../../channel-discovery/bootstrap/handler';
+import { parseCredentialRef } from '../../channel-discovery/bootstrap/store';
 import { createHostedProofKeyAuthority } from '../hosted-proof-key-authority';
 import type { ProductionHumanRuntime } from './production';
 import type { HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
@@ -31,6 +34,7 @@ export function createHostedChannelRequester(
   authenticateAgent(request: Request): Promise<AgentChannelAccessAuthentication>;
   /** Exact signed credential and sponsor for #532's personal-link request route. */
   authenticateSponsor(request: Request): Promise<HostedSponsorAuthentication>;
+  authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
   requesterAuthority: HostedAccessRequesterAuthority;
   admissionAuthority: HostedAdmissionAuthority;
 }> {
@@ -107,6 +111,63 @@ export function createHostedChannelRequester(
   return {
     authenticateAgent: request => authenticate(request, 'access'),
     authenticateSponsor: request => authenticate(request, 'sponsor'),
+    async authenticateConnector(request) {
+      let url: URL;
+      try { url = new URL(request.url); } catch { return { kind: 'rejected', code: 'forbidden' }; }
+      if (request.method !== 'POST' || ![
+        '/api/agent/channel-access/exchange',
+        '/api/agent/channel-access/ready',
+        '/api/agent/channel-access/resume',
+      ].includes(url.pathname) || url.searchParams.getAll('operation').length !== 1
+        || [...url.searchParams.keys()].some(name => name !== 'operation')) {
+        return { kind: 'rejected', code: 'forbidden' };
+      }
+      const token = request.headers.get('authorization')?.match(/^DPoP (.+)$/u)?.[1];
+      if (!token || !parseCredentialRef(token)
+        || !request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+        return { kind: 'rejected', code: 'auth_required' };
+      }
+      let body: string;
+      let deviceId: unknown;
+      try {
+        body = await request.clone().text();
+        if (Buffer.byteLength(body) > 16_384) return { kind: 'rejected', code: 'forbidden' };
+        const parsed: unknown = JSON.parse(body);
+        deviceId = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).deviceId : null;
+      } catch { return { kind: 'rejected', code: 'forbidden' }; }
+      if (typeof deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(deviceId)) {
+        return { kind: 'rejected', code: 'forbidden' };
+      }
+      const authorized = await authorize(request, 'request_channel_access').catch(() => ({ kind: 'unavailable' as const }));
+      if (authorized.kind === 'unavailable') return { kind: 'unavailable' };
+      if (authorized.kind === 'refused') return { kind: 'rejected',
+        code: authorized.status === 401 ? 'auth_required' : 'forbidden' };
+      const requester = authorized.requester;
+      if (requester.origin !== active.env.publicAppOrigin || !authorized.session
+        || typeof authorized.authorityRevision !== 'string'
+        || requester.principal !== `agent_${requester.proofKey.thumbprint}`) {
+        return { kind: 'rejected', code: 'forbidden' };
+      }
+      const proof = checkProof(request.headers.get('dpop'), { method: 'POST', url: request.url,
+        jkt: requester.proofKey.thumbprint, accessToken: token,
+        bodyHash: createHash('sha256').update(body).digest('base64url'), nowMs: active.clock() });
+      if (proof.kind !== 'valid') return { kind: 'rejected', code: 'forbidden' };
+      const record: ApprovalContext = { v: 1, ownerId: authorized.ownerId,
+        principal: requester.principal, origin: requester.origin, session: authorized.session,
+        proofKeyThumbprint: requester.proofKey.thumbprint, authorityRevision: authorized.authorityRevision };
+      const context: ChannelAccessRequesterContext = { v: 1, principal: requester.principal,
+        origin: requester.origin, sessionGeneration: requester.sessionGeneration,
+        sessionFingerprint: fingerprint(record), harness: authorized.session.harness,
+        displayLabel: null, workspaceLabel: null };
+      const held = await inspectContext(context, authorized.ownerId);
+      if (held === 'unavailable') return { kind: 'unavailable' };
+      if (held !== 'current') return { kind: 'rejected', code: 'forbidden' };
+      return { kind: 'authenticated', connector: { requester: requester.principal,
+        origin: requester.origin, sessionGeneration: requester.sessionGeneration,
+        sessionFingerprint: context.sessionFingerprint,
+        deviceId: deviceId as never, proofKeyThumbprint: requester.proofKey.thumbprint } };
+    },
     requesterAuthority: {
       async inspect(requester, ownerId) {
         const held = requestApproval;

@@ -8,7 +8,9 @@ import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createChannelAccessHandlers, type ChannelAccessHandlerDependencies } from '../../channel-access/handler';
 import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import { composeChannelAccessExchange } from '../agent/channel-access-exchange';
+import { createHostedChannelGrantPort } from '../agent/hosted-channel-grants';
 import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
+import type { PairingGrantPort } from '../../pairing/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './production';
 import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
@@ -26,6 +28,7 @@ export type HostedChannelAccessPorts = Readonly<{
     authenticateAgent: ChannelAccessHandlerDependencies['authenticateAgent'];
     requesterAuthority: HostedAccessRequesterAuthority;
     admissionAuthority?: HostedAdmissionAuthority;
+    authenticateConnector?: GrantExchangeHandlerDependencies['authenticateConnector'];
   }>;
   requesterAuthority?: HostedAccessRequesterAuthority;
   /** Controlled test override; production supplies the current requester authority. */
@@ -51,7 +54,8 @@ const unavailable = () => new Response(JSON.stringify({ v: 1, kind: 'unavailable
 export function createHostedChannelAccessRoutes(
   dependencies: ProductionHumanDependencies,
   ports: HostedChannelAccessPorts,
-): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[]; exchange: readonly RouteRegistration[] }> {
+): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[];
+  exchange: readonly RouteRegistration[]; grants: PairingGrantPort }> {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   function compose() {
     const active = runtime();
@@ -79,7 +83,7 @@ export function createHostedChannelAccessRoutes(
         return result;
       },
     });
-    const authenticateConnector = ports.authenticateConnector;
+    const authenticateConnector = hostedAuthority?.authenticateConnector ?? ports.authenticateConnector;
     const admissionAuthority = hostedAuthority?.admissionAuthority ?? ports.admissionAuthority;
     const provider = ports.provider ?? (admissionAuthority
       ? createHostedChannelAdmissionProvider(active, dependencies, admissionAuthority) : null);
@@ -94,7 +98,9 @@ export function createHostedChannelAccessRoutes(
       },
       clock: active.clock,
     }) : [];
-    return { handlers, exchange };
+    const grants = admissionAuthority && authenticateConnector && ports.bindings
+      ? createHostedChannelGrantPort({ active, journal, fulfillment: service.fulfillment, admissionAuthority }) : null;
+    return { handlers, exchange, grants };
   }
   function lazy(path: string, methods: readonly string[], select: (composed: ReturnType<typeof compose>) => readonly RouteRegistration[]): RouteRegistration {
     return Object.freeze({
@@ -119,10 +125,21 @@ export function createHostedChannelAccessRoutes(
     lazy('/api/human/channel-access/decision', ['POST'], value => value.handlers.human),
     lazy('/api/human/channel-access/mute', ['POST'], value => value.handlers.human),
   ];
-  const exchange = ports.authenticateConnector && ports.bindings ? [
+  const exchange = (ports.authenticateConnector || ports.hostedAuthority) && ports.bindings ? [
     lazy('/api/agent/channel-access/exchange', ['POST'], value => value.exchange),
     lazy('/api/agent/channel-access/ready', ['POST'], value => value.exchange),
     lazy('/api/agent/channel-access/resume', ['POST'], value => value.exchange),
   ] : [];
-  return Object.freeze({ human: Object.freeze(human), agent: Object.freeze(agent), exchange: Object.freeze(exchange) });
+  const grants: PairingGrantPort = {
+    async redeem(input) {
+      try { return await compose().grants?.redeem(input) ?? { kind: 'unavailable' }; }
+      catch { return { kind: 'unavailable' }; }
+    },
+    async markIssued(input) {
+      try { return await compose().grants?.markIssued(input) ?? 'unavailable'; }
+      catch { return 'unavailable'; }
+    },
+  };
+  return Object.freeze({ human: Object.freeze(human), agent: Object.freeze(agent),
+    exchange: Object.freeze(exchange), grants });
 }
