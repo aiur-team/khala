@@ -617,7 +617,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     held: GrantRecord,
     tracker: { redemption: Redemption | null },
     saveRedemption: (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => Promise<string>,
-    reserveIssue?: (bindingId: string) => Promise<'applied' | 'replayed' | 'unavailable' | null>,
+    reserveIssue?: (bindingId: string) => Promise<'applied' | 'pending' | 'stale' | 'unavailable' | null>,
   ): Promise<Response> {
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
@@ -694,7 +694,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     // A concurrent retry, or an uncertain prior login, fails closed here.
     if (reserveIssue) {
       const reserved = await reserveIssue(bound.binding.bindingId);
-      if (reserved === 'replayed') return json(401, { code: 'grant_replayed' });
+      if (reserved === 'pending') return json(503, { code: 'unavailable' });
+      if (reserved === 'stale') return json(401, { code: 'grant_replayed' });
       if (reserved !== 'applied') return json(503, { code: 'unavailable' });
     }
 

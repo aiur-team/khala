@@ -90,11 +90,12 @@ export function createHostedChannelGrantPort(deps: Readonly<{
     async reserveIssue(input) {
       const inspected = await issuer.inspect(input.grant);
       if (inspected.kind === 'unavailable') return 'unavailable';
-      if (inspected.kind !== 'found' || inspected.binding.operationId !== input.operationId) return 'replayed';
+      if (inspected.kind !== 'found' || inspected.binding.operationId !== input.operationId) return 'stale';
       const loaded = await exchanges.load(inspected.binding);
       if (loaded.kind === 'unavailable') return 'unavailable';
-      if (loaded.kind !== 'found' || loaded.stored.record.phase !== 'sealed') return 'replayed';
-      return reserveChannelAccessIssuance(active.store, inspected.binding, input.bindingId, loaded.stored.record.expiresAt);
+      if (loaded.kind !== 'found' || loaded.stored.record.phase !== 'sealed') return 'stale';
+      return reserveChannelAccessIssuance(active.store, inspected.binding, input.bindingId,
+        loaded.stored.record.expiresAt, active.clock());
     },
     async markIssued(input) {
       // Binding and Matrix device setup happen after redemption. Recheck the

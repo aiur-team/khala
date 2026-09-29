@@ -515,7 +515,7 @@ describe('generated hosted production composition', () => {
       headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${grant}`,
         dpop: signedProof('POST', redeemPath, grant) }, body: redeemBody('DEVICE_B'),
     }));
-    expect(concurrentReplay.status).toBe(401);
+    expect(concurrentReplay.status).toBe(503);
     expect(matrixLogins).toBe(1);
     releaseDeviceLogin();
     const redeemed = await redeemInFlight;

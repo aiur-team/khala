@@ -5,7 +5,7 @@ import { createChannelAccessHandlers } from '../../channel-access/handler';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { CHANNEL_REF, DEVICE, DIGEST, T0, connectorRequest, context, journalHarness, requester } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 import { composeChannelAccessExchange } from './channel-access-exchange';
-import { recordChannelAccessBinding } from './channel-access-binding';
+import { recordChannelAccessBinding, reserveChannelAccessIssuance } from './channel-access-binding';
 import { registerAgentHandlers } from './handlers';
 
 async function setup() {
@@ -351,5 +351,20 @@ describe('composed channel-access resume by operation', () => {
     expect((await h.ready()).status).toBe(200);
     expect((await h.resume()).status).toBe(410);
     expect(h.resumed).toHaveLength(0);
+  });
+});
+
+describe('hosted Matrix issuance reservation', () => {
+  it('waits for an active claim, then fails closed after its bounded stale window', async () => {
+    const store = journalHarness().backing.store;
+    const operation = { operationId: 'op_access_1', requester: requester.principal,
+      origin: requester.origin, sessionGeneration: 3, deviceId: DEVICE,
+      proofKeyThumbprint: requester.proofKey.thumbprint, ownerId: 'owner_1' as never,
+      channelRef: CHANNEL_REF };
+    const expiry = new Date(T0 + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS).toISOString();
+    expect(await reserveChannelAccessIssuance(store, operation, 'bnd_1', expiry, T0)).toBe('applied');
+    expect(await reserveChannelAccessIssuance(store, operation, 'bnd_1', expiry, T0 + 29_999)).toBe('pending');
+    expect(await reserveChannelAccessIssuance(store, operation, 'bnd_1', expiry, T0 + 30_000)).toBe('stale');
+    expect(await reserveChannelAccessIssuance(store, operation, 'bnd_1', expiry, T0 + 60_000)).toBe('stale');
   });
 });
