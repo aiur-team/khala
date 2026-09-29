@@ -69,7 +69,8 @@ function nextAction(outcome: string): AccessNextAction | null {
 }
 
 function failure(error: Extract<AccessOutput, { ok: false }>['error'], operationId: string): AccessOutput {
-  return { ok: false, v: 1, error, operationId, next: error === 'unavailable' ? 'reuse_operation_id' : null };
+  return { ok: false, v: 1, error, operationId,
+    next: error === 'unavailable' ? 'reuse_operation_id' : error === 'sponsor_link_required' ? 'copy_your_link' : null };
 }
 
 /** A canonical-looking channel URL, or an opaque listing reference; `null` is neither. */

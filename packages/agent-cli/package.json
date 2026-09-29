@@ -37,6 +37,7 @@
     "@khala/harnesses": "workspace:*",
     "@khala/policy": "workspace:*",
     "esbuild": "0.28.2",
+    "libsodium-wrappers": "0.8.4",
     "zod": "4.1.8"
   }
 }

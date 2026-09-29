@@ -50,8 +50,9 @@ async function sessionPorts(
   // An unbound or policy-unconfigured hosted session cannot turn a global hook
   // into a release pull. The hook rechecks the exact binding and mode at output.
   const latest = publicStatus(await opened.client.status(deps.signal));
-  if (!latest.connected || latest.binding === null || latest.binding.harness !== CODEX_HARNESS
-    || latest.binding.sessionId !== sessionId || !opened.client.listeningMode) return null;
+  const storedSessionId = opened.client.storedSessionId?.(CODEX_HARNESS, sessionId) ?? sessionId;
+  if (!latest.connected || latest.binding === null || ![CODEX_HARNESS, 'proof-key'].includes(latest.binding.harness)
+    || latest.binding.sessionId !== storedSessionId || !opened.client.listeningMode) return null;
   const mode = await opened.client.listeningMode(deps.signal);
   if (mode.bindingId !== latest.binding.bindingId || mode.generation !== latest.binding.generation
     || mode.effective === null) return null;

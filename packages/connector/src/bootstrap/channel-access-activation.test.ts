@@ -204,6 +204,9 @@ function harness(overrides: Partial<{
       expiresAt: now + 3_600_000,
       ...service.state.redeemCapability,
     },
+    matrixSession: { baseUrl: 'https://matrix.example', userId: '@agent:example',
+      deviceId, accessToken: 'exact-matrix-session-token', roomId: '!room:example',
+      ownerUserId: '@owner:example', ownerParticipantId: 'owner_1' },
   });
   const ports: { -readonly [K in keyof ChannelAccessActivationPorts]: ChannelAccessActivationPorts[K] } = {
     journal: store.journal,
@@ -220,7 +223,7 @@ function harness(overrides: Partial<{
       // The grant is not presented again: an admitted operation is looked up by ID.
       async resume({ operationId, deviceId }) {
         service.state.resumes.push(operationId);
-        if (!service.state.admitted.has(operationId)) return { kind: 'refused', code: 'admission_denied' };
+        if (!service.state.admitted.has(operationId)) return { kind: 'not_redeemed' };
         if (service.state.redeemRefusal) return { kind: 'refused', code: service.state.redeemRefusal };
         return admitted(deviceId);
       },
@@ -458,6 +461,59 @@ describe('channel-access activation', () => {
     expect(h.service.state.exchanges).toHaveLength(1);
     expect(h.service.state.redeems).toHaveLength(1);
     expect(h.service.state.resumes.length).toBeGreaterThan(0);
+  });
+
+  it('recovers a lost redeem response from the keyed journal without spending the grant twice', async () => {
+    const h = await approvedAndJournaled();
+    const redeem = h.ports.redeem.redeem;
+    const resume = h.ports.redeem.resume;
+    const activate = h.ports.devices.activate;
+    let responseLost = true;
+    const matrixSessions: unknown[] = [];
+    h.ports.redeem.redeem = async input => {
+      const committed = await redeem(input);
+      expect(committed.kind).toBe('admitted');
+      return { kind: 'outcome_unknown' };
+    };
+    h.ports.redeem.resume = async input => responseLost && h.service.state.admitted.has(input.operationId)
+      ? { kind: 'unavailable' } : resume(input);
+    h.ports.devices.activate = async input => {
+      matrixSessions.push(input.matrixSession);
+      return activate(input);
+    };
+    h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
+    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(h.store.record()).toMatchObject({ phase: 'keyed', binding: null, deviceId: 'device_1' });
+    responseLost = false;
+    expect(await resumeChannelAccessActivations(h.ports)).toEqual([{
+      operationId: OPERATION, result: { kind: 'connected', binding: bindingFor('device_1'), reused: false },
+    }]);
+    expect(h.service.state.redeems).toHaveLength(1);
+    expect(h.service.state.exchanges).toHaveLength(1);
+    expect(matrixSessions).toMatchObject([{ deviceId: 'device_1', accessToken: 'exact-matrix-session-token' }]);
+  });
+
+  it('waits without activation when operation recovery omits the exact Matrix session', async () => {
+    const h = await approvedAndJournaled();
+    const redeem = h.ports.redeem.redeem;
+    const resume = h.ports.redeem.resume;
+    let matrixAvailable = false;
+    h.ports.redeem.redeem = async input => {
+      expect((await redeem(input)).kind).toBe('admitted');
+      return { kind: 'outcome_unknown' };
+    };
+    h.ports.redeem.resume = async input => {
+      const result = await resume(input);
+      if (result.kind !== 'admitted' || matrixAvailable) return result;
+      return { kind: 'admitted', binding: result.binding, capability: result.capability };
+    };
+    h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
+    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(h.devices.activations).toBe(0);
+    expect(h.service.state.redeems).toHaveLength(1);
+    matrixAvailable = true;
+    expect(await h.activate()).toMatchObject({ kind: 'connected' });
   });
 
   describe('after admission, recovery outlives the grant', () => {
