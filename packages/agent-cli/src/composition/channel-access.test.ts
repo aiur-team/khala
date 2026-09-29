@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -142,17 +142,25 @@ describe('HTTP channel access', () => {
   });
 
   it('sends a channel URL to the service it names, and refuses a conflicting --origin', async () => {
-    const seen: { url: string | undefined; body: unknown }[] = [];
+    const seen: { url: string | undefined; body: unknown; raw: string; proof: string | undefined }[] = [];
     const origin = await loopback(async (request, response) => {
-      seen.push({ url: request.url, body: await readBody(request) });
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const raw = Buffer.concat(chunks).toString();
+      seen.push({ url: request.url, body: JSON.parse(raw) as unknown, raw,
+        proof: Array.isArray(request.headers.dpop) ? undefined : request.headers.dpop });
       json(response, 200, { v: 1, kind: 'request', operationId: 'op-1', outcome: 'pending_owner' });
     });
     const channelUrl = `${origin}/join/inviteRef123`;
     const port = access(origin);
     await expect(port.requestChannelAccess({ target: { kind: 'channel_url', channelUrl }, operationId: 'op-1', origin: null }))
       .resolves.toMatchObject({ kind: 'status' });
-    expect(seen).toEqual([{ url: CHANNEL_LINK_REQUEST_PATH,
-      body: { v: 1, kind: 'channel_url', operationId: 'op-1', credentialRef: 'credential-ref-1', channelUrl } }]);
+    expect(seen[0]).toMatchObject({ url: CHANNEL_LINK_REQUEST_PATH,
+      body: { v: 1, kind: 'channel_url', operationId: 'op-1', credentialRef: 'credential-ref-1', channelUrl } });
+    const claims = JSON.parse(Buffer.from(seen[0]!.proof!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(claims).toMatchObject({ htm: 'POST', htu: `${origin}${CHANNEL_LINK_REQUEST_PATH}`,
+      ath: createHash('sha256').update('credential-ref-1').digest('base64url'),
+      body_hash: createHash('sha256').update(seen[0]!.raw).digest('base64url') });
     await expect(port.requestChannelAccess({
       target: { kind: 'channel_url', channelUrl }, operationId: 'op-1', origin: 'https://khala.aiur.team',
     })).resolves.toEqual({ kind: 'refused', code: 'untrusted_origin' });
