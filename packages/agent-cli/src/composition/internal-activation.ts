@@ -301,11 +301,15 @@ function createPorts(
     },
   };
 
-  async function activateCall(deviceId: string, grant: string | null) {
+  async function activateCall(deviceId: string, grant: string | null, preflight = false) {
     const reply = await connectorCall('activate', { v: 1, operationId, deviceId, grant });
     if (reply === null) return { kind: 'outcome_unknown' } as const;
     const code = rejection(reply);
     if (code !== null) {
+      // Before the first redemption, internal `/activate` reports `closed` for
+      // a grant-free lookup. Let the shared state machine spend the approved
+      // grant; a revoked, already journaled binding still uses the normal path.
+      if (preflight && code === 'closed') return { kind: 'not_redeemed' } as const;
       return code === 'closed' || code === 'expired'
         ? { kind: 'refused', code: 'binding_revoked' } as const
         : { kind: 'refused', code: 'binding_conflict' } as const;
@@ -330,7 +334,10 @@ function createPorts(
   }
 
   const redeem: ChannelAccessRedeemPort = {
-    redeem: input => activateCall(input.deviceId, input.grant),
+    async redeem(input) {
+      const result = await activateCall(input.deviceId, input.grant);
+      return result.kind === 'not_redeemed' ? { kind: 'outcome_unknown' } : result;
+    },
     async resume(input) {
       // A descriptor that already holds this binding is the finished write: never call
       // `/activate` again, which would rotate the capability out from under a running client.
@@ -351,7 +358,7 @@ function createPorts(
           },
         };
       }
-      return activateCall(input.deviceId, null);
+      return activateCall(input.deviceId, null, input.bindingId === undefined);
     },
   };
 
