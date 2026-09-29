@@ -23,6 +23,12 @@ human sign-in page, or pass its invitation token to `khala join` or
 native or CLI blocker, including `feature_unavailable`, when hosted agent
 joining is unavailable.
 
+For a first hosted request, `pending_owner` can mean the owner is approving
+this session's proof key; no channel-access request exists yet. After that key
+approval, repeat the request with the same `/channels/<room-id>` URL and
+`operationId` so Khala can file the separate access request. Check access
+status only after that request is filed. Neither approval joins the channel.
+
 ## Permission cost
 
 On Claude Code in default permission mode, starting the long-running listener

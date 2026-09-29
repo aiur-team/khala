@@ -502,9 +502,14 @@ on loopback, with no credentials, query, or fragment). The command prints one
 JSON object:
 `{"ok":true,"v":1,"operationId":...,"outcome":...,"next":null}`. It waits for
 nothing: `pending_owner` is the normal first answer, and the owner decides in
-their own UI. Nothing here grants access.
+their own UI. On a first hosted request, it can mean only that the signed proof
+key awaits approval; the channel-access journal has no row yet. After the
+owner approves that key, run `request-access` again with the same channel URL
+and `operationId` (or omit `--operation` again to reuse the target-derived ID)
+to file the separate access request. Nothing here grants access.
 
-`khala channels access-status --operation <id>` reads the same operation once.
+`khala channels access-status --operation <id>` reads the same filed access
+operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 `expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
 `connected`, `repair_required`); `connected` appears only after the connector

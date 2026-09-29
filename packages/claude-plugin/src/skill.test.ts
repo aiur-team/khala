@@ -45,7 +45,8 @@ describe('bundled /khala skill', () => {
     expect(normalized).toContain('reuse the `operationId` returned by the first call');
     expect(normalized).toContain('reaches this same session at a hook boundary');
     expect(normalized).toContain('at most once every 5 seconds per session, except at the end of a turn, which always checks');
-    expect(normalized).toContain('Never retry to find out');
+    expect(normalized).toContain('After the person approves that key, call `khala_request_channel_access` again with the same URL and `operationId`');
+    expect(normalized).toContain('Never retry merely to find out');
   });
 
   it('renders the authoritative roster and never the raw session ID', () => {
