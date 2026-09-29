@@ -209,6 +209,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], domain: 'human' },
       { path: '/api/human/channel-closure', methods: ['GET', 'POST'], domain: 'closure' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/messaging/participants', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/bootstrap/descriptor', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/bootstrap/token', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/bootstrap/redeem', methods: ['POST'], domain: 'agent' },

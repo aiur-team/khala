@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ChatComposer, ChatMessage, ChatThread, ConversationLayout, ConversationList, ParticipantDetail, type ConversationSummary } from '../ui/conversation';
+import { ChatComposer, ChatMessage, ChatSystemEvent, ChatThread, ConversationLayout, ConversationList, ParticipantDetail, type ConversationSummary } from '../ui/conversation';
 import './showcase.css';
 
 type Example = Readonly<{
@@ -9,18 +9,21 @@ type Example = Readonly<{
   context: string;
   preview: string;
   participants: readonly { name: string; role: string }[];
-  messages: readonly { author: string; role: string; text: string; mine?: boolean }[];
+  messages: readonly ({ kind: 'message'; author: string; role: string; text: string; mine?: boolean }
+    | { kind: 'rename'; actor: string; before: string; after: string })[];
 }>;
 
 const examples: readonly Example[] = [
   {
     id: 'planning', title: 'Launch · example', context: 'Launch checklist · ticket #42',
     preview: 'I can take the docs while you verify the flow.',
-    participants: [{ name: 'Maya', role: 'Owner' }, { name: 'Theo', role: 'Collaborator' }, { name: 'Maya’s agent', role: 'Agent' }],
+    participants: [{ name: 'Maya', role: 'Owner' }, { name: 'Theo', role: 'Collaborator' }, { name: 'Dolan', role: 'Agent · owned by Maya' }],
     messages: [
-      { author: 'Maya', role: 'Owner', text: 'Can we split the launch checklist?' },
-      { author: 'Theo', role: 'Collaborator', text: 'I’ll verify the browser flow and report what I find.' },
-      { author: 'Maya’s agent', role: 'Agent', text: 'I can take the docs while you verify the flow.' },
+      { kind: 'message', author: 'Maya', role: 'Owner', text: 'Can we split the launch checklist?' },
+      { kind: 'message', author: 'Codex #420', role: 'Agent', text: 'I can take the docs.' },
+      { kind: 'rename', actor: 'Maya', before: 'Codex #420', after: 'Dolan' },
+      { kind: 'message', author: 'Theo', role: 'Collaborator', text: 'I’ll verify the browser flow and report what I find.' },
+      { kind: 'message', author: 'Dolan', role: 'Agent', text: 'I can take the docs while you verify the flow.' },
     ],
   },
   {
@@ -28,9 +31,9 @@ const examples: readonly Example[] = [
     preview: 'The smaller layout keeps the back control visible.',
     participants: [{ name: 'Alex', role: 'Owner' }, { name: 'Jordan', role: 'Collaborator' }, { name: 'Jordan’s agent', role: 'Agent' }],
     messages: [
-      { author: 'Alex', role: 'Owner', text: 'How does the thread feel on a phone?' },
-      { author: 'Jordan', role: 'Collaborator', text: 'The conversation list gives way to the thread after a tap.' },
-      { author: 'Jordan’s agent', role: 'Agent', text: 'The smaller layout keeps the back control visible.' },
+      { kind: 'message', author: 'Alex', role: 'Owner', text: 'How does the thread feel on a phone?' },
+      { kind: 'message', author: 'Jordan', role: 'Collaborator', text: 'The conversation list gives way to the thread after a tap.' },
+      { kind: 'message', author: 'Jordan’s agent', role: 'Agent', text: 'The smaller layout keeps the back control visible.' },
     ],
   },
   {
@@ -38,9 +41,9 @@ const examples: readonly Example[] = [
     preview: 'I’ve outlined the next steps for both owners.',
     participants: [{ name: 'Priya', role: 'Owner' }, { name: 'Sam', role: 'Collaborator' }, { name: 'Priya’s agent', role: 'Agent' }],
     messages: [
-      { author: 'Priya', role: 'Owner', text: 'What should we hand over before the next review?' },
-      { author: 'Sam', role: 'Collaborator', text: 'I’ll add the open questions to the notes.' },
-      { author: 'Priya’s agent', role: 'Agent', text: 'I’ve outlined the next steps for both owners.' },
+      { kind: 'message', author: 'Priya', role: 'Owner', text: 'What should we hand over before the next review?' },
+      { kind: 'message', author: 'Sam', role: 'Collaborator', text: 'I’ll add the open questions to the notes.' },
+      { kind: 'message', author: 'Priya’s agent', role: 'Agent', text: 'I’ve outlined the next steps for both owners.' },
     ],
   },
 ];
@@ -71,7 +74,11 @@ export function ExampleShowcase() {
       thread={<ChatThread title={example.title} onBack={() => { setDetailsOpen(false); setInThread(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.showcase-app .conversation-list__item[aria-current="page"]`)?.focus()); }}>
         <div className="conversation-thread__actions"><span>{example.context}</span><button type="button" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Participants and agents</button></div>
         <ol className="fixture-messages">
-          {example.messages.map((message, index) => <ChatMessage key={`${example.id}-${index}`} id={`${example.id}-${index}`} author={message.author} kindLabel={message.role} mine={message.mine ?? false}>{message.text}</ChatMessage>)}
+          {example.messages.map((message, index) => message.kind === 'rename'
+            ? <ChatSystemEvent key={`${example.id}-${index}`} id={`${example.id}-${index}`} actor={message.actor}>
+              {message.before} is now called {message.after}
+            </ChatSystemEvent>
+            : <ChatMessage key={`${example.id}-${index}`} id={`${example.id}-${index}`} author={message.author} kindLabel={message.role} mine={message.mine ?? false}>{message.text}</ChatMessage>)}
           {(localMessages[selected] ?? []).map((message, index) => <ChatMessage key={`local-${index}`} id={`local-${index}`} author="You" kindLabel="Local example" mine>{message}</ChatMessage>)}
         </ol>
         <p className="showcase-app__local-note" id="showcase-local-note">Example only. Your text stays in this page and disappears when you leave.</p>
