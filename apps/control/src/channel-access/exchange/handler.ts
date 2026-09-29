@@ -60,6 +60,7 @@ export type GrantExchangeHandlerDependencies = Readonly<{
   /** Request-scoped exchange for one authenticated connector. */
   exchangeFor(connector: Readonly<{ sessionFingerprint: string }>): ConnectorGrantExchangePort;
   clock: TrustedClock;
+  diagnostic?: (stage: 'connector_auth' | 'request_validation' | 'exchange_result' | 'envelope_decode') => void;
 }>;
 
 const BINDING_CONFLICTS: ReadonlySet<GrantExchangeRejection> = new Set([
@@ -68,11 +69,18 @@ const BINDING_CONFLICTS: ReadonlySet<GrantExchangeRejection> = new Set([
 ]);
 
 export function createGrantExchangeHandler(deps: GrantExchangeHandlerDependencies): RouteRegistration {
+  function report(stage: 'connector_auth' | 'request_validation' | 'exchange_result' | 'envelope_decode'): void {
+    try { deps.diagnostic?.(stage); } catch { /* diagnostic sink failed */ }
+  }
+
   async function handle(request: Request): Promise<Response> {
     const operation = readOperation(request);
     if (operation === null) return rejected(400, 'invalid_request');
     const auth = await safeCall(() => deps.authenticateConnector(request));
-    if (auth === null || auth.kind === 'unavailable') return unavailable();
+    if (auth === null || auth.kind === 'unavailable') {
+      report('connector_auth');
+      return unavailable();
+    }
     if (auth.kind === 'rejected') return rejected(auth.code === 'auth_required' ? 401 : 403, auth.code);
     const body = decodeGrantExchangeRequest(await readJson(request));
     if (!body.ok) return rejected(400, 'invalid_request');
@@ -86,12 +94,19 @@ export function createGrantExchangeHandler(deps: GrantExchangeHandlerDependencie
       proofKeyThumbprint: connector.proofKeyThumbprint,
       nowMs: deps.clock(),
     });
-    if (!validated.ok) return mapRejection(validated.reason);
+    if (!validated.ok) {
+      if (validated.reason === 'crypto_unavailable') report('request_validation');
+      return mapRejection(validated.reason);
+    }
     const result = await safeCall(() => deps.exchangeFor({ sessionFingerprint: connector.sessionFingerprint })
       .exchange(validated.request, { signal: request.signal }));
-    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
+    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') {
+      report('exchange_result');
+      return unavailable();
+    }
     if (result.kind === 'rejected') return mapRejection(result.code);
     const envelope = decodeSealedGrantEnvelope(result.value);
+    if (!envelope.ok) report('envelope_decode');
     return envelope.ok ? json(200, envelope.value) : unavailable();
   }
 

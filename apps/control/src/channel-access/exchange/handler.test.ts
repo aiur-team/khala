@@ -36,6 +36,7 @@ async function setup(result: OperationResult<SealedGrantEnvelope, GrantExchangeR
     proofKeyThumbprint: body.proofKey.thumbprint,
   };
   const calls: { connector: unknown; input: ValidatedGrantExchangeRequest }[] = [];
+  const diagnostics: string[] = [];
   const state: { auth: ConnectorExchangeAuthentication } = { auth: { kind: 'authenticated', connector } };
   const route = createGrantExchangeHandler({
     authenticateConnector: async () => state.auth,
@@ -51,12 +52,13 @@ async function setup(result: OperationResult<SealedGrantEnvelope, GrantExchangeR
       };
     },
     clock: () => T0,
+    diagnostic: stage => diagnostics.push(stage),
   });
   const post = (payload: unknown, query = '?operation=op_access_1', contentType = 'application/json') => route.handle(new Request(
     `${requester.origin}${CONNECTOR_CHANNEL_ACCESS_EXCHANGE_PATH}${query}`,
     { method: 'POST', headers: { 'content-type': contentType }, body: JSON.stringify(payload) },
   ));
-  return { route, body, connector, calls, state, post };
+  return { route, body, connector, calls, state, diagnostics, post };
 }
 
 async function read(response: Response) {
@@ -82,6 +84,7 @@ describe('connector grant-exchange route', () => {
     expect(await read(await h.post(h.body))).toMatchObject({ status: 403, body: { code: 'forbidden' } });
     h.state.auth = { kind: 'unavailable' };
     expect((await h.post(h.body)).status).toBe(503);
+    expect(h.diagnostics).toEqual(['connector_auth']);
     expect(h.calls).toHaveLength(0);
   });
 
