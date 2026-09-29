@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDigests } from '../../invitations/internal';
 import { createHostedChannelAdmissionProvider } from './hosted-channel-admission';
+import { hostedCreatedChannelRef } from './channel-create';
 import type { ProductionHumanRuntime } from '../human/production';
 
 describe('hosted Matrix channel admission', () => {
@@ -83,5 +84,14 @@ describe('hosted Matrix channel admission', () => {
     roomOwner = 'owner_2';
     sponsorJoined = false;
     expect(await provider.admit({ ...request, providerOperationId: 'provider_2' })).toEqual({ kind: 'rejected' });
+
+    roomOwner = ownerId;
+    sponsorJoined = true;
+    const created = { ...request, providerOperationId: 'provider_created',
+      channelRef: hostedCreatedChannelRef(roomId as never) };
+    expect(await provider.admit(created)).toEqual({ kind: 'admitted', membership: 'joined' });
+    expect(await provider.reconcile(created)).toEqual({ kind: 'admitted', membership: 'already_joined' });
+    roomOwner = 'owner_2';
+    expect(await provider.admit({ ...created, providerOperationId: 'provider_wrong_owner' })).toEqual({ kind: 'rejected' });
   });
 });

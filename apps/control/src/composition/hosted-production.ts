@@ -58,7 +58,7 @@ export function registerHostedProductionRoutes(
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
       channelAccess: () => options.channelAccess ? access.human
-        : [createHostedChannelAccessInbox(options), ...access.human.slice(1)],
+        : [createHostedChannelAccessInbox(options, access.reconcileCreate), ...access.human.slice(1)],
       channelDiscoveryBootstrap: () => discovery.human,
       channelLink: () => createHostedHumanChannelLinkRoutes(options),
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,

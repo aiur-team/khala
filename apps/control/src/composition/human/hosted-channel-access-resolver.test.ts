@@ -15,6 +15,33 @@ const context = { v: 1 as const, principal: requester.principal, origin, session
   sessionFingerprint: requester.proofKey.thumbprint, harness: 'codex', displayLabel: null, workspaceLabel: null };
 
 describe('hosted channel-access resolver', () => {
+  it('accepts create intents only for an explicitly approved exact session', async () => {
+    let approved = true;
+    const authority = {
+      inspect: async () => 'current' as const,
+      inspectContext: async () => approved ? 'current' as const : 'revoked' as const,
+      checkContext: async () => approved ? 'current' as const : 'revoked' as const,
+      resolveCreateOwner: async () => approved
+        ? { ownerId: ownerId as never, ownerRevision: context.sessionFingerprint } : 'revoked' as const,
+    };
+    const runtime = { env: { publicAppOrigin: origin, invitationHmacSecret: secret } } as ProductionHumanRuntime;
+    const input = { v: 1 as const, operationId: 'create_1', credentialRef: 'credential_1',
+      proposedTitle: 'Planning', origin };
+    expect(await createHostedChannelAccessResolver(runtime, authority).resolveCreate(input, requester))
+      .toEqual({ kind: 'unavailable' });
+    const resolver = createHostedChannelAccessResolver(runtime, authority, true);
+    expect(await resolver.resolveCreate(input, requester)).toEqual({ kind: 'resolved',
+      ownerId, ownerRevision: context.sessionFingerprint });
+    expect(await resolver.revalidateCreate({ ownerId: ownerId as never,
+      ownerRevision: context.sessionFingerprint, requester: context })).toEqual({ kind: 'current',
+        ownerId, ownerRevision: context.sessionFingerprint });
+    expect(await resolver.revalidateCreate({ ownerId: ownerId as never,
+      ownerRevision: 'different-approval', requester: context })).toEqual({ kind: 'revoked' });
+    approved = false;
+    expect(await resolver.revalidateCreate({ ownerId: ownerId as never,
+      ownerRevision: context.sessionFingerprint, requester: context })).toEqual({ kind: 'revoked' });
+  });
+
   it('requires current key approval, active exact link, and live Matrix owner on every recheck', async () => {
     let status: 'active' | 'revoked' = 'active';
     let roomOwner = ownerId;

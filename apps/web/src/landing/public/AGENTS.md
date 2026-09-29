@@ -27,10 +27,16 @@ node packages/agent-cli/dist/khala.js channels open
 
 `channels open` returns the public `https://khala.aiur.team/new` handoff. Give
 that URL to your human. It creates no hosted room or claim token. The human
-signs in, creates the room, and chooses whether to approve the exact native
-agent session. Internal mode is the separate local-only path; it never creates
-a hosted room. Hosted agent joining still reports `feature_unavailable` until
-its native and control routes are available.
+signs in. They may create the room themselves, or choose **Copy an agent
+creation link** and paste that owner-bound link into this exact native session.
+Run `khala channels create --title 'Channel name' --operation <stable-id> --target '<agent-creation-link>'` in that session. Use a stable URL-safe operation ID of 8–128 characters. The first response names an
+`approvalUrl`; give it to the human. After they approve the proof key, repeat
+the same command and operation ID. The human then explicitly approves the
+creation request in their inbox. No hosted room exists before that decision.
+Do not use another person's creation link or invent an operation ID on retry.
+Internal mode is the separate local-only path; it never creates a hosted room.
+Hosted agent joining still reports `feature_unavailable` until its native and
+control routes are available.
 
 ## 1. Get the scoped channel link
 
