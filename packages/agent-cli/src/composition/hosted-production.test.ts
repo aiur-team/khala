@@ -38,6 +38,10 @@ describe('installed hosted connector factory', () => {
     let grant = '';
     let redeemed = false;
     let loseRedeemResponse = true;
+    let recoveryReachable = false;
+    let grants = 0;
+    let matrixLogins = 0;
+    const bindings = new Set<string>();
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
     let createApproved = false;
@@ -59,6 +63,7 @@ describe('installed hosted connector factory', () => {
       if (url.pathname.endsWith('/exchange')) {
         const exchange = body as unknown as GrantExchangeRequest;
         await sodium.ready;
+        if (!grant) grants++;
         grant = 'cagrant_' + 'A'.repeat(43);
         const payload = { v: 1, operationId: exchange.operationId, requester: exchange.requester, origin,
           sessionGeneration: exchange.sessionGeneration, deviceId: exchange.deviceId,
@@ -74,11 +79,13 @@ describe('installed hosted connector factory', () => {
         if (url.pathname.endsWith('/resume') && !redeemed) {
           return reply({ v: 1, kind: 'rejected', code: 'operation_mismatch' }, 409);
         }
+        if (url.pathname.endsWith('/resume') && !recoveryReachable) throw new TypeError('recovery temporarily unavailable');
         const deviceId = String(body?.device_id ?? body?.deviceId);
         if (url.pathname.endsWith('/redeem')) expect((init?.headers as Record<string, string>).authorization).toBe(`DPoP ${grant}`);
-        if (url.pathname.endsWith('/redeem')) redeemed = true;
+        if (url.pathname.endsWith('/redeem')) { redeemed = true; matrixLogins++; }
         const binding = { v: 1, bindingId: 'bnd_1', ownerId: 'owner_1', agentParticipantId: 'agent_1',
           deviceId, harness: 'proof-key', sessionId: principal, generation: 0 };
+        bindings.add(binding.bindingId);
         admittedBinding = binding as unknown as SessionBinding;
         const matrixSession = { baseUrl: 'https://matrix.example', userId: '@agent:matrix.example', deviceId,
           accessToken: 'matrix-access-token', roomId: '!room:matrix.example',
@@ -136,17 +143,23 @@ describe('installed hosted connector factory', () => {
       createApproved = true;
       await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin });
     }
-    expect([...rows.values()].map(row => decodeActivationRecord(JSON.parse(row.record))?.phase)).toContain('admitted');
-    expect(retained.size).toBe(1);
-    if (mode === 'connect') await opened.client.connect(link);
-    else await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin });
+    const beforeRestart = [...rows.values()].map(row => decodeActivationRecord(JSON.parse(row.record))!);
+    expect(beforeRestart).toContainEqual(expect.objectContaining({ phase: 'keyed', binding: null, deviceId: 'KHALA_device_1' }));
+    expect(retained.size).toBe(0);
+    expect(grants).toBe(1);
+    expect(matrixLogins).toBe(1);
+    await opened.close();
+    recoveryReachable = true;
+    const restarted = await factory(SESSION);
+    if (mode === 'connect') await restarted.client.connect(link);
+    else await restarted.client.channelCreateStatus?.({ operationId: 'create_123', origin });
     expect([...retained.values()][0]).toMatchObject({ binding: { bindingId: 'bnd_1' },
       matrixSession: { deviceId: 'KHALA_device_1', accessToken: 'matrix-access-token' } });
     nativeAvailable = true;
     if (mode === 'connect') {
-      expect(await opened.client.connect(link)).toMatchObject({ kind: 'connected', binding: { bindingId: 'bnd_1' } });
+      expect(await restarted.client.connect(link)).toMatchObject({ kind: 'connected', binding: { bindingId: 'bnd_1' } });
     } else {
-      expect(await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
+      expect(await restarted.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
         .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'connected' } });
     }
     expect(calls).toContain('/api/agent/channel-access/exchange');
@@ -154,10 +167,15 @@ describe('installed hosted connector factory', () => {
     expect(calls).toContain('/api/agent/channel-access/resume');
     expect(calls).toContain('/api/agent/channel-access/ready');
     expect(calls.filter(path => path === '/api/agent/bootstrap/redeem')).toHaveLength(1);
+    expect(calls.filter(path => path === '/api/agent/channel-access/exchange')).toHaveLength(1);
+    expect(grants).toBe(1);
+    expect(matrixLogins).toBe(1);
+    expect([...bindings]).toEqual(['bnd_1']);
+    expect((await restarted.client.status()).binding?.bindingId).toBe('bnd_1');
     if (mode === 'connect') {
-      expect(await opened.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+      expect(await restarted.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
     }
-    await opened.close();
+    await restarted.close();
   });
   it('accepts only an exact configured HTTPS origin', () => {
     expect(hostedAppOrigin(undefined)).toBe('https://khala.aiur.team');
