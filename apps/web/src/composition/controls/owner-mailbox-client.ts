@@ -1,5 +1,6 @@
 import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ControlsClient } from './browser-port';
+import { parsePublicOrigin } from '../human/hosted-config';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -12,12 +13,13 @@ const object = (value: unknown): value is Record<string, unknown> =>
 /** The same-origin human mailbox supplies owner authority from the cookie and CSRF session. */
 export function createOwnerMailboxControlsClient(input: Readonly<{
   origin: string;
+  allowInsecureLoopback?: boolean;
   csrf: () => Promise<string | null>;
   fetch?: Fetch;
   waitMs?: number;
 }>): ControlsClient {
   const origin = new URL(input.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== input.origin) throw new Error('controls_origin_invalid');
+  if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('controls_origin_invalid');
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   const waitMs = input.waitMs ?? 8_000;
   const possiblySubmitted = new Set<string>();

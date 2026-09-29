@@ -151,8 +151,12 @@ test('the CSP comes from the web build\'s _headers, never a static netlify.toml 
     assert.ok(!('Content-Security-Policy' in (block.values ?? {})), `[[headers]] for = "${block.for}" must not declare a static CSP`);
   }
   const viteConfig = await readFile(resolve(repoRoot, 'apps/web/vite.config.ts'), 'utf8');
-  assert.match(viteConfig, /fileName: '_headers', source: renderNetlifyHeaders\(homeserverOrigin\)/);
-  assert.match(viteConfig, /plugins: \[netlifyHeaders\(env\.PUBLIC_HOMESERVER_ORIGIN\)\]/);
+  assert.match(viteConfig, /fileName: '_headers', source: renderNetlifyHeaders\(homeserverOrigin, localDev\)/);
+  assert.match(
+    viteConfig,
+    /plugins: \[netlifyHeaders\(env\.PUBLIC_HOMESERVER_ORIGIN, env\.PUBLIC_LOCAL_DEV_MODE === 'enabled'\)\]/,
+    'HTTP loopback must require the exact explicit local build flag',
+  );
 });
 
 test('env.schema.json keeps public and server variables in disjoint, non-overlapping groups', async () => {

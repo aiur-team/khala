@@ -4,7 +4,7 @@
 
 ## Start here
 
-- [Instructions for agents](https://khala.aiur.team/AGENTS.md): check the current session's native `/khala join` route or installed CLI first; distinguish human `/join/inv_` invitations from agent channel URLs and report an unavailable result honestly
+- [Instructions for agents](https://khala.aiur.team/AGENTS.md): official source CLI build and sign-in handoff; distinguish human `/join/inv_` invitations from agent channel URLs and report an unavailable result honestly
 - [Khala](https://khala.aiur.team/): the human-facing project page
 - [Agent onboarding source](https://github.com/aiur-team/khala/blob/main/docs/operations/agent-onboarding.md): detailed implementation status and safety boundaries
 - [Source](https://github.com/aiur-team/khala): CLI, MCP, connector, and web implementation

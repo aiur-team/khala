@@ -6,12 +6,13 @@
 export type HostedEnvironment = Readonly<{
   PUBLIC_APP_ORIGIN?: string;
   PUBLIC_HOMESERVER_ORIGIN?: string;
+  PUBLIC_LOCAL_DEV_MODE?: string;
 }>;
 
 export type HostedConfigKey = keyof HostedEnvironment;
 
 export type HostedConfig =
-  | Readonly<{ ok: true; appOrigin: string; homeserverOrigin: string }>
+  | Readonly<{ ok: true; appOrigin: string; homeserverOrigin: string; localDev: boolean }>
   | Readonly<{ ok: false; missing: readonly HostedConfigKey[] }>;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -22,7 +23,7 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
  * garbage is rejected rather than trimmed, so nothing unexpected can reach a
  * CSP directive.
  */
-export function parsePublicOrigin(value: string | undefined): string | null {
+export function parsePublicOrigin(value: string | undefined, allowInsecureLoopback = false): string | null {
   if (!value) return null;
   let url: URL;
   try {
@@ -30,15 +31,16 @@ export function parsePublicOrigin(value: string | undefined): string | null {
   } catch {
     return null;
   }
-  const secure = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname));
+  const secure = url.protocol === 'https:' || (allowInsecureLoopback && url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname));
   if (!secure || url.origin !== value.replace(/\/$/u, '')) return null;
   return url.origin;
 }
 
 export function readHostedConfig(env: HostedEnvironment): HostedConfig {
-  const appOrigin = parsePublicOrigin(env.PUBLIC_APP_ORIGIN);
-  const homeserverOrigin = parsePublicOrigin(env.PUBLIC_HOMESERVER_ORIGIN);
-  if (appOrigin && homeserverOrigin) return { ok: true, appOrigin, homeserverOrigin };
+  const localDev = env.PUBLIC_LOCAL_DEV_MODE === 'enabled';
+  const appOrigin = parsePublicOrigin(env.PUBLIC_APP_ORIGIN, localDev);
+  const homeserverOrigin = parsePublicOrigin(env.PUBLIC_HOMESERVER_ORIGIN, localDev);
+  if (appOrigin && homeserverOrigin) return { ok: true, appOrigin, homeserverOrigin, localDev };
   const missing: HostedConfigKey[] = [];
   if (!appOrigin) missing.push('PUBLIC_APP_ORIGIN');
   if (!homeserverOrigin) missing.push('PUBLIC_HOMESERVER_ORIGIN');
@@ -71,8 +73,8 @@ export function contentSecurityPolicy(homeserverOrigin: string | null): string {
  * rendered here from the build's own PUBLIC_HOMESERVER_ORIGIN. A value that is
  * set but malformed fails the build rather than widening or dropping the policy.
  */
-export function renderNetlifyHeaders(homeserverOriginValue: string | undefined): string {
-  const homeserverOrigin = parsePublicOrigin(homeserverOriginValue);
+export function renderNetlifyHeaders(homeserverOriginValue: string | undefined, allowInsecureLoopback = false): string {
+  const homeserverOrigin = parsePublicOrigin(homeserverOriginValue, allowInsecureLoopback);
   if (homeserverOriginValue && !homeserverOrigin) {
     throw new Error('PUBLIC_HOMESERVER_ORIGIN must be an HTTPS origin such as https://matrix.example.com');
   }

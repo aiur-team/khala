@@ -14,6 +14,7 @@ type Fetch = typeof globalThis.fetch;
 
 export type MatrixAgentAdmissionOptions = Readonly<{
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   serverName: string;
   registrationSharedSecret: string;
   passwordDerivationSecret: string;
@@ -66,7 +67,9 @@ export function agentMatrixIdentity(ownerId: OwnerId, session: SessionRef, serve
  */
 export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions): MatrixAgentAdmission {
   const origin = new URL(options.homeserverOrigin);
-  if (origin.protocol !== 'https:' || origin.origin !== options.homeserverOrigin) throw new Error('Matrix origin must be exact HTTPS');
+  const loopback = options.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || loopback) || origin.origin !== options.homeserverOrigin) throw new Error('Matrix origin must be exact HTTPS');
   if (!/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u.test(options.serverName)) throw new Error('invalid Matrix server name');
   if (Buffer.byteLength(options.registrationSharedSecret) < 32 || Buffer.byteLength(options.passwordDerivationSecret) < 32) {
     throw new Error('Matrix secrets must be at least 32 bytes');
