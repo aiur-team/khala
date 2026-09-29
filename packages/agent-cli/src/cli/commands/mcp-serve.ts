@@ -78,10 +78,10 @@ const PREJOIN_TOOLS = new Set([
 ]);
 
 /**
- * The installed entry's server: every tool call runs as the session its `_meta` names,
- * through that session's own `grant.json`, and a call naming no session, or a session
- * holding no binding, is refused `not_connected`. Each session's client and delivery
- * open once and stop with the server.
+ * The installed entry routes by the caller-supplied `_meta` local label. That
+ * label never authenticates a hosted request: prejoin actions require the
+ * connector's signed key and the owner's separate approval. Read/send still
+ * require a current binding. Each client and delivery stops with the server.
  */
 async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants): Promise<void> {
   if (!deps.internalClient || !deps.internalDelivery) throw new CliError('internal_unavailable');

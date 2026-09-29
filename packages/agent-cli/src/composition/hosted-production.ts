@@ -50,7 +50,7 @@ type ProductionConnector = Readonly<{
 }>;
 export type OpenProductionConnector = (input: OpenProductionConnectorInput) => Promise<ProductionConnector>;
 
-/** Binds the provider-named MCP session to one production connector instance. */
+/** Binds a caller-supplied local session label to one production connector instance. */
 export function hostedSessionFactory(options: Readonly<{
   openConnector: OpenProductionConnector;
   stateDirectory: string;
