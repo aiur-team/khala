@@ -5,6 +5,7 @@ import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject, cre
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { chromium } from '@playwright/test';
 import { vi } from 'vitest';
 import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '../../../../packages/connector/src/storage/open';
@@ -1389,6 +1390,7 @@ describe('expired cleanup across issued control authority and restarted producti
         return route ? route.handle(request) : new Response(null, { status: 404 });
       }));
       const input = { stateDirectory: directory, appOrigin: ORIGIN,
+        chromiumExecutablePath: chromium.executablePath(),
         browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session,
         sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
         inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
