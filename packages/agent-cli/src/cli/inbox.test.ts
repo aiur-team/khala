@@ -13,6 +13,7 @@ import type { InboxDelivery } from './types.js';
 
 const roots: string[] = [];
 const consumers: InboxConsumer[] = [];
+const bunBinary = process.env.KHALA_BUN_BIN ?? 'bun';
 const bindingId = 'binding-1' as BindingId;
 const payload = new TextEncoder().encode('released payload');
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -219,6 +220,25 @@ describe('durable inbox', () => {
     await listener.release();
     expect(fs.existsSync(path.join(bindingDirectory(directory), 'listener.lock'))).toBe(true);
   });
+
+  it.skipIf(spawnSync(bunBinary, ['--version'], { encoding: 'utf8' }).status !== 0)(
+    'opens the inbox listener under the OpenCode Bun runtime', () => {
+      const directory = stateDirectory();
+      const module = new URL('./inbox.ts', import.meta.url).href;
+      const child = spawnSync(bunBinary, ['--conditions=khala-source', '-e',
+        `import(${JSON.stringify(module)}).then(async ({openInbox}) => {`
+        + `const inbox = await openInbox({stateDirectory:${JSON.stringify(directory)},bindingId:'binding-1',`
+        + `generation:3,maxPayloadBytes:1024,maxSelectionEvents:32});`
+        + `const listener=await inbox.acquireListener();`
+        + `try{await inbox.acquireCallConsumer();throw Error('second consumer acquired')}`
+        + `catch(error){if(error.code!=='listener_busy')throw error}`
+        + `process.stdout.write('LISTENING\\n');await listener.release();})`,
+      ], { encoding: 'utf8', timeout: 5_000 });
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toContain('LISTENING');
+      expect(fs.existsSync(path.join(bindingDirectory(directory), 'listener.lock'))).toBe(true);
+    },
+  );
 
   it('releases a socketless kernel lease after a killed process across process boundaries', async () => {
     const directory = stateDirectory();
