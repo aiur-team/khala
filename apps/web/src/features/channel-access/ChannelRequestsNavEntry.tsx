@@ -6,23 +6,25 @@ export interface ChannelRequestsNavEntryProps {
   controller: ChannelAccessInboxController;
   href: string;
   current?: boolean;
+  onNavigate?: () => void;
 }
 
 /**
- * The owner's persistent "Channel requests" navigation entry. It is always
- * rendered, and its indicator shows the exact pending count from 0 up to the
- * hard owner maximum of 50. The label stays readable when a host collapses its
- * menu behind a toggle.
+ * Show the request review action only while the owner has known pending work.
  */
-export function ChannelRequestsNavEntry({ controller, href, current = false }: ChannelRequestsNavEntryProps) {
+export function ChannelRequestsNavEntry({ controller, href, current = false, onNavigate }: ChannelRequestsNavEntryProps) {
   const view = useInboxView(controller);
   const count = pendingIndicator(view.requests);
-  const known = view.phase === 'ready';
+  if (view.phase !== 'ready' || count === 0) return null;
   return (
-    <a href={href} className="channel-requests-nav" aria-current={current ? 'page' : undefined}>
-      <span className="channel-requests-nav__label">Channel requests</span>
-      {known ? <span className="channel-requests-nav__count" aria-hidden="true">{count}</span> : null}
-      {known ? <span className="channel-requests-nav__sr">{`, ${count} pending`}</span> : null}
+    <a href={href} className="channel-requests-nav" aria-label={`Channel requests, ${count} pending`} title="Channel requests"
+      onClick={onNavigate ? event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        onNavigate();
+      } : undefined}
+      aria-current={current ? 'page' : undefined}>
+      <span aria-hidden="true">{count}</span>
     </a>
   );
 }

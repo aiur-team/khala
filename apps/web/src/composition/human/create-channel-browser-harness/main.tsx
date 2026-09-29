@@ -117,7 +117,7 @@ function Harness() {
       <output id="policy-log" hidden />
       <output id="opened-channel" hidden />
       <output id="share-count" hidden>0</output>
-      {openedRoom && signedIn ? <ChannelSharePanel admission={admission} roomId={openedRoom} roomTitle="Harness channel" onCopy={async shareUrl => {
+      {openedRoom && signedIn ? <ChannelSharePanel admission={admission} roomId={openedRoom} onCopy={async shareUrl => {
         logCopy(shareUrl);
         return { ok: true };
       }} /> : <CreateChannelScreen

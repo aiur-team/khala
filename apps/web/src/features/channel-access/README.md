@@ -14,10 +14,11 @@ The hosted mount (route, menu placement, and deep links) belongs to #298.
 - **One place to land.** "Show in inbox" on a notice and a direct link
   (`selectedHandle`) both select the same row and move focus to it. Neither one
   opens the row. A batch notice lands on the pending list.
-- **Navigation entry.** `ChannelRequestsNavEntry` is always rendered. It shows
-  the exact pending count, from `0` up to the hard owner maximum of 50. It works
-  inside a host's collapsed menu. It shares the inbox controller, so the host
-  creates one controller, calls `start()`, and passes it to both components.
+- **Navigation entry.** `ChannelRequestsNavEntry` appears immediately before
+  create in the conversation-list header only when the ready inbox has pending
+  requests. Its visible text is the count, capped at 50, and its accessible
+  name identifies channel requests. It shares the inbox controller, so the
+  host creates one controller, calls `start()`, and passes it to both components.
 - **Verified first.** Each row and dialog leads with the harness and the
   session fingerprint. Agent-reported name and workspace are marked unverified.
   So is a creation request's proposed title. The dialog shows fixed
