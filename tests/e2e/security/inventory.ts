@@ -139,6 +139,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /__khala/bootstrap.js': probe('internal-http'),
   'http-internal:POST /__khala/session': probe('internal-http'),
   'http-internal:GET /api/v1/session': probe('internal-http'),
+  // Owner-scoped channel index; the agent probe asserts its binding is refused.
+  'http-internal:GET /api/v1/channels': probe('internal-http'),
   'http-internal:POST /api/v1/channels': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/timeline': probe('internal-http'),
