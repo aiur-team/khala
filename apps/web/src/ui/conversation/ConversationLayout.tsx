@@ -22,7 +22,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
 }>) {
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <aside className="conversation-list" aria-label="Conversations">
-    <header className="conversation-list__head"><strong>Channels</strong><span>{conversations.length}</span>{action}</header>
+    <header className="conversation-list__head"><strong>Channels</strong>{action ? <div className="conversation-list__head-actions">{action}</div> : null}</header>
     {showSearch ? <label className="conversation-list__search"><span className="sr-only">Search channels</span>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search channels" />

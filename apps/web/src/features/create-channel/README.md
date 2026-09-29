@@ -6,10 +6,9 @@ after creation. Private mode opens the channel directly and never calls the
 admission port.
 
 The create screen asks only for an optional title. Its default share link
-admits members from admission forward. The channel page offers Copy link and
-a named-email invite, which prepares a restricted link and opens an email draft
-for the owner to send. Full-history admission still requires verified key
-transfer and is not offered.
+admits members from admission forward. The channel page has one action to copy
+a share link. Full-history admission still requires verified key transfer and
+is not offered.
 
 ## Operation identity
 

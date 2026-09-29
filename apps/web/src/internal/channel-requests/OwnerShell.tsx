@@ -5,6 +5,7 @@ import type { ChannelAccessInboxController } from '../../features/channel-access
 import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { ConversationList } from '../../ui/conversation';
+import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRequestsNavEntry';
 import type { HumanShellChrome } from '../../composition/human/screen';
 import type { HumanRouteContext } from '../../composition/human/application';
 import { CreateChannelDialog } from '../../composition/human/CreateChannelDialog';
@@ -86,8 +87,10 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
         selectedId={route.kind === 'channel' ? roomId : null} query="" onQueryChange={() => undefined} showSearch={false}
         status={conversations === undefined ? 'loading' : conversations === null ? 'error' : 'ready'}
         onSelect={id => { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); }}
-        action={<button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel"
-          onClick={() => { setDrawerOpen(false); setCreateOpen(true); }}>+</button>} />
+        action={<><ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()}
+          current={route.kind === 'channel_requests'} onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
+          <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel"
+            onClick={() => { setDrawerOpen(false); setCreateOpen(true); }}>+</button></>} />
     </div>}>
     <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels"
       aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><a className="aiur-shell__brand" href={routes.createPath()}>KHALA</a>{themeAction}</div>
