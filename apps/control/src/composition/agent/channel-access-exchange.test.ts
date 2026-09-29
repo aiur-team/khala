@@ -5,6 +5,7 @@ import { createChannelAccessHandlers } from '../../channel-access/handler';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { CHANNEL_REF, DEVICE, DIGEST, T0, connectorRequest, context, journalHarness, requester } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 import { composeChannelAccessExchange } from './channel-access-exchange';
+import { recordChannelAccessBinding } from './channel-access-binding';
 import { registerAgentHandlers } from './handlers';
 
 async function setup() {
@@ -29,7 +30,7 @@ async function setup() {
   const bindingState = { revoked: false };
   const binding = {
     v: 1, bindingId: 'bnd_1', ownerId: 'owner_1', agentParticipantId: 'agent_1',
-    deviceId: DEVICE, harness: 'codex', sessionId: 'thread-1', generation: 3,
+    deviceId: DEVICE, harness: 'proof-key', sessionId: requester.principal, generation: 3,
   };
   const bindings: Parameters<typeof composeChannelAccessExchange>[0]['bindings'] = {
     async resumeAdapterCapability(input) {
@@ -97,6 +98,7 @@ async function setup() {
         proofKeyThumbprint: bound.proofKeyThumbprint,
       });
       expect(redeemed.kind).toBe('redeemed');
+      expect(await recordChannelAccessBinding(journal.backing.store, bound, binding.bindingId)).toBe('applied');
     },
     resume: (overrides: Record<string, unknown> = {}) => route('/api/agent/channel-access/resume').handle(new Request(
       `${requester.origin}/api/agent/channel-access/resume?operation=op_access_1`,
@@ -110,7 +112,6 @@ async function setup() {
           origin: requester.origin,
           sessionGeneration: 3,
           deviceId: DEVICE,
-          bindingId: 'bnd_1',
           proofKeyThumbprint: caller.proofKeyThumbprint,
           ...overrides,
         }),
@@ -288,6 +289,7 @@ describe('composed channel-access resume by operation', () => {
       expect((await h.resume(override)).status).toBe(409);
     }
     expect((await h.resume({ extra: true })).status).toBe(400);
+    expect((await h.resume({ bindingId: 'bnd_unrelated' })).status).toBe(409);
     expect(h.resumed).toHaveLength(0);
   });
 

@@ -30,6 +30,7 @@ export function composeChannelAccessExchange(deps: Readonly<{
   provider: ChannelAdmissionProviderPort;
   /** The admitted bindings, from the agent-bootstrap capabilities; resume never creates one. */
   bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
+  approval?: Parameters<typeof createChannelAccessResumeService>[0]['approval'];
   authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
   clock: TrustedClock;
   /** Wraps the access authority; `composeChannelCreate` supplies one for created channels. */
@@ -50,6 +51,8 @@ export function composeChannelAccessExchange(deps: Readonly<{
     authority,
     issuer,
     bindings: deps.bindings,
+    store: deps.store,
+    ...(deps.approval ? { approval: deps.approval } : {}),
     clock: deps.clock,
   });
   const handlerDeps: GrantExchangeHandlerDependencies = {

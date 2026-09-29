@@ -203,7 +203,7 @@ consumption, the service refuses a new key (`encryption_key_mismatch`) and the o
 | `journal` | `createChannelAccessActivationStore(storage)` |
 | `status` | `createHttpChannelAccessStatus({ signer, trustedOrigins, credential })`, using the live discovery credential |
 | `exchange` | `createHttpChannelAccessClient({ signer, trustedOrigins })`: exchange and readiness routes with DPoP proofs |
-| `redeem` | Grant redemption, and `resume` of an admitted operation by ID without the grant. The hosted routes are not built yet; both must be idempotent per operation, like `BootstrapAdmissionPort` |
+| `redeem` | One-use grant redemption and authenticated `resume` of that exact admitted operation without the grant or a locally stored binding ID. The hosted resume route returns the original binding with a fresh capability. |
 | `devices` | The same `ConnectorDevicePort` bootstrap uses |
 | `trust` | Trust initialization for the new binding (`@khala/policy` `initialTrustState` gives the review baseline) |
 

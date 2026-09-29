@@ -189,16 +189,18 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
 }
 
 const RESUME_FIELDS = [
-  'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'bindingId', 'proofKeyThumbprint',
+  'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'proofKeyThumbprint',
 ] as const;
 
 function readResume(value: unknown): ChannelAccessResumeRequest | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
-  if (Object.keys(r).length !== RESUME_FIELDS.length || !RESUME_FIELDS.every(field => Object.hasOwn(r, field))) return null;
+  if (!RESUME_FIELDS.every(field => Object.hasOwn(r, field))
+    || Object.keys(r).some(field => field !== 'bindingId' && !(RESUME_FIELDS as readonly string[]).includes(field))) return null;
   const text = (field: string) => typeof r[field] === 'string' && (r[field] as string).length > 0 && (r[field] as string).length <= 512;
   if (r.v !== 1 || !Number.isSafeInteger(r.sessionGeneration) || (r.sessionGeneration as number) < 0
-    || !['operationId', 'requester', 'origin', 'deviceId', 'bindingId', 'proofKeyThumbprint'].every(text)) return null;
+    || !['operationId', 'requester', 'origin', 'deviceId', 'proofKeyThumbprint'].every(text)
+    || (Object.hasOwn(r, 'bindingId') && !text('bindingId'))) return null;
   return r as unknown as ChannelAccessResumeRequest;
 }
 
