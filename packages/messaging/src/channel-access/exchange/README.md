@@ -40,7 +40,9 @@ A `ControlStore` record keyed by (requester, origin, operation) moves through
    request uses the live discovery credential and a fresh method, exact URL and body-bound DPoP proof.
    The server checks the bound key, device, generation, consumed grant, current owner approval, sealed
    exchange recovery window, and the durable operation-to-binding record written before redemption returned.
-   It returns only that binding with a new adapter capability. A missing or conflicting record fails closed;
+   It returns only that binding, the original server-issued Matrix device session, and a new adapter capability.
+   The Matrix session is stored with the mapping until the recovery window expires; resume never logs in again.
+   A missing or conflicting record fails closed;
    revocation, ownership loss, expiry and a revoked binding close recovery.
 
 ## Guarantees and limits

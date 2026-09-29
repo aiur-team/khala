@@ -9,6 +9,7 @@ import { createChannelAccessHandlers, type ChannelAccessHandlerDependencies } fr
 import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import { composeChannelAccessExchange } from '../agent/channel-access-exchange';
 import { createHostedChannelGrantPort } from '../agent/hosted-channel-grants';
+import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { PairingGrantPort } from '../../pairing/store';
 import type { RouteRegistration } from '../../runtime/handler';
@@ -102,7 +103,7 @@ export function createHostedChannelAccessRoutes(
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
-      ...(admissionAuthority ? { approval: async (record, ownerId, channelRef) => {
+      ...(admissionAuthority ? { approval: async (record, ownerId, channelRef, matrixSession) => {
         const result = await admissionAuthority.current({
           providerOperationId: record.providerOperationId, ownerId: ownerId as never,
           channelRef: channelRef as never, requester: record.requester,
@@ -111,7 +112,12 @@ export function createHostedChannelAccessRoutes(
         });
         if (result !== 'current') return result;
         const target = await readHostedAccessTarget(active, channelRef as never);
-        return target === 'unavailable' ? 'unavailable' : target?.ownerId === ownerId ? 'current' : 'revoked';
+        if (target === 'unavailable') return 'unavailable';
+        const identity = agentMatrixIdentity(ownerId as never, { harness: 'proof-key', sessionId: record.requester,
+          generation: record.sessionGeneration }, active.env.matrixServerName);
+        return target?.ownerId === ownerId && target.roomId === matrixSession.roomId
+          && matrixSession.userId === identity.userId && matrixSession.baseUrl === active.env.publicHomeserverOrigin
+          ? 'current' : 'revoked';
       } } : {}),
       async authenticateConnector(request) {
         const result = await authenticateConnector(request);

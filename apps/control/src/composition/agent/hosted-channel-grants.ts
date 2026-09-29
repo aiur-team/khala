@@ -108,8 +108,9 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       if (approval !== 'current') return 'replayed';
       const target = await readHostedAccessTarget(active, binding.channelRef);
       if (target === 'unavailable') return 'unavailable';
-      if (target === null || target.ownerId !== binding.ownerId) return 'replayed';
-      return recordChannelAccessBinding(active.store, binding, input.bindingId);
+      if (target === null || target.ownerId !== binding.ownerId || !input.matrixSession
+        || input.matrixSession.deviceId !== binding.deviceId || input.matrixSession.roomId !== target.roomId) return 'replayed';
+      return recordChannelAccessBinding(active.store, binding, input.bindingId, input.matrixSession, record.expiresAt);
     },
   };
 }

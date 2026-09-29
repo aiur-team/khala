@@ -207,11 +207,13 @@ describe('generated hosted production composition', () => {
     });
     if (owner.kind !== 'created' || other.kind !== 'created') throw new Error('owner sessions unavailable');
     let agentJoined = false;
+    let matrixLogins = 0;
     let humanJoined = false;
     const matrixFetch: typeof fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === '/_matrix/client/v3/login') {
         const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        if (body.device_id === 'DEVICE_B') matrixLogins += 1;
         return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
       }
       if (path.startsWith('/_matrix/client/v3/profile/')) return Response.json({});
@@ -494,7 +496,8 @@ describe('generated hosted production composition', () => {
       body: redeemBody('DEVICE_B'),
     }));
     expect(redeemed.status).toBe(200);
-    const activated = await redeemed.json() as { binding: { bindingId: string }; adapter_capability: { token: string } };
+    const activated = await redeemed.json() as { binding: { bindingId: string }; adapter_capability: { token: string };
+      matrix_session: { accessToken: string; deviceId: string; userId: string; roomId: string } };
     expect(activated.binding.bindingId).toMatch(/^bnd_/);
     const readProofPath = `${origin}/api/agent/owner-device-proof/lookup`;
     const readProof = await restarted(new Request(readProofPath, { headers: {
@@ -514,6 +517,7 @@ describe('generated hosted production composition', () => {
     const recoveryBody = JSON.stringify({ v: 1, operationId: 'b-agent-request', requester: `agent_${jkt}`,
       origin, sessionGeneration: 0, deviceId: 'DEVICE_B', proofKeyThumbprint: jkt });
     const recoveryProof = connectorProof(recoveryBody, resumePath);
+    const loginsBeforeRecovery = matrixLogins;
     const afterRedeemRestart = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
       clock: () => now, fetch: matrixFetch,
@@ -522,6 +526,8 @@ describe('generated hosted production composition', () => {
     expect(recovered.status).toBe(200);
     const recoveredAdmission = await recovered.json() as typeof activated;
     expect(recoveredAdmission).toMatchObject({ binding: { bindingId: activated.binding.bindingId } });
+    expect(recoveredAdmission.matrix_session).toEqual(activated.matrix_session);
+    expect(matrixLogins).toBe(loginsBeforeRecovery);
     const recoveredRead = await afterRedeemRestart(new Request(readProofPath, { headers: {
       authorization: `DPoP ${recoveredAdmission.adapter_capability.token}`,
       dpop: signedProof('GET', readProofPath, recoveredAdmission.adapter_capability.token),
