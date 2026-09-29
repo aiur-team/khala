@@ -48,7 +48,10 @@ describe('runCli', () => {
     const discoveryPath = '/private/discovery/session/descriptor.json';
     const grantPath = '/private/discovery/session/grant.json';
     const io = streams();
-    const local = client({ async requestAccess() { return { kind: 'status', outcome: 'connected', grantDescriptorPath: grantPath }; } });
+    const local = client({
+      async requestAccess() { return { kind: 'status', outcome: 'connected' }; },
+      joinedGrantDescriptorPath() { return grantPath; },
+    });
     expect(await runCli(['--internal-descriptor', discoveryPath, 'join', 'http://127.0.0.1:4870/channels/ch_1'], {
       client: client(), internalClient: async () => local, inbox: unusedInbox, ...io,
     })).toBe(0);

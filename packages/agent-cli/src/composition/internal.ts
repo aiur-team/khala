@@ -190,6 +190,10 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     // The internal server binds a session by its digest, never the harness's own ID.
     storedSessionId: internalSessionDigest,
 
+    joinedGrantDescriptorPath() {
+      return discoverySelection().kind === 'selected' ? activationPaths(options.descriptorPath).grantPath : null;
+    },
+
     async status(signal) {
       const descriptor = current();
       // A discovery descriptor is an unjoined agent: it holds no binding by construction.
@@ -252,9 +256,7 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
           descriptorPath: options.descriptorPath, descriptor: selection.descriptor, origin: selection.origin,
           operationId: answered.operationId, repair: joined.outcome === 'repair_required', fetch: options.fetch, signal, clock: options.clock,
         });
-        if (activated !== 'unavailable') return { kind: 'status', outcome: activated,
-          ...(activated === 'connected' ? { grantDescriptorPath: grantPath } : {}),
-        };
+        if (activated !== 'unavailable') return { kind: 'status', outcome: activated };
         // Never report `connected` for a binding this descriptor does not hold.
         return joined.outcome === 'connected' ? { kind: 'unavailable' } : joined;
       }
