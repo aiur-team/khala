@@ -13,6 +13,7 @@ import { isClaudeMcpEntry } from '../composition/claude-mcp.js';
 import { createClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
 import { installedHostedSession } from '../composition/hosted-main.js';
+import { hostedAppOrigin } from '../composition/hosted-production.js';
 import { sessionGrants } from '../composition/session-grant.js';
 import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
@@ -77,6 +78,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         openConnector: openProductionConnector, environment: process.env, stateDirectory,
         distDirectory, workdir: process.cwd(), openInbox: openGenerationInbox,
       }),
+      hostedOrigin: hostedAppOrigin(process.env.KHALA_APP_ORIGIN),
       hostedBindingPresent: session => hasProductionBinding(path.join(stateDirectory, 'hosted'),
         { ...session, workdir: path.resolve(process.cwd()) }),
       ...(setup === undefined ? {} : { setup }),

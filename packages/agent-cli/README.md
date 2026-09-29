@@ -57,14 +57,12 @@ The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
 inside this workspace, under the opt-in `khala-source` condition; a consumer of
 the published package cannot resolve them.
 
-`khala channels open` is the provisional hosted-channel entry point. It takes no
-session identity or claim URL from arguments. The installed native-session
-composition must verify the calling Codex or Claude session before the command
-returns one same-origin HTTPS claim URL for the human. Until that composition is
-available, it exits 4 with a JSON `blocked` result naming the missing step
-(`native_session`, `hosted_route`, or `credentials`); retrying after that step is
-available is safe for the same session. A provisional result is not a connected
-binding and gives the agent no owner authority.
+`khala channels open` gives the person the hosted `/new` URL. The person signs
+in there before creating a room. This command performs no hosted mutation,
+creates no claim token, and does not give the agent a binding or owner authority.
+If the configured hosted origin is missing or invalid, it exits 4 with
+`{"ok":false,"kind":"blocked","step":"hosted_origin"}`. Joining the room
+later still requires an exact supported native session and the human's approval.
 
 `node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
 release gate. It packs the package as npm would publish it, then refuses the
