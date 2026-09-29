@@ -183,6 +183,7 @@ describe('channel discovery owner consent', () => {
     const page = await response.text();
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('origin');
     expect(page).toContain('Authorize channel discovery');
     expect(page).toContain('does not join or create a channel');
     expect(page).toContain('Request access');

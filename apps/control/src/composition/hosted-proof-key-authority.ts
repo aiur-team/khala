@@ -18,6 +18,9 @@ export const PROOF_KEY_CREATE_TARGET_PATH = '/api/human/channel-discovery/author
 const ID = /^[A-Za-z0-9_-]{43}$/u;
 const MAX_CANDIDATE_BYTES = 4_096;
 const BASE = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
+// A browser form POST sends Origin: null under no-referrer. Keep the exact
+// mutation-origin check while sending only the origin, never the candidate URL.
+export const OWNER_FORM_HEADERS = { ...BASE, 'referrer-policy': 'origin' };
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...BASE, 'content-type': 'application/json' } });
@@ -208,7 +211,7 @@ ${replace}
 <input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
 <button type="submit" name="decision" value="approve">Approve key</button>
 <button type="submit" name="decision" value="deny">Deny</button></form></body></html>`;
-        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+        return new Response(html, { status: 200, headers: { ...OWNER_FORM_HEADERS, 'content-type': 'text/html; charset=utf-8',
           'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
       }
       if (checkMutationOrigin(request, active.env.publicAppOrigin) !== 'ok') return json(403, { kind: 'forbidden' });
@@ -246,7 +249,7 @@ ${replace}
 <input type="hidden" name="generation" value="${current.generation}">
 <input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
 <button type="submit" name="decision" value="revoke">Revoke key</button></form></body></html>`;
-        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+        return new Response(html, { status: 200, headers: { ...OWNER_FORM_HEADERS, 'content-type': 'text/html; charset=utf-8',
           'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
       }
       if (checkMutationOrigin(request, active.env.publicAppOrigin) !== 'ok') return json(403, { kind: 'forbidden' });
