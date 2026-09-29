@@ -88,7 +88,13 @@ describe('bundled /khala skill', () => {
     expect(help.trim().split('\n').map(line => line.split(/\s+/)[1])).toEqual([...DISPATCHED_VERBS]);
     expect(normalized).toContain('Then call the `khala_status` MCP tool');
     expect(normalized).toContain('Report `unproven` as unproven');
-    expect(normalized).toContain('never changes the listening mode');
+    expect(normalized).toContain('This help path does not change the listening mode');
+  });
+
+  it('keeps the full skill consistent about the unsafe-message mode exception', () => {
+    expect(skill).toContain('request `async` with the returned version');
+    expect(skill).toContain('This help path does not change the listening mode');
+    expect(skill).not.toMatch(/(?:this skill|\/khala) never changes the listening mode/i);
   });
 
   it('keeps the shared rules in sync with packages/agent-skill', () => {
