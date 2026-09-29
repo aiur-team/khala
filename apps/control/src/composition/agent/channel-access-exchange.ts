@@ -11,7 +11,7 @@ import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journa
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
 import { type GrantExchangeAuthority, createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
-import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
+import { createGrantExchangeService, type GrantExchangeDiagnostic } from '@khala/messaging/channel-access/exchange/service';
 import type { ChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import {
@@ -35,8 +35,16 @@ export function composeChannelAccessExchange(deps: Readonly<{
   clock: TrustedClock;
   /** Wraps the access authority; `composeChannelCreate` supplies one for created channels. */
   authority?: (access: GrantExchangeAuthority) => GrantExchangeAuthority;
+  diagnostic?: (event: Readonly<{
+    stage: GrantExchangeDiagnostic['stage'] | 'authority_inspect' | 'authority_pending' | 'authority_claim'
+      | 'connector_auth' | 'request_validation' | 'exchange_result' | 'envelope_decode';
+    result: 'ok' | 'unavailable';
+  }>) => void;
 }>): readonly RouteRegistration[] {
-  const access = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock });
+  const access = createGrantExchangeAuthority({
+    store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock,
+    ...(deps.diagnostic ? { diagnostic: stage => deps.diagnostic?.({ stage, result: 'unavailable' }) } : {}),
+  });
   const authority = deps.authority ? deps.authority(access) : access;
   const issuer = createExchangeGrantIssuer({ store: deps.store, clock: deps.clock });
   const service = createGrantExchangeService({
@@ -45,6 +53,7 @@ export function composeChannelAccessExchange(deps: Readonly<{
     provider: deps.provider,
     issuer,
     clock: deps.clock,
+    ...(deps.diagnostic ? { diagnostic: deps.diagnostic } : {}),
   });
   const resume = createChannelAccessResumeService({
     journal: exchangeJournal(deps.store),
@@ -59,6 +68,7 @@ export function composeChannelAccessExchange(deps: Readonly<{
     authenticateConnector: deps.authenticateConnector,
     exchangeFor: connector => service.forConnector(connector),
     clock: deps.clock,
+    ...(deps.diagnostic ? { diagnostic: stage => deps.diagnostic?.({ stage, result: 'unavailable' }) } : {}),
   };
   return Object.freeze([
     createGrantExchangeHandler(handlerDeps),

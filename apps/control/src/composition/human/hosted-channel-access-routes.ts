@@ -115,6 +115,7 @@ export function createHostedChannelAccessRoutes(
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
+      diagnostic: event => console.info(JSON.stringify({ component: 'hosted_channel_exchange', ...event })),
       ...(create ? { authority: create.exchangeAuthority } : {}),
       ...(admissionAuthority ? { approval: async (record, ownerId, channelRef, matrixSession) => {
         const result = await admissionAuthority.current({
@@ -147,13 +148,20 @@ export function createHostedChannelAccessRoutes(
     return { handlers, exchange, grants, create };
   }
   function lazy(path: string, methods: readonly string[], select: (composed: ReturnType<typeof compose>) => readonly RouteRegistration[]): RouteRegistration {
+    function reportExchangeFailure(stage: 'route_composition' | 'route_unavailable'): void {
+      if (path !== '/api/agent/channel-access/exchange') return;
+      try { console.info(JSON.stringify({ component: 'hosted_channel_exchange', stage, result: 'unavailable' })); }
+      catch { /* diagnostic sink failed */ }
+    }
     return Object.freeze({
       path, methods: Object.freeze([...methods]),
       async handle(request: Request) {
         try {
           const route = select(compose()).find(item => item.path === path);
+          if (!route) reportExchangeFailure('route_unavailable');
           return route ? await route.handle(request) : unavailable();
         } catch {
+          reportExchangeFailure('route_composition');
           return unavailable();
         }
       },

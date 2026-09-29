@@ -42,7 +42,12 @@ export function createGrantExchangeAuthority(deps: Readonly<{
   store: Pick<ChannelAccessStore, 'inspectRequester'>;
   fulfillment: Pick<ChannelAccessFulfillmentPort, 'claimAccess' | 'updateAccess'>;
   clock: TrustedClock;
+  diagnostic?: (stage: 'authority_inspect' | 'authority_pending' | 'authority_claim') => void;
 }>): GrantExchangeAuthority {
+  function report(stage: 'authority_inspect' | 'authority_pending' | 'authority_claim'): void {
+    try { deps.diagnostic?.(stage); } catch { /* diagnostic sink failed */ }
+  }
+
   async function authorize(input: ExchangeAuthorityInput, options?: CallOptions): Promise<ExchangeAuthorityResult> {
     const located = await safe(() => deps.store.inspectRequester({
       requester: input.requester,
@@ -53,12 +58,18 @@ export function createGrantExchangeAuthority(deps: Readonly<{
       operationId: input.operationId,
     }, options));
     // Unknown, foreign, and not-yet-decided requests look the same to the connector.
-    if (located === null || located.kind !== 'found') return { kind: 'unavailable' };
+    if (located === null || located.kind !== 'found') {
+      report('authority_inspect');
+      return { kind: 'unavailable' };
+    }
     const { context, status } = located;
     if (deps.clock() >= Date.parse(context.deadline) || status.outcome === 'expired') {
       return { kind: 'closed', reason: 'expired' };
     }
-    if (status.outcome === 'pending_owner') return { kind: 'unavailable' };
+    if (status.outcome === 'pending_owner') {
+      report('authority_pending');
+      return { kind: 'unavailable' };
+    }
     if (status.outcome !== 'approved' && status.outcome !== 'connecting') return { kind: 'closed', reason: 'closed' };
     const claimed = await safe(() => deps.fulfillment.claimAccess({
       v: 1,
@@ -66,11 +77,17 @@ export function createGrantExchangeAuthority(deps: Readonly<{
       expectedRevision: `carev_${context.revision}`,
       operationId: input.claimOperationId,
     }, options));
-    if (claimed === null || claimed.kind === 'unavailable' || claimed.kind === 'outcome_unknown') return { kind: 'unavailable' };
+    if (claimed === null || claimed.kind === 'unavailable' || claimed.kind === 'outcome_unknown') {
+      report('authority_claim');
+      return { kind: 'unavailable' };
+    }
     if (claimed.kind === 'ok') return { kind: 'authorized', authorization: claimed.value };
     if (claimed.code === 'expired') return { kind: 'closed', reason: 'expired' };
     // A concurrent journal write moved the row; the caller retries with a fresh read.
-    if (claimed.code === 'stale_revision') return { kind: 'unavailable' };
+    if (claimed.code === 'stale_revision') {
+      report('authority_claim');
+      return { kind: 'unavailable' };
+    }
     return { kind: 'closed', reason: 'closed' };
   }
 
