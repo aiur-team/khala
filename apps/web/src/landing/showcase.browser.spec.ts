@@ -43,6 +43,8 @@ test('public showcase stays local and works across themes and widths', { timeout
     assert.equal(await page.getByText('Open the real Khala app').count(), 0);
     assert.equal(await pane.getByRole('button', { name: 'Participants and agents' }).count(), 1);
     assert.equal(await pane.getByRole('button', { name: 'Send message' }).getAttribute('aria-describedby'), 'showcase-local-note');
+    assert.equal(await pane.getByRole('textbox', { name: 'Message' }).getAttribute('aria-describedby'), 'showcase-local-note');
+    assert.equal(await pane.getByRole('textbox', { name: 'Message' }).getAttribute('placeholder') ?? '', '');
     assert.match(await pane.locator('#showcase-local-note').textContent() ?? '', /not sent to agents/);
 
     const participantButton = pane.getByRole('button', { name: 'Participants and agents' });
@@ -100,8 +102,12 @@ test('public showcase stays local and works across themes and widths', { timeout
     await pane.getByRole('textbox', { name: 'Message' }).fill('A local note');
     await pane.getByRole('button', { name: 'Send message' }).click();
     assert.equal(await pane.getByText('A local note').isVisible(), true);
+    await pane.getByRole('textbox', { name: 'Message' }).fill('An Enter note');
+    await pane.getByRole('textbox', { name: 'Message' }).press('Enter');
+    assert.equal(await pane.getByText('An Enter note').isVisible(), true);
     await page.reload();
     assert.equal(await page.getByText('A local note').count(), 0, 'local text is not persisted');
+    assert.equal(await page.getByText('An Enter note').count(), 0, 'Enter text is not persisted');
     assert.deepEqual(calls, [], 'no chat or auth requests');
     assert.deepEqual(errors, [], 'no browser errors');
     await context.close();
