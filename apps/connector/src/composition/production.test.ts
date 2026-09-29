@@ -54,6 +54,8 @@ describe('installed hosted connector composition', () => {
       binding = { v: 1, bindingId: 'binding-active-restart', ownerId: 'owner-active',
         agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
         deviceId, harness: 'proof-key', sessionId: `agent_${signer.jkt}`, generation: 0 } as SessionBinding;
+      expect(await storage.bindDeviceIdentity({ deviceId, fingerprint: 'active-device-fingerprint' }))
+        .toEqual({ kind: 'bound' });
       expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer })
         .acceptInitial({ token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
