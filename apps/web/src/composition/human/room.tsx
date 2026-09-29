@@ -238,6 +238,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   );
   const recovery = useMemo(() => createBrowserRecoveryPort({
     principal: context.principal, identity: context.identity, device: context.device,
+    ...(context.room.observeEntries ? { historyEntries: { roomId, observeEntries: context.room.observeEntries } } : {}),
     resumeStore: sessionResumeStore(context.principal.ownerId, roomId),
     ...(context.closure ? { closure: context.closure(roomId) } : {}),
     ...(context.revocation ? { revocation: context.revocation(roomId) } : {}),

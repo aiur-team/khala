@@ -93,6 +93,27 @@ function operation(kind: OperationKind, state: string, reason: string | null = n
 }
 
 describe('RecoveryPanel state facts', () => {
+  it('explains policy scope without claiming missing keys on a ready device', () => {
+    const html = render(view({ history: 'policy_limited', deviceState: 'ready' }));
+    expect(html).toContain('History access depends on policy');
+    expect(html).toContain('No missing keys have been observed');
+    expect(html).not.toContain('History partially available');
+    expect(html).not.toContain('Some received messages remain unavailable');
+  });
+
+  it('does not call other observed decrypt failures missing keys', () => {
+    const html = render(view({ history: 'decrypt_failed', deviceState: 'ready' }));
+    expect(html).toContain('Some messages could not be decrypted');
+    expect(html).toContain('cause has not been identified as missing keys');
+  });
+
+  it('does not call a digest verification failure a decrypt failure', () => {
+    const html = render(view({ history: 'digest_unavailable', deviceState: 'ready' }));
+    expect(html).toContain('Message verification unavailable');
+    expect(html).toContain('could not be verified and displayed');
+    expect(html).not.toContain('Some messages could not be decrypted');
+  });
+
   it('distinguishes a signed-in identity from missing historical keys', () => {
     const html = render(view());
 
@@ -109,9 +130,15 @@ describe('RecoveryPanel state facts', () => {
     const html = render(view({ history: 'partial', deviceState: 'ready' }));
 
     expect(html).toContain('History partially available');
-    expect(html).toContain('Some earlier messages remain unavailable');
+    expect(html).toContain('Some received messages remain unavailable');
     expect(html).toMatch(/status-badge--caution[^>]*>History partially available/);
     expect(html).not.toMatch(/status-badge--positive[^>]*>History partially available/);
+  });
+
+  it('keeps a lost device explicitly unavailable', () => {
+    const html = render(view({ history: 'unavailable', deviceState: 'lost' }));
+    expect(html).toContain('Device unavailable');
+    expect(html).toContain('History keys unavailable');
   });
 
   it.each(['not_configured', 'unsupported_substrate', 'device_not_ready', 'signed_out'] as const)(
