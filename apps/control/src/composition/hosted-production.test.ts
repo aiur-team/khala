@@ -75,6 +75,18 @@ describe('generated hosted production composition', () => {
     expect(challenge.status).toBe(429);
     expect(await challenge.json()).toEqual({ kind: 'limited' });
   });
+  it('bounds unauthenticated candidate JSON before parsing it', async () => {
+    const blobs = durableStores();
+    const route = createGateway({ registrations: registerHostedProductionRoutes({
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+    }), absentPrefixes: [], appOrigin: origin });
+    const response = await route(new Request(`${origin}${PROOF_KEY_CANDIDATE_PATH}`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'a'.repeat(4_096) }),
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ kind: 'rejected' });
+  });
   it('does not authenticate a claimed native thread without a discovery credential', async () => {
     const discovery = createHostedDiscoveryBootstrap({ env, stores });
     const request = new Request(`${origin}/api/agent/channel-access/request`, {

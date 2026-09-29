@@ -15,6 +15,7 @@ export const PROOF_KEY_CANDIDATE_PATH = '/api/agent/channel-discovery/authority/
 export const PROOF_KEY_APPROVE_PATH = '/api/human/channel-discovery/authority/approve';
 export const PROOF_KEY_REVOKE_PATH = '/api/human/channel-discovery/authority/revoke';
 const ID = /^[A-Za-z0-9_-]{43}$/u;
+const MAX_CANDIDATE_BYTES = 4_096;
 const BASE = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
 
 function json(status: number, body: unknown): Response {
@@ -67,6 +68,30 @@ function candidateBody(value: unknown) {
     session: { harness: body.harness, sessionId: body.sessionId, generation: body.generation as number } };
 }
 
+async function readCandidateBody(request: Request): Promise<unknown> {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      length += part.value.byteLength;
+      if (length > MAX_CANDIDATE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(part.value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+  } catch { return null; }
+  finally { reader.releaseLock(); }
+}
+
 /** Generated-function routes for signed candidate filing and authenticated owner approval. */
 export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHumanDependencies = {}): readonly RouteRegistration[] {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
@@ -88,10 +113,10 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
     }) },
     { path: PROOF_KEY_CANDIDATE_PATH, methods: ['POST'], handle: safe(async (request, active, authority) => {
       if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return json(400, { kind: 'rejected' });
-      const body = candidateBody(await request.json().catch(() => null));
-      if (!body) return json(400, { kind: 'rejected' });
       const budget = await reserveHostedDiscoveryAttempt(active);
       if (budget !== 'reserved') return json(budget === 'limited' ? 429 : 503, { kind: budget });
+      const body = candidateBody(await readCandidateBody(request));
+      if (!body) return json(400, { kind: 'rejected' });
       const result = await authority.propose({ ...body, proof: request.headers.get('dpop') });
       if (!('candidateId' in result)) return json(result.kind === 'rejected' ? 403 : 503, result);
       return json(result.kind === 'approved' ? 200 : 202,
