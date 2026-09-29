@@ -10,7 +10,7 @@ import { createHostedChannelAccessRoutes, type HostedChannelAccessPorts } from '
 import { createHostedChannelRequester } from './human/hosted-channel-requester';
 import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
 import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
-import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
+import { createHostedAgentChannelLinkRoutes, createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'> & Readonly<{
   /** Supplied only after the exact native-session authority is available. */
@@ -76,5 +76,6 @@ export function registerHostedProductionRoutes(
       roomSend: () => bootstrap.roomSend.agent,
       channelDiscoveryBootstrap: () => discovery.agent,
     }),
+    ...createHostedAgentChannelLinkRoutes(options, discovery.authorize),
   ]);
 }
