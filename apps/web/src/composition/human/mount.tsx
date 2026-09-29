@@ -281,7 +281,7 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       <ChannelAccessContext.Provider value={controller}>{children}</ChannelAccessContext.Provider>
       {creating ? <CreateChannelDialog context={context}
         returnFocus={restoreCreateFocus}
-        onClose={() => { setCreating(false); if (route.kind === 'create') navigateRoute(routes.conversationsPath()); }}
+        onClose={() => setCreating(false)}
         onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null}
     </AiurShell>
   );
@@ -303,8 +303,6 @@ export function HumanApplicationScreen({
   const renderRoute = (context: HumanRouteContext, route: HumanRoute): ReactNode => {
     switch (route.kind) {
       case 'conversations':
-        return <ConversationIndexRoute />;
-      case 'create':
         return <ConversationIndexRoute />;
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;

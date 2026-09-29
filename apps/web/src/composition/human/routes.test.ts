@@ -5,8 +5,8 @@ import { createHumanRouteCodec } from './routes';
 describe('createHumanRouteCodec', () => {
   const codec = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
 
-  test('maps create, join and opaque room locations', () => {
-    expect(codec.parse('https://khala.aiur.team/new')).toEqual({ kind: 'create', path: '/new' });
+  test('maps the legacy new path to the index alongside join and room locations', () => {
+    expect(codec.parse('https://khala.aiur.team/new')).toEqual({ kind: 'conversations', path: '/new' });
     expect(codec.conversationsPath()).toBe('/conversations');
     expect(codec.parse('/conversations')).toEqual({ kind: 'conversations', path: '/conversations' });
     expect(codec.parse('https://khala.aiur.team/')).toEqual({ kind: 'not_found', path: '/' });

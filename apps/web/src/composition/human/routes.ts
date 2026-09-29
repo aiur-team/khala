@@ -3,7 +3,6 @@ import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../.
 
 export type HumanRoute =
   | Readonly<{ kind: 'conversations'; path: string }>
-  | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
   | Readonly<{ kind: 'channel_tools'; path: string; roomId: RoomId }>
@@ -55,7 +54,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   const origin = exactHttpsOrigin(options.origin, options.allowInsecureLoopback);
   const base = normalizedBasePath(options.basePath);
   // The site root belongs to the public landing page (netlify.toml), so the
-  // application's create route lives one segment below the base path.
+  // application's legacy entry route lives one segment below the base path.
   const createPath = () => `${base}/new`;
   const conversationsPath = () => `${base}/conversations`;
   const joinRoot = `${base}/join`;
@@ -93,7 +92,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     }
     const requestedPath = `${parsed.pathname}${parsed.search}`;
     if (parsed.origin !== origin || parsed.username || parsed.password) return notFound(requestedPath);
-    if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'create', path: createPath() };
+    if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'conversations', path: createPath() };
     if (parsed.pathname === conversationsPath() && parsed.search === '') return { kind: 'conversations', path: conversationsPath() };
     if (parsed.pathname === joinRoot) {
       const decoded = parseJoinLocation(parsed.href);
