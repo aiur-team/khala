@@ -41,6 +41,7 @@ import {
 } from '@khala/messaging/browser-device/index';
 import {
   createRoomService,
+  type ChannelService,
   type RoomJournal,
   type CreateLookup,
   type RoomSubstrate,
@@ -516,7 +517,7 @@ class MatrixSubstrate implements RoomSubstrate {
 
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
-  room: RoomPort;
+  room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   participant(): ParticipantView | null;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
@@ -589,7 +590,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     return next;
   }
 
-  const room: RoomPort = {
+  const room: RoomPort & Pick<ChannelService, 'observeEntries'> = {
     create: (value, options) => service()?.create(value, options) ?? Promise.resolve(unavailable()),
     prepareIntro: (value, options) => service()?.prepareIntro(value, options) ?? Promise.resolve(unavailable()),
     resumeIntro: (value, options) => service()?.resumeIntro(value, options) ?? Promise.resolve(unavailable()),
@@ -597,6 +598,9 @@ export function createMatrixBrowserPorts(input: Readonly<{
     timeline: (value, options) => service()?.timeline(value, options) ?? Promise.resolve(unavailable()),
     observe(roomId, listener) {
       return service()?.observe(roomId, listener) ?? (() => undefined);
+    },
+    observeEntries(roomId, listener) {
+      return service()?.observeEntries(roomId, listener) ?? (() => undefined);
     },
   };
 
