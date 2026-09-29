@@ -303,6 +303,20 @@ describe('channel discovery credential lifecycle', () => {
     }
   });
 
+  it('rejects credentials from a revoked approval even after the same key is approved again', async () => {
+    const h = setup();
+    const oldCredential = await h.credential();
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'authorized' });
+    h.setAuthority('removed');
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    h.setAuthorityRevision('approval-2');
+    h.setAuthority('verified');
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    expect((await h.refresh(oldCredential.credentialRef)).status).toBe(401);
+    const newCredential = await h.credential();
+    expect(await h.authorize(newCredential.credentialRef)).toMatchObject({ kind: 'authorized' });
+  });
+
   it('requires current sender proof, exact scope and rejects proof replay', async () => {
     const h = setup();
     const credential = await h.credential();
