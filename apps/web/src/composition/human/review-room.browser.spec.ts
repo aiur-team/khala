@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -24,25 +24,38 @@ declare global { interface Window {
   __oldStatusReturned: () => boolean;
 } }
 
-test('created channel page can copy a link and prepare a named email invitation', { timeout: 90_000 }, async () => {
+test('created channel page has one share action that copies a working link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await page.getByRole('button', { name: 'Copy channel invite link' }).click();
     await page.getByRole('status').getByText('Copied').waitFor();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'https://khala.example/join/invite_1');
-    await page.locator('.channel-share__more summary').click();
-    await page.getByRole('textbox', { name: 'Invite by email' }).fill('friend@example.com');
-    await page.getByRole('button', { name: 'Create email invite' }).click();
-    await page.getByRole('link', { name: 'Open email draft' }).waitFor();
-    assert.match((await page.getByRole('link', { name: 'Open email draft' }).getAttribute('href')) ?? '', /friend%40example.com/);
+    assert.equal(await page.locator('.channel-share button').count(), 1);
+    assert.equal(await page.locator('.channel-share__more').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.__shareRequests()), [
       { roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'none' } },
-      { roomId: 'room_1', policy: { v: 1, kind: 'named_email', email: 'friend@example.com', history: 'none' } },
     ]);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole('button', { name: 'Close details' }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       'room sharing stays within the phone viewport');
+  });
+});
+
+test('channel care route mounts recipient review and recovery outside the chat', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?tools', async page => {
+    const care = page.getByRole('main', { name: 'Channel care route' });
+    await care.getByRole('heading', { name: 'Channel care' }).waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
+    await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
+    await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await page.locator('.conversation-thread__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-mobile.png'), fullPage: true });
+    }
   });
 });
 
@@ -59,6 +72,7 @@ test('share offers a selectable link when clipboard access is denied', { timeout
 
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-review-room-profile-'));
   let server: PreviewServer | null = null;
   let browser: Browser | null = null;
   try {
@@ -68,15 +82,15 @@ async function withRoomPage(path: string, run: (page: Page) => Promise<void>): P
     server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
       build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      headless: true, args: ['--no-sandbox'] });
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + path);
-    await page.getByRole('button', { name: 'Channel settings' }).click();
     await run(page);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
 }
 
@@ -176,7 +190,6 @@ test('new binding and account stay current after older trust finishes out of ord
 
     // Route/account replacement discards the old route lease and trust cache.
     await page.evaluate(() => window.__switchReviewAccount());
-    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByText('Waiting for verified agent device trust.').waitFor();
     assert.equal(await page.getByText('To: Replaced identity').count(), 0);
     await page.evaluate(() => window.__releaseAccountTrust());
@@ -225,7 +238,6 @@ test('mounted controls discard an old generation and account while their status 
     const first = await page.evaluate(() => window.__controlCommands());
     assert.equal(first[0]?.expectedBindingGeneration, 1);
     await page.evaluate(() => window.__switchReviewAccount());
-    await page.getByRole('button', { name: 'Channel settings' }).click();
     await page.getByText('Other account agent').waitFor();
     await page.getByRole('button', { name: 'Request pause' }).waitFor();
     await page.getByRole('button', { name: 'Request pause' }).click();

@@ -49,7 +49,7 @@ describe('splash page prompt', () => {
 
   test('links the hero to the hosted app with an enabled prompt', () => {
     expect(html).toContain('<a class="button cta app-cta aiur-action" href="/new">Open Khala app</a>');
-    expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('create');
+    expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('conversations');
     expect(html).toMatch(/<button class="button copy aiur-copy-control" id="copyBtn"[^>]*>/);
     expect(html).not.toContain('Coming soon.');
     expect(html).not.toContain('aria-disabled="true"');

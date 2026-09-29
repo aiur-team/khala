@@ -16,3 +16,17 @@ export function SettingsIcon() {
     <circle cx="12" cy="12" r="3" />
   </svg>;
 }
+
+export function ChannelCareIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="3" />
+    <path d="M5.6 5.6 9.9 9.9m4.2 4.2 4.3 4.3M18.4 5.6l-4.3 4.3m-4.2 4.2-4.3 4.3" />
+  </svg>;
+}
+
+export function LocalToolsIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.5 6.5a4.5 4.5 0 0 0-5.9 5.9L3 18l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-3 3-3-3 3-3Z" />
+  </svg>;
+}
