@@ -3,7 +3,7 @@ import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
   type PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
-import { createHumanRoomRenderer } from '../room';
+import { createHumanRoomRenderer, HumanControls, HumanReview } from '../room';
 import { registerReview } from '../../review/register';
 import { registerControls } from '../../controls/register';
 import '../../../features/review/review.css';
@@ -179,16 +179,23 @@ const controls = registerControls({ client: {
 }, bindingFor: () => null, refreshMs: 75 });
 let attachment = capability.attach(context);
 let controlsAttachment = controls.attach(context);
-const renderer = createHumanRoomRenderer(review, capability, async (_context, _roomId, binding) => {
+const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_context, _roomId, binding) => {
   if (!race) { await trustReady; return true; }
   if (binding.agentParticipantId === oldBinding.agentParticipantId) { await oldTrust; oldTrustReturned = true; }
   if (binding.agentParticipantId === replacedIdentity.agentParticipantId) await replacementTrust;
   if (binding.agentParticipantId === accountBinding.agentParticipantId) await accountTrust;
   return true;
-}, race || controlsEnabled ? 75 : 5_000, controlsEnabled ? controls : undefined);
+};
+const refreshMs = race || controlsEnabled ? 75 : 5_000;
+const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const root = createRoot(document.getElementById('app')!);
-root.render(renderer(context, route));
+const testSurface = (currentContext: HumanRouteContext) => <>{renderer(currentContext, route)}
+  <aside aria-label="Deferred channel tools"><HumanReview context={currentContext} roomId={roomId} review={review}
+    capability={capability} trustBinding={trustBinding} refreshMs={refreshMs} />
+    {controlsEnabled ? <HumanControls context={currentContext} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} /> : null}
+  </aside></>;
+root.render(testSurface(context));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;
   controlVersion = 3;
@@ -199,11 +206,11 @@ window.__switchReviewAccount = () => {
     participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
   controlsAttachment = controls.attach(nextContext);
-  root.render(renderer(nextContext, route));
+  root.render(testSurface(nextContext));
 };
 window.__switchReviewDevice = () => {
   const nextContext = { ...context, generation: 2,
     device: { ...context.device, current: () => ({ state: 'ready', deviceId: 'device_2', generation: 2 }),
       observe: () => () => undefined } } as unknown as HumanRouteContext;
-  root.render(renderer(nextContext, route));
+  root.render(testSurface(nextContext));
 };

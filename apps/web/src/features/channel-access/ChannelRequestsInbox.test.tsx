@@ -203,23 +203,22 @@ describe('toDecisionPrompt', () => {
 describe('ChannelRequestsNavEntry', () => {
   const nav = (view: InboxView) => renderToStaticMarkup(<ChannelRequestsNavEntry controller={controllerFor(view)} href="#/channel-requests" />);
 
-  it('stays visible with an exact 0', () => {
+  it('does not render with zero pending requests', () => {
     const html = nav(ready([]));
-    expect(text(html)).toContain('Channel requests');
-    expect(html).toContain('<span class="channel-requests-nav__count" aria-hidden="true">0</span>');
-    expect(text(html)).toContain(', 0 pending');
+    expect(html).toBe('');
   });
 
   it('shows the exact count up to 50 and caps there', () => {
     const fifty = requestsFor(Array.from({ length: 50 }, (_, index) => ({ kind: 'access' as const, title: 'T', fingerprint: `a${index}` })));
     expect(pendingIndicator(fifty.slice(0, 1))).toBe(1);
     expect(pendingIndicator(fifty.slice(0, 49))).toBe(49);
-    expect(text(nav(ready(fifty)))).toContain(', 50 pending');
+    expect(nav(ready(fifty))).toContain('aria-label="Channel requests, 50 pending"');
+    expect(text(nav(ready(fifty))).trim()).toBe('50');
     const overflow = [...fifty, ...requestsFor([{ kind: 'access', title: 'T', fingerprint: 'extra' }])];
-    expect(text(nav(ready(overflow)))).toContain(', 50 pending');
+    expect(text(nav(ready(overflow))).trim()).toBe('50');
   });
 
   it('does not claim a count before the inbox loads', () => {
-    expect(text(nav(INITIAL_INBOX_VIEW)).trim()).toBe('Channel requests');
+    expect(nav(INITIAL_INBOX_VIEW)).toBe('');
   });
 });

@@ -179,3 +179,63 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await rm(browserProfile, { recursive: true, force: true });
   }
 });
+
+test('owner conversation shell fills desktop and phone with conditional request control', { timeout: 90_000 }, async () => {
+  const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-owner-visual-'));
+  const browserProfile = await mkdtemp(join('/tmp', 'khala-owner-visual-profile-'));
+  let server: PreviewServer | null = null;
+  let browser: Browser | null = null;
+  try {
+    await build({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist'), emptyOutDir: true,
+        rollupOptions: { input: join(import.meta.dirname, 'browser-harness/device-loss.html') } }, logLevel: 'error' });
+    server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual');
+    const title = page.locator('.aiur-shell__title');
+    await title.getByText('First channel').waitFor();
+    const requests = page.getByRole('link', { name: 'Channel requests, 2 pending' });
+    await requests.waitFor();
+    assert.equal((await requests.innerText()).trim(), '2');
+    assert.equal(await requests.evaluate(node => node.nextElementSibling?.getAttribute('aria-label')), 'Create channel');
+    assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
+    assert.equal(await page.locator('.conversation-detail').count(), 0);
+    assert.equal(await page.locator('.channel-share__more').count(), 0);
+    const brand = await page.locator('.aiur-shell__brand').boundingBox();
+    const theme = await page.getByRole('button', { name: 'Toggle color theme' }).boundingBox();
+    const logout = await page.getByRole('button', { name: 'Log out' }).boundingBox();
+    assert.ok(brand && theme && logout && brand.x < theme.x && theme.x < logout.x && logout.x + logout.width < 261);
+    assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopWidth), '0px');
+    assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopLeftRadius), '0px');
+    const main = await page.locator('.aiur-shell__content').boundingBox();
+    const chat = await page.locator('.conversation-layout').boundingBox();
+    assert.ok(main && chat && Math.abs(main.width - chat.width) < 1 && Math.abs(main.height - chat.height) < 1);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      await page.screenshot({ path: join(screenshotDir, 'human-desktop.png') });
+    }
+    await page.getByRole('button', { name: 'Toggle color theme' }).click();
+    assert.equal(await page.locator('.aiur-shell').getAttribute('data-theme'), 'light');
+    await page.getByRole('button', { name: 'Toggle color theme' }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
+    await page.getByRole('button', { name: 'Channels' }).click();
+    await page.waitForTimeout(250);
+    await requests.focus();
+    assert.equal(await requests.evaluate(node => node === document.activeElement), true);
+    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-requests.png') });
+    await page.keyboard.press('Enter');
+    await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(scratch, { recursive: true, force: true });
+    await rm(browserProfile, { recursive: true, force: true });
+  }
+});

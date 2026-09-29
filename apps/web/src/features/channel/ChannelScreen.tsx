@@ -1,11 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { AiurShell } from '../../shell/AiurShell';
-import { SettingsIcon } from '../../shell/icons';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ThemeChoice } from '../../shell/types';
-import { AgentPresencePanel } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
-import { ChatThread, ConversationLayout, ParticipantDetail } from '../../ui/conversation';
+import { ChatThread, ConversationLayout } from '../../ui/conversation';
 
 export interface ChannelScreenProps {
   title: string;
@@ -25,18 +23,13 @@ export interface ChannelScreenProps {
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
 export type RoomScreenProps = ChannelScreenProps;
 
-export function ChannelScreen({ title, description, theme = 'dark', controller, renderTimeline, renderReview, renderControls, renderShare, renderHeaderActions, showPresence = true, onBack, embedded = false }: ChannelScreenProps) {
-  const [detailOpen, setDetailOpen] = useState(false);
+export function ChannelScreen({ title, description, theme = 'dark', renderTimeline, renderShare, renderHeaderActions, onBack, embedded = false }: ChannelScreenProps) {
   const content = (
     <div className="channel-page"><KhalaPageFrame model={{ title, labelledBy: 'khala-channel-title' }}>
         <ConversationLayout inThread thread={<ChatThread title={title} {...(onBack ? { onBack } : {})}>
-          <div className="conversation-thread__actions">{description ? <span>{description}</span> : null}{renderHeaderActions?.()}{renderShare?.()}<button type="button" className="aiur-shell__icon-button" aria-label="Channel settings" title="Channel settings" onClick={() => setDetailOpen(true)}>
-            <SettingsIcon />
-          </button></div>
+          {description || renderHeaderActions || renderShare ? <div className="conversation-thread__actions">{description ? <span>{description}</span> : null}{renderHeaderActions?.()}{renderShare?.()}</div> : null}
           {renderTimeline()}
-        </ChatThread>} detail={detailOpen ? <ParticipantDetail name={title} onClose={() => setDetailOpen(false)}>
-          {showPresence ? <AgentPresencePanel controller={controller} /> : null}{renderControls()}{renderReview()}
-        </ParticipantDetail> : undefined} />
+        </ChatThread>} />
       </KhalaPageFrame></div>
   );
   return embedded ? content : (

@@ -150,6 +150,8 @@ describe('HumanApplicationScreen', () => {
     );
     expect(room).toContain('live room');
     expect(room).toContain('aria-label="Log out"');
+    expect(room).toContain('<div class="khala-content-actions"><h1 dir="auto">Encrypted conversation</h1>');
+    expect(room.indexOf('aria-label="Toggle color theme"')).toBeLessThan(room.indexOf('aria-label="Log out"'));
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
@@ -181,7 +183,21 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('<h2 id="channel-requests-recent-heading">Recent</h2>');
     expect(html).toContain('>50<');
     expect(html).toContain('50 pending');
+    expect(html.indexOf('class="channel-requests-nav"')).toBeLessThan(html.indexOf('aria-label="Create channel"'));
     expect(html).toContain('Waiting for you (60)');
+  });
+
+  it('hides the request control for a ready inbox with no pending work', async () => {
+    const channelAccess = await channelAccessController(0);
+    const context = readyContext('/channels/room_1');
+    const html = renderToStaticMarkup(
+      <HumanApplicationScreen application={application({ phase: 'ready', path: context.path, context })}
+        identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess}
+        capabilities={[]} mode="standalone" />,
+    );
+    expect(html).not.toContain('class="channel-requests-nav"');
+    expect(html).not.toContain('0 pending');
+    expect(html).toContain('aria-label="Create channel"');
   });
 
   it('deep-links /channel-requests/<handle> to that request', async () => {

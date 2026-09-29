@@ -25,7 +25,8 @@ describe('ChannelScreen', () => {
     expect(html).toContain('khala-content-root');
     expect(html).toContain('Release channel');
     expect(html).toContain('Timeline slot');
-    expect(html).toContain('aria-label="Channel settings"');
+    expect(html).not.toContain('aria-label="Channel details"');
+    expect(html).not.toContain('conversation-detail');
     expect(html).not.toContain('Review slot');
     expect(html).not.toContain('Controls slot');
     expect(html).not.toContain('Agent presence');

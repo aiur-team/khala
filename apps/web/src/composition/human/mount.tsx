@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ChannelAccessRequestHandle, IdentityPort } from '@khala/contracts/messaging/index';
-import { AiurShell } from '../../shell/AiurShell';
+import { AiurShell, ThemeToggle } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
@@ -168,6 +168,10 @@ function OwnerShell({ application, createController, routes, chrome, context, na
   const [controller] = useState(createController);
   const route = routes.parse(chrome.path);
   const conversations = useConversationIndex(context);
+  const selectedTitle = route.kind === 'channel'
+    ? conversations?.find(item => item.id === route.roomId)?.title ?? 'Encrypted conversation'
+    : route.kind === 'channel_requests' ? 'Channel requests' : 'Channels';
+  const channelTitle = route.kind === 'channel' ? selectedTitle : undefined;
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(route.kind === 'create');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -185,17 +189,21 @@ function OwnerShell({ application, createController, routes, chrome, context, na
     return () => controller.dispose();
   }, [controller]);
   const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
+  const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
   const sidebar = <>
     <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
-      action={<button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button>}
+      action={<><ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()} current={route.kind === 'channel_requests'}
+        onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
+        <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button></>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
-    <ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()} current={route.kind === 'channel_requests'} />
   </>;
   return (
     <AiurShell
       mode={chrome.mode}
+      className="khala-owner-shell"
+      {...(channelTitle ? { title: channelTitle } : {})}
       navigation={[]}
       brandHref={routes.conversationsPath()}
       sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
@@ -217,8 +225,8 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       collapsed={chrome.collapsed}
       onCollapsedChange={chrome.onCollapsedChange}
     >
-      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{actions}</div> : null}
-      <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><span>Channels</span>{chrome.mode === 'hosted-content' ? actions : null}</div>
+      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{channelTitle ? <h1 dir="auto">{channelTitle}</h1> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
+      <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button>{channelTitle ? <h1 dir="auto">{channelTitle}</h1> : <span>{selectedTitle}</span>}{chrome.mode === 'hosted-content' ? hostedActions : null}</div>
       <ChannelAccessContext.Provider value={controller}>{children}</ChannelAccessContext.Provider>
       {creating ? <CreateChannelDialog context={context}
         returnFocus={restoreCreateFocus}

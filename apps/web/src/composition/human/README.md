@@ -36,9 +36,11 @@ bundle never reaches join, recovery, the Matrix adapter or the control API.
 The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.
-The owner shell links the top logo and KHALA wordmark to `/new`; its sidebar
-contains Channel requests without a duplicate home label. Signed-in owners can
-log out from the topbar (or the content edge in hosted mode). Successful logout
+The owner shell links the top logo and KHALA wordmark to `/new`. The selected
+channel fills the main pane and its title appears in the top navigation. The
+sidebar header shows a request count before create only while requests are
+pending. Signed-in owners can switch themes and log out from the topbar (or the
+content edge in hosted mode). Successful logout
 ends the route and Matrix device lease before showing sign-in at `/new`.
 
 ## Routes and entry

@@ -79,7 +79,7 @@ function ControlsForBinding({ context, roomId, capability, binding }: {
   }} />;
 }
 
-function HumanControls({ context, roomId, review, capability, refreshMs }: {
+export function HumanControls({ context, roomId, review, capability, refreshMs }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: ReviewRoomId;
   review: ReviewClient | undefined;
@@ -141,7 +141,7 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
 }
 
-function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
+export function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review: ReviewClient | undefined;
@@ -270,7 +270,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
-        admission={context.admission} roomId={roomId} roomTitle={selectedConversation?.title ?? 'Encrypted conversation'} /> : null}
+        admission={context.admission} roomId={roomId} /> : null}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}

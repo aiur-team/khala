@@ -117,7 +117,7 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await page.getByText('No messages yet.').waitFor();
     assert.equal(await page.getByRole('heading', { name: 'One', level: 1 }).count(), 1);
     assert.equal(await page.getByRole('heading', { name: 'One', level: 2 }).count(), 1);
-    assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     await page.locator('.conversation-list__item').first().waitFor();
     assert.equal(await page.getByText('Delivery evidence unavailable').count(), 0, 'empty channels do not show a receipt error');
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;

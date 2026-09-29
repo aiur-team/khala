@@ -89,7 +89,7 @@ describe('LocalApplicationScreen', () => {
     expect(html).toContain('aria-label="Create channel"');
     expect(html).not.toContain('channel-requests-nav');
     expect((html.match(/<main/g) ?? [])).toHaveLength(1);
-    expect(html).toContain('aria-label="Channel settings"');
+    expect(html).not.toContain('aria-label="Channel details"');
     expect(html).not.toContain('href="/channels/ch_1/settings"');
   });
 
