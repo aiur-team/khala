@@ -24,7 +24,7 @@ import type {
 } from '../types.js';
 
 /** Exact versions whose mutation footprint and settings-only plugin loading are certified. */
-export const CLAUDE_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['2.1.283']);
+export const CLAUDE_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['2.1.283', '2.1.284']);
 
 export const CLAUDE_MARKETPLACE_NAME = 'khala';
 export const CLAUDE_PLUGIN_NAME = 'khala';

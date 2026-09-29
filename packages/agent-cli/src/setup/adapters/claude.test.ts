@@ -115,6 +115,7 @@ afterEach(async () => {
 describe('claude setup adapter: detection', () => {
   it('parses the version banner and fails closed on anything else', () => {
     expect(parseClaudeVersion('2.1.283 (Claude Code)\n')).toBe('2.1.283');
+    expect(parseClaudeVersion('2.1.284 (Claude Code)\n')).toBe('2.1.284');
     expect(parseClaudeVersion('Claude Code')).toBeNull();
     expect(parseClaudeVersion('2.1.283-beta (Claude Code)')).toBeNull();
   });
@@ -140,6 +141,26 @@ describe('claude setup adapter: detection', () => {
       expect(observation.components.map(item => item.state)).toEqual(['unsupported', 'unsupported']);
       expect(() => instance.plan({ desired: 'present', observation })).toThrow(ClaudeSetupRefusal);
     });
+});
+
+describe('Claude Code 2.1.284 setup', () => {
+  it('installs only the planned native plugin paths', async () => {
+    await installClaude();
+    const before = await userState();
+    const instance = adapter();
+    const observed = await observe(instance, '2.1.284 (Claude Code)');
+    expect(observed.detection.supported).toBe(true);
+    const planned = instance.planWithContents({ desired: 'present', observation: observed });
+    expect(planned.operations.map(operation => operation.component)).toContain('plugin');
+    const executable: ExecutablePlan = {
+      command: 'setup', planDigest: sha256(new TextEncoder().encode(JSON.stringify(planned.operations))),
+      operations: planned.operations, contents: planned.contents,
+    };
+    expect((await executeSetupPlan({ roots, searchPath: binDirectory,
+      confirmedDigest: executable.planDigest, replan: async () => executable })).kind).toBe('committed');
+    expect(changedFiles(before, await userState())).toEqual([...planPaths(planned.operations)].sort());
+    expect((await observe(instance, '2.1.284 (Claude Code)')).components.map(item => item.state)).toEqual(['ready', 'ready']);
+  });
 });
 
 describe('claude setup adapter: footprint', () => {
