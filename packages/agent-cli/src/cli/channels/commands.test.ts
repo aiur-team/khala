@@ -18,6 +18,37 @@ async function run(argv: readonly string[], client: AgentClientPort) {
   return { code, stdout: io.output(), stderr: io.error() };
 }
 
+describe('khala channels open', () => {
+  async function open(hostedOrigin: string | undefined, client = listingClient()) {
+    const io = streams();
+    const code = await runCli(['channels', 'open'], { client, inbox: unusedInbox,
+      ...io, ...(hostedOrigin === undefined ? {} : { hostedOrigin }) });
+    return { code, output: JSON.parse(io.output()) as Record<string, unknown> };
+  }
+
+  it('returns a public human sign-in handoff without opening a channel', async () => {
+    const connect = vi.fn<AgentClientPort['connect']>();
+    const requestChannelCreate = vi.fn<NonNullable<AgentClientPort['requestChannelCreate']>>();
+    expect(await open('https://khala.aiur.team', listingClient({ connect, requestChannelCreate })))
+      .toEqual({ code: 0, output: { ok: true, kind: 'human_handoff',
+      url: 'https://khala.aiur.team/new', next: 'human_sign_in_before_creation' } });
+    expect(connect).not.toHaveBeenCalled();
+    expect(requestChannelCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports an unavailable hosted origin', async () => {
+    expect(await open(undefined)).toEqual({ code: 4, output: { ok: false, kind: 'blocked', step: 'hosted_origin' } });
+  });
+
+  it('refuses a malformed or non-HTTPS deployment origin', async () => {
+    for (const origin of ['https://khala.aiur.team/path', 'http://khala.aiur.team',
+      'https://user@khala.aiur.team', 'https://khala.aiur.team?claim=secret']) {
+      expect(await open(origin)).toEqual({ code: 4,
+        output: { ok: false, kind: 'blocked', step: 'hosted_origin' } });
+    }
+  });
+});
+
 describe('khala channels list', () => {
   it('prints one strictly decoded page with untrusted titles normalized', async () => {
     const result = await run(['channels', 'list'], listingClient());
