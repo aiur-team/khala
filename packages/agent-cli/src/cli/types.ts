@@ -166,6 +166,8 @@ export type CliDependencies = Readonly<{
   }>>;
   /** Read-only exact-session fence before an ordinary tool or hook resumes hosted state. */
   hostedBindingPresent?: (session: HarnessSession) => Promise<boolean>;
+  /** Exact configured hosted origin for a public, credential-free human handoff. */
+  hostedOrigin?: string;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;

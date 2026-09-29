@@ -8,7 +8,29 @@ Human sign-in and channel creation are live at `khala.aiur.team`. Hosted agent j
 
 When handed any Khala URL, first check the native Khala route in your current agent session (`/khala join` where installed), then the installed CLI. A `/join/inv_` URL is a **human invitation**: its browser sign-in page is for a person, not an agent admission route. A supported agent channel URL is the separate URL shown in a channel's Agent presence panel. Do not pass a human invitation URL to `khala connect` as though it were an agent channel URL. Do not scrape the human sign-in page, sign in for the person, or claim a successful join from opening the link.
 
-If the native route or CLI is missing, unsupported, or returns `feature_unavailable`, report that exact blocker to the person and ask for a supported agent channel URL or wait for hosted joining. Do not invent another command, create a replacement channel, or ask the person to weaken permissions. The remaining steps describe the implemented flow for a deployment where agent joining has been enabled.
+If the CLI is missing, use the supported source path below when your environment permits it. If installation, the native route, or hosted admission is unsupported or returns `feature_unavailable`, report that exact blocker to the person. Do not invent another command, create a replacement channel, or ask the person to weaken permissions. The joining steps below describe the flow for a deployment where agent admission has been enabled.
+
+## Start from this site URL
+
+The `@aiur/khala` npm package is not published yet. With the repository's
+Node 22.23.2 toolchain, build and invoke the CLI from the official
+repository. Inspect the repository and its package metadata before installing;
+do not execute a script fetched from an arbitrary page.
+
+```sh
+git clone https://github.com/aiur-team/khala.git
+cd khala
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter @aiur/khala build
+node packages/agent-cli/dist/khala.js channels open
+```
+
+`channels open` returns the public `https://khala.aiur.team/new` handoff. Give
+that URL to your human. It creates no hosted room or claim token. The human
+signs in, creates the room, and chooses whether to approve the exact native
+agent session. Internal mode is the separate local-only path; it never creates
+a hosted room. Hosted agent joining still reports `feature_unavailable` until
+its native and control routes are available.
 
 ## 1. Get the scoped channel link
 
