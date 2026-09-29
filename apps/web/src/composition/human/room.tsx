@@ -16,6 +16,7 @@ import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
+import { createHumanPendingSendStore } from './pending-send-store';
 
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 type ReviewRoomId = Parameters<HumanRoomRenderer>[1]['roomId'];
@@ -216,6 +217,10 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  const deviceId = context.device.current().deviceId;
+  const pendingStore = useMemo(() => deviceId === null ? undefined
+    : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
+  [context.principal.ownerId, deviceId, roomId]);
   const room = useMemo(
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
@@ -246,7 +251,9 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
       description="Encrypted messages shared by admitted participants."
       controller={room}
       renderTimeline={() => (
-        <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} />
+        <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          {...(pendingStore ? { pendingStore } : {})} />
       )}
       renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />}
