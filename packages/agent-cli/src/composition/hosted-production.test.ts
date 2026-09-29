@@ -36,6 +36,7 @@ describe('installed hosted connector factory', () => {
     const calls: string[] = [];
     let firstActivation = true;
     let grant = '';
+    let redeemed = false;
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body),
@@ -63,8 +64,12 @@ describe('installed hosted connector factory', () => {
           ciphertext: sodium.to_base64(ciphertext, sodium.base64_variants.URLSAFE_NO_PADDING) });
       }
       if (url.pathname.endsWith('/redeem') || url.pathname.endsWith('/resume')) {
+        if (url.pathname.endsWith('/resume') && !redeemed) {
+          return reply({ v: 1, kind: 'rejected', code: 'operation_mismatch' }, 409);
+        }
         const deviceId = String(body?.device_id ?? body?.deviceId);
         if (url.pathname.endsWith('/redeem')) expect((init?.headers as Record<string, string>).authorization).toBe(`DPoP ${grant}`);
+        if (url.pathname.endsWith('/redeem')) redeemed = true;
         const binding = { v: 1, bindingId: 'bnd_1', ownerId: 'owner_1', agentParticipantId: 'agent_1',
           deviceId, harness: 'proof-key', sessionId: principal, generation: 0 };
         admittedBinding = binding as unknown as SessionBinding;
@@ -73,7 +78,7 @@ describe('installed hosted connector factory', () => {
           ownerUserId: '@owner:matrix.example', ownerParticipantId: `human_${'a'.repeat(40)}` };
         return reply({ binding, adapter_capability: { token: 'B'.repeat(43), token_type: 'DPoP',
           scope: ['publish_own', 'receive_released', 'ack_delivery'], binding_id: 'bnd_1', generation: 0,
-          expires_at: Date.now() + 60_000 }, ...(url.pathname.endsWith('/redeem') ? { matrix_session: matrixSession } : {}) });
+          expires_at: Date.now() + 60_000 }, matrix_session: matrixSession });
       }
       if (url.pathname.endsWith('/ready')) return reply({ v: 1, kind: 'acknowledged' });
       throw new Error('unexpected request');
