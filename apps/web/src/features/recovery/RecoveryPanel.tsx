@@ -81,6 +81,11 @@ const HISTORY_PRESENTATION: Record<RecoveryView['history'], Readonly<{
     tone: 'caution',
     message: 'This device received messages it could not decrypt. The cause has not been identified as missing keys.',
   },
+  digest_unavailable: {
+    label: 'Message verification unavailable',
+    tone: 'caution',
+    message: 'Some received messages could not be verified and displayed. This does not establish a missing decryption key.',
+  },
   unavailable: {
     label: 'History keys unavailable',
     tone: 'critical',

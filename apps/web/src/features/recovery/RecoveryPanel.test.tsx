@@ -107,6 +107,13 @@ describe('RecoveryPanel state facts', () => {
     expect(html).toContain('cause has not been identified as missing keys');
   });
 
+  it('does not call a digest verification failure a decrypt failure', () => {
+    const html = render(view({ history: 'digest_unavailable', deviceState: 'ready' }));
+    expect(html).toContain('Message verification unavailable');
+    expect(html).toContain('could not be verified and displayed');
+    expect(html).not.toContain('Some messages could not be decrypted');
+  });
+
   it('distinguishes a signed-in identity from missing historical keys', () => {
     const html = render(view());
 

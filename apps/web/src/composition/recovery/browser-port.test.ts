@@ -110,6 +110,13 @@ describe('createBrowserRecoveryPort', () => {
     expect(ports.ui.snapshot().history).toBe('partial');
     onEntries?.({ generation: 1, entries: [{ kind: 'unavailable', reason: 'decryption_failed' }] });
     expect(ports.ui.snapshot().history).toBe('decrypt_failed');
+    onEntries?.({ generation: 1, entries: [{ kind: 'unavailable', reason: 'digest_unavailable' }] });
+    expect(ports.ui.snapshot().history).toBe('digest_unavailable');
+    onEntries?.({ generation: 1, entries: [
+      { kind: 'unavailable', reason: 'digest_unavailable' },
+      { kind: 'unavailable', reason: 'decryption_failed' },
+    ] });
+    expect(ports.ui.snapshot().history).toBe('decrypt_failed');
     onEntries?.({ generation: 1, entries: [] });
     expect(ports.ui.snapshot().history).toBe('policy_limited');
     onEntries?.({ generation: 0, entries: [{ kind: 'unavailable', reason: 'missing_key' }] });

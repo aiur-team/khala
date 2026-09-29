@@ -62,10 +62,13 @@ const PENDING: RecoveryCapabilities = { modes: [], unavailableReason: 'device_no
  * Readiness cannot prove complete history. Only a room entry that failed decryption
  * can establish a missing-key or other decrypt-failure state.
  */
-function historyOf(device: DeviceView, observed: 'missing_key' | 'decryption_failed' | null): HistoryAvailability {
+type ObservedHistoryFailure = 'missing_key' | 'decryption_failed' | 'digest_unavailable';
+
+function historyOf(device: DeviceView, observed: ObservedHistoryFailure | null): HistoryAvailability {
   if (device.state !== 'ready') return 'unavailable';
   if (observed === 'missing_key') return 'partial';
   if (observed === 'decryption_failed') return 'decrypt_failed';
+  if (observed === 'digest_unavailable') return 'digest_unavailable';
   return 'policy_limited';
 }
 
@@ -132,7 +135,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   let revocationTargets: readonly RevocationCapability[] = [];
   let generation = 0;
   let disposed = false;
-  let observedHistory: { generation: number; failure: 'missing_key' | 'decryption_failed' | null } | null = null;
+  let observedHistory: { generation: number; failure: ObservedHistoryFailure | null } | null = null;
   let snapshot: RecoverySnapshot = build();
 
   function matchesOwner(state: IdentityState): boolean {
@@ -227,7 +230,10 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     if (view.generation !== deps.device.current().generation) return;
     const failure = view.entries.some(entry => entry.kind === 'unavailable' && entry.reason === 'missing_key')
       ? 'missing_key'
-      : view.entries.some(entry => entry.kind === 'unavailable') ? 'decryption_failed' : null;
+      : view.entries.some(entry => entry.kind === 'unavailable' && entry.reason === 'decryption_failed')
+        ? 'decryption_failed'
+        : view.entries.some(entry => entry.kind === 'unavailable' && entry.reason === 'digest_unavailable')
+          ? 'digest_unavailable' : null;
     observedHistory = { generation: view.generation, failure };
     publish();
   }) ?? (() => {});
