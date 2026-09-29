@@ -15,6 +15,7 @@ import { createChannelAccessActivationStore } from '@khala/connector/storage/cha
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { createMatrixBootstrapDevice } from '../substrate/bootstrap-device';
+import type { openMatrixConnectorSubstrate } from '../substrate/matrix';
 import { startProductionSubscription } from './agent/subscription';
 import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
@@ -89,6 +90,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: TInbox;
+  /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
+  openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
   const origin = new URL(input.appOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== input.appOrigin || origin.username || origin.password) {
@@ -161,6 +164,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
+    ...(input.openMatrix ? { open: input.openMatrix } : {}),
   });
   let closed = false;
   let binding: SessionBinding | null = null;
