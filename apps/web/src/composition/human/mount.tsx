@@ -217,7 +217,7 @@ export function HumanApplicationScreen({
       case 'create':
         return (
           <KhalaPageFrame model={{ title: 'Khala', description: 'Create a private channel and share its link.', labelledBy: 'khala-create-title' }}>
-            <CreateChannelScreen ports={context} onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
+            <CreateChannelScreen ports={context} mode="on_demand" onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
           </KhalaPageFrame>
         );
       case 'join':

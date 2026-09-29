@@ -10,7 +10,7 @@ export interface CreateChannelScreenProps {
   /** Injected for tests and for hosts that supply their own clipboard bridge. */
   onCopyShareLink?: (shareUrl: string) => Promise<CopyResult>;
   onOpenRoom?: (roomId: string) => void;
-  /** `private` skips admission; both modes open the created channel when ready. */
+  /** `on_demand` opens the hosted channel before sharing; `private` skips admission. */
   mode?: CreateChannelMode;
   /** Test-only seam: a pre-built controller (for example one already driven to a target phase). */
   controller?: CreateChannelController;

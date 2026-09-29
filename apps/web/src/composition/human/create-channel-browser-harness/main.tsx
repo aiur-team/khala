@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AdmissionPort, ContentLimits, DevicePort, IdentityPort, RoomId, ChannelPort, ChannelSummary, SendState } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, ok } from '@khala/contracts/messaging/index';
-import { CreateChannelScreen } from '../CreateChannelScreen';
-import type { CreateChannelPorts } from '../ports';
+import { CreateChannelScreen } from '../../../features/create-channel/CreateChannelScreen';
+import { ChannelSharePanel } from '../../../features/channel/ChannelSharePanel';
+import type { CreateChannelPorts } from '../../../features/create-channel/ports';
 
 /**
  * Synthetic ports for the browser harness only. No real Matrix credentials,
@@ -74,6 +75,7 @@ const room: ChannelPort = {
 const admission: AdmissionPort = {
   share: async input => {
     await delay(200);
+    document.getElementById('share-count')!.textContent = String(Number(document.getElementById('share-count')!.textContent) + 1);
     document.getElementById('policy-log')!.textContent = JSON.stringify(input.policy);
     return ok({ inviteRef: 'invite_harness', shareUrl: 'https://khala.aiur.team/i/harness', expiresAt: null });
   },
@@ -106,6 +108,7 @@ const startSignedOut = new URLSearchParams(window.location.search).get('mode') =
 
 function Harness() {
   const [signedIn, setSignedIn] = useState(!startSignedOut);
+  const [openedRoom, setOpenedRoom] = useState<RoomId | null>(null);
   return (
     <>
       <button type="button" onClick={() => setSignedIn(false)}>
@@ -113,14 +116,15 @@ function Harness() {
       </button>
       <output id="policy-log" hidden />
       <output id="opened-channel" hidden />
-      <CreateChannelScreen
+      <output id="share-count" hidden>0</output>
+      {openedRoom && signedIn ? <ChannelSharePanel admission={admission} roomId={openedRoom} roomTitle="Harness channel" onCopy={async shareUrl => {
+        logCopy(shareUrl);
+        return { ok: true };
+      }} /> : <CreateChannelScreen
         ports={signedIn ? signedInPorts : signedOutPorts}
-        onOpenRoom={roomId => { document.getElementById('opened-channel')!.textContent = roomId; }}
-        onCopyShareLink={async shareUrl => {
-          logCopy(shareUrl);
-          return { ok: true };
-        }}
-      />
+        mode="on_demand"
+        onOpenRoom={roomId => { document.getElementById('opened-channel')!.textContent = roomId; setOpenedRoom(roomId as RoomId); }}
+      />}
     </>
   );
 }
