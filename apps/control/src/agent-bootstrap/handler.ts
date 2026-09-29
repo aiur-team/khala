@@ -182,6 +182,7 @@ export type AdapterResume =
 export type AgentBootstrapDeps = Readonly<{
   /** Exact public origin, e.g. `https://khala.aiur.team`. */
   origin: string;
+  allowInsecureLoopback?: boolean;
   store: ControlStore;
   clock: TrustedClock;
   random: Random;
@@ -255,7 +256,9 @@ export type AgentBootstrapHandlers = Readonly<{
 /** Route registrations for the human (`/api/human/`) and agent (`/api/agent/`) domains. */
 export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBootstrapHandlers {
   const origin = new URL(deps.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== deps.origin) throw new Error('bootstrap origin must be an exact https origin');
+  const localOrigin = deps.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || localOrigin) || origin.origin !== deps.origin) throw new Error('bootstrap origin must be an exact https origin');
   if (typeof deps.admissionPolicy !== 'function') throw new Error('an explicit admission policy is required (G-ADMISSION)');
   if (typeof deps.legacyMigrationWritesEnabled !== 'boolean') throw new Error('legacy migration write activation must be explicit');
   const store = guardStore(deps.store);

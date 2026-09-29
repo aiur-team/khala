@@ -35,6 +35,7 @@ import type {
   MuteRejection,
 } from '../../features/channel-access/ports';
 import type { BrowserRevocation } from '../recovery/browser-port';
+import { parsePublicOrigin } from './hosted-config';
 
 const ME_PATH = '/api/human/me';
 const LOGIN_PATH = '/api/human/auth/login';
@@ -67,6 +68,7 @@ type Fetch = typeof globalThis.fetch;
 export type HumanBrowserApiOptions = Readonly<{
   origin: string;
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   limits: ContentLimits;
   fetch?: Fetch;
   timeoutMs?: number;
@@ -90,13 +92,12 @@ export type HumanBrowserApi = Readonly<{
   roomSend: BrowserSendFence;
 }>;
 
-function exactHttpsOrigin(value: string): string {
-  const parsed = new URL(value);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.origin !== value
-    || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
+  const parsed = parsePublicOrigin(value, allowInsecureLoopback);
+  if (parsed !== value) {
     throw new Error('human browser API origin must be an exact https origin');
   }
-  return parsed.origin;
+  return parsed;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -146,8 +147,8 @@ async function failedOperation<T>(response: Response, operationId: string): Prom
  * values remain unavailable rather than entering feature state.
  */
 export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBrowserApi {
-  const origin = exactHttpsOrigin(options.origin);
-  const configuredHomeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
+  const origin = exactHttpsOrigin(options.origin, options.allowInsecureLoopback);
+  const configuredHomeserverOrigin = exactHttpsOrigin(options.homeserverOrigin, options.allowInsecureLoopback);
   const request = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 10_000;
   let csrfToken: string | null = null;
@@ -301,7 +302,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         || typeof session.accessToken !== 'string' || session.accessToken.length === 0
         || session.publishedFingerprint !== null && typeof session.publishedFingerprint !== 'string') return { kind: 'unavailable' };
       let homeserverOrigin: string;
-      try { homeserverOrigin = exactHttpsOrigin(session.homeserverOrigin as string); } catch { return { kind: 'unavailable' }; }
+      try { homeserverOrigin = exactHttpsOrigin(session.homeserverOrigin as string, options.allowInsecureLoopback); } catch { return { kind: 'unavailable' }; }
       if (homeserverOrigin !== configuredHomeserverOrigin) return { kind: 'unavailable' };
       const deviceId = decodeDeviceId(session.deviceId);
       if (!deviceId.ok || deviceId.value !== decodedRequested.value) return { kind: 'unavailable' };

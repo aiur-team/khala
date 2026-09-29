@@ -3,12 +3,12 @@ import { renderNetlifyHeaders } from './src/composition/human/hosted-config';
 
 // Publishes dist/_headers with a CSP whose connect-src names exactly this
 // deploy context's PUBLIC_HOMESERVER_ORIGIN (see hosted-config.ts).
-function netlifyHeaders(homeserverOrigin: string | undefined): Plugin {
+function netlifyHeaders(homeserverOrigin: string | undefined, localDev: boolean): Plugin {
   return {
     name: 'khala-netlify-headers',
     apply: 'build',
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: '_headers', source: renderNetlifyHeaders(homeserverOrigin) });
+      this.emitFile({ type: 'asset', fileName: '_headers', source: renderNetlifyHeaders(homeserverOrigin, localDev) });
     },
   };
 }
@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, 'PUBLIC_');
   return {
     envPrefix: 'PUBLIC_',
-    plugins: [netlifyHeaders(env.PUBLIC_HOMESERVER_ORIGIN)],
+    plugins: [netlifyHeaders(env.PUBLIC_HOMESERVER_ORIGIN, env.PUBLIC_LOCAL_DEV_MODE === 'enabled')],
     build: {
       outDir: 'dist',
       emptyOutDir: true,
