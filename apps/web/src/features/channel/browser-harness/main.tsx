@@ -12,7 +12,7 @@ import { ChannelScreen } from '../ChannelScreen';
 const roomId = 'room_harness' as RoomId;
 const scoutId = 'agent_scout' as ParticipantId;
 let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
-let snapshot: AgentPresenceSnapshot = {
+const snapshot: AgentPresenceSnapshot = {
   generation: 1,
   agents: [{
     participantId: scoutId,
