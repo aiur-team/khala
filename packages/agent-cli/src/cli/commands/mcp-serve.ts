@@ -50,6 +50,15 @@ export const mcpServeCommand: CliCommand = {
           const opened = await open();
           return opened?.client.channelAccessStatus?.(input, signal) ?? { kind: 'unavailable' };
         },
+        async requestChannelCreate(input, signal) {
+          if (!input.target) return { kind: 'refused', code: 'invalid_request' };
+          const opened = await open();
+          return opened?.client.requestChannelCreate?.(input, signal) ?? { kind: 'unavailable' };
+        },
+        async channelCreateStatus(input, signal) {
+          const opened = await open();
+          return opened?.client.channelCreateStatus?.(input, signal) ?? { kind: 'unavailable' };
+        },
       };
       let retainedToken: string | undefined;
       let sessionBinding: SessionBinding | null = null;
@@ -154,6 +163,7 @@ export const mcpServeCommand: CliCommand = {
 const PREJOIN_TOOLS = new Set([
   PAIR_TOOL_NAME, CONNECT_TOOL_NAME,
   'khala_list_channels', 'khala_request_channel_access', 'khala_channel_access_status',
+  'khala_create_channel', 'khala_channel_create_status',
 ]);
 
 /**
@@ -175,9 +185,10 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
       input: deps.stdin,
       output: deps.stdout,
       signal: deps.signal,
-      async route(meta, toolName) {
+      async route(meta, toolName, args) {
         const session = harnessSessionFromMeta(meta);
         if (session === null) return null;
+        const hostedCreate = toolName === 'khala_create_channel' && typeof args.target === 'string';
         const grantPath = grants(session);
         let routed = sessions.get(grantPath);
         if (routed === undefined) {
@@ -189,7 +200,7 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
           sessions.set(grantPath, routed);
         }
         const current = publicStatus(await routed.client.status(deps.signal));
-        if (current.connected && current.binding !== null) {
+        if (!hostedCreate && current.connected && current.binding !== null) {
           if (routed.bound === null || !sameHeldBinding(routed.bound.binding, current.binding)) {
             try {
               routed.wake = session.harness === 'codex' && deps.codexIdleWake

@@ -29,10 +29,13 @@ node packages/agent-cli/dist/khala.js channels open
 that URL to your human. It creates no hosted room or claim token. The human
 signs in. They may create the room themselves, or choose **Copy an agent
 creation link** and paste that owner-bound link into this exact native session.
-Run `khala channels create --title 'Channel name' --operation <stable-id> --target '<agent-creation-link>'` in that session. Use a stable URL-safe operation ID of 8–128 characters. The first response names an
+Call the native `khala_create_channel` MCP tool with `{ title, operationId, target }`, using that exact link as `target`. Use a stable URL-safe operation ID of 8–128 characters. The first response names an
 `approvalUrl`; give it to the human. After they approve the proof key, repeat
-the same command and operation ID. The human then explicitly approves the
+the same tool call and operation ID. The human then explicitly approves the
 creation request in their inbox. No hosted room exists before that decision.
+In a Codex command with inherited `CODEX_THREAD_ID`, the installed CLI supports
+`khala channels create --title '<title>' --operation <stable-id> --target '<agent-creation-link>'`
+with the same two approvals. A shell without that native session label refuses.
 Do not use another person's creation link or invent an operation ID on retry.
 Internal mode is the separate local-only path; it never creates a hosted room.
 Hosted agent joining still reports `feature_unavailable` until its native and
