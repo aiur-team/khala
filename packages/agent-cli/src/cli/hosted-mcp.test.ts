@@ -56,8 +56,8 @@ describe('installed hosted MCP routing', () => {
       call(1, 'khala_request_channel_access', { threadId: THREAD },
         { target: 'https://khala.aiur.team/channels/room-one' }),
     ], hostedSession, hostedBindingPresent);
-    expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
-    expect(hostedSession).not.toHaveBeenCalled();
+    expect(replies[0]?.result.structuredContent).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: THREAD });
   });
 
   it('pairs only the provider-named Codex session, never an unbound read or unnamed session', async () => {

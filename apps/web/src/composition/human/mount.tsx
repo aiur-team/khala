@@ -10,7 +10,7 @@ import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRe
 import type { ChannelAccessInboxController } from '../../features/channel-access/controller';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import { createJoinController } from '../../features/join/controller';
-import { JoinScreen } from '../../features/join/JoinScreen';
+import { AgentJoinGuidance, JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
 import type { HumanApplicationHandle, HumanRouteContext } from './application';
 import { attachHumanCapabilities, registerHumanCapabilities, type HumanCapability } from './capabilities';
@@ -67,9 +67,10 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   );
 }
 
-function SignInPanel({ identity, path, navigateExternal }: {
+function SignInPanel({ identity, path, isJoin, navigateExternal }: {
   identity: IdentityPort;
   path: string;
+  isJoin: boolean;
   navigateExternal: (url: string) => void;
 }) {
   const [signInFailed, setSignInFailed] = useState(false);
@@ -85,6 +86,7 @@ function SignInPanel({ identity, path, navigateExternal }: {
     <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
       <Panel>
         <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
+        {isJoin ? <><p>Humans: sign in to accept this invitation.</p><AgentJoinGuidance /></> : null}
         {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}
       </Panel>
     </KhalaPageFrame>
@@ -253,7 +255,7 @@ export function HumanApplicationScreen({
       routes={routes}
       mode={mode}
       renderRoute={renderRoute}
-      renderSignedOut={path => <SignInPanel identity={identity} path={path} navigateExternal={navigateExternal} />}
+      renderSignedOut={path => <SignInPanel identity={identity} path={path} isJoin={routes.parse(path).kind === 'join'} navigateExternal={navigateExternal} />}
       renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}

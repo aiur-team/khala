@@ -4,7 +4,6 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { DatabaseSync } from 'node:sqlite';
 import {
   type BindingId, type EventRef, OPENCODE_HINT_MAX_BYTES, type OpenCodeInboxHint, decodeOpenCodeInboxHint,
   encodeOpenCodeInboxHint,
@@ -852,14 +851,23 @@ async function ensureLegacyListenerFence(filename: string): Promise<void> {
 
 async function acquireSqliteConsumerLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
   await ensurePrivateFile(filename);
-  let database: DatabaseSync | null = null;
+  type LockDatabase = Readonly<{ exec(sql: string): void; close(): void }>;
+  let database: LockDatabase | null = null;
   try {
-    const { DatabaseSync } = await import('node:sqlite');
-    database = new DatabaseSync(filename, { timeout: 0 });
+    if ('bun' in process.versions) {
+      // OpenCode runs plugins in Bun versions that do not expose node:sqlite.
+      const moduleName = 'bun:sqlite';
+      const { Database } = await import(moduleName) as { Database: new (path: string) => LockDatabase };
+      database = new Database(filename);
+    } else {
+      const { DatabaseSync } = await import('node:sqlite');
+      database = new DatabaseSync(filename, { timeout: 0 });
+    }
     database.exec('BEGIN IMMEDIATE');
   } catch (error) {
     database?.close();
-    if ((error as { errcode?: number }).errcode === 5) throw new CliError('listener_busy');
+    if ((error as { errcode?: number; errno?: number }).errcode === 5
+      || (error as { errno?: number }).errno === 5) throw new CliError('listener_busy');
     throw new CliError('storage_failed');
   }
   const held = database;

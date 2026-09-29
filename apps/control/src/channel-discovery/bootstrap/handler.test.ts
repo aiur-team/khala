@@ -67,6 +67,7 @@ function setup(overrides: Overrides = {}) {
   const clock = () => now;
   const key = connectorKey(clock);
   let authorityKey = key.jkt;
+  let authorityRevision = 'approval-1';
   const store = fakeStore(clock);
   const inspected: string[] = [];
   const limiterCalls: string[] = [];
@@ -82,7 +83,8 @@ function setup(overrides: Overrides = {}) {
         inspected.push(`${input.ownerId}:${input.session.harness}:${input.session.sessionId}:${input.session.generation}`);
         return authority === 'verified'
           ? { kind: 'verified', principal: 'agent_stable_b' as StableAgentPrincipal,
-            currentGeneration: input.session.generation, proofKeyThumbprint: authorityKey }
+            currentGeneration: input.session.generation, proofKeyThumbprint: authorityKey,
+            authorityRevision }
           : { kind: authority };
       },
     },
@@ -143,7 +145,8 @@ function setup(overrides: Overrides = {}) {
   );
   return { store, key, route, params, consent, decide, code, exchange, credential, refresh, authorize, handlers, inspected, limiterCalls,
     advance(ms: number) { now += ms; }, setAuthority(next: typeof authority) { authority = next; },
-    setProofKey(next: string) { authorityKey = next; } };
+    setProofKey(next: string) { authorityKey = next; },
+    setAuthorityRevision(next: string) { authorityRevision = next; } };
 }
 
 describe('channel discovery owner consent', () => {
@@ -162,6 +165,14 @@ describe('channel discovery owner consent', () => {
     const credential = await h.credential();
     expect((await h.authorize(credential.credentialRef)).kind).toBe('authorized');
     h.setProofKey('C'.repeat(43));
+    expect(await h.authorize(credential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    expect((await h.refresh(credential.credentialRef)).status).toBe(401);
+  });
+  it('does not revive an old credential when the same key gains a fresh approval', async () => {
+    const h = setup();
+    const credential = await h.credential();
+    expect((await h.authorize(credential.credentialRef)).kind).toBe('authorized');
+    h.setAuthorityRevision('approval-2');
     expect(await h.authorize(credential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
     expect((await h.refresh(credential.credentialRef)).status).toBe(401);
   });
@@ -290,6 +301,20 @@ describe('channel discovery credential lifecycle', () => {
       expect((await later.refresh(credential.credentialRef)).status).toBe(401);
       expect(await later.authorize(credential.credentialRef)).toMatchObject({ kind: 'refused' });
     }
+  });
+
+  it('rejects credentials from a revoked approval even after the same key is approved again', async () => {
+    const h = setup();
+    const oldCredential = await h.credential();
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'authorized' });
+    h.setAuthority('removed');
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    h.setAuthorityRevision('approval-2');
+    h.setAuthority('verified');
+    expect(await h.authorize(oldCredential.credentialRef)).toMatchObject({ kind: 'refused', code: 'invalid_credential' });
+    expect((await h.refresh(oldCredential.credentialRef)).status).toBe(401);
+    const newCredential = await h.credential();
+    expect(await h.authorize(newCredential.credentialRef)).toMatchObject({ kind: 'authorized' });
   });
 
   it('requires current sender proof, exact scope and rejects proof replay', async () => {
