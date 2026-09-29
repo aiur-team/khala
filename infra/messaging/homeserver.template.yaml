@@ -31,6 +31,16 @@ database:
 enable_registration: false
 enable_registration_without_verification: false
 registration_shared_secret: __KHALA_MATRIX_REGISTRATION_SHARED_SECRET__
+# Each web device obtains a Matrix session through a serverless worker. Synapse's
+# default account login burst is too small for normal multi-tab/retry traffic;
+# failed password attempts retain Synapse's stricter default limit.
+rc_login:
+  address:
+    per_second: 1
+    burst_count: 30
+  account:
+    per_second: 0.5
+    burst_count: 20
 allow_public_rooms_without_auth: false
 allow_public_rooms_over_federation: false
 federation_domain_whitelist: []

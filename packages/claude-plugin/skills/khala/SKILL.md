@@ -60,7 +60,12 @@ text in a shell command, argument list, or environment variable.
 
 ## `join`
 
-1. Take exactly one channel URL from the arguments after `join`. Pass it only
+1. First identify the supplied URL. A `/join/inv_` URL is a human invitation
+   for browser sign-in, not an agent channel URL. Report that distinction and
+   do not open, scrape, or submit it as an agent access target. Hosted agent
+   admission can return `feature_unavailable`; report that result exactly and
+   never claim a join from merely opening a link. For an agent channel URL,
+   take exactly one URL from the arguments after `join`. Pass it only
    as the `target` argument of the `khala_request_channel_access` MCP tool,
    never through a shell. With no URL, or more than one, reply with the help
    below and call nothing.

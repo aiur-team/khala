@@ -13,10 +13,10 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
 const LOGIN_TTL_MS = 10 * 60 * 1_000;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
-function productionDiagnostic(event: 'runtime' | AuthDiagnostic['event'] | 'share', stage: string): void {
+function productionDiagnostic(event: 'runtime' | AuthDiagnostic['event'] | 'share', stage: string, httpStatus?: number): void {
   // The stage is selected from finite internal codes. Never include a request,
   // exception, identity, cookie, room, operation or invitation value.
-  console.info(JSON.stringify({ component: 'human', event, stage }));
+  console.info(JSON.stringify({ component: 'human', event, stage, ...(httpStatus === undefined ? {} : { httpStatus }) }));
 }
 
 export type ProductionHumanDependencies = Readonly<{
@@ -83,11 +83,18 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
     const clock = dependencies.clock ?? (() => Date.now());
     const random = dependencies.random ?? (bytes => randomBytes(bytes));
     const storeFor = dependencies.stores ?? (name => getStore(name) as unknown as BlobsStoreLike);
+    // Netlify supplies a short-lived Blobs credential in the invocation context.
+    // A warm function retains this runtime, so retain the adapter but bind the
+    // SDK store at each operation instead of capturing an expired credential.
+    const contextualStore = (name: string): BlobsStoreLike => ({
+      getWithMetadata: (key, options) => storeFor(name).getWithMetadata(key, options),
+      setJSON: (key, data, options) => storeFor(name).setJSON(key, data, options),
+    });
     const store = createControlStore({
-      records: storeFor(`${env.controlStateNamespace}-records`),
-      operations: storeFor(`${env.controlStateNamespace}-operations`),
+      records: contextualStore(`${env.controlStateNamespace}-records`),
+      operations: contextualStore(`${env.controlStateNamespace}-operations`),
       clock,
-      diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`),
+      diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
     });
     const matrix = createMatrixHumanServices({
       homeserverOrigin: env.publicHomeserverOrigin,
