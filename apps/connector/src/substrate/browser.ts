@@ -2,6 +2,7 @@
 // Browser half of the owner connector's Matrix device. matrix-js-sdk's supported durable
 // Rust crypto store is IndexedDB; this page is a private local sidecar, never a model surface.
 import { ClientEvent, EventType, MatrixEvent, MsgType, RoomEvent, SyncState, createClient, type MatrixClient } from 'matrix-js-sdk';
+import { trustExactPeer } from './trust-readiness';
 
 type OpenInput = Readonly<{
   baseUrl: string; userId: string; deviceId: string; accessToken: string;
@@ -137,9 +138,10 @@ window.khalaMatrix = {
   async trustPeer(userId, deviceId, expectedEd25519) {
     const crypto = client?.getCrypto();
     if (!crypto) throw new Error('matrix_closed');
-    const device = (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId);
-    if (!device || device.getFingerprint() !== expectedEd25519) throw new Error('matrix_fingerprint_mismatch');
-    await crypto.setDeviceVerified(userId, deviceId, true);
+    await trustExactPeer(
+      async () => (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId)?.getFingerprint() ?? null,
+      () => crypto.setDeviceVerified(userId, deviceId, true), expectedEd25519,
+    );
     if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) throw new Error('matrix_verification_failed');
     if (active) await crypto.forceDiscardSession(active.roomId);
   },
