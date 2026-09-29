@@ -14,7 +14,7 @@ const harnessRoot = join(here, 'browser-harness');
 // fabricated ports (see browser-harness/main.tsx) — no real Matrix credentials,
 // network calls or decrypted content. Narrow viewports per
 // docs/evidence/ui-planning-grounding.md.
-test('CreateChannelScreen completes an unnamed channel with two intros and keeps submit/copy reachable at narrow viewports', { timeout: 90_000 }, async () => {
+test('CreateChannelScreen creates directly and keeps submit/copy reachable at narrow viewports', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-create-channel-dist-'));
   const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-create-channel-profile-'));
   let server: PreviewServer | undefined;
@@ -38,35 +38,8 @@ test('CreateChannelScreen completes an unnamed channel with two intros and keeps
     await titleField.waitFor();
     await titleField.focus();
 
-    // The non-default choice is carried through the screen and controller to
-    // the injected admission implementation without translation.
-    await page.getByLabel('Anyone with the link can read messages sent before they joined').check();
-
-    // Add two introduction messages, in order.
-    const addIntro = page.getByRole('button', { name: 'Add introduction message' });
-    await addIntro.click();
-    await page.getByLabel('Message 1').fill('Hello there.');
-    await addIntro.click();
-    await page.getByLabel('Message 2').fill('Second message.');
-
-    // Move-up on the first row and move-down on the last row are disabled.
-    assert.equal(await page.getByRole('button', { name: 'Move message 1 up' }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'Move message 2 down' }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'Move message 1 down' }).isDisabled(), false);
-
-    // Removing the first row moves focus to the remaining row's remove control, not to the void.
-    await page.getByRole('button', { name: 'Remove message 1' }).click();
-    await page.getByLabel('Message 1').waitFor();
-    assert.equal(await page.getByLabel('Message 1').inputValue(), 'Second message.');
-    assert.equal(
-      await page.getByRole('button', { name: 'Remove message 1' }).evaluate(node => node === document.activeElement),
-      true,
-      'focus lands on the remaining row after removing a neighbor',
-    );
-
-    // Restore two messages for the full flow.
-    await addIntro.click();
-    await page.getByLabel('Message 2').fill('Third message.');
+    // The selected supported policy is carried to admission unchanged.
+    assert.equal(await page.getByText('Reading messages from before joining is currently unavailable.').isVisible(), true);
 
     const submit = page.getByRole('button', { name: 'Create channel' });
     await submit.waitFor();
@@ -84,7 +57,7 @@ test('CreateChannelScreen completes an unnamed channel with two intros and keeps
     const shareUrlField = page.getByLabel('Channel link');
     await shareUrlField.waitFor({ timeout: 10_000 });
     assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
-    assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'full' }));
+    assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
 
     const copyButton = page.getByRole('button', { name: 'Copy link' });
     await copyButton.click();
