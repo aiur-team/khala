@@ -131,7 +131,8 @@ export interface ChannelAccessRedeemPort {
    * Returns the same binding with a fresh capability for an operation already redeemed. It needs
    * no grant, so a crash or repair after admission works after the 15-minute grant has expired.
    */
-  resume(input: Readonly<{ operationId: string; deviceId: string; origin: string; bindingId: string }>): Promise<AdmissionOutcome>;
+  resume(input: Readonly<{ operationId: string; deviceId: string; origin: string; bindingId?: string }>): Promise<
+    AdmissionOutcome | Readonly<{ kind: 'not_redeemed' }>>;
 }
 
 export type TrustInitialization =
@@ -364,6 +365,19 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
   const { record } = loaded;
   const clock = ports.clock ?? Date.now;
   if (record.proofKeyThumbprint !== ports.signer.jkt) return repairRequired(ports, loaded, 'exchange_conflict');
+  // The journal remains keyed if the redeem response vanished before we could
+  // persist the binding. Look up the original operation before retrying its
+  // one-use grant. Only a definite "not redeemed" result permits redemption.
+  const prior = await guard(() => ports.redeem.resume({
+    operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin,
+  }), { kind: 'unavailable' } as const);
+  if (prior.kind === 'admitted') {
+    if (!prior.matrixSession) return wait(unavailable());
+    return activate(loaded, ports, prior, clock() + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
+  }
+  if (prior.kind === 'unavailable' || prior.kind === 'outcome_unknown') return wait(unavailable());
+  if (prior.kind === 'refused') return prior.code === 'binding_revoked'
+    ? close(ports, loaded, 'revoked') : repairRequired(ports, loaded, 'admission_refused');
   const privateKey = await heldPrivateKey(loaded);
   if (privateKey === null) {
     // Before a sealed result exists, a new key supersedes the lost one on the server.
@@ -406,6 +420,18 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
   // The service seals the grant with a fixed lifetime, so its expiry dates the sealing that
   // starts the recovery window. It never counts from later than now.
   const sealedAt = Math.min(opened.expiresAtMs - CHANNEL_ACCESS_GRANT_LIFETIME_MS, now);
+  if (redeemed.kind === 'unavailable' || redeemed.kind === 'outcome_unknown') {
+    // Redemption may have committed even when its response vanished. Recover
+    // by the exact journaled operation before touching the one-use grant again.
+    const recovered = await guard(() => ports.redeem.resume({
+      operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin,
+    }), { kind: 'unavailable' } as const);
+    // Without the original redeem response, the endpoint has no Matrix token.
+    // A binding alone cannot activate the exact device; wait for the server to
+    // return that same provisioned session through authenticated recovery.
+    if (recovered.kind !== 'admitted' || !recovered.matrixSession) return wait(unavailable());
+    return activate(loaded, ports, recovered, sealedAt + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
+  }
   return activate(loaded, ports, redeemed, sealedAt + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
 }
 
@@ -419,6 +445,7 @@ async function resume(loaded: Loaded, ports: ChannelAccessActivationPorts): Prom
   const redeemed = await guard(() => ports.redeem.resume({
     operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin, bindingId: record.binding!.bindingId,
   }), { kind: 'unavailable' } as const);
+  if (redeemed.kind === 'not_redeemed') return wait(unavailable());
   return activate(loaded, ports, redeemed, record.recoverableUntil!);
 }
 
@@ -455,7 +482,8 @@ async function activate(
   }
 
   const activation = await guard(
-    () => ports.devices.activate({ deviceId: record.deviceId!, binding, capability, operationId: record.operationId }),
+    () => ports.devices.activate({ deviceId: record.deviceId!, binding, capability, operationId: record.operationId,
+      ...(redeemed.matrixSession ? { matrixSession: redeemed.matrixSession } : {}) }),
     { kind: 'unavailable' } as const,
   );
   if (activation.kind === 'unavailable') return wait(unavailable());

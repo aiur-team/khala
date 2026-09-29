@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
@@ -11,6 +10,7 @@ import { readHostedCreatedTarget } from './hosted-created-target';
 import { roomFromHostedCreatedRef } from './channel-create';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
+import { recordChannelAccessBinding } from './channel-access-binding';
 
 /** The bootstrap redeem route accepts a channel grant only after an exact
  * approved exchange, signed connector key, device, session and live sponsor
@@ -29,8 +29,6 @@ export function createHostedChannelGrantPort(deps: Readonly<{
   const authority = deps.createAuthority?.(accessAuthority) ?? accessAuthority;
   const resolveTarget = (ref: string, ownerId: OwnerId) =>
     roomFromHostedCreatedRef(ref) === null ? readHostedAccessTarget(active, ref) : readHostedCreatedTarget(active, ref, ownerId);
-  const issuedKey = (grant: string) => `channel-access-issued/${createHash('sha256')
-    .update('khala.channel-access.issued.v1\0').update(grant).digest('hex')}`;
 
   return {
     async redeem(input) {
@@ -117,14 +115,9 @@ export function createHostedChannelGrantPort(deps: Readonly<{
       if (approval !== 'current') return 'replayed';
       const target = await resolveTarget(binding.channelRef, binding.ownerId);
       if (target === 'unavailable') return 'unavailable';
-      if (target === null || target.ownerId !== binding.ownerId) return 'replayed';
-      const key = issuedKey(input.grant);
-      const written = await active.store.compareAndSet({ key, expectedRevision: null,
-        operationId: `${key}#${randomBytes(16).toString('base64url')}`,
-        next: { value: { v: 1, operationId: input.operationId }, expiresAt: null } });
-      if (written.kind === 'applied') return 'applied';
-      if (written.kind === 'conflict' || written.kind === 'operation_mismatch') return 'replayed';
-      return 'unavailable';
+      if (target === null || target.ownerId !== binding.ownerId || !input.matrixSession
+        || input.matrixSession.deviceId !== binding.deviceId || input.matrixSession.roomId !== target.roomId) return 'replayed';
+      return recordChannelAccessBinding(active.store, binding, input.bindingId, input.matrixSession, record.expiresAt);
     },
   };
 }

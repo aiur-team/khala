@@ -10,12 +10,15 @@ import { createChannelAccessHandlers, type ChannelAccessHandlerDependencies } fr
 import type { GrantExchangeHandlerDependencies } from '../../channel-access/exchange/handler';
 import { composeChannelAccessExchange } from '../agent/channel-access-exchange';
 import { hostedMatrixChannelCreateAdapter } from '../agent/channel-create';
+import { roomFromHostedCreatedRef } from '../agent/channel-create';
+import { readHostedCreatedTarget } from '../agent/hosted-created-target';
 import { createHostedChannelGrantPort } from '../agent/hosted-channel-grants';
+import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { createHostedChannelAdmissionProvider, type HostedAdmissionAuthority } from '../agent/hosted-channel-admission';
 import type { PairingGrantPort } from '../../pairing/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies, type ProductionHumanRuntime } from './production';
-import { createHostedChannelAccessResolver, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
+import { createHostedChannelAccessResolver, readHostedAccessTarget, type HostedAccessRequesterAuthority } from './hosted-channel-access-resolver';
 
 function createHostedAccessState(active: ProductionHumanRuntime, resolver: ChannelAccessResolutionPort) {
   const key = createHash('sha256').update('khala.hosted.channel-access.policy.v1\0')
@@ -113,6 +116,24 @@ export function createHostedChannelAccessRoutes(
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
       ...(create ? { authority: create.exchangeAuthority } : {}),
+      ...(admissionAuthority ? { approval: async (record, ownerId, channelRef, matrixSession) => {
+        const result = await admissionAuthority.current({
+          providerOperationId: record.providerOperationId, ownerId: ownerId as never,
+          channelRef: channelRef as never, requester: record.requester,
+          sessionGeneration: record.sessionGeneration, sessionFingerprint: record.sessionFingerprint,
+          deviceId: record.deviceId, history: 'none',
+        });
+        if (result !== 'current') return result;
+        const target = roomFromHostedCreatedRef(channelRef) === null
+          ? await readHostedAccessTarget(active, channelRef as never)
+          : await readHostedCreatedTarget(active, channelRef, ownerId as never);
+        if (target === 'unavailable') return 'unavailable';
+        const identity = agentMatrixIdentity(ownerId as never, { harness: 'proof-key', sessionId: record.requester,
+          generation: record.sessionGeneration }, active.env.matrixServerName);
+        return target?.ownerId === ownerId && target.roomId === matrixSession.roomId
+          && matrixSession.userId === identity.userId && matrixSession.baseUrl === active.env.publicHomeserverOrigin
+          ? 'current' : 'revoked';
+      } } : {}),
       async authenticateConnector(request) {
         const result = await authenticateConnector(request);
         return result.kind === 'authenticated' && result.connector.origin !== active.env.publicAppOrigin

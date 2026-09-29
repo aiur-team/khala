@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,7 @@ import {
 } from '@khala/connector/bootstrap/index';
 import type { DiscoveryCredential } from '@khala/contracts/messaging/index';
 import { CHANNEL_ACCESS_CREATE_PATH, CHANNEL_ACCESS_REQUEST_PATH, CHANNEL_ACCESS_STATUS_PATH,
-  createHttpChannelAccess } from './channel-access.js';
+  CHANNEL_LINK_REQUEST_PATH, createHttpChannelAccess } from './channel-access.js';
 
 const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
 const session = { harness: 'codex', sessionId: 'session-1', workdir: '/workspace' };
@@ -94,7 +94,7 @@ describe('HTTP channel access', () => {
     const posted: unknown[] = [];
     const origin = await loopback(async (request, response) => {
       posted.push(await readBody(request));
-      json(response, 200, { v: 1, operationId: 'op-1', outcome: 'pending_owner' });
+      json(response, 200, { v: 1, kind: 'request', operationId: 'op-1', outcome: 'pending_owner' });
     });
     const held = credentials(null);
     held.authorize.mockImplementation(async () => ({ kind: 'authorized', credential: credential(origin) }));
@@ -102,7 +102,7 @@ describe('HTTP channel access', () => {
       .mockResolvedValueOnce({ kind: 'pending_owner', candidateId: 'candidate-1', approveUrl: `${origin}/approve` })
       .mockResolvedValueOnce({ kind: 'approved', candidateId: 'candidate-1', approveUrl: `${origin}/approve` });
     const port = access(origin, held, { candidate });
-    const request = { target: { kind: 'channel_url' as const, channelUrl: `${origin}/channels/room-1` },
+    const request = { target: { kind: 'channel_url' as const, channelUrl: `${origin}/join/inviteRef123` },
       operationId: 'op-1', origin: null };
 
     await expect(port.requestChannelAccess(request)).resolves.toEqual({ kind: 'status', status: {
@@ -169,20 +169,40 @@ describe('HTTP channel access', () => {
   });
 
   it('sends a channel URL to the service it names, and refuses a conflicting --origin', async () => {
-    const seen: unknown[] = [];
+    const seen: { url: string | undefined; body: unknown; raw: string; proof: string | undefined }[] = [];
     const origin = await loopback(async (request, response) => {
-      seen.push(await readBody(request));
-      json(response, 200, { v: 1, operationId: 'op-1', outcome: 'pending_owner' });
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const raw = Buffer.concat(chunks).toString();
+      seen.push({ url: request.url, body: JSON.parse(raw) as unknown, raw,
+        proof: Array.isArray(request.headers.dpop) ? undefined : request.headers.dpop });
+      json(response, 200, { v: 1, kind: 'request', operationId: 'op-1', outcome: 'pending_owner' });
     });
-    const channelUrl = `${origin}/channels/channel-1`;
+    const channelUrl = `${origin}/join/inviteRef123`;
     const port = access(origin);
     await expect(port.requestChannelAccess({ target: { kind: 'channel_url', channelUrl }, operationId: 'op-1', origin: null }))
       .resolves.toMatchObject({ kind: 'status' });
-    expect(seen).toEqual([{ v: 1, kind: 'channel_url', operationId: 'op-1', credentialRef: 'credential-ref-1', channelUrl }]);
+    expect(seen[0]).toMatchObject({ url: CHANNEL_LINK_REQUEST_PATH,
+      body: { v: 1, kind: 'channel_url', operationId: 'op-1', credentialRef: 'credential-ref-1', channelUrl } });
+    const claims = JSON.parse(Buffer.from(seen[0]!.proof!.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
+    expect(claims).toMatchObject({ htm: 'POST', htu: `${origin}${CHANNEL_LINK_REQUEST_PATH}`,
+      ath: createHash('sha256').update('credential-ref-1').digest('base64url'),
+      body_hash: createHash('sha256').update(seen[0]!.raw).digest('base64url') });
     await expect(port.requestChannelAccess({
       target: { kind: 'channel_url', channelUrl }, operationId: 'op-1', origin: 'https://khala.aiur.team',
     })).resolves.toEqual({ kind: 'refused', code: 'untrusted_origin' });
     expect(seen).toHaveLength(1);
+  });
+
+  it('explains a sponsor-bound link refusal without opening the browser', async () => {
+    const origin = await loopback(async (request, response) => {
+      await readBody(request);
+      json(response, 409, { v: 1, kind: 'use_your_link', action: 'join_in_browser_then_copy_your_link' });
+    });
+    await expect(access(origin).requestChannelAccess({
+      target: { kind: 'channel_url', channelUrl: `${origin}/join/inviteRef123` },
+      operationId: 'op-1', origin: null,
+    })).resolves.toEqual({ kind: 'refused', code: 'sponsor_link_required' });
   });
 
   it('refuses a channel URL on an origin outside the allowlist before any network step', async () => {
@@ -193,7 +213,7 @@ describe('HTTP channel access', () => {
       trustedOrigins: ['https://khala.aiur.team'], defaultOrigin: 'https://khala.aiur.team',
     });
     await expect(port.requestChannelAccess({
-      target: { kind: 'channel_url', channelUrl: 'https://evil.example/channels/c' }, operationId: 'op-1', origin: null,
+      target: { kind: 'channel_url', channelUrl: 'https://evil.example/join/inviteRef123' }, operationId: 'op-1', origin: null,
     })).resolves.toEqual({ kind: 'refused', code: 'untrusted_origin' });
     await expect(port.channelAccessStatus({ operationId: 'op-1', origin: 'https://evil.example' }))
       .resolves.toEqual({ kind: 'refused', code: 'untrusted_origin' });
