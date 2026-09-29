@@ -209,6 +209,10 @@ consumption, the service refuses a new key (`encryption_key_mismatch`) and the o
 
 Khala never launches or terminates the user's agent process in this flow.
 
+Hosted Matrix provisioning reserves one issuance before login. A concurrent redeem waits for
+the original result; after 30 seconds, an unresolved login fails closed and needs a new
+owner-approved operation. Once issuance is stored, resume recovers its original Matrix session.
+
 ## Not proven here
 
 Tests use injected doubles plus a real loopback listener and real Ed25519 signatures, so

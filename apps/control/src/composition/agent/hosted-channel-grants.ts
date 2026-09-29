@@ -10,7 +10,7 @@ import { readHostedCreatedTarget } from './hosted-created-target';
 import { roomFromHostedCreatedRef } from './channel-create';
 import type { HostedAdmissionAuthority } from './hosted-channel-admission';
 import type { ProductionHumanRuntime } from '../human/production';
-import { recordChannelAccessBinding } from './channel-access-binding';
+import { findChannelAccessBinding, recordChannelAccessBinding, reserveChannelAccessIssuance } from './channel-access-binding';
 
 /** The bootstrap redeem route accepts a channel grant only after an exact
  * approved exchange, signed connector key, device, session and live sponsor
@@ -49,6 +49,12 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         || record.deviceId !== input.deviceId || record.sessionGeneration !== input.session.generation) {
         return { kind: 'invalid_grant' };
       }
+      // The issuance record is written before the first capability is returned.
+      // Refuse a completed operation before device provisioning can log in again.
+      // An absent record still permits recovery of a consumed, unissued grant.
+      const issued = await findChannelAccessBinding(active.store, binding);
+      if (issued.kind === 'unavailable') return { kind: 'unavailable' };
+      if (issued.kind === 'found') return { kind: 'replayed' };
       const live = await authority.authorize({ operationId: binding.operationId, requester: binding.requester,
         origin: binding.origin, sessionGeneration: binding.sessionGeneration,
         sessionFingerprint: record.sessionFingerprint, claimOperationId: `${loaded.stored.key}#claim` });
@@ -87,6 +93,16 @@ export function createHostedChannelGrantPort(deps: Readonly<{
         claimFingerprint: record.sessionFingerprint, approvedAt: new Date(active.clock()).toISOString(),
         expiresAt: live.authorization.deadline,
       } };
+    },
+    async reserveIssue(input) {
+      const inspected = await issuer.inspect(input.grant);
+      if (inspected.kind === 'unavailable') return 'unavailable';
+      if (inspected.kind !== 'found' || inspected.binding.operationId !== input.operationId) return 'stale';
+      const loaded = await exchanges.load(inspected.binding);
+      if (loaded.kind === 'unavailable') return 'unavailable';
+      if (loaded.kind !== 'found' || loaded.stored.record.phase !== 'sealed') return 'stale';
+      return reserveChannelAccessIssuance(active.store, inspected.binding, input.bindingId,
+        loaded.stored.record.expiresAt, active.clock());
     },
     async markIssued(input) {
       // Binding and Matrix device setup happen after redemption. Recheck the
