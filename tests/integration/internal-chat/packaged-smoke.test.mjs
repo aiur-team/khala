@@ -1,11 +1,11 @@
 // Black-box quickstart: the packed CLI, local server, and owner browser UI.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { installTarball, packedTarball, removeScratch } from '../agent-setup/harness.mjs';
+import { repositoryRoot } from '../agent-setup/harness.mjs';
 
 function command(bin, env, args, input = '') {
   return new Promise((resolve, reject) => {
@@ -45,6 +45,43 @@ function readBodies(result) {
     .flatMap(([, json]) => JSON.parse(json)[5].map(item => item.at(-1)));
 }
 
+function installFromQuickstart(temp) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'packages/agent-cli/package.json'), 'utf8'));
+  const readme = fs.readFileSync(path.join(repositoryRoot, 'README.md'), 'utf8');
+  const installCommands = [
+    'git clone https://github.com/aiur-team/khala.git',
+    'cd khala',
+    'corepack pnpm install --frozen-lockfile',
+    'corepack pnpm --filter @aiur/khala build',
+    'npm pack ./packages/agent-cli --pack-destination .',
+    `npm install -g ./aiur-khala-${manifest.version}.tgz`,
+  ];
+  assert.ok(readme.includes(`\`\`\`sh\n${installCommands.join('\n')}\n\`\`\``), 'README must show the tested source install');
+  assert.doesNotMatch(readme, /npm install -g @aiur\/khala\b/);
+
+  const npmEnv = {
+    ...process.env,
+    npm_config_cache: path.join(temp, 'npm-cache'),
+    npm_config_fund: 'false',
+    npm_config_audit: 'false',
+    MISE_SKIP_RESHIM: '1',
+  };
+  const pack = spawnSync('npm', ['pack', './packages/agent-cli', '--json', '--pack-destination', temp], {
+    cwd: repositoryRoot, env: { ...npmEnv, npm_config_offline: 'true' }, encoding: 'utf8',
+  });
+  assert.equal(pack.status, 0, pack.stderr || pack.stdout);
+  const [packed] = JSON.parse(pack.stdout);
+  assert.equal(packed.filename, `aiur-khala-${manifest.version}.tgz`);
+  const prefix = path.join(temp, 'global');
+  const install = spawnSync('npm', ['install', '-g', '--offline', path.join(temp, packed.filename)], {
+    env: { ...npmEnv, npm_config_prefix: prefix }, encoding: 'utf8',
+  });
+  assert.equal(install.status, 0, install.stderr || install.stdout);
+  const bin = path.join(prefix, 'bin', 'khala');
+  assert.equal(fs.existsSync(bin), true);
+  return bin;
+}
+
 test('packaged local quickstart connects two exact sessions with owner approval', { timeout: 300_000 }, async () => {
   // Chromium's singleton socket has a short path limit; the workspace TMPDIR is too deep.
   const temp = fs.mkdtempSync('/tmp/khala-525-smoke-');
@@ -52,11 +89,8 @@ test('packaged local quickstart connects two exact sessions with owner approval'
   fs.mkdirSync(state, { mode: 0o700 });
   let browser;
   let launcher;
-  let packageCleanup = () => {};
   try {
-    const packed = packedTarball();
-    packageCleanup = packed.cleanup;
-    const { bin } = installTarball(packed.tarball);
+    const bin = installFromQuickstart(temp);
     const env = { HOME: temp, XDG_STATE_HOME: state, PATH: '/usr/bin:/bin', TMPDIR: temp };
     launcher = spawn(process.execPath, [bin, 'internal'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let launchError = '';
@@ -143,8 +177,6 @@ test('packaged local quickstart connects two exact sessions with owner approval'
         launcher.kill('SIGTERM');
       });
     }
-    packageCleanup();
-    removeScratch();
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

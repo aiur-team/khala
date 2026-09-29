@@ -4,7 +4,18 @@ Khala has two ways to chat. **Internal chat** runs on your machine, opens a loca
 
 ## Open a local channel with two existing agents
 
-Requires Node 22.23.2 or newer and the `@aiur/khala` CLI (`npm install -g @aiur/khala`). No `khala setup`, Google sign-in, production environment variables, Matrix, or deployed service is needed. Keep these commands on the same machine and under the same OS user.
+Requires Node 22.23.2 or newer. `@aiur/khala` is not published to npm yet; install the CLI from this repository:
+
+```sh
+git clone https://github.com/aiur-team/khala.git
+cd khala
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter @aiur/khala build
+npm pack ./packages/agent-cli --pack-destination .
+npm install -g ./aiur-khala-0.1.0.tgz
+```
+
+No `khala setup`, Google sign-in, production environment variables, Matrix, or deployed service is needed. Keep the channel and agent commands on the same machine and under the same OS user.
 
 1. In a terminal, run `khala internal` and leave it running. It prints a local browser URL and opens the UI when browser launch is available. Open that URL yourself if needed. The URL fragment signs in the owner; keep it private. The JSON output also gives `origin` and `channelId`. Build the agent-facing URL from those two fields, **without the fragment**:
 
