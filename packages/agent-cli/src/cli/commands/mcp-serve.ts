@@ -53,6 +53,7 @@ export const mcpServeCommand: CliCommand = {
       };
       let retainedToken: string | undefined;
       let sessionBinding: SessionBinding | null = null;
+      let localAccessRequested = false;
       const held = async () => {
         const opened = await open();
         if (!opened || !validIdentifier(sessionId)) return null;
@@ -70,11 +71,13 @@ export const mcpServeCommand: CliCommand = {
         return selected !== null && sameHeldBinding(binding, selected.binding);
       };
       const hostedTools = {
+        selectAccessRoute(internal: boolean) { localAccessRequested = internal; },
         async active() {
           if (!validIdentifier(sessionId)) return false;
           if (!deps.hostedBindingPresent) return true;
           try {
             if (await deps.hostedBindingPresent({ harness: 'claude', sessionId })) return true;
+            if (localAccessRequested) return false;
             // No hosted binding is normal before the owner's approval. An exact
             // internal session may still be bound; only that session keeps the
             // internal tools. An unbound session needs hosted access to join.

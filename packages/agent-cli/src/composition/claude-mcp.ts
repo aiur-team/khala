@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
-import { ChannelAccessService, defaultOperationId } from '../cli/channels/access.js';
-import { ChannelListingService, decodeRoster } from '../cli/channels/service.js';
+import { ChannelAccessService, defaultOperationId, parseAccessTarget } from '../cli/channels/access.js';
+import { ChannelListingService, decodeRoster, validOriginArgument } from '../cli/channels/service.js';
 import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
 import { ChannelCreateService } from '../cli/channels/create/service.js';
 import type { CreateRequestInput } from '../cli/channels/create/types.js';
@@ -48,6 +48,7 @@ export type ClaudeToolOptions = Readonly<{
   now?: () => Date;
   hosted?: Readonly<{
     active(): Promise<boolean>;
+    selectAccessRoute?(internal: boolean): void;
     send(message: string): Promise<Outcome>;
     read(): Promise<Outcome>;
     status(): Promise<Outcome>;
@@ -203,7 +204,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     // A create retry under the same operation ID reads that request's current state, so the
     // plugin's frozen tool set needs no separate create-status tool.
     ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool, createChannelTool]
-      .map(tool => sessionBound(withoutBatchToken(tool), entry, options.channels, hostedActive)),
+      .map(tool => sessionBound(withoutBatchToken(tool), entry, options.channels, hostedActive, options.hosted?.selectAccessRoute)),
   ]);
 }
 
@@ -247,7 +248,7 @@ function withoutBatchToken(tool: McpTool): McpTool {
  * refused before any port runs. No argument can name a session or a binding.
  */
 function sessionBound(tool: McpTool, entry: ClaudeAgentEntry, hostedChannels?: ChannelToolsPort,
-  hostedActive?: () => Promise<boolean>): McpTool {
+  hostedActive?: () => Promise<boolean>, selectAccessRoute?: (internal: boolean) => void): McpTool {
   const internalChannels = sessionChannels(entry);
   return {
     name: tool.name,
@@ -256,8 +257,33 @@ function sessionBound(tool: McpTool, entry: ClaudeAgentEntry, hostedChannels?: C
       if (entry.session === null && !context.notification) {
         return success(context.id, toolResult({ kind: 'refused', code: 'session_missing' }));
       }
-      const channels = hostedChannels && await hostedActive?.() ? hostedChannels : internalChannels;
-      return tool.call(args, { ...context, channels });
+      const target = tool.name === requestChannelAccessTool.name ? parseAccessTarget(args.target) : null;
+      const explicitOrigin = validOriginArgument(args.origin) ? args.origin : null;
+      const requestOrigin = target?.kind === 'channel_url' ? new URL(target.channelUrl).origin : explicitOrigin;
+      const localRequest = requestOrigin?.startsWith('http:') ?? false;
+      const hostedRequest = requestOrigin?.startsWith('https:') ?? false;
+      let channels = internalChannels;
+      if (hostedChannels && (hostedRequest || (!localRequest && await hostedActive?.()))) {
+        channels = tool.name === channelAccessStatusTool.name ? {
+          ...hostedChannels,
+          async status(input) {
+            if (input.origin !== null) return input.origin.startsWith('http:')
+              ? internalChannels.status(input) : hostedChannels.status(input);
+            // An operation can outlive the MCP process that filed it. Look up the
+            // exact session locally, then use the hosted proof key if absent.
+            const local = await internalChannels.status(input);
+            if (local.ok) return local;
+            const hosted = await hostedChannels.status(input);
+            return hosted.ok || local.error === 'not_found' ? hosted : local;
+          },
+        } : hostedChannels;
+      }
+      const response = await tool.call(args, { ...context, channels });
+      if (target !== null && (localRequest || hostedRequest) && plainObject(response.result)
+        && plainObject(response.result.structuredContent) && response.result.structuredContent.ok === true) {
+        selectAccessRoute?.(!!localRequest);
+      }
+      return response;
     },
   };
 }
