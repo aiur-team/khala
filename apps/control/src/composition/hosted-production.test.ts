@@ -269,6 +269,13 @@ describe('generated hosted production composition', () => {
     expect(sponsorInbox.status).toBe(200);
     const sponsorRequests = await sponsorInbox.json() as { requests: { requestHandle: string; revision: string }[] };
     expect(sponsorRequests.requests).toHaveLength(1);
+    const accessPolicy = createChannelAccessPolicy({ key: createHash('sha256')
+      .update('khala.hosted.channel-access.policy.v1\0').update(env.INVITATION_HMAC_SECRET).digest() });
+    const accessJournal = createChannelAccessStore({ store: control, policy: accessPolicy, clock: () => now });
+    const sponsorRows = await accessJournal.listOwner({ ownerId: 'owner_1' });
+    expect(sponsorRows.kind).toBe('found');
+    if (sponsorRows.kind === 'found') expect(sponsorRows.requests.map(row => row.outcome).sort())
+      .toEqual(['pending_owner', 'revoked']);
     const roomCreatorInbox = await restarted(new Request(inboxPath, {
       headers: { cookie: `${SESSION_COOKIE}=${other.token}` },
     }));
@@ -598,6 +605,19 @@ describe('generated hosted production composition', () => {
   });
   it('authenticates the durable owner inbox across a composition restart without leaking another owner', async () => {
     const blobs = durableStores();
+    let blockReconciliation = false;
+    const storeFor: typeof blobs.storeFor = name => {
+      const store = blobs.storeFor(name);
+      return {
+        ...store,
+        async setJSON(key, data, options) {
+          if (blockReconciliation && key === 'channel-access.journal.v1') {
+            throw Object.assign(new Error('journal write blocked'), { status: 403 });
+          }
+          return store.setJSON(key, data, options);
+        },
+      };
+    };
     const now = Date.parse('2026-09-28T12:00:00Z');
     const roomId = '!room:matrix.example.test';
     let membershipJoined = true;
@@ -641,7 +661,7 @@ describe('generated hosted production composition', () => {
       if (!projected.ok) throw new Error(JSON.stringify(projected.error));
     }
     const route = createGateway({ registrations: registerHostedProductionRoutes({
-      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
+      env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: storeFor,
       clock: () => now, fetch: matrixFetch,
     }), absentPrefixes: [], appOrigin: origin });
     const inbox = `${origin}/api/human/channel-access/inbox`;
@@ -650,8 +670,25 @@ describe('generated hosted production composition', () => {
     const response = await route(new Request(inbox, { headers }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ kind: 'ok', requests: [{ detail: { title: 'Owner one room' } }] });
+    const createExtra = (index: number) => journal.create({ requester: 'agent-one',
+      sessionFingerprint: 'a'.repeat(43), sessionGeneration: 1, origin,
+      operationId: `request-${index}`, ownerId: 'owner_1', targetFingerprint: `target-${index}`,
+      detail: { kind: 'access', authorizedChannelRef: roomId, targetRevision: `revision-${index}`,
+        title: `Owner room ${index}` }, harness: 'codex', requesterLabel: 'Agent one', workspaceLabel: null });
+    for (let index = 2; index <= 5; index += 1) {
+      expect((await createExtra(index)).kind).toBe('accepted');
+    }
+    expect((await createExtra(6)).kind).toBe('unavailable');
     membershipJoined = false;
+    blockReconciliation = true;
+    expect((await route(new Request(inbox, { headers }))).status).toBe(503);
+    blockReconciliation = false;
     expect(await (await route(new Request(inbox, { headers }))).json()).toMatchObject({ kind: 'ok', requests: [] });
+    const reconciled = await journal.listOwner({ ownerId: 'owner_1' });
+    expect(reconciled.kind).toBe('found');
+    if (reconciled.kind === 'found') expect(reconciled.requests.map(row => row.outcome))
+      .toEqual(['revoked', 'revoked', 'revoked', 'revoked', 'revoked']);
+    expect((await createExtra(6)).kind).toBe('accepted');
     membershipJoined = true;
     const authorityKey = `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
     const currentAuthority = await control.read(authorityKey);

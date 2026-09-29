@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { decodeChannelAccessOwnerProjection, decodeRoomId } from '@khala/contracts/messaging/index';
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
-import { projectOwner } from '@khala/messaging/channel-access/journal/service';
-import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
+import { projectOwner, revokeConfirmed } from '@khala/messaging/channel-access/journal/service';
+import { createChannelAccessStore, type ChannelAccessStoredContext } from '@khala/messaging/channel-access/journal/store';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies } from './production';
 import { readHostedAccessTarget } from './hosted-channel-access-resolver';
@@ -33,6 +33,10 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
         const listed = await journal.listOwner({ ownerId: authentication.context.principal.ownerId });
         if (listed.kind !== 'found') return unavailable();
         const requesterAuthority = createHostedChannelRequester(active).requesterAuthority;
+        async function reconcileStale(context: ChannelAccessStoredContext): Promise<boolean> {
+          if (context.outcome !== 'pending_owner' && context.outcome !== 'approved') return true;
+          return revokeConfirmed(journal, context, `hosted-inbox-${context.requestHandle}`);
+        }
         const requests = [];
         for (const item of listed.requests) {
           const context = await journal.readContext({ requestHandle: item.requestHandle });
@@ -44,9 +48,12 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
           const target = ref.startsWith('invitations.invite.') ? await readHostedAccessTarget(active, ref) : null;
           if (target === 'unavailable') return unavailable();
           // A revoked/expired personal link or departed sponsor can leave an
-          // older journal row behind. It must not hide other pending requests.
+          // older journal row behind. Close it to release request capacity.
           if (ref.startsWith('invitations.invite.')
-            && (target === null || target.ownerId !== authentication.context.principal.ownerId)) continue;
+            && (target === null || target.ownerId !== authentication.context.principal.ownerId)) {
+            if (!await reconcileStale(context.context)) return unavailable();
+            continue;
+          }
           if (ref.startsWith('invitations.invite.')) {
             const held = context.context;
             const current = await requesterAuthority.inspectContext({ v: 1,
@@ -55,17 +62,29 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
               harness: held.harness, displayLabel: held.requesterLabel, workspaceLabel: held.workspaceLabel,
             }, authentication.context.principal.ownerId);
             if (current === 'unavailable') return unavailable();
-            if (current === 'revoked') continue;
+            if (current === 'revoked') {
+              if (!await reconcileStale(context.context)) return unavailable();
+              continue;
+            }
           }
           if (!ref.startsWith('invitations.invite.')) {
             const room = decodeRoomId(ref);
-            if (!room.ok) continue;
+            if (!room.ok) {
+              if (!await reconcileStale(context.context)) return unavailable();
+              continue;
+            }
             const authority = await active.matrix.inspectRoomAuthority(room.value);
             if (authority === null) return unavailable();
-            if (authority !== authentication.context.principal.ownerId) continue;
+            if (authority !== authentication.context.principal.ownerId) {
+              if (!await reconcileStale(context.context)) return unavailable();
+              continue;
+            }
             const membership = await active.matrix.inspectOwnerMembership(authority, room.value);
             if (membership.kind === 'unavailable') return unavailable();
-            if (membership.kind !== 'joined') continue;
+            if (membership.kind !== 'joined') {
+              if (!await reconcileStale(context.context)) return unavailable();
+              continue;
+            }
           }
           const decoded = decodeChannelAccessOwnerProjection(projectOwner(item));
           if (!decoded.ok) return unavailable();

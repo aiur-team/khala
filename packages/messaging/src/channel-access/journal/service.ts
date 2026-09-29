@@ -520,7 +520,8 @@ function bindingFrom(context: ChannelAccessStoredContext): ChannelAccessCreateIn
   };
 }
 
-async function revokeConfirmed(
+/** Reconcile a confirmed stale request without dropping a concurrent owner update. */
+export async function revokeConfirmed(
   store: ChannelAccessStore,
   context: ChannelAccessStoredContext,
   operationId: string,
