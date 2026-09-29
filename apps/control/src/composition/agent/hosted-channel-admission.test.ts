@@ -4,13 +4,14 @@ import { createHostedChannelAdmissionProvider } from './hosted-channel-admission
 import type { ProductionHumanRuntime } from '../human/production';
 
 describe('hosted Matrix channel admission', () => {
-  it('joins only the current owner room and reconciles a durable retry', async () => {
+  it('joins only for a current sponsor membership and reconciles a durable retry', async () => {
     const origin = 'https://khala.aiur.team';
     const roomId = '!room:matrix.example.test';
     const ownerId = 'owner_1';
     const secret = 'invitation-secret-with-more-than-32-bytes';
     const key = createDigests(secret).inviteKey('invite_12345678');
     let roomOwner = ownerId;
+    let sponsorJoined = true;
     let joined = false;
     const claims = new Map<string, { value: unknown; revision: string }>();
     const runtime = {
@@ -40,7 +41,7 @@ describe('hosted Matrix channel admission', () => {
         },
       },
       matrix: { inspectRoomAuthority: async () => roomOwner,
-        inspectOwnerMembership: async () => ({ kind: 'joined' }) },
+        inspectOwnerMembership: async () => ({ kind: sponsorJoined ? 'joined' : 'absent' }) },
     } as unknown as ProductionHumanRuntime;
     const fetcher = vi.fn<typeof fetch>(async (resource, init) => {
       const path = new URL(String(resource)).pathname;
@@ -79,6 +80,7 @@ describe('hosted Matrix channel admission', () => {
     expect(joined).toBe(false);
     approved = true;
     roomOwner = 'owner_2';
+    sponsorJoined = false;
     expect(await provider.admit({ ...request, providerOperationId: 'provider_2' })).toEqual({ kind: 'rejected' });
   });
 });
