@@ -6,6 +6,8 @@ import { registerAgentHandlers } from './agent/handlers';
 import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
 import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
+import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
+import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
 import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
@@ -25,6 +27,8 @@ export function registerHostedProductionRoutes(
     return Object.freeze([...registerHumanHandlers(), ...registerClosureHandlers(), ...registerAgentHandlers()]);
   }
   const runtime = createProductionHumanRuntimeLoader(options);
+  const proofKeyAuthority = createHostedProofKeyAuthorityRoutes(options);
+  const discovery = createHostedDiscoveryBootstrap(options);
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
     admissionPolicy: async ({ principal, inviteRef, session }) => {
@@ -41,10 +45,12 @@ export function registerHostedProductionRoutes(
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
       channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
+      channelDiscoveryBootstrap: () => discovery.human,
       channelLink: () => createHostedHumanChannelLinkRoutes(options),
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),
+    ...proofKeyAuthority,
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
       deviceAttestation: () => bootstrap.deviceAttestation,
@@ -52,6 +58,7 @@ export function registerHostedProductionRoutes(
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
       revocationCleanup: () => bootstrap.revocationCleanup,
       roomSend: () => bootstrap.roomSend.agent,
+      channelDiscoveryBootstrap: () => discovery.agent,
     }),
   ]);
 }

@@ -33,6 +33,8 @@ export type ChannelDiscoveryCredentialClientOptions = Readonly<{
   timeoutMs?: number;
   clock?: () => number;
   allowExperimentalAgentListener?: boolean;
+  /** Only for owner-approved proof-key identity: the session is a local label, not a delivery claim. */
+  allowProofKeyLocalLabel?: boolean;
 }>;
 
 export type ChannelDiscoveryAuthorizeInput = Readonly<{
@@ -121,11 +123,11 @@ export function createChannelDiscoveryCredentialClient(
     if (result.kind === 'missing') return { kind: 'rejected', code: 'session_missing' };
     if (result.kind === 'unsupported') return { kind: 'rejected', code: 'unsupported_harness' };
     if (result.session.harness !== claim.harness || result.session.sessionId !== claim.sessionId
-      || !admitsExistingSessionRoute(
+      || !(options.allowProofKeyLocalLabel || admitsExistingSessionRoute(
         result.capabilities,
         result.session.harness,
         options.allowExperimentalAgentListener ?? false,
-      )) return { kind: 'rejected', code: 'unsupported_harness' };
+      ))) return { kind: 'rejected', code: 'unsupported_harness' };
     return { kind: 'verified', session: result.session };
   }
 

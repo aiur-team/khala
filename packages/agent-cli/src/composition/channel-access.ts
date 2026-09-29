@@ -11,6 +11,7 @@ import type {
 } from '../cli/channels/types.js';
 import type { ChannelCreatePort } from '../cli/channels/create/types.js';
 import { discard, redirectsOffOrigin } from './channel-listing.js';
+import type { CandidateOutcome } from './proof-key-candidate.js';
 
 export const CHANNEL_ACCESS_REQUEST_PATH = '/api/agent/channel-access/request';
 export const CHANNEL_ACCESS_CREATE_PATH = '/api/agent/channel-access/create';
@@ -25,6 +26,7 @@ export type HttpChannelAccessOptions = Readonly<{
   /** Exact configured service origins; `--origin` and a channel URL must name one of them. */
   trustedOrigins: readonly string[];
   defaultOrigin: string;
+  candidate?: (input: Readonly<{ target: string; operationId: string; session: SessionClaim }>, signal?: AbortSignal) => Promise<CandidateOutcome>;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }>;
@@ -108,13 +110,22 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
   }
 
   return {
-    requestChannelAccess(input, signal) {
+    async requestChannelAccess(input, signal) {
       const named = input.target.kind === 'channel_url' ? originOf(input.target.channelUrl) : null;
       // A channel URL names its own service; a conflicting `--origin` is refused, not followed.
       if (input.target.kind === 'channel_url' && (named === null || (input.origin !== null && input.origin !== named))) {
-        return Promise.resolve(refused('untrusted_origin'));
+        return refused('untrusted_origin');
       }
       const origin = input.origin ?? named ?? options.defaultOrigin;
+      if (!trusted.has(origin)) return refused('untrusted_origin');
+      if (options.credentials.current() === null && input.target.kind === 'channel_url' && options.candidate) {
+        const candidate = await options.candidate({ target: input.target.channelUrl,
+          operationId: input.operationId, session: options.session }, signal);
+        if (candidate.kind === 'pending_owner') return { kind: 'status', status: { v: 1,
+          operationId: input.operationId, outcome: 'pending_owner' } };
+        if (candidate.kind === 'rejected') return refused('discovery_denied');
+        if (candidate.kind !== 'approved') return { kind: 'unavailable' };
+      }
       return call(origin, signal, credential => ({
         target: new URL(CHANNEL_ACCESS_REQUEST_PATH, origin),
         method: 'POST',
