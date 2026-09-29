@@ -16,6 +16,8 @@ declare global {
     __timelineHarness: {
       pushLiveMessage: (body: string) => void;
       releaseNextSend: () => void;
+      delayNextSend: () => void;
+      releaseDelayedSend: () => void;
       bumpGeneration: () => void;
       revokeMembership: () => void;
     };
@@ -24,6 +26,8 @@ declare global {
 window.__timelineHarness = {
   pushLiveMessage: harness.pushLiveMessage,
   releaseNextSend: harness.releaseNextSend,
+  delayNextSend: harness.delayNextSend,
+  releaseDelayedSend: harness.releaseDelayedSend,
   bumpGeneration: harness.bumpGeneration,
   revokeMembership: harness.revokeMembership,
 };

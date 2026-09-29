@@ -68,6 +68,34 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // Send + reconcile: composing and sending a human message shows exactly
     // one row for it once accepted (no duplicate local-echo row survives).
     const composer = page.getByRole('textbox', { name: 'Message' });
+    // Hold the adapter outcome until explicitly released: clearing must happen
+    // with the optimistic row, and even an identical newly typed draft survives.
+    for (const prefix of ['', '__fail_once ', '__outcome_unknown ']) {
+      const body = `${prefix}delayed composer regression`;
+      await page.evaluate(() => window.__timelineHarness.delayNextSend());
+      await composer.fill(`${body}   `);
+      await composer.press('Shift+Enter');
+      assert.equal(await composer.inputValue(), `${body}   \n`, 'Shift+Enter inserts a newline');
+      assert.equal(await page.locator('.timeline__row--pending').count(), 0, 'Shift+Enter does not submit');
+      if (prefix === '__fail_once ') await page.getByRole('button', { name: 'Send' }).click();
+      else await composer.press('Enter');
+      await page.locator('.timeline__row--pending', { hasText: body }).waitFor();
+      assert.equal(await composer.inputValue(), '', 'optimistic send clears before adapter outcome');
+      await composer.fill(body);
+      await composer.press('Enter');
+      assert.equal(await page.locator('.timeline__row--pending').count(), 1, 'Enter cannot duplicate an unresolved send');
+      assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true);
+      await page.evaluate(() => window.__timelineHarness.releaseDelayedSend());
+      if (prefix) {
+        await page.getByText(prefix === '__fail_once ' ? 'Not delivered' : 'Delivery unknown').waitFor();
+        assert.equal(await composer.inputValue(), body, 'late failure preserves newer draft');
+        await composer.fill('different newer draft');
+        await page.getByRole('button', { name: prefix === '__fail_once ' ? 'Retry' : 'Check delivery' }).click();
+      }
+      await page.locator('.timeline__row--pending', { hasText: body }).waitFor({ state: 'detached' });
+      assert.equal(await composer.inputValue(), prefix ? 'different newer draft' : body, 'late reconciliation preserves newer draft, including identical bytes');
+      assert.equal(await page.locator('.timeline__row', { hasText: body }).count(), 1, 'retry retains submitted body and transaction');
+    }
     await composer.fill('a fresh reply from the browser test');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.locator('.timeline__row', { hasText: 'a fresh reply from the browser test' }).first().waitFor();
@@ -100,23 +128,21 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 0);
     assert.equal(await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__defer_sync repeated text' }).count(), 2);
 
-    // A draft is sent trimmed, but its acceptance is recognized against the
-    // reader's untrimmed text too: trailing whitespace alone must not leave a
-    // stale draft behind once that exact send has reconciled.
+    // Whitespace is trimmed in the send and cleared along with the draft.
     await composer.fill('a padded reply   ');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.locator('.timeline__row--pending', { hasText: 'a padded reply' }).waitFor({ state: 'detached' });
     await page.waitForFunction(() => (document.querySelector('#conversation-draft') as HTMLTextAreaElement)?.value === '');
-    assert.strictEqual(await composer.inputValue(), '', 'trailing whitespace does not block the draft from clearing on reconciliation');
+    assert.strictEqual(await composer.inputValue(), '', 'trailing whitespace clears with the submitted draft');
 
     // outcome_unknown resolves through the same transaction, not a fresh send.
-    // The draft is kept (not cleared) until the send is durably accepted, and
+    // The submitted body stays in the pending row until accepted, and
     // the row is labeled "Delivery unknown" — its own label, not just the
     // count of subsequent rows, is asserted here.
     await composer.fill('__outcome_unknown please confirm');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.getByText('Delivery unknown').waitFor();
-    assert.strictEqual(await composer.inputValue(), '__outcome_unknown please confirm', 'the draft is kept while the send is unresolved');
+    assert.strictEqual(await composer.inputValue(), '', 'submitted text lives in the pending row while unresolved');
     await page.getByRole('button', { name: 'Check delivery' }).waitFor();
     // While the send is unresolved, Send stays disabled — the reader cannot
     // submit a fresh, differently-identified send of the same or new text
