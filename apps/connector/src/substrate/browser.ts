@@ -113,6 +113,7 @@ window.khalaMatrix = {
           throw new Error('matrix_identity_changed');
         localStorage.setItem(marker, JSON.stringify({ userId: input.userId, deviceId: input.deviceId, fingerprint: keys.ed25519 }));
         matrix.getCrypto()!.globalBlacklistUnverifiedDevices = true;
+        matrix.getCrypto()!.setTrustCrossSignedDevices(false);
         await syncReady(matrix);
         client = matrix;
         active = input;
@@ -140,7 +141,13 @@ window.khalaMatrix = {
     if (!crypto) throw new Error('matrix_closed');
     await trustExactPeer(
       async () => (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId)?.getFingerprint() ?? null,
-      () => crypto.setDeviceVerified(userId, deviceId, true), expectedEd25519,
+      () => crypto.setDeviceVerified(userId, deviceId, true),
+      async () => {
+        await crypto.setDeviceVerified(userId, deviceId, false);
+        if ((await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified())
+          throw new Error('matrix_verification_rollback_failed');
+      },
+      expectedEd25519,
     );
     if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) throw new Error('matrix_verification_failed');
     if (active) await crypto.forceDiscardSession(active.roomId);

@@ -16,22 +16,28 @@ type BrowserApi = {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete (globalThis as { khalaMatrix?: BrowserApi }).khalaMatrix;
+  vi.resetModules();
 });
 
 async function openedBrowser(fingerprints: Array<string | null>) {
   const listeners = new Map<string, Set<(state: SyncState) => void>>();
   const published = [...fingerprints];
+  let verified = false;
   const getUserDeviceInfo = vi.fn(async () => {
     const fingerprint = published.length > 1 ? published.shift() : published[0];
     return new Map([['@owner:example', new Map(fingerprint === null ? []
       : [['OWNER_DEVICE', { getFingerprint: () => fingerprint }]])]]);
   });
-  const setDeviceVerified = vi.fn(async () => undefined);
+  const setDeviceVerified = vi.fn(async (_userId: string, _deviceId: string, value: boolean) => {
+    verified = value;
+  });
+  const setTrustCrossSignedDevices = vi.fn();
   const crypto = {
     getOwnDeviceKeys: async () => ({ ed25519: 'connector-key' }),
     getUserDeviceInfo,
     setDeviceVerified,
-    getDeviceVerificationStatus: async () => ({ isVerified: () => true }),
+    setTrustCrossSignedDevices,
+    getDeviceVerificationStatus: async () => ({ isVerified: () => verified }),
     forceDiscardSession: async () => undefined,
   };
   fake.client = {
@@ -58,7 +64,8 @@ async function openedBrowser(fingerprints: Array<string | null>) {
   const api = (globalThis as unknown as { khalaMatrix: BrowserApi }).khalaMatrix;
   await api.open({ baseUrl: 'https://matrix.example', userId: '@agent:example',
     deviceId: 'AGENT_DEVICE', accessToken: 'test-token', roomId: '!room:example', storeName: 'test' });
-  return { api, getUserDeviceInfo, setDeviceVerified };
+  return { api, getUserDeviceInfo, setDeviceVerified, setTrustCrossSignedDevices,
+    getDeviceVerificationStatus: crypto.getDeviceVerificationStatus };
 }
 
 describe('connector browser device trust', () => {
@@ -71,6 +78,21 @@ describe('connector browser device trust', () => {
       await expect(api.trustPeer('@owner:example', 'OWNER_DEVICE', 'wrong-key'))
         .rejects.toThrow('matrix_fingerprint_mismatch');
       expect(setDeviceVerified).toHaveBeenCalledTimes(1);
+    } finally { await api.close(); }
+  });
+
+  it('leaves a swapped owner device unverified after the SDK verification call', async () => {
+    const { api, setDeviceVerified, setTrustCrossSignedDevices, getDeviceVerificationStatus } =
+      await openedBrowser(['owner-key', 'attacker-key']);
+    try {
+      expect(setTrustCrossSignedDevices).toHaveBeenCalledExactlyOnceWith(false);
+      await expect(api.trustPeer('@owner:example', 'OWNER_DEVICE', 'owner-key'))
+        .rejects.toThrow('matrix_fingerprint_mismatch');
+      expect(setDeviceVerified.mock.calls).toEqual([
+        ['@owner:example', 'OWNER_DEVICE', true],
+        ['@owner:example', 'OWNER_DEVICE', false],
+      ]);
+      expect((await getDeviceVerificationStatus()).isVerified()).toBe(false);
     } finally { await api.close(); }
   });
 });

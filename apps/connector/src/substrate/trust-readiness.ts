@@ -2,6 +2,7 @@
 export async function trustExactPeer(
   readFingerprint: () => Promise<string | null>,
   verify: () => Promise<void>,
+  unverify: () => Promise<void>,
   expected: string,
   options: Readonly<{ attempts: number; intervalMs: number; pause?: (ms: number) => Promise<void> }> = {
     attempts: 30, intervalMs: 500,
@@ -20,6 +21,12 @@ export async function trustExactPeer(
     if (attempt + 1 < options.attempts) await pause(options.intervalMs);
   }
   if (!found) throw new Error('matrix_device_key_missing');
-  await verify();
-  if (await readFingerprint() !== expected) throw new Error('matrix_fingerprint_mismatch');
+  try {
+    await verify();
+    if (await readFingerprint() !== expected) throw new Error('matrix_fingerprint_mismatch');
+  } catch (error) {
+    try { await unverify(); }
+    catch (rollbackError) { throw new Error('matrix_verification_rollback_failed', { cause: rollbackError }); }
+    throw error;
+  }
 }
