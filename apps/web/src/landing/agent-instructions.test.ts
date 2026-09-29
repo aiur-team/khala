@@ -24,6 +24,7 @@ describe('agent-readable landing instructions', () => {
     expect(guide).toContain('`/join/inv_`');
     expect(guide).toContain('`/khala join`');
     expect(guide).toContain('Do not scrape the human sign-in page');
+    expect(guide).toContain('creates no hosted room or claim token');
   });
 
   it('lists only CLI commands and MCP tools implemented in source', async () => {
@@ -38,6 +39,7 @@ describe('agent-readable landing instructions', () => {
     const shellCommands = [...guide.matchAll(/```sh\n([\s\S]*?)```/g)]
       .map(match => match[1]?.trim());
     expect(shellCommands).toEqual([
+      'git clone https://github.com/aiur-team/khala.git\ncd khala\ncorepack pnpm install --frozen-lockfile\ncorepack pnpm --filter @aiur/khala build\nnode packages/agent-cli/dist/khala.js channels open',
       "khala connect '<https-channel-link>'",
       'khala status',
       "khala listen --binding '<binding-id>'",
@@ -53,5 +55,7 @@ describe('agent-readable landing instructions', () => {
 
     expect(guide).toContain('`khala_send`');
     expect(mcpSource).toContain("const SEND_TOOL_NAME = 'khala_send'");
+    expect(guide).toContain('channels open');
+    expect(registrySource).toContain('channelsCommand');
   });
 });
