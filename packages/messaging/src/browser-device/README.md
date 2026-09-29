@@ -83,10 +83,11 @@ A tab that cannot get the lock never reserves the store or opens a client. When 
 tab closes, the browser hands the lock to a waiting tab, which reopens the same persisted
 store. State is never cloned.
 
-**Gap: no follower state channel.** Plan U2 describes a second tab that follows the
-owning tab's state. That is not built. A second tab waits up to `lockWaitMs` for the lock
-and then reports `unavailable` with a `failed/storage_unavailable` view; it never becomes
-a second writer.
+The hosted human application requests that the owning tab release its generation
+when another tab gains focus. A tab still unable to obtain the Web Lock within
+`lockWaitMs` reports `unavailable` with a `failed/lease_unavailable` view and an
+inline retry. Store and marker failures remain `failed/storage_unavailable`.
+The device service does not follow another tab's state or become a second writer.
 
 ## Substrate adapter obligations
 

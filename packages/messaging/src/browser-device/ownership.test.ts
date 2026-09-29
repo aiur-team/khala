@@ -17,7 +17,7 @@ describe('cross-tab ownership', () => {
 
     expect(ra).toMatchObject({ kind: 'ok', value: { state: 'ready' } });
     expect(rb).toEqual({ kind: 'unavailable', retryable: true });
-    expect(b.current()).toEqual({ deviceId: null, state: 'failed', generation: 1, reason: 'storage_unavailable' });
+    expect(b.current()).toEqual({ deviceId: null, state: 'failed', generation: 1, reason: 'lease_unavailable' });
     // The follower never reserved the store or opened a client.
     expect(tabB.log).toEqual([]);
     expect(await b.use(alice, async () => 'write')).toEqual({ kind: 'rejected', code: 'not_ready' });
