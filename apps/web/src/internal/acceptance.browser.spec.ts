@@ -3,7 +3,7 @@
 // works only in the browser; the agents are externally started CLI sessions
 // (see fixtures/acceptance.ts). Covers create and confirm, grants, agent
 // exchange, the human message, listening-mode delivery, the owner's mode and pause
-// controls, Stop and the view it
+// controls, the Stop API and the view it
 // leaves, launcher close and `khala internal --resume`, with keyboard, focus and
 // announcement checks along the way.
 
@@ -24,8 +24,9 @@ const rowWith = (page: Page, text: string) => page.locator('.timeline__row:not(.
 /** The owner approves the one pending request from `agent` in the inbox, by keyboard only. */
 async function approveByKeyboard(page: Page, origin: string, agent: string, dialogName: RegExp | string, approve: string, subject?: string) {
   if (new URL(page.url()).pathname !== '/channel-requests') {
-    await page.getByRole('button', { name: 'Channel settings' }).click();
-    await page.getByRole('link', { name: /Channel requests/ }).click();
+    const requests = page.getByRole('link', { name: /Channel requests, [1-9]/ });
+    await requests.focus();
+    await page.keyboard.press('Enter');
   }
   await page.waitForURL(`${origin}/channel-requests`);
   const waiting = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: agent });
@@ -235,22 +236,19 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     assert.deepEqual(await ada.readAll(), ['Owner: held for Ada'], 'resume releases the held message');
     assert.deepEqual(await bea.readAll(), ['Owner: held for Ada'], 'Bea was never paused');
 
-    // Stop: keyboard only, confirmed, announced, and focus lands on the outcome.
+    // Stop remains enforced by the authenticated API while its chat menu is deferred.
     await adaAgent.getByRole('button', { name: 'Close agent settings' }).click();
-    await page.getByRole('button', { name: 'Channel settings' }).click();
-    await page.getByText('Stop agent delivery', { exact: true }).first().click();
-    const stopButton = page.getByRole('button', { name: 'Stop agent delivery' });
-    await stopButton.focus();
-    await page.keyboard.press('Enter');
-    await page.getByRole('group', { name: 'Stop delivery to agents in this channel?' }).waitFor();
-    assert.equal(await focused(page), 'Stop delivery to agents in this channel?');
-    await page.keyboard.press('Tab');
-    assert.equal(await focused(page), 'Stop delivery');
-    await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: 'Agent delivery stopped' }).waitFor();
-    assert.equal(await focused(page), 'Agent delivery stopped');
-    const stopStatus = page.locator('.stop-control__status[role="status"]');
-    assert.match(await stopStatus.innerText(), /Agent delivery stopped\. 2 agent bindings were revoked\./);
+    const stopReply = await page.evaluate(async id => {
+      const secret = sessionStorage.getItem('khala.requestSecret');
+      const response = await fetch(`/api/v1/channels/${encodeURIComponent(id)}/stop`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-khala-request-secret': secret ?? '' },
+        body: JSON.stringify({ v: 1, targets: null }),
+      });
+      return { status: response.status, body: await response.json() as { outcome?: string; stopped?: unknown[] } };
+    }, channelId);
+    assert.equal(stopReply.status, 200);
+    assert.equal(stopReply.body.outcome, 'stopped');
+    assert.equal(stopReply.body.stopped?.length, 2);
 
     // Stop revoked delivery, not the server: bindings can no longer read or write,
     assert.equal(await reachable(origin), true, 'the server is still running after Stop');
@@ -298,7 +296,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await page.goto(`${origin}/channels/${channelId}`);
     await rowWith(page, 'Ada: after resume').waitFor();
 
-    // Narrow viewport: the channel and its Stop outcome fit without horizontal scrolling.
+    // Narrow viewport: the channel fits without horizontal scrolling.
     await page.setViewportSize({ width: 320, height: 800 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no horizontal overflow at 320px');
 

@@ -7,9 +7,6 @@
 .channel-page .conversation-thread__actions{justify-content:flex-end;gap:.5rem}
 .channel-page .conversation-thread__actions>span{margin-right:auto}
 .channel-page .conversation-thread__actions .aiur-shell__icon-button{padding:0;width:2.05rem;height:2.05rem;border-radius:50%}
-.channel-share__more{position:static;z-index:5}
-.channel-share__more summary{display:grid;place-items:center;width:2.05rem;height:2.05rem;border:1px solid var(--khala-line);border-radius:50%;background:var(--khala-fill-control);cursor:pointer;list-style:none;font-size:1.2rem}
-.channel-share__more[open]{position:absolute;right:0;top:2.5rem;width:min(22rem,80vw);padding:.6rem;border:1px solid var(--khala-line);border-radius:12px;box-shadow:0 10px 30px #0004;background:var(--khala-fill-raised)}
 .local-agent-controls{display:flex;align-items:center;gap:.25rem}
 .local-agent-controls__avatar{font-weight:700}
 .local-agent-controls__popover{position:absolute;right:4rem;top:5rem;z-index:10;width:min(21rem,85vw);max-height:70dvh;overflow:auto;padding:1rem;border:1px solid var(--khala-line);border-radius:14px;background:var(--khala-fill-raised);color:var(--khala-ink);box-shadow:0 12px 35px #0006}

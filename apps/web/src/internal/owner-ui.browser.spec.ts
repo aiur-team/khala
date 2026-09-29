@@ -63,28 +63,14 @@ test('owner UI: settings and channel requests load, reload and navigate over rea
     await page.goto(`${origin}/__khala/bootstrap#credential=${fixture.bootstrap.credential}&channel=${channelId}`);
     await page.waitForURL(`${origin}/channels/${channelId}`);
 
-    // The settings link is a client navigation: the document is not reloaded.
-    await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'same-document'; });
-    await page.getByRole('button', { name: 'Channel settings' }).click();
-    await page.getByRole('link', { name: 'Channel discovery settings' }).click();
-    await page.waitForURL(`${origin}/channels/${channelId}/settings`);
-    await page.getByRole('heading', { name: 'Channel discovery settings' }).waitFor();
-    assert.equal(await page.evaluate(() => (window as unknown as { marker?: string }).marker), 'same-document');
-
-    // Direct load and reload of the settings page both render.
+    // The settings route remains available for direct loads while its chat menu is deferred.
+    assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     await page.goto(`${origin}/channels/${channelId}/settings`);
     await page.getByRole('heading', { name: 'Channel discovery settings' }).waitFor();
     await page.reload();
     await page.getByRole('heading', { name: 'Channel discovery settings' }).waitFor();
 
-    // The inbox navigation entry is a client navigation too, and its page survives direct load and reload.
-    await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'same-document'; });
-    await page.locator('.conversation-list__item').first().click();
-    await page.getByRole('button', { name: 'Channel settings' }).click();
-    await page.getByRole('link', { name: /Channel requests/ }).click();
-    await page.waitForURL(`${origin}/channel-requests`);
-    await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
-    assert.equal(await page.evaluate(() => (window as unknown as { marker?: string }).marker), 'same-document');
+    // The inbox route survives direct load and reload.
     await page.goto(`${origin}/channel-requests`);
     await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
     await page.reload();

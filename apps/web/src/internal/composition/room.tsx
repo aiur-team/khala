@@ -8,6 +8,7 @@ import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
+import { LocalToolsIcon } from '../../shell/icons';
 import type { HumanRouteContext } from '../../composition/human/application';
 import { LocalAgentControls } from '../controls/LocalAgentControls';
 import { createListeningController } from '../controls/listening-controller';
@@ -130,7 +131,6 @@ export function LocalRoom({
   context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
   onMakeExternal = () => undefined,
   settingsHref,
-  requestsHref,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
@@ -144,7 +144,6 @@ export function LocalRoom({
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
   settingsHref?: string;
-  requestsHref?: string;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
   const conversations = useConversationIndex(context);
@@ -216,7 +215,16 @@ export function LocalRoom({
       description="Local · Plaintext on this device"
       controller={channel}
       showPresence={false}
-      renderHeaderActions={() => listeningController ? <LocalAgentControls controller={listeningController} /> : null}
+      renderHeaderActions={() => <>
+        {listeningController ? <LocalAgentControls controller={listeningController} /> : null}
+        <details className="local-channel-tools"><summary className="aiur-shell__icon-button" aria-label="Local tools" title="Local tools"><LocalToolsIcon /></summary><div className="local-channel-tools__content">
+          {settingsHref ? <a href={settingsHref}>Channel discovery settings</a> : null}
+          {stop && stopController ? <details><summary>Stop agent delivery</summary><StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /></details> : null}
+          {makeExternal ? journey.kind === 'unknown' ? <p role="status">Checking conversion options…</p>
+            : journey.kind === 'absent' ? <p role="status">Conversion options are unavailable.</p>
+              : <MakeExternalEntry summary={journey} onOpen={onMakeExternal} /> : null}
+        </div></details>
+      </>}
       renderTimeline={() => (
         <>
           <TransportStatus state={state} roomId={roomId} onRetry={() => transport.retry()} />
@@ -229,15 +237,6 @@ export function LocalRoom({
             pendingStore={pendingStore}
             {...(evidence ? { evidence } : {})}
           />
-        </>
-      )}
-      renderReview={() => null}
-      renderControls={() => (
-        <>
-          {settingsHref ? <a href={settingsHref}>Channel discovery settings</a> : null}
-          {requestsHref ? <a href={requestsHref}>Channel requests</a> : null}
-          {stop && stopController ? <details><summary>Stop agent delivery</summary><StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /></details> : null}
-          <details><summary>More channel options</summary><MakeExternalEntry summary={journey} onOpen={onMakeExternal} /></details>
         </>
       )}
     />
