@@ -61,6 +61,20 @@ function fixture() {
 }
 
 describe('owner-approved proof-key authority', () => {
+  it('rechecks the same candidate after owner approval without changing its one-time write', async () => {
+    const h = fixture();
+    const first = await h.authority.propose(await h.submit());
+    if (first.kind !== 'pending_owner') throw new Error('candidate not recorded');
+
+    h.advance(1_000);
+    expect(await h.authority.propose(await h.submit())).toEqual(first);
+    expect(await h.authority.approve({ candidateId: first.candidateId, principal: principal(OWNER) }))
+      .toEqual({ kind: 'approved' });
+
+    h.advance(1_000);
+    expect(await h.authority.propose(await h.submit())).toEqual({ ...first, kind: 'approved' });
+  });
+
   it('isolates two keys using the same target and operation ID', async () => {
     const h = fixture();
     const first = await h.authority.propose(await h.submit());

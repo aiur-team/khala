@@ -137,7 +137,9 @@ export function createNativeSessionAuthority(ports: NativeSessionAuthorityPorts)
         input.session.harness, input.session.sessionId, String(input.session.generation)]).split(':').at(-1)!;
       const candidateKey = key('candidate', [candidateId]);
       const stored = await settleWrite<JsonValue>(store, {
-        key: candidateKey, expectedRevision: null, operationId: `native-propose:${candidateId}`,
+        // A recheck keeps the candidate ID but uses a fresh, one-time challenge.
+        // Its write operation must be distinct because the proposed expiry differs.
+        key: candidateKey, expectedRevision: null, operationId: `native-propose:${candidateId}:${input.nonce}`,
         next: { value: candidate, expiresAt: new Date(ports.clock() + CANDIDATE_TTL_MS).toISOString() },
       });
       if (stored.kind === 'applied') {
