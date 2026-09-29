@@ -10,6 +10,7 @@ export type DeviceState = 'new' | 'initializing' | 'ready' | 'locked' | 'lost' |
  * Finite public failure codes. Never an SDK error dump, stack or secret.
  */
 export const DEVICE_REASONS = [
+  'lease_unavailable',
   'storage_unavailable',
   'storage_cleared',
   'unsupported_environment',

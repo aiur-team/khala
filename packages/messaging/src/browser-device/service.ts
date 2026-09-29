@@ -218,7 +218,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       if (acquisition.kind === 'aborted') throw new Superseded();
       if (acquisition.kind === 'timeout') {
         // Another tab owns this store. Never become a second writer.
-        await fail('storage_unavailable');
+        await fail('lease_unavailable');
         return unavailable();
       }
       await adopt(g, 'lease', acquisition.lease);

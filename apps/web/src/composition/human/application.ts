@@ -28,6 +28,7 @@ type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> &
   currentCapability(): Promise<ClosureCapability | null>;
 }>;
 import { createHumanDeviceSession } from './device-session';
+import type { TabHandoff } from './tab-handoff';
 
 export interface HumanApplicationPorts {
   readonly identity: IdentityPort;
@@ -68,6 +69,7 @@ export type HumanApplicationSnapshot =
   | EmptySnapshot<'initializing_device'>
   | EmptySnapshot<'signed_out'>
   | EmptySnapshot<'disposed'>
+  | EmptySnapshot<'inactive'>
   | Readonly<{ phase: 'navigating'; path: string; context: HumanRouteContext }>
   | Readonly<{
       phase: 'unavailable';
@@ -88,12 +90,14 @@ export interface HumanApplicationHandle {
   subscribe(listener: () => void): Disposer;
   navigate(path: string): void;
   signOut(): Promise<OperationResult<null, never>>;
+  retryDevice(): void;
   dispose(): void;
 }
 
 export type HumanApplicationOptions = Readonly<{
   initialPath?: string;
   createRouteDisposer?: (context: HumanRouteContext) => Disposer | void;
+  tabHandoff?: TabHandoff;
 }>;
 
 function identityUnavailable(): IdentityState {
@@ -114,6 +118,7 @@ export function createHumanApplication(
   let snapshot: HumanApplicationSnapshot = { phase: 'checking_identity', path, context: null };
   const listeners = new Set<() => void>();
   const deviceSession = createHumanDeviceSession(ports.device);
+  let signedInOwner: AuthPrincipal['ownerId'] | null = null;
 
   function notify(): void {
     for (const listener of listeners) listener();
@@ -174,6 +179,7 @@ export function createHumanApplication(
     if (disposed || generation !== epoch) return;
 
     if (identity.kind !== 'signed_in') {
+      signedInOwner = null;
       await deviceSession.release();
       if (disposed || generation !== epoch) return;
       setSnapshot(identity.kind === 'signed_out'
@@ -182,14 +188,39 @@ export function createHumanApplication(
       return;
     }
 
+    signedInOwner = identity.principal.ownerId;
+    if (options.tabHandoff && !options.tabHandoff.isFocused() && deviceSession.current()?.state !== 'ready') {
+      setSnapshot({ phase: 'inactive', path: activePath, context: null });
+      return;
+    }
+
     if (!previous) setSnapshot({ phase: 'initializing_device', path: activePath, context: null });
-    const result = await deviceSession.ensureReady(identity.principal);
+    const handoff = options.tabHandoff;
+    let requestTimer: ReturnType<typeof setInterval> | null = null;
+    if (handoff && deviceSession.current()?.state !== 'ready') {
+      handoff.request(identity.principal.ownerId);
+      // A claim can arrive before the previous tab's blur settles. Repeat only
+      // while this tab remains focused and activation is still pending.
+      requestTimer = setInterval(() => {
+        if (!disposed && generation === epoch && handoff.isFocused()) handoff.request(identity.principal.ownerId);
+      }, 500);
+    }
+    const result = await deviceSession.ensureReady(identity.principal).finally(() => {
+      if (requestTimer) clearInterval(requestTimer);
+    });
     if (disposed || generation !== epoch) return;
+    if (handoff && !handoff.isFocused()) {
+      setSnapshot({ phase: 'inactive', path: activePath, context: null });
+      await deviceSession.release();
+      return;
+    }
 
     if (result.kind !== 'ok') {
+      const latest = deviceSession.current();
       const reason = result.kind === 'rejected'
         ? result.code
-        : result.kind === 'outcome_unknown' ? 'device_outcome_unknown' : 'device_unavailable';
+        : latest?.state === 'failed' && latest.reason ? latest.reason
+          : result.kind === 'outcome_unknown' ? 'device_outcome_unknown' : 'device_unavailable';
       setSnapshot(unavailableSnapshot(activePath, 'device', reason));
       return;
     }
@@ -252,6 +283,23 @@ export function createHumanApplication(
     void deviceSession.release();
   });
 
+  const removeTabHandoff = options.tabHandoff?.listen(ownerId => {
+    if (disposed || ownerId !== signedInOwner || options.tabHandoff?.isFocused() || snapshot.phase === 'signed_out'
+      || snapshot.phase === 'inactive' || snapshot.phase === 'disposed'
+      || snapshot.phase === 'unavailable' && snapshot.source === 'device'
+        && snapshot.reason !== 'lease_unavailable') return;
+    // Remove route authority before stop publishes its transient device view.
+    epoch += 1;
+    identityAbort?.abort();
+    deactivateRoute();
+    setSnapshot({ phase: 'inactive', path, context: null });
+    void deviceSession.release();
+  }, () => {
+    if (disposed) return;
+    if (snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
+      && snapshot.reason === 'lease_unavailable') void synchronize(path);
+  });
+
   const handle: HumanApplicationHandle = {
     getSnapshot: () => snapshot,
 
@@ -264,6 +312,12 @@ export function createHumanApplication(
     navigate(nextPath) {
       if (disposed) return;
       path = nextPath;
+      void synchronize(path);
+    },
+
+    retryDevice() {
+      if (disposed || snapshot.phase !== 'inactive' && (snapshot.phase !== 'unavailable' || snapshot.source !== 'device'
+        || snapshot.reason !== 'lease_unavailable')) return;
       void synchronize(path);
     },
 
@@ -284,6 +338,7 @@ export function createHumanApplication(
           identityAbort?.abort();
           deactivateRoute();
           path = '/new';
+          signedInOwner = null;
           setSnapshot({ phase: 'checking_identity', path, context: null });
           await deviceSession.release();
           setSnapshot({ phase: 'signed_out', path, context: null });
@@ -307,6 +362,7 @@ export function createHumanApplication(
       notify();
       listeners.clear();
       removeDeviceListener();
+      removeTabHandoff?.();
       void deviceSession.dispose();
     },
   };

@@ -197,6 +197,8 @@
 .khala-content-main{min-width:0}
 .khala-content-root--channels .khala-content-main{padding:1rem}
 .khala-sidebar{height:100%;min-width:0}
+.khala-sidebar__inactive{margin:1rem;color:var(--khala-ink-muted)}
+.khala-inactive-device{max-width:36rem;margin:clamp(1rem,8vh,5rem) auto}
 .khala-sidebar__close{display:none}
 .khala-sidebar .conversation-list{border-right:0;min-height:0;height:auto}
 .khala-sidebar .conversation-list__head{align-items:center;gap:.5rem}
