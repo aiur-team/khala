@@ -120,6 +120,9 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     const channelsButton = page.getByRole('button', { name: 'Channels', exact: true });
     await channelsButton.click();
+    const channelsDialog = page.getByRole('dialog', { name: 'Channels' });
+    await channelsDialog.waitFor();
+    assert.equal(await channelsDialog.getAttribute('aria-modal'), 'true', 'the hosted mobile drawer is modal to assistive technology');
     assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
     await createButton.click();
     await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();

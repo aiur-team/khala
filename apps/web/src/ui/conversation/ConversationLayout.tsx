@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import './conversation.css';
 
 export type ConversationSummary = Readonly<{
@@ -71,13 +71,27 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
   value: string; onChange(value: string): void; onSend(): void; disabled?: boolean; sendDisabled?: boolean; sendDescriptionId?: string; placeholder?: string;
 }>) {
   const input = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
+  const fitDraft = useCallback(() => {
     const textarea = input.current;
     if (!textarea) return;
     textarea.style.height = '38px';
-    textarea.style.height = `${Math.max(38, Math.min(textarea.scrollHeight, 140))}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 140 ? 'auto' : 'hidden';
-  }, [value]);
+    const needed = textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight;
+    textarea.style.height = `${Math.max(38, Math.min(needed, 140))}px`;
+    textarea.style.overflowY = needed > 140 ? 'auto' : 'hidden';
+  }, []);
+  useLayoutEffect(() => { fitDraft(); }, [fitDraft, value]);
+  useEffect(() => {
+    const textarea = input.current;
+    if (!textarea || typeof ResizeObserver === 'undefined') return;
+    let width = textarea.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (textarea.clientWidth === width) return;
+      width = textarea.clientWidth;
+      fitDraft();
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [fitDraft]);
   return <form className="conversation-composer" onSubmit={event => { event.preventDefault(); onSend(); }}>
     <label className="sr-only" htmlFor="conversation-draft">Message</label>
     <textarea ref={input} id="conversation-draft" value={value} onChange={event => onChange(event.target.value)} disabled={disabled} rows={1} placeholder={placeholder}

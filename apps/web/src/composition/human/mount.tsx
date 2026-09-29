@@ -199,6 +199,7 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       navigation={[]}
       brandHref={routes.conversationsPath()}
       sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
+        role={drawerOpen ? 'dialog' : undefined} aria-modal={drawerOpen || undefined} aria-label={drawerOpen ? 'Channels' : undefined}
         onKeyDown={event => {
           if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
           if (event.key !== 'Tab' || !drawerOpen) return;

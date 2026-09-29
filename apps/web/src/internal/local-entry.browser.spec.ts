@@ -159,6 +159,14 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     const threeLineSize = await composer.evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight, inline: element.style.height }));
     assert.ok(threeLineSize.height > oneLineHeight && threeLineSize.scroll <= threeLineSize.height + 2,
       'three lines are fully visible without scrolling');
+    const wrappedDraft = 'A saved draft should stay readable when the conversation becomes narrow. '.repeat(2);
+    await composer.fill(wrappedDraft);
+    const wideDraftHeight = await composer.evaluate(element => element.clientHeight);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight > height, wideDraftHeight);
+    assert.equal(await composer.inputValue(), wrappedDraft, 'resizing keeps the existing draft');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight <= height + 2, wideDraftHeight);
     await composer.fill(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
     await page.waitForFunction(() => {
       const input = document.querySelector<HTMLTextAreaElement>('#conversation-draft');
