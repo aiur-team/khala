@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
-  createAgentBootstrapHandlers, type AdmissionPolicy, type AgentAdmissionPort, type AgentDeviceSessionPort,
+  createAgentBootstrapHandlers, type AdapterCapabilities, type AdmissionPolicy, type AgentAdmissionPort, type AgentDeviceSessionPort,
 } from '../../agent-bootstrap/handler';
 import { createAdmissionService } from '../../invitations';
 import { inviteFromShareLink } from '../../invitations/link';
@@ -21,6 +21,7 @@ import { localOidcEnabled } from '../../auth/local-oidc';
 import { createDeviceAdmissionRoutes, createLazyDeviceAdmissionRoutes } from '../human/device-admission-routes';
 import { senderIdFor } from '../human/room-send-fence';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
+import type { PairingGrantPort } from '../../pairing/store';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -29,6 +30,8 @@ export type ProductionBootstrapDependencies = ProductionHumanDependencies & Read
   /** Tests may supply a controlled provider; production constructs the Matrix adapter. */
   agents?: AgentAdmissionPort;
   agentDeviceSession?: AgentDeviceSessionPort;
+  /** One-use channel-access grants from the hosted exchange. */
+  externalGrants?: PairingGrantPort;
   /** Explicit G-ADMISSION choice; there is deliberately no silent default. */
   admissionPolicy: AdmissionPolicy;
 }>;
@@ -97,6 +100,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       admissionPolicy: dependencies.admissionPolicy,
       agents: dependencies.agents ?? matrixAgents.agents,
       agentDeviceSession: dependencies.agentDeviceSession ?? matrixAgents.deviceSession,
+      ...(dependencies.externalGrants ? { pairingGrants: dependencies.externalGrants } : {}),
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       legacyMigrationWritesEnabled: false,
     });
@@ -192,6 +196,11 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
     ...bootstrap,
+    // Resume uses the same durable binding/capability store as ordinary bootstrap.
+    bindings: {
+      resumeAdapterCapability: (input: Parameters<AdapterCapabilities['resumeAdapterCapability']>[0]) =>
+        compose().bootstrap.capabilities.resumeAdapterCapability(input),
+    },
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
     ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),

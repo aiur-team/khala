@@ -511,7 +511,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   async function redeem(request: Request): Promise<Response> {
-    const grant = bearer(request);
+    const grant = bearer(request) ?? channelGrantBearer(request);
     const body = await readBody(request);
     const session = body && readSession(body);
     if (grant === null) return json(401, { code: 'invalid_grant' });
@@ -1088,6 +1088,13 @@ function bearer(request: Request): string | null {
   const authorization = request.headers.get('authorization') ?? '';
   const token = authorization.startsWith('DPoP ') ? authorization.slice(5) : '';
   return TOKEN.test(token) ? token : null;
+}
+
+/** Channel-access exchange grants have their own fixed prefix and length. */
+function channelGrantBearer(request: Request): string | null {
+  const authorization = request.headers.get('authorization') ?? '';
+  const token = authorization.startsWith('DPoP ') ? authorization.slice(5) : '';
+  return /^cagrant_[A-Za-z0-9_-]{43}$/u.test(token) ? token : null;
 }
 
 async function readForm(request: Request): Promise<URLSearchParams | null> {

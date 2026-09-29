@@ -74,7 +74,8 @@ export type DiscoveryCredentialRefusal =
   | 'proof_required' | 'invalid_proof' | 'proof_key_mismatch' | 'proof_target_mismatch' | 'proof_token_mismatch' | 'proof_replayed';
 
 export type DiscoveryCredentialAuthorization =
-  | Readonly<{ kind: 'authorized'; action: DiscoveryScope; ownerId: OwnerId; requester: DiscoveryRequester }>
+  | Readonly<{ kind: 'authorized'; action: DiscoveryScope; ownerId: OwnerId; requester: DiscoveryRequester;
+    session?: SessionRef; authorityRevision?: string | null }>
   | Readonly<{ kind: 'refused'; status: 401 | 403; code: DiscoveryCredentialRefusal }>
   | Readonly<{ kind: 'unavailable' }>;
 
@@ -428,6 +429,8 @@ export function createChannelDiscoveryBootstrapHandlers(deps: ChannelDiscoveryBo
       return {
         kind: 'authorized', action: action as DiscoveryScope, ownerId: held.ownerId as OwnerId,
         requester: makeRequester(held),
+        session: { harness: held.harness, sessionId: held.sessionId, generation: held.generation },
+        authorityRevision: held.authorityRevision,
       };
     },
   };

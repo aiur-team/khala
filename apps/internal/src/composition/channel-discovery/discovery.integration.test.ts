@@ -1161,6 +1161,7 @@ describe('internal channel discovery', () => {
     const agent = await issue(w, 'session-1');
     const input = {
       providerOperationId: 'padmit-1', ownerId: alice.ownerId, channelRef: channelId as unknown as Parameters<typeof w.discovery.admission.admit>[0]['channelRef'],
+      sessionFingerprint: 'a'.repeat(43),
       requester: agent.principal as Parameters<typeof w.discovery.admission.admit>[0]['requester'], sessionGeneration: 1,
       deviceId: 'device-1' as DeviceId, history: 'none' as const,
     };

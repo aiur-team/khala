@@ -3,14 +3,19 @@ import { registerClosureHandlers } from '../channel-closure/production';
 import { createInviteEvidenceReader } from './agent/invite-evidence';
 import { createProductionBootstrapRoutes, type ProductionBootstrapDependencies } from './agent/production-bootstrap';
 import { registerAgentHandlers } from './agent/handlers';
-import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
+import { registerHumanHandlers } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
 import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
+import { createHostedChannelAccessRoutes, type HostedChannelAccessPorts } from './human/hosted-channel-access-routes';
+import { createHostedChannelRequester } from './human/hosted-channel-requester';
 import { createHostedProofKeyAuthorityRoutes } from './hosted-proof-key-authority';
 import { createHostedDiscoveryBootstrap } from './hosted-discovery-bootstrap';
 import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
-export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
+export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'> & Readonly<{
+  /** Supplied only after the exact native-session authority is available. */
+  channelAccess?: HostedChannelAccessPorts;
+}>;
 
 /**
  * The generated Netlify function calls this exact composition root. The
@@ -31,6 +36,10 @@ export function registerHostedProductionRoutes(
   const discovery = createHostedDiscoveryBootstrap(options);
   const bootstrap = createProductionBootstrapRoutes({
     ...options,
+    externalGrants: {
+      redeem: input => access.grants.redeem(input),
+      markIssued: input => access.grants.markIssued(input),
+    },
     admissionPolicy: async ({ principal, inviteRef, session }) => {
       if (!session.harness || !session.sessionId || !Number.isSafeInteger(session.generation)) return 'deny';
       try {
@@ -42,9 +51,14 @@ export function registerHostedProductionRoutes(
       } catch { return 'deny'; }
     },
   });
+  const access = createHostedChannelAccessRoutes(options, options.channelAccess ?? {
+    hostedAuthority: active => createHostedChannelRequester(active, discovery.authorize),
+    bindings: bootstrap.bindings,
+  });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
-      channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
+      channelAccess: () => options.channelAccess ? access.human
+        : [createHostedChannelAccessInbox(options), ...access.human.slice(1)],
       channelDiscoveryBootstrap: () => discovery.human,
       channelLink: () => createHostedHumanChannelLinkRoutes(options),
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
@@ -53,6 +67,8 @@ export function registerHostedProductionRoutes(
     ...proofKeyAuthority,
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
+      channelAccess: () => access.agent,
+      ...(access.exchange.length ? { channelAccessExchange: () => access.exchange } : {}),
       deviceAttestation: () => bootstrap.deviceAttestation,
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
