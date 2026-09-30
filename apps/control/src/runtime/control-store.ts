@@ -38,7 +38,9 @@ export type ControlStoreDeps = Readonly<{
   operations: BlobsStoreLike;
   clock: TrustedClock;
   /** A fixed category only; never expose keys or adapter errors. */
-  diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'other'; stage: 'record_corrupt' | 'read_error'; httpStatus?: number }>) => void;
+  diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'room_send' | 'owner_mailbox' | 'other';
+    stage: 'record_corrupt' | 'read_error' | 'ledger_write_error' | 'ledger_read_error'
+      | 'record_write_error' | 'record_confirm_error' | 'cas_unavailable' | 'cas_unknown'; httpStatus?: number }>) => void;
 }>;
 
 type StoredEnvelope = Readonly<{ operationId: string; value: JsonValue; expiresAt: string | null }>;
@@ -149,9 +151,12 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
     const marker = key.indexOf('#');
     return marker < 0 ? null : key.slice(0, marker);
   };
-  const readDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error', error?: unknown) => {
+  const storeDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error' | 'ledger_write_error'
+    | 'ledger_read_error' | 'record_write_error' | 'record_confirm_error' | 'cas_unavailable' | 'cas_unknown', error?: unknown) => {
     const scope = key.startsWith('auth.session.v1.') ? 'session'
-      : key.startsWith('invitations.invite.') ? 'invitation' : 'other';
+      : key.startsWith('invitations.invite.') ? 'invitation'
+        : key.startsWith('room-send-') ? 'room_send'
+          : key.startsWith('owner-mailbox.') || key.startsWith('owner-mailbox-result.') ? 'owner_mailbox' : 'other';
     const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
     const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
       ? status : undefined;
@@ -247,12 +252,13 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
           }
           if (entry.key === key && entry.digest === digest) return { kind: 'unknown' };
         }
-      } catch { return { kind: 'unknown' }; }
+      } catch (error) { storeDiagnostic(key, 'ledger_read_error', error); return { kind: 'unknown' }; }
     }
     let result: { modified: boolean; etag?: string };
     try {
       result = await operations.setJSON(ledgerKey, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
     } catch (error) {
+      storeDiagnostic(key, 'ledger_write_error', error);
       return { kind: isDefiniteRejection(error) ? 'unavailable' : 'unknown' };
     }
     if (result.modified) {
@@ -264,14 +270,16 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
         return confirmed?.etag === result.etag && sameLedgerEntry(confirmed.data, key, digest)
           ? { kind: 'claimed', retry: false }
           : { kind: 'unknown' };
-      } catch {
+      } catch (error) {
+        storeDiagnostic(key, 'ledger_read_error', error);
         return { kind: 'unknown' };
       }
     }
     let entry: { data: unknown; etag?: string } | null;
     try {
       entry = await operations.getWithMetadata(ledgerKey, { type: 'json', consistency: 'strong' });
-    } catch {
+    } catch (error) {
+      storeDiagnostic(key, 'ledger_read_error', error);
       return { kind: 'unknown' };
     }
     if (entry === null || !validEtag(entry.etag)) return { kind: 'unknown' };
@@ -287,10 +295,10 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       try {
         const { live, corrupt } = await readLive<T>(key);
         if (live) return { kind: 'record', record: live };
-        if (corrupt) { readDiagnostic(key, 'record_corrupt'); return { kind: 'unavailable' }; }
+        if (corrupt) { storeDiagnostic(key, 'record_corrupt'); return { kind: 'unavailable' }; }
         return { kind: 'absent' };
       } catch (error) {
-        readDiagnostic(key, 'read_error', error);
+        storeDiagnostic(key, 'read_error', error);
         return { kind: 'unavailable' };
       }
     },
@@ -300,14 +308,15 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
 
       const claim = await claimOperation(input.operationId, input.key, digest);
       if (claim.kind === 'mismatch') return { kind: 'operation_mismatch' };
-      if (claim.kind === 'unavailable') return { kind: 'unavailable' };
-      if (claim.kind === 'unknown') return { kind: 'outcome_unknown', operationId: input.operationId };
+      if (claim.kind === 'unavailable') { storeDiagnostic(input.key, 'cas_unavailable'); return { kind: 'unavailable' }; }
+      if (claim.kind === 'unknown') { storeDiagnostic(input.key, 'cas_unknown'); return { kind: 'outcome_unknown', operationId: input.operationId }; }
       const isRetry = claim.retry;
 
       let before: Awaited<ReturnType<typeof readLive<T>>>;
       try {
         before = await readLive<T>(input.key);
       } catch (error) {
+        storeDiagnostic(input.key, 'read_error', error);
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
       if (before.corrupt) return { kind: 'unavailable' };
@@ -351,6 +360,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       try {
         result = await records.setJSON(physicalKey(input.key), envelope, conditions);
       } catch (error) {
+        storeDiagnostic(input.key, 'record_write_error', error);
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
       if (result.modified) {
@@ -362,7 +372,8 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
           if (after.live?.revision === result.etag && sameWrite(after.live, input.operationId, input.next.value, input.next.expiresAt)) {
             return { kind: 'applied', record: after.live };
           }
-        } catch {
+        } catch (error) {
+          storeDiagnostic(input.key, 'record_confirm_error', error);
           // A write might have landed before the read failed.
         }
         return { kind: 'outcome_unknown', operationId: input.operationId };
@@ -375,6 +386,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       try {
         after = await readLive<T>(input.key);
       } catch (error) {
+        storeDiagnostic(input.key, 'record_confirm_error', error);
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
       if (after.corrupt) return { kind: 'outcome_unknown', operationId: input.operationId };

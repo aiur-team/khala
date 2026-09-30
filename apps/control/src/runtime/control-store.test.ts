@@ -111,6 +111,25 @@ class FakeBlobsStore implements BlobsStoreLike {
 }
 
 describe('read diagnostics', () => {
+  it('labels room-send read and owner-mailbox CAS failures without leaking keys or payloads', async () => {
+    const records = new FakeBlobsStore();
+    const operations = new FakeBlobsStore();
+    const diagnostics: unknown[] = [];
+    const store = createControlStore({ records, operations, clock: () => 0,
+      diagnostic: entry => diagnostics.push(entry) });
+    records.failNext('server-error');
+    expect(await store.read('room-send-fence.v1.private-room')).toEqual({ kind: 'unavailable' });
+    operations.failNext('server-error');
+    expect((await store.compareAndSet({ key: 'owner-mailbox.v1.private-binding', expectedRevision: null,
+      operationId: 'private-operation', next: { value: { body: 'private-body' }, expiresAt: null } })).kind)
+      .toBe('outcome_unknown');
+    expect(diagnostics).toEqual([
+      { scope: 'room_send', stage: 'read_error', httpStatus: 503 },
+      { scope: 'owner_mailbox', stage: 'ledger_write_error', httpStatus: 503 },
+      { scope: 'owner_mailbox', stage: 'cas_unknown' },
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toMatch(/private/);
+  });
   it('distinguishes corrupt records from provider read errors without exposing keys', async () => {
     const records = new FakeBlobsStore();
     const diagnostics: unknown[] = [];
