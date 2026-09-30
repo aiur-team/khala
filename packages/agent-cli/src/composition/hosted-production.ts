@@ -7,6 +7,7 @@ import { createChannelDiscoveryCredentialClient,
   type ProofSigner, type SessionClaim, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { decodeAccessRequestStatus } from '@khala/contracts/messaging/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
+import type { HostedOpenDiagnostic } from '@khala/connector-app/composition/production';
 import { sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import type { AgentClientPort, CliDependencies } from '../cli/types.js';
@@ -50,6 +51,7 @@ type OpenProductionConnectorInput = Readonly<{
   resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
+  diagnostic?(event: HostedOpenDiagnostic): void;
   /** Test transport and credential seam; production uses the owned discovery client and fetch. */
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
@@ -88,8 +90,9 @@ export function hostedSessionFactory(options: Readonly<{
   openInbox: OpenGenerationInbox;
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
-  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
-    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic)): void;
+  diagnostic?(event: (Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
+    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic))
+    | (Readonly<{ component: 'hosted_open' }> & HostedOpenDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -107,6 +110,7 @@ export function hostedSessionFactory(options: Readonly<{
       resolveCodexExecutable: async () => session.harness === 'codex' ? options.resolveCodexExecutable() : null,
       openBrowser: options.openBrowser,
       openInbox: options.openInbox,
+      diagnostic: event => options.diagnostic?.({ component: 'hosted_open', ...event }),
     });
     const requestSessions = session.harness === 'claude' && options.readClaudeVersion
       ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir, readVersion: options.readClaudeVersion })
