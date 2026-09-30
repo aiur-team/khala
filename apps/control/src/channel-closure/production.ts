@@ -77,9 +77,15 @@ export function registerClosureHandlers(dependencies: ProductionClosureDependenc
         }
         try {
           const storeFor = dependencies.stores ?? ((name: string) => getStore(name) as unknown as BlobsStoreLike);
+          // A warm function retains the control adapter, but Netlify's Blobs
+          // credential belongs to the current invocation. Bind at each operation.
+          const contextualStore = (name: string): BlobsStoreLike => ({
+            getWithMetadata: (key, options) => storeFor(name).getWithMetadata(key, options),
+            setJSON: (key, data, options) => storeFor(name).setJSON(key, data, options),
+          });
           store = createControlStore({
-            records: storeFor(`${env.controlStateNamespace}-records`),
-            operations: storeFor(`${env.controlStateNamespace}-operations`),
+            records: contextualStore(`${env.controlStateNamespace}-records`),
+            operations: contextualStore(`${env.controlStateNamespace}-operations`),
             clock: () => Date.now(),
             diagnostic: entry => closureDiagnostic(`store_${entry.stage}`, entry.httpStatus),
           });
