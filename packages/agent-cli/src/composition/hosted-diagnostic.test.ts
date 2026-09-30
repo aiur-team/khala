@@ -44,3 +44,15 @@ it('persists only fixed native readiness fields and boolean prerequisites', () =
     prerequisites: { storage: true, device: true, bootstrap: true, subscription: false,
       controls: false, harness: false, dispatch: false, review: false, recovery: false } });
 });
+
+it('persists only fixed subscription fields and bounded HTTP status', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'subscription', stage: 'mailbox_http',
+    result: 'unavailable', httpStatus: 503, privateUrl: 'must-not-appear',
+  } as never);
+  const file = path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`);
+  const written = fs.readFileSync(file, 'utf8');
+  expect(written).not.toContain('must-not-appear');
+  expect(JSON.parse(written)).toEqual({ component: 'subscription', stage: 'mailbox_http',
+    result: 'unavailable', httpStatus: 503 });
+});

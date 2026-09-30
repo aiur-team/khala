@@ -12,6 +12,7 @@ import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding, type UnverifiedReleasedJob } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
 import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { STORAGE_ERROR_CODES, StorageError } from '@khala/connector/storage/errors';
 import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
@@ -98,6 +99,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   openBrowser(url: string): Promise<void>;
   openInbox: TInbox;
   diagnostic?(event: HostedOpenDiagnostic): void;
+  subscriptionDiagnostic?(event: HostedSubscriptionDiagnostic): void;
   /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
   openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
@@ -105,6 +107,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     const code = error instanceof StorageError && STORAGE_ERROR_CODES.includes(error.code) ? error.code : undefined;
     try { input.diagnostic?.({ stage, result: 'unavailable', ...(code ? { errorCode: code } : {}) }); }
     catch { /* Diagnostics cannot change startup behavior. */ }
+  };
+  const reportSubscription = (event: HostedSubscriptionDiagnostic) => {
+    try { input.subscriptionDiagnostic?.(event); }
+    catch { /* Diagnostics cannot change intake. */ }
   };
   const origin = new URL(input.appOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== input.appOrigin || origin.username || origin.password) {
@@ -349,7 +355,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       signer: activeSigner, capability: () => capabilityFor(next).ensure(), fingerprint: () => substrate.fingerprint });
     ownerTrust = createOwnerDeviceTrust({ appOrigin: input.appOrigin, binding: next,
       roomId: session.roomId, ownerUserId: session.ownerUserId, signer: activeSigner,
-      capability: () => capabilityFor(next).ensure(), registerOwnDevice: () => attestation.ensure(), matrix: substrate });
+      capability: () => capabilityFor(next).ensure(), registerOwnDevice: () => attestation.ensure(),
+      matrix: substrate, diagnostic: reportSubscription });
     const activeTrust = ownerTrust;
     const controls = createPolicyControlHandler({ dispatchStorage, trust,
       roomId: session.roomId as never, bindingId: next.bindingId,
@@ -375,6 +382,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       capability: () => capabilityFor(next).ensure(), controls, review: () => review,
       stop: request => stop.stop(request),
       onRevoked: async () => { remoteDenied = true; deliveryStopped = true; scheduleCleanup(); },
+      diagnostic: reportSubscription,
     });
     const activeMailbox = mailbox;
     await trust.update(next.bindingId, current => {
@@ -404,12 +412,15 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     openStage = 'subscription_start';
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
-      storage, matrix: substrate,
+      storage, matrix: substrate, diagnostic: reportSubscription,
       guard: async () => {
-        if (closed || remoteDenied || deliveryStopped) return 'revoked';
+        if (closed || remoteDenied || deliveryStopped) return { kind: 'revoked' as const, stage: 'local_guard' as const };
         const authority = await activeMailbox.authorize();
-        if (authority !== 'active') return authority === 'unavailable' ? 'unavailable' : 'revoked';
-        return activeTrust.ensure();
+        if (authority !== 'active') return { kind: authority === 'unavailable' ? 'unavailable' as const : 'revoked' as const,
+          stage: 'mailbox_guard' as const };
+        const trusted = await activeTrust.ensure();
+        return trusted === 'active' ? { kind: 'active' as const }
+          : { kind: trusted, stage: 'owner_device_guard' as const };
       },
     });
     if (manualRoute) {

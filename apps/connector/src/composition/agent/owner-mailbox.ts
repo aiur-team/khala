@@ -3,6 +3,7 @@ import type { JsonValue } from '@khala/contracts/messaging/index';
 import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { readBounded } from '@khala/connector/bootstrap/discovery';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import type { PolicyControlHandler } from '../controls/control-handler';
 import type { ReviewControlHandler } from '../review/control-handler';
 import type { LocalStopRequest, LocalStopReceipt } from '../closure/local-fence';
@@ -57,7 +58,13 @@ export function createProductionOwnerMailbox(input: Readonly<{
   stop(request: LocalStopRequest): Promise<Readonly<{ kind: 'stopped'; receipt: LocalStopReceipt }> | Readonly<{ kind: 'unavailable' }>>;
   onRevoked(): Promise<void>;
   fetch?: typeof fetch;
+  diagnostic?(event: HostedSubscriptionDiagnostic): void;
 }>) {
+  const report = (result: HostedSubscriptionDiagnostic['result'], httpStatus?: number) => {
+    try { input.diagnostic?.({ stage: 'mailbox_http', result,
+      ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    catch { /* Diagnostics cannot change authorization. */ }
+  };
   const url = new URL(input.appOrigin);
   if (url.protocol !== 'https:' || url.origin !== input.appOrigin) throw new Error('mailbox_origin_invalid');
   const transport = input.fetch ?? fetch;
@@ -124,13 +131,18 @@ export function createProductionOwnerMailbox(input: Readonly<{
   async function authorize(): Promise<'active' | 'closing' | 'revoked' | 'unavailable'> {
     if (closed) return 'revoked';
     const polled = await call('GET', pollUrl);
-    if (!polled) return 'unavailable';
+    if (!polled) { report('unavailable'); return 'unavailable'; }
     if (polled.status === 401 || polled.status === 403) {
+      report('revoked', polled.status);
       closed = true;
       await input.onRevoked();
       return 'revoked';
     }
-    if (polled.status !== 200 || !validPoll(polled.body)) return 'unavailable';
+    if (polled.status !== 200 || !validPoll(polled.body)) {
+      report('unavailable', polled.status);
+      return 'unavailable';
+    }
+    if (polled.body.closing) report('closing', polled.status);
     return polled.body.closing ? 'closing' : 'active';
   }
 

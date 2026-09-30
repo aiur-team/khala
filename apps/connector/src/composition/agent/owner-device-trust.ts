@@ -2,6 +2,7 @@ import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { readBounded } from '@khala/connector/bootstrap/discovery';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import type { MatrixConnectorSubstrate } from '../../substrate/matrix';
 import type { DeviceAttestationResult } from './device-attestation';
 
@@ -20,7 +21,13 @@ export function createOwnerDeviceTrust(input: Readonly<{
   registerOwnDevice(): Promise<DeviceAttestationResult>;
   matrix: MatrixConnectorSubstrate;
   fetch?: typeof fetch;
+  diagnostic?(event: HostedSubscriptionDiagnostic): void;
 }>) {
+  const report = (result: HostedSubscriptionDiagnostic['result'], httpStatus?: number) => {
+    try { input.diagnostic?.({ stage: 'owner_device_http', result,
+      ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    catch { /* Diagnostics cannot change owner trust. */ }
+  };
   const url = `${input.appOrigin}${PATH}`;
   const fetcher = input.fetch ?? fetch;
   const trusted = new Map<string, string>();
@@ -37,21 +44,26 @@ export function createOwnerDeviceTrust(input: Readonly<{
       response = await fetcher(url, { method: 'GET', redirect: 'error', credentials: 'omit',
         headers: { accept: 'application/json', authorization: `DPoP ${capability.token}`,
           dpop: input.signer.proof('GET', url, capability.token) }, signal: AbortSignal.timeout(10_000) });
-    } catch { return 'unavailable'; }
-    if (response.status === 401 || response.status === 403) return 'revoked';
+    } catch { report('unavailable'); return 'unavailable'; }
+    if (response.status === 401 || response.status === 403) { report('revoked', response.status); return 'revoked'; }
     if (response.status !== 200 || (response.headers.get('content-type') ?? '').split(';')[0]?.trim() !== 'application/json') {
+      report('unavailable', response.status);
       await response.body?.cancel().catch(() => undefined);
       return 'unavailable';
     }
     const bytes = await readBounded(response, 16_384);
-    if (!bytes) return 'unavailable';
+    if (!bytes) { report('unavailable', response.status); return 'unavailable'; }
     let body: unknown;
     try { body = JSON.parse(new TextDecoder('utf8', { fatal: true }).decode(bytes)) as unknown; }
-    catch { return 'unavailable'; }
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) return 'unavailable';
+    catch { report('unavailable', response.status); return 'unavailable'; }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      report('unavailable', response.status); return 'unavailable';
+    }
     const data = body as Record<string, unknown>;
     if (Object.keys(data).sort().join(',') !== 'devices,roomId,v' || data.v !== 1
-      || data.roomId !== input.roomId || !Array.isArray(data.devices) || data.devices.length > 32) return 'unavailable';
+      || data.roomId !== input.roomId || !Array.isArray(data.devices) || data.devices.length > 32) {
+      report('unavailable', response.status); return 'unavailable';
+    }
     const seen = new Set<string>();
     const pins: Array<{ deviceId: string; fingerprint: string }> = [];
     for (const value of data.devices) {
@@ -60,7 +72,9 @@ export function createOwnerDeviceTrust(input: Readonly<{
       if (Object.keys(peer).sort().join(',') !== 'deviceId,fingerprint'
         || typeof peer.deviceId !== 'string' || !DEVICE.test(peer.deviceId)
         || typeof peer.fingerprint !== 'string' || !FINGERPRINT.test(peer.fingerprint)
-        || seen.has(peer.deviceId) || peer.deviceId === input.binding.deviceId) return 'unavailable';
+      || seen.has(peer.deviceId) || peer.deviceId === input.binding.deviceId) {
+        report('unavailable', response.status); return 'unavailable';
+      }
       seen.add(peer.deviceId);
       if (trusted.has(peer.deviceId) && trusted.get(peer.deviceId) !== peer.fingerprint) return 'revoked';
       pins.push({ deviceId: peer.deviceId, fingerprint: peer.fingerprint });

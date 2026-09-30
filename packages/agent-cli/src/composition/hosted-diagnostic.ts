@@ -7,24 +7,35 @@ import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/c
 import type { ExchangeHttpDiagnostic } from '@khala/connector/bootstrap/index';
 import { STORAGE_ERROR_CODES } from '@khala/connector/storage/errors';
 import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { AGENT_READINESS_ERRORS, AGENT_READINESS_PREREQUISITES } from '../cli/types.js';
 
 type Diagnostic = Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
   & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic)
   | (Readonly<{ component: 'hosted_open' }> & HostedOpenDiagnostic)
-  | (Readonly<{ component: 'native_ready' }> & NativeReadyDiagnostic);
+  | (Readonly<{ component: 'native_ready' }> & NativeReadyDiagnostic)
+  | (Readonly<{ component: 'subscription' }> & HostedSubscriptionDiagnostic);
 
 const NATIVE_READY_STAGES = [
   'connector_unready', 'binding_absent', 'binding_mismatch', 'readiness_unready', 'status_exception',
 ] as const;
+const SUBSCRIPTION_STAGES = [
+  'local_guard', 'mailbox_guard', 'owner_device_guard', 'guard_exception',
+  'matrix_authorize', 'matrix_read', 'matrix_lost', 'mailbox_http', 'owner_device_http',
+] as const;
+const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap'] as const;
 
 /** The MCP child's stderr may be hidden by its host; retain only fixed diagnostic fields. */
 export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic): void {
   const native = event.component === 'native_ready';
+  const subscription = event.component === 'subscription';
   const line = `${JSON.stringify({ component: event.component,
-    stage: native && !(NATIVE_READY_STAGES as readonly string[]).includes(event.stage) ? 'status_exception' : event.stage,
-    result: event.result,
-    ...('httpStatus' in event && Number.isInteger(event.httpStatus) ? { httpStatus: event.httpStatus } : {}),
+    stage: native && !(NATIVE_READY_STAGES as readonly string[]).includes(event.stage) ? 'status_exception'
+      : subscription && !(SUBSCRIPTION_STAGES as readonly string[]).includes(event.stage) ? 'guard_exception' : event.stage,
+    result: subscription && !(SUBSCRIPTION_RESULTS as readonly string[]).includes(event.result)
+      ? 'unavailable' : event.result,
+    ...('httpStatus' in event && Number.isInteger(event.httpStatus)
+      && event.httpStatus >= 100 && event.httpStatus <= 599 ? { httpStatus: event.httpStatus } : {}),
     ...(event.component === 'hosted_open' && event.errorCode && STORAGE_ERROR_CODES.includes(event.errorCode)
       ? { errorCode: event.errorCode } : {}),
     ...(native ? { phase: ['ready', 'degraded', 'stopped', 'absent'].includes(event.phase) ? event.phase : 'absent',
