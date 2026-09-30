@@ -27,15 +27,38 @@ declare global { interface Window {
 test('created channel page has one share action that copies a working link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const header = page.locator('.conversation-thread__actions');
+    const before = await header.boundingBox();
+    assert.ok(before);
+    assert.equal(await header.getByText('Test channel').count(), 0);
+    assert.equal(await header.locator('input, .channel-share__hint').count(), 0);
     await page.getByRole('button', { name: 'Copy channel invite link' }).click();
     await page.getByRole('status').getByText('Copied').waitFor();
+    const after = await header.boundingBox();
+    assert.equal(after?.height, before.height, 'copy feedback does not resize the header');
+    assert.equal(await header.locator('input, .channel-share__hint').count(), 0);
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'https://khala.example/join/invite_1');
     assert.equal(await page.locator('.channel-share button').count(), 1);
     assert.equal(await page.locator('.channel-share__more').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.__shareRequests()), [
       { roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'none' } },
     ]);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      for (const theme of ['dark', 'light']) {
+        await page.locator('[data-theme]').first().evaluate((element, value) => element.setAttribute('data-theme', value), theme);
+        await page.screenshot({ path: join(screenshotDir, `channel-header-${theme}-desktop.png`) });
+      }
+    }
     await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await header.locator('input, .channel-share__hint').count(), 0);
+    if (screenshotDir) {
+      for (const theme of ['dark', 'light']) {
+        await page.locator('[data-theme]').first().evaluate((element, value) => element.setAttribute('data-theme', value), theme);
+        await page.screenshot({ path: join(screenshotDir, `channel-header-${theme}-phone.png`) });
+      }
+    }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       'room sharing stays within the phone viewport');
   });
@@ -59,12 +82,12 @@ test('channel care route mounts recipient review and recovery outside the chat',
   });
 });
 
-test('share offers a selectable link when clipboard access is denied', { timeout: 90_000 }, async () => {
+test('share reports clipboard denial without exposing the link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
     await page.getByRole('button', { name: 'Copy channel invite link' }).click();
-    await page.getByRole('alert').getByText('Copy failed. Select the link above to copy it.').waitFor();
-    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.getByRole('alert').getByText('Copy failed. Try again.').waitFor();
+    assert.equal(await page.locator('.channel-share input').count(), 0);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   });

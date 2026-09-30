@@ -330,7 +330,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       }}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
-        sponsor={context.principal.verifiedEmail}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
