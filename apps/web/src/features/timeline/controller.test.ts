@@ -64,6 +64,7 @@ describe('createTimelineController', () => {
     await controller.loadOlder();
     await controller.scanNameHistory?.();
     expect(controller.getSnapshot().namesReady).toBe(false);
+    expect(controller.getSnapshot().nameScan).toBe('unavailable');
     expect(controller.getSnapshot().phase).toBe('partial');
     controller.dispose();
   });
@@ -80,9 +81,11 @@ describe('createTimelineController', () => {
     await controller.loadOlder();
     await controller.scanNameHistory?.();
     expect(controller.getSnapshot().namesReady).toBe(false);
+    expect(controller.getSnapshot().nameScan).toBe('unavailable');
     const restored = item('$rename', 'alice', 'restored');
     emit({ roomId, room, entries: [{ kind: 'message', item: restored }], historicalEventIds: [missing.eventId], generation: 1, snapshotRevision: 'restored' });
     expect(controller.getSnapshot().namesReady).toBe(true);
+    expect(controller.getSnapshot().nameScan).toBe('ready');
     expect(controller.getSnapshot().phase).toBe('ready');
     controller.dispose();
   });
@@ -122,6 +125,23 @@ describe('createTimelineController', () => {
     expect(reads).toBe(2);
     expect(controller.getSnapshot().phase).toBe('partial');
     expect(controller.getSnapshot().namesReady).toBe(false);
+    expect(controller.getSnapshot().nameScan).toBe('retryable');
+    controller.dispose();
+  });
+
+  it('settles a failed initial read and recovers after retry', async () => {
+    let fail = true;
+    const port = { observe: () => () => {}, timeline: async () => fail
+      ? unavailable()
+      : ok({ items: [item('E1', 'alice', 'readable')], nextCursor: null, snapshotRevision: 'rev_1' }) } as unknown as ChannelPort;
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(controller.getSnapshot().nameScan).toBe('retryable');
+    fail = false;
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(controller.getSnapshot().nameScan).toBe('ready');
     controller.dispose();
   });
 

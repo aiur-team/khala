@@ -291,10 +291,16 @@ export function TimelineScreen({
           Loading conversation…
         </p>
       ) : null}
-      {data.namesReady === false ? <p className="timeline__status" role="status">Checking agent names in encrypted history…</p> : null}
-      {data.namesReady === false && (data.phase === 'partial' || data.phase === 'unavailable')
-        ? <button type="button" onClick={() => { void controller.loadOlder().then(() => controller.scanNameHistory?.()); }}>Retry history</button>
-        : null}
+      {data.nameScan === 'checking' || data.nameScan === undefined && data.namesReady === false
+        ? <p className="timeline__status" role="status">Checking agent names in encrypted history…</p> : null}
+      {data.nameScan === 'retryable' ? <p className="timeline__status" role="alert">
+        Agent names could not be checked because history did not load. You can retry while continuing this conversation.
+      </p> : null}
+      {data.nameScan === 'unavailable' ? <p className="timeline__status" role="alert">
+        Some older encrypted messages and agent names are unavailable on this device. If you changed browser profiles, open the original profile. If its keys are gone, those messages cannot be recovered. You can still send new messages.
+      </p> : null}
+      {(data.nameScan === 'retryable' || data.nameScan === 'unavailable')
+        ? <button type="button" onClick={() => { void controller.loadOlder().then(() => controller.scanNameHistory?.()); }}>Retry history</button> : null}
       {data.phase === 'partial' ? (
         <p className="timeline__status" role="status">
           Showing part of the conversation. Some history could not be loaded.
