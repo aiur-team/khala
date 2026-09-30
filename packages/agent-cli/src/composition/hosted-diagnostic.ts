@@ -27,6 +27,8 @@ const SUBSCRIPTION_STAGES = [
   'owner_device_attestation_register_transport', 'owner_device_attestation_register_response',
   'owner_device_attestation_internal', 'owner_device_capability', 'owner_device_empty',
   'owner_device_trust_peer',
+  'matrix_read_closed', 'matrix_read_bridge', 'matrix_read_members', 'matrix_read_participants',
+  'matrix_read_processing', 'matrix_read_missing_keys', 'matrix_read_names', 'matrix_read_callback',
 ] as const;
 const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap'] as const;
 
