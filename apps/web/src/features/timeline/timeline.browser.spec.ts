@@ -38,6 +38,21 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
 
     await page.locator('section.timeline').waitFor();
 
+    await page.evaluate(() => window.__timelineHarness.showUnavailable());
+    const unavailable = page.locator('[data-event-id="encrypted"]');
+    await unavailable.getByText('Message unavailable on this device.', { exact: true }).waitFor();
+    assert.equal(await unavailable.locator('button,time').count(), 0);
+    assert.equal(await unavailable.getByText('untrusted-author').count(), 0);
+    assert.deepEqual(await page.locator('[data-event-id]').evaluateAll(rows => rows.slice(-4).map(row => row.getAttribute('data-event-id'))),
+      ['recent_1', 'encrypted', 'recent_2', 'recent_3']);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await unavailable.evaluate(row => row.scrollWidth <= row.clientWidth), true);
+    await page.evaluate(() => window.__timelineHarness.decryptUnavailable());
+    await unavailable.getByText('Recovered message', { exact: true }).waitFor();
+    assert.equal(await unavailable.count(), 1);
+    assert.equal(await page.getByText('Message unavailable on this device.', { exact: true }).count(), 0);
+    await page.setViewportSize({ width: 1024, height: 900 });
+
     // AE1: an agent message carrying a fake approval button and a remote image
     // renders as inert text; no real button appears and no request to the
     // image's origin is made.

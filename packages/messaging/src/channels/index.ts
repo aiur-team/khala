@@ -1,7 +1,7 @@
 // ChannelPort adapter (KHA-112). Callers get the contract port plus a placeholder-aware
 // entries view; the SDK client, journal and device lifecycle stay internal.
 
-import type { AuthPrincipal, ContentLimits, DevicePort, Disposer, ParticipantView, RoomId, ChannelPort, ChannelSnapshot } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ContentLimits, DevicePort, Disposer, ParticipantView, RoomId, EventId, ChannelPort, ChannelSnapshot } from '@khala/contracts/messaging/index';
 import type { ChannelContext } from './context';
 import { createChannel } from './create';
 import { prepareIntro, resumeIntro } from './intro';
@@ -55,6 +55,7 @@ type Observation = {
   dispose: Disposer;
   /** Serialises asynchronous digesting so updates apply in arrival order. */
   queue: Promise<void>;
+  historicalEventIds: Set<EventId>;
 };
 
 export function createChannelService(input: ChannelServiceInput): ChannelService {
@@ -90,12 +91,13 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
         if (observation.generation !== current) {
           observation.generation = current;
           observation.projection = projectionFor(observation.roomId);
+          observation.historicalEventIds.clear();
         }
         await apply(observation.projection);
         if (observations.get(observation.roomId) !== observation || generation() !== current) return;
         const snapshot = observation.projection.snapshot(current);
         if (snapshot) notify(observation.snapshotListeners, snapshot);
-        notify(observation.entryListeners, observation.projection.entries(current));
+        notify(observation.entryListeners, { ...observation.projection.entries(current), historicalEventIds: [...observation.historicalEventIds] });
       })
       .catch(report);
   };
@@ -110,6 +112,16 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
     newId: input.newId ?? (() => globalThis.crypto.randomUUID()),
     clock,
     stopped: () => stopped,
+    historyRead(roomId, eventIds, madeIn) {
+      const observation = observations.get(roomId);
+      if (!observation || madeIn !== generation()) return;
+      if (observation.generation !== madeIn) {
+        observation.generation = madeIn;
+        observation.projection = projectionFor(roomId);
+        observation.historicalEventIds.clear();
+      }
+      for (const eventId of eventIds) observation.historicalEventIds.add(eventId);
+    },
     echo(roomId: RoomId, item: SendItem, madeIn: number) {
       const observation = observations.get(roomId);
       if (observation) enqueue(observation, madeIn, projection => projection.applyLocal(item));
@@ -139,6 +151,7 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
         entryListeners: new Set(),
         dispose: () => {},
         queue: Promise.resolve(),
+        historicalEventIds: new Set(),
       };
       observations.set(roomId, created);
       created.dispose = input.substrate.subscribe(roomId, update => receive(roomId, created, update));

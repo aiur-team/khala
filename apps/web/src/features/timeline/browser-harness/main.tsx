@@ -14,6 +14,8 @@ const controller = createTimelineController(harness.port, harness.roomId, { gene
 declare global {
   interface Window {
     __timelineHarness: {
+      showUnavailable: () => void;
+      decryptUnavailable: () => void;
       pushLiveMessage: (body: string) => void;
       releaseNextSend: () => void;
       delayNextSend: () => void;
@@ -24,6 +26,8 @@ declare global {
   }
 }
 window.__timelineHarness = {
+  showUnavailable: harness.showUnavailable,
+  decryptUnavailable: harness.decryptUnavailable,
   pushLiveMessage: harness.pushLiveMessage,
   releaseNextSend: harness.releaseNextSend,
   delayNextSend: harness.delayNextSend,

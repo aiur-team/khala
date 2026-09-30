@@ -154,3 +154,14 @@ describe('timeline receipt evidence', () => {
     expect(html).not.toMatch(/Delivery evidence|token-return/);
   });
 });
+
+
+it('anchors batch evidence to rendered row order when history decrypted a live placeholder', () => {
+  const controller = timeline(['E2', 'E1']);
+  const data = { ...controller.getSnapshot(), rows: ['E1', 'E2'].map(id => ({ kind: 'message' as const, item: item(id) })) };
+  const html = renderToStaticMarkup(<TimelineScreen controller={{ ...controller, getSnapshot: () => data }}
+    roomPort={noopSendPort} roomId={roomId} viewer={viewer} evidence={evidence('ready', [
+      wireFact({ kind: 'agent_acknowledged', releaseId: 'rel_order', events: ['E1', 'E2'], batch: 'ack_order' }),
+    ])} />);
+  expect(html.indexOf('timeline__evidence-group')).toBeLessThan(html.indexOf('data-event-id="E1"'));
+});
