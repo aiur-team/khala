@@ -3,6 +3,7 @@ import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { readBounded } from '@khala/connector/bootstrap/discovery';
 import type { MatrixConnectorSubstrate } from '../../substrate/matrix';
+import type { DeviceAttestationResult } from './device-attestation';
 
 const PATH = '/api/agent/owner-device-proof/lookup';
 const FINGERPRINT = /^[A-Za-z0-9+/]{43}=?$/u;
@@ -16,6 +17,7 @@ export function createOwnerDeviceTrust(input: Readonly<{
   ownerUserId: string;
   signer: ProofSigner;
   capability(): Promise<AdapterCapability | null>;
+  registerOwnDevice(): Promise<DeviceAttestationResult>;
   matrix: MatrixConnectorSubstrate;
   fetch?: typeof fetch;
 }>) {
@@ -25,6 +27,8 @@ export function createOwnerDeviceTrust(input: Readonly<{
   let pending: Promise<'active' | 'unavailable' | 'revoked'> | null = null;
 
   async function refresh(): Promise<'active' | 'unavailable' | 'revoked'> {
+    const own = await input.registerOwnDevice().catch(() => ({ kind: 'unavailable' as const }));
+    if (own.kind !== 'attested') return 'unavailable';
     const capability = await input.capability();
     if (!capability || capability.bindingId !== input.binding.bindingId
       || capability.generation !== input.binding.generation) return 'unavailable';
