@@ -15,6 +15,7 @@ describe('ChannelScreen', () => {
       <ChannelScreen
         title="Release channel"
         description="Humans and agents working together."
+        viewerName="Mira"
         controller={controller}
         renderTimeline={() => <div data-slot="timeline">Timeline slot</div>}
       />,
@@ -23,6 +24,7 @@ describe('ChannelScreen', () => {
     expect(html).toContain('khala-content-root');
     expect(html).toContain('Release channel');
     expect(html).toContain('Timeline slot');
+    expect(html).toContain('Mira');
     expect(html).not.toContain('aria-label="Channel details"');
     expect(html).not.toContain('conversation-detail');
     expect(html).not.toContain('Agent presence');

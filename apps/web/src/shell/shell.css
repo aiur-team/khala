@@ -232,7 +232,8 @@
 .khala-owner-shell .channel-page .khala-page-frame__header{display:none}
 .khala-owner-shell .channel-page .khala-page-frame__body{height:100%}
 .khala-owner-shell .channel-page .conversation-layout{height:100%;min-height:0;border:0;border-radius:0}
-.khala-owner-shell .channel-page .conversation-thread__head{display:none}
+.khala-owner-shell .channel-page .conversation-thread__head{display:flex}
+.khala-owner-shell:has(.channel-page) .aiur-shell__title{display:none}
 .khala-owner-shell.khala-content-root{height:100dvh}
 .khala-owner-shell .khala-content-main{min-height:0;overflow:auto;padding:0}
 .khala-device-status{padding:clamp(1rem,3vw,2rem);color:var(--khala-ink-muted)}

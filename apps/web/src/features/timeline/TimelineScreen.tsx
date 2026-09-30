@@ -39,7 +39,6 @@ export interface TimelineScreenProps {
   pendingStore?: PendingSendStore;
   /** The owner's durable receipt evidence for this channel; absent means none is shown. */
   evidence?: ReceiptEvidenceController;
-  composerPlaceholder?: string;
   /** The room index has encrypted activity that this device cannot preview. */
   unreadableActivity?: boolean;
 }
@@ -131,7 +130,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  composerPlaceholder = '', unreadableActivity = false,
+  unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const rows = useMemo(() => data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })), [data.rows, data.items]);
@@ -425,7 +424,17 @@ export function TimelineScreen({
         </button>
       ) : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
-        placeholder={composerPlaceholder}
+        participants={<>
+          {[viewer, ...extraParticipants].slice(0, 5).map(participant => {
+            const name = data.namesReady === false && participant.kind === 'agent' ? 'Agent name unavailable'
+              : names.currentNames.get(participant.participantId) ?? ('displayName' in participant ? participant.displayName : participant.initialName);
+            return <span className="conversation-participant" key={participant.participantId} title={`${name} · ${participant.kind}`}>
+              <span className="conversation-participant__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
+              <span className="conversation-participant__name">{name}</span>
+            </span>;
+          })}
+          {extraParticipants.length > 4 ? <details className="conversation-participant-overflow"><summary>+{extraParticipants.length - 4} more</summary><ul>{extraParticipants.slice(4).map(participant => <li key={participant.participantId}>{data.namesReady === false && participant.kind === 'agent' ? 'Agent name unavailable' : names.currentNames.get(participant.participantId) ?? participant.initialName}</li>)}</ul></details> : null}
+        </>}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
