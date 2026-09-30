@@ -3,6 +3,7 @@ import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { MatrixConnectorSubstrate } from '../../substrate/matrix';
 import { createOwnerDeviceTrust } from './owner-device-trust';
+import type { DeviceAttestationResult } from './device-attestation';
 
 const binding = { v: 1, bindingId: 'binding-owner-trust', ownerId: 'owner-one',
   agentParticipantId: 'agent-one', deviceId: 'AGENT_ONE', harness: 'codex',
@@ -11,19 +12,33 @@ const origin = 'https://khala.aiur.team';
 const fingerprint = 'A'.repeat(43);
 const list = (devices: unknown, roomId = '!room:example') => Response.json({ v: 1, roomId, devices });
 
-function fixture(fetch: typeof globalThis.fetch) {
+function fixture(fetch: typeof globalThis.fetch,
+  registerOwnDevice: () => Promise<DeviceAttestationResult> = async () => ({ kind: 'attested' })) {
   const trustPeer = vi.fn(async () => undefined);
   const signer = { proof: vi.fn(() => 'signed') } as unknown as ProofSigner;
   const trust = createOwnerDeviceTrust({ appOrigin: origin, binding, roomId: '!room:example',
     ownerUserId: '@owner:example', signer,
     capability: async () => ({ token: 'B'.repeat(43), bindingId: binding.bindingId,
       generation: binding.generation, scope: ['receive_released'], expiresAt: Date.now() + 60_000 }),
+    registerOwnDevice,
     matrix: { trustPeer } as unknown as MatrixConnectorSubstrate, fetch,
   });
   return { trust, trustPeer, signer };
 }
 
 describe('owner-approved Matrix device trust', () => {
+  it('does not look up owner pins until the current agent device is attested', async () => {
+    const fetch = vi.fn(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]));
+    let attested = false;
+    const { trust, trustPeer } = fixture(fetch, async () => attested
+      ? { kind: 'attested' } : { kind: 'unavailable', stage: 'register_response' });
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(trustPeer).not.toHaveBeenCalled();
+    attested = true;
+    expect(await trust.ensure()).toBe('active');
+    expect(fetch).toHaveBeenCalledOnce();
+  });
   it('trusts only the protected server pin, never keys advertised by an arbitrary Matrix device list', async () => {
     const fetch = vi.fn(async (...args: Parameters<typeof globalThis.fetch>) => {
       void args;

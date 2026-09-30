@@ -46,6 +46,7 @@ describe('installed hosted connector composition', () => {
       'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
     ])).digest('hex'));
     const matrixUserId = '@claude-agent:example';
+    const agentFingerprint = 'A'.repeat(43);
     const roomId = '!claude:example';
     const payloadA = encodeMessageContent({ v: 1, kind: 'text', body: 'held A' });
     const payloadB = encodeMessageContent({ v: 1, kind: 'text', body: 'approved B' });
@@ -64,7 +65,7 @@ describe('installed hosted connector composition', () => {
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       onText = options.onText;
       return ({
-      fingerprint: 'claude-device-fingerprint',
+      fingerprint: agentFingerprint,
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -82,8 +83,15 @@ describe('installed hosted connector composition', () => {
     let approvalExecuting = false;
     let approvalAuthorizationChecks = 0;
     let releaseAuthorizationFailed = false;
+    const attestationPaths: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const pathname = new URL(String(url)).pathname;
+      if (pathname.startsWith('/api/agent/device-attestation/')) attestationPaths.push(pathname);
+      if (pathname.endsWith('/device-attestation/challenge')) return reply({ v: 1, nonce: 'N'.repeat(43), expiresAt: Date.now() + 60_000 });
+      if (pathname.endsWith('/device-attestation/register')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ fingerprint: agentFingerprint });
+        return reply({ v: 1, kind: 'attested' });
+      }
       if (pathname.endsWith('/owner-mailbox/poll') && approvalRevoked) return new Response(null, { status: 403 });
       if (pathname.endsWith('/owner-mailbox/poll')) {
         if (approvalExecuting && ++approvalAuthorizationChecks === 2 && transientOutage) {
@@ -142,6 +150,7 @@ describe('installed hosted connector composition', () => {
         await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
             subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'ready' } } }));
+        expect(attestationPaths).toEqual(['/api/agent/device-attestation/challenge', '/api/agent/device-attestation/register']);
         expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { prerequisites: { review: 'ready', dispatch: 'blocked' } } });
         expect((await connector.send({ bindingId: binding.bindingId,
@@ -217,6 +226,7 @@ describe('installed hosted connector composition', () => {
     const matrixUserId = '@active-agent:example';
     const roomId = '!active:example';
     const deviceId = 'DEVICE_ACTIVE';
+    const agentFingerprint = 'D'.repeat(43);
     const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
     const send = vi.fn(async (clientTxnId: string, body: string) => {
       if (!clientTxnId || !body) throw new Error('test send missing transaction or body');
@@ -225,7 +235,7 @@ describe('installed hosted connector composition', () => {
     const opens: MatrixConnectorInput[] = [];
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
-      return { fingerprint: 'active-device-fingerprint',
+      return { fingerprint: agentFingerprint,
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -245,7 +255,7 @@ describe('installed hosted connector composition', () => {
       binding = { v: 1, bindingId: 'binding-active-restart', ownerId: 'owner-active',
         agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
         deviceId, harness: 'proof-key', sessionId: `agent_${signer.jkt}`, generation: 0 } as SessionBinding;
-      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: 'active-device-fingerprint' }))
+      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: agentFingerprint }))
         .toEqual({ kind: 'bound' });
       expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       expect(await createConnectorDispatchStorage(storage).applyEffectivePolicy({ binding,
@@ -265,8 +275,13 @@ describe('installed hosted connector composition', () => {
         accessToken: 'exact-device-access-token', roomId, ownerUserId: '@owner:example',
         ownerParticipantId: 'owner_participant',
       }));
-      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith('/device-attestation/challenge')) return reply({ v: 1, nonce: 'N'.repeat(43), expiresAt: Date.now() + 60_000 });
+        if (pathname.endsWith('/device-attestation/register')) {
+          expect(JSON.parse(String(init?.body))).toMatchObject({ fingerprint: agentFingerprint });
+          return reply({ v: 1, kind: 'attested' });
+        }
         if (pathname.endsWith('/owner-mailbox/poll')) return reply({ v: 1,
           bindingId: binding.bindingId, generation: 0, closing: false, entries: [] });
         if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,

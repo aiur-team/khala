@@ -27,6 +27,7 @@ import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatc
 import { createPolicyControlHandler } from './controls/control-handler';
 import { openTrustStateStore } from './controls/trust-store';
 import { createOwnerDeviceTrust } from './agent/owner-device-trust';
+import { createAgentDeviceAttestation } from './agent/device-attestation';
 import { createHostedCodexHarness, verifyReleasePayload, type LocalInbox } from './agent/hosted-codex';
 import { createDispatcher } from '@khala/connector/dispatch/run';
 import type { Dispatcher } from '@khala/connector/dispatch/types';
@@ -326,9 +327,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     const session = await boundMatrixSession(next);
     const activeSigner = signer;
     if (!activeSigner) throw new Error('production_signer_missing');
+    const attestation = createAgentDeviceAttestation({ appOrigin: input.appOrigin, binding: next,
+      signer: activeSigner, capability: () => capabilityFor(next).ensure(), fingerprint: () => substrate.fingerprint });
     ownerTrust = createOwnerDeviceTrust({ appOrigin: input.appOrigin, binding: next,
       roomId: session.roomId, ownerUserId: session.ownerUserId, signer: activeSigner,
-      capability: () => capabilityFor(next).ensure(), matrix: substrate });
+      capability: () => capabilityFor(next).ensure(), registerOwnDevice: () => attestation.ensure(), matrix: substrate });
     const activeTrust = ownerTrust;
     const controls = createPolicyControlHandler({ dispatchStorage, trust,
       roomId: session.roomId as never, bindingId: next.bindingId,
