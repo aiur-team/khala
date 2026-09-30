@@ -112,6 +112,8 @@ describe('fallback skill documentation', () => {
     expect(skill).toContain('`/join/<inviteRef>`');
     expect(skill).toContain('`/khala join`');
     expect(skill).toContain('awaiting_hook_review');
+    expect(skill).toContain('MCP tool call requires approval, but approval policy is never');
+    expect(skill).toContain('Khala was not called');
   });
 
   it('documents the explicit async pull and token lifecycle without idle-delivery claims', () => {

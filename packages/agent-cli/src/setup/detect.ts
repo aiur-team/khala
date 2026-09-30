@@ -66,6 +66,11 @@ export function createDiscoveryOnlyAdapter(harness: PathHarnessId): SetupAdapter
 
 export const VERSION_PROBE_LIMITS = Object.freeze({ timeoutMs: 5_000, outputBytes: 16_384 });
 
+/** The one vendor refusal setup may interpret as a first-run, absent Codex home. */
+export class CodexHomeMissingProbeError extends Error {
+  constructor() { super('codex_home_missing'); }
+}
+
 export type NodeSetupProbeOptions = Readonly<{
   /** Absolute PATH directories, already filtered by `resolveSetupPaths`. */
   pathEntries: readonly string[];
@@ -109,6 +114,7 @@ function runBounded(executable: string, args: readonly string[], environment: Re
       shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...environment }, detached: true, windowsHide: true,
     });
     const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
     let bytes = 0;
     let failure: string | null = null;
     const stop = (reason: string) => {
@@ -116,18 +122,24 @@ function runBounded(executable: string, args: readonly string[], environment: Re
       try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* group already gone */ }
     };
     const timer = setTimeout(() => stop('timeout'), VERSION_PROBE_LIMITS.timeoutMs);
-    const count = (chunk: Buffer, keep: boolean) => {
+    const count = (chunk: Buffer, target: Buffer[]) => {
       bytes += chunk.byteLength;
       if (bytes > VERSION_PROBE_LIMITS.outputBytes) stop('output_limit');
-      else if (keep) stdout.push(chunk);
+      else target.push(chunk);
     };
-    child.stdout.on('data', (chunk: Buffer) => count(chunk, true));
-    child.stderr.on('data', (chunk: Buffer) => count(chunk, false));
+    child.stdout.on('data', (chunk: Buffer) => count(chunk, stdout));
+    child.stderr.on('data', (chunk: Buffer) => count(chunk, stderr));
     child.once('error', () => { failure ??= 'spawn_failed'; });
     child.once('close', code => {
       clearTimeout(timer);
-      if (failure !== null || code !== 0) reject(new Error(failure ?? 'nonzero_exit'));
-      else resolve(Buffer.concat(stdout).toString('utf8'));
+      if (failure !== null) { reject(new Error(failure)); return; }
+      if (code !== 0) {
+        const diagnostic = Buffer.concat(stderr).toString('utf8');
+        reject(diagnostic.includes('failed to resolve CODEX_HOME') && diagnostic.includes('but that path does not exist')
+          ? new CodexHomeMissingProbeError() : new Error('nonzero_exit'));
+        return;
+      }
+      resolve(Buffer.concat(stdout).toString('utf8'));
     });
   });
 }

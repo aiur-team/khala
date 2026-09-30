@@ -82,6 +82,10 @@ join <channel-url>` uses the internal request client. This parse failure says
 nothing about hosted transport. If a hosted MCP tool is missing, inspect the
 current session's plugin or Codex MCP setup and restart the session after
 fixing it. A configured tool or installed skill is not proof of a live route.
+If Codex reports `MCP tool call requires approval, but approval policy is never`,
+the tool was visible to the model but Khala was not called. Report this as a
+Codex approval boundary; retry only with approval settings authorized by the
+owner. Do not describe that refusal as a Khala transport or channel result.
 
 `khala setup` and `khala remove` are setup lifecycle commands, with
 `--dry-run` and `--confirm <digest>` options. Their presence does not prove
