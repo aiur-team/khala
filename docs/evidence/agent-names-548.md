@@ -135,3 +135,16 @@ release format. Focused sequential Chromium passed all three tests: timeline
 history/send reconciliation, full internal create/grant/exchange/human message/
 mode/Stop/launcher-close/resume acceptance, and second-launcher/unknown-channel
 refusal. The 39 focused timeline tests, full typecheck and lint passed.
+
+## Packaged smoke decoding and fallback disambiguation
+
+The packaged quickstart smoke now decodes body index 5 rather than the appended
+author name. Its real npm-packed/installed CLI, owner browser approval, and exact
+two-session exchange passed. The display-name collision resolver now receives
+the names actually shown during incomplete history; a two-owner regression
+confirms distinct stable owner suffixes on unavailable agent bylines.
+
+Integrated current main `53ea0562648936781ee161316f302881f0f008ca` without
+conflicts. The resulting branch passes 62 focused web tests, all four merged
+recovery-fixture tests, full typecheck and lint. These local checks do not claim
+hosted production delivery proof.
