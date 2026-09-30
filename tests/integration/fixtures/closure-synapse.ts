@@ -156,6 +156,8 @@ export async function startClosureSynapse(options: Readonly<{ limits?: ClosureSy
       return response.json() as Promise<Record<string, unknown>>;
     }
     return { baseUrl, serverName: SERVER_NAME, version: versionBody.server_version ?? 'unknown', project, containers,
+      // Only fixture composition may consume this ephemeral registration authority; never emit it in receipts.
+      registrationSharedSecret: registrationSecret,
       probeSharedSecretRegistration, provision, loginDevice, api, close };
   } catch (error) { close(); throw error; }
 }

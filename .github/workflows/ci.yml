@@ -34,6 +34,8 @@ jobs:
       - name: Install Chromium for connector and browser tests
         run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
+      - name: Disposable bootstrap and Synapse recovery fixture
+        run: pnpm test:recovery-synapse
       # The setup release gate: packs @aiur/khala and drives the installed tarball.
       - run: node --test tests/integration/agent-setup/setup-acceptance.test.mjs
       # Each installed harness entry, as setup writes it, delivers against the installed
