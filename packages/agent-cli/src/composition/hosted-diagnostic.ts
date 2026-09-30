@@ -22,6 +22,11 @@ const NATIVE_READY_STAGES = [
 const SUBSCRIPTION_STAGES = [
   'local_guard', 'mailbox_guard', 'owner_device_guard', 'guard_exception',
   'matrix_authorize', 'matrix_read', 'matrix_lost', 'mailbox_http', 'owner_device_http',
+  'owner_device_attestation_fingerprint', 'owner_device_attestation_capability',
+  'owner_device_attestation_challenge_transport', 'owner_device_attestation_challenge_response',
+  'owner_device_attestation_register_transport', 'owner_device_attestation_register_response',
+  'owner_device_attestation_internal', 'owner_device_capability', 'owner_device_empty',
+  'owner_device_trust_peer',
 ] as const;
 const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap'] as const;
 

@@ -13,31 +13,53 @@ const fingerprint = 'A'.repeat(43);
 const list = (devices: unknown, roomId = '!room:example') => Response.json({ v: 1, roomId, devices });
 
 function fixture(fetch: typeof globalThis.fetch,
-  registerOwnDevice: () => Promise<DeviceAttestationResult> = async () => ({ kind: 'attested' })) {
-  const trustPeer = vi.fn(async () => undefined);
+  registerOwnDevice: () => Promise<DeviceAttestationResult> = async () => ({ kind: 'attested' }),
+  capability: Parameters<typeof createOwnerDeviceTrust>[0]['capability'] = async () => ({ token: 'B'.repeat(43), bindingId: binding.bindingId,
+    generation: binding.generation, scope: ['receive_released'], expiresAt: Date.now() + 60_000 }),
+  trustPeer = vi.fn(async () => undefined)) {
+  const diagnostic = vi.fn();
   const signer = { proof: vi.fn(() => 'signed') } as unknown as ProofSigner;
   const trust = createOwnerDeviceTrust({ appOrigin: origin, binding, roomId: '!room:example',
     ownerUserId: '@owner:example', signer,
-    capability: async () => ({ token: 'B'.repeat(43), bindingId: binding.bindingId,
-      generation: binding.generation, scope: ['receive_released'], expiresAt: Date.now() + 60_000 }),
+    capability,
     registerOwnDevice,
-    matrix: { trustPeer } as unknown as MatrixConnectorSubstrate, fetch,
+    matrix: { trustPeer } as unknown as MatrixConnectorSubstrate, fetch, diagnostic,
   });
-  return { trust, trustPeer, signer };
+  return { trust, trustPeer, signer, diagnostic };
 }
 
 describe('owner-approved Matrix device trust', () => {
   it('does not look up owner pins until the current agent device is attested', async () => {
     const fetch = vi.fn(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]));
     let attested = false;
-    const { trust, trustPeer } = fixture(fetch, async () => attested
+    const { trust, trustPeer, diagnostic } = fixture(fetch, async () => attested
       ? { kind: 'attested' } : { kind: 'unavailable', stage: 'register_response' });
     expect(await trust.ensure()).toBe('unavailable');
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_attestation_register_response', result: 'unavailable' });
     expect(fetch).not.toHaveBeenCalled();
     expect(trustPeer).not.toHaveBeenCalled();
     attested = true;
     expect(await trust.ensure()).toBe('active');
     expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('distinguishes capability preflight from a successful empty owner pin lookup', async () => {
+    const fetch = vi.fn(async () => list([]));
+    const noCapability = fixture(fetch, undefined, async () => null);
+    expect(await noCapability.trust.ensure()).toBe('unavailable');
+    expect(noCapability.diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_capability', result: 'unavailable' });
+    expect(fetch).not.toHaveBeenCalled();
+
+    const empty = fixture(fetch);
+    expect(await empty.trust.ensure()).toBe('unavailable');
+    expect(empty.diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_empty', result: 'unavailable' });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('reports Matrix key trust failure without changing the unavailable outcome', async () => {
+    const trustPeer = vi.fn(async () => { throw new Error('private Matrix error'); });
+    const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
+      undefined, undefined, trustPeer);
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_trust_peer', result: 'unavailable' });
   });
   it('trusts only the protected server pin, never keys advertised by an arbitrary Matrix device list', async () => {
     const fetch = vi.fn(async (...args: Parameters<typeof globalThis.fetch>) => {
