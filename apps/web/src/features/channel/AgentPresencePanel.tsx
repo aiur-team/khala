@@ -2,7 +2,6 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { ACKNOWLEDGEMENT_SUPPORT_LABELS, RECEIPT_EVIDENCE_LABELS } from '../receipt-evidence/vocabulary';
-import { StatusBadge, type StatusTone } from '../../shell/StatusBadge';
 import type { ChannelAgentView, ChannelController } from './controller';
 import type { AgentConnectionState } from './ports';
 import { participantRosterName } from './participant-name';
@@ -98,13 +97,6 @@ const CONNECTION_LABEL: Record<AgentConnectionState, string> = {
   unknown: 'Connection unknown',
 };
 
-const CONNECTION_TONE: Record<AgentConnectionState, StatusTone> = {
-  connected: 'positive',
-  stale: 'caution',
-  offline: 'caution',
-  unknown: 'neutral',
-};
-
 function defaultCopyText(value: string): Promise<void> {
   return navigator.clipboard.writeText(value);
 }
@@ -164,14 +156,14 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
           const name = namesPending ? 'Loading name…' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
           return <li key={agent.participantId} className="agent-presence__agent">
             <details className="agent-presence__details">
-              <summary aria-label={`Details for ${name}`}>
+              <summary aria-label={`Details for ${name}, ${CONNECTION_LABEL[agent.connection]}`}>
                 <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
-                <span className="agent-presence__name">{name}</span>
-                <StatusBadge tone={CONNECTION_TONE[agent.connection]} label={CONNECTION_LABEL[agent.connection]} />
+                <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span>
+                  <span className={`agent-presence__status agent-presence__status--${agent.connection}`}>{CONNECTION_LABEL[agent.connection]}</span></span>
                 <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
               </summary>
               <div className="agent-presence__detail-body">
-                <p>Owned by {agent.ownerDisplayName}</p>
+                <p>Owned by {participantRosterName(agent.ownerDisplayName, 'Channel member')}</p>
                 {!namesPending && renameAgent && viewerOwnerId && renameScope && agent.ownerId === viewerOwnerId ? <RenameAgent
                   agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
                   storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, agent.participantId])}`} /> : null}

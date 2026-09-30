@@ -37,8 +37,10 @@
 .channel-roster__chevron{flex:none;color:var(--khala-ink-muted);transition:transform .18s ease}
 .channel-roster[open] .channel-roster__chevron{transform:rotate(180deg)}
 .channel-roster__panel{position:absolute;left:0;right:0;top:100%;z-index:15;max-height:min(42dvh,22rem);overflow:auto;padding:.45rem .8rem;border-bottom:1px solid var(--khala-line);background:var(--khala-fill-raised);box-shadow:0 12px 30px #0006}
-.channel-roster__viewer{display:flex;align-items:center;gap:.55rem;min-height:2.6rem;padding:.2rem .45rem;color:var(--khala-ink);font-size:.82rem}
+.channel-roster__viewer{display:flex;align-items:center;gap:.55rem;min-height:2.75rem;padding:.2rem .45rem;color:var(--khala-ink);font-size:.82rem}
 .channel-roster__viewer .channel-participants__avatar,.agent-presence__details .channel-participants__avatar{width:24px;height:24px;font-size:.75rem}
+.channel-roster__viewer-name,.agent-presence__identity{display:flex;flex-direction:column;min-width:0;line-height:1.2}
+.channel-roster__viewer-name small,.agent-presence__status{color:var(--khala-ink-muted);font-size:.72rem;font-weight:400}
 .channel-roster__role{margin-left:auto;color:var(--khala-ink-muted);font-size:.75rem}
 .channel-toolbar__actions{display:flex;align-items:center;gap:.45rem;flex:none}
 .conversation-thread__body .timeline{min-height:0}
@@ -136,21 +138,22 @@
 
 .agent-presence__list {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: 0 0 0 1.25rem;
+  padding: 0 0 0 .65rem;
+  border-left: 2px solid var(--khala-line);
 }
 
 .agent-presence__agent {
-  border-top: 1px solid var(--khala-line);
   min-width: 0;
 }
-.agent-presence__details>summary{display:flex;align-items:center;gap:.55rem;min-height:2.6rem;padding:.2rem .45rem;border-radius:6px;cursor:pointer;list-style:none}
+.agent-presence__details>summary{display:flex;align-items:center;gap:.55rem;min-height:2.75rem;padding:.2rem .45rem;border-radius:8px;cursor:pointer;list-style:none}
 .agent-presence__details>summary::-webkit-details-marker{display:none}
 .agent-presence__details>summary:hover{background:var(--khala-fill-control)}
 .agent-presence__details>summary:focus-visible{outline:2px solid var(--khala-accent);outline-offset:-2px}
+.agent-presence__identity{flex:1}
 .agent-presence__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.84rem;font-weight:600}
-.agent-presence__details .status-badge{margin-left:auto;flex:none}
-.agent-presence__chevron{color:var(--khala-ink-muted)}
+.agent-presence__status--connected{color:var(--khala-status-positive)}
+.agent-presence__chevron{color:var(--khala-ink-muted);margin-left:auto}
 .agent-presence__details[open] .agent-presence__chevron{transform:rotate(180deg)}
 .agent-presence__detail-body{padding:.35rem .45rem .8rem 2.3rem;font-size:.82rem}
 .agent-presence__detail-body>p:first-child{margin:0;color:var(--khala-ink-muted)}

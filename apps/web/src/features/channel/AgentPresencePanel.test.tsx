@@ -19,8 +19,18 @@ describe('AgentPresencePanel', () => {
       connection: 'unknown', routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
       installCommand: null, installCommandError: false,
     }] })} />);
-    expect(html).toContain('aria-label="Details for Agent"');
+    expect(html).toContain('aria-label="Details for Agent, Connection unknown"');
     expect(html).not.toContain('@khala_a_test:matrix.example.test');
+  });
+
+  it('uses a readable owner fallback in details when the supplied owner name is a Matrix ID', () => {
+    const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents: [{
+      participantId: 'agent_1' as ParticipantId, displayName: 'Scout', ownerDisplayName: '@mira:matrix.example.test',
+      connection: 'unknown', routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
+      installCommand: null, installCommandError: false,
+    }] })} />);
+    expect(html).toContain('Owned by Channel member');
+    expect(html).not.toContain('@mira:matrix.example.test');
   });
 
   it('shows the encrypted current name and edit control only to the bound owner', () => {
@@ -73,7 +83,7 @@ describe('AgentPresencePanel', () => {
       })} />,
     );
 
-    expect(html).toContain('aria-label="Details for Scout"');
+    expect(html).toContain('aria-label="Details for Scout, Not connected"');
     expect(html.indexOf('Connection stale')).toBe(-1);
     expect(html.indexOf('Owned by Mira')).toBeGreaterThan(html.indexOf('</summary>'));
     expect(html).not.toMatch(/>agent_1</);
@@ -170,7 +180,7 @@ describe('AgentPresencePanel', () => {
     expect(html).not.toMatch(/>Connected</);
   });
 
-  it('renders an unknown connection with a neutral tone', () => {
+  it('renders an unknown connection without a connected tone', () => {
     const html = renderToStaticMarkup(
       <AgentPresencePanel controller={controller({
         phase: 'ready',
@@ -187,8 +197,8 @@ describe('AgentPresencePanel', () => {
         }],
       })} />,
     );
-    expect(html).toContain('status-badge--neutral');
-    expect(html).not.toContain('status-badge--positive');
+    expect(html).toContain('agent-presence__status--unknown');
+    expect(html).not.toContain('agent-presence__status--connected');
   });
 
   it('renders a queued receipt as queued rather than read', () => {
