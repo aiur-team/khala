@@ -18,6 +18,7 @@ export type TimelineEntriesView = Readonly<{
   roomId: RoomId;
   room: ChannelSummary | null;
   generation: number;
+  historicalEventIds?: readonly EventId[];
   entries: readonly (TimelineRow | Readonly<{ kind: 'local' }>)[];
 }>;
 const rowId = (row: TimelineRow) => row.kind === 'message' ? row.item.ref.eventId : row.eventId;
@@ -136,10 +137,7 @@ export function createTimelineController(
     if (disposed || view.roomId !== roomId || !isCurrentGeneration(generation, view)) return;
     const previousRows = getSnapshot().rows ?? [];
     const previouslyKnown = new Set(previousRows.map(rowId));
-    const newestKnownTime = previousRows.reduce((newest, row) => {
-      const time = Date.parse(row.kind === 'message' ? row.item.receivedAt : row.receivedAt);
-      return Number.isFinite(time) ? Math.max(newest, time) : newest;
-    }, -Infinity);
+    const historicalIds = new Set(view.historicalEventIds);
     const rows = new Map<string, TimelineRow>();
     for (const entry of view.entries) {
       if (entry.kind === 'local') continue;
@@ -151,12 +149,11 @@ export function createTimelineController(
     itemsDirty = true;
     membership = view.room?.membership ?? membership;
     phase = historyDegraded ? degradedPhase() : view.room ? 'ready' : 'loading';
-    // History can publish after its request resolves. Only events newer than
-    // the known transcript boundary qualify as unread arrivals; older discoveries
-    // and late decryptions remain visible without a false new-message badge.
-    if (!readerAtLatest && !readingHistory && newestKnownTime !== -Infinity) {
+    // History can publish after its request resolves; source IDs distinguish it
+    // from live events even when server timestamps tie or move backwards.
+    if (!readerAtLatest && !readingHistory) {
       newMessageCount += recentRows.filter(row => !previouslyKnown.has(rowId(row))
-        && Date.parse(row.kind === 'message' ? row.item.receivedAt : row.receivedAt) > newestKnownTime).length;
+        && !historicalIds.has(rowId(row))).length;
     }
     notify();
   }) : roomPort.observe(roomId, applySnapshot);

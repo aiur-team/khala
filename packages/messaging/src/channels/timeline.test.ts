@@ -209,3 +209,23 @@ describe('timeline page', () => {
     expect(await service.timeline({ roomId: room.roomId, cursor: null, limit: 10 })).toEqual({ kind: 'unavailable', retryable: true });
   });
 });
+
+
+it('identifies paginated ciphertext in entries even when its publication follows the history response', async () => {
+  const t = observed();
+  const historical: SubstrateEvent = { kind: 'undecryptable', eventId: '$historical' as EventId,
+    authorParticipantId: human.participantId, reason: 'missing_key', receivedAt: '2026-09-17T00:00:01Z' };
+  t.emit([message('$current', 'current')]);
+  await settle();
+  t.substrate.page = { kind: 'done', value: { events: [historical], nextCursor: null, revision: 'history' } };
+  const page = await t.service.timeline({ roomId: t.room.roomId, cursor: null, limit: 20 });
+  expect(page.kind === 'ok' && page.value.items).toEqual([]);
+  t.emit([historical, message('$live-same-time', 'live')]);
+  await settle();
+  expect(t.lastView()?.historicalEventIds).toEqual(['$historical']);
+  expect(t.lastView()?.entries).toHaveLength(3);
+  t.device.view = { ...t.device.view, generation: 2 };
+  t.emit([message('$new-generation', 'fresh')], 2);
+  await settle();
+  expect(t.lastView()?.historicalEventIds).toEqual([]);
+});

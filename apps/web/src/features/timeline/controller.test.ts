@@ -361,17 +361,20 @@ it('does not count historical ciphertext published after the history promise res
     emit = listener; return () => {};
   } }, roomId, { generation: 1 });
   const current = { kind: 'message' as const, item: item('current', 'alice', 'current', '2026-09-17T00:00:00Z') };
-  const publish = (entries: ChannelEntriesView['entries']) => emit({ roomId, room, entries, generation: 1, snapshotRevision: 'delayed' });
+  const publish = (entries: ChannelEntriesView['entries'], historicalEventIds: readonly EventId[] = []) => emit({ roomId, room, entries, historicalEventIds, generation: 1, snapshotRevision: 'delayed' });
   publish([current]);
   controller.setReaderAtLatest(false);
   await controller.loadOlder();
   await Promise.resolve();
   const historical = { kind: 'unavailable' as const, eventId: 'historical' as EventId,
     authorParticipantId: 'opaque' as ParticipantId, reason: 'missing_key' as const, receivedAt: '2026-09-16T00:00:00Z' };
-  publish([current, historical]);
+  publish([current, historical], [historical.eventId]);
   expect(controller.getSnapshot().rows).toHaveLength(2);
   expect(controller.getSnapshot().newMessageCount).toBe(0);
-  publish([current, historical, { kind: 'message', item: item('new', 'alice', 'live', '2026-09-18T00:00:00Z') }]);
+  const tied = { kind: 'message' as const, item: item('new', 'alice', 'live', current.item.receivedAt) };
+  publish([current, historical, tied], [historical.eventId]);
   expect(controller.getSnapshot().newMessageCount).toBe(1);
+  publish([current, historical, tied, { kind: 'message', item: item('backwards', 'alice', 'live backwards', '2026-09-15T00:00:00Z') }], [historical.eventId]);
+  expect(controller.getSnapshot().newMessageCount).toBe(2);
   controller.dispose();
 });

@@ -33,6 +33,8 @@ export type ChannelEntriesView = Readonly<{
   entries: readonly TimelineEntry[];
   snapshotRevision: string;
   generation: number;
+  /** Events obtained through pagination, including ciphertext omitted from contract pages. */
+  historicalEventIds?: readonly EventId[];
 }>;
 
 /** @deprecated Use `ChannelEntriesView`. Kept through the first tagged release containing #163. */
@@ -79,9 +81,11 @@ export async function timeline(
     return rejected('invalid_request');
   }
   if (ctx.stopped()) return unavailable();
+  const generation = ctx.device.current().generation;
   const page = await safeRead(() => ctx.substrate.timeline(input, options));
   if (page.kind === 'unavailable') return unavailable();
   if (page.kind === 'rejected') return rejected(page.code);
+  ctx.historyRead?.(input.roomId, page.value.events.map(event => event.eventId), generation);
   const entries = new Map<EventId, RemoteEntry>();
   for (const event of page.value.events) {
     const entry = await toEntry(input.roomId, event);
