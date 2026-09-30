@@ -88,10 +88,14 @@ export function publicStatus(value: unknown): AgentStatus {
       if (!(AGENT_READINESS_STATES as readonly unknown[]).includes(state)) throw new CliError('transport_unavailable');
       return [key, state];
     })) as AgentReadiness['prerequisites'];
+    const manualMcpReady = value.route === 'manual_mcp' && binding?.harness === 'proof-key'
+      && AGENT_READINESS_PREREQUISITES.slice(0, 5).every(key => prerequisites[key] === 'ready')
+      && prerequisites.harness === 'unknown' && prerequisites.dispatch === 'blocked'
+      && prerequisites.review === 'blocked';
     if ((input.phase === 'ready') !== (input.errorCode === null)
       || value.connected !== (input.phase === 'ready')
       || (input.phase === 'ready' && AGENT_READINESS_PREREQUISITES.slice(0, 8)
-        .some(key => prerequisites[key] !== 'ready'))) throw new CliError('transport_unavailable');
+        .some(key => prerequisites[key] !== 'ready') && !manualMcpReady)) throw new CliError('transport_unavailable');
     readiness = { phase: input.phase as AgentReadiness['phase'], prerequisites,
       errorCode: input.errorCode as AgentReadiness['errorCode'] };
   }
