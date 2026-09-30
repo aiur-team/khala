@@ -21,14 +21,14 @@ if (ownerFromUrl) localStorage.setItem('khala.test.owner', ownerFromUrl);
 const signedInOwner = ownerFromUrl ?? localStorage.getItem('khala.test.owner');
 const routeCodec = createHumanRouteCodec({ origin: window.location.origin, basePath: '/', allowInsecureLoopback: true });
 
-function PersonalShare({ owner, email }: { owner: string; email: string }) {
+function PersonalShare({ owner }: { owner: string }) {
   return <ChannelSharePanel admission={{ share: async () => unavailable() }} roomId={'room_1' as RoomId}
-    sponsor={email} channelLinks={{ personal: async () => ({ v: 1, kind: 'personal_link',
+    channelLinks={{ personal: async () => ({ v: 1, kind: 'personal_link',
       shareUrl: `${window.location.origin}/join/${owner}`, expiresAt: null }) }} />;
 }
 
 function CreatedRoom() {
-  return <main><h1>Test channel</h1><PersonalShare owner={signedInOwner ?? 'signed_out'} email={params.get('email') ?? `${signedInOwner}@example.test`} /></main>;
+  return <main><h1>Test channel</h1><PersonalShare owner={signedInOwner ?? 'signed_out'} /></main>;
 }
 
 function readyDevice(): DeviceView {
@@ -110,8 +110,7 @@ function JoinRoute() {
   }, [controller]);
 
   return <><JoinScreen view={view} onSignIn={() => void controller.signIn()} onRetry={() => controller.retry()} />
-    {view.phase === 'joined' ? <PersonalShare owner={identityState.kind === 'signed_in' ? identityState.principal.ownerId : 'signed_out'}
-      email={view.email ?? 'Member'} /> : null}</>;
+    {view.phase === 'joined' ? <PersonalShare owner={identityState.kind === 'signed_in' ? identityState.principal.ownerId : 'signed_out'} /> : null}</>;
 }
 
 const root = createRoot(document.getElementById('root')!);
