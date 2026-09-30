@@ -92,8 +92,8 @@ test('public showcase stays local and works across themes and widths', { timeout
         assert.ok(positions[1]!.left < positions[0]!.left, `${theme} ${width}: peer message aligns left`);
         assert.ok(positions[2]!.left < positions[0]!.left, `${theme} ${width}: agent message aligns left`);
         assert.ok(positions.every(position => position.bubbleLeft >= dimensions.left && position.bubbleRight <= dimensions.right), `${theme} ${width}: bubbles fit the frame`);
-        assert.equal(positions[0]!.radius, '6px', `${theme} ${width}: shared Dashboard card radius`);
-        assert.equal(positions[0]!.fontSize, '13.12px', `${theme} ${width}: shared Dashboard message type size`);
+        assert.equal(positions[0]!.radius, '13px', `${theme} ${width}: conversation bubble radius`);
+        assert.equal(positions[0]!.fontSize, '14.08px', `${theme} ${width}: conversation message type size`);
         const details = pane.getByRole('button', { name: 'Participants and agents' });
         assert.equal(await details.evaluate(node => node.closest('.conversation-thread__head') !== null), true);
         assert.equal(await details.evaluate(node => Math.round(node.getBoundingClientRect().width)), 44);

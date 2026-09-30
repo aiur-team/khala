@@ -242,6 +242,7 @@ export function LocalRoom({
       description="Local · Plaintext on this device"
       controller={channel}
       viewerOwnerId={viewer.ownerId}
+      viewerName={viewer.displayName}
       renameScope={roomId}
       namesPending={timelineData.namesReady === false}
       currentNames={currentNames}

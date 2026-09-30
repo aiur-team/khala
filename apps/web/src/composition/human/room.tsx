@@ -315,6 +315,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
       viewerOwnerId={viewer.ownerId}
+      viewerName={viewer.displayName}
       renameScope={roomId}
       namesPending={timelineData.namesReady === false}
       {...(currentNames ? { currentNames } : {})}

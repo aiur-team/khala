@@ -27,7 +27,7 @@ declare global { interface Window {
 test('created channel page has one share action that copies a working link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-    const header = page.locator('.conversation-thread__actions');
+    const header = page.locator('.conversation-thread__header-actions');
     const before = await header.boundingBox();
     assert.ok(before);
     assert.equal(await header.getByText('Test channel').count(), 0);
@@ -71,7 +71,7 @@ test('channel care route mounts recipient review and recovery outside the chat',
     assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
     await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
     await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
-    assert.equal(await page.locator('.conversation-thread__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    assert.equal(await page.locator('.conversation-thread__header-actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       await mkdir(screenshotDir, { recursive: true });
@@ -89,7 +89,7 @@ for (const failure of ['unavailable', 'denied'] as const) {
         configurable: true,
         value: kind === 'unavailable' ? undefined : { writeText: Function('return Promise.reject(new DOMException("Denied", "NotAllowedError"))') },
       }), failure);
-      const header = page.locator('.conversation-thread__actions');
+      const header = page.locator('.conversation-thread__header-actions');
       const before = await header.boundingBox();
       assert.equal(await page.getByRole('textbox', { name: 'Channel link', exact: true }).count(), 0);
       const button = page.getByRole('button', { name: 'Copy channel invite link' });
