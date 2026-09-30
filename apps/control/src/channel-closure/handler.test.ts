@@ -10,7 +10,7 @@ const principal: AuthPrincipal = {
 };
 const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
 
-function setup(diagnostic?: (stage: 'authentication_unavailable' | 'cleanup_unavailable') => void) {
+function setup(diagnostic?: (stage: 'authentication_unavailable' | 'cleanup_unavailable' | 'cleanup_rejected') => void) {
   const cleanupRequests = vi.fn(async () => ({ kind: 'ok' as const, requests: [command] }));
   const service: ClosurePort = {
     capability: vi.fn(async roomId => ok({ ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,
@@ -66,6 +66,11 @@ describe('protected closure route', () => {
     diagnostic.mockImplementationOnce(() => { throw new Error('logging failed'); });
     cleanupRequests.mockResolvedValueOnce({ kind: 'unavailable' } as never);
     expect((await gateway(new Request(url))).status).toBe(503);
+    cleanupRequests.mockRejectedValueOnce(new Error('private-cookie secret-room'));
+    const rejected = await gateway(new Request(url));
+    expect(rejected.status).toBe(503);
+    expect(await rejected.json()).toEqual({ code: 'unavailable' });
+    expect(diagnostic).toHaveBeenLastCalledWith('cleanup_rejected');
   });
 
   it('requires human mutation authority before parsing or invoking closure', async () => {

@@ -8,14 +8,14 @@ type Dependencies = Readonly<{
   auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
   service(principal: AuthPrincipal): ClosurePort;
   cleanupRequests?(principal: AuthPrincipal): Promise<Readonly<{ kind: 'ok'; requests: readonly ClosureRequest[] }> | Readonly<{ kind: 'unavailable' }>>;
-  diagnostic?(stage: 'authentication_unavailable' | 'cleanup_unavailable'): void;
+  diagnostic?(stage: 'authentication_unavailable' | 'cleanup_unavailable' | 'cleanup_rejected'): void;
 }>;
 
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const json = (status: number, body: object) => new Response(JSON.stringify(body), { status, headers: HEADERS });
 const failure = (status: number, code: string) => json(status, { code });
 
-function diagnose(deps: Dependencies, stage: 'authentication_unavailable' | 'cleanup_unavailable'): void {
+function diagnose(deps: Dependencies, stage: 'authentication_unavailable' | 'cleanup_unavailable' | 'cleanup_rejected'): void {
   try { deps.diagnostic?.(stage); } catch { /* Diagnostics cannot change the response. */ }
 }
 
@@ -71,7 +71,12 @@ export function createChannelClosureHandlers(deps: Dependencies): readonly Route
       const operationId = query.get('operationId');
       const room = query.get('roomId');
       if (query.size === 1 && query.get('cleanup') === '1') {
-        const result = await deps.cleanupRequests?.(authentication.context.principal);
+        let result: Awaited<ReturnType<NonNullable<Dependencies['cleanupRequests']>>> | undefined;
+        try { result = await deps.cleanupRequests?.(authentication.context.principal); }
+        catch {
+          diagnose(deps, 'cleanup_rejected');
+          return failure(503, 'unavailable');
+        }
         if (result?.kind !== 'ok') diagnose(deps, 'cleanup_unavailable');
         return result?.kind === 'ok' ? json(200, { kind: 'ok', value: result.requests }) : failure(503, 'unavailable');
       }
