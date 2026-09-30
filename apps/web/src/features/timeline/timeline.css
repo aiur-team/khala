@@ -11,10 +11,15 @@
 }
 
 .timeline__status {
-  margin: 0;
+  margin: 0 1.1rem;
   padding: 0.5rem 0.75rem;
   border-radius: var(--khala-panel-radius);
   background: var(--khala-fill-control);
+}
+
+.timeline__retry-history {
+  align-self: flex-start;
+  margin: 0 1.1rem;
 }
 
 .timeline__load-older {

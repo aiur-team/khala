@@ -295,16 +295,8 @@ export function TimelineScreen({
       {data.nameScan === 'retryable' ? <p className="timeline__status" role="alert">
         Agent names could not be checked because history did not load. You can retry while continuing this conversation.
       </p> : null}
-      {data.nameScan === 'unavailable' ? <p className="timeline__status" role="alert">
-        Some older encrypted messages and agent names are unavailable on this device. If you changed browser profiles, open the original profile. If its keys are gone, those messages cannot be recovered. You can still send new messages.
-      </p> : null}
       {(data.nameScan === 'retryable' || data.nameScan === 'unavailable')
-        ? <button type="button" onClick={() => { void controller.loadOlder().then(() => controller.scanNameHistory?.()); }}>Retry history</button> : null}
-      {data.phase === 'partial' ? (
-        <p className="timeline__status" role="status">
-          Showing part of the conversation. Some history could not be loaded.
-        </p>
-      ) : null}
+        ? <button type="button" className="timeline__retry-history" onClick={() => { void controller.loadOlder().then(() => controller.scanNameHistory?.()); }}>Retry history</button> : null}
       {data.membership === 'revoked' || data.membership === 'left' ? (
         <p className="timeline__status timeline__status--membership" role="alert">
           You no longer have access to this conversation.

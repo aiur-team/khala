@@ -210,7 +210,8 @@ describe('HumanApplicationScreen', () => {
     );
     expect(room).toContain('live room');
     expect(room).toContain('aria-label="Log out"');
-    expect(room).toContain('<div class="khala-content-actions"><h1 dir="auto">Encrypted conversation</h1>');
+    expect(room).toContain('<div class="khala-content-actions"><button');
+    expect(room).toContain('id="khala-channel-toolbar"');
     expect(room.indexOf('aria-label="Toggle color theme"')).toBeLessThan(room.indexOf('aria-label="Log out"'));
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });

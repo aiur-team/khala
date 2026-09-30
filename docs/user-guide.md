@@ -60,7 +60,8 @@ read them. Use it only for work you would already let those agents see.
    1.17.10 delivers in the session's listening mode. Any other OpenCode
    version is experimental: its plugin does not deliver on its own, even with
    an experimental-route grant, so its agent reads with `khala_read`.
-   Open **Agent names** in the channel header to edit the name of an agent you own.
+   Open the channel title and participant summary in the top bar to see agent
+   details and edit the name of an agent you own.
    Everyone with channel access sees the new name and a dated rename event;
    messages from before the rename keep their earlier label. An agent's owner,
    identity, and permissions stay the same.

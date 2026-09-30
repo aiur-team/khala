@@ -70,12 +70,14 @@ const conversations = {
 const application = createHumanApplication({ identity, device, room: {} as never, admission: {} as never, conversations,
   limits: {} as never }, { initialPath: holdDeviceHarness ? '/new' : '/channels/room_1' });
 function VisualRoom() {
-  return <ChannelScreen embedded title="First channel" controller={{ getSnapshot: () => ({ phase: 'ready', agents: [] }), subscribe: () => () => {}, dispose: () => {} }}
+  return <ChannelScreen embedded title="First channel" viewerName="Alice" controller={visualController}
     renderTimeline={() => <><ul className="fixture-messages"><ChatMessage id="hello" author="Alice">A shared place for the release.</ChatMessage></ul>
       <ChatComposer value="" onChange={() => {}} onSend={() => {}} /></>}
     renderShare={() => <ChannelSharePanel roomId={'room_1' as never} admission={{ share: async () => ({ kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null } }) }} />}
     />;
 }
+const visualSnapshot = { phase: 'ready' as const, agents: [] };
+const visualController = { getSnapshot: () => visualSnapshot, subscribe: () => () => {}, dispose: () => {} };
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
     renderRoom={(context, route) => visualHarness ? <VisualRoom /> : <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}

@@ -1,5 +1,6 @@
 import { AgentPresencePanel } from './AgentPresencePanel';
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ThemeChoice } from '../../shell/types';
@@ -46,11 +47,36 @@ function ChannelParticipants({ controller, currentNames, namesPending, descripti
 
 export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, viewerName, currentNames, namesPending, renameAgent, renameScope,
   renderTimeline, renderShare, renderHeaderActions, onBack, embedded = false }: ChannelScreenProps) {
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const roster = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!embedded) { setToolbarTarget(null); return; }
+    const hosted = document.getElementById('khala-channel-toolbar');
+    if (hosted) { setToolbarTarget(hosted); return; }
+    const narrow = window.matchMedia('(max-width: 959px)');
+    const update = () => setToolbarTarget(narrow.matches ? document.getElementById('khala-channel-toolbar-mobile') : null);
+    narrow.addEventListener('change', update);
+    update();
+    return () => narrow.removeEventListener('change', update);
+  }, [embedded]);
+  const toolbar = <div className="channel-toolbar">
+    {onBack ? <button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button> : null}
+    <details ref={roster} className="channel-roster" onToggle={event => setRosterOpen(event.currentTarget.open)} onKeyDown={event => {
+      if (event.key === 'Escape' && roster.current?.open) { event.preventDefault(); roster.current.open = false; roster.current.querySelector('summary')?.focus(); }
+    }}>
+      <summary aria-label={`Channel participants and agents for ${title}`}><span className="channel-roster__summary">{toolbarTarget ? <h1 dir="auto">{title}</h1> : <h2 dir="auto">{title}</h2>}<ChannelParticipants controller={controller} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(description ? { description } : {})} {...(viewerName ? { viewerName } : {})} /></span><span className="channel-roster__chevron" aria-hidden="true">⌄</span></summary>
+      <div className="channel-roster__panel" aria-label="Channel participants and agents">
+        {viewerName ? <p className="channel-roster__viewer">{viewerName} · human</p> : null}
+        {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} /> : null}
+      </div>
+    </details>
+    <div className="channel-toolbar__actions">{renderHeaderActions?.()}{renderShare?.()}</div>
+  </div>;
   const content = (
-    <div className="channel-page"><KhalaPageFrame model={{ title, labelledBy: 'khala-channel-title' }}>
-        <ConversationLayout inThread thread={<ChatThread title={title} {...(onBack ? { onBack } : {})}
-          headerDetail={<ChannelParticipants controller={controller} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(description ? { description } : {})} {...(viewerName ? { viewerName } : {})} />}
-          headerActions={<>{renameAgent ? <details className="channel-agent-names"><summary className="aiur-shell__icon-button" aria-label="Agent names and controls" title="Agent names and controls">◉</summary><div className="channel-agent-names__panel"><AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} renameAgent={renameAgent} /></div></details> : null}{renderHeaderActions?.()}{renderShare?.()}</>}>
+    <div className={`channel-page${toolbarTarget ? ' channel-page--topbar' : ''}`}><KhalaPageFrame model={{ title, labelledBy: 'khala-channel-title' }}>
+        {toolbarTarget ? createPortal(toolbar, toolbarTarget) : null}
+        <ConversationLayout inThread thread={<ChatThread title={title} headerContent={toolbarTarget ? null : toolbar}>
           {renderTimeline()}
         </ChatThread>} />
       </KhalaPageFrame></div>

@@ -30,8 +30,15 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.goto(url);
 
-    await page.getByRole('heading', { name: 'Release channel', level: 1 }).waitFor();
+    await page.getByText('Release channel').first().waitFor();
     await page.getByRole('button', { name: 'Send message' }).waitFor();
+    const toolbar = page.locator('#khala-channel-toolbar');
+    const disclosure = toolbar.locator('summary');
+    await disclosure.waitFor();
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'channel uses one top bar');
+    const thread = await page.locator('.conversation-thread').boundingBox();
+    const main = await page.locator('.khala-content-main').boundingBox();
+    assert.ok(thread && main && thread.width >= main.width - 2, 'thread fills available content width');
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     assert.equal(await page.locator('.conversation-detail').count(), 0);
 
@@ -55,7 +62,8 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await page.locator('.channel-participants__chip').count(), 3);
     assert.equal(await page.locator('.channel-participants__chip').last().evaluate(node => getComputedStyle(node).display !== 'none'), true,
       'the last known agent remains reachable in the narrow participant row');
-    await page.getByLabel('Agent names and controls').click();
+    await disclosure.click();
+    assert.equal(await toolbar.locator('details').getAttribute('open'), '');
     await page.getByRole('heading', { name: 'Builder' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);
@@ -64,9 +72,21 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     await page.getByRole('button', { name: 'Save name' }).click();
     await page.getByText('Scout is now called Dolan · changed by Mira').waitFor();
     await page.getByRole('heading', { name: 'Dolan' }).waitFor();
+    await disclosure.click();
     await page.getByRole('button', { name: 'Switch human' }).click();
+    await disclosure.click();
+    await page.getByRole('button', { name: 'Edit name for Builder' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Edit name for Dolan' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 1);
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto(url + '?standalone');
+    const inlineHeader = page.locator('.conversation-thread__head');
+    await inlineHeader.locator('summary').click();
+    await inlineHeader.getByRole('heading', { name: 'Release channel' }).waitFor();
+    const headerBox = await inlineHeader.boundingBox();
+    const panelBox = await page.locator('.channel-roster__panel').boundingBox();
+    assert.ok(headerBox && panelBox && panelBox.y >= headerBox.y + headerBox.height - 1 && panelBox.y < 200,
+      'standalone participant details expand directly below their header');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
