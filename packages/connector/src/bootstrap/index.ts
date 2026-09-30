@@ -40,6 +40,7 @@ export {
   type ActivationRead,
   type ActivationRecord,
   type ActivationResult,
+  type ActivationUnavailableStage,
   type ActivationWrite,
   type ChannelAccessActivationPorts,
   type ChannelAccessActivationStore,

@@ -284,6 +284,26 @@ async function approvedAndJournaled(overrides: Parameters<typeof harness>[0] = {
 }
 
 describe('channel-access activation', () => {
+  it.each(['status', 'journal', 'device', 'resume', 'exchange', 'redeem'] as const)(
+    'reports only the fixed %s checkpoint for a retryable failure', async stage => {
+      const h = await approvedAndJournaled();
+      h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
+      const secret = 'secret=https://example.test/grant?token=private';
+      if (stage === 'status') h.ports.status = { inspect: async () => { throw new Error(secret); } };
+      if (stage === 'journal') h.store.state.failLoad = true;
+      if (stage === 'device') h.ports.devices = { ...h.ports.devices,
+        reserve: async () => { throw new Error(secret); } };
+      if (stage === 'resume') h.ports.redeem = { ...h.ports.redeem,
+        resume: async () => { throw new Error(secret); } };
+      if (stage === 'exchange') h.ports.exchange = { ...h.ports.exchange,
+        exchange: async () => { throw new Error(secret); } };
+      if (stage === 'redeem') h.ports.redeem = { ...h.ports.redeem,
+        redeem: async () => { throw new Error(secret); } };
+      const result = await h.activate();
+      expect(result).toEqual({ kind: 'unavailable', retryable: true, stage });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    },
+  );
   it('journals the request before anything else and is idempotent for the same input', async () => {
     const h = harness();
     expect(await h.journal()).toBe('journaled');
@@ -377,11 +397,11 @@ describe('channel-access activation', () => {
     const h = await approvedAndJournaled();
     h.service.state.ackResult = 'unavailable';
     const result = await h.activate();
-    expect(result).toEqual({ kind: 'unavailable', retryable: true });
+    expect(result).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.store.record().phase).toBe('activated');
     expect(h.service.state.status).not.toBe('connected');
     // Even with the device ready and the envelope recovered, a restart still cannot claim it.
-    expect(await resumeChannelAccessActivations(h.ports)).toEqual([{ operationId: OPERATION, result: { kind: 'unavailable', retryable: true } }]);
+    expect(await resumeChannelAccessActivations(h.ports)).toEqual([{ operationId: OPERATION, result: expect.objectContaining({ kind: 'unavailable', retryable: true, stage: 'readiness' }) }]);
     expect(h.store.record().phase).toBe('activated');
     h.service.state.ackResult = null;
     expect(await h.activate()).toMatchObject({ kind: 'connected', reused: false });
@@ -390,7 +410,7 @@ describe('channel-access activation', () => {
   it('never reports connected without local activation, even when the service already did', async () => {
     const h = await approvedAndJournaled({ activate: () => ({ kind: 'unavailable' }) });
     h.service.state.status = 'approved';
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.service.state.acks).toHaveLength(0);
     expect(h.store.record().phase).toBe('admitted');
   });
@@ -425,7 +445,7 @@ describe('channel-access activation', () => {
     h.service.state.status = 'approved';
     // The exchange cannot answer yet; the durable tuple is already fixed.
     h.ports.exchange = { ...h.ports.exchange, exchange: async () => ({ kind: 'unavailable' }) };
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     const keyed = h.store.record();
     expect(keyed.phase).toBe('keyed');
     expect(h.store.key()).not.toBeNull();
@@ -453,7 +473,7 @@ describe('channel-access activation', () => {
         return { kind: 'ready' };
       },
     });
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.store.record()).toMatchObject({ phase: 'admitted', binding: bindingFor('device_1') });
     crash = false;
     expect(await h.activate()).toMatchObject({ kind: 'connected', reused: false });
@@ -482,7 +502,7 @@ describe('channel-access activation', () => {
       return activate(input);
     };
     h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.store.record()).toMatchObject({ phase: 'keyed', binding: null, deviceId: 'device_1' });
     responseLost = false;
     expect(await resumeChannelAccessActivations(h.ports)).toEqual([{
@@ -508,8 +528,8 @@ describe('channel-access activation', () => {
       return { kind: 'admitted', binding: result.binding, capability: result.capability };
     };
     h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.devices.activations).toBe(0);
     expect(h.service.state.redeems).toHaveLength(1);
     matrixAvailable = true;
@@ -534,7 +554,7 @@ describe('channel-access activation', () => {
           return { kind: 'ready' };
         },
       });
-      expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+      expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
       expect(h.store.record()).toMatchObject({ phase: 'admitted', recoverableUntil: T0 + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS });
       crash = false;
       return h;
@@ -653,7 +673,7 @@ describe('channel-access activation', () => {
     const h = await approvedAndJournaled();
     h.service.state.loseNextExchangeResponse = true;
     h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 1 };
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.service.state.seals).toBe(1);
     h.store.dropKey();
     h.ports.polling = { ...DEFAULT_ACTIVATION_POLLING, maxAttempts: 3 };
@@ -797,9 +817,9 @@ describe('channel-access activation', () => {
     const h = harness();
     await h.journal();
     h.service.state.status = 'unavailable';
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     h.ports.status = { inspect: async () => { throw new Error('secret transport detail'); } };
-    expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.activate()).toMatchObject({ kind: 'unavailable', retryable: true });
     expect(h.devices.reserved.size).toBe(0);
   });
 

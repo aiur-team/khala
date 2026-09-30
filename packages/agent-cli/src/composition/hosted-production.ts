@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createChannelDiscoveryCredentialClient,
   activateChannelAccess, createHttpChannelAccessClient, createHttpChannelAccessRedeem, createHttpChannelAccessStatus,
-  journalChannelAccessRequest, type BootstrapPorts, type ChannelAccessActivationPorts,
+  journalChannelAccessRequest, type ActivationUnavailableStage, type BootstrapPorts, type ChannelAccessActivationPorts,
   type ChannelDiscoveryCredentialClient,
   type ProofSigner, type SessionClaim, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { decodeAccessRequestStatus } from '@khala/contracts/messaging/index';
@@ -24,7 +24,7 @@ import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/c
 export const CANONICAL_APP_ORIGIN = 'https://khala.aiur.team';
 
 export type ActivationDiagnostic = Readonly<{
-  stage: 'status_decode' | 'activation_preflight' | 'activation_result';
+  stage: 'status_decode' | 'activation_preflight' | 'activation_result' | ActivationUnavailableStage;
   result: 'unavailable' | 'blocked';
 }>;
 
@@ -124,10 +124,12 @@ export function hostedSessionFactory(options: Readonly<{
       ...(options.fetch ? { fetch: options.fetch } : {}),
       beforeChannelRequest: async (input, credential) => {
         if (!connector.channelAccess || !connector.proofSigner) return false;
-        return await journalChannelAccessRequest({ operationId: input.operationId,
+        const journaled = await journalChannelAccessRequest({ operationId: input.operationId,
           requester: credential.requester.principal, origin: input.origin,
           sessionGeneration: credential.requester.sessionGeneration },
-        { journal: connector.channelAccess.journal, signer: connector.proofSigner }) === 'journaled';
+        { journal: connector.channelAccess.journal, signer: connector.proofSigner });
+        if (journaled === 'unavailable') reportActivation('journal');
+        return journaled === 'journaled';
       },
       candidate: createProofKeyCandidateClient({
         signer: connector.proofSigner, sessions: requestSessions,
@@ -200,11 +202,12 @@ export function hostedSessionFactory(options: Readonly<{
         requester: credential.requester.principal, origin,
         sessionGeneration: credential.requester.sessionGeneration }, activationPorts);
       if (journaled !== 'journaled') {
-        reportActivation('activation_preflight');
+        reportActivation(journaled === 'unavailable' ? 'journal' : 'activation_preflight');
         return null;
       }
       const result = await activateChannelAccess(operationId, activationPorts);
-      if (result.kind === 'unavailable' || result.kind === 'blocked') reportActivation('activation_result', result.kind);
+      if (result.kind === 'unavailable') reportActivation(result.stage, result.kind);
+      if (result.kind === 'blocked') reportActivation('activation_result', result.kind);
       return result;
     }
     function reportActivation(stage: ActivationDiagnostic['stage'], result: ActivationDiagnostic['result'] = 'unavailable') {

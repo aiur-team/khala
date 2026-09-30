@@ -178,8 +178,12 @@ export type ActivationResult =
   | Readonly<{ kind: 'pending'; outcome: 'pending_owner' }>
   | Readonly<{ kind: 'repair_required'; reason: RepairReason }>
   | Readonly<{ kind: 'closed'; outcome: ClosedOutcome }>
-  | Readonly<{ kind: 'unavailable'; retryable: true }>
+  | Readonly<{ kind: 'unavailable'; retryable: true; stage: ActivationUnavailableStage }>
   | Readonly<{ kind: 'blocked'; code: 'invalid_request' | 'not_journaled' | 'operation_conflict' }>;
+
+/** Fixed, non-sensitive checkpoint for a retryable activation failure. */
+export type ActivationUnavailableStage =
+  | 'status' | 'journal' | 'device' | 'recovery_key' | 'resume' | 'exchange' | 'redeem' | 'trust' | 'readiness' | 'internal';
 
 export type JournalRequestInput = Readonly<{
   operationId: string;
@@ -253,14 +257,14 @@ export async function activateChannelAccess(
   const sleep = ports.sleep ?? defaultSleep;
   const random = ports.random ?? Math.random;
   let repair = options.repair === true;
-  let last: ActivationResult = unavailable();
+  let last: ActivationResult = unavailable('internal');
   for (let attempt = 0; attempt < polling.maxAttempts; attempt += 1) {
     if (options.signal?.aborted === true) return last;
     const step = await attemptOnce(operationId, ports, repair);
     // Repair applies to the transition out of `repair_required` only, never to a later failure.
     repair = false;
     if (step.kind === 'done') return step.result;
-    last = step.kind === 'wait' ? step.result : unavailable();
+    last = step.kind === 'wait' ? step.result : unavailable('internal');
     if (attempt + 1 < polling.maxAttempts) {
       await guard(() => sleep(backoff(attempt, polling, random), options.signal), undefined);
     }
@@ -292,13 +296,13 @@ export function backoff(attempt: number, polling: ActivationPolling, random: () 
 async function attemptOnce(operationId: string, ports: ChannelAccessActivationPorts, repair: boolean): Promise<Step> {
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const loaded = await guard(() => ports.journal.load(operationId), { kind: 'unavailable' } as const);
-    if (loaded.kind === 'unavailable') return wait(unavailable());
+    if (loaded.kind === 'unavailable') return wait(unavailable('journal'));
     if (loaded.kind === 'absent') return done(blocked('not_journaled'));
     // A failure after resuming ends the attempt as `done`, so repair never loops.
     const next = await advance(loaded, ports, repair);
     if (next.kind !== 'continue') return next;
   }
-  return wait(unavailable());
+  return wait(unavailable('internal'));
 }
 
 async function advance(loaded: Loaded, ports: ChannelAccessActivationPorts, repair: boolean): Promise<Step> {
@@ -329,7 +333,7 @@ async function advance(loaded: Loaded, ports: ChannelAccessActivationPorts, repa
 async function reconnected(loaded: Loaded, ports: ChannelAccessActivationPorts): Promise<Step> {
   const { record } = loaded;
   const status = await guard(() => ports.devices.status(record.deviceId!), 'unavailable' as const);
-  if (status === 'unavailable') return wait(unavailable());
+  if (status === 'unavailable') return wait(unavailable('device'));
   if (status === 'ready') return done({ kind: 'connected', binding: record.binding!, reused: true });
   return repairRequired(ports, loaded, 'activation_failed');
 }
@@ -345,12 +349,12 @@ async function approve(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     return close(ports, loaded, outcome as ClosedOutcome);
   }
   // Unknown, stale, or ambiguous status collapses to `unavailable` and reconciles by operation ID.
-  if (!PROCEED.has(outcome as AccessRequestOutcome)) return wait(unavailable());
+  if (!PROCEED.has(outcome as AccessRequestOutcome)) return wait(unavailable('status'));
 
   const reservation = await guard(() => ports.devices.reserve(record.operationId), { kind: 'unavailable' } as const);
-  if (reservation.kind === 'unavailable') return wait(unavailable());
+  if (reservation.kind === 'unavailable') return wait(unavailable('device'));
   const key = await generateRecoveryKey();
-  if (key === null) return wait(unavailable());
+  if (key === null) return wait(unavailable('recovery_key'));
   // The device, both key thumbprints and the private key are durable before any exchange.
   return saved(await save(ports, loaded, {
     ...record,
@@ -372,10 +376,10 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin,
   }), { kind: 'unavailable' } as const);
   if (prior.kind === 'admitted') {
-    if (!prior.matrixSession) return wait(unavailable());
+    if (!prior.matrixSession) return wait(unavailable('resume'));
     return activate(loaded, ports, prior, clock() + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
   }
-  if (prior.kind === 'unavailable' || prior.kind === 'outcome_unknown') return wait(unavailable());
+  if (prior.kind === 'unavailable' || prior.kind === 'outcome_unknown') return wait(unavailable('resume'));
   if (prior.kind === 'refused') return prior.code === 'binding_revoked'
     ? close(ports, loaded, 'revoked') : repairRequired(ports, loaded, 'admission_refused');
   const privateKey = await heldPrivateKey(loaded);
@@ -383,7 +387,7 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     // Before a sealed result exists, a new key supersedes the lost one on the server.
     // After consumption the server refuses it (`encryption_key_mismatch`) and nothing is reminted.
     const key = await generateRecoveryKey();
-    if (key === null) return wait(unavailable());
+    if (key === null) return wait(unavailable('recovery_key'));
     return saved(await save(ports, loaded, {
       ...record, recoveryPublicKey: key.publicKey, recoveryKeyThumbprint: key.thumbprint,
     }, { kind: 'set', privateKey: key.privateKey }));
@@ -400,11 +404,11 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     sessionGeneration: record.sessionGeneration,
     expiresAt: new Date(clock() + EXCHANGE_REQUEST_LIFETIME_MS).toISOString(),
   }), { kind: 'unavailable' } as const);
-  if (exchanged.kind === 'unavailable') return wait(unavailable());
+  if (exchanged.kind === 'unavailable') return wait(unavailable('exchange'));
   if (exchanged.kind === 'rejected') {
     if (exchanged.code === 'closed') return close(ports, loaded, 'closed');
     if (exchanged.code === 'expired') return close(ports, loaded, 'expired');
-    if (exchanged.code === 'crypto_unavailable') return wait(unavailable());
+    if (exchanged.code === 'crypto_unavailable') return wait(unavailable('exchange'));
     // The envelope was sealed to a key this connector no longer holds.
     if (exchanged.code === 'encryption_key_mismatch') return repairRequired(ports, loaded, 'recovery_key_lost');
     return repairRequired(ports, loaded, 'exchange_conflict');
@@ -429,7 +433,8 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     // Without the original redeem response, the endpoint has no Matrix token.
     // A binding alone cannot activate the exact device; wait for the server to
     // return that same provisioned session through authenticated recovery.
-    if (recovered.kind !== 'admitted' || !recovered.matrixSession) return wait(unavailable());
+    if (recovered.kind === 'not_redeemed') return wait(unavailable('redeem'));
+    if (recovered.kind !== 'admitted' || !recovered.matrixSession) return wait(unavailable('resume'));
     return activate(loaded, ports, recovered, sealedAt + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
   }
   return activate(loaded, ports, redeemed, sealedAt + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
@@ -445,7 +450,7 @@ async function resume(loaded: Loaded, ports: ChannelAccessActivationPorts): Prom
   const redeemed = await guard(() => ports.redeem.resume({
     operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin, bindingId: record.binding!.bindingId,
   }), { kind: 'unavailable' } as const);
-  if (redeemed.kind === 'not_redeemed') return wait(unavailable());
+  if (redeemed.kind === 'not_redeemed') return wait(unavailable('resume'));
   return activate(loaded, ports, redeemed, record.recoverableUntil!);
 }
 
@@ -457,7 +462,7 @@ async function activate(
 ): Promise<Step> {
   const { record } = loaded;
   const clock = ports.clock ?? Date.now;
-  if (redeemed.kind === 'unavailable' || redeemed.kind === 'outcome_unknown') return wait(unavailable());
+  if (redeemed.kind === 'unavailable' || redeemed.kind === 'outcome_unknown') return wait(unavailable('resume'));
   if (redeemed.kind === 'refused') {
     return redeemed.code === 'binding_revoked' ? close(ports, loaded, 'revoked') : repairRequired(ports, loaded, 'admission_refused');
   }
@@ -486,11 +491,11 @@ async function activate(
       ...(redeemed.matrixSession ? { matrixSession: redeemed.matrixSession } : {}) }),
     { kind: 'unavailable' } as const,
   );
-  if (activation.kind === 'unavailable') return wait(unavailable());
+  if (activation.kind === 'unavailable') return wait(unavailable('device'));
   if (activation.kind === 'failed') return repairRequired(ports, current, 'activation_failed');
 
   const trust = await guard(() => ports.trust.initialize(binding), { kind: 'unavailable' } as const);
-  if (trust.kind === 'unavailable') return wait(unavailable());
+  if (trust.kind === 'unavailable') return wait(unavailable('trust'));
   // A new binding starts in effective review, unpaused; anything else is not a readiness baseline.
   if (trust.kind === 'failed' || trust.mode !== 'review' || trust.paused) return repairRequired(ports, current, 'activation_failed');
 
@@ -500,7 +505,7 @@ async function activate(
 async function acknowledge(loaded: Loaded, ports: ChannelAccessActivationPorts): Promise<Step> {
   const { record } = loaded;
   const status = await guard(() => ports.devices.status(record.deviceId!), 'unavailable' as const);
-  if (status === 'unavailable') return wait(unavailable());
+  if (status === 'unavailable') return wait(unavailable('device'));
   if (status !== 'ready') return repairRequired(ports, loaded, 'activation_failed');
   const acknowledged = await guard(() => ports.exchange.acknowledge({
     v: 1,
@@ -512,7 +517,7 @@ async function acknowledge(loaded: Loaded, ports: ChannelAccessActivationPorts):
     proofKeyThumbprint: record.proofKeyThumbprint,
     recipientKeyThumbprint: record.recoveryKeyThumbprint!,
   }), 'unavailable' as const);
-  if (acknowledged === 'unavailable') return wait(unavailable());
+  if (acknowledged === 'unavailable') return wait(unavailable('readiness'));
   if (acknowledged === 'closed') return close(ports, loaded, 'closed');
   if (acknowledged === 'rejected') return repairRequired(ports, loaded, 'exchange_conflict');
   // Only an acknowledged readiness reaches `connected`. The recovery key has done its job.
@@ -611,7 +616,7 @@ async function save(
 
 /** A saved transition continues from a fresh load; a lost race reloads; a failed write waits. */
 function saved(write: SaveResult): Step {
-  return write.kind === 'unavailable' ? wait(unavailable()) : { kind: 'continue' };
+  return write.kind === 'unavailable' ? wait(unavailable('journal')) : { kind: 'continue' };
 }
 
 async function repairRequired(ports: ChannelAccessActivationPorts, loaded: Loaded, reason: RepairReason): Promise<Step> {
@@ -715,8 +720,8 @@ function blocked(code: Extract<ActivationResult, { kind: 'blocked' }>['code']): 
   return { kind: 'blocked', code };
 }
 
-function unavailable(): ActivationResult {
-  return { kind: 'unavailable', retryable: true };
+function unavailable(stage: ActivationUnavailableStage): ActivationResult {
+  return { kind: 'unavailable', retryable: true, stage };
 }
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
