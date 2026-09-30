@@ -29,11 +29,13 @@ let root: string;
 let roots: SetupRoots;
 let version: string;
 let resolvable: boolean;
+let hooksFeatureEnabled: boolean;
 
 beforeEach(async () => {
   ({ root, roots } = await syntheticHome());
   version = 'codex-cli 0.154.0\n';
   resolvable = true;
+  hooksFeatureEnabled = true;
   // A live runtime descriptor exists; nothing setup writes may ever carry its port or token.
   const descriptor = path.join(roots.xdgStateHome, 'khala', 'runtime.json');
   await fsp.mkdir(path.dirname(descriptor), { recursive: true });
@@ -49,8 +51,9 @@ const probe: SetupProbe = {
   runVersion: async (executable, args) => {
     expect(executable).toBe(CODEX);
     if (args.join(' ') === 'mcp list --json') return '[]';
-    if (args.join(' ') === 'features list') return 'hooks stable true\n';
+    if (args.join(' ') === 'features list') return `hooks stable ${hooksFeatureEnabled}\n`;
     expect(args).toEqual(['--version']);
+    if (version === 'throw') throw new Error('version command unavailable');
     return version;
   },
   readFile: async target => {
@@ -155,6 +158,14 @@ describe('Codex detection', () => {
     const { adapter, observation } = await observe();
     expect(adapter.plan({ desired: 'present', observation }).map(item => item.component))
       .toEqual(['skill', 'hooks', 'mcp_entry']);
+  });
+
+  it('probes MCP even when the version command fails', async () => {
+    version = 'throw';
+    const { adapter, observation } = await observe();
+    expect(observation.detection).toEqual({ executable: CODEX, version: 'unknown', supported: true });
+    expect(adapter.plan({ desired: 'present', observation }).map(item => item.component))
+      .toContain('mcp_entry');
   });
 });
 
@@ -336,6 +347,30 @@ describe('Codex conflicts and drift', () => {
     const { adapter, observation } = await observe();
     expect(states(observation).mcp_entry).toBe('drifted');
     expect(adapter.plan({ desired: 'absent', observation })).toEqual([]);
+    expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
+  });
+
+  it('preserves managed hooks drift when hooks are disabled and refuses removal', async () => {
+    expect((await run('setup')).kind).toBe('committed');
+    await fsp.appendFile(paths().hooks, '\nuser edit\n');
+    hooksFeatureEnabled = false;
+    const before = await everythingButExecutorState();
+    const { adapter, observation } = await observe();
+    expect(states(observation).hooks).toBe('drifted');
+    expect(adapter.plan({ desired: 'absent', observation })).toEqual([]);
+    expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
+    await run('remove');
+    expect(await everythingButExecutorState()).toEqual(before);
+  });
+
+  it('preserves unmanaged hooks conflict when hooks are disabled', async () => {
+    await fsp.mkdir(paths().codexHome, { recursive: true });
+    await fsp.writeFile(paths().hooks, JSON.stringify({ hooks: { Stop: [{ hooks: [
+      { type: 'command', command: hookCommand() },
+    ] }] } }));
+    hooksFeatureEnabled = false;
+    const { adapter, observation } = await observe();
+    expect(states(observation).hooks).toBe('conflict');
     expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
   });
 

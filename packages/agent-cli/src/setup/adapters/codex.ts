@@ -375,13 +375,10 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
     async detect(environment): Promise<HarnessDetection> {
       const executable = await environment.probe.resolveExecutable('codex');
       if (executable === null) return { executable: null, version: null, supported: false };
-      let output: string;
+      let version: string | null = null;
       try {
-        output = await environment.probe.runVersion(executable, ['--version']);
-      } catch {
-        return { executable, version: null, supported: false };
-      }
-      const version = parseCodexVersion(output);
+        version = parseCodexVersion(await environment.probe.runVersion(executable, ['--version']));
+      } catch { /* Version is diagnostic data, not an MCP authorization gate. */ }
       // Probe the actual native surfaces setup uses. The version is diagnostic
       // data; a new compatible CLI can use the same MCP and hook layout.
       let supported = false;
@@ -413,7 +410,7 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
           const features = await environment.probe.runVersion(detection.executable, ['features', 'list']);
           nativeHooks = /^hooks\s+\S+\s+true\s*$/m.test(features);
         } catch { /* The MCP request route still works without hook delivery. */ }
-        if (!nativeHooks) {
+        if (!nativeHooks && !BLOCKED.includes(components[1]!.state)) {
           components[1] = { component: 'hooks', state: 'unsupported' };
           diagnostics.push({ ...diagnostic('codex_hooks_unavailable',
             'This Codex CLI does not report enabled native hooks; MCP requests can be configured, but hook delivery is unavailable.', 'hooks'),

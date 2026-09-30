@@ -11,6 +11,7 @@ session ID, operation ID, proof key, or credential is retained.
 | Real Claude setup contract, private home | `claude mcp list` resolved `plugin:khala:khala` from the setup-owned marketplace |
 | Rebuilt local CLI against operator home | Codex version `supported:true`, skill/hooks/MCP absent, route `unknown`; Claude version `supported:true`, marketplace ready, plugin payload absent relative to this checkout, route `unavailable`; overall `connected:false` |
 | Existing Claude session, operator-reported | Native MCP request returned `{ok:false,error:unavailable,next:reuse_operation_id}` at 16:17:52Z. Hosted function logs in the same two-minute window contained Duration entries, with no `hosted_channel_exchange` stage. |
+| Isolated local channel, operator-reported on candidate `a40dea4a` | Both installed sessions discovered and requested one channel, received owner approval, and returned `connected` on retry. Claude send and Codex reply send were accepted; each agent read one release and ACK returned empty. The owner browser showed both agents and messages. No hosted request was retried. |
 
 The running Claude MCP process used the Sep 29 installed `khala.js` bundle.
 That bundle requires Claude version `2.1.284` exactly, while the running
@@ -25,10 +26,10 @@ child stderr, so each process also writes those fields to its private Khala
 state `hosted/diagnostics-<pid>.jsonl` file. No further live request was made.
 
 Codex 0.159.2 may use its exact MCP session label for an owner-approved hosted
-access request. Native queue, hook delivery, join, read, and send are still
-unproven for that version. Claude 2.1.285 retains an experimental delivery
-claim. A backend `unavailable` result leaves final join/read/send acceptance
-open.
+access request. Native queue and hook delivery remain unproven for that
+version. Claude 2.1.285 retains an experimental delivery claim. The isolated
+local channel proof applies to an earlier candidate; the backend
+`unavailable` result leaves hosted join/read/send acceptance open.
 
 The Codex CLI in this sandbox is wrapped by `npx`, which cannot write its
 default npm cache under the agent filesystem policy. The actual installed
