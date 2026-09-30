@@ -12,6 +12,7 @@ import {
   Visibility,
   createClient,
   type MatrixClient,
+  type EventTimeline,
 } from 'matrix-js-sdk';
 import {
   decodeMessageContent,
@@ -185,6 +186,23 @@ export async function decryptTimelineEvents(client: Pick<MatrixClient, 'decryptE
     // retries them when keys arrive and emits MatrixEventEvent.Decrypted.
     try { await client.decryptEventIfNeeded(event); } catch { /* Keep the ciphertext entry. */ }
   }));
+}
+
+/** A live event can arrive while history is loading; only backward insertions belong to the page. */
+export async function paginateHistoricalEvents(client: Pick<MatrixClient, 'on' | 'off' | 'paginateEventTimeline'>,
+  timeline: EventTimeline, roomId: RoomId, limit: number): Promise<Readonly<{ events: readonly MatrixEvent[]; hasMore: boolean }>> {
+  const historicalIds = new Set<string>();
+  const record = (event: MatrixEvent, room: Room | undefined, toStartOfTimeline: boolean | undefined) => {
+    const id = event.getId();
+    if (room?.roomId === roomId && toStartOfTimeline && id) historicalIds.add(id);
+  };
+  client.on(RoomEvent.Timeline, record);
+  try {
+    const hasMore = await client.paginateEventTimeline(timeline, { backwards: true, limit });
+    return { events: timeline.getEvents().filter(event => historicalIds.has(event.getId() ?? '')), hasMore };
+  } finally {
+    client.off(RoomEvent.Timeline, record);
+  }
 }
 
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
@@ -551,9 +569,9 @@ class MatrixSubstrate implements RoomSubstrate {
         source = all.slice(Math.max(0, all.length - input.limit));
       } else {
         if (input.cursor !== currentCursor) return { kind: 'rejected', code: 'invalid_request' };
-        const previous = new Set(timeline.getEvents().map(event => event.getId()));
-        hasMore = await this.active().client.paginateEventTimeline(timeline, { backwards: true, limit: input.limit });
-        source = timeline.getEvents().filter(event => !previous.has(event.getId()));
+        const page = await paginateHistoricalEvents(this.active().client, timeline, input.roomId, input.limit);
+        hasMore = page.hasMore;
+        source = page.events;
       }
       const page = await this.events(source);
       return {

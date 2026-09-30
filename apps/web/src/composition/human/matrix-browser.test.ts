@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, Visibility, type MatrixClient, type Room } from 'matrix-js-sdk';
+import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { decodeContentLimits, type ParticipantView } from '@khala/contracts/messaging/index';
-import { createMatrixRoomRequest, decryptTimelineEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
+import { createMatrixRoomRequest, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('attempts all initial ciphertext and keeps a failed event available for later key recovery', async () => {
@@ -26,6 +26,36 @@ describe('Matrix browser safety boundaries', () => {
     await decryptTimelineEvents(client, [first, second]);
     expect(client.decryptEventIfNeeded).toHaveBeenCalledTimes(2);
     expect(decryptEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a concurrent live arrival out of a backward history page', async () => {
+    const event = (id: string) => new MatrixEvent({
+      event_id: id, room_id: '!room:example.test', sender: '@sender:example.test',
+      type: 'm.room.encrypted', content: {}, origin_server_ts: 1,
+    });
+    const old = event('$old');
+    const anchor = event('$anchor');
+    const live = event('$live');
+    const events = [anchor];
+    let receive: ((event: MatrixEvent, room: Room, toStart: boolean) => void) | undefined;
+    const room = { roomId: '!room:example.test' } as Room;
+    const timeline = { getEvents: () => events } as EventTimeline;
+    const client = {
+      on: vi.fn((kind: RoomEvent, callback: typeof receive) => { if (kind === RoomEvent.Timeline) receive = callback; }),
+      off: vi.fn((kind: RoomEvent) => { if (kind === RoomEvent.Timeline) receive = undefined; }),
+      paginateEventTimeline: vi.fn(async () => {
+        events.push(live);
+        receive?.(live, room, false);
+        events.unshift(old);
+        receive?.(old, room, true);
+        return true;
+      }),
+    } as unknown as MatrixClient;
+
+    const page = await paginateHistoricalEvents(client, timeline, room.roomId as never, 20);
+    expect(page.events).toEqual([old]);
+    expect(page.hasMore).toBe(true);
+    expect(client.off).toHaveBeenCalledWith(RoomEvent.Timeline, expect.any(Function));
   });
 
   it('creates encrypted invite-only rooms', () => {
