@@ -47,10 +47,11 @@ test('browser device lifecycle survives a full browser restart and refuses lost 
   const outDir = await mkdtemp(join(tmpdir(), 'khala-device-dist-'));
   // Chromium's singleton socket path is length-limited, so the profile uses /tmp.
   const profile = await mkdtemp(join('/tmp', 'khala-device-profile-'));
+  const freshProfile = await mkdtemp(join('/tmp', 'khala-device-fresh-profile-'));
   let server: PreviewServer | undefined;
   let context: BrowserContext | undefined;
-  const launch = async () => chromium.launchPersistentContext(profile, {
-    executablePath, headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: profile },
+  const launch = async (directory = profile) => chromium.launchPersistentContext(directory, {
+    executablePath, headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: directory },
   });
   try {
     await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
@@ -81,6 +82,18 @@ test('browser device lifecycle survives a full browser restart and refuses lost 
     assert.deepEqual(await call(page, 'ensure', { ...alice, publishedFingerprint: fingerprint, lockWaitMs: 1_000 }), ready(1));
     assert.equal(await call(page, 'fingerprint'), fingerprint);
     assert.deepEqual(await call(page, 'decrypt', event!), { kind: 'plaintext', text: 'written before restart' });
+
+    // The same Matrix device ID in a genuinely new browser profile has no old
+    // crypto store. Its published identity must stop it before the SDK starts.
+    const freshContext = await launch(freshProfile);
+    try {
+      const freshPage = await open(freshContext);
+      assert.deepEqual(await call(freshPage, 'ensure', { ...alice, publishedFingerprint: fingerprint, lockWaitMs: 1_000 }),
+        { kind: 'ok', value: { deviceId: 'DEVICE_A', state: 'lost', generation: 1, reason: 'key_material_missing' } });
+      assert.deepEqual(await call(freshPage, 'decrypt', event!), { kind: 'rejected' });
+    } finally {
+      await freshContext.close();
+    }
 
     // Two tabs contend: the second never becomes a writer while the first holds the lock.
     const second = await open(context);
@@ -118,5 +131,6 @@ test('browser device lifecycle survives a full browser restart and refuses lost 
     await new Promise<void>(resolve => server ? server.httpServer.close(() => resolve()) : resolve());
     await rm(outDir, { recursive: true, force: true });
     await rm(profile, { recursive: true, force: true });
+    await rm(freshProfile, { recursive: true, force: true });
   }
 });

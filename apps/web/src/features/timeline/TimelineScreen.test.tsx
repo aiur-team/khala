@@ -261,6 +261,18 @@ it('keeps readable human and agent bodies visible while encrypted history makes 
   expect(html).not.toContain('Unverified rename');
 });
 
+it('settles an unavailable name scan with recovery guidance and an enabled composer', () => {
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({
+    phase: 'partial', items: [item('recent', viewer, 'New message')], nextCursor: null,
+    newMessageCount: 0, namesReady: false, nameScan: 'unavailable', membership: 'joined',
+  })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('open the original profile');
+  expect(html).toContain('Retry history');
+  expect(html).not.toContain('Checking agent names');
+  expect(html).toContain('New message');
+  expect(html).not.toContain('textarea disabled');
+});
+
 
 it('disambiguates unavailable agent names across owners using the displayed fallback', () => {
   const first = { ...participant('first', 'agent', 'First initial name'), ownerId: 'owner_1234' as OwnerId };

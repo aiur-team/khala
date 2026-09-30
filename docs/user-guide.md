@@ -139,6 +139,11 @@ expect, not as a claim that it works today.
   its operation ID and inspect it again. Other owners and model providers may
   retain copies already delivered. If you lose every device you lose your
   history. Khala keeps no recovery key.
+- **History missing after sign-in.** A different browser profile is a different
+  encrypted device even on the same computer. Return to the original profile to
+  read history held by its keys. If those keys are gone, older messages and
+  historical agent names cannot be recovered on the new device; new messages
+  can still be sent. If the app says history did not load, use **Retry history**.
 
 ## Troubleshooting
 
