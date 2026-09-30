@@ -39,7 +39,9 @@ state directories are removed after completed tests.
   reaches the resume path. This test's adapter is an in-memory transport stand-in;
   it does not perform a durable hosted redemption.
 - Refusals and unrelated paths do not consume the drop. Exactly the first successful
-  admitted POST to the redeem path is dropped. A child without the private CA
+  POST to `/api/agent/bootstrap/redeem` returning a matching binding and DPoP
+  capability tuple is dropped. The obsolete `/api/agent/channel-access/redeem`
+  endpoint, parsed `kind: admitted` objects and mismatched tuples do not consume it. A child without the private CA
   cannot reach the adapter. Receipts contain only counts and a transport-only scope.
 - Two real installed `khala mcp-serve` child processes use the same disposable
   Claude session label and workdir. Their fresh connector creates one actual
@@ -73,6 +75,30 @@ mechanism only**, not a pre-fix recovery regression in application code.
 5. Exercise wrong proof/device/generation, denied/revoked/expired and ambiguous
    operation typed refusals against the composed service. Record only typed
    outcomes and counts. Keep production acceptance separately open.
+
+## Real connector protocol regression
+
+The production `createHttpChannelAccessRedeem` implementation in
+`packages/connector/src/bootstrap/channel-access-http.ts` sends grants to
+`/api/agent/bootstrap/redeem` through `createHttpAdmission`. The wire response
+contains `binding` and `adapter_capability`; `parseChannelAccessAdmission` turns
+that wire body into the connector's `kind: admitted` result.
+
+The original bridge instead watched `/api/agent/channel-access/redeem` and a
+wire-level `kind: admitted`. A new real connector HTTP client child, with no
+injected fetch, first failed: it returned `admitted` instead of the expected
+`outcome_unknown`, proving that the original bridge did not drop its response.
+After correcting endpoint and wire tuple detection, it returns `outcome_unknown`.
+A second connector process uses the same disposable proof key, performs a
+grant-free resume without a binding ID, and parses the returned wire tuple as
+`admitted`. The receipt is scoped `connector_protocol_only` and reports two
+processes, one redeem request, one resume request, one proof key and one drop.
+
+The server handler in this regression remains a stand-in. There is no hosted
+approval, persistent binding allocation, grant issuance, Matrix login, installed
+CLI activation journal or native read/send in this check. It verifies that the
+fixture can now drop the real client's redemption protocol, not that hosted
+restart recovery is accepted. Full composition remains the next integration step.
 
 Transport and installed-client tests currently run independently. Joining them
 without the real hosted adapters would produce another simulated recovery claim.
