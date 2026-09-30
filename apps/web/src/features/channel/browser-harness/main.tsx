@@ -8,6 +8,7 @@ import '../channel.css';
 import { createChannelController } from '../controller';
 import type { AgentPresenceSnapshot, ChannelUiPort } from '../ports';
 import { ChannelScreen } from '../ChannelScreen';
+import { ChannelSharePanel } from '../ChannelSharePanel';
 
 const roomId = 'room_harness' as RoomId;
 const scoutId = 'agent_scout' as ParticipantId;
@@ -103,6 +104,9 @@ function Harness() {
           <button type="button" onClick={() => setViewer(viewer === miraId ? theoId : miraId)}>Switch human</button>
         </section>
       )}
+      renderShare={() => <ChannelSharePanel roomId={roomId} admission={{ share: async () => ({
+        kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null },
+      }) }} onCopy={async () => ({ ok: true })} />}
     />
       </main>
     </div>
