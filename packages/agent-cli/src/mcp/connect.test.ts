@@ -30,4 +30,17 @@ describe('khala_connect', () => {
     expect(JSON.stringify(response)).not.toContain('secret transport detail');
     expect(JSON.stringify(response)).not.toContain('/i/room');
   });
+
+  it('returns a typed pending owner handoff without exposing injected fields', async () => {
+    const connect = vi.fn(async () => ({ kind: 'pending' as const, operationId: 'operation_123',
+      outcome: 'pending_owner' as const, approveUrl: 'https://secret.example/approve', credential: 'secret' }));
+    const context = { id: 3, notification: false,
+      connect: new ConnectService({ ...createUnavailableClient(), connect }) } as never;
+    const response = await connectTool.call({ url: 'https://khala.aiur.team/join/inviteRef123' }, context);
+    expect(response.result).toMatchObject({ structuredContent: { ok: true, operationId: 'operation_123',
+      outcome: 'pending_owner', next: 'human_approve' } });
+    expect(response.result).not.toHaveProperty('isError');
+    expect(JSON.stringify(response)).not.toContain('secret');
+    expect(JSON.stringify(response)).not.toContain('inviteRef123');
+  });
 });

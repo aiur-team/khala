@@ -7,7 +7,7 @@ export type ConnectToolPort = Pick<ConnectService, 'connect'>;
 export function connectToolDefinition(): McpToolDefinition {
   return {
     name: CONNECT_TOOL_NAME,
-    description: 'Connect this existing agent session to the Khala channel at an HTTPS link. Opens the owner’s browser for sign-in and consent; the owner must approve this exact session before admission. Returns only the binding or a finite refusal.',
+    description: 'Connect this existing agent session to the Khala channel at an HTTPS link. Opens the owner’s browser for sign-in and consent; the owner must approve this exact session before admission. Pending owner approval returns an operationId; call again with the same link after approval. Returns a binding only after admission.',
     inputSchema: {
       type: 'object',
       properties: { url: { type: 'string', description: 'Exact HTTPS Khala channel link supplied by the owner.' } },
