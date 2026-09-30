@@ -558,7 +558,8 @@ class MatrixSubstrate implements RoomSubstrate {
 
   async timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>): Promise<SubstrateRead<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>> {
     try {
-      const room = this.active().client.getRoom(input.roomId);
+      const active = this.active();
+      const room = active.client.getRoom(input.roomId);
       if (!room) return { kind: 'rejected', code: 'not_found' };
       const timeline = room.getLiveTimeline();
       const currentCursor = timeline.getPaginationToken(Direction.Backward);
@@ -569,11 +570,13 @@ class MatrixSubstrate implements RoomSubstrate {
         source = all.slice(Math.max(0, all.length - input.limit));
       } else {
         if (input.cursor !== currentCursor) return { kind: 'rejected', code: 'invalid_request' };
-        const page = await paginateHistoricalEvents(this.active().client, timeline, input.roomId, input.limit);
+        const page = await paginateHistoricalEvents(active.client, timeline, input.roomId, input.limit);
         hasMore = page.hasMore;
         source = page.events;
       }
+      if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline pagination');
       const page = await this.events(source);
+      if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline projection');
       return {
         kind: 'done',
         value: {
