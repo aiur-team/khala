@@ -108,13 +108,13 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   cleanupConsumer.start();
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });
   const createChannelAccess = () => createChannelAccessInboxController({ requests: api.channelAccess });
-  const roomRenderer = createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
-    if (!binding.device) return false;
+  const roomRenderer = createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding, signal) => {
+    if (!binding.device || signal.aborted) return false;
     const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
-      && matrix.device.current().generation === context.deviceView.generation;
+      && matrix.device.current().generation === context.deviceView.generation && !signal.aborted;
     if (!currentOwner()) return false;
     const proof = await matrix.ownerDeviceProof();
-    if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)
+    if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof, signal)
       || !currentOwner()) return false;
     const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
       binding.device.deviceId, binding.device.fingerprint);
