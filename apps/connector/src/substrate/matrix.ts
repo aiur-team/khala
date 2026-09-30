@@ -15,6 +15,7 @@ import type { chromium as Chromium } from 'playwright-core';
 import { decodeContentLimits, decodeMessageContent, encodeMessageContent, type DeviceId, type EventId, type ParticipantId, type RoomId } from '@khala/contracts/messaging/index';
 import type { ConnectorDevicePort, DeviceActivation, DeviceStatus } from '@khala/connector/bootstrap/ports';
 import type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from '@khala/connector/subscription/adapter';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { projectVerifiedName, type NameState } from './name-state';
 import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 
@@ -47,6 +48,7 @@ export type MatrixConnectorInput = Readonly<{
   onRename?: (input: Readonly<{ eventId: EventId; roomId: RoomId; actorParticipantId: ParticipantId; actorDeviceId: DeviceId;
     receivedAt: string;
     agentParticipantId: ParticipantId; name: string; canonicalPayload: Uint8Array }>) => Promise<boolean>;
+  diagnostic?: (event: HostedSubscriptionDiagnostic) => void;
   chromiumExecutablePath?: string;
   browserBundleDirectory?: string;
   /** Exact, packaged Playwright 1.63.0 package root for the installed CLI. */
@@ -253,19 +255,28 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       },
       listen(listener) { if (!closed) listeners.add(listener); return () => { listeners.delete(listener); }; },
       async read({ cursor, limit }, options): Promise<SourceRead> {
-        if (closed) return { kind: 'unavailable' };
+        const unavailable = (stage: HostedSubscriptionDiagnostic['stage']): SourceRead => {
+          try { input.diagnostic?.({ stage, result: 'unavailable' }); }
+          catch { /* Diagnostics cannot change a Matrix read. */ }
+          return { kind: 'unavailable' };
+        };
+        if (closed) return unavailable('matrix_read_closed');
         if (limit < 1 || limit > 100 || !Number.isSafeInteger(limit)) return { kind: 'rejected', code: 'unsupported' };
+        let stage: HostedSubscriptionDiagnostic['stage'] = 'matrix_read_bridge';
         try {
           const wire = await abortable(call<BrowserPage>(current(), 'read', cursor, limit), options?.signal);
           // A limited timeline means Synapse dropped older events. Never advance beyond a gap.
           if (wire.limited) return { kind: 'gap' };
           const events: SourceEvent[] = [];
+          stage = 'matrix_read_members';
           const members = input.resolveParticipants ? await abortable(call<readonly string[]>(current(), 'members'), options?.signal) : [];
           const senders = [...new Set([...members, ...wire.events.map(event => event.senderUserId)])];
           const targets = [...new Set(wire.events.map(event => event.agentParticipantId).filter((id): id is string => id !== null))];
+          stage = 'matrix_read_participants';
           const participants = input.resolveParticipants ? await input.resolveParticipants(senders, targets) : null;
-          if (input.resolveParticipants && !participants) return { kind: 'unavailable' };
+          if (input.resolveParticipants && !participants) return unavailable(stage);
           for (const event of wire.events) {
+            stage = 'matrix_read_processing';
             // The agent's own encrypted sends are not owner-authored pending work.
             // Skipping them still advances the authenticated Matrix cursor.
             if (event.senderUserId === input.userId) continue;
@@ -277,10 +288,11 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               authorParticipantId: participant, authorDeviceId: claimedDevice };
             if (event.failure !== null || event.body === null || event.senderDeviceId === null) {
               if (input.participantIdFor(event.senderUserId) === null) {
-                if (event.failure === 'missing_keys') return { kind: 'unavailable' };
+                if (event.failure === 'missing_keys') return unavailable('matrix_read_missing_keys');
                 continue;
               }
-              if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
               events.push({ kind: 'undecryptable', ref: base, reason: event.failure ?? 'decrypt_failed' });
               continue;
             }
@@ -289,7 +301,8 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               : { v: 1, kind: event.nameSnapshot ? 'agent_name_snapshot' : 'agent_rename', agentParticipantId: event.agentParticipantId, body: event.body,
                   ...(event.nameSnapshot ? { sourceEventId: event.nameSourceEventId } : {}) }, contentLimits);
             if (!decoded.ok) {
-              if (input.onText && input.participantIdFor(event.senderUserId) !== null && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onText && input.participantIdFor(event.senderUserId) !== null && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
               events.push({ kind: 'undecryptable', ref: base, reason: 'unsupported' });
               continue;
             }
@@ -299,27 +312,31 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               const actor = participants?.get(event.senderUserId);
               const target = [...(participants?.values() ?? [])].find(item => item.participantId === rename.agentParticipantId);
               if (actor?.kind !== 'human' || target?.kind !== 'agent' || actor.ownerId !== target.ownerId) continue;
+              stage = 'matrix_read_names';
               namesState = projectVerifiedName(namesState, { kind: rename.kind, participantId: rename.agentParticipantId,
                 name: rename.body, eventId: base.eventId,
                 ...(rename.kind === 'agent_name_snapshot' ? { sourceEventId: rename.sourceEventId } : {}) });
               await writeJson(namesPath, namesState);
               if (rename.kind === 'agent_name_snapshot') {
-                if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+                stage = 'matrix_read_callback';
+                if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return unavailable(stage);
                 continue;
               }
-              if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return unavailable(stage);
               if (!input.onRename || !await input.onRename({ eventId: base.eventId, roomId: base.roomId,
                 actorDeviceId: claimedDevice,
                 receivedAt: event.receivedAt,
                 actorParticipantId: actor.participantId, agentParticipantId: rename.agentParticipantId,
-                name: rename.body, canonicalPayload })) return { kind: 'unavailable' };
+                name: rename.body, canonicalPayload })) return unavailable(stage);
               continue;
             }
             // Review only the owner human's text. The agent's metadata path is separate.
             if (input.participantIdFor(event.senderUserId) === null) continue;
+            stage = 'matrix_read_callback';
             if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId,
               authorName: namesState.names.find(item => item.participantId === participant)?.name
-                ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+                ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
             events.push({ kind: 'decrypted', ref: {
               ...base, contentDigest: `sha256:${createHash('sha256').update(canonicalPayload).digest('hex')}`,
             }, verifiedDeviceId: claimedDevice, canonicalPayload });
@@ -327,7 +344,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
           return { kind: 'page', events, nextCursor: wire.nextCursor, caughtUp: wire.events.length < limit };
         } catch (error) {
           const reason = error instanceof Error ? error.message : '';
-          return reason.includes('matrix_authority_lost') ? { kind: 'rejected', code: 'authority_lost' } : { kind: 'unavailable' };
+          return reason.includes('matrix_authority_lost') ? { kind: 'rejected', code: 'authority_lost' } : unavailable(stage);
         }
       },
     };
