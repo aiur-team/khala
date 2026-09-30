@@ -270,10 +270,10 @@ test('owner conversation shell fills desktop and phone with conditional request 
       headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual');
-    const title = page.locator('.aiur-shell__title');
-    await title.getByText('First channel').waitFor();
     const requests = page.getByRole('link', { name: 'Channel requests, 2 pending' });
     await requests.waitFor();
+    const title = page.locator('.channel-roster__summary');
+    await title.getByText('First channel').waitFor();
     assert.equal((await requests.innerText()).trim(), '2');
     assert.equal(await requests.evaluate(node => node.nextElementSibling?.getAttribute('aria-label')), 'Create channel');
     assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 0);
@@ -308,6 +308,9 @@ test('owner conversation shell fills desktop and phone with conditional request 
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.locator('#khala-channel-toolbar-mobile .channel-roster').waitFor();
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'local phone uses its mobile bar for channel details');
+    assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).count(), 1);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
     await page.getByRole('button', { name: 'Channels' }).click();
     await page.waitForTimeout(250);
@@ -318,6 +321,41 @@ test('owner conversation shell fills desktop and phone with conditional request 
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-requests.png') });
     await page.keyboard.press('Enter');
     await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual&hosted');
+    const hostedToolbar = page.locator('#khala-channel-toolbar');
+    const roster = hostedToolbar.locator('details.channel-roster');
+    await roster.waitFor();
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'hosted channel has a single top bar');
+    const hostedMain = await page.locator('.khala-content-main').boundingBox();
+    const hostedThread = await page.locator('.conversation-thread').boundingBox();
+    assert.ok(hostedMain && hostedThread && hostedThread.width >= hostedMain.width - 2, 'hosted thread fills the content column');
+    await roster.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await roster.getAttribute('open'), '', 'keyboard opens the participant details');
+    await page.getByRole('heading', { name: 'Agent presence' }).waitFor();
+    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'hosted-roster-dark.png') });
+    await page.keyboard.press('Escape');
+    assert.equal(await roster.getAttribute('open'), null, 'Escape closes the participant details');
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    if (screenshotDir) {
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+        for (const theme of ['dark', 'light']) {
+          await page.locator('[data-theme]').first().evaluate((node, value) => node.setAttribute('data-theme', value), theme);
+          await page.screenshot({ path: join(screenshotDir, `hosted-${width}-${theme}.png`) });
+        }
+      }
+    }
+    const share = page.getByRole('button', { name: 'Copy channel invite link' });
+    await share.click();
+    assert.equal(await roster.getAttribute('open'), null, 'share does not toggle participant details');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    assert.equal(await page.getByRole('button', { name: 'Channels' }).isVisible(), true);
+    await page.setViewportSize({ width: 320, height: 740 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'top bar fits a 320px window');
+    assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).isVisible(), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

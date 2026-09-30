@@ -2,9 +2,11 @@
 
 .channel-page .khala-page-frame{max-width:none}
 .channel-page .khala-page-frame__header{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.channel-page--topbar .khala-page-frame__header{display:none}
 .channel-page .khala-page-frame__body{min-width:0}
 .channel-page .conversation-layout{height:calc(100dvh - 130px);min-height:420px}
 .channel-page .conversation-thread__actions{justify-content:flex-end;gap:.5rem}
+.channel-page .conversation-thread__head{position:relative}
 .channel-page .conversation-thread__actions>span{margin-right:auto}
 .channel-page .conversation-thread__actions .aiur-shell__icon-button{padding:0;width:2.05rem;height:2.05rem;border-radius:50%}
 .local-agent-controls{display:flex;align-items:center;gap:.25rem}
@@ -24,15 +26,24 @@
 .channel-participants__avatar--human{background:#9c5733}
 .channel-participants__name{overflow:hidden;text-overflow:ellipsis}
 .channel-participants__more{flex:none}
-.channel-agent-names{position:relative}
-.channel-agent-names>summary{list-style:none}
-.channel-agent-names>summary::-webkit-details-marker{display:none}
-.channel-agent-names__panel{position:absolute;z-index:15;right:0;top:calc(100% + .5rem);width:min(22rem,calc(100vw - 1.5rem));max-height:min(70dvh,38rem);overflow:auto;padding:.85rem;border:1px solid var(--khala-line);border-radius:12px;background:var(--khala-fill-raised);box-shadow:0 12px 30px #0006}
-.channel-agent-names__panel .panel{margin:0}
+.channel-toolbar{display:flex;align-items:center;gap:.7rem;width:100%;min-width:0}
+.channel-roster{flex:1;min-width:0}
+.channel-roster>summary{display:flex;align-items:center;gap:.4rem;min-width:0;padding:.3rem .45rem;margin-left:-.45rem;border-radius:8px;cursor:pointer;list-style:none}
+.channel-roster>summary::-webkit-details-marker{display:none}
+.channel-roster>summary:hover{background:var(--khala-fill-control)}
+.channel-roster>summary:focus-visible{outline:2px solid var(--khala-accent);outline-offset:2px}
+.channel-roster__summary{display:grid;gap:.15rem;min-width:0}
+.channel-roster__summary>:is(h1,h2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;font:inherit;font-size:.94rem;font-weight:700}
+.channel-roster__chevron{flex:none;color:var(--khala-ink-muted);transition:transform .18s ease}
+.channel-roster[open] .channel-roster__chevron{transform:rotate(180deg)}
+.channel-roster__panel{position:absolute;left:0;right:0;top:100%;z-index:15;max-height:min(60dvh,38rem);overflow:auto;padding:.85rem 1rem;border-bottom:1px solid var(--khala-line);background:var(--khala-fill-raised);box-shadow:0 12px 30px #0006}
+.channel-roster__panel .panel{margin:0}
+.channel-roster__viewer{margin:0 0 .65rem;color:var(--khala-ink-muted);font-size:.82rem}
+.channel-toolbar__actions{display:flex;align-items:center;gap:.45rem;flex:none}
 .conversation-thread__body .timeline{min-height:0}
 .conversation-thread__body .timeline__list{padding:.9rem 1.15rem;gap:.45rem}
 .conversation-thread__body .timeline__row.conversation-message{max-width:min(86%,42rem)}
-@media(max-width:760px){.channel-page .conversation-layout{height:100%;min-height:0}.conversation-thread__body .timeline__row.conversation-message{max-width:88%}.conversation-thread__body .timeline__list{padding:.7rem}.channel-participants{overflow-x:auto;scrollbar-width:thin}.conversation-composer textarea{font-size:16px}.conversation-composer button{width:40px;height:40px}.channel-agent-names__panel{position:fixed;left:.75rem;right:.75rem;top:4rem;width:auto}}
+@media(max-width:760px){.channel-page .conversation-layout{height:100%;min-height:0}.conversation-thread__body .timeline__row.conversation-message{max-width:88%}.conversation-thread__body .timeline__list{padding:.7rem}.channel-participants{overflow:hidden}.conversation-composer textarea{font-size:16px}.conversation-composer button{width:40px;height:40px}}
 
 .conversation-thread__body .timeline{height:100%;gap:0}
 .conversation-thread__body .timeline__list{flex:1;max-height:none;min-height:0;padding:1.1rem;gap:.25rem;background:var(--khala-fill)}

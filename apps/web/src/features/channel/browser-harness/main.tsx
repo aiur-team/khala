@@ -60,7 +60,9 @@ function Harness() {
   }
 
   return (
-    <ChannelScreen
+    <div className="khala-content-root khala-owner-shell" data-theme="dark">
+      <main className="khala-content-main"><div className="khala-content-actions"><div id="khala-channel-toolbar" /></div>
+    <ChannelScreen embedded={!new URLSearchParams(location.search).has('standalone')}
       title="Release channel"
       description="Coordinate the launch with people and their agents."
       controller={controller}
@@ -102,6 +104,8 @@ function Harness() {
         </section>
       )}
     />
+      </main>
+    </div>
   );
 }
 
