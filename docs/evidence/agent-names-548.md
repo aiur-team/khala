@@ -161,4 +161,4 @@ unchanged. Mobile conversation content retains its existing scroll viewport.
 Regenerated precisely those ten baselines in the CI-pinned
 `mcr.microsoft.com/playwright:v1.63.0-noble` image. All ten regenerated files
 are byte-identical to the corresponding CI actual images. The full suite passes
-55 tests with one skipped in each of two comparison-only runs.
+56 tests in each of two comparison-only runs (CI=true).
