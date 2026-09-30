@@ -13,6 +13,7 @@ import {
   Visibility,
   createClient,
   type MatrixClient,
+  type EventTimeline,
 } from 'matrix-js-sdk';
 import {
   decodeMessageContent,
@@ -178,6 +179,34 @@ export function subscribeRoomDecryption(client: Pick<MatrixClient, 'on' | 'off'>
   };
   client.on(MatrixEventEvent.Decrypted, onDecrypted);
   return () => client.off(MatrixEventEvent.Decrypted, onDecrypted);
+}
+
+/** Initial sync does not decrypt every timeline event; attempt each one before projection. */
+export async function decryptTimelineEvents(client: Pick<MatrixClient, 'decryptEventIfNeeded'>,
+  events: readonly MatrixEvent[]): Promise<void> {
+  await Promise.all(events.map(async event => {
+    if (event.getType() !== 'm.room.encrypted' || event.isDecryptionFailure()) return;
+    // Missing historical keys are represented as unavailable entries. The SDK
+    // retries them when keys arrive and emits MatrixEventEvent.Decrypted.
+    try { await client.decryptEventIfNeeded(event); } catch { /* Keep the ciphertext entry. */ }
+  }));
+}
+
+/** A live event can arrive while history is loading; only backward insertions belong to the page. */
+export async function paginateHistoricalEvents(client: Pick<MatrixClient, 'on' | 'off' | 'paginateEventTimeline'>,
+  timeline: EventTimeline, roomId: RoomId, limit: number): Promise<Readonly<{ events: readonly MatrixEvent[]; hasMore: boolean }>> {
+  const historicalIds = new Set<string>();
+  const record = (event: MatrixEvent, room: Room | undefined, toStartOfTimeline: boolean | undefined) => {
+    const id = event.getId();
+    if (room?.roomId === roomId && toStartOfTimeline && id) historicalIds.add(id);
+  };
+  client.on(RoomEvent.Timeline, record);
+  try {
+    const hasMore = await client.paginateEventTimeline(timeline, { backwards: true, limit });
+    return { events: timeline.getEvents().filter(event => historicalIds.has(event.getId() ?? '')), hasMore };
+  } finally {
+    client.off(RoomEvent.Timeline, record);
+  }
 }
 
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
@@ -508,11 +537,16 @@ class MatrixSubstrate implements RoomSubstrate {
   }
 
   private async events(events: readonly MatrixEvent[], roomId: RoomId): Promise<readonly SubstrateEvent[]> {
+    const active = this.active();
+    await decryptTimelineEvents(active.client, events);
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
     const mappings = await this.participants.resolve(senders, undefined, roomId);
-    const crypto = this.active().client.getCrypto();
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during participant resolution');
+    const crypto = active.client.getCrypto();
     if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
     const devices = await crypto.getUserDeviceInfo(senders, true);
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during device attribution');
     return events.flatMap(event => {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
@@ -527,7 +561,7 @@ class MatrixSubstrate implements RoomSubstrate {
       }
       const participant: ParticipantView = {
         ...mapping,
-        displayName: sender === this.active().client.getUserId() ? this.active().principal.verifiedEmail : mapping.displayName,
+        displayName: sender === active.client.getUserId() ? active.principal.verifiedEmail : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
@@ -537,7 +571,8 @@ class MatrixSubstrate implements RoomSubstrate {
 
   async timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>): Promise<SubstrateRead<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>> {
     try {
-      const room = this.active().client.getRoom(input.roomId);
+      const active = this.active();
+      const room = active.client.getRoom(input.roomId);
       if (!room) return { kind: 'rejected', code: 'not_found' };
       const timeline = room.getLiveTimeline();
       const currentCursor = timeline.getPaginationToken(Direction.Backward);
@@ -548,11 +583,13 @@ class MatrixSubstrate implements RoomSubstrate {
         source = all.slice(Math.max(0, all.length - input.limit));
       } else {
         if (input.cursor !== currentCursor) return { kind: 'rejected', code: 'invalid_request' };
-        const previous = new Set(timeline.getEvents().map(event => event.getId()));
-        hasMore = await this.active().client.paginateEventTimeline(timeline, { backwards: true, limit: input.limit });
-        source = timeline.getEvents().filter(event => !previous.has(event.getId()));
+        const page = await paginateHistoricalEvents(active.client, timeline, input.roomId, input.limit);
+        hasMore = page.hasMore;
+        source = page.events;
       }
+      if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline pagination');
       const page = await this.events(source, input.roomId);
+      if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline projection');
       return {
         kind: 'done',
         value: {

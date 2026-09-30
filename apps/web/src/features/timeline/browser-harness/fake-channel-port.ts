@@ -6,6 +6,7 @@ import type { RoomId } from '@khala/contracts/messaging/ids';
 import type {
   MessageContent, OperationResult, ParticipantView, ChannelPort, ChannelRejection, ChannelSnapshot, SendState, TimelineItem,
 } from '@khala/contracts/messaging/index';
+import type { TimelineEntriesView, TimelineRow } from '../controller';
 import { ok, outcomeUnknown } from '@khala/contracts/messaging/outcomes';
 
 const alice: ParticipantView = { participantId: 'alice' as never, kind: 'human', ownerId: 'owner_alice' as never, displayName: 'Alice', deviceIds: [] };
@@ -13,6 +14,8 @@ const agent: ParticipantView = { participantId: 'agent' as never, kind: 'agent',
 
 /** The harness only ever fabricates decryptable items, never an unavailable placeholder. */
 type FakeTimelineItem = Extract<TimelineItem, { content: MessageContent }>;
+
+let eventSequence = 0;
 
 function makeItem(eventId: string, author: ParticipantView, body: string, clientTxnId: string | null = null): FakeTimelineItem {
   return {
@@ -27,7 +30,7 @@ function makeItem(eventId: string, author: ParticipantView, body: string, client
     content: { v: 1, kind: 'text', body },
     participant: author,
     clientTxnId,
-    receivedAt: '2026-09-17T00:00:00Z',
+    receivedAt: new Date(Date.parse('2026-09-17T00:00:00Z') + eventSequence++).toISOString(),
   };
 }
 
@@ -47,6 +50,18 @@ export function createFakeChannelPort() {
   let generation = 1;
   let membership: ChannelSnapshot['room']['membership'] = 'joined';
   const listeners = new Set<(snapshot: ChannelSnapshot) => void>();
+  const entryListeners = new Set<(view: TimelineEntriesView) => void>();
+  let encrypted: TimelineRow | null = null;
+  function entriesView(): TimelineEntriesView {
+    const snapshot = currentSnapshot();
+    const entries: TimelineRow[] = recent.map(item => ({ kind: 'message', item }));
+    if (encrypted) entries.splice(1, 0, encrypted);
+    return { ...snapshot, roomId, entries };
+  }
+  function emit() {
+    listeners.forEach(listener => listener(currentSnapshot()));
+    entryListeners.forEach(listener => listener(entriesView()));
+  }
   const outcomeUnknownTxns = new Set<string>();
   const failOnceTxns = new Set<string>();
   const deferredSync: TimelineItem[] = [];
@@ -62,7 +77,11 @@ export function createFakeChannelPort() {
     };
   }
 
-  const port: ChannelPort = {
+  const port: ChannelPort & { observeEntries(roomId: RoomId, listener: (view: TimelineEntriesView) => void): () => void } = {
+    observeEntries: (_roomId, listener) => {
+      entryListeners.add(listener); listener(entriesView());
+      return () => entryListeners.delete(listener);
+    },
     create: async () => ok({ roomId, title: null, membership: 'joined', revision: 'rev_1' }),
     prepareIntro: async () => ok([]),
     resumeIntro: async () => ok([]),
@@ -75,7 +94,7 @@ export function createFakeChannelPort() {
         outcomeUnknownTxns.delete(clientTxnId);
         const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
-        listeners.forEach(listener => listener(currentSnapshot()));
+        emit();
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
       }
       if (content.body.startsWith('__outcome_unknown')) {
@@ -86,7 +105,7 @@ export function createFakeChannelPort() {
         failOnceTxns.delete(clientTxnId);
         const item = makeItem(clientTxnId, alice, content.body);
         recent = [...recent, item];
-        listeners.forEach(listener => listener(currentSnapshot()));
+        emit();
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
       }
       if (content.body.startsWith('__fail_once')) {
@@ -101,7 +120,7 @@ export function createFakeChannelPort() {
         return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
       }
       recent = [...recent, item];
-      listeners.forEach(listener => listener(currentSnapshot()));
+      emit();
       return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
     },
     timeline: async ({ cursor, limit }) => {
@@ -119,6 +138,14 @@ export function createFakeChannelPort() {
 
   return {
     port,
+    showUnavailable() {
+      encrypted = { kind: 'unavailable', eventId: 'encrypted' as never, receivedAt: '2026-09-17T00:00:00Z' };
+      emit();
+    },
+    decryptUnavailable() {
+      encrypted = { kind: 'message', item: makeItem('encrypted', alice, 'Recovered message') };
+      emit();
+    },
     roomId,
     viewer: alice,
     delayNextSend() { delayNext = true; },
@@ -130,19 +157,19 @@ export function createFakeChannelPort() {
       const item = deferredSync.shift();
       if (!item) return;
       recent = [...recent, item];
-      listeners.forEach(listener => listener(currentSnapshot()));
+      emit();
     },
     pushLiveMessage(body: string) {
       const item = makeItem(`live_${recent.length}`, agent, body);
       recent = [...recent, item];
-      listeners.forEach(listener => listener(currentSnapshot()));
+      emit();
     },
     bumpGeneration() {
       generation += 1;
     },
     revokeMembership() {
       membership = 'revoked';
-      listeners.forEach(listener => listener(currentSnapshot()));
+      emit();
     },
   };
 }

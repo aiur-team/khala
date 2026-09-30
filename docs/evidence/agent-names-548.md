@@ -32,3 +32,26 @@ The ordered projection tests cover an earlier held message followed by a rename,
 restart/retry, a rename inside one approved release, split acknowledgements,
 legacy committed intake migration, and crash recovery after an inbox append.
 The projection stores approved bytes only; held bodies stay outside its journal.
+
+## Integration with main through b657d8a4
+
+Integrated the exact main commits containing #607 initial decryption and #608
+unavailable timeline rows. Naming remains in the shared Matrix event projection;
+the complete name-history scan and owner-only publisher remain present. Explicit
+historical event IDs remain intact so paginated ciphertext does not inflate the
+live unread count. Unavailable rows stay visible while decrypted messages wait
+for the name-history check.
+
+Full typecheck, 59 combined web tests, 20 messaging timeline/name tests, and
+targeted ESLint passed. The 25 screen/evidence tests passed again after restoring
+the name-readiness gate. Earlier current-main integration also passed 22
+admission tests, with separate assertions for admission claims and durable
+forward/reverse agent identities.
+
+Browser verification was attempted twice, including a sequential retry with an
+owner-private temporary directory. Chromium failed during launch, before page
+execution, with `HistoryService::Init` / `Zygote could not fork` errors. The
+earlier passing browser and native proofs above remain prior-head evidence.
+The original independent review found no actionable bugs; a follow-up review
+agent could not run because of the session thread limit. The final merge was
+reviewed manually.
