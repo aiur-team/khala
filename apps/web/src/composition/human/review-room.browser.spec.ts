@@ -16,6 +16,9 @@ declare global { interface Window {
   __setReviewBinding: (kind: 'new' | 'replacement') => void;
   __releaseOldTrust: () => void;
   __oldTrustReturned: () => boolean;
+  __trustCalls: () => number;
+  __leaveRoom: () => void;
+  __rerenderRoom: () => void;
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
   __releaseAccountTrust: () => void;
@@ -23,6 +26,57 @@ declare global { interface Window {
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
 } }
+
+test('normal conversation registers owner proof and trusts each admitted agent once', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?proof', async page => {
+    const requests: string[] = [];
+    const registrationBodies: unknown[] = [];
+    await page.route('**/api/human/owner-device-proof/**', async route => {
+      requests.push(new URL(route.request().url()).pathname);
+      if (route.request().url().includes('/register')) registrationBodies.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(
+        route.request().url().includes('/challenge') ? { v: 1, nonce: 'n'.repeat(43) } : { v: 1, kind: 'pinned' }) });
+    });
+    await page.reload();
+    await page.waitForFunction(() => window.__trustCalls() === 2);
+    assert.equal(await page.getByRole('heading', { name: 'Channel care' }).count(), 0);
+    assert.equal(requests.filter(path => path.endsWith('/challenge')).length, 2);
+    assert.equal(requests.filter(path => path.endsWith('/register')).length, 2);
+    assert.deepEqual(registrationBodies.map(body => (body as { matrixAccessToken: string }).matrixAccessToken),
+      ['transient-token', 'transient-token']);
+    assert.equal(requests.some(path => path.includes('transient-token')), false);
+    await page.evaluate(() => window.__rerenderRoom());
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => window.__trustCalls()), 2);
+    assert.equal(requests.length, 4, 'rerender does not register again');
+  });
+});
+
+test('leaving the normal conversation cancels proof before registration', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?proof', async page => {
+    let releaseChallenge: (() => void) | undefined;
+    const held = new Promise<void>(resolve => { releaseChallenge = resolve; });
+    let challengeSeen: (() => void) | undefined;
+    const seen = new Promise<void>(resolve => { challengeSeen = resolve; });
+    let registerCount = 0;
+    await page.route('**/api/human/owner-device-proof/**', async route => {
+      if (route.request().url().includes('/challenge')) {
+        challengeSeen?.();
+        await held;
+        try { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ v: 1, nonce: 'n'.repeat(43) }) }); }
+        catch { /* Aborted route. */ }
+      } else { registerCount += 1; await route.fulfill({ status: 200, contentType: 'application/json', body: '{"v":1,"kind":"pinned"}' }); }
+    });
+    await page.reload();
+    await seen;
+    await page.evaluate(() => window.__leaveRoom());
+    await page.getByText('Outside the channel').waitFor();
+    releaseChallenge?.();
+    await page.waitForTimeout(250);
+    assert.equal(registerCount, 0);
+    assert.equal(await page.evaluate(() => window.__trustCalls()), 0);
+  });
+});
 
 test('created channel page has one share action that copies a working link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {

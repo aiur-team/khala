@@ -18,7 +18,7 @@ export function createOwnerDeviceClient(input: Readonly<{
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   return {
     async register(roomId: RoomId, bindingId: BindingId, generation: number,
-      device: Readonly<{ deviceId: string; fingerprint: string; matrixAccessToken: string }>): Promise<boolean> {
+      device: Readonly<{ deviceId: string; fingerprint: string; matrixAccessToken: string }>, signal?: AbortSignal): Promise<boolean> {
       const url = new URL(CHALLENGE, origin);
       url.searchParams.set('room_id', roomId);
       url.searchParams.set('binding_id', bindingId);
@@ -26,15 +26,16 @@ export function createOwnerDeviceClient(input: Readonly<{
       url.searchParams.set('device_id', device.deviceId);
       try {
         const challenge = await request(url, { method: 'GET', credentials: 'same-origin',
-          headers: { accept: 'application/json' } });
+          headers: { accept: 'application/json' }, ...(signal ? { signal } : {}) });
         if (!challenge.ok || !(challenge.headers.get('content-type') ?? '').startsWith('application/json')) return false;
         const answer: unknown = await challenge.json();
         if (typeof answer !== 'object' || answer === null || !('v' in answer) || answer.v !== 1
           || !('nonce' in answer) || typeof answer.nonce !== 'string' || !NONCE.test(answer.nonce)) return false;
         const csrf = await input.csrf();
-        if (!csrf) return false;
+        if (!csrf || signal?.aborted) return false;
         const registered = await request(new URL(REGISTER, origin), { method: 'POST', credentials: 'same-origin',
           headers: { accept: 'application/json', 'content-type': 'application/json', 'x-khala-csrf': csrf },
+          ...(signal ? { signal } : {}),
           body: JSON.stringify({ v: 1, roomId, bindingId, generation, deviceId: device.deviceId,
             fingerprint: device.fingerprint, nonce: answer.nonce, matrixAccessToken: device.matrixAccessToken }),
         });

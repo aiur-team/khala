@@ -26,6 +26,8 @@ import { createHumanPendingSendStore } from './pending-send-store';
 
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 type ReviewRoomId = Parameters<HumanRoomRenderer>[1]['roomId'];
+type TrustBinding = (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
+  binding: OwnerReviewBinding, signal: AbortSignal) => Promise<boolean>;
 
 function reviewIdentity(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
   binding: OwnerReviewBinding): string {
@@ -63,8 +65,7 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, rou
 
 /** Production room renderer with the authenticated owner mailbox attached. */
 export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability,
-  trustBinding: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
-    binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000,
+  trustBinding: TrustBinding, refreshMs = 5_000,
   controls?: ControlsCapability): HumanRoomRenderer & { tools: HumanRoomRenderer } {
   const render = (toolsOnly: boolean): HumanRoomRenderer => (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
     {...(navigate && routes ? { navigate, routes } : {})} review={review}
@@ -159,15 +160,8 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
 }
 
-export function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
-  context: Parameters<HumanRoomRenderer>[0];
-  roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
-  review: ReviewClient | undefined;
-  capability: ReviewCapability | undefined;
-  trustBinding: ((context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
-    binding: OwnerReviewBinding) => Promise<boolean>) | undefined;
-  refreshMs: number;
-}) {
+function useOwnerBindingTrust(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
+  review: ReviewClient | undefined, trustBinding: TrustBinding | undefined, refreshMs: number) {
   const [discovery, setDiscovery] = useState<Readonly<{ scope: string; active: number;
     bindings: readonly OwnerReviewBinding[] }> | null>(null);
   const scope = reviewScope(context, roomId);
@@ -202,7 +196,8 @@ export function HumanReview({ context, roomId, review, capability, trustBinding,
           if (trusted.has(key)) continue;
           let pending = trusting.get(key);
           if (!pending) {
-            pending = Promise.resolve().then(() => trustBinding(context, roomId, binding)).catch(() => false);
+            pending = Promise.resolve().then(() => abort.signal.aborted ? false
+              : trustBinding(context, roomId, binding, abort.signal)).catch(() => false);
             trusting.set(key, pending);
             void pending.then(() => { if (trusting.get(key) === pending) trusting.delete(key); });
           }
@@ -217,7 +212,27 @@ export function HumanReview({ context, roomId, review, capability, trustBinding,
     const timer = setInterval(refresh, refreshMs);
     return () => { abort.abort(); clearInterval(timer); };
   }, [context, roomId, review, trustBinding, refreshMs, scope]);
-  if (!review || !capability || !trustBinding || discovery === null || discovery.scope !== scope) {
+  return discovery?.scope === scope ? discovery : null;
+}
+
+function HumanTrust({ context, roomId, review, trustBinding, refreshMs }: {
+  context: Parameters<HumanRoomRenderer>[0]; roomId: ReviewRoomId;
+  review: ReviewClient | undefined; trustBinding: TrustBinding | undefined; refreshMs: number;
+}) {
+  useOwnerBindingTrust(context, roomId, review, trustBinding, refreshMs);
+  return null;
+}
+
+export function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
+  context: Parameters<HumanRoomRenderer>[0];
+  roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
+  review: ReviewClient | undefined;
+  capability: ReviewCapability | undefined;
+  trustBinding: TrustBinding | undefined;
+  refreshMs: number;
+}) {
+  const discovery = useOwnerBindingTrust(context, roomId, review, trustBinding, refreshMs);
+  if (!review || !capability || !trustBinding || discovery === null) {
     return <Panel heading="Recipient review"><p role="status">Review unavailable or loading.</p></Panel>;
   }
   if (discovery.active === 0) return <Panel heading="Recipient review"><p role="status">No active agent recipient in this channel.</p></Panel>;
@@ -234,8 +249,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   review?: ReviewClient;
   capability?: ReviewCapability;
   controls?: ControlsCapability;
-  trustBinding?: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
-    binding: OwnerReviewBinding) => Promise<boolean>;
+  trustBinding?: TrustBinding;
   refreshMs?: number;
   toolsOnly?: boolean;
 }) {
@@ -310,6 +324,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   }
 
   return (
+    <><HumanTrust context={context} roomId={roomId} review={review} trustBinding={trustBinding} refreshMs={refreshMs} />
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
@@ -339,6 +354,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
-    />
+    /></>
   );
 }
