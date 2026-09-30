@@ -15,6 +15,8 @@ const agent: ParticipantView = { participantId: 'agent' as never, kind: 'agent',
 /** The harness only ever fabricates decryptable items, never an unavailable placeholder. */
 type FakeTimelineItem = Extract<TimelineItem, { content: MessageContent }>;
 
+let eventSequence = 0;
+
 function makeItem(eventId: string, author: ParticipantView, body: string, clientTxnId: string | null = null): FakeTimelineItem {
   return {
     ref: {
@@ -28,7 +30,7 @@ function makeItem(eventId: string, author: ParticipantView, body: string, client
     content: { v: 1, kind: 'text', body },
     participant: author,
     clientTxnId,
-    receivedAt: '2026-09-17T00:00:00Z',
+    receivedAt: new Date(Date.parse('2026-09-17T00:00:00Z') + eventSequence++).toISOString(),
   };
 }
 

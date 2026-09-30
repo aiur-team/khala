@@ -352,3 +352,26 @@ it('keeps three initial encrypted events as three rows after one late decryption
   expect(controller.getSnapshot().items).toHaveLength(1);
   controller.dispose();
 });
+
+
+it('does not count historical ciphertext published after the history promise resolves', async () => {
+  const fake = fakeChannelPort();
+  let emit!: (view: ChannelEntriesView) => void;
+  const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+    emit = listener; return () => {};
+  } }, roomId, { generation: 1 });
+  const current = { kind: 'message' as const, item: item('current', 'alice', 'current', '2026-09-17T00:00:00Z') };
+  const publish = (entries: ChannelEntriesView['entries']) => emit({ roomId, room, entries, generation: 1, snapshotRevision: 'delayed' });
+  publish([current]);
+  controller.setReaderAtLatest(false);
+  await controller.loadOlder();
+  await Promise.resolve();
+  const historical = { kind: 'unavailable' as const, eventId: 'historical' as EventId,
+    authorParticipantId: 'opaque' as ParticipantId, reason: 'missing_key' as const, receivedAt: '2026-09-16T00:00:00Z' };
+  publish([current, historical]);
+  expect(controller.getSnapshot().rows).toHaveLength(2);
+  expect(controller.getSnapshot().newMessageCount).toBe(0);
+  publish([current, historical, { kind: 'message', item: item('new', 'alice', 'live', '2026-09-18T00:00:00Z') }]);
+  expect(controller.getSnapshot().newMessageCount).toBe(1);
+  controller.dispose();
+});
