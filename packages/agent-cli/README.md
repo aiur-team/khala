@@ -543,6 +543,15 @@ owner approves that key, run `request-access` again with the same channel URL
 and `operationId` (or omit `--operation` again to reuse the target-derived ID)
 to file the separate access request. Nothing here grants access.
 
+Native `khala_connect` follows the same approval sequence with a stable
+operation ID for the exact link and session. While the proof key or channel
+request awaits owner approval, it returns
+`{"ok":true,"operationId":...,"outcome":"pending_owner","next":"human_approve"}`.
+After each approval, call `khala_connect` again with the same link. `connecting`
+returns `next: "retry_same_link"`; `repair_required` returns
+`next: "repair_connector"`. A binding appears only after native admission and
+readiness. The pending response contains no link, proof key, or credential.
+
 `khala channels access-status --operation <id>` reads the same filed access
 operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,

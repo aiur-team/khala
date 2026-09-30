@@ -56,6 +56,11 @@ export function waitForSignal(signal: AbortSignal | undefined, milliseconds: num
 export function publicConnectResult(value: unknown) {
   if (!plainObject(value)) throw new CliError('transport_unavailable');
   if (value.kind === 'unavailable') return { kind: 'unavailable' } as const;
+  if (value.kind === 'pending' && validIdentifier(value.operationId)
+    && ['pending_owner', 'connecting', 'repair_required'].includes(String(value.outcome))) {
+    return { kind: 'pending', operationId: value.operationId,
+      outcome: value.outcome as 'pending_owner' | 'connecting' | 'repair_required' } as const;
+  }
   if (value.kind === 'refused' && typeof value.code === 'string'
     && (CONNECT_REFUSAL_CODES as readonly string[]).includes(value.code)) {
     return { kind: 'refused', code: value.code as ConnectRefusalCode } as const;
