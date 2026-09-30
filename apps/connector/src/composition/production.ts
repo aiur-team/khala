@@ -9,7 +9,7 @@ import {
   type BootstrapPorts, type SessionClaim, type SessionInspectionPort,
 } from '@khala/connector/bootstrap/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
-import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
+import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding, type UnverifiedReleasedJob } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
 import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
@@ -27,7 +27,7 @@ import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatc
 import { createPolicyControlHandler } from './controls/control-handler';
 import { openTrustStateStore } from './controls/trust-store';
 import { createOwnerDeviceTrust } from './agent/owner-device-trust';
-import { createHostedCodexHarness, type LocalInbox } from './agent/hosted-codex';
+import { createHostedCodexHarness, verifyReleasePayload, type LocalInbox } from './agent/hosted-codex';
 import { createDispatcher } from '@khala/connector/dispatch/run';
 import type { Dispatcher } from '@khala/connector/dispatch/types';
 import { sha256Digest } from '@khala/connector/storage/payloads';
@@ -150,7 +150,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   const projectionFor = (bindingId: string, generation: number) => {
     const key = JSON.stringify([bindingId, generation]);
     let projection = projections.get(key);
-    if (!projection) { projection = createOrderedProjection(path.join(sessionDirectory, `projection-${createHash('sha256').update(key).digest('hex')}.json`)); projections.set(key, projection); }
+    if (!projection) { projection = createOrderedProjection(path.join(sessionDirectory, `projection-${createHash('sha256').update(key).digest('hex')}.json`),
+      { manualRead: manualRoute }); projections.set(key, projection); }
     return projection;
   };
   const openRawHostedInbox: OpenInbox = (bindingId, generation) => {
@@ -240,6 +241,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let harness: HarnessPort | null = null;
   let dispatcher: Dispatcher | null = null;
   let review: ReviewControlHandler | null = null;
+  let manualRoute = false;
   let listening: ReturnType<typeof createHostedListeningControl> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling: Promise<void> | null = null;
@@ -360,17 +362,6 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         bindingId: next.bindingId, ownerId: next.ownerId, generation: next.generation,
         policyVersion: 0 }), result: undefined };
     });
-    await projectionFor(next.bindingId, next.generation).seedLegacy(readOrderedPendingReferences(storage, next));
-    subscription = await startProductionSubscription({
-      binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
-      storage, matrix: substrate,
-      guard: async () => {
-        if (closed || remoteDenied || deliveryStopped) return 'revoked';
-        const authority = await activeMailbox.authorize();
-        if (authority !== 'active') return authority === 'unavailable' ? 'unavailable' : 'revoked';
-        return activeTrust.ensure();
-      },
-    });
     if (input.session.harness === 'codex') {
       harness = createHostedCodexHarness({ binding: next, claim: input.session,
         sessionInspection: sessionInspector,
@@ -384,6 +375,61 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         inspectHooks: async () => (await input.inspectHostedCodexHooks()) as Awaited<ReturnType<Parameters<typeof createHostedCodexHarness>[0]['inspectHooks']>>,
         openInbox: openHostedInbox,
       });
+    }
+    const inspected = harness ? await harness.inspect(next).catch(() => null) : null;
+    manualRoute = next.harness === 'proof-key' && (input.session.harness === 'claude'
+      || input.session.harness === 'codex' && inspected?.support !== 'tested');
+    await projectionFor(next.bindingId, next.generation).seedLegacy(readOrderedPendingReferences(storage, next));
+    subscription = await startProductionSubscription({
+      binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
+      storage, matrix: substrate,
+      guard: async () => {
+        if (closed || remoteDenied || deliveryStopped) return 'revoked';
+        const authority = await activeMailbox.authorize();
+        if (authority !== 'active') return authority === 'unavailable' ? 'unavailable' : 'revoked';
+        return activeTrust.ensure();
+      },
+    });
+    if (manualRoute) {
+      const releases = { enqueue: async (job: UnverifiedReleasedJob) => {
+        if (!sameSessionBinding(job.binding, next) || closed || remoteDenied || deliveryStopped) return 'conflict' as const;
+        const held = await readBinding().catch(error => {
+          if (error instanceof Error && ['production_binding_revoked', 'production_binding_session_changed',
+            'production_binding_ledger_mismatch'].includes(error.message)) return null;
+          throw error;
+        });
+        if (!held || !sameSessionBinding(held, next)) return 'conflict' as const;
+        const authority = await activeMailbox.authorize();
+        if (authority === 'unavailable') throw new Error('manual_release_authority_unavailable');
+        if (authority !== 'active') return 'conflict' as const;
+        const ownerDevice = await activeTrust.ensure();
+        if (ownerDevice === 'unavailable') throw new Error('manual_release_owner_device_unavailable');
+        if (ownerDevice !== 'active') return 'conflict' as const;
+        const committed = await storage.ledger.transaction(tx => tx.readRelease(job.releaseId));
+        if (!committed || !sameSessionBinding(committed.job.binding, next)
+          || committed.job.payloadRef !== job.payloadRef
+          || committed.job.payloadDigest !== job.payloadDigest) return 'conflict' as const;
+        const payload = await dispatchStorage.payloads.read(job.payloadRef, productionLimits().maxPayloadBytes);
+        if (!payload || await verifyReleasePayload(committed.job, payload) !== 'ok') return 'conflict' as const;
+        const inbox = await openRawHostedInbox(next.bindingId, next.generation);
+        const result = await projectionFor(next.bindingId, next.generation).enqueue({
+          v: 1, releaseId: job.releaseId, bindingId: next.bindingId, generation: next.generation,
+          events: committed.job.events, payloadDigest: committed.job.payloadDigest, payload,
+          receivedAt: new Date().toISOString(),
+        }, inbox);
+        return result === 'duplicate' ? 'duplicate' as const : 'queued' as const;
+      } };
+      review = createReviewControlHandler({ storage, dispatchStorage, releases,
+        bindingId: next.bindingId, limits: productionLimits(),
+        room: { members: async roomId => {
+          if (roomId !== session.roomId || closed || remoteDenied || deliveryStopped
+            || await activeMailbox.authorize() !== 'active' || await activeTrust.ensure() !== 'active'
+            || await substrate.source.authorize() !== 'ok') return null;
+          return [session.ownerParticipantId as never, next.agentParticipantId];
+        } },
+      });
+      await review.resumeReleases(next.bindingId);
+    } else if (harness) {
       const activeHarness = harness;
       listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
         current: async () => {
@@ -664,14 +710,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (trusted !== 'active') return unavailable(trusted === 'revoked' ? 'binding_revoked' : 'owner_device_unverified',
           { ...receiving, controls: trusted === 'revoked' ? 'blocked' : 'unknown' });
         const controlled = { ...receiving, controls: 'ready' } as const;
-        if (input.session.harness === 'claude' && held.harness === 'proof-key') {
-          // Claude's installed MCP tools are explicitly invoked by this session. No
-          // Codex harness, listening mode, review worker, or queue is running here.
+        if (manualRoute && held.harness === 'proof-key' && review) {
+          // Hosted MCP tools are explicitly invoked by this session. The owner
+          // review handler releases to the inbox without starting a model queue.
           return { v: 1 as const, connected: true, binding: held,
             route: 'manual_mcp' as const, sourceCursor: null,
             readiness: { phase: 'ready' as const, prerequisites: { storage: 'ready' as const,
               ...controlled, harness: 'unknown' as const, dispatch: 'blocked' as const,
-              review: 'blocked' as const, recovery: 'unknown' as const }, errorCode: null },
+              review: 'ready' as const, recovery: 'unknown' as const }, errorCode: null },
           };
         }
         const activeHarness = harness as HarnessPort | null;
