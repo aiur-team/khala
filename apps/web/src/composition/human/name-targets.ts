@@ -9,14 +9,12 @@ export async function attachNameTargets(events: readonly SubstrateEvent[],
   for (const event of events) {
     if (event.kind !== 'message' || event.content.kind === 'text') { result.push(event); continue; }
     const targetId = event.content.agentParticipantId;
-    const mapping = await resolve(targetId).catch(() => null);
+    const mapping = await resolve(targetId);
     if (!isCurrent()) throw new Error('Matrix session changed during name target resolution');
-    const targetParticipant = [...(mapping?.values() ?? [])].find(participant => participant.participantId === targetId);
-    if (!targetParticipant) {
-      result.push({ kind: 'undecryptable', eventId: event.eventId, authorParticipantId: event.participant.participantId,
-        receivedAt: event.receivedAt, reason: 'decryption_failed' });
-      continue;
-    }
+    if (mapping === null) throw new Error('Matrix name target lookup unavailable');
+    const targetParticipant = [...mapping.values()].find(participant => participant.participantId === targetId);
+    // A successful lookup omitting the target rejects this metadata claim.
+    if (!targetParticipant) continue;
     result.push({ ...event, targetParticipant });
   }
   return result;

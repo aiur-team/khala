@@ -105,3 +105,17 @@ Validation: 54 focused web tests (including the final malformed-content case),
 49 control tests, full typecheck and lint passed. Native output reports
 `departedMembershipUnavailable: true`. Full hosted delivery proof remains
 outstanding; these results cover the Matrix history primitive and local paths.
+
+## Invalid naming claims preserve rendered readiness
+
+The rereview of `56004a5d` identified that treating a rejected naming target as
+undecryptable indefinitely withheld readable messages. Successful participant
+responses now preserve omitted targets as an empty mapping: those metadata
+claims are ignored. Null/error responses remain availability failures and do
+not invent missing encryption keys. Historical membership read failures retain
+availability semantics; explicit forbidden/not-found reads reject the claim.
+
+A regression passes the target projection through timeline entry conversion,
+real controller name scanning, and rendered TimelineScreen. Both adjacent text
+messages remain visible, namesReady becomes true, and the invalid rename is
+absent. All 60 focused web tests, 49 control tests, full typecheck and lint pass.

@@ -11,16 +11,16 @@ const rename: SubstrateEvent = { ...text, eventId: '$rename' as never,
   content: { v: 1, kind: 'agent_rename', agentParticipantId: 'agent_missing' as never, body: 'Dolan' } };
 
 it('keeps readable neighbours when one valid name target is unknown or unreadable', async () => {
-  const resolve = vi.fn(async () => null);
+  const resolve = vi.fn(async () => new Map<string, ParticipantView>());
   const result = await attachNameTargets([text, rename, { ...text, eventId: '$after' as never }], resolve, () => true);
-  expect(result.map(event => event.kind)).toEqual(['message', 'undecryptable', 'message']);
+  expect(result.map(event => event.kind)).toEqual(['message', 'message']);
   expect(result[0]).toEqual(text);
   expect(resolve).toHaveBeenCalledExactlyOnceWith('agent_missing');
 });
 
-it('does not turn a target dependency exception into whole-page failure', async () => {
-  const result = await attachNameTargets([text, rename], async () => { throw new Error('unavailable'); }, () => true);
-  expect(result.map(event => event.kind)).toEqual(['message', 'undecryptable']);
+it('reports transient lookup failure without inventing missing encryption keys', async () => {
+  await expect(attachNameTargets([text, rename], async () => { throw new Error('unavailable'); }, () => true)).rejects.toThrow('unavailable');
+  await expect(attachNameTargets([rename], async () => null, () => true)).rejects.toThrow('target lookup unavailable');
 });
 
 it('attaches the authenticated historical target and fences an obsolete session', async () => {
@@ -28,4 +28,30 @@ it('attaches the authenticated historical target and fences an obsolete session'
   const resolve = async () => new Map([['@departed:example.test', target]]);
   expect(await attachNameTargets([rename], resolve, () => true)).toMatchObject([{ kind: 'message', targetParticipant: target }]);
   await expect(attachNameTargets([rename], resolve, () => false)).rejects.toThrow('Matrix session changed');
+});
+
+it('renders readable messages with ready names after rejecting an unknown or unauthorized target claim', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { createTimelineController } = await import('../../features/timeline/controller');
+  const { TimelineScreen } = await import('../../features/timeline/TimelineScreen');
+  const { toEntry } = await import('@khala/messaging/channels/timeline');
+  const roomId = 'room_test' as import('@khala/contracts/messaging/index').RoomId;
+  const events = await attachNameTargets([text, rename, { ...text, eventId: '$after' as never }],
+    async () => new Map<string, ParticipantView>(), () => true);
+  const entries = await Promise.all(events.map(event => toEntry(roomId, event)));
+  const page = { items: entries.flatMap(entry => entry.kind === 'message' ? [entry.item] : []),
+    unavailableEventIds: entries.flatMap(entry => entry.kind === 'unavailable' ? [entry.eventId] : []),
+    nextCursor: null, snapshotRevision: 'rev_1' };
+  const port = { observe: () => () => {}, timeline: async () => ({ kind: 'ok' as const, value: page }),
+    send: async () => ({ kind: 'unavailable' as const, retryable: true }) } as unknown as import('@khala/contracts/messaging/index').ChannelPort;
+  const controller = createTimelineController(port, roomId, { generation: 1 });
+  await controller.loadOlder();
+  await controller.scanNameHistory?.();
+  expect(controller.getSnapshot().namesReady).toBe(true);
+  expect(controller.getSnapshot().phase).toBe('ready');
+  const html = renderToStaticMarkup(createElement(TimelineScreen, { controller, roomPort: port, roomId, viewer: participant }));
+  expect(html.match(/Readable/g)).toHaveLength(2);
+  expect(html).not.toContain('Dolan');
+  controller.dispose();
 });

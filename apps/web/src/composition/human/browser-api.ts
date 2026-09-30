@@ -346,8 +346,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         resolved.set(value.matrixUserId, participant.value);
       }
       return userIds.every(userId => resolved.has(userId))
-        && [...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId))
-        && (targetParticipantIds ?? []).every(id => [...resolved.values()].some(participant => participant.participantId === id)) ? resolved : null;
+        && [...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId)) ? resolved : null;
     },
   };
 
