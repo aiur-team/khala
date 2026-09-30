@@ -6,7 +6,7 @@
 
 [Scope and epics](../product/ticket-breakdown.md) · [Ownership](../product/repo-layout.md) · [Review reports](reviews/) · [Executor transition](../product/executor-transition.md)
 
-The [single-link human and agent onboarding plan](2026-09-28-single-link-channel-onboarding.md) covers follow-on tickets #532–#534 and #536, coordinated with existing hosted access and native setup work.
+The [single-link human and agent onboarding plan](2026-09-28-single-link-channel-onboarding.md) covers open follow-on tickets #532, #534, and #536, and records the personal browser links delivered by #594 after it superseded #533.
 
 | Ticket | Epic | Outcome | Plan readiness |
 |---|---|---|---|
