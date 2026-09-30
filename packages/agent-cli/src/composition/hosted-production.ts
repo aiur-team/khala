@@ -10,7 +10,8 @@ import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 import { sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
-import type { AgentClientPort, CliDependencies } from '../cli/types.js';
+import { AGENT_READINESS_PREREQUISITES, type AgentClientPort, type AgentReadiness, type AgentStatus,
+  type CliDependencies } from '../cli/types.js';
 import { parseAccessTarget } from '../cli/channels/access.js';
 import type { OpenGenerationInbox } from './delivering-inbox.js';
 import type { HarnessSession } from './session-grant.js';
@@ -28,6 +29,14 @@ export type ActivationDiagnostic = Readonly<{
   stage: 'status_decode' | 'activation_preflight' | 'activation_no_credential' | 'activation_origin_mismatch'
     | 'activation_ports' | 'journal_conflict' | 'activation_result' | ActivationUnavailableStage;
   result: 'unavailable' | 'blocked';
+}>;
+
+export type NativeReadyDiagnostic = Readonly<{
+  stage: 'connector_unready' | 'binding_absent' | 'binding_mismatch' | 'readiness_unready' | 'status_exception';
+  result: 'unavailable';
+  phase: AgentReadiness['phase'] | 'absent';
+  errorCode: AgentReadiness['errorCode'];
+  prerequisites: Readonly<Record<(typeof AGENT_READINESS_PREREQUISITES)[number], boolean>>;
 }>;
 
 /** A preview override is an exact HTTPS origin, never an arbitrary link. */
@@ -93,7 +102,8 @@ export function hostedSessionFactory(options: Readonly<{
   credentialClient?: ChannelDiscoveryCredentialClient;
   diagnostic?(event: (Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
     & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic))
-    | (Readonly<{ component: 'hosted_open' }> & HostedOpenDiagnostic)): void;
+    | (Readonly<{ component: 'hosted_open' }> & HostedOpenDiagnostic)
+    | (Readonly<{ component: 'native_ready' }> & NativeReadyDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -221,12 +231,23 @@ export function hostedSessionFactory(options: Readonly<{
       try { options.diagnostic?.({ component: 'activation', stage, result }); }
       catch { /* Diagnostics cannot change the access outcome. */ }
     }
+    function reportNativeReady(stage: NativeReadyDiagnostic['stage'], status?: AgentStatus) {
+      const prerequisites = Object.fromEntries(AGENT_READINESS_PREREQUISITES.map(key => [key,
+        status?.readiness?.prerequisites[key] === 'ready'])) as NativeReadyDiagnostic['prerequisites'];
+      try { options.diagnostic?.({ component: 'native_ready', stage, result: 'unavailable',
+        phase: status?.readiness?.phase ?? 'absent', errorCode: status?.readiness?.errorCode ?? null,
+        prerequisites }); }
+      catch { /* Diagnostics cannot change native readiness. */ }
+    }
     async function nativeReady(binding: SessionBinding): Promise<boolean> {
       try {
         const status = await connector.status();
-        return status.connected && status.binding !== null
-          && sameSessionBinding(status.binding, binding) && status.readiness?.phase === 'ready';
-      } catch { return false; }
+        if (!status.connected) { reportNativeReady('connector_unready', status); return false; }
+        if (status.binding === null) { reportNativeReady('binding_absent', status); return false; }
+        if (!sameSessionBinding(status.binding, binding)) { reportNativeReady('binding_mismatch', status); return false; }
+        if (status.readiness?.phase !== 'ready') { reportNativeReady('readiness_unready', status); return false; }
+        return true;
+      } catch { reportNativeReady('status_exception'); return false; }
     }
     const requestChannelAccess: AgentClientPort['requestChannelAccess'] = async (input, signal) => {
       if (!access) return { kind: 'unavailable' };

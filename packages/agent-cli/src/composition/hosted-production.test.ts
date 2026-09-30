@@ -185,6 +185,11 @@ describe('installed hosted connector factory', () => {
       async status() { return nativeAvailable && admittedBinding
         ? { v: 1, connected: true, binding: admittedBinding, route: 'native_cli_queue', sourceCursor: null,
           readiness: { phase: 'ready', prerequisites: {} as never, errorCode: null } }
+        : admittedBinding ? { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null,
+          readiness: { phase: 'degraded', errorCode: 'subscription_offline', prerequisites: {
+            storage: 'ready', device: 'ready', bootstrap: 'ready', subscription: 'offline',
+            controls: 'blocked', harness: 'unknown', dispatch: 'blocked', review: 'blocked', recovery: 'unknown',
+          } } } as const
         : { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
       async listChannels() { return { kind: 'unavailable' }; }, async listAgents() { return { kind: 'unavailable' }; },
       async inbox() { throw new Error('no binding'); }, async close() {},
@@ -253,6 +258,16 @@ describe('installed hosted connector factory', () => {
       expect(await restarted.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
         .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'connected' } });
     }
+    nativeAvailable = false;
+    const degraded = mode === 'connect' ? await restarted.client.connect(link)
+      : await restarted.client.channelCreateStatus?.({ operationId: 'create_123', origin });
+    expect(degraded).toMatchObject(mode === 'connect' ? { kind: 'pending', outcome: 'connecting' }
+      : { kind: 'status', status: { outcome: 'connecting' } });
+    expect(diagnostics).toContainEqual({ component: 'native_ready', stage: 'connector_unready',
+      result: 'unavailable', phase: 'degraded', errorCode: 'subscription_offline',
+      prerequisites: { storage: true, device: true, bootstrap: true, subscription: false,
+        controls: false, harness: false, dispatch: false, review: false, recovery: false } });
+    nativeAvailable = true;
     expect(calls).toContain('/api/agent/channel-access/exchange');
     expect(calls).toContain('/api/agent/bootstrap/redeem');
     expect(calls).toContain('/api/agent/channel-access/resume');
