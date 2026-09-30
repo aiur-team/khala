@@ -10,6 +10,17 @@ import { createOwnerCleanupRequests } from './cleanup-requests';
 import { createMatrixClosureTransport } from './matrix';
 import { createChannelClosureService } from './service';
 
+type ClosureDiagnosticStage = 'feature_unavailable' | 'authentication_unavailable' | 'cleanup_unavailable'
+  | 'store_record_corrupt' | 'store_read_error';
+
+function closureDiagnostic(stage: ClosureDiagnosticStage, httpStatus?: number): void {
+  // Only fixed internal stages and a numeric provider status may reach logs.
+  try {
+    console.info(JSON.stringify({ component: 'channel-closure', stage,
+      ...(httpStatus === undefined ? {} : { httpStatus }) }));
+  } catch { /* Diagnostics cannot change the response. */ }
+}
+
 /** The mailbox owns enumeration; the adapter accepts only a typed aggregate receipt. */
 export function createProtectedClosureConnector(input: Readonly<{
   store: ControlStore; principal: AuthPrincipal; clock: () => number; authoritySecret: string;
@@ -41,7 +52,10 @@ export function registerClosureHandlers(): readonly RouteRegistration[] {
     methods: ['GET', 'POST'],
     async handle(request) {
       const human = await loadHuman(request);
-      if (human === null || !human.messaging) return new Response(JSON.stringify({ code: 'feature_unavailable' }), { status: 503 });
+      if (human === null || !human.messaging) {
+        closureDiagnostic('feature_unavailable');
+        return new Response(JSON.stringify({ code: 'feature_unavailable' }), { status: 503 });
+      }
       if (!store || !homeserverOrigin || !authoritySecret) {
         const env = readHumanServerEnv();
         const storeFor = (name: string) => getStore(name) as unknown as BlobsStoreLike;
@@ -49,6 +63,7 @@ export function registerClosureHandlers(): readonly RouteRegistration[] {
           records: storeFor(`${env.controlStateNamespace}-records`),
           operations: storeFor(`${env.controlStateNamespace}-operations`),
           clock: () => Date.now(),
+          diagnostic: entry => closureDiagnostic(`store_${entry.stage}`, entry.httpStatus),
         });
         homeserverOrigin = env.publicHomeserverOrigin;
         authoritySecret = env.invitationHmacSecret;
@@ -58,6 +73,7 @@ export function registerClosureHandlers(): readonly RouteRegistration[] {
       const activeSecret = authoritySecret;
       const handlers = createChannelClosureHandlers({
         auth: human.auth,
+        diagnostic: stage => closureDiagnostic(stage),
         cleanupRequests: principal => createOwnerCleanupRequests(activeStore, principal.ownerId).list(),
         service: principal => createChannelClosureService({
           principal,

@@ -8,11 +8,16 @@ type Dependencies = Readonly<{
   auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
   service(principal: AuthPrincipal): ClosurePort;
   cleanupRequests?(principal: AuthPrincipal): Promise<Readonly<{ kind: 'ok'; requests: readonly ClosureRequest[] }> | Readonly<{ kind: 'unavailable' }>>;
+  diagnostic?(stage: 'authentication_unavailable' | 'cleanup_unavailable'): void;
 }>;
 
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const json = (status: number, body: object) => new Response(JSON.stringify(body), { status, headers: HEADERS });
 const failure = (status: number, code: string) => json(status, { code });
+
+function diagnose(deps: Dependencies, stage: 'authentication_unavailable' | 'cleanup_unavailable'): void {
+  try { deps.diagnostic?.(stage); } catch { /* Diagnostics cannot change the response. */ }
+}
 
 function denied(result: Exclude<MutationAuthorization, { kind: 'authorized' }>): Response {
   if (result.kind === 'unavailable') return failure(503, 'unavailable');
@@ -57,13 +62,17 @@ export function createChannelClosureHandlers(deps: Dependencies): readonly Route
       }
 
       const authentication = await deps.auth.authenticateRequest(request).catch(() => ({ kind: 'unavailable' as const }));
-      if (authentication.kind === 'unavailable') return failure(503, 'unavailable');
+      if (authentication.kind === 'unavailable') {
+        diagnose(deps, 'authentication_unavailable');
+        return failure(503, 'unavailable');
+      }
       if (authentication.kind !== 'authenticated') return failure(401, 'authentication_required');
       const query = new URL(request.url).searchParams;
       const operationId = query.get('operationId');
       const room = query.get('roomId');
       if (query.size === 1 && query.get('cleanup') === '1') {
         const result = await deps.cleanupRequests?.(authentication.context.principal);
+        if (result?.kind !== 'ok') diagnose(deps, 'cleanup_unavailable');
         return result?.kind === 'ok' ? json(200, { kind: 'ok', value: result.requests }) : failure(503, 'unavailable');
       }
       if (query.size !== 1 || (operationId === null && room === null)) return failure(400, 'invalid_request');
