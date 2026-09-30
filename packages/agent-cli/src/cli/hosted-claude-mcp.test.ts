@@ -51,6 +51,39 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('keeps the public refusal generic while reporting a fixed local readiness code', async () => {
+    const diagnostics: string[] = [];
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null,
+          readiness: { phase: 'degraded', errorCode: 'subscription_offline', prerequisites: {
+            storage: 'ready', device: 'ready', bootstrap: 'ready', subscription: 'offline',
+            controls: 'blocked', harness: 'unknown', dispatch: 'blocked', review: 'blocked', recovery: 'unknown',
+          } } } as const; } },
+      inbox: async () => { throw new Error('unbound'); }, async close() {},
+    });
+    const results = await serve(factory, [request(1, 'khala_status')], SESSION, undefined,
+      chunk => diagnostics.push(chunk));
+    expect(results[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+    expect(diagnostics.join('')).toBe('{"component":"hosted_session","stage":"connector_unready",'
+      + '"result":"unavailable","errorCode":"subscription_offline"}\n');
+  });
+
+  it('reports a fixed session mismatch without exposing either session identifier', async () => {
+    const diagnostics: string[] = [];
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => 'private-current-session',
+        async status() { return { v: 1, connected: true, binding,
+          route: 'manual_mcp', sourceCursor: null }; } },
+      inbox: async () => { throw new Error('unbound'); }, async close() {},
+    });
+    const results = await serve(factory, [request(1, 'khala_status')], SESSION, undefined,
+      chunk => diagnostics.push(chunk));
+    expect(results[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+    expect(diagnostics.join('')).toBe('{"component":"hosted_session","stage":"session_mismatch",'
+      + '"result":"unavailable"}\n');
+  });
+
   it('reports a hosted session open failure without logging private exception details', async () => {
     const diagnostics: string[] = [];
     const factory: NonNullable<CliDependencies['hostedSession']> = async () => {
