@@ -17,3 +17,13 @@ it('retains only fixed local stages for an MCP process whose stderr is hidden', 
   expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
 });
+
+it('persists a hosted open storage code without error text or identifiers', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'state_storage',
+    result: 'unavailable', errorCode: 'locked' });
+  const file = path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`);
+  expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
+    component: 'hosted_open', stage: 'state_storage', result: 'unavailable', errorCode: 'locked',
+  });
+});

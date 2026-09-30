@@ -11,6 +11,7 @@ import {
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding, type UnverifiedReleasedJob } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { STORAGE_ERROR_CODES, StorageError } from '@khala/connector/storage/errors';
 import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
@@ -70,6 +71,14 @@ export function supportedBrowserVersion(output: string): boolean {
   return match !== null && Number(match[1]) >= 150 && Number(match[1]) <= 153;
 }
 
+export type HostedOpenDiagnostic = Readonly<{
+  stage: 'browser_preflight' | 'state_storage' | 'trust_storage' | 'bootstrap_persistence'
+    | 'binding_recovery' | 'device_resume' | 'intake_start' | 'subscription_start'
+    | 'review_resume' | 'connector_bootstrap';
+  result: 'unavailable';
+  errorCode?: (typeof STORAGE_ERROR_CODES)[number];
+}>;
+
 export function subscriptionDiagnostic(state: SubscriptionState) {
   if (state.kind === 'live') return null;
   if (state.kind === 'offline') return { prerequisite: 'offline' as const, errorCode: 'subscription_offline' as const };
@@ -95,9 +104,15 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: TInbox;
+  diagnostic?(event: HostedOpenDiagnostic): void;
   /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
   openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
+  const reportOpen = (stage: HostedOpenDiagnostic['stage'], error?: unknown) => {
+    const code = error instanceof StorageError && STORAGE_ERROR_CODES.includes(error.code) ? error.code : undefined;
+    try { input.diagnostic?.({ stage, result: 'unavailable', ...(code ? { errorCode: code } : {}) }); }
+    catch { /* Diagnostics cannot change startup behavior. */ }
+  };
   const origin = new URL(input.appOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== input.appOrigin || origin.username || origin.password) {
     throw new Error('production_origin_invalid');
@@ -122,21 +137,30 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       if (supportedBrowserVersion(version.stdout)) { chromiumExecutablePath = candidate; break; }
     } catch { /* Try the next installed executable. */ }
   }
-  if (!chromiumExecutablePath) throw new Error('chromium_unavailable_run_khala_setup');
+  if (!chromiumExecutablePath) {
+    reportOpen('browser_preflight');
+    throw new Error('chromium_unavailable_run_khala_setup');
+  }
   const sessionDirectory = productionSessionDirectory(input.stateDirectory, input.session);
   const stateDirectory = path.join(sessionDirectory, 'state');
   const markerFile = path.join(sessionDirectory, 'current-binding.json');
   const admissionFile = (operationId: string) => path.join(sessionDirectory,
     `channel-access-${createHash('sha256').update(operationId).digest('hex')}.json`);
-  await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(sessionDirectory, { recursive: true, mode: 0o700 })
+    .catch(error => { reportOpen('state_storage', error); throw error; });
   let mode: 'create' | 'existing';
   try { mode = (await stat(stateDirectory)).isDirectory() ? 'existing' : 'create'; }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      reportOpen('state_storage', error);
+      throw error;
+    }
     mode = 'create';
   }
-  const storage = await openConnectorStorage({ directory: stateDirectory, mode, limits: productionLimits() });
+  const storage = await openConnectorStorage({ directory: stateDirectory, mode, limits: productionLimits() })
+    .catch(error => { reportOpen('state_storage', error); throw error; });
   const trust = await openTrustStateStore({ directory: stateDirectory, mode }).catch(async error => {
+    reportOpen('trust_storage', error);
     await storage.close();
     throw error;
   });
@@ -249,6 +273,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let remoteDenied = false;
   let deliveryStopped = false;
   let activeSends = 0;
+  let openStage: HostedOpenDiagnostic['stage'] = 'bootstrap_persistence';
   const sendWaiters: Array<() => void> = [];
 
   async function quiesceDelivery(): Promise<void> {
@@ -383,6 +408,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     manualRoute = next.harness === 'proof-key' && (input.session.harness === 'claude'
       || input.session.harness === 'codex' && inspected?.support !== 'tested');
     await projectionFor(next.bindingId, next.generation).seedLegacy(readOrderedPendingReferences(storage, next));
+    openStage = 'subscription_start';
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,
@@ -431,6 +457,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           return [session.ownerParticipantId as never, next.agentParticipantId];
         } },
       });
+      openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
     } else if (harness) {
       const activeHarness = harness;
@@ -471,6 +498,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           return [session.ownerParticipantId as never, next.agentParticipantId];
         } },
       });
+      openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
     }
     schedulePoll();
@@ -528,10 +556,12 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   });
 
   try {
+    openStage = 'bootstrap_persistence';
     const persistence = await createBootstrapPersistence(storage);
     signer = persistence.signer;
     // A hosted binding records the approved proof-key principal. Recover the
     // persisted signer before checking that principal against the marker.
+    openStage = 'binding_recovery';
     binding = await readBinding(true);
     if (binding) {
       const heldBinding = binding;
@@ -562,11 +592,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         });
         scheduleCleanup();
       } else {
+        openStage = 'device_resume';
         const status = await matrix.devices.status(heldBinding.deviceId);
         if (status !== 'ready') throw new Error('matrix_device_not_ready');
+        openStage = 'intake_start';
         await startIntake(heldBinding);
       }
     }
+    openStage = 'connector_bootstrap';
     const { operations } = persistence;
     const ports: BootstrapPorts = {
       discovery: createDiscovery({ trustedOrigins: [input.appOrigin], hostedOrigin: input.appOrigin }),
@@ -778,6 +811,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       },
     };
   } catch (error) {
+    reportOpen(openStage, error);
     const active = subscription as SubscriptionHandle | null;
     const activeMailbox = mailbox as ReturnType<typeof createProductionOwnerMailbox> | null;
     const activePoll = polling as Promise<void> | null;

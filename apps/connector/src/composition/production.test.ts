@@ -37,6 +37,26 @@ describe('installed hosted connector composition', () => {
     if (getgid) Object.defineProperty(process, 'getgid', getgid);
   });
 
+  it('reports only a fixed storage stage and code when a second connector cannot open', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-open-diagnostic-'));
+    const diagnostics: unknown[] = [];
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
+      chromiumExecutablePath, browserBundleDirectory: path.join(directory, 'unused-browser'),
+      session: { harness: 'claude', sessionId: 'owned-session', workdir: '/project' },
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined, openInbox: async () => undefined,
+      diagnostic: (event: unknown) => diagnostics.push(event),
+    };
+    try {
+      const first = await openProductionConnector(input);
+      try {
+        await expect(openProductionConnector(input)).rejects.toThrow();
+        expect(diagnostics).toEqual([{ stage: 'state_storage', result: 'unavailable', errorCode: 'locked' }]);
+      } finally { await first.close(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   it.each([
     ['claude', false], ['codex', false], ['claude', true],
   ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (transient outage: %s)', async (harness, transientOutage) => {

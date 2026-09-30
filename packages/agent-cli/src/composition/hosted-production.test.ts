@@ -10,6 +10,24 @@ import type { AgentClientPort } from '../cli/types.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
+  it('forwards a redacted connector-open stage to the hosted diagnostic sink', async () => {
+    const diagnostics: unknown[] = [];
+    const factory = hostedSessionFactory({
+      openConnector: async input => {
+        input.diagnostic?.({ stage: 'device_resume', result: 'unavailable' });
+        throw new Error('private device and session detail');
+      },
+      stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
+      browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
+      readVersion: async () => null, inspectHooks: async () => null,
+      resolveCodexExecutable: async () => null, openBrowser: async () => undefined,
+      openInbox: async () => { throw new Error('unused inbox'); },
+      diagnostic: event => diagnostics.push(event),
+    });
+    await expect(factory(SESSION)).rejects.toThrow();
+    expect(diagnostics).toEqual([{ component: 'hosted_open', stage: 'device_resume', result: 'unavailable' }]);
+  });
+
   it('reports a fixed post-access decode stage without request identifiers', async () => {
     const origin = 'https://khala.aiur.team';
     const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
