@@ -10,6 +10,21 @@ const controller: ChannelController = {
 };
 
 describe('ChannelScreen', () => {
+  it('keeps Matrix routing IDs out of participant names', () => {
+    const agentController: ChannelController = {
+      ...controller,
+      getSnapshot: () => ({ phase: 'ready', agents: [{ participantId: 'agent_1' as never,
+        displayName: '@khala_a_test:matrix.example.test', ownerDisplayName: 'Mira', connection: 'unknown',
+        routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
+        installCommand: null, installCommandError: false }] }),
+    };
+    const html = renderToStaticMarkup(<ChannelScreen title="Release channel" viewerName="@mira:matrix.example.test"
+      controller={agentController} renderTimeline={() => null} />);
+    expect(html).not.toContain('@khala_a_test:matrix.example.test');
+    expect(html).not.toContain('@mira:matrix.example.test');
+    expect(html).toContain('Agent');
+  });
+
   it('composes every feature through an injected render slot inside hosted shell content', () => {
     const html = renderToStaticMarkup(
       <ChannelScreen
