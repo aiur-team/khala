@@ -35,9 +35,9 @@ provider tool-registration failure. No shell connect or browser invite visit
 substitutes for a native call.
 
 This ticket cannot assert a live read/send outcome until Join-Test performs
-that exact model-visible call after resuming. [Official OpenAI plugin session
-documentation](https://developers.openai.com/api/docs/guides/agents-api/tools/plugins)
-also says existing sessions do not reload tools; the installed Codex CLI's
-`mcp` command surface provides no reload operation. The source-backed and
-observed conclusion is a current-session tool-registration limitation. No
-hosted authorization result exists for this session yet.
+that exact model-visible call after resuming. The local-session reload limit is
+an inference from Join-Test's missing tools despite an enabled on-disk entry,
+the fresh-session model-visible proof, and the installed Codex 0.159.2 `mcp`
+command surface, which provides no reload operation. These observations do
+not establish that every Codex interface lacks hot reload. No hosted
+authorization result exists for Join-Test's session yet.
