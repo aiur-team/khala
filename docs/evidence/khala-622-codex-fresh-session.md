@@ -1,16 +1,16 @@
 # Codex 0.159.2 fresh-session MCP and discovery proof
 
-2026-09-30, Linux x86_64. The tested source commit was
+2026-09-30, Linux x86_64. The original live-session CLI was built from
 `ba727b14806ee0663fa740928ac4a36f4c7aef9d` (merged PR #621). The
 installed Codex executable was `@openai/codex` 0.159.2 (`codex-cli 0.159.2`).
 The globally installed `@aiur/khala` reported package version 0.1.0 but had
 an older setup bundle: its disposable-home dry run classified Codex 0.159.2 as
-unsupported. This proof instead built the `@aiur/khala` 0.1.0 CLI from the
-tested commit and installed its payload into a disposable home. The model
+unsupported. The live-session proof instead built the `@aiur/khala` 0.1.0 CLI
+from that commit and installed its payload into a disposable home. The model
 turn used existing Codex authentication; no credential value was recorded.
 No production session, channel, invite, or Khala capability was used.
 
-The initial source-built dry run also classified Codex as unsupported while
+The original source-built dry run also classified Codex as unsupported while
 the explicit disposable `CODEX_HOME` path did not exist: `codex mcp list
 --json` itself exits before reading configuration in that condition. Creating
 the empty directory made the native probe succeed. The confirmed setup then
@@ -23,6 +23,16 @@ protocol `2025-03-26`, server `khala-agent-cli`, and all 11 intended tools:
 `khala_list_agents`, `khala_request_channel_access`,
 `khala_channel_access_status`, `khala_create_channel`,
 `khala_channel_create_status`, `khala_pair`, and `khala_connect`.
+
+PR #623 repairs the missing-home probe for certified versions. A second
+source-built CLI run began with `CODEX_HOME` absent: dry run planned skill,
+hooks, and MCP entry without creating the directory; confirmation applied all
+three; Codex then listed Khala as an enabled MCP server. The host's ambient
+`codex` launcher resolves its npm package before invoking Codex. Its first
+cold-cache version probe exceeded Khala's bounded probe time and reported
+`unknown`; after that launcher cache warmed, the same fresh-home run reported
+0.159.2 and exercised the repaired path. This wrapper timing is separate from
+Codex's own missing-home refusal.
 
 A newly started real `codex exec` session under this home exposed
 `mcp__khala__khala_read` to the model. The model called it through Codex's
@@ -41,10 +51,17 @@ service in the isolated home. MCP registration and launch worked; the
 model-visible call reached Khala's native route. No internal join, successful
 read/send, hook execution, or hosted access is claimed. Those remain with
 #523 after the hosted request path is ready. The older globally installed
-Khala bundle must be replaced with the #621 build before the same setup works
-through the ambient `khala` command.
+Khala bundle must be replaced with a build containing the reviewed fresh-home
+repair from PR #623 before setup works through the ambient `khala` command
+when `CODEX_HOME` is absent.
 
-Focused verification on the repository's pinned Node 22.23.2: 41 agent-cli
+The original PR code changes were checked at `1e190c4aea2be9ad6c9e4220690bb235c876fa90`,
+separately from the `ba727b1` CLI used for the live session. The fresh-home
+repair began at `1f756062a292b45a2497a362a3abf1e135036187` and was
+narrowed at `18105a471f88c5a5d0cd55918b2be5975be70f41`: only Codex's
+specific missing-home diagnostic permits the absent-home fallback; timeouts
+and other probe failures remain unsupported. Focused verification on the
+repository's pinned Node 22.23.2 at that final code revision: 55 agent-cli
 tests passed, including the opt-in installed-Codex setup contract; seven
 agent-skill tests passed. The installed-Codex test previously spent its
 deadline repeatedly snapshotting Codex-owned cache files after removal. It
