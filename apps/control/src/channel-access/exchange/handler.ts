@@ -60,6 +60,7 @@ export type GrantExchangeHandlerDependencies = Readonly<{
   /** Request-scoped exchange for one authenticated connector. */
   exchangeFor(connector: Readonly<{ sessionFingerprint: string }>): ConnectorGrantExchangePort;
   clock: TrustedClock;
+  diagnostic?: (stage: 'connector_auth' | 'request_validation' | 'exchange_result' | 'envelope_decode') => void;
 }>;
 
 const BINDING_CONFLICTS: ReadonlySet<GrantExchangeRejection> = new Set([
@@ -68,11 +69,18 @@ const BINDING_CONFLICTS: ReadonlySet<GrantExchangeRejection> = new Set([
 ]);
 
 export function createGrantExchangeHandler(deps: GrantExchangeHandlerDependencies): RouteRegistration {
+  function report(stage: 'connector_auth' | 'request_validation' | 'exchange_result' | 'envelope_decode'): void {
+    try { deps.diagnostic?.(stage); } catch { /* diagnostic sink failed */ }
+  }
+
   async function handle(request: Request): Promise<Response> {
     const operation = readOperation(request);
     if (operation === null) return rejected(400, 'invalid_request');
     const auth = await safeCall(() => deps.authenticateConnector(request));
-    if (auth === null || auth.kind === 'unavailable') return unavailable();
+    if (auth === null || auth.kind === 'unavailable') {
+      report('connector_auth');
+      return unavailable();
+    }
     if (auth.kind === 'rejected') return rejected(auth.code === 'auth_required' ? 401 : 403, auth.code);
     const body = decodeGrantExchangeRequest(await readJson(request));
     if (!body.ok) return rejected(400, 'invalid_request');
@@ -86,12 +94,19 @@ export function createGrantExchangeHandler(deps: GrantExchangeHandlerDependencie
       proofKeyThumbprint: connector.proofKeyThumbprint,
       nowMs: deps.clock(),
     });
-    if (!validated.ok) return mapRejection(validated.reason);
+    if (!validated.ok) {
+      if (validated.reason === 'crypto_unavailable') report('request_validation');
+      return mapRejection(validated.reason);
+    }
     const result = await safeCall(() => deps.exchangeFor({ sessionFingerprint: connector.sessionFingerprint })
       .exchange(validated.request, { signal: request.signal }));
-    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
+    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') {
+      report('exchange_result');
+      return unavailable();
+    }
     if (result.kind === 'rejected') return mapRejection(result.code);
     const envelope = decodeSealedGrantEnvelope(result.value);
+    if (!envelope.ok) report('envelope_decode');
     return envelope.ok ? json(200, envelope.value) : unavailable();
   }
 
@@ -167,7 +182,7 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
       .resume(body, { signal: request.signal }));
     if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
     if (result.kind === 'rejected') return mapRejection(result.code);
-    const { binding, capability } = result.value;
+    const { binding, capability, matrixSession } = result.value;
     return json(200, {
       binding,
       adapter_capability: {
@@ -178,6 +193,7 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
         generation: binding.generation,
         expires_at: capability.expiresAt,
       },
+      matrix_session: matrixSession,
     });
   }
 
@@ -189,16 +205,18 @@ export function createChannelAccessResumeHandler(deps: Readonly<{
 }
 
 const RESUME_FIELDS = [
-  'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'bindingId', 'proofKeyThumbprint',
+  'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'proofKeyThumbprint',
 ] as const;
 
 function readResume(value: unknown): ChannelAccessResumeRequest | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
-  if (Object.keys(r).length !== RESUME_FIELDS.length || !RESUME_FIELDS.every(field => Object.hasOwn(r, field))) return null;
+  if (!RESUME_FIELDS.every(field => Object.hasOwn(r, field))
+    || Object.keys(r).some(field => field !== 'bindingId' && !(RESUME_FIELDS as readonly string[]).includes(field))) return null;
   const text = (field: string) => typeof r[field] === 'string' && (r[field] as string).length > 0 && (r[field] as string).length <= 512;
   if (r.v !== 1 || !Number.isSafeInteger(r.sessionGeneration) || (r.sessionGeneration as number) < 0
-    || !['operationId', 'requester', 'origin', 'deviceId', 'bindingId', 'proofKeyThumbprint'].every(text)) return null;
+    || !['operationId', 'requester', 'origin', 'deviceId', 'proofKeyThumbprint'].every(text)
+    || (Object.hasOwn(r, 'bindingId') && !text('bindingId'))) return null;
   return r as unknown as ChannelAccessResumeRequest;
 }
 

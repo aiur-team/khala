@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { AgentPresencePanel } from './AgentPresencePanel';
+import type { ReactNode } from 'react';
 import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ThemeChoice } from '../../shell/types';
-import { AgentPresencePanel } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
-import { ChatThread, ConversationLayout, ParticipantDetail } from '../../ui/conversation';
+import { ChatThread, ConversationLayout } from '../../ui/conversation';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 
 export interface ChannelScreenProps {
@@ -18,10 +18,9 @@ export interface ChannelScreenProps {
   renameAgent?: (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
   renameScope?: string;
   renderTimeline: () => ReactNode;
-  renderReview: () => ReactNode;
-  renderControls: () => ReactNode;
   renderShare?: () => ReactNode;
-  renderList?: () => ReactNode;
+  renderHeaderActions?: () => ReactNode;
+  showPresence?: boolean;
   onBack?: () => void;
   embedded?: boolean;
 }
@@ -30,33 +29,14 @@ export interface ChannelScreenProps {
 export type RoomScreenProps = ChannelScreenProps;
 
 export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, currentNames, namesPending, renameAgent, renameScope,
-  renderTimeline, renderReview, renderControls, renderShare, renderList, onBack, embedded = false }: ChannelScreenProps) {
-  const [detailOpen, setDetailOpen] = useState(false);
+  renderTimeline, renderShare, renderHeaderActions, onBack, embedded = false }: ChannelScreenProps) {
   const content = (
-      <KhalaPageFrame model={{ title, ...(description ? { description } : {}), labelledBy: 'khala-channel-title' }}>
-        {renderList ? <ConversationLayout inThread list={renderList()} thread={<ChatThread title={title} onBack={onBack ?? (() => {})}>
-          <div className="conversation-thread__actions"><span>{description}</span>{renderShare?.()}<button type="button" onClick={() => setDetailOpen(true)}>Details and controls</button></div>
+    <div className="channel-page"><KhalaPageFrame model={{ title, labelledBy: 'khala-channel-title' }}>
+        <ConversationLayout inThread thread={<ChatThread title={title} {...(onBack ? { onBack } : {})}>
+          {description || renameAgent || renderHeaderActions || renderShare ? <div className="conversation-thread__actions">{description ? <span>{description}</span> : null}{renameAgent ? <details className="channel-agent-names"><summary>Agent names</summary><AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} renameAgent={renameAgent} /></details> : null}{renderHeaderActions?.()}{renderShare?.()}</div> : null}
           {renderTimeline()}
-        </ChatThread>} detail={detailOpen ? <ParticipantDetail name={title} onClose={() => setDetailOpen(false)}>
-          <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})}
-            {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})}
-            {...(renameAgent ? { renameAgent } : {})} {...(renameScope ? { renameScope } : {})} />{renderControls()}{renderReview()}
-        </ParticipantDetail> : undefined} /> : <div className="channel-screen">
-          <aside className="channel-screen__presence" aria-label="Channel agents">
-            <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})}
-              {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})}
-              {...(renameAgent ? { renameAgent } : {})} {...(renameScope ? { renameScope } : {})} />
-            {renderShare?.()}
-            <div className="channel-screen__controls">{renderControls()}</div>
-          </aside>
-          <section className="channel-screen__conversation" aria-label="Channel conversation">
-            {renderTimeline()}
-          </section>
-          <aside className="channel-screen__review" aria-label="Recipient review">
-            {renderReview()}
-          </aside>
-        </div>}
-      </KhalaPageFrame>
+        </ChatThread>} />
+      </KhalaPageFrame></div>
   );
   return embedded ? content : (
     <AiurShell

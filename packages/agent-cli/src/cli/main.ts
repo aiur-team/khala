@@ -13,9 +13,12 @@ import { isClaudeMcpEntry } from '../composition/claude-mcp.js';
 import { createClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
 import { installedHostedSession } from '../composition/hosted-main.js';
+import { hostedAppOrigin } from '../composition/hosted-production.js';
 import { sessionGrants } from '../composition/session-grant.js';
 import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
+import type { AgentClientPort, CliDependencies } from './types.js';
+import { validIdentifier } from './validation.js';
 import { setupEnvironment } from '../setup/environment.js';
 import { resolveSetupPaths } from '../setup/paths.js';
 import type { SetupExecute } from '../setup/plan.js';
@@ -23,6 +26,33 @@ import { PAYLOAD_DIRECTORY } from '../setup/payload.js';
 import { executeSetupPlan } from '../setup/transaction.js';
 
 export { setupEnvironment };
+
+/** Shell commands use the native Codex label only as a selector; the connector owns authority. */
+export function nativeShellCreateClient(sessionId: string | undefined,
+  hostedSession: NonNullable<CliDependencies['hostedSession']>): Readonly<{
+  client: AgentClientPort; close(): Promise<void>;
+}> {
+  const opened: { current: Awaited<ReturnType<typeof hostedSession>> | null } = { current: null };
+  const select = async () => {
+    if (!validIdentifier(sessionId)) return null;
+    opened.current ??= await hostedSession({ harness: 'codex', sessionId });
+    return opened.current.client;
+  };
+  return {
+    client: { ...createUnavailableClient(),
+      async requestChannelCreate(input, signal) {
+        if (!input.target) return { kind: 'refused', code: 'invalid_request' };
+        const selected = await select();
+        return selected?.requestChannelCreate?.(input, signal) ?? { kind: 'refused', code: 'discovery_required' };
+      },
+      async channelCreateStatus(input, signal) {
+        const selected = await select();
+        return selected?.channelCreateStatus?.(input, signal) ?? { kind: 'refused', code: 'discovery_required' };
+      },
+    },
+    async close() { await opened.current?.close(); },
+  };
+}
 
 /** Applies a confirmed plan through the transactional executor, rooted at the same HOME/XDG/CODEX_HOME/PATH. */
 export function setupExecute(env: NodeJS.ProcessEnv): SetupExecute {
@@ -65,18 +95,22 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
     ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
   });
+  const hostedSession = installedHostedSession({
+    openConnector: openProductionConnector, environment: process.env, stateDirectory,
+    distDirectory, workdir: process.cwd(), openInbox: openGenerationInbox,
+  });
+  const shell = nativeShellCreateClient(process.env.CODEX_THREAD_ID, hostedSession);
   try {
     return await runCli(argv, {
-      client: createUnavailableClient(),
-      // A shell invocation has no provider-named session; hosted calls are scoped separately below.
+      client: shell.client,
+      // Codex exports its thread label to agent commands. The connector still
+      // inspects this exact session and requires owner approval of its key.
       // Under `--internal-descriptor` the descriptor client supplies its own binding's mode control.
       listeningMode: null,
       // An internal descriptor's delivering inbox supplies the recorder that writes its receipts.
       inbox: openGenerationInbox,
-      hostedSession: installedHostedSession({
-        openConnector: openProductionConnector, environment: process.env, stateDirectory,
-        distDirectory, workdir: process.cwd(), openInbox: openGenerationInbox,
-      }),
+      hostedSession,
+      hostedOrigin: hostedAppOrigin(process.env.KHALA_APP_ORIGIN),
       hostedBindingPresent: session => hasProductionBinding(path.join(stateDirectory, 'hosted'),
         { ...session, workdir: path.resolve(process.cwd()) }),
       ...(setup === undefined ? {} : { setup }),
@@ -114,6 +148,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           descriptorPath: sessionGrants(internalRoot)({ harness: 'codex', sessionId }) });
       },
     });
-  } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+  } finally {
+    await shell.close();
+    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
+  }
 }
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

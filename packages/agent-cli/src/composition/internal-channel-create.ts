@@ -23,6 +23,7 @@ function project(result: InternalDiscoveryCallResult): ChannelAccessResult {
 export function createInternalChannelCreate(client: InternalDiscoveryClient): ChannelCreatePort {
   return {
     async requestChannelCreate(input, signal) {
+      if (input.target) return { kind: 'refused', code: 'invalid_request' };
       if (input.origin !== null) return { kind: 'refused', code: 'untrusted_origin' };
       return project(await client.requestCreate({ operationId: input.operationId, proposedTitle: input.title }, signal));
     },

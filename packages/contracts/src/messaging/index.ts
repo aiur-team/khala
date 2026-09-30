@@ -39,6 +39,10 @@ export {
   decodeAdmission, decodeInviteState, decodeShareGrant,
 } from './admission';
 export {
+  type AgentChannelLinkResult, type HumanChannelLinkResult, type PersonalChannelLinkResult,
+  decodeAgentChannelLinkResult, decodeHumanChannelLinkResult, decodePersonalChannelLinkResult,
+} from './channel-link';
+export {
   type RevocationPort, type RevocationProgress, type RevocationRejection, type RevocationRequest, type RevocationSubject,
   type RevocationTarget,
   decodeRevocationProgress, decodeRevocationRequest,

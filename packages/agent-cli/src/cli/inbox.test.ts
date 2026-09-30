@@ -13,6 +13,7 @@ import type { InboxDelivery } from './types.js';
 
 const roots: string[] = [];
 const consumers: InboxConsumer[] = [];
+const bunBinary = process.env.KHALA_BUN_BIN ?? 'bun';
 const bindingId = 'binding-1' as BindingId;
 const payload = new TextEncoder().encode('released payload');
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -67,6 +68,26 @@ afterEach(async () => {
 });
 
 describe('durable inbox', () => {
+  it('keeps current name metadata outside timeline and survives restart without consuming a batch token', async () => {
+    const directory = stateDirectory();
+    const options = { stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 };
+    const first = await openInbox(options);
+    const names = [{ participantId: 'agent-one', name: 'Dolan', sourceEventId: '$rename-one', eventId: '$snapshot-one' }];
+    await first.setCurrentNames!(names);
+    const restarted = await openInbox(options);
+    const consumer = await restarted.acquireCallConsumer!();
+    consumers.push(consumer);
+    expect(await consumer.readBatch({ maxBytes: 1024 })).toBeNull();
+    expect(await consumer.readCurrentNames!()).toEqual(names);
+    await restarted.enqueue(delivery());
+    const batch = await consumer.readBatch({ maxBytes: 1024 });
+    expect(batch?.items).toHaveLength(1);
+    expect(batch?.currentNames).toEqual(names);
+    await restarted.setCurrentNames!([{ ...names[0]!, name: 'Scout', sourceEventId: '$rename-two', eventId: '$snapshot-two' }]);
+    expect((await consumer.readBatch({ maxBytes: 1024 }))?.currentNames?.[0]?.name).toBe('Scout');
+    expect((await consumer.readBatch({ maxBytes: 1024 }))?.token).toBe(batch?.token);
+  });
+
   it('appends once, decodes the payload and deduplicates a release', async () => {
     const inbox = await openInbox({ stateDirectory: stateDirectory(), bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
 
@@ -219,6 +240,25 @@ describe('durable inbox', () => {
     await listener.release();
     expect(fs.existsSync(path.join(bindingDirectory(directory), 'listener.lock'))).toBe(true);
   });
+
+  it.skipIf(spawnSync(bunBinary, ['--version'], { encoding: 'utf8' }).status !== 0)(
+    'opens the inbox listener under the OpenCode Bun runtime', () => {
+      const directory = stateDirectory();
+      const module = new URL('./inbox.ts', import.meta.url).href;
+      const child = spawnSync(bunBinary, ['--conditions=khala-source', '-e',
+        `import(${JSON.stringify(module)}).then(async ({openInbox}) => {`
+        + `const inbox = await openInbox({stateDirectory:${JSON.stringify(directory)},bindingId:'binding-1',`
+        + `generation:3,maxPayloadBytes:1024,maxSelectionEvents:32});`
+        + `const listener=await inbox.acquireListener();`
+        + `try{await inbox.acquireCallConsumer();throw Error('second consumer acquired')}`
+        + `catch(error){if(error.code!=='listener_busy')throw error}`
+        + `process.stdout.write('LISTENING\\n');await listener.release();})`,
+      ], { encoding: 'utf8', timeout: 5_000 });
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toContain('LISTENING');
+      expect(fs.existsSync(path.join(bindingDirectory(directory), 'listener.lock'))).toBe(true);
+    },
+  );
 
   it('releases a socketless kernel lease after a killed process across process boundaries', async () => {
     const directory = stateDirectory();

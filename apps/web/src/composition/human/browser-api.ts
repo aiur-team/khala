@@ -9,6 +9,8 @@ import {
   decodeParticipantView,
   decodeRevocationProgress,
   decodeShareGrant,
+  decodeHumanChannelLinkResult,
+  decodePersonalChannelLinkResult,
   isSameOriginReturnPath,
   sameProviderIdentity,
   outcomeUnknown,
@@ -35,11 +37,15 @@ import type {
   MuteRejection,
 } from '../../features/channel-access/ports';
 import type { BrowserRevocation } from '../recovery/browser-port';
+import { parsePublicOrigin } from './hosted-config';
+import type { HumanChannelLinks } from './channel-links';
 
 const ME_PATH = '/api/human/me';
 const LOGIN_PATH = '/api/human/auth/login';
 const LOGOUT_PATH = '/api/human/auth/logout';
 const SHARE_PATH = '/api/human/invitations/share';
+const LINK_RESOLVE_PATH = '/api/human/channel-link/resolve';
+const LINK_PERSONAL_PATH = '/api/human/channel-link/personal';
 const INSPECT_PATH = '/api/human/invitations/inspect';
 const ADMIT_PATH = '/api/human/invitations/admit';
 const MATRIX_SESSION_PATH = '/api/human/messaging/session';
@@ -67,6 +73,7 @@ type Fetch = typeof globalThis.fetch;
 export type HumanBrowserApiOptions = Readonly<{
   origin: string;
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   limits: ContentLimits;
   fetch?: Fetch;
   timeoutMs?: number;
@@ -77,6 +84,7 @@ export type HumanBrowserApi = Readonly<{
   reviewCsrf(): Promise<string | null>;
   identity: IdentityPort;
   admission: AdmissionPort;
+  channelLinks: HumanChannelLinks;
   credentials: CredentialSource;
   participants: Readonly<{
     resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null>;
@@ -90,13 +98,12 @@ export type HumanBrowserApi = Readonly<{
   roomSend: BrowserSendFence;
 }>;
 
-function exactHttpsOrigin(value: string): string {
-  const parsed = new URL(value);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.origin !== value
-    || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
+  const parsed = parsePublicOrigin(value, allowInsecureLoopback);
+  if (parsed !== value) {
     throw new Error('human browser API origin must be an exact https origin');
   }
-  return parsed.origin;
+  return parsed;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -146,8 +153,8 @@ async function failedOperation<T>(response: Response, operationId: string): Prom
  * values remain unavailable rather than entering feature state.
  */
 export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBrowserApi {
-  const origin = exactHttpsOrigin(options.origin);
-  const configuredHomeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
+  const origin = exactHttpsOrigin(options.origin, options.allowInsecureLoopback);
+  const configuredHomeserverOrigin = exactHttpsOrigin(options.homeserverOrigin, options.allowInsecureLoopback);
   const request = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 10_000;
   let csrfToken: string | null = null;
@@ -301,7 +308,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         || typeof session.accessToken !== 'string' || session.accessToken.length === 0
         || session.publishedFingerprint !== null && typeof session.publishedFingerprint !== 'string') return { kind: 'unavailable' };
       let homeserverOrigin: string;
-      try { homeserverOrigin = exactHttpsOrigin(session.homeserverOrigin as string); } catch { return { kind: 'unavailable' }; }
+      try { homeserverOrigin = exactHttpsOrigin(session.homeserverOrigin as string, options.allowInsecureLoopback); } catch { return { kind: 'unavailable' }; }
       if (homeserverOrigin !== configuredHomeserverOrigin) return { kind: 'unavailable' };
       const deviceId = decodeDeviceId(session.deviceId);
       if (!deviceId.ok || deviceId.value !== decodedRequested.value) return { kind: 'unavailable' };
@@ -580,7 +587,20 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       return { operationId: body.hold.operationId, epoch: body.hold.epoch as number };
     },
   };
-  return { identity, admission, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
+  const channelLinks: HumanChannelLinks = {
+    async resolve(channelUrl, signal) {
+      const response = await mutation(LINK_RESOLVE_PATH, { v: 1, channelUrl }, signal);
+      const decoded = response && decodeHumanChannelLinkResult(await jsonObject(response));
+      return decoded?.ok ? decoded.value : { v: 1, kind: 'unavailable' };
+    },
+    async personal(roomId, signal) {
+      const response = await mutation(LINK_PERSONAL_PATH, { v: 1, roomId }, signal);
+      const decoded = response && decodePersonalChannelLinkResult(await jsonObject(response));
+      return decoded?.ok && (decoded.value.kind !== 'personal_link' || new URL(decoded.value.shareUrl).origin === origin)
+        ? decoded.value : { v: 1, kind: 'unavailable' };
+    },
+  };
+  return { identity, admission, channelLinks, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
     async reviewCsrf() {
       if (csrfToken !== null) return csrfToken;
       return (await readCurrent()).kind === 'signed_in' ? csrfToken : null;

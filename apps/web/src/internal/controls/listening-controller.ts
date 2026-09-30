@@ -45,7 +45,7 @@ export type ListeningController = Readonly<{
 const LABELS: Record<ListeningModeName, string> = { steer: 'Steer', sync: 'Sync', async: 'Async' };
 
 export const FAILURE_TEXT: Record<ListeningFailure, string> = {
-  unavailable: 'Khala could not reach the local server. Nothing changed. Try again.',
+  unavailable: 'Khala could not reach the local server. Agent state could not be confirmed. Try again.',
   session_ended: 'This local session has ended. Relaunch Khala from your terminal.',
   forbidden: 'This session cannot change that agent. It may have been stopped.',
   conflict: 'That agent changed while you were choosing. The current state is shown; choose again.',
@@ -69,7 +69,7 @@ export function createListeningController(port: ListeningPort, channelId: string
     let listed: Awaited<ReturnType<ListeningPort['list']>>;
     try { listed = await port.list(channelId); } catch { listed = { kind: 'failed', reason: 'unavailable' }; }
     if (listed.kind === 'listed') {
-      set({ phase: 'ready', bindings: listed.bindings });
+      set({ phase: 'ready', bindings: listed.bindings, failure: null });
       // A confirmation stays open only while the evidence it shows is still the binding's current claim.
       const open = view.confirmation;
       if (open !== null) {
@@ -84,7 +84,7 @@ export function createListeningController(port: ListeningPort, channelId: string
       }
     }
     // A failed reread keeps the last state the owner saw, but never claims it is current.
-    else set({ phase: view.phase === 'loading' ? 'failed' : view.phase, failure: listed.reason });
+    else set({ phase: view.phase === 'loading' ? 'failed' : view.phase, failure: listed.reason, notice: '' });
   }
 
   async function change(bindingId: string, run: (binding: ListeningBinding) => ReturnType<ListeningPort['setMode']>, done: (binding: ListeningBinding) => string) {

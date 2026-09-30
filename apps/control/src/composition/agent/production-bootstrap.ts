@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import {
-  createAgentBootstrapHandlers, type AdmissionPolicy, type AgentAdmissionPort, type AgentDeviceSessionPort,
+  createAgentBootstrapHandlers, type AdapterCapabilities, type AdmissionPolicy, type AgentAdmissionPort, type AgentDeviceSessionPort,
 } from '../../agent-bootstrap/handler';
 import { createAdmissionService } from '../../invitations';
+import { inviteFromShareLink } from '../../invitations/link';
 import {
   createProductionHumanRuntimeLoader,
   type ProductionHumanDependencies,
@@ -16,10 +17,12 @@ import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, cr
 import { createOwnerRevocationRoutes, createLazyOwnerRevocationRoutes } from '../human/revocation';
 import { createAgentRevocationCleanupRoutes, createCleanupProtocolPort, createLazyAgentRevocationCleanupRoutes } from '../human/revocation-cleanup';
 import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoomSendRoutes } from '../human/room-send-routes';
+import { localOidcEnabled } from '../../auth/local-oidc';
 import { createDeviceAdmissionRoutes, createLazyDeviceAdmissionRoutes } from '../human/device-admission-routes';
 import { senderIdFor } from '../human/room-send-fence';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { AGENT_PARTICIPANTS_PATH, createAgentParticipantDirectoryRoute } from './participant-directory';
+import type { PairingGrantPort } from '../../pairing/store';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -28,23 +31,13 @@ export type ProductionBootstrapDependencies = ProductionHumanDependencies & Read
   /** Tests may supply a controlled provider; production constructs the Matrix adapter. */
   agents?: AgentAdmissionPort;
   agentDeviceSession?: AgentDeviceSessionPort;
+  /** One-use channel-access grants from the hosted exchange. */
+  externalGrants?: PairingGrantPort;
   /** Explicit G-ADMISSION choice; there is deliberately no silent default. */
   admissionPolicy: AdmissionPolicy;
 }>;
 
-/** Parse only the canonical share URL, without accepting an arbitrary same-origin path. */
-export function inviteFromShareLink(url: URL, origin: string): string | null {
-  if (url.origin !== origin || url.username || url.password || url.search || url.hash
-    || !url.pathname.startsWith('/join/')) return null;
-  const encoded = url.pathname.slice('/join/'.length);
-  if (!encoded || encoded.includes('/')) return null;
-  try {
-    const invite = decodeURIComponent(encoded);
-    return /^[A-Za-z0-9_-]{8,256}$/u.test(invite) ? invite : null;
-  } catch {
-    return null;
-  }
-}
+export { inviteFromShareLink };
 
 /**
  * Bind the existing one-use bootstrap protocol to the same production OIDC,
@@ -55,10 +48,12 @@ export function inviteFromShareLink(url: URL, origin: string): string | null {
 export function createProductionBootstrapRoutes(dependencies: ProductionBootstrapDependencies) {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
   const ingressToken = (dependencies.env ?? process.env).MATRIX_REGISTRATION_INGRESS_TOKEN;
+  const localAuth = localOidcEnabled(dependencies.env ?? process.env);
   const compose = () => {
     const active = runtime();
     const matrixAgents = createMatrixAgentAdmission({
       homeserverOrigin: active.env.publicHomeserverOrigin,
+      allowInsecureLoopback: localAuth,
       serverName: active.env.matrixServerName,
       registrationSharedSecret: active.env.matrixRegistrationSharedSecret,
       passwordDerivationSecret: active.env.matrixPasswordDerivationSecret,
@@ -91,6 +86,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const bootstrap = createAgentBootstrapHandlers({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       clock: active.clock,
       random: dependencies.random ?? (bytes => randomBytes(bytes)),
@@ -105,11 +101,13 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       admissionPolicy: dependencies.admissionPolicy,
       agents: dependencies.agents ?? matrixAgents.agents,
       agentDeviceSession: dependencies.agentDeviceSession ?? matrixAgents.deviceSession,
+      ...(dependencies.externalGrants ? { pairingGrants: dependencies.externalGrants } : {}),
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       legacyMigrationWritesEnabled: false,
     });
     const attestation = createDeviceAttestationRoutes({
       origin: active.env.publicAppOrigin,
+      allowInsecureLoopback: localAuth,
       store: active.store,
       capabilities: bootstrap.capabilities,
       publishedFingerprint: binding => matrixAgents.publishedDeviceFingerprint(binding),
@@ -135,6 +133,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       verifyBrowserDevice: createMatrixBrowserDeviceVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
     });
@@ -173,6 +172,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       verifyBrowserSender: createMatrixBrowserSenderVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
       async agentSender(binding) {
@@ -185,6 +185,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       store: active.store, auth: active.auth,
       verifyBrowserSender: createMatrixBrowserSenderVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
       // G-ADMISSION, a trusted replacement binding/generation, room event position,
@@ -200,6 +201,11 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
     ...bootstrap,
+    // Resume uses the same durable binding/capability store as ordinary bootstrap.
+    bindings: {
+      resumeAdapterCapability: (input: Parameters<AdapterCapabilities['resumeAdapterCapability']>[0]) =>
+        compose().bootstrap.capabilities.resumeAdapterCapability(input),
+    },
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
     ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),

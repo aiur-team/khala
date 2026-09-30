@@ -1,4 +1,10 @@
 import { createRoot } from 'react-dom/client';
+import '../../../brand/fonts.css';
+import '../../../brand/tokens.css';
+import '../../../shell/shell.css';
+import '../../../ui/conversation/conversation.css';
+import '../../../features/channel/channel.css';
+import '../../../features/recovery/recovery.css';
 import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
   type PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
@@ -37,7 +43,7 @@ const items = [item('event_a', 'Withheld A', 'a'), item('event_b', 'Approved B',
 const confirmed = sessionStorage.getItem('khala.test.send.confirmed');
 if (confirmed) {
   const { clientTxnId, body } = JSON.parse(confirmed) as { clientTxnId: string; body: string };
-  items.push(item(clientTxnId, body, 'c', clientTxnId));
+  items.push(item(clientTxnId, body, 'c'));
 }
 const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1',
   room: { roomId, title: 'Test channel', membership: 'joined', revision: 'room_1' }, items };
@@ -63,10 +69,11 @@ const room = {
       return new Promise<never>(() => {});
     }
     if (original !== null && original !== clientTxnId) return { kind: 'rejected', code: 'operation_mismatch' };
-    const sent = item(clientTxnId, content.body, 'c', clientTxnId);
-    items.push(sent);
+    const sent = item(clientTxnId, content.body, 'c');
+    const deferSync = content.body.startsWith('__defer_sync');
+    if (!deferSync) items.push(sent);
     sessionStorage.setItem('khala.test.send.confirmed', JSON.stringify({ clientTxnId, body: content.body }));
-    for (const listener of roomListeners) listener(snapshot);
+    if (!deferSync) for (const listener of roomListeners) listener(snapshot);
     return { kind: 'ok', value: { clientTxnId, state: 'accepted', eventRef: sent.ref } };
   },
 } as unknown as RoomPort;
@@ -179,16 +186,22 @@ const controls = registerControls({ client: {
 }, bindingFor: () => null, refreshMs: 75 });
 let attachment = capability.attach(context);
 let controlsAttachment = controls.attach(context);
-const renderer = createHumanRoomRenderer(review, capability, async (_context, _roomId, binding) => {
+const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_context, _roomId, binding) => {
   if (!race) { await trustReady; return true; }
   if (binding.agentParticipantId === oldBinding.agentParticipantId) { await oldTrust; oldTrustReturned = true; }
   if (binding.agentParticipantId === replacedIdentity.agentParticipantId) await replacementTrust;
   if (binding.agentParticipantId === accountBinding.agentParticipantId) await accountTrust;
   return true;
-}, race || controlsEnabled ? 75 : 5_000, controlsEnabled ? controls : undefined);
+};
+const refreshMs = race || controlsEnabled ? 75 : 5_000;
+const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const root = createRoot(document.getElementById('app')!);
-root.render(renderer(context, route));
+const toolsRoute = new URLSearchParams(location.search).has('tools');
+const testSurface = (currentContext: HumanRouteContext) => toolsRoute
+  ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Channel care route">{renderer.tools(currentContext, route)}</main></div>
+  : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
+root.render(testSurface(context));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;
   controlVersion = 3;
@@ -199,11 +212,11 @@ window.__switchReviewAccount = () => {
     participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
   controlsAttachment = controls.attach(nextContext);
-  root.render(renderer(nextContext, route));
+  root.render(testSurface(nextContext));
 };
 window.__switchReviewDevice = () => {
   const nextContext = { ...context, generation: 2,
     device: { ...context.device, current: () => ({ state: 'ready', deviceId: 'device_2', generation: 2 }),
       observe: () => () => undefined } } as unknown as HumanRouteContext;
-  root.render(renderer(nextContext, route));
+  root.render(testSurface(nextContext));
 };

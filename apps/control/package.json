@@ -8,6 +8,7 @@
     "./invitations/*": "./src/invitations/*.ts",
     "./agent-bootstrap/*": "./src/agent-bootstrap/*.ts",
     "./channel-access/*": "./src/channel-access/*.ts",
+    "./channel-link/*": "./src/channel-link/*.ts",
     "./channel-discovery/bootstrap/*": "./src/channel-discovery/bootstrap/*.ts",
     "./channel-discovery/*": "./src/channel-discovery/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
@@ -17,7 +18,8 @@
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
     "build:functions": "node --import tsx src/runtime/discover.ts",
-    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
+    "test:browser": "node --conditions=khala-source --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",

@@ -50,6 +50,11 @@ export const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     add(s, 'POST /__khala/session', forged);
   },
   'http-internal:GET /api/v1/session': async s => add(s, 'GET /api/v1/session', await s.world.http('GET', '/api/v1/session')),
+  'http-internal:GET /api/v1/channels': async s => {
+    const denied = await s.world.http('GET', '/api/v1/channels');
+    expect(denied.status).toBe(403);
+    add(s, 'GET channel index', denied);
+  },
   'http-internal:POST /api/v1/channels': async s => {
     const created = await s.world.http('POST', '/api/v1/channels', { body: { operationId: 'op-agent-create', title: 'agent' } });
     expect(created.status).toBe(403);

@@ -69,6 +69,15 @@ export function decodeChannel(input: unknown, limits: ContentLimits, withPartici
   });
 }
 
+/** The owner-scoped channel index uses the same channel summary decoder as a channel read. */
+export function decodeChannels(input: unknown, limits: ContentLimits): Decoded<readonly ChannelSummary[]> {
+  return decodeWith(() => {
+    const envelope = object(input, '', ['channels']);
+    return array(envelope.field('channels'), envelope.at('channels'))
+      .map((value, index) => readChannel(value, elementPath(envelope.at('channels'), index), limits));
+  });
+}
+
 function readEvent(input: unknown, path: string, channelId: string, limits: ContentLimits): MessageEvent {
   const r = object(input, path, ['eventId', 'channelId', 'authorDeviceId', 'participant', 'content', 'clientTxnId', 'receivedAt']);
   if (r.field('channelId') !== channelId) fail(r.at('channelId'), 'mismatch');

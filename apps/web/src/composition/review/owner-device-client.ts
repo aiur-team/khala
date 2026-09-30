@@ -1,5 +1,6 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/index';
+import { parsePublicOrigin } from '../human/hosted-config';
 
 const CHALLENGE = '/api/human/owner-device-proof/challenge';
 const REGISTER = '/api/human/owner-device-proof/register';
@@ -8,11 +9,12 @@ const NONCE = /^[A-Za-z0-9_-]{43}$/u;
 /** Only the protected registration POST sees this transient Matrix access token. */
 export function createOwnerDeviceClient(input: Readonly<{
   origin: string;
+  allowInsecureLoopback?: boolean;
   csrf: () => Promise<string | null>;
   fetch?: typeof globalThis.fetch;
 }>) {
   const origin = new URL(input.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== input.origin) throw new Error('owner_device_origin_invalid');
+  if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('owner_device_origin_invalid');
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   return {
     async register(roomId: RoomId, bindingId: BindingId, generation: number,

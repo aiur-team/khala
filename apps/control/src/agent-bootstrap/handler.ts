@@ -167,6 +167,7 @@ export interface AdapterCapabilities {
    */
   resumeAdapterCapability(input: Readonly<{
     bindingId: string; ownerId: OwnerId; deviceId: string; generation: number; jkt: string;
+    expectedSession?: Readonly<{ harness: string; sessionId: string }>;
     planned?: Readonly<{ token: string; expiresAt: number; operationId: string; previousCapability: string }>;
   }>): Promise<AdapterResume>;
 }
@@ -182,6 +183,7 @@ export type AdapterResume =
 export type AgentBootstrapDeps = Readonly<{
   /** Exact public origin, e.g. `https://khala.aiur.team`. */
   origin: string;
+  allowInsecureLoopback?: boolean;
   store: ControlStore;
   clock: TrustedClock;
   random: Random;
@@ -255,7 +257,9 @@ export type AgentBootstrapHandlers = Readonly<{
 /** Route registrations for the human (`/api/human/`) and agent (`/api/agent/`) domains. */
 export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBootstrapHandlers {
   const origin = new URL(deps.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== deps.origin) throw new Error('bootstrap origin must be an exact https origin');
+  const localOrigin = deps.allowInsecureLoopback === true && origin.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || localOrigin) || origin.origin !== deps.origin) throw new Error('bootstrap origin must be an exact https origin');
   if (typeof deps.admissionPolicy !== 'function') throw new Error('an explicit admission policy is required (G-ADMISSION)');
   if (typeof deps.legacyMigrationWritesEnabled !== 'boolean') throw new Error('legacy migration write activation must be explicit');
   const store = guardStore(deps.store);
@@ -508,7 +512,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   async function redeem(request: Request): Promise<Response> {
-    const grant = bearer(request);
+    const grant = bearer(request) ?? channelGrantBearer(request);
     const body = await readBody(request);
     const session = body && readSession(body);
     if (grant === null) return json(401, { code: 'invalid_grant' });
@@ -591,23 +595,29 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     // The store already made the spend durable; admission and binding converge on stable
     // operation ids, so a retry resumes here without a second spend.
     const tracker: { redemption: Redemption | null } = { redemption: { operationId: presented.operationId, admitted: null, issued: false } };
-    const saveRedemption = async (next: Redemption) => {
+    const saveRedemption = async (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => {
       if (next.issued) {
+        if (!bindingId) return 'unavailable';
         // The store spends the issuance too, so a later retry cannot mint a second capability.
-        const marked = await safeCall(() => grants.markIssued({ grant: presented.grant, operationId: presented.operationId }));
+        const marked = await safeCall(() => grants.markIssued({ grant: presented.grant, operationId: presented.operationId,
+          bindingId, ...(matrixSession === undefined ? {} : { matrixSession }) }));
         if (marked === 'replayed') return 'conflict';
         if (marked !== 'applied') return 'unavailable';
       }
       tracker.redemption = next;
       return 'applied';
     };
-    return finishRedeem(held, tracker, saveRedemption);
+    return finishRedeem(held, tracker, saveRedemption,
+      grants.reserveIssue ? bindingId => safeCall(() => grants.reserveIssue!({
+        grant: presented.grant, operationId: presented.operationId, bindingId,
+      })) : undefined);
   }
 
   async function finishRedeem(
     held: GrantRecord,
     tracker: { redemption: Redemption | null },
-    saveRedemption: (next: Redemption) => Promise<string>,
+    saveRedemption: (next: Redemption, bindingId?: string, matrixSession?: AgentMatrixSession | null) => Promise<string>,
+    reserveIssue?: (bindingId: string) => Promise<'applied' | 'pending' | 'stale' | 'unavailable' | null>,
   ): Promise<Response> {
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
@@ -680,6 +690,15 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     if (indexed.kind === 'closed') return json(403, { code: 'admission_denied' });
     if (indexed.kind !== 'ok') return json(503, { code: 'unavailable' });
 
+    // Claim the one external Matrix login before calling its non-transactional API.
+    // A concurrent retry, or an uncertain prior login, fails closed here.
+    if (reserveIssue) {
+      const reserved = await reserveIssue(bound.binding.bindingId);
+      if (reserved === 'pending') return json(503, { code: 'unavailable' });
+      if (reserved === 'stale') return json(401, { code: 'grant_replayed' });
+      if (reserved !== 'applied') return json(503, { code: 'unavailable' });
+    }
+
     const matrixSession = deps.agentDeviceSession
       ? await safeCall(() => deps.agentDeviceSession!.issue(bound.binding, address.roomId))
       : null;
@@ -694,7 +713,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       { code: pinned === 'conflict' ? 'binding_conflict' : 'unavailable' });
 
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
-    const spent = await saveRedemption({ ...tracker.redemption!, issued: true });
+    const spent = await saveRedemption({ ...tracker.redemption!, issued: true }, bound.binding.bindingId, matrixSession);
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
     if (spent !== 'applied') return json(503, { code: 'unavailable' });
     const capability = await issueCapability(ownerId, address.roomId, bound.binding, held.jkt);
@@ -881,6 +900,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       if (binding.ownerId !== input.ownerId || binding.deviceId !== input.deviceId || binding.generation !== input.generation) {
         return { kind: 'refused', code: 'binding_conflict' };
       }
+      if (input.expectedSession && (binding.harness !== input.expectedSession.harness
+        || binding.sessionId !== input.expectedSession.sessionId)) return { kind: 'refused', code: 'binding_conflict' };
       if (located.record.revokedGeneration !== null) return { kind: 'refused', code: 'binding_revoked' };
       if (input.planned && located.record.capability !== input.planned.previousCapability
         && located.record.capability !== digest(input.planned.token)) return { kind: 'refused', code: 'binding_conflict' };
@@ -1085,6 +1106,13 @@ function bearer(request: Request): string | null {
   const authorization = request.headers.get('authorization') ?? '';
   const token = authorization.startsWith('DPoP ') ? authorization.slice(5) : '';
   return TOKEN.test(token) ? token : null;
+}
+
+/** Channel-access exchange grants have their own fixed prefix and length. */
+function channelGrantBearer(request: Request): string | null {
+  const authorization = request.headers.get('authorization') ?? '';
+  const token = authorization.startsWith('DPoP ') ? authorization.slice(5) : '';
+  return /^cagrant_[A-Za-z0-9_-]{43}$/u.test(token) ? token : null;
 }
 
 async function readForm(request: Request): Promise<URLSearchParams | null> {

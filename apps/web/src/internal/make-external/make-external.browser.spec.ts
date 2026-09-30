@@ -149,9 +149,7 @@ async function press(page: Page, name: string, key = 'Enter'): Promise<void> {
 }
 
 async function openJourney(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Make external' }).waitFor();
-  await page.getByRole('button', { name: 'Make external' }).focus();
-  await page.keyboard.press('Enter');
+  await page.goto(`${new URL(page.url()).origin}/channels/${channelId}/make-external`);
   await arrive(page, 'Make this channel external');
 }
 
@@ -222,8 +220,9 @@ test('carry history end to end: keyboard only, lost responses, reload, commit an
     // The old channel reference no longer leads to a writable channel.
     await press(page, 'View this read-only channel');
     await page.waitForURL(`${run.origin}/channels/${channelId}`);
-    await page.getByText('This channel moved to an external channel and is read-only.').waitFor();
     await page.getByText('This channel is read-only. Its conversation continues in the external channel.').waitFor();
+    await page.goto(`${run.origin}/channels/${channelId}/make-external`);
+    await page.getByText('The external channel is authoritative. This internal channel is kept read-only on this computer.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Make external' }).count(), 0);
     assert.equal(run.send('after the switch'), false, 'the internal store refuses writes after the link');
     assert.equal(await page.evaluate(() => (window as { __pwned?: number }).__pwned), undefined);
@@ -249,7 +248,6 @@ test('a failed sign-in and a cancel before creation change nothing', { timeout: 
     await arrive(page, 'Confirm the external channel');
     await press(page, 'Cancel');
     await page.waitForURL(`${run.origin}/channels/${channelId}`);
-    await page.getByRole('button', { name: 'Make external' }).waitFor();
     assert.equal(provider.creates.length, 0);
     assert.equal(run.send('still active'), true);
   } finally {

@@ -131,7 +131,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  composerPlaceholder = 'Write a message', unreadableActivity = false,
+  composerPlaceholder = '', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const evidenceView = useSyncExternalStore(
@@ -176,6 +176,7 @@ export function TimelineScreen({
   // Every send keeps its own row by `clientTxnId` until reconciled: a later
   // send never silently replaces an earlier failed/outcome_unknown one (R3).
   const [pendingList, setPendingList] = useState<readonly PendingSend[]>(() => pendingStore?.load().map(restored) ?? []);
+  const pendingListRef = useRef(pendingList);
   const [atLatest, setAtLatest] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<HTMLOListElement | null>(null);
@@ -184,9 +185,19 @@ export function TimelineScreen({
   const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
   const sendBlocked = sendBlockedReason !== null;
 
+  const updatePending = useCallback((update: (list: readonly PendingSend[]) => readonly PendingSend[]) => {
+    const next = update(pendingListRef.current);
+    if (next === pendingListRef.current) return;
+    pendingListRef.current = next;
+    // A reload may happen before React's next effect. Persist each accepted
+    // event ID before publishing the state change to the UI.
+    pendingStore?.save(next);
+    setPendingList(next);
+  }, [pendingStore]);
+
   useEffect(() => {
-    pendingStore?.save(pendingList);
-  }, [pendingList, pendingStore]);
+    pendingStore?.save(pendingListRef.current);
+  }, [pendingStore]);
 
   useEffect(() => {
     controller.setReaderAtLatest(atLatest);
@@ -199,16 +210,10 @@ export function TimelineScreen({
   }, [controller]);
 
   useEffect(() => {
-    setPendingList(list => {
-      const reconciled = list.filter(entry => isReconciled(entry, data.items));
-      if (reconciled.length === 0) return list;
-      // The draft is kept until a send is durably accepted (KTD3/AE2); once
-      // it reconciles, clear it — but only if the reader hasn't already
-      // started composing something new on top of it.
-      setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
-      return list.filter(entry => !isReconciled(entry, data.items));
-    });
-  }, [data.items]);
+    const reconciled = pendingList.filter(entry => isReconciled(entry, data.items));
+    if (reconciled.length === 0) return;
+    updatePending(list => list.filter(entry => !isReconciled(entry, data.items)));
+  }, [data.items, pendingList, updatePending]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -239,23 +244,21 @@ export function TimelineScreen({
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || !canCompose || sendBlocked) return;
+    if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
+      entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
-    const next = [...pendingList, { clientTxnId, content, phase: 'pending' as const }];
-    // Persist before starting Matrix I/O: a reload can interrupt the request
-    // before React's passive effect has saved the newly visible local row.
-    pendingStore?.save(next);
-    setPendingList(next);
+    updatePending(list => [...list, { clientTxnId, content, phase: 'pending' as const }]);
+    setDraft('');
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
-    setPendingList(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
+    updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
 
   async function handleRetry(entry: PendingSend): Promise<void> {
     if ((entry.phase !== 'failed' && entry.phase !== 'outcome_unknown') || sendBlocked) return;
-    setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? { ...item, phase: 'pending' } : item)));
+    updatePending(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? { ...item, phase: 'pending' } : item)));
     const result = await retrySend(roomPort as ChannelPort, roomId, entry);
-    setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
+    updatePending(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
   }
 
   const names = projectTimelineNames(data.nameHistory ?? data.items, viewer, extraParticipants);
@@ -266,7 +269,7 @@ export function TimelineScreen({
       ? (attributed.get(item.ref.eventId) as Extract<typeof names.events[number], { kind: 'message' }>).authorName
       : item.participant.displayName,
   })), viewer]);
-  // A `failed` or `outcome_unknown` send keeps its draft text on screen, but
+  // A `failed` or `outcome_unknown` send keeps its body in the pending row, but
   // Send must stay disabled while it's unresolved: otherwise the reader could
   // submit the same text again under a fresh `clientTxnId`, duplicating a
   // send that may already have gone through (AE2). Only Retry — which reuses
@@ -300,7 +303,7 @@ export function TimelineScreen({
           You no longer have access to this conversation.
         </p>
       ) : null}
-      {evidence ? (
+      {evidence && (data.items.length > 0 || evidenceView.units.length > 0) ? (
         <>
           <EvidenceAccess status={evidenceView.status} onRetry={() => void evidence.refresh()} />
           <EvidenceAnnouncer text={evidenceView.announcement?.text ?? null} />
@@ -325,6 +328,7 @@ export function TimelineScreen({
         </li> : null}
         {data.namesReady === false ? null : data.items.map((item, index) => {
           const nameEvent = attributed.get(item.ref.eventId);
+          if (item.content.kind === 'agent_name_snapshot') return null;
           if (item.content.kind === 'agent_rename') return nameEvent?.kind === 'agent_rename'
             ? <ChatSystemEvent key={item.ref.eventId} id={item.ref.eventId} actor={nameEvent.actorName}>
                 {nameEvent.previousName} is now called {nameEvent.name}

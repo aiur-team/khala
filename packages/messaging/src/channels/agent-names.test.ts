@@ -39,6 +39,32 @@ describe('ordered agent names', () => {
     expect(result.currentNames.get(codex)).toBe('Dolan');
   });
 
+  it('bootstraps a late joiner without exposing earlier rename or chat, including messages before snapshot arrival', () => {
+    const result = projectNamesInOrder(participants, [message('joined-message'), {
+      kind: 'agent_name_snapshot', eventId: 'snapshot', actorParticipantId: maya,
+      targetParticipantId: codex, name: 'Dolan', sourceEventId: 'pre-join-rename',
+    }, message('after-snapshot')]);
+    expect(result.events).toEqual([
+      { kind: 'message', eventId: 'joined-message', authorParticipantId: codex, authorName: 'Dolan' },
+      { kind: 'message', eventId: 'after-snapshot', authorParticipantId: codex, authorName: 'Dolan' },
+    ]);
+    expect(result.currentNames.get(codex)).toBe('Dolan');
+  });
+
+  it('keeps readable history bylines and rejects a stale or wrong-owner snapshot', () => {
+    const snapshot = (eventId: string, name: string, sourceEventId: string, actorParticipantId = maya): NameTimelineEvent => ({
+      kind: 'agent_name_snapshot', eventId, actorParticipantId, targetParticipantId: codex, name, sourceEventId,
+    });
+    const result = projectNamesInOrder(participants, [message('before'), rename('first', maya, 'Dolan'),
+      snapshot('current', 'Dolan', 'first'), snapshot('silent-mutation', 'Sneaky', 'first'), rename('second', maya, 'Scout'), snapshot('stale', 'Dolan', 'first'),
+      snapshot('forged', 'Spoof', 'second', theo), message('after')]);
+    expect(result.events.map(event => event.kind === 'message' ? event.authorName : event.name)).toEqual([
+      'Codex #420', 'Dolan', 'Scout', 'Scout',
+    ]);
+    expect(result.currentNames.get(codex)).toBe('Scout');
+    expect(result.latestRename.get(codex)).toBe('second');
+  });
+
   it('orders simultaneous renames by their durable event order', () => {
     const result = projectNamesInOrder(participants, [rename('first', maya, 'Dolan'), rename('second', maya, 'Scout'), message('next')]);
     expect(result.events[1]).toMatchObject({ previousName: 'Dolan', name: 'Scout' });

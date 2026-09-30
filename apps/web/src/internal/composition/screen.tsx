@@ -97,8 +97,6 @@ export function LocalApplicationScreen({
         );
       case 'channel':
         return (
-          <>
-            <p><a className="internal-owner-link" href={routes.settingsPath(route.roomId)}>Channel discovery settings</a></p>
             <LocalRoom
               context={context}
               roomId={route.roomId}
@@ -108,8 +106,8 @@ export function LocalApplicationScreen({
               {...(listening ? { listening } : {})}
               makeExternal={makeExternal}
               onMakeExternal={() => navigateRoute(routes.makeExternalPath(route.roomId))}
+              settingsHref={routes.settingsPath(route.roomId)}
             />
-          </>
         );
       case 'channel_settings':
         return <ChannelSettingsRoute settings={owner.settings} roomId={route.roomId} channelHref={routes.roomPath(route.roomId)} />;
@@ -132,7 +130,7 @@ export function LocalApplicationScreen({
         mode={mode}
         renderRoute={renderRoute}
         renderReadyShell={(context, chrome, children) => (
-          <OwnerShell key={context.principal.ownerId} createController={owner.createChannelAccess} routes={routes} chrome={chrome}>
+          <OwnerShell key={context.principal.ownerId} createController={owner.createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
             {children}
           </OwnerShell>
         )}

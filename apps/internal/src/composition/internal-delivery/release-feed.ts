@@ -60,12 +60,12 @@ function eventRef(event: StoredEvent): EventRef {
 }
 
 function release(
-  binding: SessionBinding, event: StoredEvent, modeWakes: boolean, peerWakes: boolean, maxPayloadBytes: number,
+  binding: SessionBinding, event: StoredEvent, modeWakes: boolean, peerWakes: boolean, maxPayloadBytes: number, authorName: string,
 ): AgentRelease | null {
   const releaseId = internalReleaseId(binding, event.eventId);
   const ref = eventRef(event);
-  if (event.content.kind === 'agent_rename') {
-    const payload = new TextEncoder().encode(JSON.stringify(['khala.agent-rename.v1',
+  if ((event.content.kind === 'agent_rename' || event.content.kind === 'agent_name_snapshot')) {
+    const payload = new TextEncoder().encode(JSON.stringify([event.content.kind === 'agent_rename' ? 'khala.agent-rename.v1' : 'khala.agent-name-snapshot.v1',
       ref.roomId, ref.eventId, ref.authorParticipantId, event.content.agentParticipantId, event.content.body]));
     if (payload.byteLength > maxPayloadBytes) return null;
     return { releaseId, events: [ref], payload,
@@ -73,13 +73,21 @@ function release(
       releasedAt: event.receivedAt, wake: false };
   }
   const textContent = event.content;
-  const encode = (content: typeof textContent) => encodeReleasePayload({
+  const encode = (content: typeof textContent) => {
+    const encoded = encodeReleasePayload({
     releaseId,
     bindingId: binding.bindingId as BindingId,
     generation: binding.generation,
     policyVersion: INTERNAL_POLICY_VERSION,
     items: [{ ref, content }],
-  });
+    });
+    if (!encoded.ok) return encoded;
+    const tuple = JSON.parse(new TextDecoder().decode(encoded.bytes)) as unknown[];
+    tuple[0] = 'khala.attributed-release.v1';
+    const rows = tuple[5] as unknown[][];
+    for (const row of rows) row.push(authorName);
+    return { ok: true as const, bytes: new TextEncoder().encode(JSON.stringify(tuple)) };
+  };
   let encoded = encode(textContent);
   // Measured on the escaped bytes, not the body: control characters expand sixfold.
   if (encoded.ok && encoded.bytes.byteLength > maxPayloadBytes) {
@@ -112,10 +120,13 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
         const page = input.store.readSubscription({ channelId, binding, cursor, limit });
         if (page.kind === 'rejected') return { kind: 'rejected', code: page.code };
         if (page.kind !== 'page') return { kind: 'unavailable' };
+        const names = input.store.nameProjection(channelId);
+        if (!names) return { kind: 'unavailable' };
+        const bylines = new Map(names.events.filter(event => event.kind === 'message').map(event => [event.eventId, event.authorName]));
         const releases: AgentRelease[] = [];
         let spent = 0;
         for (const [index, event] of page.events.entries()) {
-          const next = release(binding, event, modeWakes, false, maxPayloadBytes);
+          const next = release(binding, event, modeWakes, false, maxPayloadBytes, bylines.get(event.eventId) ?? event.participant.displayName);
           // An event that cannot be encoded must not be skipped past silently.
           if (next === null) return { kind: 'unavailable' };
           const size = next.payload.byteLength + RELEASE_OVERHEAD_BYTES;

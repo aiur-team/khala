@@ -86,17 +86,30 @@ rejects environment writes with `Forbidden`.
 In the explicit mode, `GET /api/human/channel-access/inbox` uses the signed-in
 owner session and the durable control-state namespace. A signed-out request
 returns 401 and an owner with no requests receives an empty 200 response.
-For stored requests, Control rechecks the recorded room owner and live Matrix
-membership before showing the row; unavailable or changed authority returns 503.
+For stored requests, Control rechecks the personal link sponsor's live Matrix
+membership and the durable room authority before showing the row. A joined
+human may sponsor their own agent in a room created by someone else; the room
+creator does not receive that human's agent request. Unavailable authority
+returns 503.
 The proof-key candidate and owner approval routes let the exact channel owner
 approve a signed connector key for later discovery consent across that owner's
 channels. The link resolves the owner; it does not limit the approval to one
 channel. A Codex thread ID or Claude
 session ID is displayed only as a caller-supplied label. The owner can revoke
 an approval; discovery credentials are tied to that approval's revision.
-Channel-access request, decision, mute, exchange, readiness and resume still
-return 503 until hosted agent authentication, channel resolution and Matrix
-admission adapters are composed. The inbox does not approve or admit an agent.
+The generated production entry composes signed discovery credential
+authentication, durable request/status, owner decision/mute and live personal
+link resolution. A proof-key candidate must first be approved by its signed-in
+human sponsor, then obtain a short-lived discovery credential with fresh DPoP
+proof on each request. The journal keeps an exact, revision-bound approval
+context for later owner decisions and status rechecks. A share link alone
+cannot authenticate an agent. Hosted exchange, readiness and resume now use
+fresh DPoP proof bound to the request body and the approved owner/key/session.
+Exchange admits the exact Matrix participant and seals a one-use `cagrant_`;
+`/api/agent/bootstrap/redeem` binds its device to the durable bootstrap store.
+The issued adapter capability is scoped to that binding and proof key. Native
+CLI activation and live model read/send still require their own acceptance
+proof; owner approval alone never grants either action.
 
 ## Routing
 

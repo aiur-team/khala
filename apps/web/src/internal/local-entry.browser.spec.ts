@@ -115,7 +115,56 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await page.goto(`${origin}/__khala/bootstrap#credential=${fixture.bootstrap.credential}&channel=${channelId}`);
     await page.waitForURL(`${origin}/channels/${channelId}`);
     await page.getByText('No messages yet.').waitFor();
-    assert.equal(await page.getByRole('heading', { name: 'Local channel' }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: 'One', level: 1 }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: 'One', level: 2 }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
+    const localTools = page.locator('.local-channel-tools');
+    const toolsToggle = localTools.locator('summary').first();
+    assert.equal(await toolsToggle.getAttribute('aria-label'), 'Local tools');
+    assert.equal(await toolsToggle.getAttribute('title'), 'Local tools');
+    assert.equal((await toolsToggle.innerText()).trim(), '');
+    await toolsToggle.focus();
+    assert.equal(await toolsToggle.evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await localTools.getAttribute('open'), '');
+    await localTools.getByRole('link', { name: 'Channel discovery settings' }).waitFor();
+    assert.equal(await localTools.getByRole('link', { name: 'Channel requests' }).count(), 0);
+    const stopSummary = localTools.locator('summary').filter({ hasText: 'Stop agent delivery' });
+    await stopSummary.click();
+    await localTools.getByRole('button', { name: 'Stop agent delivery' }).waitFor();
+    await stopSummary.click();
+    await localTools.getByText('Conversion options are unavailable.').waitFor();
+    assert.equal(await localTools.locator('details').count(), 1);
+    await page.locator('.conversation-list__item').first().waitFor();
+    assert.equal(await page.getByText('Delivery evidence unavailable').count(), 0, 'empty channels do not show a receipt error');
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: path.join(screenshotDir, 'local-desktop-tools.png'), fullPage: true });
+    }
+    await toolsToggle.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await localTools.getAttribute('open'), null);
+    if (screenshotDir) {
+      await page.screenshot({ path: path.join(screenshotDir, 'local-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: path.join(screenshotDir, 'local-mobile.png'), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true, 'local chat fits the phone viewport');
+    const channelsButton = page.getByRole('button', { name: 'Channels' });
+    await channelsButton.click();
+    const channelsDialog = page.getByRole('dialog', { name: 'Channels' });
+    await channelsDialog.waitFor();
+    assert.equal(await channelsDialog.getAttribute('aria-modal'), 'true', 'the mobile drawer hides background controls from modal navigation');
+    assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
+    await page.getByRole('button', { name: 'Create channel' }).click();
+    await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await channelsButton.evaluate(element => element === document.activeElement), true);
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     // Observe: two agents' messages arrive over the hint stream with their own attribution.
     assert.equal((await agentSend(fixture.bob.credential, 'from bob')).status, 201);
@@ -126,10 +175,40 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     assert.ok(rows.some(row => row.includes('Carol') && row.includes('from carol')), rows.join('\n'));
 
     // Send: the human's message is accepted and reconciled into the durable timeline.
-    await page.getByRole('textbox', { name: 'Message' }).fill('hello agents');
-    await page.getByRole('button', { name: 'Send' }).click();
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    assert.equal(await composer.getAttribute('placeholder'), '');
+    const oneLineHeight = await composer.evaluate(element => element.clientHeight);
+    await composer.fill('first line\nsecond line\nthird line');
+    const threeLineSize = await composer.evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight, inline: element.style.height }));
+    assert.ok(threeLineSize.height > oneLineHeight && threeLineSize.scroll <= threeLineSize.height + 2,
+      'three lines are fully visible without scrolling');
+    const wrappedDraft = 'A saved draft should stay readable when the conversation becomes narrow. '.repeat(2);
+    await composer.fill(wrappedDraft);
+    const wideDraftHeight = await composer.evaluate(element => element.clientHeight);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight > height, wideDraftHeight);
+    assert.equal(await composer.inputValue(), wrappedDraft, 'resizing keeps the existing draft');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight <= height + 2, wideDraftHeight);
+    await composer.fill(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLTextAreaElement>('#conversation-draft');
+      return input !== null && input.clientHeight <= 138 && input.scrollHeight > input.clientHeight + 2;
+    });
+    await composer.fill('hello agents');
+    await composer.press('Enter');
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 0);
+    const ownMeta = await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'hello agents' }).locator('.conversation-message__meta').innerText();
+    assert.equal((ownMeta.match(/\bYou\b/g) ?? []).length, 1, 'own messages show one You attribution');
+
+    await composer.fill('first line');
+    await composer.press('Shift+Enter');
+    assert.equal(await composer.inputValue(), 'first line\n');
+    await composer.fill('composing');
+    await composer.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })));
+    assert.equal(await composer.inputValue(), 'composing');
+    await composer.fill('');
 
     // An unknown outcome keeps its operation identity across a reload and resolves under it.
     await page.route('**/messages', route => route.abort('connectionreset'));
@@ -164,12 +243,30 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       history.pushState(null, '', '/');
       dispatchEvent(new PopStateEvent('popstate'));
     });
-    await page.getByRole('button', { name: 'Create channel' }).waitFor();
+    await page.locator('.conversation-list__item').first().waitFor();
+    assert.equal(await page.locator('.conversation-list__item').count(), 2, 'both channels remain available from the home route');
+    await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).waitFor();
     assert.doesNotMatch(await text(page), /Who can join|Copy link|Sign in/);
     await page.getByLabel('Channel name (optional)').fill('Scratch');
-    await page.getByRole('button', { name: 'Create channel' }).click();
+    await page.locator('.khala-content-main').getByRole('button', { name: 'Create channel' }).click();
     await page.waitForURL(/\/channels\/evt-/);
     await page.getByText('No messages yet.').waitFor();
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('.conversation-list__item').length === 3);
+    await page.locator('.conversation-list__item', { hasText: 'One' }).click();
+    await page.waitForURL(`${origin}/channels/${channelId}`);
+    await page.getByRole('heading', { name: 'One', level: 1 }).waitFor();
+    await page.locator('.conversation-list__item', { hasText: 'Scratch' }).click();
+    await page.waitForURL(/\/channels\/evt-/);
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
+    await page.evaluate(() => {
+      history.pushState(null, '', '/channel-requests');
+      dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
+    assert.equal(await page.locator('.conversation-list__item').count(), 3, 'the inbox route keeps the conversation list');
+    await page.locator('.conversation-list__item', { hasText: 'Scratch' }).click();
+    await page.getByRole('heading', { name: 'Scratch', level: 1 }).waitFor();
 
     // Transport loss: sending pauses with an announced reconnecting state and the draft is kept.
     await page.getByRole('textbox', { name: 'Message' }).fill('draft survives');

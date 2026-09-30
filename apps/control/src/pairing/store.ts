@@ -81,8 +81,11 @@ export interface PairingGrantPort {
     | Readonly<{ kind: 'invalid_grant' }>
     | Readonly<{ kind: 'unavailable' }>
   >;
+  /** Optional durable one-way claim before provisioning an external device session. */
+  reserveIssue?(input: Readonly<{ grant: string; operationId: string; bindingId: string }>): Promise<'applied' | 'pending' | 'stale' | 'unavailable'>;
   /** Durably records that the spending operation is about to mint its capability; a retry is then refused. */
-  markIssued(input: Readonly<{ grant: string; operationId: string }>): Promise<'applied' | 'replayed' | 'unavailable'>;
+  markIssued(input: Readonly<{ grant: string; operationId: string; bindingId: string;
+    matrixSession?: import('../agent-bootstrap/handler').AgentMatrixSession | null }>): Promise<'applied' | 'replayed' | 'unavailable'>;
 }
 
 export interface PairingStore {

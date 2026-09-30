@@ -9,16 +9,14 @@
 .showcase-mount{height:calc(100% - 34px)}
 .showcase-app{display:flex;flex-direction:column;height:100%;min-height:0;--khala-ink:var(--aiur-fg);--khala-ink-muted:var(--aiur-muted);--khala-fill:var(--aiur-bg-soft);--khala-fill-raised:#1e2025;--khala-fill-control:#23262c;--khala-line:var(--aiur-line);--khala-accent:var(--aiur-accent);color:var(--khala-ink);background:var(--khala-fill);font-family:var(--font-body);font-size:14px;text-align:left}
 :root[data-theme='light'] .showcase-app{--khala-fill:var(--aiur-bg);--khala-fill-raised:#f4ecd9;--khala-fill-control:#ece0c8}
-.showcase-app__bar{display:flex;align-items:center;gap:9px;min-height:41px;padding:0 14px;border-bottom:1px solid var(--khala-line);font-size:12px;font-weight:600}
-.showcase-app__mark{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:var(--khala-accent);color:#fff;font-weight:800}
-.showcase-app__example{margin-left:auto;color:var(--khala-ink-muted);font:10px var(--font-mono);white-space:nowrap}
 .showcase-app .conversation-layout{flex:1;width:100%;height:auto;min-height:0;border:0;border-radius:0;grid-template-columns:280px minmax(0,1fr)}
 .showcase-app .conversation-layout--detail{grid-template-columns:260px minmax(0,1fr) 260px}
 .showcase-app .conversation-thread__head{padding:.6rem .85rem}
-.showcase-app .conversation-thread__actions{gap:.4rem;padding:.4rem .85rem}
+.showcase-app .conversation-thread__head h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.showcase-app__participants-button{display:grid;place-items:center;flex:none;width:44px;height:44px;margin-left:auto;border:1px solid var(--khala-line);border-radius:50%;background:var(--khala-fill-control);color:var(--khala-ink);cursor:pointer}
+.showcase-app__participants-button svg{width:22px;height:22px}
 .showcase-app .fixture-messages{min-height:0;gap:.6rem;padding:.85rem;overflow:auto}
-.showcase-app .conversation-message__meta span:first-of-type{border:1px solid var(--khala-line);border-radius:999px;padding:1px 6px;color:var(--khala-ink-muted);font-size:10px;line-height:1.3}
-.showcase-app__local-note{padding:4px 14px;color:var(--khala-ink-muted);font-size:11px}
+.showcase-app__local-note{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .showcase-app .conversation-composer{padding:.35rem .75rem .65rem}
 .showcase-app .conversation-detail{padding:.9rem}
 .showcase-app__detail-context{margin:8px 0 15px;color:var(--khala-ink-muted);font-size:12px}
@@ -28,8 +26,7 @@
 .showcase-app__participants strong,.showcase-app__participants small{display:block}.showcase-app__participants small{color:var(--khala-ink-muted);font-size:11px}
 .showcase-app__agent-section{margin-top:18px;border-top:1px solid var(--khala-line);padding-top:12px}.showcase-app__agent-section summary{cursor:pointer;font-weight:600}.showcase-app__agent-section p{margin-top:8px;color:var(--khala-ink-muted);font-size:12px}
 .showcase-app :focus-visible{outline:3px solid var(--khala-accent);outline-offset:2px}
-.showcase-link{order:3;display:block;width:max-content;margin:14px auto 0;font-size:13px}
 @media(max-width:1100px){.showcase-app .conversation-layout,.showcase-app .conversation-layout--detail{grid-template-columns:240px minmax(0,1fr)}.showcase-app .conversation-detail{position:absolute;inset:0 0 0 auto;width:min(320px,100%);background:var(--khala-fill-raised);box-shadow:0 8px 30px #0006}}
 @media(max-width:900px){.showcase-app .conversation-layout,.showcase-app .conversation-layout--detail{grid-template-columns:minmax(0,1fr)}.showcase-app .conversation-layout:not(.conversation-layout--thread) .conversation-thread{display:none}.showcase-app .conversation-layout--thread .conversation-list{display:none}.showcase-app .conversation-thread__back{display:block}.showcase-app .conversation-detail{inset:0;width:100%}}
-@media(max-width:440px){.showcase-section{padding-inline:12px}.showcase-heading{padding-inline:6px}.showcase-app__bar{padding-inline:10px}.showcase-app__example{font-size:9px}.showcase-window{border-radius:14px}.showcase-chrome{height:28px}.showcase-mount{height:calc(100% - 28px)}}
+@media(max-width:440px){.showcase-section{padding-inline:12px}.showcase-heading{padding-inline:6px}.showcase-window{border-radius:14px}.showcase-chrome{height:28px}.showcase-mount{height:calc(100% - 28px)}}
 @media(prefers-reduced-motion:reduce){.showcase-app *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}

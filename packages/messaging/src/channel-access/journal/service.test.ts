@@ -50,12 +50,19 @@ const otherOwner: AuthPrincipal = { ...owner, ownerId: 'owner_2' as OwnerId, pro
 
 function harness() {
   let now = T0;
+  let revokeAfterResolve = false;
+  let revokeDuringCreate = false;
   const backing = fakeControlStore();
   const policy = createChannelAccessPolicy({ key: new Uint8Array(32).fill(5) });
   const journal = createChannelAccessStore({ store: backing.store, policy, clock: () => now });
   const claims: string[] = [];
   const store: ChannelAccessStore = {
     ...journal,
+    async create(...args) {
+      const result = await journal.create(...args);
+      if (revokeDuringCreate) state.access = { kind: 'revoked' };
+      return result;
+    },
     async claimAccess(...args) { claims.push('access'); return journal.claimAccess(...args); },
     async claimCreate(...args) { claims.push('create'); return journal.claimCreate(...args); },
   };
@@ -76,6 +83,7 @@ function harness() {
   };
   const resolver: ChannelAccessResolutionPort = {
     async resolveAccess() {
+      if (revokeAfterResolve) state.access = { kind: 'revoked' };
       return { kind: 'resolved', ownerId: owner.ownerId, channelRef: CHANNEL_REF, targetRevision: TARGET_REVISION, title: 'Private channel' };
     },
     async resolveCreate() { return { kind: 'resolved', ownerId: owner.ownerId, ownerRevision: OWNER_REVISION }; },
@@ -106,6 +114,8 @@ function harness() {
     notifications,
     ownershipCalls,
     state,
+    revokeOnResolve() { revokeAfterResolve = true; },
+    revokeOnCreate() { revokeDuringCreate = true; },
     handle,
     advance(ms: number) { now += ms; },
     async requestAccess(operationId = 'request_1') {
@@ -139,6 +149,30 @@ function approve(requestHandle: string, operationId = 'decision_1') {
 }
 
 describe('channel-access service', () => {
+  it('does not journal or notify after a target is revoked between resolve and create', async () => {
+    const h = harness();
+    h.revokeOnResolve();
+    const status = await h.service.journal.requestAccess({
+      v: 1, kind: 'listing_ref', operationId: 'revoked-before-create',
+      credentialRef: 'credential_1', listingRef: 'listing_1',
+    }, requester, context);
+    expect(status.outcome).toBe('unavailable');
+    expect(await h.journal.listOwner({ ownerId: owner.ownerId })).toMatchObject({ kind: 'found', requests: [] });
+    expect(h.notifications).toHaveLength(0);
+  });
+  it('revokes a newly written row when the target changes during create', async () => {
+    const h = harness();
+    h.revokeOnCreate();
+    const status = await h.service.journal.requestAccess({
+      v: 1, kind: 'listing_ref', operationId: 'revoked-during-create',
+      credentialRef: 'credential_1', listingRef: 'listing_1',
+    }, requester, context);
+    expect(status.outcome).toBe('unavailable');
+    const listed = await h.journal.listOwner({ ownerId: owner.ownerId });
+    expect(listed.kind).toBe('found');
+    if (listed.kind === 'found') expect(listed.requests[0]?.outcome).toBe('revoked');
+    expect(h.notifications).toHaveLength(0);
+  });
   it('resolves and journals access without retaining the submitted locator', async () => {
     const h = harness();
     const status = await h.service.journal.requestAccess({

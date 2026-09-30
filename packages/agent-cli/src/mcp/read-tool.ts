@@ -51,7 +51,7 @@ export async function executeReadTool(input: ExecuteReadToolInput): Promise<Read
 
   return {
     kind: 'success',
-    primaryResult: result.kind === 'batch' ? budgetPrimary : primaryResult('empty'),
+    primaryResult: result.kind === 'batch' ? budgetPrimary : primaryResult('empty', result.currentNames),
     preselectedBatch: result.kind === 'batch' ? result.batch : null,
   };
 }
@@ -68,8 +68,8 @@ export function readToolFailure(code: CliErrorCode): ReadToolFailure {
   };
 }
 
-function primaryResult(kind: 'batch' | 'empty'): McpToolResult {
-  const safe = { kind } as const;
+function primaryResult(kind: 'batch' | 'empty', currentNames?: ReadonlyArray<Readonly<{ participantId: string; name: string; sourceEventId: string | null; eventId: string }>>): McpToolResult {
+  const safe = { kind, ...(currentNames?.length ? { currentNames } : {}) } as const;
   return {
     content: [{ type: 'text', text: JSON.stringify(safe) }],
     structuredContent: safe,

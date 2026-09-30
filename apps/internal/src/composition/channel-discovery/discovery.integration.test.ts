@@ -1161,6 +1161,7 @@ describe('internal channel discovery', () => {
     const agent = await issue(w, 'session-1');
     const input = {
       providerOperationId: 'padmit-1', ownerId: alice.ownerId, channelRef: channelId as unknown as Parameters<typeof w.discovery.admission.admit>[0]['channelRef'],
+      sessionFingerprint: 'a'.repeat(43),
       requester: agent.principal as Parameters<typeof w.discovery.admission.admit>[0]['requester'], sessionGeneration: 1,
       deviceId: 'device-1' as DeviceId, history: 'none' as const,
     };
@@ -1253,7 +1254,9 @@ describe('internal channel discovery', () => {
       await a.approve();
       expect(a.bindingRows()).toBe(0);
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
-      expect(a.calls).toEqual(['exchange', 'activate', 'ready']);
+      // The grant-free preflight checks for a committed activation before
+      // spending the one-use grant. A fresh request returns not redeemed.
+      expect(a.calls).toEqual(['activate', 'exchange', 'activate', 'ready']);
       expect(a.bindingRows()).toBe(1);
       const active = a.readGrant();
       expect(active).toMatchObject({ channelId, grantRef: expect.any(String), bindingId: expect.any(String), bindingCapability: expect.any(String) });

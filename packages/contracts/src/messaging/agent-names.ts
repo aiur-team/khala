@@ -21,7 +21,8 @@ export function validateAgentName(input: unknown): AgentNameResult {
 
 export type NameTimelineEvent =
   | Readonly<{ kind: 'message'; eventId: string; authorParticipantId: ParticipantId }>
-  | Readonly<{ kind: 'agent_rename'; eventId: string; actorParticipantId: ParticipantId; targetParticipantId: ParticipantId; name: string }>;
+  | Readonly<{ kind: 'agent_rename'; eventId: string; actorParticipantId: ParticipantId; targetParticipantId: ParticipantId; name: string }>
+  | Readonly<{ kind: 'agent_name_snapshot'; eventId: string; actorParticipantId: ParticipantId; targetParticipantId: ParticipantId; name: string; sourceEventId: string | null }>;
 
 export type ProjectedNameEvent =
   | Readonly<{ kind: 'message'; eventId: string; authorParticipantId: ParticipantId; authorName: string }>
@@ -37,9 +38,24 @@ export type NameParticipant = Readonly<{
 
 /** Replays the permitted channel history in transport order with authenticated owner bindings. */
 export function projectNamesInOrder(participants: readonly NameParticipant[], events: readonly NameTimelineEvent[]):
-  Readonly<{ events: readonly ProjectedNameEvent[]; currentNames: ReadonlyMap<ParticipantId, string> }> {
+  Readonly<{ events: readonly ProjectedNameEvent[]; currentNames: ReadonlyMap<ParticipantId, string>; latestRename: ReadonlyMap<ParticipantId, string | null> }> {
   const identity = new Map(participants.map(participant => [participant.participantId, participant]));
   const currentNames = new Map(participants.map(participant => [participant.participantId, participant.initialName]));
+  const latestRename = new Map<ParticipantId, string | null>();
+  const visibleRenames = new Set(events.filter(event => event.kind === 'agent_rename').map(event => event.eventId));
+  // A snapshot referencing a rename outside this viewer's history is the baseline
+  // at their history boundary. A readable rename must be replayed in its own place.
+  for (const event of events) {
+    if (event.kind !== 'agent_name_snapshot' || event.sourceEventId === null || visibleRenames.has(event.sourceEventId)) continue;
+    const actor = identity.get(event.actorParticipantId);
+    const target = identity.get(event.targetParticipantId);
+    const checked = validateAgentName(event.name);
+    if (actor?.kind === 'human' && target?.kind === 'agent' && actor.ownerId === target.ownerId && checked.ok
+      && !latestRename.has(target.participantId)) {
+      currentNames.set(target.participantId, checked.name);
+      latestRename.set(target.participantId, event.sourceEventId);
+    }
+  }
   const seen = new Set<string>();
   const projected: ProjectedNameEvent[] = [];
   for (const event of events) {
@@ -57,6 +73,15 @@ export function projectNamesInOrder(participants: readonly NameParticipant[], ev
     const checked = validateAgentName(event.name);
     if (!actor || !target || actor.kind !== 'human' || target.kind !== 'agent'
       || actor.ownerId !== target.ownerId || !checked.ok) continue;
+    if (event.kind === 'agent_name_snapshot') {
+      if (!latestRename.has(target.participantId)
+        || latestRename.get(target.participantId) === event.sourceEventId && currentNames.get(target.participantId) === checked.name) {
+        currentNames.set(target.participantId, checked.name);
+        latestRename.set(target.participantId, event.sourceEventId);
+      }
+      continue;
+    }
+    latestRename.set(target.participantId, event.eventId);
     const previousName = currentNames.get(target.participantId) ?? target.initialName;
     if (previousName === checked.name) continue;
     projected.push({ kind: 'agent_rename', eventId: event.eventId,
@@ -64,6 +89,6 @@ export function projectNamesInOrder(participants: readonly NameParticipant[], ev
       targetParticipantId: target.participantId, previousName, name: checked.name });
     currentNames.set(target.participantId, checked.name);
   }
-  return { events: projected, currentNames };
+  return { events: projected, currentNames, latestRename };
 }
 

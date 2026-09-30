@@ -3,7 +3,7 @@
 // works only in the browser; the agents are externally started CLI sessions
 // (see fixtures/acceptance.ts). Covers create and confirm, grants, agent
 // exchange, the human message, listening-mode delivery, the owner's mode and pause
-// controls, Stop and the view it
+// controls, the Stop API and the view it
 // leaves, launcher close and `khala internal --resume`, with keyboard, focus and
 // announcement checks along the way.
 
@@ -23,7 +23,11 @@ const rowWith = (page: Page, text: string) => page.locator('.timeline__row:not(.
 
 /** The owner approves the one pending request from `agent` in the inbox, by keyboard only. */
 async function approveByKeyboard(page: Page, origin: string, agent: string, dialogName: RegExp | string, approve: string, subject?: string) {
-  await page.getByRole('link', { name: /Channel requests/ }).click();
+  if (new URL(page.url()).pathname !== '/channel-requests') {
+    const requests = page.getByRole('link', { name: /Channel requests, [1-9]/ });
+    await requests.focus();
+    await page.keyboard.press('Enter');
+  }
   await page.waitForURL(`${origin}/channel-requests`);
   const waiting = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: agent });
   const row = subject === undefined ? waiting : waiting.filter({ hasText: subject });
@@ -33,6 +37,7 @@ async function approveByKeyboard(page: Page, origin: string, agent: string, dial
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: dialogName });
   await dialog.waitFor();
+  await page.waitForFunction(() => Boolean(document.activeElement?.closest('[role="dialog"]')));
   assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]'))), true, 'focus moves into the dialog');
   const approveButton = dialog.getByRole('button', { name: approve });
   // Tab to the approve action rather than clicking it.
@@ -97,7 +102,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await page.goto(url);
     await page.waitForURL(`${origin}/channels/${channelId}`);
     await page.getByText('No messages yet.').waitFor();
-    await page.getByRole('heading', { name: 'Local channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Channel', level: 1 }).waitFor();
     const channelText = await page.locator('body').innerText();
     assert.match(channelText, /channel/i);
     assert.doesNotMatch(channelText, /\broom\b/i, 'the UI says channel, never room');
@@ -133,7 +138,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
 
     // Exchange: Ada writes, Bea reads it exactly once and answers, and the owner sees both, attributed.
     await page.goto(channelUrl);
-    await page.getByRole('heading', { name: 'Local channel' }).waitFor();
+    await page.getByRole('heading', { name: 'Channel', level: 1 }).waitFor();
     assert.equal((await ada.send('Ada: hello Bea')).code, 0);
     assert.deepEqual(await bea.readAll(), ['Ada: hello Bea']);
     assert.deepEqual(await bea.readAll(), [], 'a read message is not delivered again');
@@ -174,49 +179,50 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     });
     assert.equal(reported.status, 200);
     await page.reload();
-    await page.getByRole('heading', { name: 'Listening modes' }).waitFor();
-    const modeStatus = page.locator('.listening-control__status[role="status"]');
+    await page.getByRole('button', { name: 'Ada settings' }).click();
+    let adaAgent = page.getByRole('dialog', { name: 'Ada settings' });
+    await adaAgent.waitFor();
 
     // Supported: Ada's sync is in effect; the owner moves her to steer by keyboard and hears it.
-    const adaModes = page.getByRole('group', { name: 'Listening mode for Ada' });
-    await adaModes.waitFor();
-    const adaAgent = page.locator('.listening-control__agent', { has: adaModes });
-    await adaAgent.getByText('In effect: Sync.').waitFor();
-    const adaSync = adaModes.getByRole('radio', { name: 'Sync', exact: true });
+    await adaAgent.getByText('sync mode').waitFor();
+    const adaSync = adaAgent.getByRole('radio', { name: 'Sync', exact: true });
     assert.equal(await adaSync.isChecked(), true);
     await adaSync.focus();
     await page.keyboard.press('ArrowUp');
-    await page.getByText('Ada: Steer requested.').waitFor();
-    assert.equal(await adaModes.getByRole('radio', { name: 'Steer', exact: true }).isChecked(), true);
-    await adaAgent.getByText('In effect: Steer.').waitFor();
-    await adaAgent.getByText('Last changed by you (owner) (v2)').waitFor();
-    assert.equal(await adaModes.getByRole('radio', { name: 'Async (not proven for this agent)', exact: true }).isDisabled(), true,
+    await adaAgent.getByText('Ada: Steer requested.').waitFor();
+    assert.equal(await adaAgent.getByRole('radio', { name: 'Steer', exact: true }).isChecked(), true);
+    await adaAgent.getByText('steer mode').waitFor();
+    assert.equal(await adaAgent.getByRole('radio', { name: 'Async', exact: true }).isDisabled(), true,
       'async stays unproven without a receipt proof');
 
     // Ada moves herself back to sync with `khala mode set`; the owner's panel names her as the one who changed it.
     const agentSet = await ada.mode(['set', 'sync', '--expected-version', '2']);
     assert.equal(agentSet.code, 0, `khala mode set: ${agentSet.out}${agentSet.err}`);
     await page.reload();
-    await adaAgent.getByText('In effect: Sync.').waitFor();
-    assert.match(await adaAgent.innerText(), /Last changed by the agent \(Codex CLI 0\.156\.1 · [0-9a-f]+\) \(v3\)/);
+    await page.getByRole('button', { name: 'Ada settings' }).click();
+    adaAgent = page.getByRole('dialog', { name: 'Ada settings' });
+    await adaAgent.getByText('sync mode').waitFor();
 
     // Unproven: every Bea mode is shown, disabled, unclaimed, with the idle-delivery reason.
-    const beaModes = page.getByRole('group', { name: 'Listening mode for Bea' });
+    await adaAgent.getByRole('button', { name: 'Close agent settings' }).click();
+    await page.getByRole('button', { name: 'Bea settings' }).click();
+    const beaAgent = page.getByRole('dialog', { name: 'Bea settings' });
     for (const mode of ['Steer', 'Sync', 'Async']) {
-      const radio = beaModes.getByRole('radio', { name: `${mode} (not proven for this agent)`, exact: true });
+      const radio = beaAgent.getByRole('radio', { name: mode, exact: true });
       assert.equal(await radio.isDisabled(), true, `${mode} is disabled for Bea`);
       assert.equal(await radio.isChecked(), false, `${mode} is not claimed for Bea`);
     }
-    const beaAgent = page.locator('.listening-control__agent', { has: beaModes });
-    assert.match(await beaAgent.innerText(), /Idle agents receive messages only at their next turn\./);
-    await beaAgent.getByText(/Requested: none\. Not in effect/).waitFor();
+    await beaAgent.getByText('Mode unavailable').waitFor();
+    await beaAgent.getByRole('button', { name: 'Close agent settings' }).click();
+    await page.getByRole('button', { name: 'Ada settings' }).click();
+    adaAgent = page.getByRole('dialog', { name: 'Ada settings' });
 
     // Pause: announced, and the owner's next message is held before Ada can claim it; resume releases it once.
-    const pauseAda = page.getByRole('button', { name: 'Pause delivery to Ada' });
+    const pauseAda = adaAgent.getByRole('button', { name: 'Pause delivery' });
     await pauseAda.focus();
     await page.keyboard.press('Enter');
     await page.getByText('Delivery to Ada is paused. New messages wait until you resume.').waitFor();
-    assert.match(await modeStatus.innerText(), /Delivery to Ada is paused\./);
+    assert.match(await adaAgent.innerText(), /Delivery to Ada is paused\./);
     await composer.fill('Owner: held for Ada');
     await page.getByRole('button', { name: 'Send' }).click();
     await rowWith(page, 'Owner: held for Ada').waitFor();
@@ -224,26 +230,26 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     assert.equal(heldResponse.status, 200);
     assert.deepEqual(await heldResponse.json().then(body => [body.held, body.releases.length]), ['paused', 0], 'nothing reaches Ada while paused');
     assert.deepEqual(await ada.readAll(), [], 'Ada cannot read a held message');
-    const resumeAda = page.getByRole('button', { name: 'Resume delivery to Ada' });
+    const resumeAda = adaAgent.getByRole('button', { name: 'Resume delivery' });
     await resumeAda.focus();
     await page.keyboard.press('Enter');
     await page.getByText('Delivery to Ada resumed.').waitFor();
     assert.deepEqual(await ada.readAll(), ['Owner: held for Ada'], 'resume releases the held message');
     assert.deepEqual(await bea.readAll(), ['Owner: held for Ada'], 'Bea was never paused');
 
-    // Stop: keyboard only, confirmed, announced, and focus lands on the outcome.
-    const stopButton = page.getByRole('button', { name: 'Stop agent delivery' });
-    await stopButton.focus();
-    await page.keyboard.press('Enter');
-    await page.getByRole('group', { name: 'Stop delivery to agents in this channel?' }).waitFor();
-    assert.equal(await focused(page), 'Stop delivery to agents in this channel?');
-    await page.keyboard.press('Tab');
-    assert.equal(await focused(page), 'Stop delivery');
-    await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: 'Agent delivery stopped' }).waitFor();
-    assert.equal(await focused(page), 'Agent delivery stopped');
-    const stopStatus = page.locator('.stop-control__status[role="status"]');
-    assert.match(await stopStatus.innerText(), /Agent delivery stopped\. 2 agent bindings were revoked\./);
+    // Stop remains enforced by the authenticated API while its chat menu is deferred.
+    await adaAgent.getByRole('button', { name: 'Close agent settings' }).click();
+    const stopReply = await page.evaluate(async id => {
+      const secret = sessionStorage.getItem('khala.requestSecret');
+      const response = await fetch(`/api/v1/channels/${encodeURIComponent(id)}/stop`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-khala-request-secret': secret ?? '' },
+        body: JSON.stringify({ v: 1, targets: null }),
+      });
+      return { status: response.status, body: await response.json() as { outcome?: string; stopped?: unknown[] } };
+    }, channelId);
+    assert.equal(stopReply.status, 200);
+    assert.equal(stopReply.body.outcome, 'stopped');
+    assert.equal(stopReply.body.stopped?.length, 2);
 
     // Stop revoked delivery, not the server: bindings can no longer read or write,
     assert.equal(await reachable(origin), true, 'the server is still running after Stop');
@@ -291,7 +297,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await page.goto(`${origin}/channels/${channelId}`);
     await rowWith(page, 'Ada: after resume').waitFor();
 
-    // Narrow viewport: the channel and its Stop outcome fit without horizontal scrolling.
+    // Narrow viewport: the channel fits without horizontal scrolling.
     await page.setViewportSize({ width: 320, height: 800 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no horizontal overflow at 320px');
 

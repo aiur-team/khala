@@ -2,13 +2,15 @@
 // port shaped like the local server's owner routes. No server and no agent process.
 import { createRoot } from 'react-dom/client';
 import { ListeningControl } from '../ListeningControl';
+import { LocalAgentControls } from '../LocalAgentControls';
 import { createListeningController } from '../listening-controller';
 import { provenCodexEntry, unprovenClaudeEntry } from '../listening-fixtures';
 import { type ListeningPort, decodeBindingList } from '../listening-port';
 
-type HarnessWindow = Window & { __calls: string[] };
+type HarnessWindow = Window & { __calls: string[]; __failList: boolean; __refresh(): Promise<void> };
 const harness = window as unknown as HarnessWindow;
 harness.__calls = [];
+harness.__failList = false;
 
 let ada = { requested: 'sync', version: 1, paused: false };
 let beaPaused = false;
@@ -17,7 +19,7 @@ const list = () => decodeBindingList({
 })!;
 
 const port: ListeningPort = {
-  async list() { return { kind: 'listed', bindings: list() }; },
+  async list() { return harness.__failList ? { kind: 'failed', reason: 'unavailable' } : { kind: 'listed', bindings: list() }; },
   async setMode(_channel, binding, requested) {
     harness.__calls.push(`mode:${binding.displayName}:${requested}:v${binding.version}`);
     ada = { ...ada, requested, version: ada.version + 1 };
@@ -36,5 +38,6 @@ const port: ListeningPort = {
 };
 
 const controller = createListeningController(port, 'ch_harness');
+harness.__refresh = () => controller.refresh();
 void controller.refresh();
-createRoot(document.querySelector('#root')!).render(<ListeningControl controller={controller} />);
+createRoot(document.querySelector('#root')!).render(<><ListeningControl controller={controller} /><LocalAgentControls controller={controller} /></>);

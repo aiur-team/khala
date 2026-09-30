@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -8,7 +8,7 @@ import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const harnessRoot = join(here, 'browser-harness');
+const harnessRoot = join(here, '../../composition/human/browser-harness');
 const SECRET_INVITE_REF = 'super-secret-invite-token-do-not-log-9f2c';
 
 // Real desktop/phone viewports and real same-origin navigation against the
@@ -21,9 +21,11 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
   let server: PreviewServer | undefined;
   let browser: Browser | undefined;
   try {
-    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true,
+      rollupOptions: { input: join(harnessRoot, 'personal-links.html') } }, logLevel: 'error' });
+    await copyFile(join(outDir, 'personal-links.html'), join(outDir, 'index.html'));
     server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
-    const url = server.resolvedUrls!.local[0]!;
+    const url = `${server.resolvedUrls!.local[0]!}personal-links.html`;
 
     browser = await chromium.launch({
       executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
@@ -42,7 +44,7 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
 
       await page.goto(`${url}?invite=${SECRET_INVITE_REF}`);
       await page.getByRole('link', { name: 'Agent instructions' }).waitFor();
-      assert.match(await page.locator('body').innerText(), /Agents: this is a human invitation.*\/khala join route or installed CLI/);
+      assert.match(await page.locator('body').innerText(), /Joining as a person gives you your own link for your agent/);
       assert.doesNotMatch(await page.locator('body').innerText(), new RegExp(SECRET_INVITE_REF));
       await page.getByRole('button', { name: 'Sign in' }).waitFor();
       await page.getByRole('button', { name: 'Sign in' }).click();
@@ -56,7 +58,7 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
       // Complete the round trip: still signed in leads to the joined state, once.
       await page.getByRole('button', { name: 'Sign in' }).click();
       await page.getByRole('link', { name: /Continue as test user/ }).click();
-      await page.getByText('You', { exact: false }).waitFor();
+      await page.getByText("You're in.").waitFor();
       assert.equal(await page.getByText(/You.re in/).count(), 1);
 
       // The raw invite reference never reaches console output.
@@ -93,6 +95,7 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
       ['expired', /expired/i],
       ['revoked', /revoked/i],
       ['identity_mismatch', /wrong account/i],
+      ['invalid_link', /not valid/i],
     ] as const) {
       const page = await browser.newPage({ viewport: { width: 1024, height: 800 } });
       await page.goto(`${url}?invite=${SECRET_INVITE_REF}&identity=signed_in&state=${state}`);
@@ -101,6 +104,43 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
       assert.equal(await page.getByRole('button', { name: 'Try again' }).count(), 0, `${state} must not offer a retry action`);
       await page.close();
     }
+
+    // A creates the channel, B opens A's link in a separate signed-in context,
+    // and each person gets a distinct personal link after admission.
+    const a = await browser.newPage({ viewport: { width: 1024, height: 800 } });
+    const b = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await a.goto(`${url}?create=1&owner=owner_alice`);
+    await a.getByRole('heading', { name: 'Test channel' }).waitFor();
+    const aLink = a.getByRole('textbox', { name: 'My channel link' });
+    await aLink.waitFor();
+    const linkA = await aLink.inputValue();
+    assert.match(linkA, /\/join\/owner_alice$/);
+    await a.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await a.getByRole('button', { name: 'Copy my channel link' }).click();
+    assert.equal(await a.evaluate(() => navigator.clipboard.readText()), linkA);
+    await a.goto(linkA);
+    await a.getByText("You're in.").waitFor();
+    await a.getByText(/Your link \(owner_alice@example.test\)/).waitFor();
+
+    await b.goto(`${url}?create=1&owner=owner_bob`);
+    await b.goto(linkA);
+    await b.getByText("You're in.").waitFor();
+    await b.getByText(/Your link \(owner_bob@example.test\)/).waitFor();
+    const bLink = b.getByRole('textbox', { name: 'My channel link' });
+    await bLink.waitFor();
+    const linkB = await bLink.inputValue();
+    assert.match(linkB, /\/join\/owner_bob$/);
+    assert.notEqual(linkA, linkB);
+    await b.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await b.getByRole('button', { name: 'Copy my channel link' }).click();
+    assert.equal(await b.evaluate(() => navigator.clipboard.readText()), linkB);
+    assert.equal(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await b.reload();
+    await b.getByText("You're in.").waitFor();
+    await b.getByText(/Your link \(owner_bob@example.test\)/).waitFor();
+    assert.equal(await b.getByRole('textbox', { name: 'My channel link' }).inputValue(), linkB);
+    await a.close();
+    await b.close();
 
     // A revoked callback never exposes room content (AE1).
     {

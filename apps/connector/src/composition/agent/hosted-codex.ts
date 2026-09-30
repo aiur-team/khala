@@ -10,6 +10,7 @@ import { encodeMessageContent } from '@khala/contracts/messaging/events';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 
 export type LocalInbox = Readonly<{
+  setCurrentNames?(names: readonly Readonly<{ participantId: string; name: string; sourceEventId: string | null; eventId: string }>[]): Promise<void>;
   enqueue(delivery: Readonly<{ v: 1; releaseId: string; bindingId: string; generation: number;
     events: ReleasedJob['events']; payloadDigest: string; payload: Uint8Array; receivedAt: string }>): Promise<'appended' | 'duplicate'>;
   notifyListener(reason: 'released'): Promise<'notified' | 'unavailable'>;
@@ -25,17 +26,23 @@ export function createHostedCodexHarness(input: Readonly<{
   inspectHooks(): Promise<HarnessCapabilities | null>;
   openInbox(bindingId: string, generation: number): Promise<LocalInbox>;
 }>): HarnessPort {
+  // The hosted server binds the approved proof key. Codex's queue uses the
+  // separately inspected provider thread. Project only at this local adapter
+  // boundary; storage, approvals, and release IDs keep the server binding.
+  const nativeBinding: SessionBinding = input.binding.harness === 'proof-key'
+    ? { ...input.binding, harness: 'codex', sessionId: input.claim.sessionId }
+    : input.binding;
   const clock = { now: () => new Date() };
   const limits = { maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 };
   const nativeCli: CodexNativeCliPort = {
     async inspect(sessionId) {
-      if (sessionId !== input.binding.sessionId || !await input.current()) return {
+      if (sessionId !== nativeBinding.sessionId || !await input.current()) return {
         version: null, session: 'not_owned', bindingId: null, generation: null,
         platform: process.platform, arch: process.arch,
       };
       const inspected = await input.sessionInspection.inspect(input.claim);
-      if (inspected.kind !== 'verified' || inspected.session.harness !== input.binding.harness
-        || inspected.session.sessionId !== input.binding.sessionId
+      if (inspected.kind !== 'verified' || inspected.session.harness !== nativeBinding.harness
+        || inspected.session.sessionId !== nativeBinding.sessionId
         || inspected.session.generation !== input.binding.generation) return {
         version: null, session: 'not_owned', bindingId: null, generation: null,
         platform: process.platform, arch: process.arch,
@@ -46,7 +53,7 @@ export function createHostedCodexHarness(input: Readonly<{
     },
     async run(argv) {
       if (argv.length !== 5 || argv[0] !== 'queue' || argv[1] !== '--thread'
-        || argv[2] !== input.binding.sessionId || argv[3] !== '--message'
+        || argv[2] !== nativeBinding.sessionId || argv[3] !== '--message'
         || argv[4] !== CODEX_IDLE_WAKE_NOTICE || !await input.current()) return { status: 'not_started' };
       const executable = await input.resolveExecutable();
       if (!executable || !path.isAbsolute(executable)) return { status: 'not_started' };
@@ -85,15 +92,19 @@ export function createHostedCodexHarness(input: Readonly<{
       if (!sameSessionBinding(binding, input.binding) || !await input.current()) {
         return unsupportedNativeCliCapabilities('unknown', limits as never);
       }
-      const native = await core.inspect(binding);
+      const native = await core.inspect(nativeBinding);
       if (native.support !== 'tested' || native.existingSession !== 'native_cli_queue') return native;
       const hooks = await input.inspectHooks();
       if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== native.version) return native;
       return { ...native, modes: hooks.modes, acknowledgement: hooks.acknowledgement };
     },
-    notify: (binding, hint) => core.notify(binding, hint),
-    submit: command => core.submit(command),
-    reconcile: async job => await input.current() ? core.reconcile(job) : null,
+    notify: (binding, hint) => sameSessionBinding(binding, input.binding)
+      ? core.notify(nativeBinding, hint) : Promise.resolve(),
+    submit: command => core.submit({ ...command,
+      job: { ...command.job, binding: sameSessionBinding(command.job.binding, input.binding)
+        ? nativeBinding : command.job.binding } }),
+    reconcile: async job => await input.current() && sameSessionBinding(job.binding, input.binding)
+      ? core.reconcile({ ...job, binding: nativeBinding }) : null,
     close: () => core.close(),
   };
 }

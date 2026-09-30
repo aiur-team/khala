@@ -149,6 +149,7 @@ const ROUTES = {
   bootstrapScript: { method: 'GET', path: BOOTSTRAP_SCRIPT_ROUTE, admission: 'public' },
   exchange: { method: 'POST', path: SESSION_EXCHANGE_ROUTE, admission: 'bootstrap' },
   session: { method: 'GET', path: '/api/v1/session', admission: 'authenticated' },
+  listChannels: { method: 'GET', path: '/api/v1/channels', admission: 'authenticated' },
   create: { method: 'POST', path: '/api/v1/channels', admission: 'authenticated' },
   channel: { method: 'GET', path: '/api/v1/channels/:channelId', admission: 'authenticated' },
   timeline: { method: 'GET', path: '/api/v1/channels/:channelId/timeline', admission: 'authenticated', allowQuery: true },
@@ -258,7 +259,7 @@ function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec 
   const role = discoveryRole(route) ?? bindingModeRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
-  if (route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE || isMakeExternalRoute(route)) {
+  if (route === ROUTES.listChannels || route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE || isMakeExternalRoute(route)) {
     return principal.kind === 'human';
   }
   // Only a bound agent acknowledges, and only for its own binding.
@@ -301,7 +302,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
 
   const routes: RouteSpec[] = [
     ROUTES.bootstrapDocument, ROUTES.bootstrapScript, ROUTES.exchange,
-    ROUTES.session, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
+    ROUTES.session, ROUTES.listChannels, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (options.releases) routes.push(ROUTES.releases);
   if (options.receipts) routes.push(ROUTES.receipts);
@@ -560,6 +561,13 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     sendJson(response, 200, { human: { ownerId, participantId, deviceId } });
   }
 
+  function listChannels({ principal, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'human') { fail(response, failure(403, 'forbidden')); return; }
+    const listed = store.listChannels(principal.human.participantId);
+    if (listed.kind === 'unavailable') { fail(response, failure(503, 'unavailable')); return; }
+    sendJson(response, 200, { channels: listed.channels.map(channelView) });
+  }
+
   /** Lets a local agent client learn the exact live binding its capability holds. */
   function binding({ principal, response }: RouteContext<Principal>): void {
     if (principal?.kind !== 'binding') {
@@ -789,7 +797,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
-    if (content.value.kind === 'agent_rename') {
+    if ((content.value.kind === 'agent_rename' || content.value.kind === 'agent_name_snapshot')) {
       const rename = content.value;
       const roster = store.roster(params.channelId as RoomId);
       const target = roster.kind === 'done'
@@ -954,6 +962,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
             return;
           case ROUTES.exchange: return await exchange(context);
           case ROUTES.session: return session(context);
+          case ROUTES.listChannels: return listChannels(context);
           case ROUTES.create: return await create(context);
           case ROUTES.channel: return channel(context);
           case ROUTES.timeline: return timeline(context);

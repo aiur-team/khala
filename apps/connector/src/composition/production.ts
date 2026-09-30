@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -11,9 +11,11 @@ import {
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { createMatrixBootstrapDevice } from '../substrate/bootstrap-device';
+import type { openMatrixConnectorSubstrate } from '../substrate/matrix';
 import { startProductionSubscription } from './agent/subscription';
 import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
@@ -36,6 +38,8 @@ import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
 import { createAgentParticipantLookup } from './agent/participant-directory';
 import { renameDelivery } from './agent/rename-delivery';
+import { readOrderedPendingReferences } from '@khala/connector/storage/ordered-pending';
+import { createOrderedProjection } from './agent/ordered-projection';
 import type { AgentListeningModeSetInput } from '@khala/connector/agent/listening-mode';
 
 function productionLimits() {
@@ -90,6 +94,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: TInbox;
+  /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
+  openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
   const origin = new URL(input.appOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== input.appOrigin || origin.username || origin.password) {
@@ -119,6 +125,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   const sessionDirectory = productionSessionDirectory(input.stateDirectory, input.session);
   const stateDirectory = path.join(sessionDirectory, 'state');
   const markerFile = path.join(sessionDirectory, 'current-binding.json');
+  const admissionFile = (operationId: string) => path.join(sessionDirectory,
+    `channel-access-${createHash('sha256').update(operationId).digest('hex')}.json`);
   await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
   let mode: 'create' | 'existing';
   try { mode = (await stat(stateDirectory)).isDirectory() ? 'existing' : 'create'; }
@@ -138,7 +146,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     recordAcknowledgement?: (acknowledgement: Acknowledgement) => Promise<void>;
   }>) => Promise<LocalInbox>;
   const rawOpenInbox = input.openInbox as unknown as OpenInbox;
-  const openHostedInbox: OpenInbox = (bindingId, generation) => {
+  const projections = new Map<string, ReturnType<typeof createOrderedProjection>>();
+  const projectionFor = (bindingId: string, generation: number) => {
+    const key = JSON.stringify([bindingId, generation]);
+    let projection = projections.get(key);
+    if (!projection) { projection = createOrderedProjection(path.join(sessionDirectory, `projection-${createHash('sha256').update(key).digest('hex')}.json`)); projections.set(key, projection); }
+    return projection;
+  };
+  const openRawHostedInbox: OpenInbox = (bindingId, generation) => {
     if (closed || remoteDenied || deliveryStopped) throw new Error('production_binding_revoked');
     return rawOpenInbox(bindingId, generation, {
     recordAcknowledgement: async acknowledgement => {
@@ -146,7 +161,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         || acknowledgement.bindingId !== bindingId || acknowledgement.generation !== generation) {
         throw new Error('acknowledgement_binding_mismatch');
       }
-      const releases = acknowledgement.releaseIds.filter(releaseId => !/^rename_[0-9a-f]{64}$/u.test(releaseId));
+      const releases = await projectionFor(bindingId, generation).acknowledge(acknowledgement.releaseIds);
       if (releases.length === 0) return;
       const result = await acknowledgementRecorder.recordBatchAcknowledgement({
         principal: { bindingId: binding.bindingId, generation: binding.generation },
@@ -154,6 +169,28 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       });
       if (result.kind === 'refused') throw new Error('acknowledgement_refused');
     },
+    }).then(inbox => new Proxy(inbox, { get(target, property, receiver) {
+      if (property === 'enqueue') return (delivery: Parameters<LocalInbox['enqueue']>[0]) => {
+        if (closed || remoteDenied || deliveryStopped || !binding || binding.bindingId !== bindingId || binding.generation !== generation) {
+          throw new Error('production_binding_revoked');
+        }
+        return target.enqueue(delivery);
+      };
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }));
+  };
+  const openHostedInbox: OpenInbox = (bindingId, generation) => {
+    const opened = openRawHostedInbox(bindingId, generation);
+    return opened.then(async inbox => {
+      const projection = projectionFor(bindingId, generation);
+      await projection.flush(inbox);
+      // Preserve call/wake consumers on the CLI's FileInbox prototype.
+      return new Proxy(inbox, { get(target, property, receiver) {
+        if (property === 'enqueue') return (delivery: Parameters<LocalInbox['enqueue']>[0]) => projection.enqueue(delivery, target);
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
     });
   };
   const matrix = createMatrixBootstrapDevice({
@@ -168,15 +205,27 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       return createAgentParticipantLookup({ appOrigin: input.appOrigin, binding, roomId: session.roomId,
         signer, capability: () => capabilityFor(binding!).ensure() })(userIds, targetParticipantIds);
     },
+    onText: async event => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      await projectionFor(binding.bindingId, binding.generation).observe(event.roomId, event.eventId, event.authorName);
+      return true;
+    },
+    onCurrentNames: async names => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      const inbox = await openRawHostedInbox(binding.bindingId, binding.generation);
+      if (!inbox.setCurrentNames) return false;
+      await inbox.setCurrentNames(names);
+      return true;
+    },
     onRename: async event => {
       if (!binding || closed || remoteDenied || deliveryStopped) return false;
       try {
-        const inbox = await openHostedInbox(binding.bindingId, binding.generation);
-        const result = await inbox.enqueue(renameDelivery(binding, event));
-        if (result === 'appended') await inbox.notifyListener('released').catch(() => 'unavailable' as const);
+        const inbox = await openRawHostedInbox(binding.bindingId, binding.generation);
+        await projectionFor(binding.bindingId, binding.generation).metadata(renameDelivery(binding, event), inbox);
         return true;
       } catch { return false; }
     },
+    ...(input.openMatrix ? { open: input.openMatrix } : {}),
   });
   let closed = false;
   let binding: SessionBinding | null = null;
@@ -311,6 +360,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         bindingId: next.bindingId, ownerId: next.ownerId, generation: next.generation,
         policyVersion: 0 }), result: undefined };
     });
+    await projectionFor(next.bindingId, next.generation).seedLegacy(readOrderedPendingReferences(storage, next));
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,
@@ -321,7 +371,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         return activeTrust.ensure();
       },
     });
-    if (next.harness === 'codex') {
+    if (input.session.harness === 'codex') {
       harness = createHostedCodexHarness({ binding: next, claim: input.session,
         sessionInspection: sessionInspector,
         current: async () => {
@@ -386,7 +436,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     }
     const decoded = decodeSessionBinding(value);
     if (!decoded.ok) throw new Error('production_binding_corrupt');
-    if (decoded.value.harness !== input.session.harness || decoded.value.sessionId !== input.session.sessionId) {
+    const providerSession = decoded.value.harness === input.session.harness
+      && decoded.value.sessionId === input.session.sessionId;
+    const approvedProofKey = decoded.value.harness === 'proof-key'
+      && signer !== null && decoded.value.sessionId === `agent_${signer.jkt}`;
+    if (!providerSession && !approvedProofKey) {
       throw new Error('production_binding_session_changed');
     }
     const local = await storage.ledger.transaction(tx => tx.readBinding(decoded.value.bindingId));
@@ -425,9 +479,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   });
 
   try {
-    binding = await readBinding(true);
     const persistence = await createBootstrapPersistence(storage);
     signer = persistence.signer;
+    // A hosted binding records the approved proof-key principal. Recover the
+    // persisted signer before checking that principal against the marker.
+    binding = await readBinding(true);
     if (binding) {
       const heldBinding = binding;
       const snapshot = await storage.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: heldBinding.bindingId, selection: [] }));
@@ -490,6 +546,48 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     return {
       ports,
       proofSigner: signer,
+      channelAccess: {
+        journal: createChannelAccessActivationStore(storage),
+        devices: ports.devices,
+        async admitted(operationId: string, value: Readonly<{ binding: SessionBinding; matrixSession: MatrixDeviceSession }>) {
+          if (!/^[A-Za-z0-9_-]{8,64}$/.test(operationId) || closed || remoteDenied
+            || !signer || value.binding.harness !== 'proof-key'
+            || value.binding.sessionId !== `agent_${signer.jkt}`
+            || value.binding.deviceId !== value.matrixSession.deviceId) throw new Error('channel_access_admission_invalid');
+          const file = admissionFile(operationId);
+          const temporary = `${file}.${randomUUID()}.tmp`;
+          try {
+            const handle = await open(temporary, 'wx', 0o600);
+            try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); } finally { await handle.close(); }
+            try { await link(temporary, file); } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+              const previous: unknown = JSON.parse(await readFile(file, 'utf8'));
+              if (JSON.stringify(previous) !== JSON.stringify(value)) throw new Error('channel_access_admission_conflict');
+            }
+            const directory = await open(sessionDirectory, 'r');
+            try { await directory.sync(); } finally { await directory.close(); }
+          } finally { await rm(temporary, { force: true }); }
+        },
+        async recovered(operationId: string) {
+          if (!/^[A-Za-z0-9_-]{8,64}$/.test(operationId) || closed || remoteDenied) return null;
+          let value: unknown;
+          try { value = JSON.parse(await readFile(admissionFile(operationId), 'utf8')); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+          if (!value || typeof value !== 'object' || !('binding' in value) || !('matrixSession' in value)) return null;
+          const record = value as { binding: unknown; matrixSession: MatrixDeviceSession };
+          const decoded = decodeSessionBinding(record.binding);
+          if (!decoded.ok || !signer || decoded.value.harness !== 'proof-key'
+            || decoded.value.sessionId !== `agent_${signer.jkt}`
+            || decoded.value.deviceId !== record.matrixSession?.deviceId) return null;
+          return { binding: decoded.value, matrixSession: record.matrixSession };
+        },
+        trust: { async initialize(next: SessionBinding) {
+          if (closed || remoteDenied || !binding || !sameSessionBinding(binding, next)) return { kind: 'failed' as const };
+          const state = await trust.read(next.bindingId);
+          if (!state || state.generation !== next.generation || !state.effective) return { kind: 'unavailable' as const };
+          return { kind: 'initialized' as const, mode: state.effective.mode, paused: state.effective.paused };
+        } },
+      },
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
         if (closed || remoteDenied || deliveryStopped || !binding || !subscription || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };

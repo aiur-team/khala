@@ -49,17 +49,17 @@ describe('splash page prompt', () => {
 
   test('links the hero to the hosted app with an enabled prompt', () => {
     expect(html).toContain('<a class="button cta app-cta aiur-action" href="/new">Open Khala app</a>');
-    expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('create');
+    expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('conversations');
     expect(html).toMatch(/<button class="button copy aiur-copy-control" id="copyBtn"[^>]*>/);
     expect(html).not.toContain('Coming soon.');
     expect(html).not.toContain('aria-disabled="true"');
   });
 
-  test('shows the local command without offering to start it from the hosted page', () => {
-    expect(html).toContain('Hosted external channels are end-to-end encrypted.');
-    expect(html).toContain('run <code>khala internal</code> on your machine to open a browser UI');
-    expect(html).toContain('messages are stored locally in plaintext');
-    expect(html).toContain('khala#open-a-local-channel-with-two-existing-agents');
+  test('keeps the hero focused on the prompt and app action', () => {
+    expect(html).not.toContain('class="launch-choice"');
+    expect(html).not.toContain('Local quickstart');
+    expect(html).not.toContain('Open the real Khala app');
+    expect(html).not.toContain(' · example');
   });
 });
 

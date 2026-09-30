@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -24,18 +24,16 @@ declare global { interface Window {
   __oldStatusReturned: () => boolean;
 } }
 
-test('created channel page can copy a link and prepare a named email invitation', { timeout: 90_000 }, async () => {
+test('created channel page has one share action that copies a working link', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
-    await page.getByRole('button', { name: 'Copy link' }).click();
-    await page.getByRole('textbox', { name: 'Channel link' }).waitFor();
-    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
-    await page.getByRole('textbox', { name: 'Invite by email' }).fill('friend@example.com');
-    await page.getByRole('button', { name: 'Create email invite' }).click();
-    await page.getByRole('link', { name: 'Open email draft' }).waitFor();
-    assert.match((await page.getByRole('link', { name: 'Open email draft' }).getAttribute('href')) ?? '', /friend%40example.com/);
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
+    await page.getByRole('status').getByText('Copied').waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'https://khala.example/join/invite_1');
+    assert.equal(await page.locator('.channel-share button').count(), 1);
+    assert.equal(await page.locator('.channel-share__more').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.__shareRequests()), [
       { roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'none' } },
-      { roomId: 'room_1', policy: { v: 1, kind: 'named_email', email: 'friend@example.com', history: 'none' } },
     ]);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
@@ -43,8 +41,38 @@ test('created channel page can copy a link and prepare a named email invitation'
   });
 });
 
+test('channel care route mounts recipient review and recovery outside the chat', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?tools', async page => {
+    const care = page.getByRole('main', { name: 'Channel care route' });
+    await care.getByRole('heading', { name: 'Channel care' }).waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
+    await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
+    await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await page.locator('.conversation-thread__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: join(screenshotDir, 'human-channel-care-mobile.png'), fullPage: true });
+    }
+  });
+});
+
+test('share offers a selectable link when clipboard access is denied', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
+    await page.getByRole('alert').getByText('Copy failed. Select the link above to copy it.').waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Channel link' }).inputValue(), 'https://khala.example/join/invite_1');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  });
+});
+
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-review-room-profile-'));
   let server: PreviewServer | null = null;
   let browser: Browser | null = null;
   try {
@@ -54,14 +82,15 @@ async function withRoomPage(path: string, run: (page: Page) => Promise<void>): P
     server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
       build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      headless: true, args: ['--no-sandbox'] });
-    const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + path);
     await run(page);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
 }
 
@@ -111,6 +140,20 @@ test('mounted human room keeps one confirmed message after reload', { timeout: 9
     await page.reload();
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'confirmed before reload' }).waitFor();
     assert.equal(await page.locator('.timeline__row', { hasText: 'confirmed before reload' }).count(), 1);
+  });
+});
+
+test('mounted human room reconciles an acknowledged send after reload when sync omits its transaction', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html', async page => {
+    await page.getByRole('textbox', { name: 'Message' }).fill('__defer_sync acknowledged before reload');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.timeline__row--pending', { hasText: '__defer_sync acknowledged before reload' }).getByText('Sent').waitFor();
+    await page.waitForFunction(() => Object.keys(sessionStorage).some(key => key.startsWith('khala.pending-send.v2:')
+      && sessionStorage.getItem(key)?.includes('eventId')));
+    await page.reload();
+    await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: '__defer_sync acknowledged before reload' }).waitFor();
+    await page.locator('.timeline__row--pending', { hasText: '__defer_sync acknowledged before reload' }).waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.timeline__row', { hasText: '__defer_sync acknowledged before reload' }).count(), 1);
   });
 });
 

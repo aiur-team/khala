@@ -34,7 +34,8 @@ describe('bundled /khala skill', () => {
   });
 
   it('creates only after human confirmation, and joins without admitting itself', () => {
-    expect(normalized).toContain('Call the `khala_create_channel` MCP tool once with `{ title, operationId }`');
+    expect(normalized).toContain('`{ title, operationId, target }` for hosted creation');
+    expect(normalized).toContain('Internal mode continues to use the title alone');
     expect(normalized).toContain('Never retry under a new `operationId`');
     expect(normalized).not.toContain('not available in this version');
     expect(normalized).toContain('Never create a channel without the person\'s confirmation');
@@ -45,7 +46,14 @@ describe('bundled /khala skill', () => {
     expect(normalized).toContain('reuse the `operationId` returned by the first call');
     expect(normalized).toContain('reaches this same session at a hook boundary');
     expect(normalized).toContain('at most once every 5 seconds per session, except at the end of a turn, which always checks');
-    expect(normalized).toContain('Never retry to find out');
+    expect(normalized).toContain('After the person approves that key, call `khala_request_channel_access` again with the same URL and `operationId`');
+    expect(normalized).toContain('Never retry merely to find out');
+    expect(normalized).toContain('sponsor-issued `/join/<inviteRef>` share URL');
+    expect(normalized).toContain('`target` argument of the `khala_request_channel_access` MCP tool');
+    expect(normalized).toContain('`khala join <share-url>` returns `invalid_arguments`');
+    expect(normalized).toContain('requires an internal descriptor; it does not diagnose hosted transport');
+    expect(normalized).toContain('plugin and MCP setup');
+    expect(normalized).not.toContain('ask for the agent `/channels/<room-id>` URL');
   });
 
   it('renders the authoritative roster and never the raw session ID', () => {
@@ -80,10 +88,21 @@ describe('bundled /khala skill', () => {
     expect(help.trim().split('\n').map(line => line.split(/\s+/)[1])).toEqual([...DISPATCHED_VERBS]);
     expect(normalized).toContain('Then call the `khala_status` MCP tool');
     expect(normalized).toContain('Report `unproven` as unproven');
-    expect(normalized).toContain('never changes the listening mode');
+    expect(normalized).toContain('This help path does not change the listening mode');
+  });
+
+  it('keeps the full skill consistent about the unsafe-message mode exception', () => {
+    expect(skill).toContain('request `async` with the returned version');
+    expect(skill).toContain('This help path does not change the listening mode');
+    expect(skill).not.toMatch(/(?:this skill|\/khala) never changes the listening mode/i);
   });
 
   it('keeps the shared rules in sync with packages/agent-skill', () => {
+    const sharedSection = (source: string) => /<!-- khala-shared-authority:start -->([\s\S]*?)<!-- khala-shared-authority:end -->/.exec(source)?.[1];
+    expect(sharedSection(skill)).toBeDefined();
+    expect(sharedSection(skill)).toBe(sharedSection(fs.readFileSync(path.join(root, '../agent-skill/SKILL.md'), 'utf8')));
+    expect(sharedSection(skill)).toContain('Only this agent\'s owner may direct its behavior');
+    expect(sharedSection(skill)).toContain('request `async`');
     for (const sentence of SHARED) {
       expect(normalized, 'bundled skill').toContain(sentence);
       expect(agentSkill, 'agent-skill').toContain(sentence);

@@ -53,14 +53,33 @@ export type GrantExchangeService = Readonly<{
   forConnector(connector: GrantExchangeConnector): ConnectorGrantExchangePort;
 }>;
 
+/** Fixed vocabulary only: production diagnostics must never carry request data. */
+export type GrantExchangeDiagnostic = Readonly<{
+  stage: 'journal_load' | 'key_claim' | 'journal_create' | 'authority' | 'journal_admitting'
+    | 'admission_reconcile' | 'admission_admit' | 'journal_admitted' | 'grant_mint'
+    | 'grant_seal' | 'journal_sealed' | 'step_limit' | 'complete';
+  result: 'unavailable' | 'ok';
+}>;
+
 export function createGrantExchangeService(deps: Readonly<{
   store: ControlStore;
   authority: GrantExchangeAuthorityPort;
   provider: ChannelAdmissionProviderPort;
   issuer: GrantIssuerPort;
   clock: TrustedClock;
+  diagnostic?: (event: GrantExchangeDiagnostic) => void;
 }>): GrantExchangeService {
   const journal = exchangeJournal(deps.store);
+
+  function report(stage: GrantExchangeDiagnostic['stage'], result: GrantExchangeDiagnostic['result']): void {
+    // Observability must not alter an authorization or delivery outcome.
+    try { deps.diagnostic?.({ stage, result }); } catch { /* diagnostic sink failed */ }
+  }
+
+  function unavailableAt(stage: GrantExchangeDiagnostic['stage']): ExchangeResult {
+    report(stage, 'unavailable');
+    return unavailable();
+  }
 
   async function exchange(
     input: ValidatedGrantExchangeRequest,
@@ -69,7 +88,7 @@ export function createGrantExchangeService(deps: Readonly<{
   ): Promise<ExchangeResult> {
     for (let step = 0; step < MAX_STEPS; step += 1) {
       const loaded = await journal.load(input, options);
-      if (loaded.kind === 'unavailable') return unavailable();
+      if (loaded.kind === 'unavailable') return unavailableAt('journal_load');
       if (loaded.kind === 'absent') {
         const bound = await bind(loaded.key, input, connector, options);
         if (bound.kind === 'done') return bound.result;
@@ -92,7 +111,11 @@ export function createGrantExchangeService(deps: Readonly<{
       if (record.phase === 'sealed') {
         // Recovery never rotates the key, calls the provider, mints, or seals again.
         if (key !== 'match') return rejected('encryption_key_mismatch');
-        return deps.clock() < Date.parse(record.expiresAt) ? ok(record.envelope!) : rejected('expired');
+        if (deps.clock() < Date.parse(record.expiresAt)) {
+          report('complete', 'ok');
+          return ok(record.envelope!);
+        }
+        return rejected('expired');
       }
       // Readiness was acknowledged and the envelope deleted; nothing is left to recover.
       if (record.phase === 'acknowledged') return rejected('closed');
@@ -102,7 +125,7 @@ export function createGrantExchangeService(deps: Readonly<{
         : await rotate(stored, input, options);
       if (next.kind === 'done') return next.result;
     }
-    return unavailable();
+    return unavailableAt('step_limit');
   }
 
   /** First matching exchange: persist the bound tuple and provider operation before any effect. */
@@ -118,9 +141,9 @@ export function createGrantExchangeService(deps: Readonly<{
       publicKey: input.encryptionKey.publicKey,
       expiresAt: iso(now + KEY_INDEX_LIFETIME_MS),
     }, options);
-    if (claimed !== 'claimed') return done(claimed === 'key_reuse' ? rejected('key_reuse') : unavailable());
+    if (claimed !== 'claimed') return done(claimed === 'key_reuse' ? rejected('key_reuse') : unavailableAt('key_claim'));
     const providerDigest = await sha256Hex(['provider-operation', recordKey]);
-    if (providerDigest === null) return done(unavailable());
+    if (providerDigest === null) return done(unavailableAt('journal_create'));
     const created = await journal.create(recordKey, {
       v: 1,
       seq: 1,
@@ -141,7 +164,7 @@ export function createGrantExchangeService(deps: Readonly<{
       envelope: null,
       closed: null,
     }, options);
-    return created.kind === 'unavailable' ? done(unavailable()) : { kind: 'continue' };
+    return created.kind === 'unavailable' ? done(unavailableAt('journal_create')) : { kind: 'continue' };
   }
 
   /** Before sealing, a new recovery key supersedes the prior one for the same tuple. */
@@ -151,13 +174,13 @@ export function createGrantExchangeService(deps: Readonly<{
       publicKey: input.encryptionKey.publicKey,
       expiresAt: iso(Date.parse(stored.record.createdAt) + KEY_INDEX_LIFETIME_MS),
     }, options);
-    if (claimed !== 'claimed') return done(claimed === 'key_reuse' ? rejected('key_reuse') : unavailable());
+    if (claimed !== 'claimed') return done(claimed === 'key_reuse' ? rejected('key_reuse') : unavailableAt('key_claim'));
     const saved = await journal.save(stored, {
       ...stored.record,
       encryptionPublicKey: input.encryptionKey.publicKey,
       encryptionKeyThumbprint: input.encryptionKey.thumbprint,
     }, options);
-    return saved.kind === 'unavailable' ? done(unavailable()) : { kind: 'continue' };
+    return saved.kind === 'unavailable' ? done(unavailableAt('journal_create')) : { kind: 'continue' };
   }
 
   /** Rechecks authority, then performs exactly one effect for the current phase. */
@@ -171,14 +194,14 @@ export function createGrantExchangeService(deps: Readonly<{
       sessionFingerprint: record.sessionFingerprint,
       claimOperationId: `${stored.key}#claim`,
     }, options));
-    if (authority === null || authority.kind === 'unavailable') return done(unavailable());
+    if (authority === null || authority.kind === 'unavailable') return done(unavailableAt('authority'));
     if (authority.kind === 'closed') return close(stored, authority.reason, options);
     const authorization = authority.authorization;
     if (!sameRequester(authorization, record)) return close(stored, 'closed', options);
     if (deps.clock() >= Date.parse(authorization.deadline)) return close(stored, 'expired', options);
     if (record.phase === 'bound') {
       const saved = await journal.save(stored, { ...record, phase: 'admitting' }, options);
-      if (saved.kind !== 'saved') return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailable());
+      if (saved.kind !== 'saved') return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailableAt('journal_admitting'));
       return admit(saved.stored, authorization, false, options);
     }
     if (record.phase === 'admitting') return admit(stored, authorization, true, options);
@@ -198,6 +221,7 @@ export function createGrantExchangeService(deps: Readonly<{
       channelRef: authorization.channelRef,
       requester: record.requester,
       sessionGeneration: record.sessionGeneration,
+      sessionFingerprint: record.sessionFingerprint,
       deviceId: record.deviceId,
       history: 'none',
     };
@@ -206,17 +230,21 @@ export function createGrantExchangeService(deps: Readonly<{
     let result = reconcileFirst
       ? await safe(() => deps.provider.reconcile(request, options))
       : { kind: 'not_applied' as const };
-    if (result?.kind === 'not_applied') result = await safe(() => deps.provider.admit(request, options));
+    let admissionStage: 'admission_reconcile' | 'admission_admit' = 'admission_reconcile';
+    if (result?.kind === 'not_applied') {
+      admissionStage = 'admission_admit';
+      result = await safe(() => deps.provider.admit(request, options));
+    }
     if (result === null || result.kind !== 'admitted') {
-      if (result?.kind !== 'rejected') return done(unavailable());
+      if (result?.kind !== 'rejected') return done(unavailableAt(admissionStage));
       // Stay resumable until the journal request is closed too; the next retry reconciles
       // the same rejection and repeats the same idempotent close.
       const closed = await safe(() => deps.authority.close({ authorization, operationId: `${stored.key}#close` }, options));
-      if (closed !== 'closed') return done(unavailable());
+      if (closed !== 'closed') return done(unavailableAt('authority'));
       return close(stored, 'closed', options);
     }
     const saved = await journal.save(stored, { ...record, phase: 'admitted', membership: result.membership }, options);
-    return saved.kind === 'unavailable' ? done(unavailable()) : { kind: 'continue' };
+    return saved.kind === 'unavailable' ? done(unavailableAt('journal_admitted')) : { kind: 'continue' };
   }
 
   async function seal(stored: StoredExchange, authorization: ChannelAccessAuthorization, options?: CallOptions): Promise<Step> {
@@ -236,7 +264,7 @@ export function createGrantExchangeService(deps: Readonly<{
       },
       expiresAt,
     }, options));
-    if (minted === null || minted.kind !== 'minted') return done(unavailable());
+    if (minted === null || minted.kind !== 'minted') return done(unavailableAt('grant_mint'));
     const envelope = await sealGrantPayload({
       v: 1,
       operationId: record.operationId,
@@ -249,16 +277,19 @@ export function createGrantExchangeService(deps: Readonly<{
       expiresAt,
       grant: minted.grant,
     }, record.encryptionPublicKey);
-    if (envelope === null) return done(unavailable());
+    if (envelope === null) return done(unavailableAt('grant_seal'));
     const saved = await journal.save(stored, {
       ...record,
       phase: 'sealed',
       envelope,
       expiresAt: iso(now + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS),
     }, options);
-    if (saved.kind === 'saved') return done(ok(envelope));
+    if (saved.kind === 'saved') {
+      report('complete', 'ok');
+      return done(ok(envelope));
+    }
     // A racing exchange stored its envelope first; the next load returns those bytes.
-    return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailable());
+    return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailableAt('journal_sealed'));
   }
 
   /**

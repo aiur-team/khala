@@ -52,7 +52,7 @@ function context(path: string): HumanRouteContext {
 }
 
 function application(snapshot: HumanApplicationSnapshot): HumanApplicationHandle {
-  return { getSnapshot: () => snapshot, subscribe: () => () => undefined, navigate: vi.fn(), signOut: vi.fn(), dispose: vi.fn() };
+  return { getSnapshot: () => snapshot, subscribe: () => () => undefined, navigate: vi.fn(), retryDevice: vi.fn(), signOut: vi.fn(), dispose: vi.fn() };
 }
 
 function render(path: string, state: LocalTransportState = { kind: 'live' }, phase: 'ready' | 'signed_out' = 'ready'): string {
@@ -82,10 +82,16 @@ describe('LocalApplicationScreen', () => {
     for (const text of HOSTED_ONLY) expect(html).not.toContain(text);
   });
 
-  it('adds owner navigation to the channel-requests inbox with a settings link on each channel', () => {
+  it('keeps local controls in local tools while the shared sidebar stays minimal', () => {
     const html = render('/channels/ch_1');
-    expect(html).toContain('href="/channel-requests"');
-    expect(html).toContain('Channel requests');
+    expect(html).toContain('aria-label="Channels"');
+    expect(html).toContain('conversation-list__item is-active');
+    expect(html).toContain('aria-label="Create channel"');
+    expect(html).not.toContain('channel-requests-nav');
+    expect((html.match(/<main/g) ?? [])).toHaveLength(1);
+    expect(html).not.toContain('aria-label="Channel details"');
+    expect(html).toContain('aria-label="Local tools" title="Local tools"');
+    expect(html).not.toContain('>Local tools</summary>');
     expect(html).toContain('href="/channels/ch_1/settings"');
   });
 
@@ -122,7 +128,7 @@ describe('LocalApplicationScreen', () => {
 
   it('renders the channel with the viewer attribution and an initial load distinct from an empty channel', () => {
     const html = render('/channels/ch_1');
-    expect(html).toContain('Local channel');
+    expect(html).toContain('Local · Plaintext on this device');
     expect(html).toContain('Loading conversation…');
     expect(html).not.toContain('No messages yet.');
   });

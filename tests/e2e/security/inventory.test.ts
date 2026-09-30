@@ -25,6 +25,12 @@ describe('surface inventory', () => {
     expect(audit.unlisted).toEqual(['mcp-tool:khala_search_history']);
   });
 
+  it('covers the owner-only local channel index with an agent refusal probe', async () => {
+    const { ids } = await discoverSurfaces();
+    expect(ids).toContain('http-internal:GET /api/v1/channels');
+    expect(SURFACE_INVENTORY['http-internal:GET /api/v1/channels']).toEqual({ kind: 'probe', probe: 'internal-http' });
+  });
+
   it('fails the audit for an inventoried surface that is no longer registered', async () => {
     const { ids } = await discoverSurfaces();
     const audit = auditInventory(ids.filter(id => id !== 'mcp-tool:khala_read'), SURFACE_INVENTORY);

@@ -32,6 +32,8 @@ export type HumanScreenProps<Route> = Readonly<{
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
   /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
   renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => ReactNode;
+  /** Neutral shell while identity is checked or the signed-in device is unavailable. */
+  renderPendingShell?: (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable', children: ReactNode) => ReactNode;
   /** Account action for signed-in device or route failures outside the ready shell. */
   renderSignedInAction?: (mode: ShellMode) => ReactNode;
 }>;
@@ -60,6 +62,22 @@ function statusContent(snapshot: HumanApplicationSnapshot): ReactNode {
   }
 }
 
+function InactiveDevice({ application, timedOut }: { application: HumanApplicationHandle; timedOut: boolean }) {
+  return <section className="khala-inactive-device" aria-label="Inactive tab">
+    <Panel heading={timedOut ? 'Device handoff took too long' : 'Khala is active in another tab'}>
+      <p>{timedOut ? 'The other tab has not released this device yet. Focus this tab and try again.'
+        : 'Your channels will resume here when you focus this tab.'}</p>
+      <button type="button" className="aiur-action" onClick={() => application.retryDevice()}>Try again in this tab</button>
+    </Panel>
+  </section>;
+}
+
+function RouteLoading() {
+  return <section className="khala-route-loading" role="status" aria-label="Loading conversation">
+    <span /><span /><span />
+  </section>;
+}
+
 function ReadyRoute<Route>({ context, routes, renderRoute, attachCapabilities }: {
   context: HumanRouteContext;
   routes: HumanScreenRoutes<Route>;
@@ -79,6 +97,7 @@ export function HumanScreen<Route>({
   renderDeviceLoss,
   attachCapabilities,
   renderReadyShell,
+  renderPendingShell,
   renderSignedInAction,
 }: HumanScreenProps<Route>) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
@@ -92,12 +111,24 @@ export function HumanScreen<Route>({
     content = (
       <ReadyRoute context={snapshot.context} routes={routes} renderRoute={renderRoute} attachCapabilities={attachCapabilities} />
     );
+  } else if (snapshot.phase === 'navigating') {
+    content = <RouteLoading />;
   } else if (snapshot.phase === 'signed_out') {
     content = renderSignedOut(snapshot.path);
+  } else if (snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
+    && snapshot.reason === 'lease_unavailable') {
+    content = <InactiveDevice application={application} timedOut={snapshot.phase === 'unavailable'} />;
   } else if (snapshot.phase === 'unavailable' && snapshot.source === 'device'
     && (snapshot.reason === 'storage_cleared' || snapshot.reason === 'key_material_missing')
     && renderDeviceLoss !== undefined) {
     content = renderDeviceLoss(snapshot.path);
+  } else if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
+    || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity')) && renderPendingShell) {
+    content = <section className="khala-device-status" aria-label="Channel status">{statusContent(snapshot)}
+      {snapshot.phase === 'unavailable' && snapshot.retryable
+        ? <button type="button" className="aiur-action" onClick={() => application.navigate(snapshot.path)}>Try again</button>
+        : null}
+    </section>;
   } else {
     content = (
       <KhalaPageFrame model={{ title: 'Account and device status', labelledBy: 'khala-status' }}>
@@ -113,16 +144,24 @@ export function HumanScreen<Route>({
     collapsed,
     onCollapsedChange: setCollapsed,
   };
-  if (snapshot.phase === 'ready' && renderReadyShell !== undefined) {
+  if ((snapshot.phase === 'ready' || snapshot.phase === 'navigating') && renderReadyShell !== undefined) {
     return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
   }
-  const signedInAction = snapshot.phase === 'unavailable' && snapshot.source !== 'identity'
+  if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
+    || snapshot.phase === 'inactive'
+    || (snapshot.phase === 'unavailable' && snapshot.source !== 'identity')) && renderPendingShell) {
+    return <>{renderPendingShell(chrome, snapshot.phase, content)}</>;
+  }
+  const signedInAction = snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source !== 'identity'
     ? renderSignedInAction?.(mode) : null;
+  const inactiveShell = snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
+    && snapshot.reason === 'lease_unavailable';
   return (
     <AiurShell
       mode={mode}
-      brandHref={routes.createPath()}
+      brandHref={inactiveShell ? snapshot.path : routes.createPath()}
       navigation={[]}
+      sidebar={inactiveShell ? <div className="khala-sidebar"><p className="khala-sidebar__inactive">Channels are paused in this tab.</p></div> : undefined}
       actions={signedInAction}
       theme={chrome.theme}
       collapsed={collapsed}

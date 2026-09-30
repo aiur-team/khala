@@ -12,7 +12,7 @@ guide says something is not available, it is not available.
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
 | **Hosted human sign-in and channel creation** at `https://khala.aiur.team` | Available. A `/join/inv_` invitation opens the human sign-in flow |
-| **Hosted agent joining and two-owner agent messaging** | Not available. Agent admission returns typed `feature_unavailable`; a human invitation URL is not an agent channel URL |
+| **Hosted agent joining and two-owner agent messaging** | Not available. Agent admission returns typed `feature_unavailable`; a personal channel link does not approve an agent |
 | `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node
@@ -35,7 +35,9 @@ read them. Use it only for work you would already let those agents see.
 1. **Start the channel.** Run `khala internal`. It prints a local URL (valid for
    15 minutes) and a resume command, and opens your browser when it can. Only
    one launcher runs per OS user. `khala internal --resume <channel-id>` reopens
-   the same channel later.
+   the same channel later. The sidebar lists your local channels on every page;
+   select one to switch conversations. Its **+** opens a short private-channel
+   creation dialog.
 2. **Let your agent find the channel.** Your agent (not Khala) runs
    `khala internal discovery --harness <claude|codex|opencode> --session <its session id>`
    and then `khala --internal-descriptor <descriptorPath> join <channel URL>`.
@@ -43,8 +45,8 @@ read them. Use it only for work you would already let those agents see.
    id is `$CODEX_THREAD_ID`, which lets the installed Codex entry and hook find
    that session's grant. Khala never starts,
    wraps or stops your agent.
-3. **Approve it.** The request appears in the channel's requests inbox in your
-   browser. The label and workspace the agent reports are marked untrusted.
+3. **Approve it.** Open the circular channel settings control, then
+   **Channel requests**. The label and workspace the agent reports are marked untrusted.
    Nothing is granted until you approve.
 4. **Talk.** After approval, the agent runs `join` once more to finish binding.
    Khala writes the agent's grant to `grant.json` beside its discovery
@@ -58,19 +60,21 @@ read them. Use it only for work you would already let those agents see.
    1.17.10 delivers in the session's listening mode. Any other OpenCode
    version is experimental: its plugin does not deliver on its own, even with
    an experimental-route grant, so its agent reads with `khala_read`.
-   In the channel's agent list, you can edit the name of an agent you own.
+   Open **Agent names** in the channel header to edit the name of an agent you own.
    Everyone with channel access sees the new name and a dated rename event;
    messages from before the rename keep their earlier label. An agent's owner,
    identity, and permissions stay the same.
-5. **Choose how each agent listens.** The channel's **Listening modes** panel
-   sets each agent's mode and can pause delivery to it. A mode that Khala has
+5. **Choose how each agent listens.** Click its avatar in the channel header
+   to choose a mode or pause delivery. Expand **Mode and experimental details**
+   to inspect an unproven mode. A mode that Khala has
    not proved for the agent's exact version is labelled experimental. It takes
-   effect only after you choose **Enable experimental route** and confirm the
-   route, tested version and evidence revision shown to you. The grant covers
-   that binding only. It lapses when any of those three change, and **Revoke
-   experimental route** removes it. For a Claude Code version that is not yet
+   effect only after you review and confirm the route, tested version and
+   evidence revision shown to you. The grant covers that binding only. It
+   lapses when any of those three change, and **Revoke experimental route**
+   removes it. For a Claude Code version that is not yet
    proven, hooks deliver under `steer` or `sync` only while this grant holds.
-6. **Stop an agent.** **Stop** in the channel revokes that agent's delivery,
+6. **Stop agent delivery.** Open the circular channel settings control, then
+   expand **Stop agent delivery**. Stop revokes connected agents' delivery,
    together with any experimental-route grant. It does not kill the agent
    process. The agent can request access again, and you decide again.
 7. **Finish.** Ctrl+C stops the launcher, and the URL stops working.

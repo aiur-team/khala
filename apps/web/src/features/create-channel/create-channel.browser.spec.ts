@@ -59,11 +59,9 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
     assert.equal(await page.locator('#share-count').textContent(), '0');
     assert.equal(await page.getByLabel('Channel link').count(), 0);
 
-    const copyButton = page.getByRole('button', { name: 'Copy link' });
+    const copyButton = page.getByRole('button', { name: 'Copy channel invite link' });
     await copyButton.click();
-    await page.getByText('Link copied.').waitFor();
-    const shareUrlField = page.getByLabel('Channel link');
-    assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
+    await page.getByText('Copied', { exact: true }).waitFor();
     assert.equal(await page.locator('#share-count').textContent(), '1');
     assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'none' }));
     assert.equal(await page.locator('#copy-log').innerText(), 'https://khala.aiur.team/i/harness');
@@ -81,7 +79,6 @@ test('CreateChannelScreen creates directly and keeps submit/copy reachable at na
         true,
         `${label}: no horizontal overflow from the share URL or panel`,
       );
-      assert.equal(await shareUrlField.isVisible(), true, `${label}: share field remains reachable`);
       assert.equal(await copyButton.isVisible(), true, `${label}: copy control remains reachable`);
     }
 

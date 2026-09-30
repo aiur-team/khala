@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
@@ -7,6 +7,7 @@ import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Panel } from '../../shell/Panel';
+import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
 import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
@@ -19,7 +20,6 @@ import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
-import { ConversationList } from '../../ui/conversation';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
@@ -65,11 +65,12 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, rou
 export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability,
   trustBinding: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000,
-  controls?: ControlsCapability): HumanRoomRenderer {
-  return (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
+  controls?: ControlsCapability): HumanRoomRenderer & { tools: HumanRoomRenderer } {
+  const render = (toolsOnly: boolean): HumanRoomRenderer => (context, route, navigate, routes) => <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
     {...(navigate && routes ? { navigate, routes } : {})} review={review}
     capability={capability} trustBinding={trustBinding} refreshMs={refreshMs}
-    {...(controls ? { controls } : {})} />;
+    {...(controls ? { controls } : {})} toolsOnly={toolsOnly} />;
+  return Object.assign(render(false), { tools: render(true) });
 }
 
 function ControlsForBinding({ context, roomId, capability, binding }: {
@@ -96,7 +97,7 @@ function ControlsForBinding({ context, roomId, capability, binding }: {
   }} />;
 }
 
-function HumanControls({ context, roomId, review, capability, refreshMs }: {
+export function HumanControls({ context, roomId, review, capability, refreshMs }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: ReviewRoomId;
   review: ReviewClient | undefined;
@@ -158,7 +159,7 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
 }
 
-function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
+export function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review: ReviewClient | undefined;
@@ -225,7 +226,7 @@ function HumanReview({ context, roomId, review, capability, trustBinding, refres
     capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, navigate, routes, review, capability, trustBinding, refreshMs = 5_000, controls }: {
+function HumanRoom({ context, roomId, navigate, routes, review, capability, trustBinding, refreshMs = 5_000, controls, toolsOnly = false }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   navigate?: (path: string) => void;
@@ -236,10 +237,10 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   trustBinding?: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>;
   refreshMs?: number;
+  toolsOnly?: boolean;
 }) {
   const conversations = useConversationIndex(context);
   const selectedConversation = conversations?.find(item => item.id === roomId);
-  const [query, setQuery] = useState('');
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
@@ -272,6 +273,12 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     initialName: agent.displayName,
   }] : []);
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  const toolsRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!toolsOnly) return;
+    const heading = toolsRoot.current?.querySelector('h1');
+    if (heading) { heading.tabIndex = -1; heading.focus(); }
+  }, [roomId, toolsOnly]);
   if (context.conversations && conversations === undefined) {
     return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
   }
@@ -289,11 +296,23 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     );
   }
 
+  if (toolsOnly) {
+    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'khala-channel-care-title' }}>
+      {routes ? <a href={routes.roomPath(roomId)} onClick={navigate ? event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); navigate(routes.roomPath(roomId));
+      } : undefined}>Back to conversation</a> : null}
+      <HumanReview context={context} roomId={roomId} review={review} capability={capability}
+        trustBinding={trustBinding} refreshMs={refreshMs} />
+      <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
+      <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
+    </KhalaPageFrame></div>;
+  }
+
   return (
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
-      description="Encrypted messages shared by admitted participants."
       controller={room}
       viewerOwnerId={viewer.ownerId}
       renameScope={roomId}
@@ -310,28 +329,15 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
         return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
       }}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
-        admission={context.admission} roomId={roomId} roomTitle={selectedConversation?.title ?? 'Encrypted conversation'} /> : null}
-      {...(context.conversations && routes && navigate ? {
-        renderList: () => <ConversationList conversations={conversations ?? []} selectedId={roomId} query={query}
-          emptyLabel="No encrypted conversations yet."
-          onQueryChange={setQuery} status={conversations ? 'ready' : 'error'}
-          onSelect={id => { if (conversations?.some(item => item.id === id)) navigate(routes.roomPath(id)); }} />,
-        onBack: () => navigate(routes.conversationsPath()),
-      } : {})}
+        admission={context.admission} roomId={roomId}
+        sponsor={context.principal.verifiedEmail}
+        {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
           extraParticipants={extraParticipants}
-          {...(pendingStore ? { pendingStore } : {})} composerPlaceholder="Message this channel"
+          {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
-      )}
-      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
-        trustBinding={trustBinding} refreshMs={refreshMs} />}
-      renderControls={() => (
-        <>
-          <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
-          <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
-        </>
       )}
     />
   );

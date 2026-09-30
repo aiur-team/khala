@@ -10,7 +10,7 @@ type OpenInput = Readonly<{
 type BrowserEvent = Readonly<{
   eventId: string; roomId: string; senderUserId: string; senderDeviceId: string | null;
   receivedAt: string;
-  body: string | null; agentParticipantId: string | null;
+  body: string | null; agentParticipantId: string | null; nameSnapshot?: boolean; nameSourceEventId?: string | null;
   failure: 'missing_keys' | 'withheld_unverified' | 'withheld' | 'decrypt_failed' | 'unsupported' | null;
 }>;
 type SyncPage = Readonly<{ events: readonly BrowserEvent[]; nextCursor: string; limited: boolean }>;
@@ -96,7 +96,8 @@ async function eventFromWire(raw: Record<string, unknown>): Promise<BrowserEvent
   if (!status?.isVerified()) return placeholder('withheld_unverified', device.deviceId);
   return { eventId, roomId, senderUserId: sender, senderDeviceId: device.deviceId, body: content.body,
     receivedAt: new Date(event.getTs()).toISOString(),
-    agentParticipantId: content.msgtype === MsgType.Notice ? content['com.khala.agent_participant_id'] as string : null, failure: null };
+    agentParticipantId: content.msgtype === MsgType.Notice ? content['com.khala.agent_participant_id'] as string : null,
+    ...(content['com.khala.name_snapshot'] === true ? { nameSnapshot: true, nameSourceEventId: content['com.khala.name_source_event_id'] as string | null } : {}), failure: null };
 }
 
 window.khalaMatrix = {

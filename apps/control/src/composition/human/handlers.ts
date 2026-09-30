@@ -382,6 +382,8 @@ export type HumanHandlerDependencies = Readonly<{
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
   channelAccess?: () => readonly RouteRegistration[];
+  /** Authenticated channel-link resolution and personal link issuance. */
+  channelLink?: () => readonly RouteRegistration[];
   /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
   channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
   /** Request-lifetime channel-discovery settings registrations supplied by the composition root. */
@@ -445,6 +447,7 @@ export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): 
     ...(dependencies?.deviceAdmission?.() ?? createLazyDeviceAdmissionRoutes(() => [])),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
+    ...(dependencies?.channelLink?.() ?? []),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
     ...(dependencies?.channelDiscovery?.() ?? unavailableChannelSettingsRoutes),
   ]);

@@ -6,8 +6,8 @@ import {
   type MessageContent, type OwnerId, type ParticipantId, type ParticipantView,
   type RoomId, encodeMessageContent,
 } from '@khala/contracts/messaging/index';
-import { decodeParticipantId } from '@khala/contracts/messaging/ids';
-import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import { decodeEventId, decodeParticipantId } from '@khala/contracts/messaging/ids';
+import { projectNamesInOrder, validateAgentName, type NameTimelineEvent } from '@khala/contracts/messaging/agent-names';
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
@@ -80,6 +80,8 @@ export type ChannelReadResult =
   | Readonly<{ kind: 'done'; channel: StoredChannel }>
   | Readonly<{ kind: 'rejected'; code: 'not_found' | 'not_joined' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
+
+export type ChannelListResult = Readonly<{ kind: 'done'; channels: readonly StoredChannel[] }> | Readonly<{ kind: 'unavailable' }>;
 
 export type RosterResult =
   | Readonly<{ kind: 'done'; participants: readonly ParticipantView[] }>
@@ -231,6 +233,12 @@ export function decodeCanonical(bytes: Uint8Array, expectedDigest: string): Mess
       const name = validateAgentName(raw[3]);
       if (!target.ok || !name.ok || name.name !== raw[3]) return null;
       content = { v: 1, kind: 'agent_rename', agentParticipantId: target.value, body: name.name };
+    } else if (raw.length === 5 && raw[1] === 'agent_name_snapshot') {
+      const target = decodeParticipantId(raw[2]);
+      const name = validateAgentName(raw[3]);
+      const source = raw[4] === null ? null : decodeEventId(raw[4]);
+      if (!target.ok || !name.ok || name.name !== raw[3] || source !== null && !source.ok) return null;
+      content = { v: 1, kind: 'agent_name_snapshot', agentParticipantId: target.value, body: name.name, sourceEventId: source?.value ?? null };
     } else return null;
     return sameBytes(encodeMessageContent(content), bytes) ? content : null;
   } catch {
@@ -431,7 +439,10 @@ export interface ChannelStore {
     creatorDeviceId: DeviceId;
   }>): CreatedChannelLookup;
   channel(input: Readonly<{ channelId: RoomId; participantId: ParticipantId }>): ChannelReadResult;
+  listChannels(participantId: ParticipantId): ChannelListResult;
   roster(channelId: RoomId): RosterResult;
+  /** Endpoint-only presentation projection. Call only after authenticating channel access. */
+  nameProjection(channelId: RoomId): ReturnType<typeof projectNamesInOrder> | null;
   participantForDevice(input: Readonly<{ channelId: RoomId; deviceId: DeviceId }>): ProvenanceResult;
   send(input: Readonly<{
     channelId: RoomId;
@@ -720,6 +731,24 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
       } catch { return unavailable(); }
     },
 
+    listChannels(participantId) {
+      if (!isIdentifier(participantId)) return unavailable();
+      try {
+        return handle.read(db => {
+          const rows = db.prepare(`
+            SELECT c.channel_id, c.title, c.revision, m.membership
+            FROM channels c JOIN memberships m ON m.channel_id = c.channel_id
+            WHERE m.participant_id = ? AND m.membership = 'joined'
+            ORDER BY c.created_at DESC, c.channel_id
+          `).all(participantId) as unknown as ChannelRow[];
+          return { kind: 'done', channels: rows.map(row => ({
+            channelId: row.channel_id as RoomId, title: row.title,
+            membership: 'joined' as const, revision: String(row.revision),
+          })) } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
     roster(channelId) {
       try {
         return handle.read(db => {
@@ -737,6 +766,23 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           return { kind: 'done', participants: [...participantViewsFromRows(rows).values()] } as const;
         });
       } catch { return unavailable(); }
+    },
+
+    nameProjection(channelId) {
+      try {
+        return handle.read(db => {
+          const rows = db.prepare('SELECT * FROM events WHERE channel_id = ? ORDER BY sequence').all(channelId) as unknown as EventRow[];
+          const events = storedEvents(db, rows);
+          const roster = api.roster(channelId);
+          if (!events || roster.kind !== 'done') return null;
+          return projectNamesInOrder(roster.participants.map(participant => ({ ...participant, initialName: participant.displayName })),
+            events.map((event): NameTimelineEvent => event.content.kind === 'text'
+              ? { kind: 'message', eventId: event.eventId, authorParticipantId: event.authorParticipantId }
+              : { kind: event.content.kind, eventId: event.eventId, actorParticipantId: event.authorParticipantId,
+                  targetParticipantId: event.content.agentParticipantId, name: event.content.body,
+                  sourceEventId: event.content.kind === 'agent_name_snapshot' ? event.content.sourceEventId : null }));
+        });
+      } catch { return null; }
     },
 
     participantForDevice(input) {

@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import type { JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { decodeOwnerId, type JsonValue, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { checkMutationOrigin, csrfMatches } from '../auth/csrf';
 import { LOGIN_PATH } from '../auth/callback';
 import { createDigests } from '../invitations/internal';
@@ -14,9 +14,13 @@ export const PROOF_KEY_CHALLENGE_PATH = '/api/agent/channel-discovery/authority/
 export const PROOF_KEY_CANDIDATE_PATH = '/api/agent/channel-discovery/authority/candidate';
 export const PROOF_KEY_APPROVE_PATH = '/api/human/channel-discovery/authority/approve';
 export const PROOF_KEY_REVOKE_PATH = '/api/human/channel-discovery/authority/revoke';
+export const PROOF_KEY_CREATE_TARGET_PATH = '/api/human/channel-discovery/authority/create-target';
 const ID = /^[A-Za-z0-9_-]{43}$/u;
 const MAX_CANDIDATE_BYTES = 4_096;
 const BASE = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
+// A browser form POST sends Origin: null under no-referrer. Keep the exact
+// mutation-origin check while sending only the origin, never the candidate URL.
+export const OWNER_FORM_HEADERS = { ...BASE, 'referrer-policy': 'origin' };
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...BASE, 'content-type': 'application/json' } });
@@ -25,8 +29,32 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/gu, character => `&#${character.charCodeAt(0)};`);
 }
 
+function createTarget(active: ProductionHumanRuntime, ownerId: OwnerId): string {
+  const proof = createHmac('sha256', active.env.invitationHmacSecret)
+    .update('khala.agent-create-target.v1\0').update(ownerId).digest('base64url');
+  return `${active.env.publicAppOrigin}/new?agent_create=${ownerId}.${proof}`;
+}
+
+export function resolveCreateTarget(active: ProductionHumanRuntime, target: string): OwnerId | null {
+  let url: URL;
+  try { url = new URL(target); } catch { return null; }
+  if (url.origin !== active.env.publicAppOrigin || url.username || url.password
+    || url.pathname !== '/new' || url.hash
+    || [...url.searchParams.keys()].join(',') !== 'agent_create') return null;
+  const value = url.searchParams.get('agent_create')?.match(/^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u);
+  if (!value) return null;
+  const owner = decodeOwnerId(value[1]);
+  if (!owner.ok) return null;
+  const expected = createTarget(active, owner.value);
+  const actualProof = value[2]!;
+  const expectedProof = new URL(expected).searchParams.get('agent_create')!.split('.')[1]!;
+  return timingSafeEqual(Buffer.from(actualProof), Buffer.from(expectedProof)) ? owner.value : null;
+}
+
 /** A channel link is only a locator. Recheck its current creator and room owner on every use. */
 async function resolveInviteOwner(active: ProductionHumanRuntime, target: string) {
+  const createOwner = resolveCreateTarget(active, target);
+  if (createOwner !== null) return { kind: 'resolved' as const, ownerId: createOwner };
   let url: URL;
   try { url = new URL(target); } catch { return { kind: 'rejected' as const }; }
   const inviteRef = inviteFromShareLink(url, active.env.publicAppOrigin);
@@ -46,7 +74,10 @@ async function resolveInviteOwner(active: ProductionHumanRuntime, target: string
   if (authority.kind !== 'record' || !authority.record.value || typeof authority.record.value !== 'object'
     || Array.isArray(authority.record.value)) return { kind: 'rejected' as const };
   const value = authority.record.value as Record<string, JsonValue>;
-  if (value.v !== 1 || value.roomId !== roomId || value.ownerId !== ownerId) return { kind: 'rejected' as const };
+  // A joined human's personal link names that human as sponsor. The durable
+  // room authority still names the original room creator, who can differ.
+  if (value.v !== 1 || value.roomId !== roomId || typeof value.ownerId !== 'string'
+    || value.ownerId.length === 0) return { kind: 'rejected' as const };
   const membership = await active.matrix.inspectOwnerMembership(ownerId, roomId);
   return membership.kind === 'joined' ? { kind: 'resolved' as const, ownerId }
     : { kind: 'unavailable' as const };
@@ -101,6 +132,22 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
       catch { return json(503, { kind: 'unavailable' }); }
     };
   return Object.freeze([
+    { path: PROOF_KEY_CREATE_TARGET_PATH, methods: ['GET'], handle: safe(async (request, active) => {
+      const auth = await active.auth.authenticateRequest(request);
+      if (auth.kind === 'unavailable') return json(503, { kind: 'unavailable' });
+      if (auth.kind !== 'authenticated') return json(401, { kind: 'sign_in_required' });
+      const url = createTarget(active, auth.context.principal.ownerId);
+      if (request.headers.get('accept')?.includes('text/html')) {
+        const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Authorize your agent</title></head><body>
+<h1>Authorize your agent to ask for a channel</h1>
+<p>Copy this link to the exact Codex or Claude session you want to use. The agent will return a separate approval page. No room is created until you approve that session and its channel request.</p>
+<input aria-label="Agent creation link" readonly value="${escapeHtml(url)}" size="90">
+<p>This link identifies your account for an approval request. Sharing it grants no room or message access.</p></body></html>`;
+        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+          'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
+      }
+      return json(200, { v: 1, url });
+    }) },
     { path: PROOF_KEY_CHALLENGE_PATH, methods: ['GET'], handle: safe(async (request, active, authority) => {
       const url = new URL(request.url);
       const keys = [...url.searchParams.keys()];
@@ -149,12 +196,14 @@ export function createHostedProofKeyAuthorityRoutes(dependencies: ProductionHuma
           ? `<p>This local label already has an approved key. Revoke it before approving a replacement. Reusing the same key requires a higher generation.</p>
 <a href="${PROOF_KEY_REVOKE_PATH}?${new URLSearchParams({ harness: pending.harnessLabel,
   session_id: pending.sessionLabel })}">Review existing approval</a>` : '';
+        const createIntent = resolveCreateTarget(active, pending.target) === auth.context.principal.ownerId;
         const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Approve agent proof key</title></head><body>
 <h1>Approve this proof key?</h1>
 <p>Approving recognizes this key for channels you own. Anyone holding its private key can ask you for discovery credentials that list your channels and request access or creation. This approval alone issues no credential, admits no device, and allows no message read or send.</p>
-<p>The channel link below identifies you as the current owner; this key approval is owner-wide, not limited to that one link.</p>
+<p>${createIntent ? 'You issued the creation handoff below after signing in.'
+    : 'The channel link below identifies you as the current owner; this key approval is owner-wide, not limited to that one link.'}</p>
 <p>The named Codex or Claude session is a local label supplied by the requester. Khala cannot verify that provider thread exists.</p>
-<dl><dt>Channel link</dt><dd>${escapeHtml(pending.target)}</dd><dt>Proof key</dt><dd>${escapeHtml(pending.proofKeyThumbprint)}</dd>
+<dl><dt>${createIntent ? 'Creation handoff' : 'Channel link'}</dt><dd>${escapeHtml(pending.target)}</dd><dt>Proof key</dt><dd>${escapeHtml(pending.proofKeyThumbprint)}</dd>
 <dt>Harness label</dt><dd>${escapeHtml(pending.harnessLabel)}</dd><dt>Session label</dt><dd>${escapeHtml(pending.sessionLabel)}</dd>
 <dt>Generation</dt><dd>${pending.generation}</dd></dl>
 ${replace}
@@ -162,7 +211,7 @@ ${replace}
 <input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
 <button type="submit" name="decision" value="approve">Approve key</button>
 <button type="submit" name="decision" value="deny">Deny</button></form></body></html>`;
-        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+        return new Response(html, { status: 200, headers: { ...OWNER_FORM_HEADERS, 'content-type': 'text/html; charset=utf-8',
           'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
       }
       if (checkMutationOrigin(request, active.env.publicAppOrigin) !== 'ok') return json(403, { kind: 'forbidden' });
@@ -200,7 +249,7 @@ ${replace}
 <input type="hidden" name="generation" value="${current.generation}">
 <input type="hidden" name="csrf_token" value="${escapeHtml(auth.context.csrfToken)}">
 <button type="submit" name="decision" value="revoke">Revoke key</button></form></body></html>`;
-        return new Response(html, { status: 200, headers: { ...BASE, 'content-type': 'text/html; charset=utf-8',
+        return new Response(html, { status: 200, headers: { ...OWNER_FORM_HEADERS, 'content-type': 'text/html; charset=utf-8',
           'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
       }
       if (checkMutationOrigin(request, active.env.publicAppOrigin) !== 'ok') return json(403, { kind: 'forbidden' });

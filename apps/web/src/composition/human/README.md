@@ -26,6 +26,13 @@ are released during logout, account switch, route replacement, or application
 shutdown. Re-entry creates a fresh attachment for the new route generation;
 an old generation must never regain a DOM listener or subscription.
 
+In the hosted browser, the focused tab requests the signed-in owner's device
+from another tab over BroadcastChannel. The current tab removes route and
+capability authority, closes its Matrix client and crypto store, and releases
+the Web Lock before the focused tab can open the store. An inactive tab keeps
+the signed-in shell and an inline retry control; focus resumes it. The channel
+message contains only the owner identifier and a tab nonce, never credentials.
+
 `screen.tsx` is the route-agnostic application screen: shell chrome, identity
 and device status, and the ready route. It imports no route feature and takes
 `renderRoute` and `renderSignedOut` from its host. `mount.tsx` binds the hosted
@@ -36,16 +43,23 @@ bundle never reaches join, recovery, the Matrix adapter or the control API.
 The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.
-The owner shell links the top logo and KHALA wordmark to `/new`; its sidebar
-contains Channel requests without a duplicate home label. Signed-in owners can
-log out from the topbar (or the content edge in hosted mode). Successful logout
+The owner shell links the top logo and KHALA wordmark to `/conversations`. The selected
+channel fills the main pane and its title appears in the top navigation. The
+sidebar header shows a request count before create only while requests are
+pending. Signed-in owners can switch themes and log out from the topbar (or the
+content edge in hosted mode). Successful logout
 ends the route and Matrix device lease before showing sign-in at `/new`.
+After sign-in, the channel index shell appears while the device initializes.
+Its channel and create controls stay unavailable until the device is ready;
+recoverable device errors show a retry in the index. `/new` also opens the
+index; only the `+` action opens channel creation.
 
 ## Routes and entry
 
 The site root `/` belongs to the public landing page (`netlify.toml`), so the
-application routes live below it: `/new` creates a channel, `/join?invite=…`
-admits a shared link, and `/channels/<id>` opens a channel. The SPA entry reads
+application routes live below it: `/new` opens the signed-in index, `/join?invite=…`
+admits a shared link, `/channels/<id>` opens a channel, and
+`/channels/<id>/tools` opens channel care from the sidebar. The SPA entry reads
 an optional `?mount=hosted-content` parameter to boot without standalone chrome,
 then strips it before routing; any other value boots standalone.
 
@@ -55,7 +69,8 @@ owner and participant ID. It then matches the event's claimed Ed25519 key to a
 Matrix device ID. A missing mapping or key match fails closed; sender strings
 and display names never become owner authority.
 
-The hosted channel room also mounts the recovery panel. Closure appears only
+The separate channel care page mounts recipient review, agent controls, and the
+recovery panel. Closure appears only
 when the protected control API returns a capability for the signed-in owner and
 current channel. A partial result means local cleanup is still unconfirmed;
 the panel keeps the operation identity for inspection. Closure never promises

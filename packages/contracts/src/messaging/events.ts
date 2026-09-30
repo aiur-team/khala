@@ -26,7 +26,9 @@ export type EventRef = Readonly<{
 /** Authored content. Rename metadata remains inside the encrypted room event. */
 export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
 export type AgentRenameContent = Readonly<{ v: 1; kind: 'agent_rename'; agentParticipantId: ParticipantId; body: string }>;
-export type MessageContent = TextMessageContent | AgentRenameContent;
+/** Encrypted current-name bootstrap; it is metadata, never a second rename. */
+export type AgentNameSnapshotContent = Readonly<{ v: 1; kind: 'agent_name_snapshot'; agentParticipantId: ParticipantId; body: string; sourceEventId: EventId | null }>;
+export type MessageContent = TextMessageContent | AgentRenameContent | AgentNameSnapshotContent;
 
 /**
  * Finite public reasons a timeline event's content cannot be shown. Never a free-text
@@ -81,7 +83,7 @@ export type TimelineItem =
     }>
   | Readonly<{
       ref: EventRef;
-      content: AgentRenameContent;
+      content: AgentRenameContent | AgentNameSnapshotContent;
       participant: ParticipantView;
       clientTxnId: string | null;
       /** UTC RFC 3339, local receipt time; not an ordering authority. */
@@ -120,10 +122,15 @@ export function isContentDigest(value: string): boolean {
  */
 export function encodeMessageContent(content: MessageContent): Uint8Array {
   if (content.v !== 1) throw new TypeError('unsupported message content version or kind');
-  if (content.kind === 'agent_rename') {
+  if ((content.kind === 'agent_rename' || content.kind === 'agent_name_snapshot')) {
     const participant = decodeWith(() => readId<'ParticipantId'>(content.agentParticipantId, 'agentParticipantId'));
     const name = validateAgentName(content.body);
     if (!participant.ok || !name.ok || name.name !== content.body) throw new TypeError('invalid agent rename content');
+    if (content.kind === 'agent_name_snapshot') {
+      const source = content.sourceEventId === null ? null : decodeWith(() => readId<'EventId'>(content.sourceEventId, 'sourceEventId'));
+      if (source !== null && !source.ok) throw new TypeError('invalid snapshot source');
+      return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.agentParticipantId, content.body, content.sourceEventId]));
+    }
     return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.agentParticipantId, content.body]));
   }
   if (content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
@@ -203,14 +210,17 @@ export function decodeMessageContent(input: unknown, limits: ContentLimits): Dec
 
 export function readMessageContent(input: unknown, path: string, limits: ContentLimits): MessageContent {
   if (typeof input === 'object' && input !== null && !Array.isArray(input)
-    && (input as Record<string, unknown>).kind === 'agent_rename') {
-    const r = object(input, path, ['v', 'kind', 'agentParticipantId', 'body']);
+    && ['agent_rename', 'agent_name_snapshot'].includes((input as Record<string, unknown>).kind as string)) {
+    const snapshot = (input as Record<string, unknown>).kind === 'agent_name_snapshot';
+    const r = object(input, path, snapshot ? ['v', 'kind', 'agentParticipantId', 'body', 'sourceEventId'] : ['v', 'kind', 'agentParticipantId', 'body']);
     const v = version(r.field('v'), r.at('v'));
-    const kind = literal(r.field('kind'), r.at('kind'), ['agent_rename']);
+    const kind = literal(r.field('kind'), r.at('kind'), ['agent_rename', 'agent_name_snapshot']);
     const agentParticipantId = readId<'ParticipantId'>(r.field('agentParticipantId'), r.at('agentParticipantId'));
     const name = validateAgentName(r.field('body'));
     if (!name.ok || name.name !== r.field('body')) fail(r.at('body'), 'invalid_value');
-    return { v, kind, agentParticipantId, body: name.name };
+    return kind === 'agent_name_snapshot'
+      ? { v, kind, agentParticipantId, body: name.name, sourceEventId: nullable(r.field('sourceEventId'), value => readId<'EventId'>(value, r.at('sourceEventId'))) }
+      : { v, kind, agentParticipantId, body: name.name };
   }
   const r = object(input, path, ['v', 'kind', 'body']);
   return {

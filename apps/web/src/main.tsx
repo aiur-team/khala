@@ -1,6 +1,7 @@
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createHumanApplication } from './composition/human/application';
+import { createBrowserTabHandoff } from './composition/human/tab-handoff';
 import { createHumanBrowserApi } from './composition/human/browser-api';
 import { createOwnerCleanupConsumer } from './composition/human/cleanup-consumer';
 import { readHumanEntry } from './composition/human/entry';
@@ -35,10 +36,10 @@ if (!target) throw new Error('missing Khala application mount');
 // A deployment without its public origins renders an explicit unavailable
 // screen; throwing here would leave the visitor a blank page.
 const config = readHostedConfig(import.meta.env);
-if (config.ok) startHostedApplication(target, config.appOrigin, config.homeserverOrigin);
+if (config.ok) startHostedApplication(target, config.appOrigin, config.homeserverOrigin, config.localDev);
 else mountHostedUnavailable(target, config.missing);
 
-function startHostedApplication(target: Element, appOrigin: string, homeserverOrigin: string): void {
+function startHostedApplication(target: Element, appOrigin: string, homeserverOrigin: string, localDev: boolean): void {
   const decodedLimits = decodeContentLimits({
     maxBodyBytes: 32_768,
     maxDisplayNameBytes: 255,
@@ -49,11 +50,11 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   const entry = readHumanEntry(location);
   if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
 
-  const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
-  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
-  const controlsClient = createOwnerMailboxControlsClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value, allowInsecureLoopback: localDev });
+  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
+  const controlsClient = createOwnerMailboxControlsClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
   const controlsCapability = registerControls({ client: controlsClient, bindingFor: () => null });
-  const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf, allowInsecureLoopback: localDev });
   const deliveryLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
   if (!deliveryLimits.ok) throw new Error('invalid review limits');
   const reviewCapability = registerReview({ client: review.review, limits: deliveryLimits.value, bindingFor: () => null });
@@ -87,12 +88,13 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     room: matrix.room,
     conversations: matrix.conversations,
     admission: api.admission,
+    channelLinks: api.channelLinks,
     participant: matrix.participant,
     roomParticipants: matrix.roomParticipants,
     closure,
     ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,
-  }, { initialPath: entry.path });
+  }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
   cleanupConsumer = createOwnerCleanupConsumer({
     ownerId: () => {
       const snapshot = application.getSnapshot();
@@ -104,8 +106,20 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   });
   const unsubscribeCleanup = application.subscribe(() => { void cleanupConsumer?.poll(); });
   cleanupConsumer.start();
-  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
+  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });
   const createChannelAccess = () => createChannelAccessInboxController({ requests: api.channelAccess });
+  const roomRenderer = createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
+    if (!binding.device) return false;
+    const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
+      && matrix.device.current().generation === context.deviceView.generation;
+    if (!currentOwner()) return false;
+    const proof = await matrix.ownerDeviceProof();
+    if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)
+      || !currentOwner()) return false;
+    const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
+      binding.device.deviceId, binding.device.fingerprint);
+    return established && currentOwner();
+  }, 5_000, controlsCapability);
   const mounted = mountKhalaContent({
     target,
     application,
@@ -114,18 +128,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     createChannelAccess,
     mode: entry.mode,
     capabilities: registerHumanCapabilities(reviewCapability, controlsCapability),
-    renderRoom: createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
-      if (!binding.device) return false;
-      const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
-        && matrix.device.current().generation === context.deviceView.generation;
-      if (!currentOwner()) return false;
-      const proof = await matrix.ownerDeviceProof();
-      if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)
-        || !currentOwner()) return false;
-      const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
-        binding.device.deviceId, binding.device.fingerprint);
-      return established && currentOwner();
-    }, 5_000, controlsCapability),
+    renderRoom: roomRenderer,
+    renderChannelTools: roomRenderer.tools,
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);

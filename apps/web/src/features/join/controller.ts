@@ -78,8 +78,20 @@ export function createJoinController(ports: JoinPorts): JoinController {
 
   async function checkInvitation(gen: number, ref: string, principal: AuthPrincipal) {
     setView({ phase: 'checking_invitation', email: principal.verifiedEmail, roomId: null, retryAllowed: false, errorCode: null });
-    const state = await ports.admission.inspect(ref);
+    const channelUrl = new URL(`/join/${encodeURIComponent(ref)}`, globalThis.location?.origin ?? 'https://khala.invalid').href;
+    const resolved = ports.channelLinks ? await ports.channelLinks.resolve(channelUrl) : null;
+    const state = resolved === null ? await ports.admission.inspect(ref) : resolved.kind === 'join_required' ? 'eligible'
+      : resolved.kind === 'joined' ? 'already_joined' : resolved.kind;
     if (gen !== generation) return;
+
+    if (state === 'invalid_link') {
+      setView({ phase: 'invalid_link', email: principal.verifiedEmail, roomId: null, retryAllowed: false, errorCode: null });
+      return;
+    }
+    if (state === 'forbidden') {
+      setView({ phase: 'wrong_account', email: principal.verifiedEmail, roomId: null, retryAllowed: false, errorCode: null });
+      return;
+    }
 
     const phase = inviteStatePhase(state);
     if (phase === 'sign_in') {

@@ -48,6 +48,12 @@ export type ExchangeGrantIssuer = Readonly<{
     options?: CallOptions,
   ): Promise<Readonly<{ kind: 'minted'; grant: string }> | Readonly<{ kind: 'unavailable' }>>;
   redeem(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantRedeemResult>;
+  /** Read-only lookup for an opaque grant before an exact-tuple redemption. */
+  inspect(grant: string, options?: CallOptions): Promise<
+    | Readonly<{ kind: 'found'; binding: ExchangeGrantBinding }>
+    | Readonly<{ kind: 'rejected'; code: 'invalid_grant' | 'expired' }>
+    | Readonly<{ kind: 'unavailable' }>
+  >;
   /**
    * Read-only: the bound tuple of a grant this exact tuple already redeemed. It lets a
    * consumer that crashed after `redeem` finish the same activation; it never consumes.
@@ -99,6 +105,17 @@ export function createExchangeGrantIssuer(deps: Readonly<{
       if (resolved?.kind === 'applied') return { kind: 'minted', grant };
     }
     return { kind: 'unavailable' };
+  }
+
+  async function inspect(grant: string, options?: CallOptions): ReturnType<ExchangeGrantIssuer['inspect']> {
+    if (!GRANT.test(grant)) return { kind: 'rejected', code: 'invalid_grant' };
+    const read = await safe(() => deps.store.read(grantKey(grant), options));
+    if (read === null || read.kind === 'unavailable') return { kind: 'unavailable' };
+    if (read.kind === 'absent') return { kind: 'rejected', code: 'invalid_grant' };
+    const held = readStoredGrant(read.record.value);
+    if (held === null) return { kind: 'unavailable' };
+    if (deps.clock() >= Date.parse(held.expiresAt)) return { kind: 'rejected', code: 'expired' };
+    return { kind: 'found', binding: held.binding };
   }
 
   /** The stored grant for this exact bound tuple, or why it is not one. */
@@ -171,7 +188,7 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'consumed', binding: found.stored.binding };
   }
 
-  return Object.freeze({ mint, redeem, consumed: consumedBy, wasRedeemed });
+  return Object.freeze({ mint, inspect, redeem, consumed: consumedBy, wasRedeemed });
 }
 
 function grantKey(grant: string): string {

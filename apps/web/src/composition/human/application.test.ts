@@ -12,6 +12,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import { ok, unavailable } from '@khala/contracts/messaging/index';
 import { createHumanApplication, type HumanApplicationSnapshot, type HumanRouteContext } from './application';
+import type { TabHandoff } from './tab-handoff';
 
 const limits = {
   maxBodyBytes: 4_096,
@@ -96,6 +97,68 @@ function settleStaleContinuations(): Promise<void> {
 }
 
 describe('createHumanApplication', () => {
+  it('fences the route before yielding its device and reacquires on focus', async () => {
+    const events: string[] = [];
+    let focused = true;
+    let request: (ownerId: OwnerId) => void = () => undefined;
+    let focus: () => void = () => undefined;
+    const tabHandoff: TabHandoff = {
+      isFocused: () => focused,
+      request: ownerId => { events.push(`request:${ownerId}`); },
+      listen(onRequest, onFocus) { request = onRequest; focus = onFocus; return () => undefined; },
+    };
+    const device = fakeDevice({ stop: vi.fn(async () => { events.push('stop'); }) });
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const app = createHumanApplication({ identity, device, room: {} as RoomPort, admission: {} as AdmissionPort, limits },
+      { initialPath: '/channels/first', tabHandoff, createRouteDisposer: () => () => { events.push('dispose-route'); } });
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+
+    request(bob.ownerId);
+    expect(app.getSnapshot().phase).toBe('ready');
+    request(alice.ownerId);
+    expect(app.getSnapshot().phase).toBe('ready'); // stale claim delivered after focus returned
+    focused = false;
+    request(alice.ownerId);
+    expect(app.getSnapshot()).toMatchObject({ phase: 'inactive', context: null });
+    await eventually(() => expect(events).toContain('stop'));
+    expect(events.indexOf('dispose-route')).toBeLessThan(events.indexOf('stop'));
+
+    focused = true;
+    focus();
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+    expect(events.filter(event => event === `request:${alice.ownerId}`)).toHaveLength(2);
+    app.dispose();
+  });
+
+  it.each(['lost', 'revoked'] as const)('keeps %s device state visible after another tab claims the lease', async state => {
+    let focused = true;
+    let request: (ownerId: OwnerId) => void = () => undefined;
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const stop = vi.fn(async () => undefined);
+    const device = fakeDevice({
+      ensureReady: vi.fn(async () => ok({ ...readyDevice(alice), state,
+        reason: state === 'lost' ? 'storage_cleared' as const : 'revoked_by_owner' as const })),
+      stop,
+    });
+    const app = createHumanApplication({ identity, device, room: {} as RoomPort, admission: {} as AdmissionPort, limits },
+      { tabHandoff: { isFocused: () => focused, request: () => undefined,
+        listen(onRequest) { request = onRequest; return () => undefined; } } });
+    await eventually(() => expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device',
+      reason: state === 'lost' ? 'storage_cleared' : 'revoked_by_owner' }));
+    focused = false;
+    request(alice.ownerId);
+    expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', reason: state === 'lost'
+      ? 'storage_cleared' : 'revoked_by_owner' });
+    expect(stop).not.toHaveBeenCalled();
+    app.dispose();
+  });
+
   it('fences a stale identity response after navigation activates another account', async () => {
     const firstIdentity = deferred<IdentityState>();
     const identity: IdentityPort = {
@@ -298,6 +361,44 @@ describe('createHumanApplication', () => {
     await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
 
     expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', context: null });
+  });
+
+  it('keeps the signed-in shell phase through device retry without granting a route context', async () => {
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const ensureReady = vi.fn(async () => unavailable());
+    const app = application(identity, fakeDevice({ ensureReady }));
+    await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
+    const seen: HumanApplicationSnapshot[] = [];
+    const dispose = app.subscribe(() => seen.push(app.getSnapshot()));
+    app.navigate('/new');
+    await eventually(() => expect(ensureReady).toHaveBeenCalledTimes(2));
+    await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
+    expect(seen.map(snapshot => snapshot.phase)).toEqual(['initializing_device', 'initializing_device', 'unavailable']);
+    expect(seen.every(snapshot => snapshot.context === null)).toBe(true);
+    dispose();
+  });
+
+  it('keeps the owner context mounted while navigating and exposes a later device failure', async () => {
+    const nextIdentity = deferred<IdentityState>();
+    let notify: (view: DeviceView) => void = () => undefined;
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValueOnce({ kind: 'signed_in', principal: alice }).mockImplementationOnce(() => nextIdentity.promise),
+      beginSignIn: vi.fn(),
+      signOut: vi.fn(),
+    };
+    const device = fakeDevice({ observe(listener) { notify = listener; return () => undefined; } });
+    const app = application(identity, device);
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+    const original = ready(app.getSnapshot());
+
+    app.navigate('/channels/second');
+    expect(app.getSnapshot()).toMatchObject({ phase: 'navigating', path: '/channels/second', context: original });
+    notify({ ...readyDevice(alice), state: 'failed', reason: 'initialization_failed' });
+    await eventually(() => expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', reason: 'initialization_failed' }));
+    nextIdentity.resolve({ kind: 'signed_in', principal: alice });
   });
 
   it('does not publish ready when revocation follows activation before rendering', async () => {

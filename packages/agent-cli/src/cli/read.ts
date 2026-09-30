@@ -39,6 +39,6 @@ export function parseReadArguments(args: readonly string[]): ReadArguments {
 
 export function renderReadOutput(result: ReadResult): string {
   return result.kind === 'empty'
-    ? JSON.stringify({ ok: true, kind: 'empty' })
+    ? JSON.stringify({ ok: true, kind: 'empty', ...(result.currentNames?.length ? { currentNames: result.currentNames } : {}) })
     : renderInboxBatch(result.batch);
 }

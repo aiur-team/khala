@@ -15,6 +15,7 @@ khala status [--check]
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
+khala channels open
 khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]
 khala channels access-status --operation <id> [--origin <trusted-origin>]
 khala agents list --channel <held-binding-id>
@@ -55,6 +56,29 @@ runtime dependencies, so installing the local tarball fetches nothing and runs n
 The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
 inside this workspace, under the opt-in `khala-source` condition; a consumer of
 the published package cannot resolve them.
+
+`khala channels open` gives the person the hosted `/new` URL. The person signs
+in there before creating a room. This command performs no hosted mutation,
+creates no claim token, and does not give the agent a binding or owner authority.
+If the configured hosted origin is missing or invalid, it exits 4 with
+`{"ok":false,"kind":"blocked","step":"hosted_origin"}`. Joining the room
+later still requires an exact supported native session and the human's approval.
+
+After sign-in, the person can copy an owner-bound agent creation link from
+`/new`. A Codex agent command with its inherited `CODEX_THREAD_ID` can run
+`khala channels create --title <title> --operation <stable-id> --target '<agent-creation-link>'`.
+The native Codex or Claude MCP session can call `khala_create_channel` with
+`{ title, operationId, target }`, where `target` is that exact link.
+The operation ID for an agent creation link must be 8–128 URL-safe characters and reused on retry.
+The first call returns an `approvalUrl` for the human to approve that session's
+proof key; repeat the same tool call, target and operation ID after approval to file the
+separate channel request. Only the human's subsequent inbox approval creates
+the hosted room. A retry keeps the same operation ID. Another person's link
+cannot transfer room ownership to this agent. A shell without the native Codex
+thread label reports `discovery_required` without a hosted request.
+The label alone is not authentication: the connector inspects the installed
+harness and exact session, and the human must approve its proof key and the
+separate creation request.
 
 `node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
 release gate. It packs the package as npm would publish it, then refuses the
@@ -276,14 +300,18 @@ hold a current `grant.json`:
   `not_connected`.
 - `join <channel-url>` accepts only `<origin>/channels/<channelId>` on the
   running origin. With a discovery descriptor, it files a channel-access request
-  as that agent and prints `{"ok":true,"kind":"access","outcome":...}` without
+  as that exact agent session and prints `{"ok":true,"kind":"access","outcome":...}` without
   waiting. A retry reads the same request, and `unavailable` never starts a new
   one. After a `denied`, `expired` or `revoked` answer (Stop revokes), the next
   `join` files a fresh request instead of repeating the old answer, up to 16
   times per channel and descriptor generation. After that, or when a rotated
   descriptor is refused with `discovery_required`, run `khala internal
-  discovery` again. The
-  launch's transport capability names no agent, so `join` with `active.json`
+  discovery` again. The channel owner must approve before a grant is written.
+  A human invite (`/join/<invite>` or `/join?invite=<invite>`) belongs in the browser and is
+  rejected as an agent join target. If discovery returns `not_running`, the
+  owner has not started `khala internal` on that machine; no descriptor or
+  request was issued. The launch's transport capability names no agent, so
+  `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests
   inbox. Once it is approved, the next `join` finishes the binding: it
@@ -483,12 +511,21 @@ anything without the owner's approval of the displayed session.
 
 ## Channel access requests
 
-For a first hosted channel URL request, the connector signs a candidate with
-its own proof key. The signed-in owner of the resolved channel approves that
+For a first hosted channel URL request, pass the sponsor-issued
+`<origin>/join/<inviteRef>` link to the native join tool. The CLI sends it to
+`POST /api/agent/channel-link/request` with the exact discovery credential and
+a body-bound DPoP proof; it never browses the human join page. If the link
+belongs to another sponsor, the command reports `sponsor_link_required` with
+`next: "copy_your_link"`; the person joins in their own browser and then gives
+this agent their personal link. The connector signs a candidate with its own
+proof key. The signed-in owner of the resolved channel approves that
 key before the separate discovery consent. The session ID is a caller-supplied
 local label; key approval applies to that owner's channels, not just the link
-used to find them. Hosted request, status, grant exchange, and admission routes
-remain unavailable until their trusted provider adapters and live proof pass.
+used to find them. The hosted native client can call request, status, exchange,
+redeem, resume, and ready with the approved proof key. A deployed, owner-approved
+Codex and Claude read/send proof is still required before calling the route
+production proven. A lost redeem response before the binding ID is persisted
+cannot currently be resumed by operation ID; #564 tracks that acceptance gap.
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
@@ -498,13 +535,22 @@ on loopback, with no credentials, query, or fragment). The command prints one
 JSON object:
 `{"ok":true,"v":1,"operationId":...,"outcome":...,"next":null}`. It waits for
 nothing: `pending_owner` is the normal first answer, and the owner decides in
-their own UI. Nothing here grants access.
+their own UI. On a first hosted request, it can mean only that the signed proof
+key awaits approval; the channel-access journal has no row yet. After the
+owner approves that key, run `request-access` again with the same channel URL
+and `operationId` (or omit `--operation` again to reuse the target-derived ID)
+to file the separate access request. Nothing here grants access.
 
-`khala channels access-status --operation <id>` reads the same operation once.
+`khala channels access-status --operation <id>` reads the same filed access
+operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 `expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
-`connected`, `repair_required`); `connected` appears only after the connector
-has activated the grant. Output is decoded with the closed
+`connected`, `repair_required`); the hosted native client attempts exchange,
+one-time redemption, Matrix device activation, and ready before reporting
+`connected`. This is scoped to the exact Codex or Claude MCP session; shell
+`khala connect` has no provider session to authenticate a hosted request.
+Production native read and send remain unproven until an owner-approved live
+session exercises both. Output is decoded with the closed
 `decodeAccessRequestStatus` decoder, so any extra field is reported as
 `unavailable` and not printed.
 
@@ -534,7 +580,7 @@ follow redirects.
 
 ## Channel creation requests
 
-`khala channels create --title <title> --operation <id> [--origin <trusted-origin>]`
+`khala channels create --title <title> --operation <id> [--origin <trusted-origin>] [--target <agent-creation-link>]`
 asks the service owner to create one new secret channel, and
 `khala channels create-status --operation <id> [--origin <trusted-origin>]` reads
 that operation once. Both run from your own already-running CLI session; Khala
@@ -662,7 +708,7 @@ its footprint cannot be declared up front.
 
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
-| 2.1.283 | supported | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies clean, populated, hardened, and upgraded homes through the executor and asserts that the changed files equal the planned paths. |
+| 2.1.283, 2.1.284 | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies the planned footprint in private homes. Route proof remains exact-version: 2.1.284 is experimental pending a live model read/send. |
 | any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
@@ -727,7 +773,7 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0 | Supported |
+| 0.154.0, 0.157.1, 0.158.0 | Supported setup; native delivery claims remain exact-version and route-specific |
 | Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter

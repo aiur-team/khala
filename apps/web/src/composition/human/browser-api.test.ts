@@ -21,6 +21,30 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
+  it('decodes personal issuance and human resolution with the current CSRF proof', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'personal_link', shareUrl: `${origin}/join/invite_alice123`, expiresAt: null }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'join_required' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.channelLinks.personal('room_1' as RoomId)).toEqual({ v: 1, kind: 'personal_link',
+      shareUrl: `${origin}/join/invite_alice123`, expiresAt: null });
+    expect(await api.channelLinks.resolve(`${origin}/join/invite_alice123`)).toEqual({ v: 1, kind: 'join_required' });
+    expect(fetch.mock.calls.slice(1).map(call => call[0])).toEqual([
+      `${origin}/api/human/channel-link/personal`, `${origin}/api/human/channel-link/resolve`,
+    ]);
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it('refuses a personal link on another origin', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'personal_link',
+        shareUrl: 'https://other.example/join/invite_alice123', expiresAt: null }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.channelLinks.personal('room_1' as RoomId)).toEqual({ v: 1, kind: 'unavailable' });
+  });
+
   it('retrieves exact owner cleanup requests without needing the closed room in its view', async () => {
     const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
     const fetch = vi.fn<typeof globalThis.fetch>()
@@ -170,6 +194,21 @@ describe('createHumanBrowserApi', () => {
     expect(fetch.mock.calls[1]?.[0]).toBe(`${origin}/api/human/messaging/session`);
     expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ deviceId: 'KH_WEB_1' }));
     expect(JSON.stringify(fetch.mock.calls)).not.toContain('password');
+  });
+
+  it('accepts a returned loopback Matrix session only in explicit local mode', async () => {
+    const localOrigin = 'http://localhost:8888';
+    const localMatrix = 'http://127.0.0.1:8008';
+    const session = { homeserverOrigin: localMatrix, userId: '@alice:localhost', accessToken: 'device-token',
+      deviceId: 'KH_WEB_1', publishedFingerprint: null };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { session }));
+    const api = createHumanBrowserApi({ origin: localOrigin, homeserverOrigin: localMatrix,
+      allowInsecureLoopback: true, limits, fetch, deviceIds: { get: () => 'KH_WEB_1', put: () => {} } });
+    expect(await api.credentials.resolve(principal, new AbortController().signal)).toMatchObject({
+      kind: 'ok', session: { credentials: { homeserverOrigin: localMatrix } },
+    });
   });
 
   it('decodes server-authoritative Matrix participant mappings', async () => {

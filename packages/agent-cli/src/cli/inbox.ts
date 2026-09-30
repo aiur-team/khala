@@ -4,7 +4,6 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { DatabaseSync } from 'node:sqlite';
 import {
   type BindingId, type EventRef, OPENCODE_HINT_MAX_BYTES, type OpenCodeInboxHint, decodeOpenCodeInboxHint,
   encodeOpenCodeInboxHint,
@@ -36,7 +35,10 @@ export type InboxStatus = Readonly<{
   cursor: InboxCursor;
 }>;
 
+export type CurrentAgentName = Readonly<{ participantId: string; name: string; sourceEventId: string | null; eventId: string }>;
+
 export type InboxBatch = Readonly<{
+  currentNames?: readonly CurrentAgentName[];
   token: string;
   items: readonly InboxItem[];
 }>;
@@ -62,6 +64,7 @@ export type ReadBatchInput = Readonly<{
 const EXPLICIT_READ_SCOPE = 'khala-call';
 
 export type InboxConsumer = Readonly<{
+  readCurrentNames?(): Promise<readonly CurrentAgentName[]>;
   readBatch(input: ReadBatchInput): Promise<InboxBatch | null>;
   release(): Promise<void>;
 }>;
@@ -87,6 +90,8 @@ export type ListenerHintReason = OpenCodeInboxHint['reason'];
 export type ListenerNotification = 'notified' | 'unavailable';
 
 export interface Inbox {
+  setCurrentNames?(names: readonly CurrentAgentName[]): Promise<void>;
+  readCurrentNames?(): Promise<readonly CurrentAgentName[]>;
   enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'>;
   acquireListener(): Promise<Readonly<{ release(): Promise<void> }>>;
   readNext(): Promise<InboxItem | null>;
@@ -192,6 +197,27 @@ class FileInbox implements BatchInbox {
     this.#consumerLockPath = path.join(paths.bindingDirectory, CONSUMER_LOCK_DB_FILE);
   }
 
+  async setCurrentNames(names: readonly CurrentAgentName[]): Promise<void> {
+    if (!Array.isArray(names) || names.length > 100 || names.some(item => !validIdentifier(item.participantId)
+      || !validIdentifier(item.eventId) || !(item.sourceEventId === null || validIdentifier(item.sourceEventId))
+      || typeof item.name !== 'string' || item.name.length === 0 || item.name.length > 80)) throw new CliError('invalid_input');
+    await this.#serial(() => writeAtomicJson(path.join(this.#bindingDirectory, 'current-names.json'), this.#bindingDirectory,
+      `.names-${randomUUID()}.tmp`, names));
+  }
+
+  async readCurrentNames(): Promise<readonly CurrentAgentName[]> {
+    const text = await readPrivateUtf8File(path.join(this.#bindingDirectory, 'current-names.json')).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '[]';
+      throw error;
+    });
+    const names: unknown = JSON.parse(text);
+    if (!Array.isArray(names) || names.length > 100 || names.some(item => !plainObject(item)
+      || !validIdentifier(item.participantId) || !validIdentifier(item.eventId)
+      || !(item.sourceEventId === null || validIdentifier(item.sourceEventId))
+      || typeof item.name !== 'string' || item.name.length === 0 || item.name.length > 80)) throw new CliError('storage_failed');
+    return names as CurrentAgentName[];
+  }
+
   async enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'> {
     return this.#serial(async () => {
       const record = recordFromDelivery(delivery, this.#options);
@@ -254,6 +280,7 @@ class FileInbox implements BatchInbox {
       throw error;
     }
     return {
+      readCurrentNames: () => this.readCurrentNames(),
       readBatch: input => this.#readBatch(input, () => !released),
       nextWake: () => {
         if (released) return Promise.reject(new CliError('listener_busy'));
@@ -296,6 +323,7 @@ class FileInbox implements BatchInbox {
     const lock = await this.#acquireConsumerLock();
     let released = false;
     return {
+      readCurrentNames: () => this.readCurrentNames(),
       readBatch: input => this.#readBatch(input, () => !released),
       release: async () => {
         if (released) return;
@@ -367,14 +395,14 @@ class FileInbox implements BatchInbox {
       }
       if (outstanding !== null) {
         const mark = input.explicitRead === true ? EXPLICIT_READ_SCOPE : input.offerScope;
-        if (mark === undefined) return outstanding.batch;
+        if (mark === undefined) return { ...outstanding.batch, currentNames: await this.readCurrentNames() };
         const previous = outstanding.state.offeredScope;
         if (mark !== EXPLICIT_READ_SCOPE
           && (previous === mark || (previous === EXPLICIT_READ_SCOPE && input.turnStart !== true))) return null;
         if (previous !== mark) {
           await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, { ...outstanding.state, offeredScope: mark });
         }
-        return outstanding.batch;
+        return { ...outstanding.batch, currentNames: await this.readCurrentNames() };
       }
 
       const records: string[] = [];
@@ -409,7 +437,7 @@ class FileInbox implements BatchInbox {
           : input.offerScope === undefined ? {} : { offeredScope: input.offerScope }),
       };
       await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, state);
-      return { token: state.token, items };
+      return { token: state.token, items, currentNames: await this.readCurrentNames() };
     });
   }
 
@@ -852,14 +880,23 @@ async function ensureLegacyListenerFence(filename: string): Promise<void> {
 
 async function acquireSqliteConsumerLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
   await ensurePrivateFile(filename);
-  let database: DatabaseSync | null = null;
+  type LockDatabase = Readonly<{ exec(sql: string): void; close(): void }>;
+  let database: LockDatabase | null = null;
   try {
-    const { DatabaseSync } = await import('node:sqlite');
-    database = new DatabaseSync(filename, { timeout: 0 });
+    if ('bun' in process.versions) {
+      // OpenCode runs plugins in Bun versions that do not expose node:sqlite.
+      const moduleName = 'bun:sqlite';
+      const { Database } = await import(moduleName) as { Database: new (path: string) => LockDatabase };
+      database = new Database(filename);
+    } else {
+      const { DatabaseSync } = await import('node:sqlite');
+      database = new DatabaseSync(filename, { timeout: 0 });
+    }
     database.exec('BEGIN IMMEDIATE');
   } catch (error) {
     database?.close();
-    if ((error as { errcode?: number }).errcode === 5) throw new CliError('listener_busy');
+    if ((error as { errcode?: number; errno?: number }).errcode === 5
+      || (error as { errno?: number }).errno === 5) throw new CliError('listener_busy');
     throw new CliError('storage_failed');
   }
   const held = database;

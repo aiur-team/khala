@@ -3,7 +3,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { createAgentIdentityDirectory } from '../agent/identity-directory';
-import { decodeOwnerId } from '@khala/contracts/messaging/index';
+import { decodeOwnerId, decodeRoomId } from '@khala/contracts/messaging/index';
 import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
   AuthPrincipal,
@@ -15,6 +15,7 @@ import type {
   RoomId,
   RoomSummary,
 } from '@khala/contracts/messaging/index';
+import type { ChannelCreateSubstrate } from '@khala/messaging/channel-create/adapter';
 import type { MessagingAccountDirectory } from '../../auth/index';
 import type {
   AdmissionGateway,
@@ -29,6 +30,7 @@ type Fetch = typeof globalThis.fetch;
 
 export type MatrixHumanOptions = Readonly<{
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   serverName: string;
   registrationSharedSecret: string;
   registrationIngressToken?: string | null;
@@ -78,6 +80,8 @@ export type MatrixHumanServices = Readonly<{
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
   /** Read the durable creator authority for a room; null is never ownership proof. */
   inspectRoomAuthority(roomId: RoomId): Promise<OwnerId | null>;
+  /** Only the owner approved by the channel-create workflow may select this substrate. */
+  channelCreateFor(ownerId: OwnerId): ChannelCreateSubstrate;
   /** Inventory only: callers must hold/fence adapter sends before trusting a rotation result. */
   inspectRoomSenderDevices(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<
     Readonly<{ kind: 'ok'; senders: readonly MatrixRoomSenderDevice[] }> | Readonly<{ kind: 'unavailable' }>
@@ -88,9 +92,10 @@ export type MatrixRoomSenderDevice = Readonly<{ matrixUserId: string; deviceId: 
 
 type MatrixLogin = Readonly<{ userId: string; accessToken: string; deviceId: DeviceId }>;
 
-function exactHttpsOrigin(value: string): string {
+function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || url.origin !== value
+  const loopback = allowInsecureLoopback && url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (!(url.protocol === 'https:' || loopback) || url.username || url.password || url.origin !== value
     || url.pathname !== '/' || url.search || url.hash) throw new Error('Matrix origin must be an exact https origin');
   return url.origin;
 }
@@ -120,7 +125,7 @@ function matrixRoom(roomId: RoomId, title: string | null): RoomSummary {
 }
 
 export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHumanServices {
-  const homeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
+  const homeserverOrigin = exactHttpsOrigin(options.homeserverOrigin, options.allowInsecureLoopback);
   const serverName = validateServerName(options.serverName);
   const registrationSecret = requireSecret(options.registrationSharedSecret, 'Matrix registration shared secret');
   const registrationIngressToken = options.registrationIngressToken
@@ -625,6 +630,65 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
+  function channelCreateFor(ownerId: OwnerId): ChannelCreateSubstrate {
+    return {
+      async createRoom(input, call) {
+        const session = await controlLogin(ownerId, call);
+        if (!session) return { kind: 'unavailable' };
+        try {
+          const response = await request('/_matrix/client/v3/createRoom', {
+            method: 'POST', headers: { authorization: `Bearer ${session.accessToken}`,
+              'content-type': 'application/json' },
+            body: JSON.stringify({ visibility: 'private', preset: 'private_chat',
+              ...(input.title ? { name: input.title } : {}),
+              initial_state: [
+                { type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } },
+                { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
+                { type: 'com.aiur.khala.create.v1', state_key: '', content: { operation_id: input.operationId } },
+              ] }),
+          }, call);
+          const value = await body(response);
+          if (response.status === 403) return { kind: 'rejected', code: 'forbidden' };
+          if (response.status >= 500) return { kind: 'unknown' };
+          const room = decodeRoomId(value?.room_id);
+          if (response.status !== 200 || !room.ok) return { kind: 'unavailable' };
+          if (!await rememberAuthority(room.value, ownerId, call)
+            || await roomAuthority(room.value, call) !== ownerId) return { kind: 'unknown' };
+          return { kind: 'done', value: matrixRoom(room.value, input.title) };
+        } catch { return { kind: 'unknown' }; }
+      },
+      async findCreatedRoom(input, call) {
+        const session = await controlLogin(ownerId, call);
+        if (!session) return { kind: 'unavailable' };
+        try {
+          const response = await request('/_matrix/client/v3/joined_rooms', {
+            headers: { authorization: `Bearer ${session.accessToken}` },
+          }, call);
+          const value = await body(response);
+          if (response.status !== 200 || !Array.isArray(value?.joined_rooms)
+            || value.joined_rooms.length > 1000) return { kind: 'unavailable' };
+          for (const raw of value.joined_rooms) {
+            const room = decodeRoomId(raw);
+            if (!room.ok) return { kind: 'unavailable' };
+            const marker = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(room.value)}/state/com.aiur.khala.create.v1/`, {
+              headers: { authorization: `Bearer ${session.accessToken}` },
+            }, call);
+            if (marker.status === 404) continue;
+            if (marker.status !== 200) return { kind: 'unavailable' };
+            const detail = await body(marker);
+            if (detail?.operation_id !== input.operationId) continue;
+            if (!await rememberAuthority(room.value, ownerId, call)
+              || await roomAuthority(room.value, call) !== ownerId) return { kind: 'unavailable' };
+            return { kind: 'found', room: matrixRoom(room.value, null) };
+          }
+          // A missing marker in a joined-room snapshot cannot prove that a
+          // timed-out create did not land; never allocate a second room.
+          return { kind: 'unknown' };
+        } catch { return { kind: 'unavailable' }; }
+      },
+    };
+  }
+
   return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
-    inspectRoomAuthority: roomAuthority, inspectRoomSenderDevices };
+    inspectRoomAuthority: roomAuthority, inspectRoomSenderDevices, channelCreateFor };
 }
