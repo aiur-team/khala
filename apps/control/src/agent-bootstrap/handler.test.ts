@@ -5,7 +5,6 @@ import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject, cre
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
 import { vi } from 'vitest';
 import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '../../../../packages/connector/src/storage/open';
@@ -1302,6 +1301,7 @@ describe('expired revoked cleanup authority', () => {
 describe('expired cleanup across issued control authority and restarted production connector', () => {
   it('delivers a delayed exact Stop to closure without reviving intake or fabricating Matrix removal', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-expired-closure-'));
+    const chromiumExecutablePath = path.join(directory, 'chromium');
     const session = { harness: 'codex' as const, sessionId: SESSION.session_id, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
       'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
@@ -1315,6 +1315,7 @@ describe('expired cleanup across issued control authority and restarted producti
     let now = T0;
     let opened: Awaited<ReturnType<typeof openProductionConnector>> | null = null;
     try {
+      await writeFile(chromiumExecutablePath, '#!/bin/sh\nprintf "Chromium 153.0.0.0\\n"\n', { mode: 0o700 });
       await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
       const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
       if (!limits.ok) throw new Error('invalid fixture limits');
@@ -1390,8 +1391,7 @@ describe('expired cleanup across issued control authority and restarted producti
         return route ? route.handle(request) : new Response(null, { status: 404 });
       }));
       const input = { stateDirectory: directory, appOrigin: ORIGIN,
-        chromiumExecutablePath: chromium.executablePath(),
-        browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session,
+        browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), chromiumExecutablePath, session,
         sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
         inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
         openBrowser: vi.fn(async () => undefined), openInbox: vi.fn(async () => undefined) };

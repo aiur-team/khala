@@ -33,7 +33,13 @@ export const mcpServeCommand: CliCommand = {
       let hosted: Hosted | null = null;
       const open = async () => {
         if (!validIdentifier(sessionId) || !deps.hostedSession) return null;
-        if (hosted === null) hosted = await deps.hostedSession({ harness: 'claude', sessionId });
+        if (hosted === null) {
+          try { hosted = await deps.hostedSession({ harness: 'claude', sessionId }); }
+          catch (error) {
+            deps.stderr.write('{"component":"hosted_session","stage":"open","result":"unavailable"}\n');
+            throw error;
+          }
+        }
         return hosted;
       };
       const channelsClient: AgentClientPort = {

@@ -35,6 +35,14 @@ export type ChannelDiscoveryCredentialClientOptions = Readonly<{
   allowExperimentalAgentListener?: boolean;
   /** Only for owner-approved proof-key identity: the session is a local label, not a delivery claim. */
   allowProofKeyLocalLabel?: boolean;
+  /** Fixed vocabulary only: never pass URLs, session labels, credentials or thrown errors. */
+  diagnostic?(event: DiscoveryCredentialDiagnostic): void;
+}>;
+
+export type DiscoveryCredentialDiagnostic = Readonly<{
+  stage: 'session_inspection' | 'callback_listener' | 'browser_launch' | 'owner_callback' | 'token_exchange';
+  result: 'unavailable' | 'rejected' | 'cancelled' | 'timed_out' | 'outcome_unknown';
+  httpStatus?: number;
 }>;
 
 export type ChannelDiscoveryAuthorizeInput = Readonly<{
@@ -107,6 +115,11 @@ export function createChannelDiscoveryCredentialClient(
   const timeoutMs = options.timeoutMs ?? DEFAULT_CHANNEL_DISCOVERY_TIMEOUT_MS;
   const clock = options.clock ?? Date.now;
   let held: HeldCredential | null = null;
+  const report = (stage: DiscoveryCredentialDiagnostic['stage'], result: DiscoveryCredentialDiagnostic['result'],
+    httpStatus?: number) => {
+    try { options.diagnostic?.({ stage, result, ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    catch { /* Diagnostics cannot change a consent result. */ }
+  };
 
   async function inspect(claim: SessionClaim): Promise<
     | Readonly<{ kind: 'verified'; session: VerifiedSession }>
@@ -159,7 +172,10 @@ export function createChannelDiscoveryCredentialClient(
       if (isAborted(callOptions?.signal)) return { kind: 'cancelled' };
 
       const inspected = await inspect(input.session);
-      if (inspected.kind !== 'verified') return inspected;
+      if (inspected.kind !== 'verified') {
+        report('session_inspection', inspected.kind === 'unavailable' ? 'unavailable' : 'rejected');
+        return inspected;
+      }
       if (isAborted(callOptions?.signal)) return { kind: 'cancelled' };
 
       const state = randomBytes(16).toString('base64url');
@@ -169,6 +185,7 @@ export function createChannelDiscoveryCredentialClient(
       try {
         listener = await listenForDiscoveryCallback(callbackPath, state, timeoutMs, callOptions?.signal);
       } catch {
+        report('callback_listener', 'unavailable');
         return { kind: 'unavailable' };
       }
       const redirectUri = `http://127.0.0.1:${listener.port}${callbackPath}`;
@@ -189,12 +206,13 @@ export function createChannelDiscoveryCredentialClient(
         try {
           await options.openBrowser(authorizeUrl.href);
         } catch {
+          report('browser_launch', 'unavailable');
           return { kind: 'unavailable' };
         }
         const callback = await listener.result;
-        if (callback.kind === 'denied') return { kind: 'denied' };
-        if (callback.kind === 'cancelled') return { kind: 'cancelled' };
-        if (callback.kind === 'timeout') return { kind: 'timed_out' };
+        if (callback.kind === 'denied') { report('owner_callback', 'rejected'); return { kind: 'denied' }; }
+        if (callback.kind === 'cancelled') { report('owner_callback', 'cancelled'); return { kind: 'cancelled' }; }
+        if (callback.kind === 'timeout') { report('owner_callback', 'timed_out'); return { kind: 'timed_out' }; }
 
         // The callback is the commit boundary. Do not let a late local abort
         // cancel a request whose code may be consumed by the service.
@@ -210,20 +228,22 @@ export function createChannelDiscoveryCredentialClient(
         }, { dpop: options.signer.proof('POST', tokenUrl) });
         if (response.kind === 'failed') {
           held = null;
+          report('token_exchange', 'outcome_unknown');
           return { kind: 'outcome_unknown' };
         }
-        if (response.status === 403) return { kind: 'denied' };
-        if (response.status === 429) return { kind: 'unavailable' };
+        if (response.status === 403) { report('token_exchange', 'rejected', 403); return { kind: 'denied' }; }
+        if (response.status === 429) { report('token_exchange', 'unavailable', 429); return { kind: 'unavailable' }; }
         // The service can fail after credential issuance but before it can
         // prove limiter finalization. Once the code exchange was submitted,
         // any 5xx therefore has an indeterminate issuance outcome.
         if (response.status >= 500) {
           held = null;
+          report('token_exchange', 'outcome_unknown', response.status);
           return { kind: 'outcome_unknown' };
         }
-        if (response.status !== 200) return { kind: 'rejected', code: 'invalid_grant' };
+        if (response.status !== 200) { report('token_exchange', 'rejected', response.status); return { kind: 'rejected', code: 'invalid_grant' }; }
         const accepted = await acceptCredential(response.body, { origin: input.origin, session: inspected.session });
-        if (accepted === null) return { kind: 'rejected', code: 'invalid_response' };
+        if (accepted === null) { report('token_exchange', 'rejected', 200); return { kind: 'rejected', code: 'invalid_response' }; }
         held = { credential: accepted, claim: input.session, session: inspected.session, origin: input.origin };
         return { kind: 'authorized', credential: accepted };
       } finally {

@@ -28,6 +28,10 @@ export function installedHostedSession(input: Readonly<{
     resolveCodexExecutable: () => setupEnvironment(input.environment).probe.resolveExecutable('codex'),
     inspectHooks: () => inspectHostedCodexHooks(setupEnvironment(input.environment)),
     openBrowser: url => openDefaultBrowser(url, appOrigin),
+    diagnostic: event => {
+      process.stderr.write(`${JSON.stringify({ component: event.component, stage: event.stage,
+        result: event.result, ...('httpStatus' in event ? { httpStatus: event.httpStatus } : {}) })}\n`);
+    },
     openInbox: input.openInbox,
   });
 }
