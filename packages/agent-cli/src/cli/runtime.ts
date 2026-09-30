@@ -91,7 +91,7 @@ export function publicStatus(value: unknown): AgentStatus {
     const manualMcpReady = value.route === 'manual_mcp' && binding?.harness === 'proof-key'
       && AGENT_READINESS_PREREQUISITES.slice(0, 5).every(key => prerequisites[key] === 'ready')
       && prerequisites.harness === 'unknown' && prerequisites.dispatch === 'blocked'
-      && prerequisites.review === 'blocked';
+      && (prerequisites.review === 'blocked' || prerequisites.review === 'ready');
     if ((input.phase === 'ready') !== (input.errorCode === null)
       || value.connected !== (input.phase === 'ready')
       || (input.phase === 'ready' && AGENT_READINESS_PREREQUISITES.slice(0, 8)

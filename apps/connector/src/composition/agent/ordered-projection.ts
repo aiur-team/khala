@@ -10,7 +10,9 @@ const keyFor = (roomId: string, eventId: string) => JSON.stringify([roomId, even
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
 /** The journal contains event identities/names and approved bytes only. Held bodies never enter it. */
-export function createOrderedProjection(filename: string) {
+export function createOrderedProjection(filename: string, options: Readonly<{
+  manualRead?: boolean;
+}> = {}) {
   let serial = Promise.resolve();
   let cached: State | null = null;
   const run = <T>(fn: (state: State) => Promise<T>): Promise<T> => {
@@ -49,12 +51,15 @@ export function createOrderedProjection(filename: string) {
   async function flush(state: State, inbox: LocalInbox) {
     for (const row of state.rows) {
       if (row.delivered) continue;
-      if (!row.delivery) break;
+      if (!row.delivery) {
+        if (options.manualRead) continue;
+        break;
+      }
       const { payload, ...delivery } = row.delivery;
       await inbox.enqueue({ ...delivery, payload: Buffer.from(payload, 'base64') });
       row.delivered = true;
       await save(state);
-      await inbox.notifyListener('released').catch(() => 'unavailable' as const);
+      if (!options.manualRead) await inbox.notifyListener('released').catch(() => 'unavailable' as const);
     }
   }
   return {

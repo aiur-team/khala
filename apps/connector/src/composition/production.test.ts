@@ -7,6 +7,7 @@ import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/deli
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
+import { sha256Digest } from '@khala/connector/storage/payloads';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { nativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import type { MatrixConnectorInput, MatrixConnectorSubstrate } from '../substrate/matrix';
@@ -15,45 +16,90 @@ import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 import { publicStatus } from '../../../../packages/agent-cli/src/cli/runtime';
+import { openInbox, type OpenInboxOptions } from '../../../../packages/agent-cli/src/cli/inbox';
+import { encodeMessageContent } from '@khala/contracts/messaging/events';
 
 describe('installed hosted connector composition', () => {
   let chromiumFixtureDirectory: string;
   let chromiumExecutablePath: string;
+  const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+  const getgid = Object.getOwnPropertyDescriptor(process, 'getgid');
   beforeAll(async () => {
+    Object.defineProperty(process, 'getuid', { configurable: true, value: undefined });
+    Object.defineProperty(process, 'getgid', { configurable: true, value: undefined });
     chromiumFixtureDirectory = await mkdtemp(path.join(os.tmpdir(), 'khala-test-chromium-'));
     chromiumExecutablePath = path.join(chromiumFixtureDirectory, 'chromium');
     await writeFile(chromiumExecutablePath, '#!/bin/sh\nprintf "Chromium 153.0.0.0\\n"\n', { mode: 0o700 });
   });
-  afterAll(async () => { await rm(chromiumFixtureDirectory, { recursive: true, force: true }); });
+  afterAll(async () => {
+    await rm(chromiumFixtureDirectory, { recursive: true, force: true });
+    if (getuid) Object.defineProperty(process, 'getuid', getuid);
+    if (getgid) Object.defineProperty(process, 'getgid', getgid);
+  });
 
-  it('advances an approved Claude session from connecting to manual MCP readiness', async () => {
+  it.each([
+    ['claude', false], ['codex', false], ['claude', true],
+  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (transient outage: %s)', async (harness, transientOutage) => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
-    const session = { harness: 'claude' as const, sessionId: 'claude-session-1', workdir: '/project' };
+    const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
       'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
     ])).digest('hex'));
     const matrixUserId = '@claude-agent:example';
     const roomId = '!claude:example';
-    const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
+    const payloadA = encodeMessageContent({ v: 1, kind: 'text', body: 'held A' });
+    const payloadB = encodeMessageContent({ v: 1, kind: 'text', body: 'approved B' });
+    const event = (id: string, payload: Uint8Array) => ({ kind: 'decrypted' as const,
+      ref: { v: 1 as const, roomId: roomId as never, eventId: id as never,
+        authorParticipantId: 'owner_participant' as never, authorDeviceId: 'OWNER_DEVICE' as never,
+        contentDigest: sha256Digest(payload) }, verifiedDeviceId: 'OWNER_DEVICE' as never,
+      canonicalPayload: payload });
+    const events = [event('event_A', payloadA), event('event_B', payloadB)];
+    let onText: MatrixConnectorInput['onText'];
+    const read = vi.fn(async () => {
+      for (const item of events) await onText?.({ roomId, eventId: item.ref.eventId, authorName: 'Owner' });
+      return { kind: 'page' as const, events, nextCursor: 'cursor-1', caughtUp: true };
+    });
     const send = vi.fn(async () => ({ eventId: '$claude-sent:example' }));
-    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => ({
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      onText = options.onText;
+      return ({
       fingerprint: 'claude-device-fingerprint',
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
       send, trustPeer: async () => undefined, removeOwnDevice: async () => 'removed',
       discardOutboundSession: async () => true, close: async () => undefined,
-    });
+      });
+    };
     const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
       headers: { 'content-type': 'application/json' } });
     let ownerAuthorized = true;
     let ownerTrusted = true;
     let approvalRevoked = false;
-    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+    const commands: unknown[] = [];
+    const completions: unknown[] = [];
+    let approvalExecuting = false;
+    let approvalAuthorizationChecks = 0;
+    let releaseAuthorizationFailed = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const pathname = new URL(String(url)).pathname;
       if (pathname.endsWith('/owner-mailbox/poll') && approvalRevoked) return new Response(null, { status: 403 });
-      if (pathname.endsWith('/owner-mailbox/poll')) return reply({ v: 1,
-        bindingId: 'binding-claude', generation: 0, closing: !ownerAuthorized, entries: [] });
+      if (pathname.endsWith('/owner-mailbox/poll')) {
+        if (approvalExecuting && ++approvalAuthorizationChecks === 2 && transientOutage) {
+          releaseAuthorizationFailed = true;
+          approvalExecuting = false;
+          return new Response(null, { status: 503 });
+        }
+        const entries = commands.splice(0);
+        if (entries.length > 0) approvalExecuting = true;
+        return reply({ v: 1, bindingId: 'binding-claude', generation: 0,
+          closing: !ownerAuthorized, entries });
+      }
+      if (pathname.endsWith('/owner-mailbox/complete')) {
+        completions.push(JSON.parse(String(init?.body)));
+        return reply({ v: 1, operationId: 'approve_B_0001' });
+      }
       if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
         devices: ownerTrusted ? [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] : [] });
       if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
@@ -66,10 +112,11 @@ describe('installed hosted connector composition', () => {
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
       inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
       openBrowser: async () => undefined,
-      openInbox: vi.fn(async (bindingId: string, generation: number, options?: unknown) => {
+      openInbox: vi.fn(async (bindingId: string, generation: number, options?: Pick<OpenInboxOptions, 'recordAcknowledgement'>) => {
         expect([bindingId, generation, options]).toEqual(['binding-claude', 0, expect.any(Object)]);
-        return { enqueue: async () => 'appended' as const,
-          notifyListener: async () => 'notified' as const };
+        return openInbox({ stateDirectory: path.join(directory, 'inbox'), bindingId, generation,
+          maxPayloadBytes: 64 * 1024, maxSelectionEvents: 20,
+          ...(options?.recordAcknowledgement ? { recordAcknowledgement: options.recordAcknowledgement } : {}) });
       }),
     };
     try {
@@ -94,9 +141,9 @@ describe('installed hosted connector composition', () => {
         })).toEqual({ kind: 'ready' });
         await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
-            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'blocked' } } }));
+            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'ready' } } }));
         expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
-          route: 'manual_mcp', binding });
+          route: 'manual_mcp', binding, readiness: { prerequisites: { review: 'ready', dispatch: 'blocked' } } });
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
         expect(send).toHaveBeenCalledOnce();
@@ -104,6 +151,30 @@ describe('installed hosted connector composition', () => {
         expect(input.openInbox).toHaveBeenCalledWith(binding.bindingId, 0, expect.any(Object));
         expect(input.inspectHostedCodexHooks).not.toHaveBeenCalled();
         expect(input.resolveCodexExecutable).not.toHaveBeenCalled();
+        const before = await connector.inbox(binding.bindingId, 0);
+        const beforeConsumer = await before.acquireCallConsumer!();
+        expect(await beforeConsumer.readBatch({ maxBytes: 64 * 1024, explicitRead: true })).toBeNull();
+        await beforeConsumer.release();
+        commands.push({ operationId: 'approve_B_0001', kind: 'review_approve', outcome: null,
+          authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
+            authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
+          body: { v: 1, commandId: 'approve_B_0001', roomId, bindingId: binding.bindingId,
+            expectedPolicyVersion: 0, expectedBindingGeneration: 0, selection: [events[1]!.ref],
+            issuedAt: '2026-09-30T00:00:00Z' } });
+        await vi.waitFor(() => expect(completions).toHaveLength(1), { timeout: 5_000 });
+        expect(completions[0]).toMatchObject({ outcome: { ok: true } });
+        if (transientOutage) expect(releaseAuthorizationFailed).toBe(true);
+        const approved = await connector.inbox(binding.bindingId, 0);
+        if (transientOutage) expect(await approved.readNext()).toBeNull();
+        await vi.waitFor(async () => expect(await approved.readNext()).not.toBeNull(), { timeout: 5_000 });
+        const reader = await approved.acquireCallConsumer!();
+        const batch = await reader.readBatch({ maxBytes: 64 * 1024, explicitRead: true });
+        expect(batch?.items).toHaveLength(1);
+        expect(Buffer.from(batch!.items[0]!.payload).toString()).toContain('approved B');
+        expect(Buffer.from(batch!.items[0]!.payload).toString()).not.toContain('held A');
+        expect(await reader.readBatch({ maxBytes: 64 * 1024, acknowledgeToken: batch!.token,
+          explicitRead: true })).toBeNull();
+        await reader.release();
 
         ownerAuthorized = false;
         expect(await connector.status()).toMatchObject({ connected: false,
