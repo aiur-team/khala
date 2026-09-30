@@ -27,3 +27,20 @@ it('persists a hosted open storage code without error text or identifiers', () =
     component: 'hosted_open', stage: 'state_storage', result: 'unavailable', errorCode: 'locked',
   });
 });
+
+it('persists only fixed native readiness fields and boolean prerequisites', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'native_ready', stage: 'connector_unready',
+    result: 'unavailable', phase: 'degraded', errorCode: 'subscription_offline',
+    prerequisites: { storage: true, device: true, bootstrap: true, subscription: false,
+      controls: false, harness: false, dispatch: false, review: false, recovery: false },
+    privateIdentifier: 'must-not-appear',
+  } as never);
+  const file = path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`);
+  const written = fs.readFileSync(file, 'utf8');
+  expect(written).not.toContain('must-not-appear');
+  expect(JSON.parse(written)).toEqual({ component: 'native_ready', stage: 'connector_unready',
+    result: 'unavailable', phase: 'degraded', errorCode: 'subscription_offline',
+    prerequisites: { storage: true, device: true, bootstrap: true, subscription: false,
+      controls: false, harness: false, dispatch: false, review: false, recovery: false } });
+});
