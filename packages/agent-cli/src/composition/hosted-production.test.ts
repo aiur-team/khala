@@ -179,7 +179,7 @@ describe('installed hosted connector factory', () => {
     expect(retained.size).toBe(0);
     expect(grants).toBe(1);
     expect(matrixLogins).toBe(1);
-    expect(diagnostics).toContainEqual({ component: 'activation', stage: 'activation_result', result: 'unavailable' });
+    expect(diagnostics).toContainEqual({ component: 'activation', stage: 'resume', result: 'unavailable' });
     await opened.close();
     recoveryReachable = true;
     const restarted = await factory(SESSION);
