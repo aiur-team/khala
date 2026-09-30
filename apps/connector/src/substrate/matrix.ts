@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from 'playwright-core';
@@ -17,6 +17,7 @@ import type { ConnectorDevicePort, DeviceActivation, DeviceStatus } from '@khala
 import type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from '@khala/connector/subscription/adapter';
 import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { projectVerifiedName, type NameState } from './name-state';
+import { acquireMatrixWriterLock, type MatrixWriterLockDiagnostic } from './matrix-writer-lock';
 import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 
 type BrowserEvent = Readonly<{
@@ -59,6 +60,7 @@ export type MatrixConnectorSubstrate = Readonly<{
   devices: ConnectorDevicePort;
   source: SubscriptionSource;
   fingerprint: string;
+  writerLock: MatrixWriterLockDiagnostic;
   /** Encrypts one agent-authored message with the same durable Matrix device. */
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   /** Explicit trust only after an authenticated owner-approved fingerprint attestation. */
@@ -144,10 +146,7 @@ async function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> 
   finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
 }
 
-/**
- * Opens exactly one writer. A stale lock after abrupt death is a deliberate repair gate:
- * the operator checks the old process is gone before removing that one owned lock.
- */
+/** Opens exactly one writer, recovering a dead owner's profile under a kernel guard. */
 export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> {
   if (!input.baseUrl.startsWith('https://') && !input.baseUrl.startsWith('http://127.0.0.1:'))
     throw new Error('matrix_origin_untrusted');
@@ -159,9 +158,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     ? path.join(input.browserDriverDirectory, 'index.js') : requireDriver.resolve('playwright-core');
   const driver = requireDriver(driverPath) as { chromium: typeof Chromium };
   if (!driver.chromium || typeof driver.chromium.launchPersistentContext !== 'function') throw new Error('matrix_browser_driver_invalid');
-  const lockPath = fileFor(input.profileDirectory, 'writer.lock');
-  const lock: FileHandle = await open(lockPath, 'wx', 0o600).catch(() => { throw new Error('matrix_device_locked'); });
-  await lock.writeFile(String(process.pid));
+  const lock = await acquireMatrixWriterLock(input.profileDirectory);
   let context: BrowserContext | null = null;
   let server: Server | null = null;
   let page: Page | null = null;
@@ -349,7 +346,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       },
     };
     return {
-      devices, source, fingerprint: identity.fingerprint,
+      devices, source, fingerprint: identity.fingerprint, writerLock: lock.diagnostic,
       send: (clientTxnId, body) => serializeSend(async () => {
         if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
           || Buffer.byteLength(body) > 64 * 1024) throw new Error('matrix_invalid_send');
@@ -381,18 +378,18 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
         listeners.clear();
         try { await call<void>(current(), 'close'); } catch { /* browser may have stopped */ }
         closed = true;
-        await context?.close();
-        await new Promise<void>(resolve => server?.close(() => resolve()));
-        await lock.close();
-        await rm(lockPath, { force: true });
+        try {
+          await context?.close();
+          await new Promise<void>(resolve => server?.close(() => resolve()));
+        } finally { await lock.close(); }
       },
     };
   } catch (error) {
     try { if (page) await call<void>(page, 'close'); } catch { /* ignore during failure cleanup */ }
-    await context?.close();
-    if (server) await new Promise<void>(resolve => server?.close(() => resolve()));
-    await lock.close();
-    await rm(lockPath, { force: true });
+    try {
+      await context?.close();
+      if (server) await new Promise<void>(resolve => server?.close(() => resolve()));
+    } finally { await lock.close(); }
     throw error;
   }
 }

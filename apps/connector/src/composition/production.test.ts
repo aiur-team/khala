@@ -11,6 +11,7 @@ import { sha256Digest } from '@khala/connector/storage/payloads';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { nativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import type { MatrixConnectorInput, MatrixConnectorSubstrate } from '../substrate/matrix';
+import { MatrixWriterLockError } from '../substrate/matrix-writer-lock';
 import { revocationStopId } from '../../../control/src/composition/human/revocation-cleanup';
 import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
@@ -57,6 +58,55 @@ describe('installed hosted connector composition', () => {
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
+  it('forwards active and recovered writer-lock stages through the installed diagnostic sink', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-writer-diagnostic-'));
+    const session = { harness: 'codex', sessionId: 'writer-diagnostic', workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const diagnostics: unknown[] = [];
+    let attempts = 0;
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      if (++attempts === 1) throw new MatrixWriterLockError('active_writer');
+      return {
+        fingerprint: 'signed-ed25519-fingerprint', writerLock: { kind: 'stale_recovered' },
+        devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
+          activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+        source: { authorize: async () => 'ok', listen: () => () => undefined,
+          read: async () => ({ kind: 'page', events: [], nextCursor: '', caughtUp: true }) },
+        send: async () => ({ eventId: '$event:example' }), trustPeer: async () => undefined,
+        removeOwnDevice: async () => 'removed', discardOutboundSession: async () => true,
+        close: async () => undefined,
+      };
+    };
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
+      chromiumExecutablePath, browserBundleDirectory: path.join(directory, 'unused-browser'), session,
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined, openInbox: async () => undefined,
+      diagnostic: (event: unknown) => diagnostics.push(event), openMatrix,
+    };
+    try {
+      const connector = await openProductionConnector(input);
+      try {
+        const reservation = await connector.ports.devices.reserve('operation-123');
+        expect(reservation.kind).toBe('reserved');
+        if (reservation.kind !== 'reserved') return;
+        await writeFile(path.join(sessionDirectory, 'matrix-session.json'), JSON.stringify({
+          baseUrl: 'https://matrix.example', userId: '@agent:example', deviceId: reservation.deviceId,
+          accessToken: 'a'.repeat(64), roomId: '!room:example', ownerUserId: '@owner:example',
+          ownerParticipantId: `human_${'b'.repeat(40)}`,
+        }));
+        expect(await connector.ports.devices.status(reservation.deviceId)).toBe('unavailable');
+        expect(await connector.ports.devices.status(reservation.deviceId)).toBe('ready');
+        expect(diagnostics).toEqual([
+          { stage: 'matrix_writer_active', result: 'unavailable' },
+          { stage: 'matrix_writer_recovered', result: 'recovered' },
+        ]);
+      } finally { await connector.close(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   it.each([
     ['claude', false], ['codex', false], ['claude', true],
   ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (transient outage: %s)', async (harness, transientOutage) => {
@@ -85,7 +135,7 @@ describe('installed hosted connector composition', () => {
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       onText = options.onText;
       return ({
-      fingerprint: agentFingerprint,
+      fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -255,7 +305,7 @@ describe('installed hosted connector composition', () => {
     const opens: MatrixConnectorInput[] = [];
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
-      return { fingerprint: agentFingerprint,
+      return { fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },

@@ -103,7 +103,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
   openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
-  const reportOpen = (stage: HostedOpenDiagnostic['stage'], error?: unknown) => {
+  const reportOpen = (stage: Exclude<HostedOpenDiagnostic['stage'], 'matrix_writer_recovered'>, error?: unknown) => {
     const code = error instanceof StorageError && STORAGE_ERROR_CODES.includes(error.code) ? error.code : undefined;
     try { input.diagnostic?.({ stage, result: 'unavailable', ...(code ? { errorCode: code } : {}) }); }
     catch { /* Diagnostics cannot change startup behavior. */ }
@@ -225,6 +225,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
     diagnostic: reportSubscription,
+    writerLockDiagnostic: event => { try { input.diagnostic?.(event); } catch { /* Diagnostics cannot change startup behavior. */ } },
     resolveParticipants: async (userIds, targetParticipantIds) => {
       if (!binding || !signer || closed || remoteDenied || deliveryStopped) return null;
       const session = await matrixSession();
@@ -273,7 +274,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let remoteDenied = false;
   let deliveryStopped = false;
   let activeSends = 0;
-  let openStage: HostedOpenDiagnostic['stage'] = 'bootstrap_persistence';
+  let openStage: Exclude<HostedOpenDiagnostic['stage'], 'matrix_writer_recovered'> = 'bootstrap_persistence';
   const sendWaiters: Array<() => void> = [];
 
   async function quiesceDelivery(): Promise<void> {

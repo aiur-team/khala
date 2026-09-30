@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, readlink } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { createServer as createTcpServer, connect, type Server as TcpServer, type Socket } from 'node:net';
 import { join } from 'node:path';
@@ -90,7 +90,7 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         { userId: bob.user_id, deviceId: bob.device_id, fingerprint: identity }), true);
         await substrate.trustPeer(alice.user_id, alice.device_id, aliceKeys.ed25519);
         await page.evaluate(room => (globalThis as unknown as { peer: PeerBridge }).peer.rotate(room), roomId);
-        await assert.rejects(openMatrixConnectorSubstrate(input), /matrix_device_locked/);
+        await assert.rejects(openMatrixConnectorSubstrate(input), /matrix_writer_lock_active_writer/);
         const marker = 'synthetic-verified-encrypted-replay';
         const sent = await page.evaluate(({ roomId, marker }) => (globalThis as unknown as { peer: PeerBridge }).peer.send(roomId, marker), { roomId, marker }) as { event_id: string };
         const rawResponse = await fetch(`${baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(sent.event_id)}`, {
@@ -138,8 +138,10 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         await assert.rejects(substrate.send(ownTxn, 'changed transaction body'), /matrix_send_conflict/);
         const firstCursor = first.nextCursor;
         await substrate.close(); substrate = null;
+        await writeFile(join(input.profileDirectory, 'writer.lock'), '2147483647', { mode: 0o600 });
         const reopened = await openMatrixConnectorSubstrate(input);
         substrate = reopened;
+        assert.deepEqual(reopened.writerLock, { kind: 'stale_recovered' });
         assert.equal(reopened.fingerprint, identity);
         assert.deepEqual(await reopened.send(ownTxn, ownMessage), ownSent);
         await assert.rejects(reopened.send(ownTxn, 'changed after restart'), /matrix_send_conflict/);

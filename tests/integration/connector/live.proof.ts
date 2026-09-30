@@ -313,9 +313,7 @@ test('KHA-133 live base runtime: native accepted, SIGKILL, same binding, outcome
       assert.equal(crashed.accepted.bindingId, packet.binding.bindingId);
       assert.ok(crashed.accepted.deviceFingerprint);
       assert.ok(crashed.accepted.signerThumbprint);
-      // A dead process cannot still own the profile. Remove only this exact
-      // scratch lock, then let the SDK verify its persisted identity.
-      await rm(path.join(packet.matrixProfile, 'writer.lock'));
+      // The dead owner's profile lock is recovered automatically on restart.
       const result = await recover(env);
       assert.equal(result.bindingId, packet.binding.bindingId);
       assert.equal(result.deviceId, packet.binding.deviceId);

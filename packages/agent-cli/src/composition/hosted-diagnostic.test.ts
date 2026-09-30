@@ -28,6 +28,19 @@ it('persists a hosted open storage code without error text or identifiers', () =
   });
 });
 
+it('persists fixed Matrix writer stages without owner details', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'matrix_writer_active',
+    result: 'unavailable', privatePid: 123, privatePath: '/secret/profile' } as never);
+  recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'matrix_writer_recovered',
+    result: 'recovered', privateSession: 'secret-session' } as never);
+  const file = path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`);
+  expect(fs.readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line))).toEqual([
+    { component: 'hosted_open', stage: 'matrix_writer_active', result: 'unavailable' },
+    { component: 'hosted_open', stage: 'matrix_writer_recovered', result: 'recovered' },
+  ]);
+});
+
 it('persists only fixed native readiness fields and boolean prerequisites', () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
   recordHostedDiagnostic(root, { component: 'native_ready', stage: 'connector_unready',
