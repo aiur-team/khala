@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDigests } from '../../invitations/internal';
-import { createHostedChannelAdmissionProvider } from './hosted-channel-admission';
+import { createHostedChannelAdmissionProvider, type HostedAdmissionDiagnostic } from './hosted-channel-admission';
 import { hostedCreatedChannelRef } from './channel-create';
 import type { ProductionHumanRuntime } from '../human/production';
 
@@ -19,6 +19,15 @@ describe('hosted Matrix channel admission', () => {
     let ownerLoginDenied = false;
     let failOnce = true;
     let membershipFailure: number | null = null;
+    let targetUnavailable = false;
+    let claimUnavailable = false;
+    let approvalUnavailable = false;
+    let approvalThrows = false;
+    const diagnostics: HostedAdmissionDiagnostic[] = [];
+    const diagnostic = (event: HostedAdmissionDiagnostic) => diagnostics.push(event);
+    const expectDiagnostic = (stage: HostedAdmissionDiagnostic['stage'], result: HostedAdmissionDiagnostic['result']) => {
+      expect(diagnostics.splice(0)).toEqual([{ stage, result }]);
+    };
     const claims = new Map<string, { value: unknown; revision: string }>();
     const runtime = {
       env: { publicAppOrigin: origin, publicHomeserverOrigin: 'https://matrix.example.test',
@@ -29,6 +38,7 @@ describe('hosted Matrix channel admission', () => {
       clock: () => 1000,
       store: {
         async read(readKey: string) {
+          if (readKey === key && targetUnavailable) return { kind: 'unavailable' };
           const claim = claims.get(readKey);
           if (claim) return { kind: 'record', record: { key: readKey, operationId: 'claim_1',
             expiresAt: null, ...claim } };
@@ -39,6 +49,7 @@ describe('hosted Matrix channel admission', () => {
               expiresAt: null, lastAuthorizedOperationDigest: null } } } : { kind: 'absent' };
         },
         async compareAndSet(input: { key: string; next: { value: unknown } }) {
+          if (claimUnavailable) return { kind: 'unavailable' };
           const existing = claims.get(input.key);
           if (existing) return { kind: 'conflict', current: existing };
           const record = { value: input.next.value, revision: 'claim_1' };
@@ -94,26 +105,32 @@ describe('hosted Matrix channel admission', () => {
     });
     let approved = true;
     const approvalPort = {
-      current: async () => approved ? 'current' : 'revoked',
+      current: async () => {
+        if (approvalThrows) throw new Error('private approval failure');
+        return approvalUnavailable ? 'unavailable' : approved ? 'current' : 'revoked';
+      },
     } as const;
-    const provider = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort);
+    const provider = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort, diagnostic);
     const request = { providerOperationId: 'provider_1', ownerId: ownerId as never, channelRef: key as never,
       requester: `agent_${'a'.repeat(43)}` as never, sessionGeneration: 2,
       sessionFingerprint: 'b'.repeat(43), deviceId: 'DEVICE_1' as never,
       history: 'none' as const };
     expect(await provider.reconcile(request)).toEqual({ kind: 'not_applied' });
     expect(await provider.admit(request)).toEqual({ kind: 'unavailable' });
+    expectDiagnostic(initialFailure === 'owner_login' ? 'admission_matrix_inspect' : 'admission_matrix_admit', 'unavailable');
     expect([...claims.keys()].filter(key => key.startsWith('hosted-channel-admission.v1.'))).toHaveLength(1);
     expect(accountExists).toBe(false);
     expect(joined).toBe(false);
     const callsAfterFailure = fetcher.mock.calls.length;
     approved = false;
     expect(await provider.reconcile(request)).toEqual({ kind: 'rejected' });
+    expectDiagnostic('admission_approval_recheck', 'rejected');
     expect(fetcher.mock.calls.length).toBe(callsAfterFailure);
     approved = true;
     for (const status of [200, 403, 404, 503]) {
       membershipFailure = status;
       expect(await provider.reconcile(request)).toEqual({ kind: 'unavailable' });
+      expectDiagnostic('admission_matrix_inspect', 'unavailable');
       expect(accountExists).toBe(false);
       expect(joined).toBe(false);
     }
@@ -125,38 +142,69 @@ describe('hosted Matrix channel admission', () => {
     }).length;
     const targetReadsBefore = targetReads();
     expect(await provider.reconcile(request)).toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_matrix_inspect', 'unavailable');
     expect(targetReads()).toBe(targetReadsBefore);
     matrixOwnerJoined = true;
-    const restarted = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort);
+    const restarted = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort, diagnostic);
     expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'joined' });
+    expectDiagnostic('admission_matrix_admit', 'ok');
     expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'already_joined' });
+    expectDiagnostic('admission_matrix_inspect', 'ok');
     expect([...claims.keys()].filter(key => key.startsWith('hosted-channel-admission.v1.'))).toHaveLength(1);
     expect([...claims.keys()].filter(key => key.startsWith('matrix.agent-identity.v1.'))).toHaveLength(1);
     expect([...claims.keys()].filter(key => key.startsWith('matrix.agent-participant.v1.'))).toHaveLength(1);
     ownerLoginDenied = true;
     expect(await restarted.reconcile(request)).toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_matrix_inspect', 'unavailable');
     ownerLoginDenied = false;
     expect(fetcher.mock.calls.filter(([resource, init]) => new URL(String(resource)).pathname.includes('/join/')
       && init?.method === 'POST')).toHaveLength(1);
     expect(await provider.admit({ ...request, deviceId: 'DEVICE_2' as never })).toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_claim', 'unavailable');
     approved = false;
     expect(await provider.reconcile(request)).toEqual({ kind: 'rejected' });
+    expectDiagnostic('admission_approval_recheck', 'rejected');
     joined = false;
     expect(await provider.admit({ ...request, providerOperationId: 'provider_revoked' }))
       .toEqual({ kind: 'rejected' });
+    expectDiagnostic('admission_approval_recheck', 'rejected');
     expect(joined).toBe(false);
     approved = true;
+    approvalUnavailable = true;
+    expect(await provider.admit({ ...request, providerOperationId: 'provider_approval_unavailable' }))
+      .toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_approval_recheck', 'unavailable');
+    approvalUnavailable = false;
+    approvalThrows = true;
+    expect(await provider.admit({ ...request, providerOperationId: 'provider_approval_throws' }))
+      .toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_approval_recheck', 'unavailable');
+    approvalThrows = false;
+    claimUnavailable = true;
+    expect(await provider.admit({ ...request, providerOperationId: 'provider_claim_unavailable' }))
+      .toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_claim', 'unavailable');
+    claimUnavailable = false;
+    targetUnavailable = true;
+    expect(await provider.admit({ ...request, providerOperationId: 'provider_target_unavailable' }))
+      .toEqual({ kind: 'unavailable' });
+    expectDiagnostic('admission_target_lookup', 'unavailable');
+    targetUnavailable = false;
     roomOwner = 'owner_2';
     sponsorJoined = false;
     expect(await provider.admit({ ...request, providerOperationId: 'provider_2' })).toEqual({ kind: 'rejected' });
+    expectDiagnostic('admission_target_lookup', 'rejected');
 
     roomOwner = ownerId;
     sponsorJoined = true;
     const created = { ...request, providerOperationId: 'provider_created',
       channelRef: hostedCreatedChannelRef(roomId as never) };
     expect(await provider.admit(created)).toEqual({ kind: 'admitted', membership: 'joined' });
+    expectDiagnostic('admission_matrix_admit', 'ok');
     expect(await provider.reconcile(created)).toEqual({ kind: 'admitted', membership: 'already_joined' });
+    expectDiagnostic('admission_matrix_inspect', 'ok');
     roomOwner = 'owner_2';
     expect(await provider.admit({ ...created, providerOperationId: 'provider_wrong_owner' })).toEqual({ kind: 'rejected' });
+    expectDiagnostic('admission_target_lookup', 'rejected');
   });
 });
