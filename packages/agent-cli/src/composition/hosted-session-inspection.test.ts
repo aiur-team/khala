@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { codexMcpSessionInspection } from './hosted-session-inspection.js';
+import { claudeProofKeyLabelInspection, codexMcpSessionInspection } from './hosted-session-inspection.js';
 
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 const CLAIM = { ...SESSION, workdir: '/tmp/existing-session' };
@@ -30,5 +30,23 @@ describe('installed Codex MCP session inspection', () => {
       .toEqual({ kind: 'unsupported' });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.154.0', generation: async () => null }).inspect(CLAIM))
       .toEqual({ kind: 'unavailable' });
+  });
+
+  it('accepts 0.159.2 only as an exact-session request label with unsupported delivery', async () => {
+    const inspect = codexMcpSessionInspection({ session: SESSION, workdir: CLAIM.workdir,
+      readVersion: async () => '0.159.2', generation: async () => 3 });
+    expect(await inspect.inspect(CLAIM)).toMatchObject({ kind: 'verified',
+      session: { ...SESSION, generation: 3 },
+      capabilities: { support: 'unsupported', existingSession: 'unknown', immediateNotification: 'unknown' } });
+    expect(await inspect.inspect({ ...CLAIM, sessionId: 'another-thread' })).toEqual({ kind: 'missing' });
+  });
+});
+
+describe('installed Claude proof-key label inspection', () => {
+  it.each(['2.1.284', '2.1.285'])('accepts the current exact session on %s as experimental', async version => {
+    const inspect = claudeProofKeyLabelInspection({ session: { harness: 'claude', sessionId: 'claude-session' },
+      workdir: CLAIM.workdir, readVersion: async () => version });
+    expect(await inspect.inspect({ harness: 'claude', sessionId: 'claude-session', workdir: CLAIM.workdir }))
+      .toMatchObject({ kind: 'verified', capabilities: { version, support: 'experimental' } });
   });
 });

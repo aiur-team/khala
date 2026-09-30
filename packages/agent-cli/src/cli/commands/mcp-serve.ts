@@ -32,7 +32,10 @@ export const mcpServeCommand: CliCommand = {
       type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
       let hosted: Hosted | null = null;
       const open = async () => {
-        if (!validIdentifier(sessionId) || !deps.hostedSession) return null;
+        if (!validIdentifier(sessionId) || !deps.hostedSession) {
+          deps.stderr.write('{"component":"hosted_session","stage":"session_identifier","result":"unavailable"}\n');
+          return null;
+        }
         if (hosted === null) {
           try { hosted = await deps.hostedSession({ harness: 'claude', sessionId }); }
           catch (error) {

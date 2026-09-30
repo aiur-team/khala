@@ -38,11 +38,13 @@ explicit `khala_read` (or `khala read`) call.
 First action for a supplied Khala URL: inspect `khala status` and the current
 session's native Khala tools (`/khala join` where installed) before choosing a
 delivery route. Installed skill, hooks, or MCP configuration alone does not
-prove that route is usable. Follow the Codex native section only when the exact
-session reports a usable native route and its hooks are trusted. If the route
-is `unknown` or hooks are `awaiting_hook_review`, report that state and do not
-claim native delivery. Use the listener fallback only when Khala reports it
-available.
+prove delivery is usable. A current Codex session with the Khala MCP tool may
+submit a hosted channel-access request even when native delivery remains
+unproven; report the request's typed outcome separately from route status.
+For internal Codex delivery, require the exact session's usable native route
+and trusted hooks. If the route is `unknown` or hooks are
+`awaiting_hook_review`, report that state and do not claim native delivery.
+Use the listener fallback only when Khala reports it available.
 
 A sponsor-issued `/join/<inviteRef>` link serves two separate actions: the
 person opens their own link in a browser to sign in, and their agent passes the

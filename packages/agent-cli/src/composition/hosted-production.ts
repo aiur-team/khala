@@ -16,7 +16,7 @@ import type { HarnessSession } from './session-grant.js';
 import { createConnectorBootstrapClient } from './bootstrap.js';
 import { claudeProofKeyLabelInspection, codexMcpSessionInspection } from './hosted-session-inspection.js';
 import { createHttpChannelListing } from './channel-listing.js';
-import { createHttpChannelAccess } from './channel-access.js';
+import { createHttpChannelAccess, type ChannelAccessDiagnostic } from './channel-access.js';
 import { createProofKeyCandidateClient } from './proof-key-candidate.js';
 import type { CandidateDiagnostic } from './proof-key-candidate.js';
 import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/channel-discovery';
@@ -83,8 +83,8 @@ export function hostedSessionFactory(options: Readonly<{
   openInbox: OpenGenerationInbox;
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
-  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' }>
-    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic)): void;
+  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' }>
+    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -130,6 +130,7 @@ export function hostedSessionFactory(options: Readonly<{
         diagnostic: event => options.diagnostic?.({ component: 'proof_key_candidate', ...event }),
         ...(options.fetch ? { fetch: options.fetch } : {}),
       }),
+      diagnostic: event => options.diagnostic?.({ component: 'channel_access', ...event }),
     }) : null;
     const listChannels = discovery && connector.proofSigner ? createHttpChannelListing({
       credentials: discovery, signer: connector.proofSigner, session: claim,
