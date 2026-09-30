@@ -1,5 +1,6 @@
 import {
   type OperationResult,
+  type ControlStore,
   type SealedGrantEnvelope,
   decodeSealedGrantPayload,
   validateSealedGrantPayload,
@@ -25,7 +26,7 @@ import {
   validatedRequest,
 } from './support.test';
 
-async function harness() {
+async function harness(wrapStore: (store: ControlStore) => ControlStore = store => store) {
   let now = T0;
   const backing = fakeControlStore();
   backing.useClock(() => now);
@@ -34,7 +35,7 @@ async function harness() {
   const issuer = fakeIssuer();
   const diagnostics: GrantExchangeDiagnostic[] = [];
   const service = createGrantExchangeService({
-    store: backing.store,
+    store: wrapStore(backing.store),
     authority: authority.port,
     provider: provider.port,
     issuer: issuer.port,
@@ -64,6 +65,36 @@ function envelopeOf(result: OperationResult<SealedGrantEnvelope, string>): Seale
 }
 
 describe('channel-access grant exchange', () => {
+  it('reports the last phase and conflict count when repeated create conflicts exhaust the loop', async () => {
+    const h = await harness(store => ({
+      ...store,
+      compareAndSet: input => input.key.startsWith('channel-access-exchange/')
+        ? Promise.resolve({ kind: 'conflict', current: null })
+        : store.compareAndSet(input),
+    }));
+
+    expect(await h.exchange()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(h.diagnostics).toEqual([{
+      stage: 'step_limit', result: 'unavailable', phase: 'absent', continuation: 'create_conflict', conflicts: 8,
+    }]);
+    expect(h.provider.admits).toHaveLength(0);
+  });
+
+  it('distinguishes a repeated sealing conflict after admission from a create conflict', async () => {
+    const h = await harness(store => ({
+      ...store,
+      compareAndSet: input => input.operationId.includes('.sealed.')
+        ? Promise.resolve({ kind: 'conflict', current: null })
+        : store.compareAndSet(input),
+    }));
+
+    expect(await h.exchange()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(h.diagnostics).toEqual([{
+      stage: 'step_limit', result: 'unavailable', phase: 'admitted', continuation: 'sealed_conflict', conflicts: 6,
+    }]);
+    expect(h.provider.admits).toHaveLength(1);
+  });
+
   it('admits once with history none and returns one sealed, context-bound grant', async () => {
     const h = await harness();
     const envelope = envelopeOf(await h.exchange());

@@ -39,7 +39,9 @@ const KEY_INDEX_LIFETIME_MS = 2 * CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS;
 const MAX_STEPS = 8;
 
 type ExchangeResult = OperationResult<SealedGrantEnvelope, GrantExchangeRejection>;
-type Step = Readonly<{ kind: 'continue' }> | Readonly<{ kind: 'done'; result: ExchangeResult }>;
+type Continuation = 'create_saved' | 'create_conflict' | 'rotate_saved' | 'rotate_conflict'
+  | 'admitting_conflict' | 'admitted_saved' | 'admitted_conflict' | 'sealed_conflict';
+type Step = Readonly<{ kind: 'continue'; reason: Continuation }> | Readonly<{ kind: 'done'; result: ExchangeResult }>;
 
 type ReadinessResult = OperationResult<null, GrantExchangeRejection>;
 
@@ -59,6 +61,10 @@ export type GrantExchangeDiagnostic = Readonly<{
     | 'admission_reconcile' | 'admission_admit' | 'journal_admitted' | 'grant_mint'
     | 'grant_seal' | 'journal_sealed' | 'step_limit' | 'complete';
   result: 'unavailable' | 'ok';
+  /** Fixed vocabulary and bounded count only; no request, key, record, or provider data. */
+  phase?: ExchangeRecord['phase'] | 'absent';
+  continuation?: Continuation;
+  conflicts?: number;
 }>;
 
 export function createGrantExchangeService(deps: Readonly<{
@@ -71,9 +77,10 @@ export function createGrantExchangeService(deps: Readonly<{
 }>): GrantExchangeService {
   const journal = exchangeJournal(deps.store);
 
-  function report(stage: GrantExchangeDiagnostic['stage'], result: GrantExchangeDiagnostic['result']): void {
+  function report(stage: GrantExchangeDiagnostic['stage'], result: GrantExchangeDiagnostic['result'],
+    details: Pick<GrantExchangeDiagnostic, 'phase' | 'continuation' | 'conflicts'> = {}): void {
     // Observability must not alter an authorization or delivery outcome.
-    try { deps.diagnostic?.({ stage, result }); } catch { /* diagnostic sink failed */ }
+    try { deps.diagnostic?.({ stage, result, ...details }); } catch { /* diagnostic sink failed */ }
   }
 
   function unavailableAt(stage: GrantExchangeDiagnostic['stage']): ExchangeResult {
@@ -86,16 +93,23 @@ export function createGrantExchangeService(deps: Readonly<{
     connector: GrantExchangeConnector,
     options?: CallOptions,
   ): Promise<ExchangeResult> {
+    let phase: GrantExchangeDiagnostic['phase'] = 'absent';
+    let continuation: Continuation | undefined;
+    let conflicts = 0;
     for (let step = 0; step < MAX_STEPS; step += 1) {
       const loaded = await journal.load(input, options);
       if (loaded.kind === 'unavailable') return unavailableAt('journal_load');
       if (loaded.kind === 'absent') {
+        phase = 'absent';
         const bound = await bind(loaded.key, input, connector, options);
         if (bound.kind === 'done') return bound.result;
+        continuation = bound.reason;
+        if (bound.reason === 'create_conflict') conflicts += 1;
         continue;
       }
       const stored = loaded.stored;
       const record = stored.record;
+      phase = record.phase;
       const drift = bindingDrift(record, {
         sessionGeneration: input.sessionGeneration,
         deviceId: input.deviceId,
@@ -124,8 +138,11 @@ export function createGrantExchangeService(deps: Readonly<{
         ? await advance(stored, options)
         : await rotate(stored, input, options);
       if (next.kind === 'done') return next.result;
+      continuation = next.reason;
+      if (next.reason.endsWith('_conflict')) conflicts += 1;
     }
-    return unavailableAt('step_limit');
+    report('step_limit', 'unavailable', { phase, ...(continuation === undefined ? {} : { continuation }), conflicts });
+    return unavailable();
   }
 
   /** First matching exchange: persist the bound tuple and provider operation before any effect. */
@@ -164,7 +181,8 @@ export function createGrantExchangeService(deps: Readonly<{
       envelope: null,
       closed: null,
     }, options);
-    return created.kind === 'unavailable' ? done(unavailableAt('journal_create')) : { kind: 'continue' };
+    return created.kind === 'unavailable' ? done(unavailableAt('journal_create'))
+      : { kind: 'continue', reason: created.kind === 'conflict' ? 'create_conflict' : 'create_saved' };
   }
 
   /** Before sealing, a new recovery key supersedes the prior one for the same tuple. */
@@ -180,7 +198,8 @@ export function createGrantExchangeService(deps: Readonly<{
       encryptionPublicKey: input.encryptionKey.publicKey,
       encryptionKeyThumbprint: input.encryptionKey.thumbprint,
     }, options);
-    return saved.kind === 'unavailable' ? done(unavailableAt('journal_create')) : { kind: 'continue' };
+    return saved.kind === 'unavailable' ? done(unavailableAt('journal_create'))
+      : { kind: 'continue', reason: saved.kind === 'conflict' ? 'rotate_conflict' : 'rotate_saved' };
   }
 
   /** Rechecks authority, then performs exactly one effect for the current phase. */
@@ -201,7 +220,8 @@ export function createGrantExchangeService(deps: Readonly<{
     if (deps.clock() >= Date.parse(authorization.deadline)) return close(stored, 'expired', options);
     if (record.phase === 'bound') {
       const saved = await journal.save(stored, { ...record, phase: 'admitting' }, options);
-      if (saved.kind !== 'saved') return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailableAt('journal_admitting'));
+      if (saved.kind !== 'saved') return saved.kind === 'conflict'
+        ? { kind: 'continue', reason: 'admitting_conflict' } : done(unavailableAt('journal_admitting'));
       return admit(saved.stored, authorization, false, options);
     }
     if (record.phase === 'admitting') return admit(stored, authorization, true, options);
@@ -244,7 +264,8 @@ export function createGrantExchangeService(deps: Readonly<{
       return close(stored, 'closed', options);
     }
     const saved = await journal.save(stored, { ...record, phase: 'admitted', membership: result.membership }, options);
-    return saved.kind === 'unavailable' ? done(unavailableAt('journal_admitted')) : { kind: 'continue' };
+    return saved.kind === 'unavailable' ? done(unavailableAt('journal_admitted'))
+      : { kind: 'continue', reason: saved.kind === 'conflict' ? 'admitted_conflict' : 'admitted_saved' };
   }
 
   async function seal(stored: StoredExchange, authorization: ChannelAccessAuthorization, options?: CallOptions): Promise<Step> {
@@ -289,7 +310,8 @@ export function createGrantExchangeService(deps: Readonly<{
       return done(ok(envelope));
     }
     // A racing exchange stored its envelope first; the next load returns those bytes.
-    return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailableAt('journal_sealed'));
+    return saved.kind === 'conflict' ? { kind: 'continue', reason: 'sealed_conflict' }
+      : done(unavailableAt('journal_sealed'));
   }
 
   /**
