@@ -148,3 +148,17 @@ Integrated current main `53ea0562648936781ee161316f302881f0f008ca` without
 conflicts. The resulting branch passes 62 focused web tests, all four merged
 recovery-fixture tests, full typecheck and lint. These local checks do not claim
 hosted production delivery proof.
+
+## Fictional rename showcase visual baselines
+
+CI run 36668849683 passed browser acceptance but reported ten stale landing
+screenshots. Inspected expected/actual images and representative light/dark,
+desktop/mobile and scrolled diff artifacts: the changes are confined to the
+intentional fictional Codex #420 → Dolan rename, owner notice and added earlier
+message. The frame, navigation, composer and surrounding page layout remain
+unchanged. Mobile conversation content retains its existing scroll viewport.
+
+Regenerated precisely those ten baselines in the CI-pinned
+`mcr.microsoft.com/playwright:v1.63.0-noble` image. All ten regenerated files
+are byte-identical to the corresponding CI actual images. The full suite passes
+55 tests with one skipped in each of two comparison-only runs.
