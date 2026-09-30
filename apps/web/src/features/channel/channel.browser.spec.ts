@@ -52,7 +52,7 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     await page.reload();
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     await page.getByRole('button', { name: 'Show two agents' }).click();
-    await page.getByText('Agent names', { exact: true }).click();
+    await page.getByLabel('Agent names and controls').click();
     await page.getByRole('heading', { name: 'Builder' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);

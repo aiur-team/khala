@@ -28,4 +28,11 @@ describe('conversation index presentation', () => {
     expect(html).toContain('Message unavailable on this device');
     expect(html).toContain('No messages yet');
   });
+
+  test('shows an unread summary from authorized room counts', () => {
+    const html = renderToStaticMarkup(<ConversationList conversations={[{ ...items[0]!, unreadCount: 2 }, ...items.slice(1)]}
+      query="" onQueryChange={vi.fn()} onSelect={vi.fn()} status="ready" />);
+    expect(html).toContain('2 unread');
+    expect(html).toContain('2 unread notifications');
+  });
 });
