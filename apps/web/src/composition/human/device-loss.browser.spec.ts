@@ -333,20 +333,19 @@ test('owner conversation shell fills desktop and phone with conditional request 
     await roster.locator('summary').focus();
     await page.keyboard.press('Enter');
     assert.equal(await roster.getAttribute('open'), '', 'keyboard opens the participant details');
-    await page.getByRole('heading', { name: 'Agent presence' }).waitFor();
-    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'hosted-roster-dark.png') });
-    await page.keyboard.press('Escape');
-    assert.equal(await roster.getAttribute('open'), null, 'Escape closes the participant details');
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.getByText('No agents have joined this channel yet.').waitFor();
     if (screenshotDir) {
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
         for (const theme of ['dark', 'light']) {
           await page.locator('[data-theme]').first().evaluate((node, value) => node.setAttribute('data-theme', value), theme);
-          await page.screenshot({ path: join(screenshotDir, `hosted-${width}-${theme}.png`) });
+          await page.screenshot({ path: join(screenshotDir, `hosted-roster-${width}-${theme}.png`) });
         }
       }
     }
+    await page.keyboard.press('Escape');
+    assert.equal(await roster.getAttribute('open'), null, 'Escape closes the participant details');
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     const share = page.getByRole('button', { name: 'Copy channel invite link' });
     await share.click();
     assert.equal(await roster.getAttribute('open'), null, 'share does not toggle participant details');

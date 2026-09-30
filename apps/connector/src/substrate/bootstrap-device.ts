@@ -18,6 +18,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
   onText?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onText'];
   onCurrentNames?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onCurrentNames'];
   onRename?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onRename'];
+  diagnostic?: Parameters<typeof openMatrixConnectorSubstrate>[0]['diagnostic'];
 }>): Readonly<{
   devices: ConnectorDevicePort;
   fingerprint(): string | null;
@@ -92,6 +93,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
       ...(input.onText ? { onText: input.onText } : {}),
       ...(input.onCurrentNames ? { onCurrentNames: input.onCurrentNames } : {}),
       ...(input.onRename ? { onRename: input.onRename } : {}),
+      ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
       ...(input.chromiumExecutablePath ? { chromiumExecutablePath: input.chromiumExecutablePath } : {}),
       ...(input.browserBundleDirectory ? { browserBundleDirectory: input.browserBundleDirectory } : {}),
       ...(input.browserDriverDirectory ? { browserDriverDirectory: input.browserDriverDirectory } : {}),

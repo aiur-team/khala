@@ -66,3 +66,13 @@ it('persists fixed owner-device attestation stages without attached details', ()
   expect(JSON.parse(written)).toEqual({ component: 'subscription',
     stage: 'owner_device_attestation_register_response', result: 'unavailable' });
 });
+
+it('persists a fixed Matrix read stage without event or key details', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'subscription', stage: 'matrix_read_members',
+    result: 'unavailable', privateEvent: 'must-not-appear',
+  } as never);
+  const written = fs.readFileSync(path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`), 'utf8').trim();
+  expect(JSON.parse(written)).toEqual({ component: 'subscription',
+    stage: 'matrix_read_members', result: 'unavailable' });
+});
