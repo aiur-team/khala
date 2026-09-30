@@ -30,12 +30,20 @@ let roots: SetupRoots;
 let version: string;
 let resolvable: boolean;
 let hooksFeatureEnabled: boolean;
+let mcpProbeFails: boolean;
+let hooksProbeFails: boolean;
+let mcpListing: string;
+let directoryProbeFails: boolean;
 
 beforeEach(async () => {
   ({ root, roots } = await syntheticHome());
   version = 'codex-cli 0.154.0\n';
   resolvable = true;
   hooksFeatureEnabled = true;
+  mcpProbeFails = false;
+  hooksProbeFails = false;
+  mcpListing = '[]';
+  directoryProbeFails = false;
   // A live runtime descriptor exists; nothing setup writes may ever carry its port or token.
   const descriptor = path.join(roots.xdgStateHome, 'khala', 'runtime.json');
   await fsp.mkdir(path.dirname(descriptor), { recursive: true });
@@ -50,8 +58,14 @@ const probe: SetupProbe = {
   resolveExecutable: async name => (name === 'codex' && resolvable ? CODEX : null),
   runVersion: async (executable, args) => {
     expect(executable).toBe(CODEX);
-    if (args.join(' ') === 'mcp list --json') return '[]';
-    if (args.join(' ') === 'features list') return `hooks stable ${hooksFeatureEnabled}\n`;
+    if (args.join(' ') === 'mcp list --json') {
+      if (mcpProbeFails) throw new Error('CODEX_HOME does not exist');
+      return mcpListing;
+    }
+    if (args.join(' ') === 'features list') {
+      if (hooksProbeFails) throw new Error('CODEX_HOME does not exist');
+      return `hooks stable ${hooksFeatureEnabled}\n`;
+    }
     expect(args).toEqual(['--version']);
     if (version === 'throw') throw new Error('version command unavailable');
     return version;
@@ -62,7 +76,10 @@ const probe: SetupProbe = {
     if (!stat.isFile()) throw new Error(`not a regular file: ${target}`);
     return new Uint8Array(await fsp.readFile(target));
   },
-  listDirectory: async target => fsp.readdir(target).catch(() => null),
+  listDirectory: async target => {
+    if (directoryProbeFails) throw new Error('unreadable directory');
+    return fsp.readdir(target).catch(() => null);
+  },
 };
 const environment = (): SetupEnvironment => ({ ...roots, probe });
 const paths = () => codexPaths(roots);
@@ -166,6 +183,32 @@ describe('Codex detection', () => {
     expect(observation.detection).toEqual({ executable: CODEX, version: 'unknown', supported: true });
     expect(adapter.plan({ desired: 'present', observation }).map(item => item.component))
       .toContain('mcp_entry');
+  });
+
+  it('plans all native components for a known version before Codex creates its home', async () => {
+    version = 'codex-cli 0.159.2\n';
+    mcpProbeFails = true;
+    hooksProbeFails = true;
+    const { adapter, observation } = await observe();
+    expect(await exists(paths().codexHome)).toBe(false);
+    expect(observation.detection).toEqual({ executable: CODEX, version: '0.159.2', supported: true });
+    expect(states(observation)).toEqual({ skill: 'absent', hooks: 'absent', mcp_entry: 'absent' });
+    expect(adapter.plan({ desired: 'present', observation }).map(item => item.component))
+      .toEqual(['skill', 'hooks', 'mcp_entry']);
+    expect(await exists(paths().codexHome)).toBe(false);
+
+    await fsp.mkdir(paths().codexHome);
+    expect((await observe()).observation.detection.supported).toBe(false);
+    await fsp.rmdir(paths().codexHome);
+    version = 'codex-cli 0.999.0\n';
+    expect((await observe()).observation.detection.supported).toBe(false);
+    mcpProbeFails = false;
+    mcpListing = '{"not":"an array"}';
+    version = 'codex-cli 0.159.2\n';
+    expect((await observe()).observation.detection.supported).toBe(false);
+    mcpProbeFails = true;
+    directoryProbeFails = true;
+    expect((await adapter.detect(environment())).supported).toBe(false);
   });
 });
 
