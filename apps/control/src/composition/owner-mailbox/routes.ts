@@ -19,6 +19,10 @@ function json(status: number, value: unknown): Response {
   } });
 }
 function unavailable(): Response { return json(503, { code: 'unavailable' }); }
+export type MailboxFailureStage = 'auth' | 'binding_read' | 'owner_index_read' | 'membership' | 'mailbox_submit' | 'composition';
+export type MailboxFailureCode = 'session_store_unavailable' | 'store_unavailable' | 'matrix_unavailable'
+  | 'submit_failed' | 'load_failed' | 'route_missing' | 'handle_failed';
+export type MailboxDiagnostic = (entry: Readonly<{ stage: MailboxFailureStage; code: MailboxFailureCode }>) => void;
 function plain(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -49,28 +53,41 @@ export function createOwnerMailboxRoutes(input: Readonly<{
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
   /** Existing DPoP attestation, never a Matrix device-list guess. */
   lookupAgentDevice(binding: SessionBinding): Promise<Readonly<{ userId: string; deviceId: string; fingerprint: string }> | null>;
+  diagnostic?: MailboxDiagnostic;
 }>): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[] }> {
   const bindings = createAgentBindingStore({ store: input.store });
   const ownerRooms = createOwnerRoomIndex(input.store);
+  const submitUnavailable = (stage: MailboxFailureStage, code: MailboxFailureCode): Response => {
+    try { input.diagnostic?.({ stage, code }); } catch { /* Diagnostics never affect authorization. */ }
+    return json(503, { code: 'unavailable', stage, errorCode: code });
+  };
   async function owner(request: Request, bindingId: string, mutate: boolean): Promise<
     Readonly<{ principal: AuthPrincipal; binding: SessionBinding; roomId: RoomId }> | Response
   > {
-    const signed = mutate ? await input.auth.requireHumanMutation(request) : await input.auth.authenticateRequest(request);
-    if (signed.kind === 'unavailable') return unavailable();
+    let signed: Awaited<ReturnType<AuthService['requireHumanMutation']>> | Awaited<ReturnType<AuthService['authenticateRequest']>>;
+    try { signed = mutate ? await input.auth.requireHumanMutation(request) : await input.auth.authenticateRequest(request); }
+    catch { return mutate ? submitUnavailable('auth', 'session_store_unavailable') : unavailable(); }
+    if (signed.kind === 'unavailable') return mutate ? submitUnavailable('auth', 'session_store_unavailable') : unavailable();
     if (signed.kind !== 'authorized' && signed.kind !== 'authenticated') {
       return json(signed.kind === 'signed_out' || ('code' in signed && signed.code === 'signed_out') ? 401 : 403,
         { code: 'owner_auth_required' });
     }
     const principal = signed.context.principal;
-    const found = await bindings.locateBinding(bindingId as BindingId);
-    if (found.kind === 'unavailable') return unavailable();
+    let found: Awaited<ReturnType<typeof bindings.locateBinding>>;
+    try { found = await bindings.locateBinding(bindingId as BindingId); }
+    catch { return mutate ? submitUnavailable('binding_read', 'store_unavailable') : unavailable(); }
+    if (found.kind === 'unavailable') return mutate ? submitUnavailable('binding_read', 'store_unavailable') : unavailable();
     if (found.kind !== 'found' || found.record.revokedGeneration !== null
       || found.record.binding.ownerId !== principal.ownerId) return json(403, { code: 'forbidden' });
-    const indexed = await ownerRooms.inspect(principal.ownerId, found.address.roomId);
-    if (indexed.kind !== 'ok') return unavailable();
+    let indexed: Awaited<ReturnType<typeof ownerRooms.inspect>>;
+    try { indexed = await ownerRooms.inspect(principal.ownerId, found.address.roomId); }
+    catch { return mutate ? submitUnavailable('owner_index_read', 'store_unavailable') : unavailable(); }
+    if (indexed.kind !== 'ok') return mutate ? submitUnavailable('owner_index_read', 'store_unavailable') : unavailable();
     if (indexed.value?.marker) return json(403, { code: 'channel_closing' });
-    const membership = await input.gateway.inspectMembership({ roomId: found.address.roomId, principal, history: 'none' });
-    if (membership.kind === 'unavailable') return unavailable();
+    let membership: Awaited<ReturnType<typeof input.gateway.inspectMembership>>;
+    try { membership = await input.gateway.inspectMembership({ roomId: found.address.roomId, principal, history: 'none' }); }
+    catch { return mutate ? submitUnavailable('membership', 'matrix_unavailable') : unavailable(); }
+    if (membership.kind === 'unavailable') return mutate ? submitUnavailable('membership', 'matrix_unavailable') : unavailable();
     if (membership.kind !== 'joined') return json(403, { code: 'forbidden' });
     return { principal, binding: found.record.binding, roomId: found.address.roomId };
   }
@@ -121,10 +138,17 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         if (!body) return json(400, { code: 'invalid_request' });
         const authority = await owner(request, body.bindingId, true);
         if (authority instanceof Response) return authority;
-        const mailbox = createOwnerMailbox({ store: input.store, binding: authority.binding, roomId: authority.roomId, clock: input.clock, authoritySecret: input.authoritySecret });
-        const result = await mailbox.submit({ operationId: body.operationId, kind: body.kind as OwnerCommandKind, body: body.body }, authority.principal);
+        let mailbox: ReturnType<typeof createOwnerMailbox>;
+        try { mailbox = createOwnerMailbox({ store: input.store, binding: authority.binding, roomId: authority.roomId,
+          clock: input.clock, authoritySecret: input.authoritySecret }); }
+        catch { return submitUnavailable('composition', 'load_failed'); }
+        let result: Awaited<ReturnType<typeof mailbox.submit>>;
+        try { result = await mailbox.submit({ operationId: body.operationId, kind: body.kind as OwnerCommandKind,
+          body: body.body }, authority.principal); }
+        catch { return submitUnavailable('mailbox_submit', 'submit_failed'); }
         return result.kind === 'ok' ? json(200, { v: 1, operationId: result.value.operationId, outcome: result.value.outcome })
-          : result.kind === 'conflict' ? json(409, { code: 'operation_conflict' }) : unavailable();
+          : result.kind === 'conflict' ? json(409, { code: 'operation_conflict' })
+            : submitUnavailable('mailbox_submit', 'store_unavailable');
       } },
       { path: OWNER_MAILBOX_RESULT, methods: ['GET'], async handle(request: Request) {
         const url = new URL(request.url);
@@ -185,10 +209,27 @@ export function unavailableOwnerMailboxRoutes(): Readonly<{ human: readonly Rout
 }
 
 /** Generated gateway metadata is static; live stores and auth load only per request. */
-export function createLazyOwnerMailboxRoutes(load: () => ReturnType<typeof createOwnerMailboxRoutes>): ReturnType<typeof createOwnerMailboxRoutes> {
+export function createLazyOwnerMailboxRoutes(load: () => ReturnType<typeof createOwnerMailboxRoutes>,
+  diagnostic?: MailboxDiagnostic): ReturnType<typeof createOwnerMailboxRoutes> {
   const defaults = unavailableOwnerMailboxRoutes();
   const bind = (routes: readonly RouteRegistration[], domain: 'human' | 'agent'): readonly RouteRegistration[] =>
     routes.map((route, index) => ({ path: route.path, methods: route.methods,
-      handle: (request: Request) => load()[domain][index]!.handle(request) }));
+      handle: async (request: Request) => {
+        let selected: RouteRegistration | undefined;
+        try { selected = load()[domain][index]; }
+        catch {
+          try { diagnostic?.({ stage: 'composition', code: 'load_failed' }); } catch { /* diagnostic only */ }
+          return json(503, { code: 'unavailable', stage: 'composition', errorCode: 'load_failed' });
+        }
+        if (!selected) {
+          try { diagnostic?.({ stage: 'composition', code: 'route_missing' }); } catch { /* diagnostic only */ }
+          return json(503, { code: 'unavailable', stage: 'composition', errorCode: 'route_missing' });
+        }
+        try { return await selected.handle(request); }
+        catch {
+          try { diagnostic?.({ stage: 'composition', code: 'handle_failed' }); } catch { /* diagnostic only */ }
+          return json(503, { code: 'unavailable', stage: 'composition', errorCode: 'handle_failed' });
+        }
+      } }));
   return { human: bind(defaults.human, 'human'), agent: bind(defaults.agent, 'agent') };
 }
