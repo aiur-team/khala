@@ -32,8 +32,10 @@ function probe(versionOutput: string | Error = SUPPORTED): SetupProbe {
       const candidate = path.join(binDirectory, name);
       return (await fsp.lstat(candidate).then(() => true, () => false)) ? candidate : null;
     },
-    async runVersion() {
+    async runVersion(_executable, args) {
       if (versionOutput instanceof Error) throw versionOutput;
+      if (args.join(' ') === 'mcp list --help') return 'Usage: claude mcp list';
+      if (args.join(' ') === 'plugin list --help') return 'Usage: claude plugin list';
       return versionOutput;
     },
     async readFile(target) {
@@ -135,15 +137,22 @@ describe('claude setup adapter: detection', () => {
     expect(await userState()).toEqual(before);
   });
 
-  it.each([['2.1.282 (Claude Code)'], ['9.9.9 (Claude Code)'], ['garbled'], [new Error('exit 1')]])(
-    'fails closed on an uncertified version (%s)', async versionOutput => {
+  it.each([['2.1.282 (Claude Code)'], ['9.9.9 (Claude Code)'], ['garbled']])(
+    'accepts a version as diagnostic data when native commands exist (%s)', async versionOutput => {
       await installClaude();
       const instance = adapter();
       const observation = await observe(instance, versionOutput);
-      expect(observation.detection.supported).toBe(false);
-      expect(observation.components.map(item => item.state)).toEqual(['unsupported', 'unsupported']);
-      expect(() => instance.plan({ desired: 'present', observation })).toThrow(ClaudeSetupRefusal);
+      expect(observation.detection.supported).toBe(true);
+      expect(instance.plan({ desired: 'present', observation }).length).toBeGreaterThan(0);
     });
+
+  it('refuses when native command probes fail', async () => {
+    await installClaude();
+    const instance = adapter();
+    const observation = await observe(instance, new Error('missing native commands'));
+    expect(observation.detection.supported).toBe(false);
+    expect(() => instance.plan({ desired: 'present', observation })).toThrow(ClaudeSetupRefusal);
+  });
 });
 
 describe.each(['2.1.284', '2.1.285'])('Claude Code %s setup', testedVersion => {
@@ -181,6 +190,8 @@ describe.skipIf(nativeClaude === undefined)('installed Claude setup contract', (
     });
     const version = (await invoke(['--version'])).stdout.trim();
     expect(version).toBe('2.1.285 (Claude Code)');
+    expect((await invoke(['mcp', 'list', '--help'])).stdout).toContain('mcp list');
+    expect((await invoke(['plugin', 'list', '--help'])).stdout).toContain('plugin list');
     const instance = adapter();
     const observation = await observe(instance, version);
     const planned = instance.planWithContents({ desired: 'present', observation });

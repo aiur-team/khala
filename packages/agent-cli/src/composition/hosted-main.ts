@@ -5,6 +5,7 @@ import { openDefaultBrowser } from './default-browser.js';
 import { hostedAppOrigin, hostedSessionFactory, type OpenProductionConnector } from './hosted-production.js';
 import { readInstalledCodexVersion } from './hosted-session-inspection.js';
 import { inspectClaudeVersion, inspectHostedCodexHooks } from './local-harness-capabilities.js';
+import { recordHostedDiagnostic } from './hosted-diagnostic.js';
 
 /** The published CLI's hosted composition; no provider session exists until an MCP call names it. */
 export function installedHostedSession(input: Readonly<{
@@ -28,10 +29,7 @@ export function installedHostedSession(input: Readonly<{
     resolveCodexExecutable: () => setupEnvironment(input.environment).probe.resolveExecutable('codex'),
     inspectHooks: () => inspectHostedCodexHooks(setupEnvironment(input.environment)),
     openBrowser: url => openDefaultBrowser(url, appOrigin),
-    diagnostic: event => {
-      process.stderr.write(`${JSON.stringify({ component: event.component, stage: event.stage,
-        result: event.result, ...('httpStatus' in event ? { httpStatus: event.httpStatus } : {}) })}\n`);
-    },
+    diagnostic: event => recordHostedDiagnostic(input.stateDirectory, event),
     openInbox: input.openInbox,
   });
 }

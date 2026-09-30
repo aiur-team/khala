@@ -23,7 +23,7 @@ import type {
   SetupEnvironment, SetupOperation, SetupPlanRequest, Sha256Digest,
 } from '../types.js';
 
-/** Exact versions whose mutation footprint and settings-only plugin loading are certified. */
+/** Versions retained for setup regression coverage; not a hosted-request admission gate. */
 export const CLAUDE_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['2.1.283', '2.1.284', '2.1.285']);
 
 export const CLAUDE_MARKETPLACE_NAME = 'khala';
@@ -275,7 +275,15 @@ export class ClaudeSetupAdapter implements SetupAdapter {
     } catch {
       version = null;
     }
-    return { executable, version, supported: version !== null && CLAUDE_SUPPORTED_VERSIONS.includes(version) };
+    let supported = false;
+    try {
+      const [mcp, plugin] = await Promise.all([
+        environment.probe.runVersion(executable, ['mcp', 'list', '--help']),
+        environment.probe.runVersion(executable, ['plugin', 'list', '--help']),
+      ]);
+      supported = mcp.includes('mcp list') && plugin.includes('plugin list');
+    } catch { /* An unproven plugin/MCP surface cannot receive setup writes. */ }
+    return { executable, version, supported };
   }
 
   async inspect(environment: SetupEnvironment, detection: HarnessDetection): Promise<HarnessObservation> {
@@ -286,8 +294,8 @@ export class ClaudeSetupAdapter implements SetupAdapter {
       components = [{ component: 'marketplace', state: 'absent' }, { component: 'plugin', state: 'absent' }];
     } else if (!detection.supported) {
       components = [{ component: 'marketplace', state: 'unsupported' }, { component: 'plugin', state: 'unsupported' }];
-      diagnostics.push(diagnostic('claude_version_unsupported', 'error',
-        `Claude Code ${detection.version ?? '(unknown version)'} is not a certified version (${CLAUDE_SUPPORTED_VERSIONS.join(', ')}); setup refuses it.`));
+      diagnostics.push(diagnostic('claude_native_setup_unavailable', 'error',
+        'The installed Claude Code CLI did not expose the plugin and MCP commands this setup requires.'));
     } else {
       components = (['marketplace', 'plugin'] as const).map(component => ({ component, state: componentState(inspection, component, diagnostics) }));
     }

@@ -37,17 +37,15 @@ export function codexMcpSessionInspection(input: Readonly<{
         || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
       try {
         const [version, generation] = await Promise.all([input.readVersion(), input.generation(input.session)]);
-        // 0.159.2 carries the installed MCP session label, but its native queue
-        // delivery has no proof. Permit the owner-approved hosted request without
-        // claiming that an existing session can receive channel messages.
-        if (version === null || (!NATIVE_CLI_CODEX_VERSIONS.includes(version) && version !== '0.159.2')) return { kind: 'unsupported' };
+        // The MCP caller supplied this exact session label; owner approval of
+        // its proof key remains separate. Version only controls delivery claims.
         if (generation === null || !Number.isSafeInteger(generation) || generation < 0) return { kind: 'unavailable' };
         return {
           kind: 'verified',
           session: { harness: 'codex', sessionId: input.session.sessionId, generation },
-          capabilities: NATIVE_CLI_CODEX_VERSIONS.includes(version)
+          capabilities: version !== null && NATIVE_CLI_CODEX_VERSIONS.includes(version)
             ? nativeCliCapabilities(version, LOCAL_DELIVERY_LIMITS)
-            : unsupportedNativeCliCapabilities(version, LOCAL_DELIVERY_LIMITS),
+            : unsupportedNativeCliCapabilities(version ?? 'unknown', LOCAL_DELIVERY_LIMITS),
         };
       } catch {
         return { kind: 'unavailable' };
@@ -67,7 +65,6 @@ export function claudeProofKeyLabelInspection(input: Readonly<{
       || claim.sessionId !== input.session.sessionId || claim.workdir !== input.workdir
       || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
     const version = await input.readVersion().catch(() => null);
-    if (version !== '2.1.284' && version !== '2.1.285') return { kind: 'unsupported' };
     return { kind: 'verified', session: { harness: 'claude', sessionId: input.session.sessionId, generation: 0 },
       capabilities: installedClaudeCapabilities(version, LOCAL_DELIVERY_LIMITS) };
   } };

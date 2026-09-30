@@ -12,12 +12,17 @@ session ID, operation ID, proof key, or credential is retained.
 | Rebuilt local CLI against operator home | Codex version `supported:true`, skill/hooks/MCP absent, route `unknown`; Claude version `supported:true`, marketplace ready, plugin payload absent relative to this checkout, route `unavailable`; overall `connected:false` |
 | Existing Claude session, operator-reported | Native MCP request returned `{ok:false,error:unavailable,next:reuse_operation_id}` at 16:17:52Z. Hosted function logs in the same two-minute window contained Duration entries, with no `hosted_channel_exchange` stage. |
 
-The existing Claude observation localizes the failure to a point before hosted
-channel exchange. It does not distinguish proof-key candidate inspection,
-challenge or submission from discovery authorization, local journaling, or
-the channel-link transport. The client now emits a fixed component/stage/result
-and optional HTTP status on these failure paths, without request identifiers
-or secrets. No further live request was made for this check.
+The running Claude MCP process used the Sep 29 installed `khala.js` bundle.
+That bundle requires Claude version `2.1.284` exactly, while the running
+session reports `2.1.285`. Its local proof-key candidate inspection therefore
+returns `unsupported`; the candidate client maps this to the typed
+`unavailable` outcome before any hosted HTTP exchange. This is a code-path
+cause for the observed retry, independent of the server-log inference. The
+candidate build removes that exact-version admission gate. It records fixed
+component/stage/result diagnostics, plus HTTP status when present, at the
+pre-exchange and post-access activation stages. A Claude MCP host may hide
+child stderr, so each process also writes those fields to its private Khala
+state `hosted/diagnostics-<pid>.jsonl` file. No further live request was made.
 
 Codex 0.159.2 may use its exact MCP session label for an owner-approved hosted
 access request. Native queue, hook delivery, join, read, and send are still

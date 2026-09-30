@@ -710,8 +710,8 @@ its footprint cannot be declared up front.
 
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
-| 2.1.283, 2.1.284, 2.1.285 | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies the planned footprint in private homes. Route proof remains exact-version: 2.1.284 and 2.1.285 are experimental pending live model read/send. |
-| any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
+| CLI exposes plugin and MCP commands | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. Delivery claims remain version specific; 2.1.284 and 2.1.285 are experimental pending live model read/send. |
+| CLI lacks plugin or MCP commands | unsupported | nothing | Setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
 bytes or absence, and drift refuses the whole removal. Absent Claude plans
@@ -775,8 +775,8 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0, 0.157.1, 0.158.0, 0.159.0, 0.159.1, 0.159.2 | Supported setup; native delivery claims remain exact-version and route-specific. On 0.159.2, the MCP session can submit a hosted request, but queue and hook delivery remain unproven. |
-| Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
+| CLI exposes native MCP listing | Supported skill and MCP setup; hook setup requires the enabled native hooks feature. Delivery claims remain version and route specific. On 0.159.2, an exact MCP session can submit a hosted request, while queue and hook delivery remain unproven. |
+| CLI lacks native MCP listing | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter
 

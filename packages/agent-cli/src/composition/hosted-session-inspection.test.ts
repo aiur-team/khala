@@ -18,16 +18,16 @@ describe('installed Codex MCP session inspection', () => {
     expect(generation).toHaveBeenCalledOnce();
   });
 
-  it('fails closed for an unproven install or missing generation', async () => {
+  it('degrades delivery claims for an unproven version or missing generation', async () => {
     const input = { session: SESSION, workdir: CLAIM.workdir, generation: async () => 0 };
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.157.1' }).inspect(CLAIM))
       .toMatchObject({ kind: 'verified', capabilities: { version: '0.157.1', existingSession: 'native_cli_queue' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.157.0' }).inspect(CLAIM))
-      .toEqual({ kind: 'unsupported' });
+      .toMatchObject({ kind: 'verified', capabilities: { support: 'unsupported' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.155.0' }).inspect(CLAIM))
-      .toEqual({ kind: 'unsupported' });
+      .toMatchObject({ kind: 'verified', capabilities: { support: 'unsupported' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => null }).inspect(CLAIM))
-      .toEqual({ kind: 'unsupported' });
+      .toMatchObject({ kind: 'verified', capabilities: { support: 'unsupported' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.154.0', generation: async () => null }).inspect(CLAIM))
       .toEqual({ kind: 'unavailable' });
   });

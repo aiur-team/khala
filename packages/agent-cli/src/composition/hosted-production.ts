@@ -23,6 +23,11 @@ import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/c
 
 export const CANONICAL_APP_ORIGIN = 'https://khala.aiur.team';
 
+export type ActivationDiagnostic = Readonly<{
+  stage: 'status_decode' | 'activation_preflight' | 'activation_result';
+  result: 'unavailable' | 'blocked';
+}>;
+
 /** A preview override is an exact HTTPS origin, never an arbitrary link. */
 export function hostedAppOrigin(value: string | undefined): string {
   if (value === undefined) return CANONICAL_APP_ORIGIN;
@@ -83,8 +88,8 @@ export function hostedSessionFactory(options: Readonly<{
   openInbox: OpenGenerationInbox;
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
-  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' }>
-    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic)): void;
+  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' }>
+    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -187,11 +192,24 @@ export function hostedSessionFactory(options: Readonly<{
     } : null;
     async function advance(operationId: string, origin: string) {
       const credential = discovery?.current();
-      if (!activationPorts || !credential || credential.requester.origin !== origin) return null;
+      if (!activationPorts || !credential || credential.requester.origin !== origin) {
+        reportActivation('activation_preflight');
+        return null;
+      }
       const journaled = await journalChannelAccessRequest({ operationId,
         requester: credential.requester.principal, origin,
         sessionGeneration: credential.requester.sessionGeneration }, activationPorts);
-      return journaled === 'journaled' ? activateChannelAccess(operationId, activationPorts) : null;
+      if (journaled !== 'journaled') {
+        reportActivation('activation_preflight');
+        return null;
+      }
+      const result = await activateChannelAccess(operationId, activationPorts);
+      if (result.kind === 'unavailable' || result.kind === 'blocked') reportActivation('activation_result', result.kind);
+      return result;
+    }
+    function reportActivation(stage: ActivationDiagnostic['stage'], result: ActivationDiagnostic['result'] = 'unavailable') {
+      try { options.diagnostic?.({ component: 'activation', stage, result }); }
+      catch { /* Diagnostics cannot change the access outcome. */ }
     }
     async function nativeReady(binding: SessionBinding): Promise<boolean> {
       try {
@@ -210,7 +228,10 @@ export function hostedSessionFactory(options: Readonly<{
       const result = await access.requestChannelAccess(input, signal);
       if (result.kind !== 'status') return result;
       const decoded = decodeAccessRequestStatus(result.status);
-      if (!decoded.ok || decoded.value.operationId !== input.operationId) return { kind: 'unavailable' };
+      if (!decoded.ok || decoded.value.operationId !== input.operationId) {
+        reportActivation('status_decode');
+        return { kind: 'unavailable' };
+      }
       if (!['approved', 'connecting', 'connected', 'repair_required'].includes(decoded.value.outcome)) return result;
       const activated = await advance(input.operationId, origin);
       if (!activated || activated.kind === 'unavailable' || activated.kind === 'blocked') return { kind: 'unavailable' };
@@ -227,7 +248,10 @@ export function hostedSessionFactory(options: Readonly<{
       const result = await access.channelAccessStatus(input, signal);
       if (result.kind !== 'status') return result;
       const decoded = decodeAccessRequestStatus(result.status);
-      if (!decoded.ok || decoded.value.operationId !== input.operationId) return { kind: 'unavailable' };
+      if (!decoded.ok || decoded.value.operationId !== input.operationId) {
+        reportActivation('status_decode');
+        return { kind: 'unavailable' };
+      }
       if (!['approved', 'connecting', 'connected', 'repair_required'].includes(decoded.value.outcome)) return result;
       const activated = await advance(input.operationId, input.origin ?? options.appOrigin);
       if (!activated || activated.kind === 'unavailable' || activated.kind === 'blocked') return { kind: 'unavailable' };
@@ -253,7 +277,10 @@ export function hostedSessionFactory(options: Readonly<{
       operationId: string, origin: string): Promise<Awaited<ReturnType<typeof requestChannelCreate>>> {
       if (result.kind !== 'status') return result;
       const decoded = decodeAccessRequestStatus(result.status);
-      if (!decoded.ok || decoded.value.operationId !== operationId) return { kind: 'unavailable' };
+      if (!decoded.ok || decoded.value.operationId !== operationId) {
+        reportActivation('status_decode');
+        return { kind: 'unavailable' };
+      }
       if (!['approved', 'connecting', 'connected', 'repair_required'].includes(decoded.value.outcome)) return result;
       const activated = await advance(operationId, origin);
       if (!activated || activated.kind === 'unavailable' || activated.kind === 'blocked') return { kind: 'unavailable' };
