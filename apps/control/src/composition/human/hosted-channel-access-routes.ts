@@ -109,13 +109,15 @@ export function createHostedChannelAccessRoutes(
     });
     const authenticateConnector = hostedAuthority?.authenticateConnector ?? ports.authenticateConnector;
     const admissionAuthority = hostedAuthority?.admissionAuthority ?? ports.admissionAuthority;
+    const diagnostic = (event: { stage: string; result: string }) =>
+      console.info(JSON.stringify({ component: 'hosted_channel_exchange', ...event }));
     const provider = ports.provider ?? (admissionAuthority
-      ? createHostedChannelAdmissionProvider(active, dependencies, admissionAuthority) : null);
+      ? createHostedChannelAdmissionProvider(active, dependencies, admissionAuthority, diagnostic) : null);
     if (authenticateConnector && ports.bindings && provider === null) throw new Error('admission authority unavailable');
     const exchange = authenticateConnector && ports.bindings && provider ? composeChannelAccessExchange({
       store: active.store, journal, fulfillment: service.fulfillment,
       provider, bindings: ports.bindings,
-      diagnostic: event => console.info(JSON.stringify({ component: 'hosted_channel_exchange', ...event })),
+      diagnostic,
       ...(create ? { authority: create.exchangeAuthority } : {}),
       ...(admissionAuthority ? { approval: async (record, ownerId, channelRef, matrixSession) => {
         const result = await admissionAuthority.current({
