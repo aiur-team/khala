@@ -10,6 +10,35 @@ import type { AgentClientPort } from '../cli/types.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
+  it('reports a fixed post-access decode stage without request identifiers', async () => {
+    const origin = 'https://khala.aiur.team';
+    const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
+    const credential = { credentialRef: 'secret', requester: { principal: `agent_${signer.jkt}`,
+      origin, sessionGeneration: 0 } } as DiscoveryCredential;
+    const diagnostics: unknown[] = [];
+    const factory = hostedSessionFactory({
+      openConnector: async () => ({ ports: {} as never, proofSigner: signer,
+        async send(input) { return { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
+        async listChannels() { return { kind: 'unavailable' }; }, async listAgents() { return { kind: 'unavailable' }; },
+        async inbox() { throw new Error('no binding'); }, async close() {} }),
+      credentialClient: { current: () => credential, authorize: async () => ({ kind: 'authorized', credential }),
+        refresh: async () => ({ kind: 'missing' }), invalidate() {} },
+      fetch: async () => new Response(JSON.stringify({ v: 1, operationId: 'other-operation', outcome: 'approved' }),
+        { status: 200, headers: { 'content-type': 'application/json' } }),
+      stateDirectory: '/tmp/khala-state/hosted', appOrigin: origin,
+      browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
+      readVersion: async () => '0.159.2', inspectHooks: async () => null,
+      resolveCodexExecutable: async () => null, async openBrowser() {},
+      async openInbox() { throw new Error('no binding'); }, diagnostic: event => diagnostics.push(event),
+    });
+    const opened = await factory(SESSION);
+    expect(await opened.client.channelAccessStatus?.({ operationId: 'requested-operation', origin }))
+      .toEqual({ kind: 'unavailable' });
+    expect(diagnostics).toEqual([{ component: 'activation', stage: 'status_decode', result: 'unavailable' }]);
+    await opened.close();
+  });
+
   it.each(['connect', 'create'] as const)('activates %s from a simulated approved status and retries a lost redeem response', async mode => {
     const origin = 'https://khala.aiur.team';
     const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
@@ -45,6 +74,7 @@ describe('installed hosted connector factory', () => {
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
     let createApproved = false;
+    const diagnostics: unknown[] = [];
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } });
     const transport = (async (target: string | URL | Request, init?: RequestInit) => {
@@ -126,6 +156,7 @@ describe('installed hosted connector factory', () => {
       browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
       readVersion: async () => '0.154.0', inspectHooks: async () => null,
       resolveCodexExecutable: async () => '/usr/bin/codex',
+      diagnostic: event => diagnostics.push(event),
       async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
@@ -148,6 +179,7 @@ describe('installed hosted connector factory', () => {
     expect(retained.size).toBe(0);
     expect(grants).toBe(1);
     expect(matrixLogins).toBe(1);
+    expect(diagnostics).toContainEqual({ component: 'activation', stage: 'activation_result', result: 'unavailable' });
     await opened.close();
     recoveryReachable = true;
     const restarted = await factory(SESSION);

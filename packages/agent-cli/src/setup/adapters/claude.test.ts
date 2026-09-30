@@ -1,6 +1,8 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256 } from '../filesystem.js';
 import { snapshot, syntheticHome, type Snapshot } from '../fixtures/setup-home.js';
@@ -30,8 +32,10 @@ function probe(versionOutput: string | Error = SUPPORTED): SetupProbe {
       const candidate = path.join(binDirectory, name);
       return (await fsp.lstat(candidate).then(() => true, () => false)) ? candidate : null;
     },
-    async runVersion() {
+    async runVersion(_executable, args) {
       if (versionOutput instanceof Error) throw versionOutput;
+      if (args.join(' ') === 'mcp list --help') return 'Usage: claude mcp list';
+      if (args.join(' ') === 'plugin list --help') return 'Usage: claude plugin list';
       return versionOutput;
     },
     async readFile(target) {
@@ -116,6 +120,7 @@ describe('claude setup adapter: detection', () => {
   it('parses the version banner and fails closed on anything else', () => {
     expect(parseClaudeVersion('2.1.283 (Claude Code)\n')).toBe('2.1.283');
     expect(parseClaudeVersion('2.1.284 (Claude Code)\n')).toBe('2.1.284');
+    expect(parseClaudeVersion('2.1.285 (Claude Code)\n')).toBe('2.1.285');
     expect(parseClaudeVersion('Claude Code')).toBeNull();
     expect(parseClaudeVersion('2.1.283-beta (Claude Code)')).toBeNull();
   });
@@ -132,23 +137,30 @@ describe('claude setup adapter: detection', () => {
     expect(await userState()).toEqual(before);
   });
 
-  it.each([['2.1.282 (Claude Code)'], ['9.9.9 (Claude Code)'], ['garbled'], [new Error('exit 1')]])(
-    'fails closed on an uncertified version (%s)', async versionOutput => {
+  it.each([['2.1.282 (Claude Code)'], ['9.9.9 (Claude Code)'], ['garbled']])(
+    'accepts a version as diagnostic data when native commands exist (%s)', async versionOutput => {
       await installClaude();
       const instance = adapter();
       const observation = await observe(instance, versionOutput);
-      expect(observation.detection.supported).toBe(false);
-      expect(observation.components.map(item => item.state)).toEqual(['unsupported', 'unsupported']);
-      expect(() => instance.plan({ desired: 'present', observation })).toThrow(ClaudeSetupRefusal);
+      expect(observation.detection.supported).toBe(true);
+      expect(instance.plan({ desired: 'present', observation }).length).toBeGreaterThan(0);
     });
+
+  it('refuses when native command probes fail', async () => {
+    await installClaude();
+    const instance = adapter();
+    const observation = await observe(instance, new Error('missing native commands'));
+    expect(observation.detection.supported).toBe(false);
+    expect(() => instance.plan({ desired: 'present', observation })).toThrow(ClaudeSetupRefusal);
+  });
 });
 
-describe('Claude Code 2.1.284 setup', () => {
+describe.each(['2.1.284', '2.1.285'])('Claude Code %s setup', testedVersion => {
   it('installs only the planned native plugin paths', async () => {
     await installClaude();
     const before = await userState();
     const instance = adapter();
-    const observed = await observe(instance, '2.1.284 (Claude Code)');
+    const observed = await observe(instance, `${testedVersion} (Claude Code)`);
     expect(observed.detection.supported).toBe(true);
     const planned = instance.planWithContents({ desired: 'present', observation: observed });
     expect(planned.operations.map(operation => operation.component)).toContain('plugin');
@@ -159,8 +171,39 @@ describe('Claude Code 2.1.284 setup', () => {
     expect((await executeSetupPlan({ roots, searchPath: binDirectory,
       confirmedDigest: executable.planDigest, replan: async () => executable })).kind).toBe('committed');
     expect(changedFiles(before, await userState())).toEqual([...planPaths(planned.operations)].sort());
-    expect((await observe(instance, '2.1.284 (Claude Code)')).components.map(item => item.state)).toEqual(['ready', 'ready']);
+    expect((await observe(instance, `${testedVersion} (Claude Code)`)).components.map(item => item.state)).toEqual(['ready', 'ready']);
   });
+});
+
+const nativeClaude = process.env.KHALA_TEST_CLAUDE_EXECUTABLE;
+describe.skipIf(nativeClaude === undefined)('installed Claude setup contract', () => {
+  it('loads the setup-owned plugin on the exact installed version in a private home', async () => {
+    await installClaude();
+    const exec = promisify(execFile);
+    const vendorEnvironment = {
+      HOME: roots.home, XDG_CONFIG_HOME: roots.xdgConfigHome,
+      XDG_DATA_HOME: roots.xdgDataHome, XDG_STATE_HOME: roots.xdgStateHome,
+      PATH: process.env.PATH,
+    };
+    const invoke = (args: string[]) => exec(nativeClaude!, args, {
+      env: vendorEnvironment, cwd: roots.home, timeout: 15_000, maxBuffer: 1024 * 1024,
+    });
+    const version = (await invoke(['--version'])).stdout.trim();
+    expect(version).toBe('2.1.285 (Claude Code)');
+    expect((await invoke(['mcp', 'list', '--help'])).stdout).toContain('mcp list');
+    expect((await invoke(['plugin', 'list', '--help'])).stdout).toContain('plugin list');
+    const instance = adapter();
+    const observation = await observe(instance, version);
+    const planned = instance.planWithContents({ desired: 'present', observation });
+    const executable: ExecutablePlan = {
+      command: 'setup', planDigest: sha256(new TextEncoder().encode(JSON.stringify(planned.operations))),
+      operations: planned.operations, contents: planned.contents,
+    };
+    expect((await executeSetupPlan({ roots, searchPath: binDirectory,
+      confirmedDigest: executable.planDigest, replan: async () => executable })).kind).toBe('committed');
+    const servers = (await invoke(['mcp', 'list'])).stdout;
+    expect(servers).toContain(`plugin:${CLAUDE_PLUGIN_ID.replace('@', ':')}`);
+  }, 30_000);
 });
 
 describe('claude setup adapter: footprint', () => {

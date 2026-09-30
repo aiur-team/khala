@@ -37,6 +37,20 @@ beforeEach(async () => {
   const executable = (name: string, output: string) => write(path.join(bin, name), `#!/bin/sh\necho '${output}'\n`, 0o755);
   await executable('claude', `${CLAUDE_SUPPORTED_VERSIONS[0]} (Claude Code)`);
   await executable('codex', `codex-cli ${CODEX_SUPPORTED_VERSIONS[0]}`);
+  await write(path.join(bin, 'claude'), `#!/bin/sh
+case "$*" in
+  'mcp list --help') echo 'Usage: claude mcp list' ;;
+  'plugin list --help') echo 'Usage: claude plugin list' ;;
+  *) echo '${CLAUDE_SUPPORTED_VERSIONS[0]} (Claude Code)' ;;
+esac
+`, 0o755);
+  await write(path.join(bin, 'codex'), `#!/bin/sh
+case "$*" in
+  'mcp list --json') echo '[]' ;;
+  'features list') echo 'hooks stable true' ;;
+  *) echo 'codex-cli ${CODEX_SUPPORTED_VERSIONS[0]}' ;;
+esac
+`, 0o755);
   await executable('opencode', OPENCODE_TESTED_VERSIONS[0]!);
   // Claude Desktop is installed too; it is report-only and must refuse nothing.
   await write(path.join(roots.home, 'Applications', 'Claude.app', 'Contents', 'Info.plist'),
