@@ -1,8 +1,63 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { startSubscription, type SubscriptionHandle } from '@khala/connector/subscription/index';
+import type { SubscriptionSource } from '@khala/connector/subscription/adapter';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import type { ConnectorStorage } from '@khala/connector/storage/open';
 import type { MatrixConnectorSubstrate } from '../../substrate/matrix';
+
+type Guard = Readonly<{ kind: 'active' }> | Readonly<{
+  kind: 'unavailable' | 'revoked';
+  stage: 'local_guard' | 'mailbox_guard' | 'owner_device_guard';
+}>;
+
+/** Keeps source and owner-authority failures distinct without carrying room or event data. */
+export function productionSubscriptionSource(input: Readonly<{
+  matrix: Pick<MatrixConnectorSubstrate, 'source'>;
+  guard(): Promise<Guard>;
+  diagnostic?(event: HostedSubscriptionDiagnostic): void;
+}>): SubscriptionSource {
+  const report = (stage: HostedSubscriptionDiagnostic['stage'], result: HostedSubscriptionDiagnostic['result']) => {
+    try { input.diagnostic?.({ stage, result }); } catch { /* Diagnostics cannot change intake. */ }
+  };
+  const guard = async () => {
+    try { return await input.guard(); }
+    catch (error) { report('guard_exception', 'unavailable'); throw error; }
+  };
+  return {
+    async authorize(options) {
+      const authority = await guard();
+      if (authority.kind !== 'active') {
+        report(authority.stage, authority.kind);
+        return authority.kind === 'revoked' ? 'revoked' : 'unavailable';
+      }
+      try {
+        const result = await input.matrix.source.authorize(options);
+        if (result !== 'ok') report('matrix_authorize', result);
+        return result;
+      } catch (error) { report('matrix_authorize', 'unavailable'); throw error; }
+    },
+    listen(listener) {
+      try { return input.matrix.source.listen({ hint: listener.hint,
+        lost: () => { report('matrix_lost', 'unavailable'); listener.lost(); } }); }
+      catch (error) { report('matrix_lost', 'unavailable'); throw error; }
+    },
+    async read(page, options) {
+      const authority = await guard();
+      if (authority.kind !== 'active') {
+        report(authority.stage, authority.kind);
+        return authority.kind === 'revoked' ? { kind: 'rejected' as const, code: 'authority_lost' as const }
+          : { kind: 'unavailable' as const };
+      }
+      try {
+        const result = await input.matrix.source.read(page, options);
+        if (result.kind !== 'page') report('matrix_read', result.kind === 'unavailable' ? 'unavailable'
+          : result.kind === 'gap' ? 'gap' : 'rejected');
+        return result;
+      } catch (error) { report('matrix_read', 'unavailable'); throw error; }
+    },
+  };
+}
 
 /**
  * Adapts the endpoint's authenticated Matrix cursor to the same durable ledger
@@ -16,27 +71,15 @@ export async function startProductionSubscription(input: Readonly<{
   storage: ConnectorStorage;
   matrix: MatrixConnectorSubstrate;
   /** Server-checked current binding, owner membership and closure marker. */
-  guard(): Promise<'active' | 'revoked' | 'unavailable'>;
+  guard(): Promise<Guard>;
+  diagnostic?(event: HostedSubscriptionDiagnostic): void;
   clock?: () => number;
 }>): Promise<SubscriptionHandle> {
   let locked = false;
   const clock = input.clock ?? Date.now;
   const streamId = `matrix:${input.roomId}:${input.binding.deviceId}`;
   return startSubscription({ binding: input.binding, streamId, pageSize: 50 }, {
-    source: {
-      async authorize(options) {
-        const authority = await input.guard();
-        return authority === 'active' ? input.matrix.source.authorize(options)
-          : authority === 'revoked' ? 'revoked' : 'unavailable';
-      },
-      listen(listener) { return input.matrix.source.listen(listener); },
-      async read(page, options) {
-        const authority = await input.guard();
-        return authority === 'active' ? input.matrix.source.read(page, options)
-          : authority === 'revoked' ? { kind: 'rejected' as const, code: 'authority_lost' as const }
-            : { kind: 'unavailable' as const };
-      },
-    },
+    source: productionSubscriptionSource(input),
     cursors: {
       async load(id) {
         try {

@@ -8,6 +8,7 @@ import { createChannelDiscoveryCredentialClient,
 import { decodeAccessRequestStatus } from '@khala/contracts/messaging/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import { AGENT_READINESS_PREREQUISITES, type AgentClientPort, type AgentReadiness, type AgentStatus,
@@ -62,6 +63,7 @@ type OpenProductionConnectorInput = Readonly<{
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
   diagnostic?(event: HostedOpenDiagnostic): void;
+  subscriptionDiagnostic?(event: HostedSubscriptionDiagnostic): void;
   /** Test transport and credential seam; production uses the owned discovery client and fetch. */
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
@@ -103,7 +105,8 @@ export function hostedSessionFactory(options: Readonly<{
   diagnostic?(event: (Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
     & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic))
     | (Readonly<{ component: 'hosted_open' }> & HostedOpenDiagnostic)
-    | (Readonly<{ component: 'native_ready' }> & NativeReadyDiagnostic)): void;
+    | (Readonly<{ component: 'native_ready' }> & NativeReadyDiagnostic)
+    | (Readonly<{ component: 'subscription' }> & HostedSubscriptionDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -122,6 +125,7 @@ export function hostedSessionFactory(options: Readonly<{
       openBrowser: options.openBrowser,
       openInbox: options.openInbox,
       diagnostic: event => options.diagnostic?.({ component: 'hosted_open', ...event }),
+      subscriptionDiagnostic: event => options.diagnostic?.({ component: 'subscription', ...event }),
     });
     const requestSessions = session.harness === 'claude' && options.readClaudeVersion
       ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir, readVersion: options.readClaudeVersion })

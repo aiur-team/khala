@@ -11,11 +11,12 @@ import { ReadOperation } from './read.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
-  it('forwards a redacted connector-open stage to the hosted diagnostic sink', async () => {
+  it('forwards redacted connector stages to the hosted diagnostic sink', async () => {
     const diagnostics: unknown[] = [];
     const factory = hostedSessionFactory({
       openConnector: async input => {
         input.diagnostic?.({ stage: 'device_resume', result: 'unavailable' });
+        input.subscriptionDiagnostic?.({ stage: 'mailbox_http', result: 'unavailable', httpStatus: 503 });
         throw new Error('private device and session detail');
       },
       stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
@@ -26,7 +27,10 @@ describe('installed hosted connector factory', () => {
       diagnostic: event => diagnostics.push(event),
     });
     await expect(factory(SESSION)).rejects.toThrow();
-    expect(diagnostics).toEqual([{ component: 'hosted_open', stage: 'device_resume', result: 'unavailable' }]);
+    expect(diagnostics).toEqual([
+      { component: 'hosted_open', stage: 'device_resume', result: 'unavailable' },
+      { component: 'subscription', stage: 'mailbox_http', result: 'unavailable', httpStatus: 503 },
+    ]);
   });
 
   it('reports a fixed post-access decode stage without request identifiers', async () => {
