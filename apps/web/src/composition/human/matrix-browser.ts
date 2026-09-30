@@ -176,6 +176,17 @@ export function subscribeRoomDecryption(client: Pick<MatrixClient, 'on' | 'off'>
   return () => client.off(MatrixEventEvent.Decrypted, onDecrypted);
 }
 
+/** Initial sync does not decrypt every timeline event; attempt each one before projection. */
+export async function decryptTimelineEvents(client: Pick<MatrixClient, 'decryptEventIfNeeded'>,
+  events: readonly MatrixEvent[]): Promise<void> {
+  await Promise.all(events.map(async event => {
+    if (event.getType() !== 'm.room.encrypted' || event.isDecryptionFailure()) return;
+    // Missing historical keys are represented as unavailable entries. The SDK
+    // retries them when keys arrive and emits MatrixEventEvent.Decrypted.
+    try { await client.decryptEventIfNeeded(event); } catch { /* Keep the ciphertext entry. */ }
+  }));
+}
+
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     let finished = false;
@@ -495,11 +506,16 @@ class MatrixSubstrate implements RoomSubstrate {
   }
 
   private async events(events: readonly MatrixEvent[]): Promise<readonly SubstrateEvent[]> {
+    const active = this.active();
+    await decryptTimelineEvents(active.client, events);
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
     const mappings = await this.participants.resolve(senders);
-    const crypto = this.active().client.getCrypto();
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during participant resolution');
+    const crypto = active.client.getCrypto();
     if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
     const devices = await crypto.getUserDeviceInfo(senders, true);
+    if (this.runtime.active !== active) throw new Error('Matrix session changed during device attribution');
     return events.flatMap(event => {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
@@ -514,7 +530,7 @@ class MatrixSubstrate implements RoomSubstrate {
       }
       const participant: ParticipantView = {
         ...mapping,
-        displayName: sender === this.active().client.getUserId() ? this.active().principal.verifiedEmail : mapping.displayName,
+        displayName: sender === active.client.getUserId() ? active.principal.verifiedEmail : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
