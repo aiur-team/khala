@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { ChannelPort, ChannelSnapshot, TimelineItem } from '@khala/contracts/messaging/index';
 import { ok, rejected, unavailable, type Disposer } from '@khala/contracts/messaging/outcomes';
+import type { ChannelEntriesView } from '@khala/messaging/channels/index';
 import { createTimelineController } from './controller';
 
 const roomId = 'room_demo' as RoomId;
@@ -274,4 +275,80 @@ describe('createTimelineController', () => {
     expect(ids.filter(id => id === 'E4')).toHaveLength(1);
     controller.dispose();
   });
+});
+
+
+describe('unavailable transcript entries', () => {
+  it('keeps encrypted events in projection order, replaces late decryptions once, and fences stale updates', async () => {
+    const fake = fakeChannelPort({ first: [item('older', 'alice', 'older')] });
+    let emit!: (view: ChannelEntriesView) => void;
+    let disposed = 0;
+    const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+      emit = listener;
+      return () => { disposed += 1; };
+    } }, roomId, { generation: 1 });
+    const unavailableRow = { kind: 'unavailable' as const, eventId: 'encrypted' as EventId,
+      authorParticipantId: 'opaque-untrusted' as ParticipantId, reason: 'missing_key' as const,
+      receivedAt: '2026-09-17T00:00:00Z' };
+    const publish = (entries: ChannelEntriesView['entries'], generation = 1) => emit({ roomId, room, entries, generation, snapshotRevision: '1' });
+    publish([{ kind: 'message', item: item('first', 'alice', 'first') }, unavailableRow,
+      { kind: 'message', item: item('last', 'alice', 'last') }]);
+    await controller.loadOlder();
+    expect(controller.getSnapshot().rows?.map(row => row.kind === 'message' ? row.item.ref.eventId : row.eventId))
+      .toEqual(['older', 'first', 'encrypted', 'last']);
+    controller.setReaderAtLatest(false);
+    publish([{ kind: 'message', item: item('first', 'alice', 'first') }, unavailableRow,
+      { kind: 'message', item: item('encrypted', 'alice', 'decrypted') }, { kind: 'message', item: item('last', 'alice', 'last') }]);
+    expect(controller.getSnapshot().rows).toHaveLength(4);
+    expect(controller.getSnapshot().items.map(row => row.content.kind === 'text' ? row.content.body : null)).toEqual(['older', 'first', 'decrypted', 'last']);
+    expect(controller.getSnapshot().newMessageCount).toBe(0);
+    publish([], 2);
+    expect(controller.getSnapshot().rows).toHaveLength(4);
+    controller.dispose(); controller.dispose();
+    expect(disposed).toBe(1);
+    expect(fake.listenerCount()).toBe(0);
+  });
+});
+
+
+it('does not label encrypted history discovered by pagination as new messages', async () => {
+  const fake = fakeChannelPort();
+  let emit!: (view: ChannelEntriesView) => void;
+  const controller = createTimelineController({ ...fake.port,
+    observeEntries: (_roomId, listener) => { emit = listener; return () => {}; },
+    timeline: async () => {
+      emit({ roomId, room, generation: 1, snapshotRevision: 'history', entries: [{ kind: 'unavailable',
+        eventId: 'old-encrypted' as EventId, authorParticipantId: 'opaque' as ParticipantId,
+        reason: 'missing_key', receivedAt: '2026-09-16T00:00:00Z' }] });
+      return ok({ items: [], nextCursor: null, snapshotRevision: 'history' });
+    },
+  }, roomId, { generation: 1 });
+  controller.setReaderAtLatest(false);
+  await controller.loadOlder();
+  expect(controller.getSnapshot().rows).toHaveLength(1);
+  expect(controller.getSnapshot().newMessageCount).toBe(0);
+  controller.dispose();
+});
+
+
+it('keeps three initial encrypted events as three rows after one late decryption', () => {
+  const fake = fakeChannelPort();
+  let emit!: (view: ChannelEntriesView) => void;
+  const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+    emit = listener; return () => {};
+  } }, roomId, { generation: 1 });
+  const entries: ChannelEntriesView['entries'] = ['cipher-1', 'cipher-2', 'cipher-3'].map(eventId => ({
+    kind: 'unavailable', eventId: eventId as EventId, authorParticipantId: 'opaque' as ParticipantId,
+    reason: 'missing_key', receivedAt: '2026-09-17T00:00:00Z',
+  }));
+  emit({ roomId, room, entries, generation: 1, snapshotRevision: 'initial' });
+  expect(controller.getSnapshot().rows?.map(row => row.kind)).toEqual(['unavailable', 'unavailable', 'unavailable']);
+  expect(controller.getSnapshot().items).toHaveLength(0);
+  emit({ roomId, room, entries: [entries[0]!, { kind: 'message', item: item('cipher-2', 'alice', 'readable') }, entries[2]!],
+    generation: 1, snapshotRevision: 'late' });
+  expect(controller.getSnapshot().rows?.map(row => row.kind)).toEqual(['unavailable', 'message', 'unavailable']);
+  expect(controller.getSnapshot().rows?.map(row => row.kind === 'message' ? row.item.ref.eventId : row.eventId))
+    .toEqual(['cipher-1', 'cipher-2', 'cipher-3']);
+  expect(controller.getSnapshot().items).toHaveLength(1);
+  controller.dispose();
 });
