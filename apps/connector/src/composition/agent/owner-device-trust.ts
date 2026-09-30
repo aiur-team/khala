@@ -28,17 +28,27 @@ export function createOwnerDeviceTrust(input: Readonly<{
       ...(httpStatus === undefined ? {} : { httpStatus }) }); }
     catch { /* Diagnostics cannot change owner trust. */ }
   };
+  const reportLocal = (stage: HostedSubscriptionDiagnostic['stage']) => {
+    try { input.diagnostic?.({ stage, result: 'unavailable' }); }
+    catch { /* Diagnostics cannot change owner trust. */ }
+  };
   const url = `${input.appOrigin}${PATH}`;
   const fetcher = input.fetch ?? fetch;
   const trusted = new Map<string, string>();
   let pending: Promise<'active' | 'unavailable' | 'revoked'> | null = null;
 
   async function refresh(): Promise<'active' | 'unavailable' | 'revoked'> {
-    const own = await input.registerOwnDevice().catch(() => ({ kind: 'unavailable' as const }));
-    if (own.kind !== 'attested') return 'unavailable';
+    const own = await input.registerOwnDevice().catch(() => ({ kind: 'unavailable' as const, stage: 'internal' as const }));
+    if (own.kind !== 'attested') {
+      reportLocal(`owner_device_attestation_${own.stage}`);
+      return 'unavailable';
+    }
     const capability = await input.capability();
     if (!capability || capability.bindingId !== input.binding.bindingId
-      || capability.generation !== input.binding.generation) return 'unavailable';
+      || capability.generation !== input.binding.generation) {
+      reportLocal('owner_device_capability');
+      return 'unavailable';
+    }
     let response: Response;
     try {
       response = await fetcher(url, { method: 'GET', redirect: 'error', credentials: 'omit',
@@ -83,11 +93,15 @@ export function createOwnerDeviceTrust(input: Readonly<{
     for (const peer of pins) {
       if (!trusted.has(peer.deviceId)) {
         try { await input.matrix.trustPeer(input.ownerUserId, peer.deviceId, peer.fingerprint); }
-        catch { return 'unavailable'; }
+        catch { reportLocal('owner_device_trust_peer'); return 'unavailable'; }
         trusted.set(peer.deviceId, peer.fingerprint);
       }
     }
-    return seen.size > 0 ? 'active' : 'unavailable';
+    if (seen.size === 0) {
+      reportLocal('owner_device_empty');
+      return 'unavailable';
+    }
+    return 'active';
   }
   return {
     ensure() {
