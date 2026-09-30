@@ -10,7 +10,7 @@ const principal: AuthPrincipal = {
 };
 const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
 
-function setup() {
+function setup(diagnostic?: (stage: 'authentication_unavailable' | 'cleanup_unavailable' | 'cleanup_rejected') => void) {
   const cleanupRequests = vi.fn(async () => ({ kind: 'ok' as const, requests: [command] }));
   const service: ClosurePort = {
     capability: vi.fn(async roomId => ok({ ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,
@@ -22,7 +22,8 @@ function setup() {
     authenticateRequest: vi.fn(async () => ({ kind: 'authenticated' as const, context: { principal, csrfToken: 'csrf' } })),
     requireHumanMutation: vi.fn(async () => ({ kind: 'authorized' as const, context: { principal, csrfToken: 'csrf' } })),
   };
-  const registrations = createChannelClosureHandlers({ auth, service: () => service, cleanupRequests });
+  const registrations = createChannelClosureHandlers({ auth, service: () => service, cleanupRequests,
+    ...(diagnostic ? { diagnostic } : {}) });
   const gateway = createGateway({ registrations, absentPrefixes: [], appOrigin: origin });
   return { auth, service, cleanupRequests, gateway };
 }
@@ -49,6 +50,27 @@ describe('protected closure route', () => {
     expect(cleanupRequests).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(await (await gateway(new Request(url))).json())).not.toMatch(/secret|matrixAccessToken|body/);
     expect((await gateway(new Request(`${origin}${CLOSURE_PATH}?cleanup=1&roomId=room_1`))).status).toBe(400);
+  });
+
+  it('identifies the cleanup GET 503 branch without logging request values', async () => {
+    const diagnostic = vi.fn();
+    const { auth, cleanupRequests, gateway } = setup(diagnostic);
+    const url = `${origin}${CLOSURE_PATH}?cleanup=1`;
+    vi.mocked(auth.authenticateRequest).mockResolvedValueOnce({ kind: 'unavailable' } as never);
+    expect((await gateway(new Request(url, { headers: { cookie: 'private-cookie' } }))).status).toBe(503);
+    expect(diagnostic).toHaveBeenLastCalledWith('authentication_unavailable');
+    cleanupRequests.mockResolvedValueOnce({ kind: 'unavailable' } as never);
+    expect((await gateway(new Request(url))).status).toBe(503);
+    expect(diagnostic).toHaveBeenLastCalledWith('cleanup_unavailable');
+    expect(diagnostic.mock.calls).toEqual([['authentication_unavailable'], ['cleanup_unavailable']]);
+    diagnostic.mockImplementationOnce(() => { throw new Error('logging failed'); });
+    cleanupRequests.mockResolvedValueOnce({ kind: 'unavailable' } as never);
+    expect((await gateway(new Request(url))).status).toBe(503);
+    cleanupRequests.mockRejectedValueOnce(new Error('private-cookie secret-room'));
+    const rejected = await gateway(new Request(url));
+    expect(rejected.status).toBe(503);
+    expect(await rejected.json()).toEqual({ code: 'unavailable' });
+    expect(diagnostic).toHaveBeenLastCalledWith('cleanup_rejected');
   });
 
   it('requires human mutation authority before parsing or invoking closure', async () => {

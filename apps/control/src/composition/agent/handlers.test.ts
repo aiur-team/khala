@@ -41,7 +41,7 @@ describe('registerAgentHandlers', () => {
       expect(await response.json()).toEqual(registration.path.startsWith('/api/agent/revocation/')
         ? { code: 'feature_unavailable' }
         : registration.path.startsWith('/api/agent/room-send/')
-        ? { code: 'unavailable' }
+        ? { kind: 'unavailable', stage: 'composition', code: 'route_missing' }
         : registration.path === '/api/agent/messaging/participants'
         ? { code: 'feature_unavailable' }
         : index >= 9 && index < 12

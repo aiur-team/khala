@@ -47,6 +47,10 @@ export { inviteFromShareLink };
  */
 export function createProductionBootstrapRoutes(dependencies: ProductionBootstrapDependencies) {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
+  const routeDiagnostic = (route: 'room_send' | 'owner_mailbox', stage: string, code: string) => {
+    // Callers supply only finite, internal stage/code literals; never log request or adapter data.
+    console.warn(JSON.stringify({ component: 'control', route, stage, code }));
+  };
   const ingressToken = (dependencies.env ?? process.env).MATRIX_REGISTRATION_INGRESS_TOKEN;
   const localAuth = localOidcEnabled(dependencies.env ?? process.env);
   const compose = () => {
@@ -119,6 +123,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       capabilities: bootstrap.capabilities, clock: active.clock,
       authoritySecret: active.env.invitationHmacSecret,
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      diagnostic: entry => routeDiagnostic('owner_mailbox', entry.stage, entry.code),
       async lookupAgentDevice(binding) {
         const registered = await attestation.lookup(binding);
         if (!registered) return null;
@@ -170,6 +175,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     const roomSend = createRoomSendRoutes({
       store: active.store, auth: active.auth, capabilities: bootstrap.capabilities,
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      diagnostic: entry => routeDiagnostic('room_send', entry.stage, entry.code),
       verifyBrowserSender: createMatrixBrowserSenderVerifier({
         homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
         allowInsecureLoopback: localAuth,
@@ -207,15 +213,18 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
         compose().bootstrap.capabilities.resumeAdapterCapability(input),
     },
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
-    ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
+    ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox,
+      entry => routeDiagnostic('owner_mailbox', entry.stage, entry.code)),
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),
     participantDirectory: [{ path: AGENT_PARTICIPANTS_PATH, methods: ['POST'],
       handle: (request: Request) => compose().participantDirectory.handle(request) }],
     revocation: createLazyOwnerRevocationRoutes(() => compose().revocation),
     revocationCleanup: createLazyAgentRevocationCleanupRoutes(() => compose().revocationCleanup),
     roomSend: {
-      human: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/human/')),
-      agent: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/agent/')),
+      human: createLazyRoomSendRoutes(() => compose().roomSend,
+        entry => routeDiagnostic('room_send', entry.stage, entry.code)).filter(route => route.path.startsWith('/api/human/')),
+      agent: createLazyRoomSendRoutes(() => compose().roomSend,
+        entry => routeDiagnostic('room_send', entry.stage, entry.code)).filter(route => route.path.startsWith('/api/agent/')),
     },
     deviceAdmission: createLazyDeviceAdmissionRoutes(() => compose().deviceAdmission),
   };
