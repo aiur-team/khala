@@ -7,6 +7,7 @@ import type { ThemeChoice } from '../../shell/types';
 import type { ChannelController } from './controller';
 import { ChatThread, ConversationLayout } from '../../ui/conversation';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
+import { participantRosterName } from './participant-name';
 
 export interface ChannelScreenProps {
   title: string;
@@ -34,9 +35,9 @@ function ChannelParticipants({ controller, currentNames, namesPending, descripti
   const { agents } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   return <div className="channel-participants" aria-label="Channel participants">
     {description ? <span className="channel-participants__context">{description}</span> : null}
-    {viewerName ? <span className="channel-participants__chip" title={`${viewerName} · human`}><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{viewerName.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{viewerName}</span></span> : null}
+    {viewerName ? <span className="channel-participants__chip" title={`${participantRosterName(viewerName, 'You')} · human`}><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{participantRosterName(viewerName, 'You')}</span></span> : null}
     {agents.slice(0, 4).map(agent => {
-      const name = namesPending ? 'Agent name unavailable' : currentNames?.get(agent.participantId) ?? agent.displayName;
+      const name = namesPending ? 'Agent name unavailable' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
       return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · ${agent.connection}`}>
         <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{name}</span>
       </span>;
@@ -67,7 +68,7 @@ export function ChannelScreen({ title, description, theme = 'dark', controller, 
     }}>
       <summary aria-label={`Channel participants and agents for ${title}`}><span className="channel-roster__summary">{toolbarTarget ? <h1 dir="auto">{title}</h1> : <h2 dir="auto">{title}</h2>}<ChannelParticipants controller={controller} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(description ? { description } : {})} {...(viewerName ? { viewerName } : {})} /></span><span className="channel-roster__chevron" aria-hidden="true">⌄</span></summary>
       <div className="channel-roster__panel" aria-label="Channel participants and agents">
-        {viewerName ? <p className="channel-roster__viewer">{viewerName} · human</p> : null}
+        {viewerName ? <div className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span>{participantRosterName(viewerName, 'You')}</span><span className="channel-roster__role">You</span></div> : null}
         {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} /> : null}
       </div>
     </details>

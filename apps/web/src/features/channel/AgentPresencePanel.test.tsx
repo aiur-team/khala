@@ -13,6 +13,16 @@ function controller(view: ChannelView): ChannelController {
 }
 
 describe('AgentPresencePanel', () => {
+  it('uses a generic roster label when the only supplied agent name is a Matrix ID', () => {
+    const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents: [{
+      participantId: 'agent_1' as ParticipantId, displayName: '@khala_a_test:matrix.example.test', ownerDisplayName: 'Mira',
+      connection: 'unknown', routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
+      installCommand: null, installCommandError: false,
+    }] })} />);
+    expect(html).toContain('aria-label="Details for Agent"');
+    expect(html).not.toContain('@khala_a_test:matrix.example.test');
+  });
+
   it('shows the encrypted current name and edit control only to the bound owner', () => {
     const ownerId = 'owner_maya' as OwnerId;
     const agentId = 'agent_420' as ParticipantId;
@@ -45,7 +55,7 @@ describe('AgentPresencePanel', () => {
     expect(html).not.toContain('No agents have joined');
   });
 
-  it('puts onboarding first when no agent is connected and shows owner, route, and receipt truthfully', () => {
+  it('keeps setup and diagnostics in agent details while showing connection in the roster', () => {
     const html = renderToStaticMarkup(
       <AgentPresencePanel controller={controller({
         phase: 'ready',
@@ -63,7 +73,10 @@ describe('AgentPresencePanel', () => {
       })} />,
     );
 
-    expect(html.indexOf('Connect Scout')).toBeLessThan(html.indexOf('Owned by Mira'));
+    expect(html).toContain('aria-label="Details for Scout"');
+    expect(html.indexOf('Connection stale')).toBe(-1);
+    expect(html.indexOf('Owned by Mira')).toBeGreaterThan(html.indexOf('</summary>'));
+    expect(html).not.toMatch(/>agent_1</);
     expect(html).toContain('Khala skill');
     expect(html).toContain('Queued at agent session');
     expect(html).toContain('Batch-token return support not verified');

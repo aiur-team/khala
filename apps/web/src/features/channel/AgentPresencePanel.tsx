@@ -2,10 +2,10 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { ACKNOWLEDGEMENT_SUPPORT_LABELS, RECEIPT_EVIDENCE_LABELS } from '../receipt-evidence/vocabulary';
-import { Panel } from '../../shell/Panel';
 import { StatusBadge, type StatusTone } from '../../shell/StatusBadge';
 import type { ChannelAgentView, ChannelController } from './controller';
 import type { AgentConnectionState } from './ports';
+import { participantRosterName } from './participant-name';
 
 export interface AgentPresencePanelProps {
   controller: ChannelController;
@@ -141,8 +141,6 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
     participantId: null,
     state: 'idle',
   });
-  const noConnectedAgents = !view.agents.some(agent => agent.connection === 'connected');
-  const panelStatus = view.phase === 'loading' ? 'busy' : view.phase === 'unavailable' ? 'error' : view.agents.length === 0 ? 'empty' : 'idle';
   const panelStatusMessage = view.phase === 'unavailable'
     ? 'Agent presence is unavailable right now.'
     : view.phase === 'ready' && view.agents.length === 0
@@ -158,66 +156,53 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
   }
 
   return (
-    <Panel
-      heading="Agent presence"
-      status={panelStatus}
-      {...(panelStatusMessage ? { statusMessage: panelStatusMessage } : {})}
-    >
-      <div className="agent-presence">
-        {noConnectedAgents ? view.agents.map(agent => (
-          <Onboarding
-            key={`onboarding-${agent.participantId}`}
-            agent={{ ...agent, displayName: namesPending ? 'Loading name…' : currentNames?.get(agent.participantId) ?? agent.displayName }}
-            copy={copy}
-            copyState={copyStatus.participantId === agent.participantId ? copyStatus.state : 'idle'}
-          />
-        )) : null}
-
-        <ol className="agent-presence__list">
-          {view.agents.map(agent => (
-            <li key={agent.participantId} className="agent-presence__agent">
-              <header className="agent-presence__agent-header">
-                <div>
-                  <h3>{namesPending ? 'Loading name…' : currentNames?.get(agent.participantId) ?? agent.displayName}</h3>
-                  <p>Owned by {agent.ownerDisplayName}</p>
-                </div>
+    <div className="agent-presence">
+      {view.phase === 'loading' ? <p role="status">Loading…</p> : null}
+      {panelStatusMessage ? <p role="status">{panelStatusMessage}</p> : null}
+      <ol className="agent-presence__list">
+        {view.agents.map(agent => {
+          const name = namesPending ? 'Loading name…' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+          return <li key={agent.participantId} className="agent-presence__agent">
+            <details className="agent-presence__details">
+              <summary aria-label={`Details for ${name}`}>
+                <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
+                <span className="agent-presence__name">{name}</span>
                 <StatusBadge tone={CONNECTION_TONE[agent.connection]} label={CONNECTION_LABEL[agent.connection]} />
-              </header>
-              {!namesPending && renameAgent && viewerOwnerId && renameScope && agent.ownerId === viewerOwnerId ? <RenameAgent
-                agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
-                storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, agent.participantId])}`} /> : null}
-              <dl className="agent-presence__facts">
-                <div>
-                  <dt>Route</dt>
-                  <dd>{agent.routeLabel}</dd>
-                </div>
-                <div>
-                  <dt>Batch-token return</dt>
-                  <dd>{ACKNOWLEDGEMENT_SUPPORT_LABELS[agent.acknowledgement]}</dd>
-                </div>
-                <div>
-                  <dt>Last receipt</dt>
-                  <dd>
-                    {agent.lastReceipt ? (
-                      <>{RECEIPT_EVIDENCE_LABELS[agent.lastReceipt.kind]} <time dateTime={agent.lastReceipt.observedAt}>{agent.lastReceipt.observedAt}</time></>
-                    ) : 'No delivery receipt yet'}
-                  </dd>
-                </div>
-              </dl>
-              {!noConnectedAgents ? (
-                <Onboarding
-                  agent={agent}
-                  copy={copy}
-                  copyState={copyStatus.participantId === agent.participantId ? copyStatus.state : 'idle'}
-                />
-              ) : null}
-            </li>
-          ))}
-        </ol>
-        <p className="agent-presence__copy-status" role="status" aria-live="polite">
-          {copyStatus.state === 'copied' ? 'Install command copied.' : copyStatus.state === 'failed' ? 'Install command could not be copied.' : ''}
-        </p>
-      </div>
-    </Panel>
+                <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div className="agent-presence__detail-body">
+                <p>Owned by {agent.ownerDisplayName}</p>
+                {!namesPending && renameAgent && viewerOwnerId && renameScope && agent.ownerId === viewerOwnerId ? <RenameAgent
+                  agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
+                  storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, agent.participantId])}`} /> : null}
+                <dl className="agent-presence__facts">
+                  <div>
+                    <dt>Route</dt>
+                    <dd>{agent.routeLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Batch-token return</dt>
+                    <dd>{ACKNOWLEDGEMENT_SUPPORT_LABELS[agent.acknowledgement]}</dd>
+                  </div>
+                  <div>
+                    <dt>Last receipt</dt>
+                    <dd>
+                      {agent.lastReceipt ? (
+                        <>{RECEIPT_EVIDENCE_LABELS[agent.lastReceipt.kind]} <time dateTime={agent.lastReceipt.observedAt}>{agent.lastReceipt.observedAt}</time></>
+                      ) : 'No delivery receipt yet'}
+                    </dd>
+                  </div>
+                </dl>
+                <Onboarding agent={{ ...agent, displayName: name }} copy={copy}
+                  copyState={copyStatus.participantId === agent.participantId ? copyStatus.state : 'idle'} />
+              </div>
+            </details>
+          </li>;
+        })}
+      </ol>
+      <p className="agent-presence__copy-status" role="status" aria-live="polite">
+        {copyStatus.state === 'copied' ? 'Install command copied.' : copyStatus.state === 'failed' ? 'Install command could not be copied.' : ''}
+      </p>
+    </div>
   );
 }
