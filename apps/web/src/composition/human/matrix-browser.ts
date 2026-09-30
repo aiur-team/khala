@@ -170,6 +170,16 @@ export function subscribeConversationIndex(client: Pick<MatrixClient, 'getRooms'
   };
 }
 
+/** A late Megolm key changes an existing event without adding a timeline row. */
+export function subscribeRoomDecryption(client: Pick<MatrixClient, 'on' | 'off'>,
+  roomId: RoomId, isCurrent: () => boolean, publish: () => void): () => void {
+  const onDecrypted = (event: MatrixEvent) => {
+    if (isCurrent() && event.getRoomId() === roomId) publish();
+  };
+  client.on(MatrixEventEvent.Decrypted, onDecrypted);
+  return () => client.off(MatrixEventEvent.Decrypted, onDecrypted);
+}
+
 function startAndWaitForInitialSync(client: MatrixClient, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     let finished = false;
@@ -309,6 +319,43 @@ class MatrixRuntime {
   }
 
   readonly principalByOwner = new Map<OwnerId, AuthPrincipal>();
+}
+
+/** Project a Matrix event without mistaking pending ciphertext for an empty room. */
+export function projectMatrixTimelineEvent(event: MatrixEvent, participant: ParticipantView,
+  authorDeviceId: DeviceId | null, limits: ContentLimits): SubstrateEvent | null {
+  const eventId = event.getId();
+  const sender = event.getSender();
+  if (!eventId || !sender) return null;
+  const receivedAt = new Date(event.getTs()).toISOString();
+  if (event.isDecryptionFailure()) {
+    return {
+      kind: 'undecryptable', eventId: eventId as EventId,
+      authorParticipantId: participant.participantId,
+      reason: event.decryptionFailureReason === 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID' ? 'missing_key' : 'decryption_failed',
+      receivedAt,
+    };
+  }
+  if (event.getType() === 'm.room.encrypted') {
+    return { kind: 'undecryptable', eventId: eventId as EventId,
+      authorParticipantId: participant.participantId, reason: 'decryption_failed', receivedAt };
+  }
+  if (event.getType() !== EventType.RoomMessage) return null;
+  const rawContent = event.getContent();
+  if (rawContent.msgtype !== MsgType.Text && rawContent.msgtype !== MsgType.Notice) return null;
+  if (rawContent.msgtype === MsgType.Notice && typeof rawContent['com.khala.agent_participant_id'] !== 'string') return null;
+  const content = decodeMessageContent(rawContent.msgtype === MsgType.Notice
+    ? { v: 1, kind: rawContent['com.khala.name_snapshot'] === true ? 'agent_name_snapshot' : 'agent_rename', body: rawContent.body,
+        agentParticipantId: rawContent['com.khala.agent_participant_id'],
+        ...(rawContent['com.khala.name_snapshot'] === true ? { sourceEventId: rawContent['com.khala.name_source_event_id'] } : {}) }
+    : { v: 1, kind: 'text', body: rawContent.body }, limits);
+  if (!content.ok || authorDeviceId === null) return null;
+  const transactionId = event.getUnsigned().transaction_id;
+  return {
+    kind: 'message', eventId: eventId as EventId, authorDeviceId, participant,
+    content: content.value, clientTxnId: typeof transactionId === 'string' ? transactionId : null,
+    receivedAt,
+  };
 }
 
 class MatrixSubstrate implements RoomSubstrate {
@@ -460,48 +507,6 @@ class MatrixSubstrate implements RoomSubstrate {
     }
   }
 
-  private event(
-    event: MatrixEvent,
-    participant: ParticipantView,
-    authorDeviceId: DeviceId | null,
-  ): SubstrateEvent | null {
-    const eventId = event.getId();
-    const sender = event.getSender();
-    if (!eventId || !sender) return null;
-    const receivedAt = new Date(event.getTs()).toISOString();
-    if (event.isDecryptionFailure()) {
-      return {
-        kind: 'undecryptable',
-        eventId: eventId as EventId,
-        authorParticipantId: participant.participantId,
-        reason: event.decryptionFailureReason === 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID' ? 'missing_key' : 'decryption_failed',
-        receivedAt,
-      };
-    }
-    if (event.getType() !== EventType.RoomMessage) return null;
-    const rawContent = event.getContent();
-    if (rawContent.msgtype !== MsgType.Text && rawContent.msgtype !== MsgType.Notice) return null;
-    if (rawContent.msgtype === MsgType.Notice && typeof rawContent['com.khala.agent_participant_id'] !== 'string') return null;
-    const content = decodeMessageContent(rawContent.msgtype === MsgType.Notice
-      && typeof rawContent['com.khala.agent_participant_id'] === 'string'
-      ? { v: 1, kind: rawContent['com.khala.name_snapshot'] === true ? 'agent_name_snapshot' : 'agent_rename', body: rawContent.body,
-          agentParticipantId: rawContent['com.khala.agent_participant_id'],
-          ...(rawContent['com.khala.name_snapshot'] === true ? { sourceEventId: rawContent['com.khala.name_source_event_id'] } : {}) }
-      : { v: 1, kind: 'text', body: rawContent.body }, this.limits);
-    if (!content.ok) return null;
-    if (authorDeviceId === null) return null;
-    const transactionId = event.getUnsigned().transaction_id;
-    return {
-      kind: 'message',
-      eventId: eventId as EventId,
-      authorDeviceId,
-      participant,
-      content: content.value,
-      clientTxnId: typeof transactionId === 'string' ? transactionId : null,
-      receivedAt,
-    };
-  }
-
   private async events(events: readonly MatrixEvent[], roomId: RoomId): Promise<readonly SubstrateEvent[]> {
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
     const mappings = await this.participants.resolve(senders, undefined, roomId);
@@ -525,7 +530,7 @@ class MatrixSubstrate implements RoomSubstrate {
         displayName: sender === this.active().client.getUserId() ? this.active().principal.verifiedEmail : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
-      const projected = this.event(event, participant, deviceId ?? null);
+      const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
       return projected ? [projected] : [];
     });
   }
@@ -600,9 +605,10 @@ class MatrixSubstrate implements RoomSubstrate {
     if (!active || !room) return () => undefined;
     let publishEpoch = 0;
     const publish = () => {
+      if (disposed || this.runtime.active !== active) return;
       const epoch = ++publishEpoch;
       void this.events(room.getLiveTimeline().getEvents(), roomId).then(events => {
-        if (!disposed && epoch === publishEpoch) {
+        if (!disposed && this.runtime.active === active && epoch === publishEpoch) {
           listener({ generation: active.generation, room: roomSummary(room, this.limits), events });
         }
       }).catch(() => undefined);
@@ -639,12 +645,15 @@ class MatrixSubstrate implements RoomSubstrate {
     const joined = room.getJoinedMembers().map(member => member.events.member?.getId()).filter((id): id is string => !!id).sort();
     membershipEpoch = JSON.stringify(joined);
     bootstrap();
+    const disposeDecryption = subscribeRoomDecryption(active.client, roomId,
+      () => !disposed && this.runtime.active === active, publish);
     publish();
     return () => {
       disposed = true;
       if (snapshotRetry !== null) clearTimeout(snapshotRetry);
       active.client.off(RoomEvent.Timeline, receive);
       active.client.off(RoomMemberEvent.Membership, membership);
+      disposeDecryption();
     };
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ClientEvent, EventType, MatrixEventEvent, Preset, Visibility, type MatrixClient, type Room } from 'matrix-js-sdk';
-import { decodeContentLimits } from '@khala/contracts/messaging/index';
-import { createMatrixRoomRequest, projectJoinedEncryptedRooms, startMatrixClient, subscribeConversationIndex } from './matrix-browser';
+import { ClientEvent, EventType, MatrixEventEvent, Preset, Visibility, type MatrixClient, type MatrixEvent, type Room } from 'matrix-js-sdk';
+import { decodeContentLimits, type ParticipantView } from '@khala/contracts/messaging/index';
+import { createMatrixRoomRequest, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('creates encrypted invite-only rooms', () => {
@@ -100,4 +100,67 @@ describe('Matrix browser safety boundaries', () => {
     dispose();
     expect(decryptListeners.size).toBe(0);
   });
+
+  it('republishes only the current room when an existing event decrypts after sync', () => {
+    const listeners = new Map<string, (event: { getRoomId(): string }) => void>();
+    const client = {
+      on: vi.fn((kind: string, listener: (event: { getRoomId(): string }) => void) => listeners.set(kind, listener)),
+      off: vi.fn((kind: string) => listeners.delete(kind)),
+    } as unknown as MatrixClient;
+    let current = true;
+    const publish = vi.fn();
+    const dispose = subscribeRoomDecryption(client, '!current:example.test' as never, () => current, publish);
+    const decrypted = listeners.get(MatrixEventEvent.Decrypted);
+    expect(decrypted).toBeDefined();
+    decrypted!({ getRoomId: () => '!other:example.test' });
+    expect(publish).not.toHaveBeenCalled();
+    decrypted!({ getRoomId: () => '!current:example.test' });
+    expect(publish).toHaveBeenCalledOnce();
+    current = false;
+    decrypted!({ getRoomId: () => '!current:example.test' });
+    expect(publish).toHaveBeenCalledOnce();
+    dispose();
+    expect(listeners.has(MatrixEventEvent.Decrypted)).toBe(false);
+  });
+
+  it('retains an encrypted event identity until the same event decrypts', () => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const participant: ParticipantView = {
+      participantId: 'participant_1' as never, kind: 'human', ownerId: 'owner_1' as never,
+      displayName: 'Owner', deviceIds: [],
+    };
+    let decrypted = false;
+    const event = {
+      getId: () => '$same', getSender: () => '@owner:example.test', getTs: () => Date.parse('2026-09-29T23:00:00Z'),
+      isDecryptionFailure: () => false,
+      getType: () => decrypted ? EventType.RoomMessage : 'm.room.encrypted',
+      getContent: () => decrypted ? { msgtype: 'm.text', body: 'Recovered text' } : {},
+      getUnsigned: () => ({}),
+    } as unknown as MatrixEvent;
+    expect(projectMatrixTimelineEvent(event, participant, null, limits.value)).toMatchObject({
+      kind: 'undecryptable', eventId: '$same', authorParticipantId: participant.participantId,
+    });
+    decrypted = true;
+    expect(projectMatrixTimelineEvent(event, participant, 'DEVICE_1' as never, limits.value)).toMatchObject({
+      kind: 'message', eventId: '$same', content: { body: 'Recovered text' },
+    });
+  });
+
+  it.each(['agent_rename', 'agent_name_snapshot'] as const)('preserves %s metadata in the shared Matrix event projection', kind => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const participant: ParticipantView = { participantId: 'human_one' as never, ownerId: 'owner_one' as never,
+      kind: 'human', displayName: 'Maya', deviceIds: [] };
+    const event = { getId: () => '$name', getSender: () => '@maya:example.test', getTs: () => 0,
+      isDecryptionFailure: () => false, getType: () => EventType.RoomMessage, getUnsigned: () => ({}),
+      getContent: () => ({ msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': 'agent_one',
+        ...(kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': '$prior' } : {}) }),
+    } as unknown as MatrixEvent;
+    expect(projectMatrixTimelineEvent(event, participant, 'DEVICE_ONE' as never, limits.value)).toMatchObject({
+      kind: 'message', content: { kind, agentParticipantId: 'agent_one', body: 'Dolan',
+        ...(kind === 'agent_name_snapshot' ? { sourceEventId: '$prior' } : {}) },
+    });
+  });
+
 });
