@@ -9,7 +9,7 @@ function requestInNewProcess(fixture, pathname) {
       try {
         const response = await fetch(process.argv[1], { method: 'POST' });
         const value = await response.json();
-        console.log(JSON.stringify({ kind: value.kind, status: response.status }));
+        console.log(JSON.stringify({ kind: value.binding && value.adapter_capability ? 'admitted' : value.kind, status: response.status }));
       } catch { console.log(JSON.stringify({ kind: 'response_lost' })); }
     `, fixture.origin + pathname], {
       env: { PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: fixture.caFile },
@@ -31,15 +31,16 @@ test('commits an upstream redemption before response loss and preserves it acros
   let commits = 0;
   const fixture = await startRecoveryTransport({
     async handle(request) {
-      if (new URL(request.url).pathname === '/api/agent/channel-access/redeem') {
+      if (new URL(request.url).pathname === '/api/agent/bootstrap/redeem') {
         commits += 1;
-        return Response.json({ kind: 'admitted', privateCapability: 'must-not-appear-in-receipt' });
+        return Response.json({ binding: { bindingId: 'bnd_fixture' },
+          adapter_capability: { binding_id: 'bnd_fixture', token_type: 'DPoP', token: 'must-not-appear-in-receipt' } });
       }
       return Response.json({ kind: commits === 1 ? 'admitted' : 'unavailable' });
     },
   });
   try {
-    const first = await requestInNewProcess(fixture, '/api/agent/channel-access/redeem');
+    const first = await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem');
     assert.equal(first.kind, 'response_lost');
     assert.equal(commits, 1);
     const second = await requestInNewProcess(fixture, '/api/agent/channel-access/resume');
@@ -53,14 +54,16 @@ test('commits an upstream redemption before response loss and preserves it acros
 test('does not consume the drop on refusal or unrelated paths; drops at most one admitted redemption', { timeout: 30_000 }, async () => {
   let allow = false;
   const fixture = await startRecoveryTransport({ async handle() {
-    return Response.json({ kind: allow ? 'admitted' : 'refused', code: 'admission_denied' }, { status: allow ? 200 : 403 });
+    return Response.json(allow
+      ? { binding: { bindingId: 'bnd_fixture' }, adapter_capability: { binding_id: 'bnd_fixture', token_type: 'DPoP' } }
+      : { kind: 'refused', code: 'admission_denied' }, { status: allow ? 200 : 403 });
   } });
   try {
-    assert.equal((await requestInNewProcess(fixture, '/api/agent/channel-access/redeem')).kind, 'refused');
+    assert.equal((await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem')).kind, 'refused');
     allow = true;
     assert.equal((await requestInNewProcess(fixture, '/api/agent/channel-access/resume')).kind, 'admitted');
-    assert.equal((await requestInNewProcess(fixture, '/api/agent/channel-access/redeem')).kind, 'response_lost');
-    assert.equal((await requestInNewProcess(fixture, '/api/agent/channel-access/redeem')).kind, 'admitted');
+    assert.equal((await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem')).kind, 'response_lost');
+    assert.equal((await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem')).kind, 'admitted');
     assert.equal(fixture.receipt().droppedRedeemResponses, 1);
   } finally { await fixture.close(); }
 });
@@ -68,8 +71,29 @@ test('does not consume the drop on refusal or unrelated paths; drops at most one
 test('a child without the private CA cannot reach the adapter', { timeout: 30_000 }, async () => {
   const fixture = await startRecoveryTransport({ async handle() { throw new Error('untrusted_child_reached_adapter'); } });
   try {
-    const result = await requestInNewProcess({ origin: fixture.origin, caFile: '' }, '/api/agent/channel-access/redeem');
+    const result = await requestInNewProcess({ origin: fixture.origin, caFile: '' }, '/api/agent/bootstrap/redeem');
     assert.equal(result.kind, 'response_lost');
     assert.equal(fixture.receipt().requests, 0);
+  } finally { await fixture.close(); }
+});
+
+test('ignores the obsolete endpoint and non-admission or mismatched bootstrap wire bodies', { timeout: 30_000 }, async () => {
+  let reply = { binding: { bindingId: 'bnd_fixture' }, adapter_capability: { binding_id: 'bnd_fixture', token_type: 'DPoP' } };
+  const fixture = await startRecoveryTransport({ async handle() { return Response.json(reply); } });
+  try {
+    assert.equal((await requestInNewProcess(fixture, '/api/agent/channel-access/redeem')).kind, 'admitted');
+    for (const invalid of [
+      { kind: 'admitted' },
+      { binding: [], adapter_capability: {} },
+      { binding: { bindingId: 'bnd_fixture' }, adapter_capability: { binding_id: 'other', token_type: 'DPoP' } },
+      { binding: { bindingId: 'bnd_fixture' }, adapter_capability: { binding_id: 'bnd_fixture', token_type: 'Bearer' } },
+    ]) {
+      reply = invalid;
+      await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem');
+    }
+    assert.equal(fixture.receipt().droppedRedeemResponses, 0);
+    reply = { binding: { bindingId: 'bnd_fixture' }, adapter_capability: { binding_id: 'bnd_fixture', token_type: 'DPoP' } };
+    assert.equal((await requestInNewProcess(fixture, '/api/agent/bootstrap/redeem')).kind, 'response_lost');
+    assert.equal(fixture.receipt().droppedRedeemResponses, 1);
   } finally { await fixture.close(); }
 });

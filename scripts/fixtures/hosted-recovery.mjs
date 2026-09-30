@@ -47,10 +47,20 @@ export async function startRecoveryTransport({ handle }) {
         // The adapter must return only after its durable commit. Read fully before deciding to drop.
         const body = Buffer.from(await response.arrayBuffer());
         counts.completedAdapterResponses += 1;
-        if (method === 'POST' && new URL(request.url).pathname === '/api/agent/channel-access/redeem'
+        if (method === 'POST' && new URL(request.url).pathname === '/api/agent/bootstrap/redeem'
           && response.status === 200 && counts.droppedRedeemResponses === 0) {
           let admitted = false;
-          try { admitted = JSON.parse(body).kind === 'admitted'; } catch { /* Malformed responses are delivered. */ }
+          try {
+            // Bootstrap's wire response has no kind field. Require the binding/capability
+            // tuple returned by that handler, rather than the connector's parsed result.
+            const value = JSON.parse(body);
+            const binding = value?.binding;
+            const capability = value?.adapter_capability;
+            admitted = !!binding && typeof binding === 'object' && !Array.isArray(binding)
+              && typeof binding.bindingId === 'string' && binding.bindingId.length > 0
+              && !!capability && typeof capability === 'object' && !Array.isArray(capability)
+              && capability.binding_id === binding.bindingId && capability.token_type === 'DPoP';
+          } catch { /* Malformed responses are delivered. */ }
           if (admitted) {
             counts.droppedRedeemResponses += 1;
             incoming.socket.destroy();
