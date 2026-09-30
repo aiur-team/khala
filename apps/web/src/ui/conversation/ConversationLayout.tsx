@@ -59,7 +59,7 @@ export function ChatMessage({ id, author, time, mine = false, grouped = false, l
     <span className="conversation-message__avatar" aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
     <div className="conversation-message__bubble">
       <header className="conversation-message__meta"><strong dir="auto">{author}</strong>
-        {kindLabel && kindLabel !== author ? <span>{kindLabel}</span> : null}
+        {kindLabel && kindLabel !== author ? <span className="conversation-message__kind">{kindLabel}</span> : null}
         {time ? <time dateTime={time}>{new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })}</time> : null}
         {status ? <span>{status}</span> : null}</header>
       <div className="conversation-message__content">{children}</div>

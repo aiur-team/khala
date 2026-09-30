@@ -1,7 +1,7 @@
 // Shared dependencies and guards for channel commands. Internal to channels/.
 
 import {
-  type AuthPrincipal, type CallOptions, type ContentLimits, type DeviceId, type DevicePort, type MessageContent,
+  type AuthPrincipal, type CallOptions, type ContentLimits, type DeviceId, type EventId, type DevicePort, type MessageContent,
   type OperationResult, type ParticipantView, type RoomId, type ChannelRejection, type ChannelSummary,
   decodeMessageContent, digestMessageContent, rejected, unavailable,
 } from '@khala/contracts/messaging/index';
@@ -22,6 +22,8 @@ export type ChannelContext = Readonly<{
   clock: () => number;
   stopped: () => boolean;
   /** Reports a local send state change, made under lifecycle `generation`, to channel observers. */
+  /** Identifies events returned by history reads before their observer publication completes. */
+  historyRead?: (roomId: RoomId, eventIds: readonly EventId[], generation: number) => void;
   echo: (roomId: RoomId, item: SendItem, generation: number) => void;
 }>;
 

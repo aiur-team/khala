@@ -773,7 +773,7 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0, 0.157.1, 0.158.0 | Supported setup; native delivery claims remain exact-version and route-specific |
+| 0.154.0, 0.157.1, 0.158.0, 0.159.0, 0.159.1 | Supported setup; native delivery claims remain exact-version and route-specific |
 | Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter

@@ -31,14 +31,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - name: Install Chromium for connector and browser tests
+        run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
       # The setup release gate: packs @aiur/khala and drives the installed tarball.
       - run: node --test tests/integration/agent-setup/setup-acceptance.test.mjs
       # Each installed harness entry, as setup writes it, delivers against the installed
       # `khala internal` (or refuses honestly where its route is unproven).
       - run: node --test tests/e2e/installed-delivery/installed-delivery.test.mjs
-      - name: Install Chromium for browser tests
-        run: pnpm exec playwright install --with-deps chromium
       - name: Browser tests
         run: |
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"

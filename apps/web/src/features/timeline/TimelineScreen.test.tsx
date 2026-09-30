@@ -198,3 +198,18 @@ describe('TimelineScreen', () => {
     expect(withoutCursor).not.toContain('Load earlier messages');
   });
 });
+
+
+it('renders each unavailable event without claiming an empty conversation or inventing attribution', () => {
+  const rows = ['encrypted-1', 'encrypted-2'].map(eventId => ({ kind: 'unavailable' as const,
+    eventId: eventId as EventId, authorParticipantId: 'untrusted-author' as ParticipantId,
+    reason: 'missing_key' as const, receivedAt: '2026-09-17T00:00:00Z' }));
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',
+    items: [], rows, nextCursor: null, newMessageCount: 0 })} roomPort={noopSendPort} roomId={roomId}
+    viewer={viewer} renderReviewAction={() => <button>Review encrypted</button>} />);
+  expect(html.match(/Message unavailable on this device\./g)).toHaveLength(2);
+  expect(html).not.toContain('No messages yet');
+  expect(html).not.toContain('untrusted-author');
+  expect(html).not.toContain('Review encrypted');
+  expect(html).not.toContain('2026-09-17');
+});

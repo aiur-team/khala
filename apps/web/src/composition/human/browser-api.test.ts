@@ -21,6 +21,30 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
+  it('decodes personal issuance and human resolution with the current CSRF proof', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'personal_link', shareUrl: `${origin}/join/invite_alice123`, expiresAt: null }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'join_required' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.channelLinks.personal('room_1' as RoomId)).toEqual({ v: 1, kind: 'personal_link',
+      shareUrl: `${origin}/join/invite_alice123`, expiresAt: null });
+    expect(await api.channelLinks.resolve(`${origin}/join/invite_alice123`)).toEqual({ v: 1, kind: 'join_required' });
+    expect(fetch.mock.calls.slice(1).map(call => call[0])).toEqual([
+      `${origin}/api/human/channel-link/personal`, `${origin}/api/human/channel-link/resolve`,
+    ]);
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it('refuses a personal link on another origin', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'personal_link',
+        shareUrl: 'https://other.example/join/invite_alice123', expiresAt: null }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.channelLinks.personal('room_1' as RoomId)).toEqual({ v: 1, kind: 'unavailable' });
+  });
+
   it('retrieves exact owner cleanup requests without needing the closed room in its view', async () => {
     const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
     const fetch = vi.fn<typeof globalThis.fetch>()

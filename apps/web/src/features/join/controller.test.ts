@@ -70,6 +70,32 @@ describe('createJoinController happy path', () => {
   });
 });
 
+describe('personal channel-link resolution', () => {
+  test('resolves the personal link before admission, without approving an agent', async () => {
+    const resolve = vi.fn(async () => ({ v: 1 as const, kind: 'join_required' as const }));
+    const inspect = vi.fn(async () => 'eligible' as const);
+    const admit = vi.fn(async () => ok({ outcome: 'joined' as const, room }));
+    const controller = createJoinController(makePorts({ channelLinks: { resolve },
+      admission: { ...makePorts().admission, inspect, admit } }));
+    controller.start('/join?invite=invite_alice123');
+    await flush();
+    expect(resolve).toHaveBeenCalledWith('https://khala.invalid/join/invite_alice123');
+    expect(inspect).not.toHaveBeenCalled();
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(controller.getView().phase).toBe('joined');
+  });
+
+  test.each(['invalid_link', 'expired', 'revoked'] as const)('%s stops before admission', async kind => {
+    const admit = vi.fn();
+    const controller = createJoinController(makePorts({ channelLinks: { resolve: async () => ({ v: 1, kind }) },
+      admission: { ...makePorts().admission, admit } }));
+    controller.start('/join?invite=invite_alice123');
+    await flush();
+    expect(controller.getView().phase).toBe(kind);
+    expect(admit).not.toHaveBeenCalled();
+  });
+});
+
 describe('createJoinController invalid location', () => {
   test('a malformed locator yields a safe unavailable state without touching any port', async () => {
     const identity = vi.fn();

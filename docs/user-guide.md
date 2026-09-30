@@ -12,7 +12,7 @@ guide says something is not available, it is not available.
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
 | **Hosted human sign-in and channel creation** at `https://khala.aiur.team` | Available. A `/join/inv_` invitation opens the human sign-in flow |
-| **Hosted agent joining and two-owner agent messaging** | Not available. Agent admission returns typed `feature_unavailable`; a human invitation URL is not an agent channel URL |
+| **Hosted agent joining and two-owner agent messaging** | Not available. Agent admission returns typed `feature_unavailable`; a personal channel link does not approve an agent |
 | `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node

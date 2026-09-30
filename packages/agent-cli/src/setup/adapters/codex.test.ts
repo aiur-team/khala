@@ -1,4 +1,6 @@
 import fsp from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -280,9 +282,9 @@ describe('Codex setup on 0.154.0', () => {
   });
 });
 
-describe('Codex setup on 0.158.0', () => {
+describe.each(['0.158.0', '0.159.0', '0.159.1'])('Codex setup on %s', testedVersion => {
   it('installs only the native skill, hooks and MCP entry, then restores the private home', async () => {
-    version = 'codex-cli 0.158.0\n';
+    version = `codex-cli ${testedVersion}\n`;
     const before = await everythingButExecutorState();
     const planned = await executablePlan('setup');
     expect(planned.operations.map(operation => operation.component)).toEqual(['skill', 'hooks', 'mcp_entry']);
@@ -357,4 +359,92 @@ describe('Codex MCP table editing', () => {
     }
     expect(CODEX_MCP_ENTRY).toBe('mcp_servers.khala');
   });
+});
+
+// Opt-in contract check against an actual vendor binary. Only a disposable home is
+// passed to Codex; neither the operator's config nor credentials are inherited.
+const nativeCodex = process.env.KHALA_TEST_CODEX_EXECUTABLE;
+describe.skipIf(nativeCodex === undefined)('installed Codex setup contract', () => {
+  it('accepts the real MCP config and preserves unreviewed hooks and unknown delivery', async () => {
+    const exec = promisify(execFile);
+    const vendorEnvironment = {
+      PATH: process.env.PATH,
+      HOME: roots.home,
+      CODEX_HOME: paths().codexHome,
+      XDG_CONFIG_HOME: roots.xdgConfigHome,
+      XDG_DATA_HOME: roots.xdgDataHome,
+      XDG_STATE_HOME: roots.xdgStateHome,
+      TMPDIR: root,
+    };
+    const invoke = (args: string[]) => exec(nativeCodex!, args, {
+      env: vendorEnvironment, cwd: roots.home, timeout: 15_000, maxBuffer: 1024 * 1024,
+    });
+    version = (await invoke(['--version'])).stdout;
+    expect(['0.159.0', '0.159.1']).toContain(parseCodexVersion(version));
+    const nativeSkill = new Uint8Array(await fsp.readFile(new URL('../../../../agent-skill/SKILL.md', import.meta.url)));
+    const before = await everythingButExecutorState();
+    expect((await run('setup', nativeSkill)).kind).toBe('committed');
+    const servers = JSON.parse((await invoke(['mcp', 'list', '--json'])).stdout) as {
+      name: string; enabled: boolean; transport: { command: string; args: string[] };
+    }[];
+    expect(servers.find(server => server.name === 'khala')).toMatchObject({
+      enabled: true, transport: { command: paths().launcher, args: ['mcp-serve'] },
+    });
+    // The real app-server discovers the installed skill without a model turn or auth.
+    const discovered = await new Promise<unknown>((resolve, reject) => {
+      const child = spawn(nativeCodex!, ['app-server', '--stdio'], {
+        env: vendorEnvironment, cwd: roots.home, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const timer = setTimeout(() => { child.kill(); reject(new Error('skills/list timed out')); }, 15_000);
+      let buffer = '';
+      child.stderr.resume();
+      child.on('error', error => { clearTimeout(timer); reject(error); });
+      child.on('exit', () => { clearTimeout(timer); reject(new Error('app-server exited before skills/list')); });
+      child.stdout.on('data', chunk => {
+        buffer += String(chunk);
+        let newline: number;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          if (line.trim().length === 0) continue;
+          let message: { id?: number; result?: unknown; error?: unknown };
+          try {
+            message = JSON.parse(line) as typeof message;
+          } catch {
+            clearTimeout(timer);
+            child.kill();
+            reject(new Error('app-server emitted a non-JSON protocol line'));
+            return;
+          }
+          if (message.id === 1) {
+            child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n');
+            child.stdin.write(JSON.stringify({ id: 2, method: 'skills/list', params: { cwds: [roots.home], forceReload: true } }) + '\n');
+          } else if (message.id === 2) {
+            clearTimeout(timer);
+            child.kill();
+            if (message.error) reject(new Error('skills/list rejected'));
+            else resolve(message.result);
+          }
+        }
+      });
+      child.stdin.write(JSON.stringify({ id: 1, method: 'initialize', params: {
+        clientInfo: { name: 'khala_setup_contract', version: '1' },
+      } }) + '\n');
+    });
+    expect(discovered).toMatchObject({ data: [{ skills: expect.arrayContaining([
+      expect.objectContaining({ name: 'khala', path: paths().skill }),
+    ]) }] });
+    const { observation } = await observe(nativeSkill);
+    expect(states(observation)).toEqual({ skill: 'ready', hooks: 'awaiting_hook_review', mcp_entry: 'ready' });
+    expect(observation.route).toBe('unknown');
+    expect((await run('remove', nativeSkill)).kind).toBe('committed');
+    expect(await exists(paths().skill)).toBe(false);
+    expect(await exists(paths().hooks)).toBe(false);
+    expect(await exists(paths().config)).toBe(false);
+    for (const [target, value] of Object.entries(before)) {
+      expect((await everythingButExecutorState())[target]).toBe(value);
+    }
+    await fsp.mkdir(paths().codexHome, { recursive: true });
+    expect(JSON.parse((await invoke(['mcp', 'list', '--json'])).stdout)).toEqual([]);
+  }, 30_000);
 });

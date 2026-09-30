@@ -130,14 +130,15 @@ export function TimelineScreen({
   composerPlaceholder = '', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const rows = useMemo(() => data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })), [data.rows, data.items]);
   const evidenceView = useSyncExternalStore(
     evidence?.subscribe ?? noEvidenceSubscribe,
     evidence?.getSnapshot ?? (() => NO_EVIDENCE),
     evidence?.getSnapshot ?? (() => NO_EVIDENCE),
   );
   const evidenceLayout = useMemo(
-    () => layoutEvidence(evidenceView.units, data.items.map(item => item.ref.eventId)),
-    [data.items, evidenceView.units],
+    () => layoutEvidence(evidenceView.units, rows.flatMap(row => row.kind === 'message' ? [row.item.ref.eventId] : [])),
+    [rows, evidenceView.units],
   );
 
   useEffect(() => {
@@ -208,8 +209,6 @@ export function TimelineScreen({
   useEffect(() => {
     const reconciled = pendingList.filter(entry => isReconciled(entry, data.items));
     if (reconciled.length === 0) return;
-    // Keep a newer draft, but clear the exact text once its send is durable.
-    setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
     updatePending(list => list.filter(entry => !isReconciled(entry, data.items)));
   }, [data.items, pendingList, updatePending]);
 
@@ -242,10 +241,12 @@ export function TimelineScreen({
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || !canCompose || sendBlocked) return;
+    if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>
+      entry.phase !== 'accepted' && !isReconciled(entry, data.items))) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
     updatePending(list => [...list, { clientTxnId, content, phase: 'pending' as const }]);
+    setDraft('');
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
@@ -258,7 +259,7 @@ export function TimelineScreen({
   }
 
   const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => item.participant), viewer]);
-  // A `failed` or `outcome_unknown` send keeps its draft text on screen, but
+  // A `failed` or `outcome_unknown` send keeps its body in the pending row, but
   // Send must stay disabled while it's unresolved: otherwise the reader could
   // submit the same text again under a fresh `clientTxnId`, duplicating a
   // send that may already have gone through (AE2). Only Retry — which reuses
@@ -308,10 +309,14 @@ export function TimelineScreen({
           setAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
         }}
       >
-        {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">
+        {rows.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">
           {unreadableActivity ? 'Messages in this channel are unavailable on this device.' : 'No messages yet.'}
         </li> : null}
-        {data.items.map((item, index) => {
+        {rows.map((row, index) => {
+          if (row.kind === 'unavailable') return <li key={row.eventId} data-event-id={row.eventId}
+            className="timeline__row message-content__unavailable">Message unavailable on this device.</li>;
+          const item = row.item;
+          const previous = rows[index - 1];
           const attribution = attributionFor(item.participant, viewer.ownerId);
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
           const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
@@ -324,7 +329,7 @@ export function TimelineScreen({
                 </li>
               ))}
               <ChatMessage id={item.ref.eventId} author={resolveDisplayName(item.participant)} time={item.receivedAt}
-                mine={attribution.isViewerOwned} grouped={index > 0 && data.items[index - 1]?.participant.participantId === item.participant.participantId}
+                mine={attribution.isViewerOwned} grouped={previous?.kind === 'message' && previous.item.participant.participantId === item.participant.participantId}
                 kindLabel={ownershipLabel(attribution)} className="timeline__row">
                 {isReadableItem(item) ? (
                   <>
