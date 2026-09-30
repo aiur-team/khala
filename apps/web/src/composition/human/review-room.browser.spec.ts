@@ -82,16 +82,39 @@ test('channel care route mounts recipient review and recovery outside the chat',
   });
 });
 
-test('share reports clipboard denial without exposing the link', { timeout: 90_000 }, async () => {
-  await withRoomPage('review-room.html', async page => {
-    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
-    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
-    await page.getByRole('alert').getByText('Copy failed. Try again.').waitFor();
-    assert.equal(await page.locator('.channel-share input').count(), 0);
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+for (const failure of ['unavailable', 'denied'] as const) {
+  test(`share offers a keyboard-selectable link when clipboard is ${failure}`, { timeout: 90_000 }, async () => {
+    await withRoomPage('review-room.html', async page => {
+      await page.evaluate(kind => Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: kind === 'unavailable' ? undefined : { writeText: Function('return Promise.reject(new DOMException("Denied", "NotAllowedError"))') },
+      }), failure);
+      const header = page.locator('.conversation-thread__actions');
+      const before = await header.boundingBox();
+      assert.equal(await page.getByRole('textbox', { name: 'Channel link', exact: true }).count(), 0);
+      const button = page.getByRole('button', { name: 'Copy channel invite link' });
+      await button.focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('alert').getByText('Copy failed. Select and copy the link below.').waitFor();
+      const input = page.getByRole('textbox', { name: 'Channel link', exact: true });
+      assert.equal(await input.inputValue(), 'https://khala.example/join/invite_1');
+      assert.equal(await input.evaluate(node => node === document.activeElement), true);
+      assert.deepEqual(await input.evaluate(node => [(node as HTMLInputElement).selectionStart, (node as HTMLInputElement).selectionEnd]), [0, 'https://khala.example/join/invite_1'.length]);
+      assert.equal((await header.boundingBox())?.height, before?.height, 'manual copying does not resize the header');
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await button.evaluate(node => node === document.activeElement), true);
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+      const box = await input.boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 390, 'manual link stays within the phone viewport');
+      await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: Function('return Promise.resolve()') } }));
+      await button.press('Enter');
+      await page.getByRole('status').getByText('Copied').waitFor();
+      assert.equal(await input.count(), 0, 'successful retry removes the fallback');
+      assert.equal((await page.evaluate(() => window.__shareRequests())).length, 1, 'retry uses the same link');
+    });
   });
-});
+}
 
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));

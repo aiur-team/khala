@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { AdmissionPort, RoomId } from '@khala/contracts/messaging/index';
 import { copyShareLink, type CopyResult } from '../../ui/share-link';
 import type { HumanChannelLinks } from '../../composition/human/channel-links';
@@ -16,6 +16,14 @@ export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = co
   const [link, setLink] = useState<ShareState>(fresh);
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [copying, setCopying] = useState(false);
+  const fallbackId = useId();
+  const fallbackInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (copied === 'failed') {
+      fallbackInput.current?.focus();
+      fallbackInput.current?.select();
+    }
+  }, [copied]);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
   useEffect(() => { if (channelLinks) void share(); }, []);
@@ -71,6 +79,10 @@ export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = co
     </button>
     {link.error ? <p className="channel-share__feedback" role="alert">Could not prepare a link. Try again.</p> : null}
     {copied === 'copied' ? <p className="channel-share__feedback" role="status">Copied</p> : null}
-    {copied === 'failed' ? <p className="channel-share__feedback" role="alert">Copy failed. Try again.</p> : null}
+    {copied === 'failed' && link.url ? <div className="channel-share__feedback channel-share__fallback">
+      <p id={`${fallbackId}-hint`} role="alert">Copy failed. Select and copy the link below.</p>
+      <label htmlFor={fallbackId}>Channel link</label>
+      <input ref={fallbackInput} id={fallbackId} aria-describedby={`${fallbackId}-hint`} readOnly value={link.url} onFocus={event => event.currentTarget.select()} />
+    </div> : null}
   </section>;
 }
