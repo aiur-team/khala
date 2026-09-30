@@ -6,7 +6,8 @@ import type {
   StableAgentPrincipal,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
-import { createHttpChannelAccessClient, createHttpChannelAccessRedeem, createHttpChannelAccessStatus } from './channel-access-http';
+import { createHttpChannelAccessClient, createHttpChannelAccessRedeem, createHttpChannelAccessStatus,
+  type ExchangeHttpDiagnostic } from './channel-access-http';
 import { createProofSigner } from './proof';
 
 const ORIGIN = 'https://khala.example';
@@ -19,7 +20,7 @@ const credential = {
   scopes: ['list_channels', 'request_channel_access', 'request_channel_create'],
   expiresAt: new Date(T0 + 300_000).toISOString(),
 } as unknown as DiscoveryCredential;
-const credentialFor = () => credential;
+const credentialFor = (): DiscoveryCredential => credential;
 
 const REQUEST: GrantExchangeRequest = {
   v: 1,
@@ -54,6 +55,47 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('channel-access HTTP client', () => {
+  it.each([
+    ['credential_unavailable', (): null => null, signer, () => json(200, ENVELOPE), undefined],
+    ['credential_mismatch', () => ({ ...credential, requester: { ...credential.requester,
+      proofKey: { ...credential.requester.proofKey, thumbprint: 'other' } } }), signer, () => json(200, ENVELOPE), undefined],
+    ['proof_unavailable', credentialFor, { ...signer, proof() { throw new Error('secret grant URL'); } },
+      () => json(200, ENVELOPE), undefined],
+    ['transport_failed', credentialFor, signer, () => { throw new Error('secret grant URL'); }, undefined],
+    ['http_status', credentialFor, signer, () => json(401, { error: 'secret grant URL' }), 401],
+    ['body_media_type', credentialFor, signer,
+      () => new Response('secret grant URL', { status: 200, headers: { 'content-type': 'text/html' } }), 200],
+    ['body_missing', credentialFor, signer,
+      () => new Response(null, { status: 200, headers: { 'content-type': 'application/json' } }), 200],
+    ['body_read_failed', credentialFor, signer, () => json(200, 'x'.repeat(40_000)), 200],
+    ['body_json_invalid', credentialFor, signer,
+      () => new Response('secret grant URL', { status: 200, headers: { 'content-type': 'application/json' } }), 200],
+  ] as const)('reports only fixed exchange HTTP stage %s', async (stage, held, proofSigner, response, httpStatus) => {
+    const t = transport(response);
+    const events: ExchangeHttpDiagnostic[] = [];
+    const client = createHttpChannelAccessClient({ signer: proofSigner, trustedOrigins: [ORIGIN],
+      credential: held as () => DiscoveryCredential | null, fetch: t.fetchStub, diagnostic: event => events.push(event) });
+    expect(await client.exchange(REQUEST)).toEqual({ kind: 'unavailable' });
+    expect(events).toEqual([{ stage, result: 'unavailable', ...(httpStatus === undefined ? {} : { httpStatus }) }]);
+    expect(JSON.stringify(events)).not.toContain('secret grant URL');
+  });
+
+  it('uses HTTP status when a non-200 response has unreadable JSON', async () => {
+    const events: ExchangeHttpDiagnostic[] = [];
+    const t = transport(() => new Response('not JSON', { status: 503, headers: { 'content-type': 'application/json' } }));
+    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN],
+      credential: credentialFor, fetch: t.fetchStub, diagnostic: event => events.push(event) });
+    expect(await client.exchange(REQUEST)).toEqual({ kind: 'unavailable' });
+    expect(events).toEqual([{ stage: 'http_status', result: 'unavailable', httpStatus: 503 }]);
+  });
+
+  it('keeps exchange outcomes stable when the local diagnostic sink throws', async () => {
+    const t = transport(() => json(401, { error: 'secret grant URL' }));
+    const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN],
+      credential: credentialFor, fetch: t.fetchStub, diagnostic() { throw new Error('local diagnostics unavailable'); } });
+    expect(await client.exchange(REQUEST)).toEqual({ kind: 'unavailable' });
+  });
+
   it('posts the exchange to the exact origin with a fresh proof and passes the envelope through', async () => {
     const t = transport(() => json(200, ENVELOPE));
     const client = createHttpChannelAccessClient({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
