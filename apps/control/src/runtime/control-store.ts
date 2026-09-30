@@ -124,6 +124,18 @@ function sameLegacyProof(data: unknown, expected: LegacyLedgerProof): boolean {
     && (data as Partial<LegacyLedgerProof>).operationIdHash === expected.operationIdHash;
 }
 
+function canonicalLegacyBoundClaim(key: string, envelope: StoredEnvelope): boolean {
+  // Only the exchange's first bound write has a reconstructible operation ID.
+  // Other legacy ledger blobs omit that ID, so equal bytes after a later write
+  // cannot prove who claimed them.
+  if (!/^channel-access-exchange\/[0-9a-f]{64}$/.test(key)
+    || typeof envelope.value !== 'object' || envelope.value === null || Array.isArray(envelope.value)) return false;
+  const value = envelope.value as Record<string, JsonValue>;
+  if (value.seq !== 1 || value.phase !== 'bound') return false;
+  const digest = createHash('sha256').update(JSON.stringify([JSON.stringify(value), envelope.expiresAt])).digest('hex');
+  return envelope.operationId === `${key}#1.bound.${digest}`;
+}
+
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
   // The Blobs SDK interpolates keys into a URL without encoding fragments or
@@ -213,7 +225,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
             // that proof across later phase transitions. The old ledger value
             // itself did not retain the operation ID.
             const record = await readLive(entry.key);
-            if (record.envelope === null || !record.envelope.operationId.startsWith(`${oldKey}#`)
+            if (record.envelope === null || !canonicalLegacyBoundClaim(oldKey, record.envelope)
               || digestOf(record.envelope.value, record.envelope.expiresAt) !== entry.digest) {
               return { kind: 'unknown' };
             }

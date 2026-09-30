@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 import { describe, expect, it } from 'vitest';
 import { createControlStore } from './control-store';
@@ -104,10 +105,11 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
 
   it('resumes a legacy bound claim while admitting uses its own ledger key', async () => {
     const fixture = sdkFixture(() => null);
-    const key = 'channel-access-exchange/legacy';
-    const boundId = `${key}#1.bound.digest`;
-    const boundValue = { phase: 'bound' };
-    const boundDigest = JSON.stringify([boundValue, null]);
+    const key = `channel-access-exchange/${'a'.repeat(64)}`;
+    const boundValue = { seq: 1, phase: 'bound' };
+    const writeDigest = createHash('sha256').update(JSON.stringify([JSON.stringify(boundValue), null])).digest('hex');
+    const boundId = `${key}#1.bound.${writeDigest}`;
+    const boundDigest = JSON.stringify([{ phase: 'bound', seq: 1 }, null]);
     fixture.entries.set(`site:operations/${key}`, { body: JSON.stringify({ key, digest: boundDigest }), etag: 'legacy-ledger' });
     fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: boundId,
       value: boundValue, expiresAt: null }), etag: 'legacy-bound' });
@@ -143,16 +145,18 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
 
   it('does not assign a legacy claim to a later same-value record', async () => {
     const fixture = sdkFixture(() => null);
-    const key = 'channel-access-exchange/superseded';
-    const value = { phase: 'bound' };
+    const key = `channel-access-exchange/${'b'.repeat(64)}`;
+    const value = { seq: 1, phase: 'bound' };
+    const writeDigest = createHash('sha256').update(JSON.stringify([JSON.stringify(value), null])).digest('hex');
+    const oldId = `${key}#1.bound.${writeDigest}`;
     fixture.entries.set(`site:operations/${key}`, { body: JSON.stringify({ key,
-      digest: JSON.stringify([value, null]) }), etag: 'legacy-ledger' });
-    fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: 'later-operation',
+      digest: JSON.stringify([{ phase: 'bound', seq: 1 }, null]) }), etag: 'legacy-ledger' });
+    fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: `${key}#2.bound.${writeDigest}`,
       value, expiresAt: null }), etag: 'later-record' });
     expect(await fixture.store.compareAndSet({ key, expectedRevision: 'later-record',
-      operationId: `${key}#1.bound.digest`, next: { value: { phase: 'changed' }, expiresAt: null } }))
-      .toEqual({ kind: 'outcome_unknown', operationId: `${key}#1.bound.digest` });
-    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { operationId: 'later-operation' } });
+      operationId: oldId, next: { value: { seq: 1, phase: 'changed' }, expiresAt: null } }))
+      .toEqual({ kind: 'outcome_unknown', operationId: oldId });
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { operationId: `${key}#2.bound.${writeDigest}` } });
   });
 
   it('migrates a proven legacy fragment record before advancing its revision', async () => {
