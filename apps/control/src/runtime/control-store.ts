@@ -6,6 +6,7 @@
 // different target keys — without claiming cross-key atomicity: each ledger
 // claim and each record write is only ever atomic on its own key.
 
+import { createHash } from 'node:crypto';
 import {
   type CompareAndSetInput,
   type ControlRead,
@@ -42,6 +43,7 @@ export type ControlStoreDeps = Readonly<{
 
 type StoredEnvelope = Readonly<{ operationId: string; value: JsonValue; expiresAt: string | null }>;
 type LedgerEntry = Readonly<{ key: string; digest: string }>;
+type LegacyLedgerProof = LedgerEntry & Readonly<{ operationIdHash: string }>;
 
 /**
  * A definite rejection is a completed round trip where the provider itself
@@ -116,8 +118,37 @@ function sameLedgerEntry(data: unknown, key: string, digest: string): boolean {
   return entry.key === key && entry.digest === digest;
 }
 
+function sameLegacyProof(data: unknown, expected: LegacyLedgerProof): boolean {
+  return sameLedgerEntry(data, expected.key, expected.digest)
+    && typeof data === 'object' && data !== null
+    && (data as Partial<LegacyLedgerProof>).operationIdHash === expected.operationIdHash;
+}
+
+function canonicalLegacyBoundClaim(key: string, envelope: StoredEnvelope): boolean {
+  // Only the exchange's first bound write has a reconstructible operation ID.
+  // Other legacy ledger blobs omit that ID, so equal bytes after a later write
+  // cannot prove who claimed them.
+  if (!/^channel-access-exchange\/[0-9a-f]{64}$/.test(key)
+    || typeof envelope.value !== 'object' || envelope.value === null || Array.isArray(envelope.value)) return false;
+  const value = envelope.value as Record<string, JsonValue>;
+  if (value.seq !== 1 || value.phase !== 'bound') return false;
+  const digest = createHash('sha256').update(JSON.stringify([JSON.stringify(value), envelope.expiresAt])).digest('hex');
+  return envelope.operationId === `${key}#1.bound.${digest}`;
+}
+
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
+  // The Blobs SDK interpolates keys into a URL without encoding fragments or
+  // queries. Keep already-safe keys in place; map every other logical key to a
+  // disjoint, URL-safe namespace before calling the SDK.
+  const physicalKey = (key: string): string => /^[A-Za-z0-9/_.:@-]+$/.test(key)
+    && !key.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
+    ? key : `~v2/${createHash('sha256').update(key).digest('hex')}`;
+  const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
+  const legacyFragmentKey = (key: string): string | null => {
+    const marker = key.indexOf('#');
+    return marker < 0 ? null : key.slice(0, marker);
+  };
   const readDiagnostic = (key: string, stage: 'record_corrupt' | 'read_error', error?: unknown) => {
     const scope = key.startsWith('auth.session.v1.') ? 'session'
       : key.startsWith('invitations.invite.') ? 'invitation' : 'other';
@@ -134,14 +165,28 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
     corrupt: boolean;
     /** The decoded envelope regardless of liveness — lets `resolve` see an expired-but-decodable record's operation ID. */
     envelope: StoredEnvelope | null;
+    legacy: boolean;
   }> {
-    const raw = await records.getWithMetadata(key, { type: 'json', consistency: 'strong' });
-    if (raw === null) return { raw: null, live: null, corrupt: false, envelope: null };
-    if (!validEtag(raw.etag)) return { raw, live: null, corrupt: true, envelope: null };
+    let raw = await records.getWithMetadata(physicalKey(key), { type: 'json', consistency: 'strong' });
+    let legacy = false;
+    if (raw === null) {
+      const oldKey = legacyFragmentKey(key);
+      if (oldKey !== null) {
+        const old = await records.getWithMetadata(oldKey, { type: 'json', consistency: 'strong' });
+        // A truncated key can alias an unrelated record. Only its own
+        // operation ID proves that these bytes belong to this logical key.
+        if (old !== null && decodeEnvelope(old.data)?.operationId.startsWith(`${key}#`)) {
+          raw = old;
+          legacy = true;
+        }
+      }
+    }
+    if (raw === null) return { raw: null, live: null, corrupt: false, envelope: null, legacy };
+    if (!validEtag(raw.etag)) return { raw, live: null, corrupt: true, envelope: null, legacy };
     const envelope = decodeEnvelope(raw.data);
-    if (envelope === null) return { raw, live: null, corrupt: true, envelope: null };
-    if (!isRecordLive({ expiresAt: envelope.expiresAt }, clock())) return { raw, live: null, corrupt: false, envelope };
-    return { raw, live: toRecord<T>(key, raw.etag, envelope), corrupt: false, envelope };
+    if (envelope === null) return { raw, live: null, corrupt: true, envelope: null, legacy };
+    if (!isRecordLive({ expiresAt: envelope.expiresAt }, clock())) return { raw, live: null, corrupt: false, envelope, legacy };
+    return { raw, live: toRecord<T>(key, raw.etag, envelope), corrupt: false, envelope, legacy };
   }
 
   type ClaimResult =
@@ -164,9 +209,49 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
    * `conflict` off the strength of this claim alone.
    */
   async function claimOperation(operationId: string, key: string, digest: string): Promise<ClaimResult> {
+    const ledgerKey = physicalKey(operationId);
+    const oldKey = legacyFragmentKey(operationId);
+    if (oldKey !== null) {
+      try {
+        const old = await operations.getWithMetadata(oldKey, { type: 'json', consistency: 'strong' });
+        if (old !== null && !validEtag(old.etag)) return { kind: 'unknown' };
+        if (old !== null) {
+          const entry = old.data as Partial<LedgerEntry> | null;
+          if (!entry || typeof entry.key !== 'string' || typeof entry.digest !== 'string') return { kind: 'unknown' };
+          const proofKey = `~legacy/${hash(oldKey)}`;
+          let proof = await operations.getWithMetadata(proofKey, { type: 'json', consistency: 'strong' });
+          if (proof === null) {
+            // Prove the old claim while its record is still current, then keep
+            // that proof across later phase transitions. The old ledger value
+            // itself did not retain the operation ID.
+            const record = await readLive(entry.key);
+            if (record.envelope === null || !canonicalLegacyBoundClaim(oldKey, record.envelope)
+              || digestOf(record.envelope.value, record.envelope.expiresAt) !== entry.digest) {
+              return { kind: 'unknown' };
+            }
+            const value: LegacyLedgerProof = { key: entry.key, digest: entry.digest,
+              operationIdHash: hash(record.envelope.operationId) };
+            const write = await operations.setJSON(proofKey, value, { onlyIfNew: true });
+            proof = await operations.getWithMetadata(proofKey, { type: 'json', consistency: 'strong' });
+            if (!validEtag(proof?.etag) || !sameLegacyProof(proof.data, value)
+              || (write.modified && (!validEtag(write.etag) || write.etag !== proof.etag))) {
+              return { kind: 'unknown' };
+            }
+          }
+          const held = proof.data as Partial<LegacyLedgerProof> | null;
+          if (!validEtag(proof.etag) || !held || typeof held.operationIdHash !== 'string'
+            || !sameLedgerEntry(held, entry.key, entry.digest)) return { kind: 'unknown' };
+          if (held.operationIdHash === hash(operationId)) {
+            return sameLedgerEntry(old.data, key, digest)
+              ? { kind: 'claimed', retry: true } : { kind: 'mismatch' };
+          }
+          if (entry.key === key && entry.digest === digest) return { kind: 'unknown' };
+        }
+      } catch { return { kind: 'unknown' }; }
+    }
     let result: { modified: boolean; etag?: string };
     try {
-      result = await operations.setJSON(operationId, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
+      result = await operations.setJSON(ledgerKey, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
     } catch (error) {
       return { kind: isDefiniteRejection(error) ? 'unavailable' : 'unknown' };
     }
@@ -175,7 +260,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       // and a strong read of the exact new ledger entry are both required.
       if (!validEtag(result.etag)) return { kind: 'unknown' };
       try {
-        const confirmed = await operations.getWithMetadata(operationId, { type: 'json', consistency: 'strong' });
+        const confirmed = await operations.getWithMetadata(ledgerKey, { type: 'json', consistency: 'strong' });
         return confirmed?.etag === result.etag && sameLedgerEntry(confirmed.data, key, digest)
           ? { kind: 'claimed', retry: false }
           : { kind: 'unknown' };
@@ -185,7 +270,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
     }
     let entry: { data: unknown; etag?: string } | null;
     try {
-      entry = await operations.getWithMetadata(operationId, { type: 'json', consistency: 'strong' });
+      entry = await operations.getWithMetadata(ledgerKey, { type: 'json', consistency: 'strong' });
     } catch {
       return { kind: 'unknown' };
     }
@@ -219,7 +304,7 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       if (claim.kind === 'unknown') return { kind: 'outcome_unknown', operationId: input.operationId };
       const isRetry = claim.retry;
 
-      let before: { raw: { data: unknown; etag?: string } | null; live: ControlRecord<T> | null; corrupt: boolean };
+      let before: Awaited<ReturnType<typeof readLive<T>>>;
       try {
         before = await readLive<T>(input.key);
       } catch (error) {
@@ -240,12 +325,31 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
         return { kind: 'conflict', current: before.live };
       }
 
+      if (before.legacy) {
+        // Copy a proven legacy record to its distinct path before advancing
+        // it. Never apply the old ETag to the new path, or assume a racing
+        // migration copied the same bytes.
+        const oldKey = legacyFragmentKey(input.key)!;
+        const old = before.raw!;
+        try {
+          const copied = await records.setJSON(physicalKey(input.key), old.data, { onlyIfNew: true });
+          const migrated = await readLive<T>(input.key);
+          const oldNow = await records.getWithMetadata(oldKey, { type: 'json', consistency: 'strong' });
+          if (migrated.legacy || migrated.corrupt || migrated.live === null || oldNow?.etag !== old.etag
+            || !sameWrite(migrated.live, before.live!.operationId, before.live!.value, before.live!.expiresAt)
+            || (copied.modified && (!validEtag(copied.etag) || copied.etag !== migrated.live.revision))) {
+            return { kind: 'outcome_unknown', operationId: input.operationId };
+          }
+          before = migrated;
+        } catch { return { kind: 'outcome_unknown', operationId: input.operationId }; }
+      }
+
       const envelope: StoredEnvelope = { operationId: input.operationId, value: input.next.value, expiresAt: input.next.expiresAt };
       const conditions: { onlyIfMatch: string } | { onlyIfNew: true } =
         before.raw && before.raw.etag !== undefined ? { onlyIfMatch: before.raw.etag } : { onlyIfNew: true };
       let result: { modified: boolean; etag?: string };
       try {
-        result = await records.setJSON(input.key, envelope, conditions);
+        result = await records.setJSON(physicalKey(input.key), envelope, conditions);
       } catch (error) {
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
