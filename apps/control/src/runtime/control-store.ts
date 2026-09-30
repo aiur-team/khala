@@ -39,8 +39,10 @@ export type ControlStoreDeps = Readonly<{
   clock: TrustedClock;
   /** A fixed category only; never expose keys or adapter errors. */
   diagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'room_send' | 'owner_mailbox' | 'other';
-    stage: 'record_corrupt' | 'read_error' | 'ledger_write_error' | 'ledger_read_error'
-      | 'record_write_error' | 'record_confirm_error' | 'cas_unavailable' | 'cas_unknown'; httpStatus?: number }>) => void;
+    stage: 'record_corrupt' | 'read_error'; httpStatus?: number }>) => void;
+  writeDiagnostic?: (entry: Readonly<{ scope: 'session' | 'invitation' | 'room_send' | 'owner_mailbox' | 'other';
+    stage: 'ledger_write_error' | 'ledger_read_error' | 'record_write_error' | 'record_confirm_error'
+      | 'cas_unavailable' | 'cas_unknown'; httpStatus?: number }>) => void;
 }>;
 
 type StoredEnvelope = Readonly<{ operationId: string; value: JsonValue; expiresAt: string | null }>;
@@ -160,7 +162,13 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
     const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
     const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
       ? status : undefined;
-    try { deps.diagnostic?.({ scope, stage, ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    try {
+      if (stage === 'record_corrupt' || stage === 'read_error') {
+        deps.diagnostic?.({ scope, stage, ...(httpStatus === undefined ? {} : { httpStatus }) });
+      } else {
+        deps.writeDiagnostic?.({ scope, stage, ...(httpStatus === undefined ? {} : { httpStatus }) });
+      }
+    }
     catch { /* Diagnostics never change store outcomes. */ }
   };
 

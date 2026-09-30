@@ -116,7 +116,7 @@ describe('read diagnostics', () => {
     const operations = new FakeBlobsStore();
     const diagnostics: unknown[] = [];
     const store = createControlStore({ records, operations, clock: () => 0,
-      diagnostic: entry => diagnostics.push(entry) });
+      diagnostic: entry => diagnostics.push(entry), writeDiagnostic: entry => diagnostics.push(entry) });
     records.failNext('server-error');
     expect(await store.read('room-send-fence.v1.private-room')).toEqual({ kind: 'unavailable' });
     operations.failNext('server-error');

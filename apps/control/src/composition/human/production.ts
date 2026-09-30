@@ -99,6 +99,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       operations: contextualStore(`${env.controlStateNamespace}-operations`),
       clock,
       diagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
+      writeDiagnostic: entry => productionDiagnostic('runtime', `${entry.scope}_${entry.stage}`, entry.httpStatus),
     });
     const matrix = createMatrixHumanServices({
       homeserverOrigin: env.publicHomeserverOrigin,
