@@ -85,7 +85,7 @@ describe('installed hosted connector composition', () => {
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       onText = options.onText;
       return ({
-      fingerprint: agentFingerprint,
+      fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -255,7 +255,7 @@ describe('installed hosted connector composition', () => {
     const opens: MatrixConnectorInput[] = [];
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
-      return { fingerprint: agentFingerprint,
+      return { fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },

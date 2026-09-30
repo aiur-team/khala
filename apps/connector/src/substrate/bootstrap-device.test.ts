@@ -29,6 +29,7 @@ describe('Matrix endpoint credential and device fence', () => {
       opens.push(input);
       return {
         fingerprint: 'signed-ed25519-fingerprint',
+        writerLock: { kind: 'acquired' },
         devices: {
           reserve: async () => ({ kind: 'reserved', deviceId: input.deviceId }),
           activate: async () => { activated = true; return { kind: 'ready' }; },
