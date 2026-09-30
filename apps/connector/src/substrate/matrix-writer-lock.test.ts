@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { acquireMatrixWriterLock, MatrixWriterLockError } from './matrix-writer-lock';
+import { acquireMatrixWriterLock, MatrixWriterLockError, parseLinuxProcessStart } from './matrix-writer-lock';
 
 let root: string | null = null;
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = null; });
@@ -27,6 +27,20 @@ it('uses fail-safe exclusive creation on macOS without inspecting Linux process 
 });
 
 describe.skipIf(process.platform !== 'linux')('Matrix profile writer lock', () => {
+  it('treats malformed process stat as uncertain rather than a dead owner', async () => {
+    const live = await readFile(`/proc/${process.pid}/stat`, 'utf8');
+    expect(parseLinuxProcessStart(live)).toMatch(/^\d+$/u);
+    const end = live.lastIndexOf(')');
+    const fields = live.slice(end + 2).trim().split(/\s+/u);
+    for (const malformed of [live.slice(0, end), `${live.slice(0, end + 2)}S`,
+      `${live.slice(0, end + 2)}${fields.slice(0, 19).join(' ')}`,
+      `${live.slice(0, end + 2)}${[...fields.slice(0, 19), 'bad', ...fields.slice(20)].join(' ')}`]) {
+      expect(() => parseLinuxProcessStart(malformed)).toThrowError(MatrixWriterLockError);
+      try { parseLinuxProcessStart(malformed); } catch (error) {
+        expect(error).toMatchObject({ code: 'ownership_uncertain' });
+      }
+    }
+  });
   it('recovers a dead legacy owner and reports recovery without disclosing the profile', async () => {
     const dir = await directory();
     await writeFile(path.join(dir, 'writer.lock'), '2147483647', { mode: 0o600 });

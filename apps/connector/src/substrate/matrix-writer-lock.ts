@@ -19,11 +19,18 @@ function lockFailure(error: unknown): MatrixWriterLockError {
 
 // The kernel start tick distinguishes a reused PID from the original process.
 // Unknown process identity is never evidence that a writer has died.
+export function parseLinuxProcessStart(stat: string): string {
+  const end = stat.lastIndexOf(')');
+  const fields = end < 0 || stat[end + 1] !== ' ' ? [] : stat.slice(end + 2).trim().split(/\s+/u);
+  const start = fields[19]; // /proc stat field 22; fields begins with field 3.
+  if (!start || !/^\d+$/u.test(start)) throw new MatrixWriterLockError('ownership_uncertain');
+  return start;
+}
+
 async function processStart(pid: number): Promise<string | null> {
   try {
     const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
-    const end = stat.lastIndexOf(')');
-    return end < 0 ? null : stat.slice(end + 2).split(' ')[19] ?? null;
+    return parseLinuxProcessStart(stat);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw new MatrixWriterLockError('ownership_uncertain');

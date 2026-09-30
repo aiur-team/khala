@@ -5,6 +5,8 @@ import type { ParticipantId } from '@khala/contracts/messaging/index';
 import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 import type { ConnectorDevicePort, MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { openMatrixConnectorSubstrate, type MatrixConnectorSubstrate } from './matrix';
+import { MatrixWriterLockError } from './matrix-writer-lock';
+import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 
 /** Endpoint-owned credential file, outside the hosted control plane and the crypto profile. */
 export function createMatrixBootstrapDevice(input: Readonly<{
@@ -19,6 +21,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
   onCurrentNames?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onCurrentNames'];
   onRename?: Parameters<typeof openMatrixConnectorSubstrate>[0]['onRename'];
   diagnostic?: Parameters<typeof openMatrixConnectorSubstrate>[0]['diagnostic'];
+  writerLockDiagnostic?: (event: HostedOpenDiagnostic) => void;
 }>): Readonly<{
   devices: ConnectorDevicePort;
   fingerprint(): string | null;
@@ -97,7 +100,17 @@ export function createMatrixBootstrapDevice(input: Readonly<{
       ...(input.chromiumExecutablePath ? { chromiumExecutablePath: input.chromiumExecutablePath } : {}),
       ...(input.browserBundleDirectory ? { browserBundleDirectory: input.browserBundleDirectory } : {}),
       ...(input.browserDriverDirectory ? { browserDriverDirectory: input.browserDriverDirectory } : {}),
+    }).catch(error => {
+      if (error instanceof MatrixWriterLockError && error.code === 'active_writer') {
+        try { input.writerLockDiagnostic?.({ stage: 'matrix_writer_active', result: 'unavailable' }); }
+        catch { /* Diagnostics cannot change device startup. */ }
+      }
+      throw error;
     });
+    if (substrate.writerLock.kind === 'stale_recovered') {
+      try { input.writerLockDiagnostic?.({ stage: 'matrix_writer_recovered', result: 'recovered' }); }
+      catch { /* Diagnostics cannot change device startup. */ }
+    }
     currentSession = candidate;
     return substrate;
   }
