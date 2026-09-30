@@ -12,6 +12,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:terminology": "node scripts/check-terminology.mjs",
     "test": "node --test scripts/*.test.mjs && pnpm test:recovery-fixture && node --test 'infra/**/*.test.ts' && pnpm -r test && pnpm test:conformance && pnpm test:e2e",
+    "test:recovery-synapse": "node --import tsx --conditions=khala-source --test tests/integration/recovery/*.test.mjs",
     "test:recovery-fixture": "node --test scripts/fixtures/*.test.mjs",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
     "test:conformance": "node tests/e2e/harness/run.mjs conformance",
