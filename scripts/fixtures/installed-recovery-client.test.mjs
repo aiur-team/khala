@@ -29,7 +29,7 @@ test('restarts a packaged and installed Claude MCP entry over the same owned exa
     const chromiumExecutable = chromium.executablePath();
     client = installRecoveryClient({ tarball: path.join(output, packed[0].filename), origin: fixture.origin,
       caFile: fixture.caFile, sessionId: 'controlled-recovery-session', workdir: repository,
-      ...(existsSync(chromiumExecutable) ? { chromiumExecutable } : {}) });
+      ...(process.platform === 'linux' && existsSync(chromiumExecutable) ? { chromiumExecutable } : {}) });
     const message = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
       name: 'khala_channel_access_status', arguments: { operationId: 'controlled-recovery-operation' },
     } };
