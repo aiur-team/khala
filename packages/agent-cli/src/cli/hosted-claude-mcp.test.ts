@@ -129,7 +129,12 @@ describe('hosted native Claude MCP', () => {
       const factory = vi.fn(async () => ({
         client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
           async status() { return { v: 1 as const, connected: approved, binding: approved ? binding : null,
-            route: 'native_cli_queue' as const, sourceCursor: null }; }, send },
+            route: approved ? 'manual_mcp' as const : 'unavailable' as const, sourceCursor: null,
+            ...(approved ? { readiness: { phase: 'ready' as const, errorCode: null,
+              prerequisites: { storage: 'ready' as const, device: 'ready' as const,
+                bootstrap: 'ready' as const, subscription: 'ready' as const, controls: 'ready' as const,
+                harness: 'unknown' as const, dispatch: 'blocked' as const, review: 'blocked' as const,
+                recovery: 'unknown' as const } } } : {}) }; }, send },
         inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
           generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 }),
         async close() {},

@@ -589,7 +589,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         } },
       },
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
-        if (closed || remoteDenied || deliveryStopped || !binding || !subscription || command.bindingId !== binding.bindingId) {
+        if (closed || remoteDenied || deliveryStopped || !binding || !subscription
+          || subscription.state().kind !== 'live' || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
         const held = await readBinding().catch(() => null);
@@ -663,6 +664,16 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (trusted !== 'active') return unavailable(trusted === 'revoked' ? 'binding_revoked' : 'owner_device_unverified',
           { ...receiving, controls: trusted === 'revoked' ? 'blocked' : 'unknown' });
         const controlled = { ...receiving, controls: 'ready' } as const;
+        if (input.session.harness === 'claude' && held.harness === 'proof-key') {
+          // Claude's installed MCP tools are explicitly invoked by this session. No
+          // Codex harness, listening mode, review worker, or queue is running here.
+          return { v: 1 as const, connected: true, binding: held,
+            route: 'manual_mcp' as const, sourceCursor: null,
+            readiness: { phase: 'ready' as const, prerequisites: { storage: 'ready' as const,
+              ...controlled, harness: 'unknown' as const, dispatch: 'blocked' as const,
+              review: 'blocked' as const, recovery: 'unknown' as const }, errorCode: null },
+          };
+        }
         const activeHarness = harness as HarnessPort | null;
         if (!activeHarness) return unavailable('harness_unsupported', { ...controlled, harness: 'unsupported' });
         const inspected = await activeHarness.inspect(held);

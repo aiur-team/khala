@@ -14,6 +14,7 @@ import { revocationStopId } from '../../../control/src/composition/human/revocat
 import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
+import { publicStatus } from '../../../../packages/agent-cli/src/cli/runtime';
 
 describe('installed hosted connector composition', () => {
   let chromiumFixtureDirectory: string;
@@ -24,6 +25,115 @@ describe('installed hosted connector composition', () => {
     await writeFile(chromiumExecutablePath, '#!/bin/sh\nprintf "Chromium 153.0.0.0\\n"\n', { mode: 0o700 });
   });
   afterAll(async () => { await rm(chromiumFixtureDirectory, { recursive: true, force: true }); });
+
+  it('advances an approved Claude session from connecting to manual MCP readiness', async () => {
+    const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
+    const session = { harness: 'claude' as const, sessionId: 'claude-session-1', workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const matrixUserId = '@claude-agent:example';
+    const roomId = '!claude:example';
+    const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
+    const send = vi.fn(async () => ({ eventId: '$claude-sent:example' }));
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => ({
+      fingerprint: 'claude-device-fingerprint',
+      devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
+        activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+      source: { authorize: async () => 'ok', listen: () => () => undefined, read },
+      send, trustPeer: async () => undefined, removeOwnDevice: async () => 'removed',
+      discardOutboundSession: async () => true, close: async () => undefined,
+    });
+    const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
+      headers: { 'content-type': 'application/json' } });
+    let ownerAuthorized = true;
+    let ownerTrusted = true;
+    let approvalRevoked = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const pathname = new URL(String(url)).pathname;
+      if (pathname.endsWith('/owner-mailbox/poll') && approvalRevoked) return new Response(null, { status: 403 });
+      if (pathname.endsWith('/owner-mailbox/poll')) return reply({ v: 1,
+        bindingId: 'binding-claude', generation: 0, closing: !ownerAuthorized, entries: [] });
+      if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
+        devices: ownerTrusted ? [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] : [] });
+      if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
+      if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1' });
+      if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
+      throw new Error(`unexpected ${pathname}`);
+    }));
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team', chromiumExecutablePath,
+      browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
+      openBrowser: async () => undefined,
+      openInbox: vi.fn(async (bindingId: string, generation: number, options?: unknown) => {
+        expect([bindingId, generation, options]).toEqual(['binding-claude', 0, expect.any(Object)]);
+        return { enqueue: async () => 'appended' as const,
+          notifyListener: async () => 'notified' as const };
+      }),
+    };
+    try {
+      const connector = await openProductionConnector(input);
+      try {
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_not_established' } });
+        const reservation = await connector.ports.devices.reserve('approved-operation');
+        expect(reservation.kind).toBe('reserved');
+        if (reservation.kind !== 'reserved' || !connector.proofSigner) throw new Error('missing admission proof');
+        const binding = { v: 1, bindingId: 'binding-claude', ownerId: 'owner-claude',
+          agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
+          deviceId: reservation.deviceId, harness: 'proof-key', sessionId: `agent_${connector.proofSigner.jkt}`,
+          generation: 0 } as SessionBinding;
+        const matrixSession = { baseUrl: 'https://matrix.example', userId: matrixUserId,
+          deviceId: reservation.deviceId, accessToken: 'exact-device-access-token', roomId,
+          ownerUserId: '@owner:example', ownerParticipantId: 'owner_participant' };
+        expect(await connector.ports.devices.activate({ operationId: 'approved-operation',
+          deviceId: reservation.deviceId, binding, matrixSession,
+          capability: { token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
+            scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000 },
+        })).toEqual({ kind: 'ready' });
+        await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: true,
+          route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
+            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'blocked' } } }));
+        expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
+          route: 'manual_mcp', binding });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
+        expect(send).toHaveBeenCalledOnce();
+        expect(await connector.inbox(binding.bindingId, 0)).toBeDefined();
+        expect(input.openInbox).toHaveBeenCalledWith(binding.bindingId, 0, expect.any(Object));
+        expect(input.inspectHostedCodexHooks).not.toHaveBeenCalled();
+        expect(input.resolveCodexExecutable).not.toHaveBeenCalled();
+
+        ownerAuthorized = false;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'channel_closing' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'revoked-send', body: 'blocked' })).kind).toBe('refused');
+        ownerAuthorized = true;
+        ownerTrusted = false;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'untrusted-send', body: 'blocked' })).kind).toBe('refused');
+        await rm(path.join(sessionDirectory, 'current-binding.json'));
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'lost-binding-send', body: 'blocked' })).kind).toBe('refused');
+        await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
+        approvalRevoked = true;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'revoked-approval-send', body: 'blocked' })).kind).toBe('refused');
+      } finally { await connector.close(); }
+      expect(await hasProductionBinding(directory, { ...session, sessionId: 'different-session' })).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));
