@@ -13,6 +13,13 @@ export type HostedAdmissionAuthority = Readonly<{
   current(input: ChannelAdmissionRequest): Promise<'current' | 'revoked' | 'unavailable'>;
 }>;
 
+/** Fixed, request-free vocabulary shared with the hosted exchange logger. */
+export type HostedAdmissionDiagnostic = Readonly<{
+  stage: 'admission_target_lookup' | 'admission_claim' | 'admission_matrix_inspect'
+    | 'admission_approval_recheck' | 'admission_matrix_admit';
+  result: 'ok' | 'rejected' | 'unavailable' | 'outcome_unknown';
+}>;
+
 /** The requester is the approved proof-key principal, never a claimed provider thread ID. */
 function sessionFor(input: ChannelAdmissionRequest): SessionRef | null {
   if (!/^agent_[A-Za-z0-9_-]{43}$/u.test(input.requester)) return null;
@@ -44,7 +51,11 @@ export function createHostedChannelAdmissionProvider(
   active: ProductionHumanRuntime,
   dependencies: ProductionHumanDependencies,
   authority: HostedAdmissionAuthority,
+  diagnostic?: (event: HostedAdmissionDiagnostic) => void,
 ): ChannelAdmissionProviderPort {
+  function report(stage: HostedAdmissionDiagnostic['stage'], result: HostedAdmissionDiagnostic['result']): void {
+    try { diagnostic?.({ stage, result }); } catch { /* diagnostics cannot affect admission */ }
+  }
   const matrix = createMatrixAgentAdmission({
     homeserverOrigin: active.env.publicHomeserverOrigin,
     serverName: active.env.matrixServerName,
@@ -67,37 +78,83 @@ export function createHostedChannelAdmissionProvider(
   }
 
   const admit: ChannelAdmissionProviderPort['admit'] = async input => {
-    const current = await inspect(input);
-    if (current === 'unavailable') return { kind: 'unavailable' };
-    if (current === null) return { kind: 'rejected' };
-    if (!await claimed(active, input, current.target.roomId)) return { kind: 'unavailable' };
-    const inviteRef = pairingInviteRef(current.target.roomId);
-    const before = await matrix.agents.inspect({ ownerId: input.ownerId, inviteRef, session: current.session });
-    if (before.kind !== 'ok' || before.value.roomId !== current.target.roomId) return { kind: 'unavailable' };
-    const approval = await authority.current(input);
-    if (approval !== 'current') return { kind: approval === 'revoked' ? 'rejected' : 'unavailable' };
-    const result = await matrix.agents.admit({ ownerId: input.ownerId, inviteRef,
-      session: current.session, deviceId: input.deviceId, operationId: input.providerOperationId,
-      expectedAgentParticipantId: before.value.agentParticipantId, expectedRoomId: current.target.roomId });
-    if (result.kind === 'ok') return { kind: 'admitted', membership: 'joined' };
-    if (result.kind === 'outcome_unknown') return { kind: 'outcome_unknown' };
-    return result.kind === 'rejected' ? { kind: 'rejected' } : { kind: 'unavailable' };
+    let stage: HostedAdmissionDiagnostic['stage'] = 'admission_target_lookup';
+    try {
+      const current = await inspect(input);
+      if (current === 'unavailable') { report('admission_target_lookup', 'unavailable'); return { kind: 'unavailable' }; }
+      if (current === null) { report('admission_target_lookup', 'rejected'); return { kind: 'rejected' }; }
+      stage = 'admission_claim';
+      if (!await claimed(active, input, current.target.roomId)) {
+        report('admission_claim', 'unavailable');
+        return { kind: 'unavailable' };
+      }
+      const inviteRef = pairingInviteRef(current.target.roomId);
+      stage = 'admission_matrix_inspect';
+      const before = await matrix.agents.inspect({ ownerId: input.ownerId, inviteRef, session: current.session });
+      if (before.kind !== 'ok' || before.value.roomId !== current.target.roomId) {
+        report('admission_matrix_inspect', 'unavailable');
+        return { kind: 'unavailable' };
+      }
+      stage = 'admission_approval_recheck';
+      const approval = await authority.current(input);
+      if (approval !== 'current') {
+        const result = approval === 'revoked' ? 'rejected' : 'unavailable';
+        report('admission_approval_recheck', result);
+        return { kind: result };
+      }
+      stage = 'admission_matrix_admit';
+      const result = await matrix.agents.admit({ ownerId: input.ownerId, inviteRef,
+        session: current.session, deviceId: input.deviceId, operationId: input.providerOperationId,
+        expectedAgentParticipantId: before.value.agentParticipantId, expectedRoomId: current.target.roomId });
+      if (result.kind === 'ok') {
+        report('admission_matrix_admit', 'ok');
+        return { kind: 'admitted', membership: 'joined' };
+      }
+      if (result.kind === 'outcome_unknown') {
+        report('admission_matrix_admit', 'outcome_unknown');
+        return { kind: 'outcome_unknown' };
+      }
+      const failure = result.kind === 'rejected' ? 'rejected' : 'unavailable';
+      report('admission_matrix_admit', failure);
+      return { kind: failure };
+    } catch {
+      report(stage, 'unavailable');
+      return { kind: 'unavailable' };
+    }
   };
   return {
     admit,
     async reconcile(input) {
-      const current = await inspect(input);
-      if (current === 'unavailable') return { kind: 'unavailable' };
-      if (current === null) return { kind: 'rejected' };
-      const expected = claim(input, current.target.roomId);
-      const read = await active.store.read<JsonValue>(expected.key);
-      if (read.kind === 'absent') return { kind: 'not_applied' };
-      if (read.kind !== 'record' || !sameJsonValue(read.record.value, expected.value)) return { kind: 'unavailable' };
-      const approval = await authority.current(input);
-      if (approval !== 'current') return { kind: approval === 'revoked' ? 'rejected' : 'unavailable' };
-      const membership = await matrix.inspectAgentRoomMembership(input.ownerId, current.session, current.target.roomId);
-      return membership === 'joined' ? { kind: 'admitted', membership: 'already_joined' }
-        : membership === 'absent' ? admit(input) : { kind: 'unavailable' };
+      let stage: HostedAdmissionDiagnostic['stage'] = 'admission_target_lookup';
+      try {
+        const current = await inspect(input);
+        if (current === 'unavailable') { report('admission_target_lookup', 'unavailable'); return { kind: 'unavailable' }; }
+        if (current === null) { report('admission_target_lookup', 'rejected'); return { kind: 'rejected' }; }
+        const expected = claim(input, current.target.roomId);
+        stage = 'admission_claim';
+        const read = await active.store.read<JsonValue>(expected.key);
+        if (read.kind === 'absent') return { kind: 'not_applied' };
+        if (read.kind !== 'record' || !sameJsonValue(read.record.value, expected.value)) {
+          report('admission_claim', 'unavailable');
+          return { kind: 'unavailable' };
+        }
+        stage = 'admission_approval_recheck';
+        const approval = await authority.current(input);
+        if (approval !== 'current') {
+          const result = approval === 'revoked' ? 'rejected' : 'unavailable';
+          report('admission_approval_recheck', result);
+          return { kind: result };
+        }
+        stage = 'admission_matrix_inspect';
+        const membership = await matrix.inspectAgentRoomMembership(input.ownerId, current.session, current.target.roomId);
+        if (membership === 'joined') report('admission_matrix_inspect', 'ok');
+        if (membership !== 'joined' && membership !== 'absent') report('admission_matrix_inspect', 'unavailable');
+        return membership === 'joined' ? { kind: 'admitted', membership: 'already_joined' }
+          : membership === 'absent' ? admit(input) : { kind: 'unavailable' };
+      } catch {
+        report(stage, 'unavailable');
+        return { kind: 'unavailable' };
+      }
     },
   };
 }
