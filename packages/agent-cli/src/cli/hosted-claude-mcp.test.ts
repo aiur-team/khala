@@ -27,14 +27,16 @@ function request(id: number, name: string, args: Record<string, unknown> = {}) {
 }
 
 async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: string[], sessionId = SESSION,
-  prejoinRoot?: string) {
+  prejoinRoot?: string, onStderr?: (chunk: string) => void) {
   const stdout = new PassThrough();
+  const stderr = new PassThrough();
   let output = '';
   stdout.on('data', chunk => { output += String(chunk); });
+  stderr.on('data', chunk => { onStderr?.(String(chunk)); });
   const code = await runCli(['mcp-serve'], {
     client: createUnavailableClient(),
     inbox: async () => { throw new Error('unbound inbox'); },
-    stdin: Readable.from(calls), stdout, stderr: new PassThrough(),
+    stdin: Readable.from(calls), stdout, stderr,
     env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId },
     hostedSession: factory,
     ...(prejoinRoot ? {
@@ -49,6 +51,19 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('reports a hosted session open failure without logging private exception details', async () => {
+    const diagnostics: string[] = [];
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => {
+      throw new Error('private session label and credential');
+    };
+    const result = await serve(factory, [request(1, 'khala_request_channel_access', {
+      target: 'https://khala.aiur.team/join/inviteRef123', operationId: 'same-operation',
+    })], SESSION, undefined, chunk => diagnostics.push(chunk));
+    expect(result[0]?.result.structuredContent).toMatchObject({ ok: false, error: 'unavailable',
+      operationId: 'same-operation', next: 'reuse_operation_id' });
+    expect(diagnostics.join('')).toBe('{"component":"hosted_session","stage":"open","result":"unavailable"}\n');
+  });
+
   it('uses hosted discovery and access before a binding file exists', async () => {
     const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-prejoin-'));
     try {
