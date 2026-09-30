@@ -6,6 +6,8 @@
 
 [Scope and epics](../product/ticket-breakdown.md) · [Ownership](../product/repo-layout.md) · [Review reports](reviews/) · [Executor transition](../product/executor-transition.md)
 
+The [single-link human and agent onboarding plan](2026-09-28-single-link-channel-onboarding.md) covers open follow-on tickets #532, #534, and #536, and records the personal browser links delivered by #594 after it superseded #533.
+
 | Ticket | Epic | Outcome | Plan readiness |
 |---|---|---|---|
 | [KHA-101](2026-09-16-kha-101-workspace-foundation-plan.md) | KHA-E02 | Scaffold TypeScript workspace and CI | implementation-ready |
