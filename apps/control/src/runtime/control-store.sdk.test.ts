@@ -81,4 +81,102 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
     expect(fixture.readOrigins.length).toBeGreaterThanOrEqual(3);
     expect(fixture.readOrigins.every(origin => origin === 'https://strong.invalid')).toBe(true);
   });
+
+  it('keeps fragment-bearing ledger and record keys distinct over the real SDK transport', async () => {
+    const fixture = sdkFixture(() => null);
+    const key = 'channel-access-exchange/abc';
+    const bound = await fixture.store.compareAndSet({ key, expectedRevision: null,
+      operationId: `${key}#1.bound.digest`, next: { value: { phase: 'bound' }, expiresAt: null } });
+    expect(bound.kind).toBe('applied');
+    if (bound.kind !== 'applied') return;
+    const admitting = await fixture.store.compareAndSet({ key, expectedRevision: bound.record.revision,
+      operationId: `${key}#2.admitting.digest`, next: { value: { phase: 'admitting' }, expiresAt: null } });
+    expect(admitting.kind).toBe('applied');
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { value: { phase: 'admitting' } } });
+
+    const issuance = `${key}#issuance`;
+    expect((await fixture.store.compareAndSet({ key: issuance, expectedRevision: null,
+      operationId: `${issuance}#claim`, next: { value: { phase: 'reserved' }, expiresAt: null } })).kind).toBe('applied');
+    expect(await fixture.store.read(issuance)).toMatchObject({ kind: 'record', record: { value: { phase: 'reserved' } } });
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { value: { phase: 'admitting' } } });
+    expect([...fixture.entries.keys()].filter(entry => entry.includes('#'))).toEqual([]);
+  });
+
+  it('resumes a legacy bound claim while admitting uses its own ledger key', async () => {
+    const fixture = sdkFixture(() => null);
+    const key = 'channel-access-exchange/legacy';
+    const boundId = `${key}#1.bound.digest`;
+    const boundValue = { phase: 'bound' };
+    const boundDigest = JSON.stringify([boundValue, null]);
+    fixture.entries.set(`site:operations/${key}`, { body: JSON.stringify({ key, digest: boundDigest }), etag: 'legacy-ledger' });
+    fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: boundId,
+      value: boundValue, expiresAt: null }), etag: 'legacy-bound' });
+    const loaded = await fixture.store.read(key);
+    expect(loaded).toMatchObject({ kind: 'record', record: { revision: 'legacy-bound', value: boundValue } });
+    if (loaded.kind !== 'record') return;
+    expect((await fixture.store.compareAndSet({ key, expectedRevision: null, operationId: boundId,
+      next: { value: boundValue, expiresAt: null } })).kind).toBe('applied');
+    expect((await fixture.store.compareAndSet({ key, expectedRevision: null, operationId: boundId,
+      next: { value: { phase: 'changed' }, expiresAt: null } })).kind).toBe('operation_mismatch');
+    const admitting = await fixture.store.compareAndSet({ key, expectedRevision: loaded.record.revision,
+      operationId: `${key}#2.admitting.digest`, next: { value: { phase: 'admitting' }, expiresAt: null } });
+    expect(admitting.kind).toBe('applied');
+    if (admitting.kind !== 'applied') return;
+    const sealed = await fixture.store.compareAndSet({ key, expectedRevision: admitting.record.revision,
+      operationId: `${key}#3.sealed.digest`, next: { value: { phase: 'sealed' }, expiresAt: null } });
+    expect(sealed.kind).toBe('applied');
+    expect((await fixture.store.compareAndSet({ key, expectedRevision: null, operationId: boundId,
+      next: { value: { phase: 'changed' }, expiresAt: null } })).kind).toBe('operation_mismatch');
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { value: { phase: 'sealed' } } });
+  });
+
+  it('refuses an ambiguous legacy ledger collision without its matching record', async () => {
+    const fixture = sdkFixture(() => null);
+    const key = 'channel-access-exchange/ambiguous';
+    fixture.entries.set(`site:operations/${key}`, { body: JSON.stringify({ key,
+      digest: JSON.stringify([{ phase: 'bound' }, null]) }), etag: 'orphan-ledger' });
+    expect(await fixture.store.compareAndSet({ key, expectedRevision: null,
+      operationId: `${key}#2.admitting.digest`, next: { value: { phase: 'admitting' }, expiresAt: null } }))
+      .toEqual({ kind: 'outcome_unknown', operationId: `${key}#2.admitting.digest` });
+    expect(await fixture.store.read(key)).toEqual({ kind: 'absent' });
+  });
+
+  it('migrates a proven legacy fragment record before advancing its revision', async () => {
+    const fixture = sdkFixture(() => null);
+    const base = 'channel-access-operation-binding/legacy';
+    const key = `${base}#issuance`;
+    const priorId = `${key}#claim`;
+    const priorValue = { phase: 'reserved' };
+    fixture.entries.set(`site:records/${base}`, { body: JSON.stringify({ operationId: priorId,
+      value: priorValue, expiresAt: null }), etag: 'legacy-issuance' });
+    const read = await fixture.store.read(key);
+    expect(read).toMatchObject({ kind: 'record', record: { revision: 'legacy-issuance', value: priorValue } });
+    if (read.kind !== 'record') return;
+    const advanced = await fixture.store.compareAndSet({ key, expectedRevision: read.record.revision,
+      operationId: `${key}#advance`, next: { value: { phase: 'advanced' }, expiresAt: null } });
+    expect(advanced.kind).toBe('applied');
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { value: { phase: 'advanced' } } });
+    expect((await fixture.store.compareAndSet({ key, expectedRevision: read.record.revision,
+      operationId: `${key}#advance`, next: { value: { phase: 'advanced' }, expiresAt: null } })).kind).toBe('applied');
+    expect(await fixture.store.read(base)).toMatchObject({ kind: 'record', record: { value: priorValue } });
+  });
+
+  it('continues reading existing dotted record keys at their original physical path', async () => {
+    const fixture = sdkFixture(() => null);
+    const key = 'auth.session.v1.existing';
+    fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: 'session-op',
+      value: { phase: 'active' }, expiresAt: null }), etag: 'existing-revision' });
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { revision: 'existing-revision' } });
+  });
+
+  it('keeps standalone dot path segments separate from normalized-looking keys', async () => {
+    const fixture = sdkFixture(() => null);
+    for (const [key, operationId] of [['a/../b', 'dotdot'], ['a/./b', 'dot'], ['b', 'plain']] as const) {
+      expect((await fixture.store.compareAndSet({ key, expectedRevision: null, operationId,
+        next: { value: operationId, expiresAt: null } })).kind).toBe('applied');
+    }
+    expect(await fixture.store.read('a/../b')).toMatchObject({ kind: 'record', record: { value: 'dotdot' } });
+    expect(await fixture.store.read('a/./b')).toMatchObject({ kind: 'record', record: { value: 'dot' } });
+    expect(await fixture.store.read('b')).toMatchObject({ kind: 'record', record: { value: 'plain' } });
+  });
 });
