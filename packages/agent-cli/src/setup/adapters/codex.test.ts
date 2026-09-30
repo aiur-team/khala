@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { codexHookCommand } from '../../codex/hooks-config.js';
+import { CodexHomeMissingProbeError } from '../detect.js';
 import { ConfinedFilesystem, sha256 } from '../filesystem.js';
 import { bytes, snapshot, syntheticHome } from '../fixtures/setup-home.js';
 import { executeSetupPlan, type ExecutablePlan, type ExecutionOutcome, type SetupRoots } from '../transaction.js';
@@ -32,6 +33,8 @@ let resolvable: boolean;
 let hooksFeatureEnabled: boolean;
 let mcpProbeFails: boolean;
 let hooksProbeFails: boolean;
+let unrelatedMcpFailure: boolean;
+let unrelatedHooksFailure: boolean;
 let mcpListing: string;
 let directoryProbeFails: boolean;
 
@@ -42,6 +45,8 @@ beforeEach(async () => {
   hooksFeatureEnabled = true;
   mcpProbeFails = false;
   hooksProbeFails = false;
+  unrelatedMcpFailure = false;
+  unrelatedHooksFailure = false;
   mcpListing = '[]';
   directoryProbeFails = false;
   // A live runtime descriptor exists; nothing setup writes may ever carry its port or token.
@@ -59,11 +64,13 @@ const probe: SetupProbe = {
   runVersion: async (executable, args) => {
     expect(executable).toBe(CODEX);
     if (args.join(' ') === 'mcp list --json') {
-      if (mcpProbeFails) throw new Error('CODEX_HOME does not exist');
+      if (mcpProbeFails) throw new CodexHomeMissingProbeError();
+      if (unrelatedMcpFailure) throw new Error('probe timed out');
       return mcpListing;
     }
     if (args.join(' ') === 'features list') {
-      if (hooksProbeFails) throw new Error('CODEX_HOME does not exist');
+      if (hooksProbeFails) throw new CodexHomeMissingProbeError();
+      if (unrelatedHooksFailure) throw new Error('probe timed out');
       return `hooks stable ${hooksFeatureEnabled}\n`;
     }
     expect(args).toEqual(['--version']);
@@ -209,6 +216,15 @@ describe('Codex detection', () => {
     mcpProbeFails = true;
     directoryProbeFails = true;
     expect((await adapter.detect(environment())).supported).toBe(false);
+    directoryProbeFails = false;
+    mcpProbeFails = false;
+    unrelatedMcpFailure = true;
+    expect((await adapter.detect(environment())).supported).toBe(false);
+    unrelatedMcpFailure = false;
+    mcpProbeFails = true;
+    hooksProbeFails = false;
+    unrelatedHooksFailure = true;
+    expect(states((await observe()).observation).hooks).toBe('unsupported');
   });
 });
 

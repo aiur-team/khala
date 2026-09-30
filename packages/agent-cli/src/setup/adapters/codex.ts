@@ -13,6 +13,7 @@ import { codexHookCommand, codexHookReviewState, codexHooksFragment } from '../.
 import { CODEX_HOOK_EVENTS } from '../../codex/hook.js';
 import { plainObject } from '../../cli/validation.js';
 import { codexAppSetupEntries } from '../../composition/codex-app.js';
+import { CodexHomeMissingProbeError } from '../detect.js';
 import { sha256 } from '../filesystem.js';
 import { MANIFEST_FILE, parseManifest, type ManifestEntry, type SetupManifest } from '../manifest.js';
 import type {
@@ -402,9 +403,9 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
       let mcp: string | null = null;
       try {
         mcp = await environment.probe.runVersion(executable, ['mcp', 'list', '--json']);
-      } catch {
+      } catch (error) {
         // Known versions refuse this probe when CODEX_HOME does not exist yet.
-        supported = await knownFreshCodex(environment, version);
+        supported = error instanceof CodexHomeMissingProbeError && await knownFreshCodex(environment, version);
       }
       if (mcp !== null) {
         try { supported = Array.isArray(JSON.parse(mcp)); }
@@ -433,9 +434,10 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
         try {
           const features = await environment.probe.runVersion(detection.executable, ['features', 'list']);
           nativeHooks = /^hooks\s+\S+\s+true\s*$/m.test(features);
-        } catch {
+        } catch (error) {
           // The same first-run CODEX_HOME refusal also hides native hook support.
-          nativeHooks = await knownFreshCodex(environment, detection.version);
+          nativeHooks = error instanceof CodexHomeMissingProbeError
+            && await knownFreshCodex(environment, detection.version);
         }
         if (!nativeHooks && !BLOCKED.includes(components[1]!.state)) {
           components[1] = { component: 'hooks', state: 'unsupported' };

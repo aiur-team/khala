@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter, createNodeSetupProbe, detectHarness } from './detect.js';
+import { CodexHomeMissingProbeError, PATH_HARNESS_IDS, createDiscoveryOnlyAdapter, createNodeSetupProbe, detectHarness } from './detect.js';
 import { HARNESS_IDS, type SetupEnvironment, type SetupProbe } from './types.js';
 
 const SECRET = 'sentinel-secret-detect';
@@ -111,6 +111,15 @@ describe('createNodeSetupProbe', () => {
     await expect(probe.runVersion(flood, [])).rejects.toThrow('output_limit');
     await new Promise(resolve => setTimeout(resolve, 1_500));
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it('tags only the native missing-home refusal, without exposing its path', async () => {
+    const bin = temporary();
+    const probe = createNodeSetupProbe({ pathEntries: [bin], environment: { PATH: '/usr/bin:/bin' } });
+    const missing = script(bin, 'missing-home', 'echo "Error: failed to resolve CODEX_HOME" >&2; echo "CODEX_HOME points to /private/home, but that path does not exist" >&2; exit 1');
+    const unrelated = script(bin, 'unrelated', 'echo "CODEX_HOME points to /private/home, but that path does not exist" >&2; exit 1');
+    await expect(probe.runVersion(missing, [])).rejects.toBeInstanceOf(CodexHomeMissingProbeError);
+    await expect(probe.runVersion(unrelated, [])).rejects.toThrow('nonzero_exit');
   });
 
   it('reads files without following symlinks and treats absence as null', async () => {
