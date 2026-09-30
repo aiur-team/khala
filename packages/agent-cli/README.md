@@ -785,6 +785,19 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 | CLI exposes native MCP listing | Supported skill and MCP setup; hook setup requires the enabled native hooks feature. Delivery claims remain version and route specific. On 0.159.2, an exact MCP session can submit a hosted request, while queue and hook delivery remain unproven. |
 | CLI lacks native MCP listing | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
+`mcp_entry: ready` describes the current config file, not the tools loaded into
+an already-running Codex session. After installing the entry, check that the
+**same session** actually exposes `mcp__khala__khala_connect` or
+`mcp__khala__khala_request_channel_access` before attempting hosted access.
+Codex 0.159.2 has no `codex mcp` reload command; if those tools are absent,
+exit the Codex process and resume that conversation in the same terminal with
+`codex resume` after confirming the entry is enabled. Confirm the resumed
+session's identity and model-visible tool inventory before submitting one
+owner-approved access request. A resumed conversation is a new MCP process, so
+neither the existing config nor a shell `khala connect` proves the request or
+delivery succeeded. An overall setup `drifted` state can also come from an
+unrelated harness; inspect the Codex component states separately.
+
 ## OpenCode setup adapter
 
 `createOpenCodeAdapter()` in `src/setup/adapters/opencode.ts` plans the OpenCode
