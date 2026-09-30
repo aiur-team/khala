@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { createChannelDiscoveryCredentialClient,
   activateChannelAccess, createHttpChannelAccessClient, createHttpChannelAccessRedeem, createHttpChannelAccessStatus,
   journalChannelAccessRequest, type ActivationUnavailableStage, type BootstrapPorts, type ChannelAccessActivationPorts,
-  type ChannelDiscoveryCredentialClient,
+  type ChannelDiscoveryCredentialClient, type ExchangeHttpDiagnostic,
   type ProofSigner, type SessionClaim, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { decodeAccessRequestStatus } from '@khala/contracts/messaging/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
@@ -88,8 +88,8 @@ export function hostedSessionFactory(options: Readonly<{
   openInbox: OpenGenerationInbox;
   fetch?: typeof fetch;
   credentialClient?: ChannelDiscoveryCredentialClient;
-  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' }>
-    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic)): void;
+  diagnostic?(event: Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
+    & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic)): void;
 }>): NonNullable<CliDependencies['hostedSession']> {
   return async (session: HarnessSession) => {
     const claim = { ...session, workdir: path.resolve(options.workdir) };
@@ -155,6 +155,7 @@ export function hostedSessionFactory(options: Readonly<{
         ...(options.fetch ? { fetch: options.fetch } : {}) }),
       exchange: createHttpChannelAccessClient({ signer: connector.proofSigner,
         trustedOrigins: [options.appOrigin], credential: () => discovery.current(),
+        diagnostic: event => options.diagnostic?.({ component: 'activation_exchange_http', ...event }),
         ...(options.fetch ? { fetch: options.fetch } : {}) }),
       redeem: {
         async redeem(input) {

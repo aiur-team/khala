@@ -4,9 +4,10 @@ import type { ActivationDiagnostic } from './hosted-production.js';
 import type { ChannelAccessDiagnostic } from './channel-access.js';
 import type { CandidateDiagnostic } from './proof-key-candidate.js';
 import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/channel-discovery';
+import type { ExchangeHttpDiagnostic } from '@khala/connector/bootstrap/index';
 
-type Diagnostic = Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' }>
-  & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic);
+type Diagnostic = Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
+  & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic);
 
 /** The MCP child's stderr may be hidden by its host; retain only fixed diagnostic fields. */
 export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic): void {

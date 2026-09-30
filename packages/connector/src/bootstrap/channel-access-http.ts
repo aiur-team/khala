@@ -35,9 +35,21 @@ export type ChannelAccessHttpOptions = Readonly<{
   /** The live owner-approved discovery credential; never persisted by this client. */
   credential(): DiscoveryCredential | null;
   fetch?: typeof fetch;
+  /** Exchange-only, fixed and redacted local failure checkpoint. */
+  diagnostic?(event: ExchangeHttpDiagnostic): void;
 }>;
 
-type Reply = Readonly<{ kind: 'response'; status: number; body: unknown }> | Readonly<{ kind: 'failed' }>;
+export type ExchangeHttpDiagnostic = Readonly<{
+  stage: 'credential_unavailable' | 'credential_mismatch' | 'proof_unavailable' | 'transport_failed'
+    | 'http_status' | 'body_media_type' | 'body_missing' | 'body_read_failed' | 'body_json_invalid';
+  result: 'unavailable';
+  httpStatus?: number;
+}>;
+
+type Reply =
+  | Readonly<{ kind: 'response'; status: number; body: unknown; bodyFailure?: 'body_media_type' | 'body_missing' }>
+  | Readonly<{ kind: 'failed'; stage: Exclude<ExchangeHttpDiagnostic['stage'], 'http_status' | 'body_media_type' | 'body_missing'>;
+    status?: number }>;
 
 /** Connector-only exchange and readiness client. */
 export function createHttpChannelAccessClient(options: ChannelAccessHttpOptions): ChannelAccessExchangeClient {
@@ -51,14 +63,24 @@ export function createHttpChannelAccessClient(options: ChannelAccessHttpOptions)
 
   return Object.freeze<ChannelAccessExchangeClient>({
     async exchange(request): Promise<ExchangeOutcome> {
+      function report(stage: ExchangeHttpDiagnostic['stage'], status?: number): void {
+        try { options.diagnostic?.({ stage, result: 'unavailable',
+          ...(status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}) }); }
+        catch { /* Local diagnostics cannot change an exchange outcome. */ }
+      }
       const target = url(request.origin, CHANNEL_ACCESS_EXCHANGE_PATH, request.operationId);
       if (target === null) return { kind: 'rejected', code: 'wrong_origin' };
       const reply = await protectedPost(options, transport, target, request.origin, request);
       // A lost response is retried; the service returns the same stored envelope.
-      if (reply.kind === 'failed') return { kind: 'unavailable' };
+      if (reply.kind === 'failed') {
+        report(reply.status !== undefined && reply.status !== 200 ? 'http_status' : reply.stage, reply.status);
+        return { kind: 'unavailable' };
+      }
       if (reply.status === 200 && reply.body !== null) return { kind: 'sealed', envelope: reply.body };
       const code = rejectionCode(reply);
-      return code === null ? { kind: 'unavailable' } : { kind: 'rejected', code };
+      if (code !== null) return { kind: 'rejected', code };
+      report(reply.status === 200 ? reply.bodyFailure ?? 'body_missing' : 'http_status', reply.status);
+      return { kind: 'unavailable' };
     },
 
     async acknowledge(readiness) {
@@ -122,13 +144,20 @@ function credentialMatches(credential: DiscoveryCredential | null, origin: strin
 }
 
 async function protectedPost(options: ChannelAccessHttpOptions, transport: typeof fetch, target: string, origin: string, body: unknown): Promise<Reply> {
-  const credential = options.credential();
-  if (!credentialMatches(credential, origin, options.signer)) return { kind: 'failed' };
-  const raw = JSON.stringify(body);
+  let credential: DiscoveryCredential | null;
+  try { credential = options.credential(); }
+  catch { return { kind: 'failed', stage: 'credential_unavailable' }; }
+  if (credential === null) return { kind: 'failed', stage: 'credential_unavailable' };
+  if (!credentialMatches(credential, origin, options.signer)) return { kind: 'failed', stage: 'credential_mismatch' };
+  let raw: string;
+  let proof: string;
+  try {
+    raw = JSON.stringify(body);
+    proof = options.signer.proof('POST', target, credential.credentialRef,
+      { bodyHash: createHash('sha256').update(raw).digest('base64url') });
+  } catch { return { kind: 'failed', stage: 'proof_unavailable' }; }
   return send(transport, 'POST', target, origin, {
-    authorization: `DPoP ${credential.credentialRef}`,
-    dpop: options.signer.proof('POST', target, credential.credentialRef,
-      { bodyHash: createHash('sha256').update(raw).digest('base64url') }),
+    authorization: `DPoP ${credential.credentialRef}`, dpop: proof,
   }, raw);
 }
 
@@ -203,19 +232,22 @@ async function send(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
-    return { kind: 'failed' };
+    return { kind: 'failed', stage: 'transport_failed' };
   }
   const mediaType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
   if (mediaType !== 'application/json') {
     await response.body?.cancel().catch(() => undefined);
-    return { kind: 'response', status: response.status, body: null };
+    return { kind: 'response', status: response.status, body: null, bodyFailure: 'body_media_type' };
   }
+  let bytes: Uint8Array | null;
   try {
-    const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
-    if (bytes === null || bytes.length === 0) return { kind: 'response', status: response.status, body: null };
-    return { kind: 'response', status: response.status, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) };
+    bytes = await readBounded(response, MAX_RESPONSE_BYTES);
   } catch {
-    // A truncated or unreadable body after the request reached the service: treat as lost.
-    return { kind: 'failed' };
+    return { kind: 'failed', stage: 'body_read_failed', status: response.status };
   }
+  if (bytes === null) return { kind: 'failed', stage: 'body_read_failed', status: response.status };
+  if (bytes.length === 0) return { kind: 'response', status: response.status, body: null, bodyFailure: 'body_missing' };
+  try {
+    return { kind: 'response', status: response.status, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) };
+  } catch { return { kind: 'failed', stage: 'body_json_invalid', status: response.status }; }
 }
