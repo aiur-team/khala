@@ -13,6 +13,19 @@ async function directory() {
   return root;
 }
 
+it('uses fail-safe exclusive creation on macOS without inspecting Linux process state', async () => {
+  const dir = await directory();
+  const file = path.join(dir, 'writer.lock');
+  const lock = await acquireMatrixWriterLock(dir, 'darwin');
+  expect(lock.diagnostic).toEqual({ kind: 'acquired' });
+  await expect(acquireMatrixWriterLock(dir, 'darwin')).rejects.toMatchObject({ code: 'ownership_uncertain' });
+  await lock.close();
+  await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+  await writeFile(file, '2147483647');
+  await expect(acquireMatrixWriterLock(dir, 'darwin')).rejects.toMatchObject({ code: 'ownership_uncertain' });
+  expect(await readFile(file, 'utf8')).toBe('2147483647');
+});
+
 describe.skipIf(process.platform !== 'linux')('Matrix profile writer lock', () => {
   it('recovers a dead legacy owner and reports recovery without disclosing the profile', async () => {
     const dir = await directory();
@@ -39,6 +52,31 @@ describe.skipIf(process.platform !== 'linux')('Matrix profile writer lock', () =
     expect(recovered.diagnostic.kind).toBe('stale_recovered');
     await recovered.close();
     expect(new MatrixWriterLockError('active_writer').message).toBe('matrix_writer_lock_active_writer');
+  });
+
+  it('does not disturb a live legacy writer and recovers it only after process exit', async () => {
+    const dir = await directory();
+    const file = path.join(dir, 'writer.lock');
+    const child = spawn(process.execPath, ['-e',
+      'const fs = require("node:fs"); const fd = fs.openSync(process.argv[1], "wx", 0o600); fs.writeSync(fd, String(process.pid)); process.stdout.write("READY\\n"); setInterval(() => {}, 1000);',
+      file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.stdout.once('data', data => String(data).includes('READY') ? resolve() : reject(new Error('child_not_ready')));
+        child.once('error', reject);
+        child.once('exit', () => reject(new Error('child_exited_before_lock')));
+      });
+      const owned = await readFile(file, 'utf8');
+      await expect(acquireMatrixWriterLock(dir)).rejects.toMatchObject({ code: 'active_writer' });
+      expect(await readFile(file, 'utf8')).toBe(owned);
+    } finally {
+      child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null)
+        await new Promise<void>(resolve => child.once('exit', () => resolve()));
+    }
+    const recovered = await acquireMatrixWriterLock(dir);
+    expect(recovered.diagnostic).toEqual({ kind: 'stale_recovered' });
+    await recovered.close();
   });
 
   it('admits only one simultaneous contender', async () => {

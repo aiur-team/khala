@@ -13,6 +13,10 @@ export class MatrixWriterLockError extends Error {
   }
 }
 
+function lockFailure(error: unknown): MatrixWriterLockError {
+  return error instanceof MatrixWriterLockError ? error : new MatrixWriterLockError('guard_unavailable');
+}
+
 // The kernel start tick distinguishes a reused PID from the original process.
 // Unknown process identity is never evidence that a writer has died.
 async function processStart(pid: number): Promise<string | null> {
@@ -28,7 +32,7 @@ async function processStart(pid: number): Promise<string | null> {
 
 async function withGuard<T>(root: string, work: () => Promise<T>): Promise<T> {
   const guard = path.join(root, 'writer.guard');
-  const file = await open(guard, 'a', 0o600);
+  const file = await open(guard, 'a', 0o600).catch(error => { throw lockFailure(error); });
   await file.close();
   // This file is permanent. flock is released by the kernel on process death,
   // including a crash during recovery; removing the guard would split waiters
@@ -52,6 +56,37 @@ async function withGuard<T>(root: string, work: () => Promise<T>): Promise<T> {
     child.stdin.end();
     await done;
   }
+}
+
+// The portable fallback keeps the original exclusive-create contract. Without
+// Linux owner identity and the guard, an existing lock is never reclaimed.
+async function acquireExclusive(root: string): Promise<Readonly<{
+  diagnostic: MatrixWriterLockDiagnostic;
+  close(): Promise<void>;
+}>> {
+  const lockPath = path.join(root, 'writer.lock');
+  let handle;
+  try { handle = await open(lockPath, 'wx', 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+      throw new MatrixWriterLockError('ownership_uncertain');
+    throw new MatrixWriterLockError('guard_unavailable');
+  }
+  try { await handle.writeFile(String(process.pid)); }
+  catch {
+    try { await handle.close(); await rm(lockPath, { force: true }); } catch { /* Fail closed if cleanup fails. */ }
+    throw new MatrixWriterLockError('guard_unavailable');
+  }
+  let closed = false;
+  return {
+    diagnostic: { kind: 'acquired' },
+    async close() {
+      if (closed) return;
+      try { await handle.close(); await rm(lockPath, { force: true }); }
+      catch (error) { throw lockFailure(error); }
+      closed = true;
+    },
+  };
 }
 
 async function ownerState(lockPath: string): Promise<'absent' | 'active' | 'stale' | 'uncertain'> {
@@ -82,10 +117,11 @@ async function ownerState(lockPath: string): Promise<'absent' | 'active' | 'stal
 }
 
 /** Only the fixed diagnostic crosses the substrate boundary; no owner path or PID is exposed. */
-export async function acquireMatrixWriterLock(root: string): Promise<Readonly<{
+export async function acquireMatrixWriterLock(root: string, platform: NodeJS.Platform = process.platform): Promise<Readonly<{
   diagnostic: MatrixWriterLockDiagnostic;
   close(): Promise<void>;
 }>> {
+  if (platform !== 'linux') return acquireExclusive(root);
   const lockPath = path.join(root, 'writer.lock');
   const start = await processStart(process.pid);
   if (start === null) throw new MatrixWriterLockError('ownership_uncertain');
@@ -101,7 +137,7 @@ export async function acquireMatrixWriterLock(root: string): Promise<Readonly<{
       await writeFile(temporary, JSON.stringify(owner), { flag: 'wx', mode: 0o600 });
       await link(temporary, lockPath);
     } finally { await rm(temporary, { force: true }); }
-  });
+  }).catch(error => { throw lockFailure(error); });
   let closed = false;
   return {
     diagnostic: { kind: recovered ? 'stale_recovered' : 'acquired' },
@@ -114,7 +150,7 @@ export async function acquireMatrixWriterLock(root: string): Promise<Readonly<{
         });
         if (raw !== JSON.stringify(owner)) throw new MatrixWriterLockError('ownership_uncertain');
         await rm(lockPath);
-      });
+      }).catch(error => { throw lockFailure(error); });
       closed = true;
     },
   };
