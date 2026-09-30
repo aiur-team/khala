@@ -100,6 +100,7 @@ describe('connector agent presence source', () => {
       generation: 3,
       agents: [{
         participantId: binding.agentParticipantId,
+        ownerId: binding.ownerId,
         displayName: 'Build agent',
         ownerDisplayName: 'Owner',
         connection: 'connected',

@@ -10,7 +10,9 @@ type OpenInput = Readonly<{
 }>;
 type BrowserEvent = Readonly<{
   eventId: string; roomId: string; senderUserId: string; senderDeviceId: string | null;
-  body: string | null; failure: 'missing_keys' | 'withheld_unverified' | 'withheld' | 'decrypt_failed' | 'unsupported' | null;
+  receivedAt: string;
+  body: string | null; agentParticipantId: string | null; nameSnapshot?: boolean; nameSourceEventId?: string | null;
+  failure: 'missing_keys' | 'withheld_unverified' | 'withheld' | 'decrypt_failed' | 'unsupported' | null;
 }>;
 type SyncPage = Readonly<{ events: readonly BrowserEvent[]; nextCursor: string; limited: boolean }>;
 
@@ -28,6 +30,7 @@ type MatrixBrowserApi = Readonly<{
   discardOutboundSession(): Promise<boolean>;
   authorize(): Promise<'ok' | 'revoked' | 'expired' | 'unavailable'>;
   read(cursor: string | null, limit: number): Promise<SyncPage>;
+  members(): Promise<readonly string[]>;
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   close(): Promise<void>;
 }>;
@@ -94,13 +97,18 @@ async function eventFromWire(raw: Record<string, unknown>): Promise<BrowserEvent
   if (typeof eventId !== 'string' || typeof roomId !== 'string' || typeof sender !== 'string') return null;
   if (roomId !== active.roomId || raw.type !== 'm.room.encrypted') return null;
   const placeholder = (reason: BrowserEvent['failure'], deviceId: string | null = null): BrowserEvent => ({
-    eventId, roomId, senderUserId: sender, senderDeviceId: deviceId, body: null, failure: reason,
+    eventId, roomId, senderUserId: sender, senderDeviceId: deviceId,
+    receivedAt: new Date(Number(raw.origin_server_ts) || 0).toISOString(),
+    body: null, agentParticipantId: null, failure: reason,
   });
   const event = new MatrixEvent(raw);
   try { await matrix.decryptEventIfNeeded(event); } catch { return placeholder('decrypt_failed'); }
   if (event.isDecryptionFailure()) return placeholder(failure(event.decryptionFailureReason));
-  if (event.getType() !== 'm.room.message' || event.getContent().msgtype !== 'm.text'
-    || typeof event.getContent().body !== 'string') return placeholder('unsupported');
+  const content = event.getContent();
+  if (event.getType() !== 'm.room.message' || typeof content.body !== 'string'
+    || (content.msgtype !== MsgType.Text && content.msgtype !== MsgType.Notice)) return placeholder('unsupported');
+  if (content.msgtype === MsgType.Notice && typeof content['com.khala.agent_participant_id'] !== 'string')
+    return placeholder('unsupported');
   const crypto = matrix.getCrypto();
   if (!crypto) return placeholder('decrypt_failed');
   const senderKey = event.getSenderKey();
@@ -113,7 +121,10 @@ async function eventFromWire(raw: Record<string, unknown>): Promise<BrowserEvent
   const status = await crypto.getDeviceVerificationStatus(sender, device.deviceId);
   requireTrustReady();
   if (!status?.isVerified()) return placeholder('withheld_unverified', device.deviceId);
-  return { eventId, roomId, senderUserId: sender, senderDeviceId: device.deviceId, body: event.getContent().body, failure: null };
+  return { eventId, roomId, senderUserId: sender, senderDeviceId: device.deviceId, body: content.body,
+    receivedAt: new Date(event.getTs()).toISOString(),
+    agentParticipantId: content.msgtype === MsgType.Notice ? content['com.khala.agent_participant_id'] as string : null,
+    ...(content['com.khala.name_snapshot'] === true ? { nameSnapshot: true, nameSourceEventId: content['com.khala.name_source_event_id'] as string | null } : {}), failure: null };
 }
 
 window.khalaMatrix = {
@@ -260,6 +271,11 @@ window.khalaMatrix = {
       if (event) events.push(event);
     }
     return { events, nextCursor: body.next_batch, limited: timeline?.limited === true };
+  },
+  async members() {
+    if (!active || !client) throw new Error('matrix_closed');
+    const result = await client.getJoinedRoomMembers(active.roomId);
+    return Object.keys(result.joined);
   },
   async send(clientTxnId, body) {
     requireTrustReady();

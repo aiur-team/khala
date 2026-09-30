@@ -154,6 +154,23 @@ async function khala(h: Harness, args: readonly string[]) {
 const occurrences = (text: string, needle: string) => text.split(needle).length - 1;
 
 describe('internal inbox delivery', () => {
+  it('delivers a rename between the surrounding messages through agent read', async () => {
+    const h = await start();
+    say(h, 'before rename');
+    const renamed = h.fixture.store.send({ channelId, eventId: 'event-agent-rename' as EventId,
+      authorParticipantId: alice.participantId, authorDeviceId: aliceDevice,
+      clientTxnId: 'txn-agent-rename', content: { v: 1, kind: 'agent_rename',
+        agentParticipantId: bob.participantId, body: 'Dolan' }, receivedAt: new Date(NOW + ++sent).toISOString() });
+    expect(renamed.kind).toBe('stored');
+    say(h, 'after rename');
+    const read = await khala(h, ['read']);
+    expect(read.code).toBe(0);
+    expect(read.out.indexOf('before rename')).toBeLessThan(read.out.indexOf('khala.agent-rename.v1'));
+    expect(read.out.indexOf('khala.agent-rename.v1')).toBeLessThan(read.out.indexOf('after rename'));
+    expect(read.out).toContain('Dolan');
+    expect(occurrences(read.out, 'khala.agent-rename.v1')).toBe(1);
+  });
+
   it('shows a human message exactly once in khala read, and never again after acknowledgement', async () => {
     const h = await start();
     const eventId = say(h, BODY);

@@ -1,6 +1,6 @@
 import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
 import { CliError } from '../cli/errors.js';
-import type { InboxBatch, InboxConsumer } from '../cli/inbox.js';
+import type { CurrentAgentName, InboxBatch, InboxConsumer } from '../cli/inbox.js';
 import { validBindingArgument } from '../cli/validation.js';
 
 export type ReadInput = Readonly<{
@@ -13,7 +13,7 @@ export type ReadInput = Readonly<{
 
 export type ReadResult =
   | Readonly<{ kind: 'batch'; batch: InboxBatch }>
-  | Readonly<{ kind: 'empty' }>;
+  | Readonly<{ kind: 'empty'; currentNames?: readonly CurrentAgentName[] }>;
 
 export type ReadOperationOptions = Readonly<{
   heldBinding: SessionBinding;
@@ -57,10 +57,11 @@ export class ReadOperation {
       ...(input.turnStart === undefined ? {} : { turnStart: input.turnStart }),
     });
 
+    const currentNames = batch === null ? await this.#consumer.readCurrentNames?.() : undefined;
     if (!sameHeldBinding(this.#heldBinding, await this.#currentBinding())) {
       throw new CliError('binding_not_held');
     }
-    return batch === null ? { kind: 'empty' } : { kind: 'batch', batch };
+    return batch === null ? { kind: 'empty', ...(currentNames?.length ? { currentNames } : {}) } : { kind: 'batch', batch };
   }
 }
 

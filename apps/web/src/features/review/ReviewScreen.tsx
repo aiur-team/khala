@@ -120,7 +120,8 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
     if (submission.phase === 'released') releaseStatusRef.current?.focus();
   }, [submission.phase]);
 
-  const visible = view.pending.filter(item => !hidden.has(item.ref.eventId));
+  const visible = view.pending.filter((item): item is Extract<TimelineItem, { content: { kind: 'text' | 'unavailable' } }> =>
+    (item.content.kind === 'text' || item.content.kind === 'unavailable') && !hidden.has(item.ref.eventId));
   const readableVisible = visible.filter(isReadable);
   const shown = filter === 'selected' ? visible.filter(item => isReadable(item) && selection.refs.some(ref => sameEventRef(ref, item.ref))) : visible;
   const resolveDisplayName = buildDisplayNameResolver(view.pending.map(item => item.participant));

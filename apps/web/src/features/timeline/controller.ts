@@ -26,6 +26,9 @@ const rowId = (row: TimelineRow) => row.kind === 'message' ? row.item.ref.eventI
 export type TimelineData = Readonly<{
   phase: TimelinePhase;
   items: readonly TimelineItem[];
+  /** Complete allowed history when the background name replay reaches its boundary. */
+  nameHistory?: readonly TimelineItem[];
+  namesReady?: boolean;
   rows?: readonly TimelineRow[];
   nextCursor: string | null;
   newMessageCount: number;
@@ -39,6 +42,8 @@ export interface TimelineController {
   subscribe(listener: () => void): () => void;
   /** Prepends one older page. A no-op once `dispose()` has run. */
   loadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null>;
+  /** Reads the permitted history for stable agent-name attribution without expanding visible pages. */
+  scanNameHistory?(): Promise<void>;
   /** Tells the controller whether the reader is scrolled to the newest item. */
   setReaderAtLatest(atLatest: boolean): void;
   /** Idempotent; unsubscribes the channel observer exactly once. */
@@ -54,6 +59,7 @@ export function createTimelineController(
   const { generation } = options;
 
   let older: readonly TimelineItem[] = [];
+  let hiddenOlder: readonly TimelineItem[] = [];
   let recent: readonly TimelineItem[] = [];
   let recentRows: readonly TimelineRow[] | null = null;
   let nextCursor: string | null = null;
@@ -63,6 +69,17 @@ export function createTimelineController(
   let readingHistory = false;
   let disposed = false;
   let membership: ChannelMembership | null = null;
+  let namesReady = false;
+  let nameScanReachedBoundary = false;
+  const unavailableNameEvents = new Set<EventId>();
+  function recordNamePage(page: TimelinePage): void {
+    for (const id of page.unavailableEventIds ?? []) unavailableNameEvents.add(id);
+    for (const item of page.items) {
+      if (item.content.kind === 'unavailable') unavailableNameEvents.add(item.ref.eventId);
+      else unavailableNameEvents.delete(item.ref.eventId);
+    }
+  }
+  let hasInitialPage = false;
   // Set on a failed history read, cleared only by a *successful* one — a live
   // snapshot arriving in between must not paper over a known history gap by
   // reporting `ready` (order-independent: forbidden-then-snapshot and
@@ -86,6 +103,12 @@ export function createTimelineController(
 
   function getSnapshot(): TimelineData {
     if (!dataDirty && cachedData) return cachedData;
+    const nameHistoryIds = new Set<string>();
+    const nameHistory = [...hiddenOlder, ...older, ...recent].filter(item => {
+      if (nameHistoryIds.has(item.ref.eventId)) return false;
+      nameHistoryIds.add(item.ref.eventId);
+      return true;
+    });
     const items = mergedItems();
     const liveRows = recentRows;
     const liveIds = new Set(liveRows?.map(rowId));
@@ -95,7 +118,9 @@ export function createTimelineController(
         const decoded = row.kind === 'unavailable' ? olderById.get(row.eventId) : undefined;
         return decoded ? { kind: 'message' as const, item: decoded } : row;
       })];
-    cachedData = { phase, items, rows, nextCursor, newMessageCount, membership };
+    cachedData = { phase, items, rows, nameHistory, namesReady,
+      nextCursor: hiddenOlder.length > 0 ? 'cached' : nextCursor, newMessageCount, membership };
+
     dataDirty = false;
     return cachedData;
   }
@@ -144,11 +169,16 @@ export function createTimelineController(
       const existing = rows.get(rowId(entry));
       if (!existing || entry.kind === 'message') rows.set(rowId(entry), entry);
     }
+    for (const row of rows.values()) {
+      if (row.kind === 'unavailable') unavailableNameEvents.add(row.eventId);
+      else unavailableNameEvents.delete(row.item.ref.eventId);
+    }
+    namesReady = nameScanReachedBoundary && unavailableNameEvents.size === 0;
     recentRows = [...rows.values()];
     recent = recentRows.flatMap(row => row.kind === 'message' ? [row.item] : []);
     itemsDirty = true;
     membership = view.room?.membership ?? membership;
-    phase = historyDegraded ? degradedPhase() : view.room ? 'ready' : 'loading';
+    phase = historyDegraded || nameScanReachedBoundary && !namesReady ? degradedPhase() : view.room ? 'ready' : 'loading';
     // History can publish after its request resolves; source IDs distinguish it
     // from live events even when server timestamps tie or move backwards.
     if (!readerAtLatest && !readingHistory) {
@@ -169,7 +199,7 @@ export function createTimelineController(
     if (disposed) return Promise.resolve(null);
     if (inFlightLoadOlder) return inFlightLoadOlder;
     readingHistory = true;
-    const request = performLoadOlder().finally(() => {
+    const request = (scanInFlight ? scanInFlight.then(() => performLoadOlder()) : performLoadOlder()).finally(() => {
       readingHistory = false;
       inFlightLoadOlder = null;
     });
@@ -178,6 +208,14 @@ export function createTimelineController(
   }
 
   async function performLoadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null> {
+    if (hiddenOlder.length > 0) {
+      const reveal = hiddenOlder.slice(-pageSize);
+      hiddenOlder = hiddenOlder.slice(0, -reveal.length);
+      older = [...reveal, ...older];
+      itemsDirty = true;
+      notify();
+      return null;
+    }
     const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
     if (disposed) return null;
     if (result.kind !== 'ok') {
@@ -193,6 +231,8 @@ export function createTimelineController(
     }
     const knownIds = new Set([...older, ...recent].map(item => item.ref.eventId));
     const additions = result.value.items.filter(item => !knownIds.has(item.ref.eventId));
+    recordNamePage(result.value);
+    hasInitialPage = true;
     older = [...additions, ...older];
     nextCursor = result.value.nextCursor;
     historyDegraded = null;
@@ -200,6 +240,47 @@ export function createTimelineController(
     itemsDirty = true;
     notify();
     return result;
+  }
+
+  let scanInFlight: Promise<void> | null = null;
+
+  function scanNameHistory(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    if (scanInFlight) return scanInFlight;
+    const run = (async () => {
+      if (inFlightLoadOlder) await inFlightLoadOlder;
+      if (!hasInitialPage) return;
+      while (!disposed && nextCursor !== null) {
+        const requestedCursor = nextCursor;
+        const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
+        if (disposed) return;
+        if (result.kind !== 'ok') {
+          historyDegraded = degradedPhase();
+          phase = historyDegraded;
+          notify();
+          return;
+        }
+        if (result.value.nextCursor === requestedCursor) {
+          historyDegraded = degradedPhase();
+          phase = historyDegraded;
+          notify();
+          return;
+        }
+        recordNamePage(result.value);
+        const known = new Set([...hiddenOlder, ...older, ...recent].map(item => item.ref.eventId));
+        hiddenOlder = [...result.value.items.filter(item => !known.has(item.ref.eventId)), ...hiddenOlder];
+        nextCursor = result.value.nextCursor;
+        notify();
+      }
+      if (!disposed) {
+        nameScanReachedBoundary = true;
+        namesReady = unavailableNameEvents.size === 0;
+        if (!namesReady) phase = degradedPhase();
+        notify();
+      }
+    })();
+    scanInFlight = run.finally(() => { scanInFlight = null; });
+    return scanInFlight;
   }
 
   function setReaderAtLatest(atLatest: boolean): void {
@@ -217,5 +298,5 @@ export function createTimelineController(
     disposeObserve();
   }
 
-  return { getSnapshot, subscribe, loadOlder, setReaderAtLatest, dispose };
+  return { getSnapshot, subscribe, loadOlder, scanNameHistory, setReaderAtLatest, dispose };
 }

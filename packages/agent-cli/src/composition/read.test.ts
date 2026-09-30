@@ -35,6 +35,21 @@ describe('ReadOperation', () => {
     expect(held.release).not.toHaveBeenCalled();
   });
 
+  it('returns authenticated current names even while the ordered timeline is empty', async () => {
+    const currentNames = [{ participantId: 'agent-1', name: 'Dolan', eventId: 'snapshot-1', sourceEventId: 'rename-1' }];
+    const operation = new ReadOperation({ heldBinding: BINDING,
+      consumer: { ...consumer(async () => null), readCurrentNames: async () => currentNames }, currentBinding: async () => BINDING });
+    await expect(operation.read({ bindingId: null, maxBytes: 4096 })).resolves.toEqual({ kind: 'empty', currentNames });
+  });
+
+  it('withholds current-name metadata when its binding is revoked during the metadata read', async () => {
+    let revoked = false;
+    const operation = new ReadOperation({ heldBinding: BINDING, consumer: { ...consumer(async () => null),
+      readCurrentNames: async () => { revoked = true; return [{ participantId: 'agent-1', name: 'Dolan', eventId: 'snapshot-1', sourceEventId: 'rename-1' }]; } },
+      currentBinding: async () => revoked ? null : BINDING });
+    await expect(operation.read({ bindingId: null, maxBytes: 4096 })).rejects.toMatchObject({ code: 'binding_not_held' });
+  });
+
   it('passes only an explicitly supplied acknowledgement token to the inbox', async () => {
     const readBatch = vi.fn(async () => null);
     const operation = new ReadOperation({

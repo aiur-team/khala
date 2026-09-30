@@ -8,7 +8,7 @@
 // broadens a selection.
 
 import type { BindingId } from '@khala/contracts/delivery/ids';
-import type { EventRef, MessageContent, TimelineItem } from '@khala/contracts/messaging/index';
+import type { EventRef, TimelineItem } from '@khala/contracts/messaging/index';
 import { sameEventRef } from '@khala/contracts/messaging/index';
 import type { SelectionPhase, SelectionSnapshot } from './model';
 
@@ -25,7 +25,7 @@ export function emptySelection(): SelectionState {
 }
 
 /** True only for an item with recoverable text content; an unavailable placeholder is never selectable. */
-export function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: MessageContent }> {
+export function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: { kind: 'text' } }> {
   return item.content.kind === 'text';
 }
 

@@ -42,7 +42,7 @@ function refusalCode(result) {
 function readBodies(result) {
   success(result);
   return [...result.out.matchAll(/^canonicalReleaseJson:\n(.+)$/gm)]
-    .flatMap(([, json]) => JSON.parse(json)[5].map(item => item.at(-1)));
+    .flatMap(([, json]) => JSON.parse(json)[5].map(item => item[5]));
 }
 
 function installFromQuickstart(temp) {

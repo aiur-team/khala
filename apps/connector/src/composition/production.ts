@@ -36,6 +36,10 @@ import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowle
 import type { HarnessPort } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
+import { createAgentParticipantLookup } from './agent/participant-directory';
+import { renameDelivery } from './agent/rename-delivery';
+import { readOrderedPendingReferences } from '@khala/connector/storage/ordered-pending';
+import { createOrderedProjection } from './agent/ordered-projection';
 import type { AgentListeningModeSetInput } from '@khala/connector/agent/listening-mode';
 
 function productionLimits() {
@@ -142,7 +146,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     recordAcknowledgement?: (acknowledgement: Acknowledgement) => Promise<void>;
   }>) => Promise<LocalInbox>;
   const rawOpenInbox = input.openInbox as unknown as OpenInbox;
-  const openHostedInbox: OpenInbox = (bindingId, generation) => {
+  const projections = new Map<string, ReturnType<typeof createOrderedProjection>>();
+  const projectionFor = (bindingId: string, generation: number) => {
+    const key = JSON.stringify([bindingId, generation]);
+    let projection = projections.get(key);
+    if (!projection) { projection = createOrderedProjection(path.join(sessionDirectory, `projection-${createHash('sha256').update(key).digest('hex')}.json`)); projections.set(key, projection); }
+    return projection;
+  };
+  const openRawHostedInbox: OpenInbox = (bindingId, generation) => {
     if (closed || remoteDenied || deliveryStopped) throw new Error('production_binding_revoked');
     return rawOpenInbox(bindingId, generation, {
     recordAcknowledgement: async acknowledgement => {
@@ -150,12 +161,36 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         || acknowledgement.bindingId !== bindingId || acknowledgement.generation !== generation) {
         throw new Error('acknowledgement_binding_mismatch');
       }
+      const releases = await projectionFor(bindingId, generation).acknowledge(acknowledgement.releaseIds);
+      if (releases.length === 0) return;
       const result = await acknowledgementRecorder.recordBatchAcknowledgement({
         principal: { bindingId: binding.bindingId, generation: binding.generation },
-        releaseIds: acknowledgement.releaseIds as never,
+        releaseIds: releases as never,
       });
       if (result.kind === 'refused') throw new Error('acknowledgement_refused');
     },
+    }).then(inbox => new Proxy(inbox, { get(target, property, receiver) {
+      if (property === 'enqueue') return (delivery: Parameters<LocalInbox['enqueue']>[0]) => {
+        if (closed || remoteDenied || deliveryStopped || !binding || binding.bindingId !== bindingId || binding.generation !== generation) {
+          throw new Error('production_binding_revoked');
+        }
+        return target.enqueue(delivery);
+      };
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }));
+  };
+  const openHostedInbox: OpenInbox = (bindingId, generation) => {
+    const opened = openRawHostedInbox(bindingId, generation);
+    return opened.then(async inbox => {
+      const projection = projectionFor(bindingId, generation);
+      await projection.flush(inbox);
+      // Preserve call/wake consumers on the CLI's FileInbox prototype.
+      return new Proxy(inbox, { get(target, property, receiver) {
+        if (property === 'enqueue') return (delivery: Parameters<LocalInbox['enqueue']>[0]) => projection.enqueue(delivery, target);
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
     });
   };
   const matrix = createMatrixBootstrapDevice({
@@ -164,6 +199,32 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
+    resolveParticipants: async (userIds, targetParticipantIds) => {
+      if (!binding || !signer || closed || remoteDenied || deliveryStopped) return null;
+      const session = await matrixSession();
+      return createAgentParticipantLookup({ appOrigin: input.appOrigin, binding, roomId: session.roomId,
+        signer, capability: () => capabilityFor(binding!).ensure() })(userIds, targetParticipantIds);
+    },
+    onText: async event => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      await projectionFor(binding.bindingId, binding.generation).observe(event.roomId, event.eventId, event.authorName);
+      return true;
+    },
+    onCurrentNames: async names => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      const inbox = await openRawHostedInbox(binding.bindingId, binding.generation);
+      if (!inbox.setCurrentNames) return false;
+      await inbox.setCurrentNames(names);
+      return true;
+    },
+    onRename: async event => {
+      if (!binding || closed || remoteDenied || deliveryStopped) return false;
+      try {
+        const inbox = await openRawHostedInbox(binding.bindingId, binding.generation);
+        await projectionFor(binding.bindingId, binding.generation).metadata(renameDelivery(binding, event), inbox);
+        return true;
+      } catch { return false; }
+    },
     ...(input.openMatrix ? { open: input.openMatrix } : {}),
   });
   let closed = false;
@@ -299,6 +360,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         bindingId: next.bindingId, ownerId: next.ownerId, generation: next.generation,
         policyVersion: 0 }), result: undefined };
     });
+    await projectionFor(next.bindingId, next.generation).seedLegacy(readOrderedPendingReferences(storage, next));
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,

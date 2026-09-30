@@ -10,6 +10,7 @@ import { encodeMessageContent } from '@khala/contracts/messaging/events';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 
 export type LocalInbox = Readonly<{
+  setCurrentNames?(names: readonly Readonly<{ participantId: string; name: string; sourceEventId: string | null; eventId: string }>[]): Promise<void>;
   enqueue(delivery: Readonly<{ v: 1; releaseId: string; bindingId: string; generation: number;
     events: ReleasedJob['events']; payloadDigest: string; payload: Uint8Array; receivedAt: string }>): Promise<'appended' | 'duplicate'>;
   notifyListener(reason: 'released'): Promise<'notified' | 'unavailable'>;

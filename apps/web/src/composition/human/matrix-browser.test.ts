@@ -92,6 +92,7 @@ describe('Matrix browser safety boundaries', () => {
       getType: () => EventType.RoomMessage,
       isDecryptionFailure: () => false,
       getClearContent: () => ({ body: 'Verified plaintext' }),
+      getContent: () => ({ body: 'Verified plaintext', msgtype: 'm.text' }),
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$event',
     };
@@ -119,6 +120,7 @@ describe('Matrix browser safety boundaries', () => {
       getType: () => decrypted ? EventType.RoomMessage : 'm.room.encrypted',
       isDecryptionFailure: () => false,
       getClearContent: () => decrypted ? { body: 'Recovered plaintext' } : {},
+      getContent: () => decrypted ? { body: 'Recovered plaintext', msgtype: 'm.text' } : {},
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$late',
       on: vi.fn((kind: string, callback: () => void) => { if (kind === MatrixEventEvent.Decrypted) decryptListeners.add(callback); }),
@@ -187,7 +189,7 @@ describe('Matrix browser safety boundaries', () => {
       getId: () => '$same', getSender: () => '@owner:example.test', getTs: () => Date.parse('2026-09-29T23:00:00Z'),
       isDecryptionFailure: () => false,
       getType: () => decrypted ? EventType.RoomMessage : 'm.room.encrypted',
-      getContent: () => decrypted ? { body: 'Recovered text' } : {},
+      getContent: () => decrypted ? { msgtype: 'm.text', body: 'Recovered text' } : {},
       getUnsigned: () => ({}),
     } as unknown as MatrixEvent;
     expect(projectMatrixTimelineEvent(event, participant, null, limits.value)).toMatchObject({
@@ -198,4 +200,33 @@ describe('Matrix browser safety boundaries', () => {
       kind: 'message', eventId: '$same', content: { body: 'Recovered text' },
     });
   });
+
+  it('drops a malformed notice target before participant target resolution', () => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const participant: ParticipantView = { participantId: 'human_one' as never, ownerId: 'owner_one' as never,
+      kind: 'human', displayName: 'Maya', deviceIds: [] };
+    const event = { getId: () => '$bad', getSender: () => '@maya:example.test', getTs: () => 0,
+      isDecryptionFailure: () => false, getType: () => EventType.RoomMessage, getUnsigned: () => ({}),
+      getContent: () => ({ msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': '' }),
+    } as unknown as MatrixEvent;
+    expect(projectMatrixTimelineEvent(event, participant, 'DEVICE_ONE' as never, limits.value)).toBeNull();
+  });
+
+  it.each(['agent_rename', 'agent_name_snapshot'] as const)('preserves %s metadata in the shared Matrix event projection', kind => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const participant: ParticipantView = { participantId: 'human_one' as never, ownerId: 'owner_one' as never,
+      kind: 'human', displayName: 'Maya', deviceIds: [] };
+    const event = { getId: () => '$name', getSender: () => '@maya:example.test', getTs: () => 0,
+      isDecryptionFailure: () => false, getType: () => EventType.RoomMessage, getUnsigned: () => ({}),
+      getContent: () => ({ msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': 'agent_one',
+        ...(kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': '$prior' } : {}) }),
+    } as unknown as MatrixEvent;
+    expect(projectMatrixTimelineEvent(event, participant, 'DEVICE_ONE' as never, limits.value)).toMatchObject({
+      kind: 'message', content: { kind, agentParticipantId: 'agent_one', body: 'Dolan',
+        ...(kind === 'agent_name_snapshot' ? { sourceEventId: '$prior' } : {}) },
+    });
+  });
+
 });

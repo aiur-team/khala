@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
+import { projectTimelineNames } from '../../features/timeline/names';
+import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Panel } from '../../shell/Panel';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
@@ -34,11 +36,25 @@ function reviewScope(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRo
   return JSON.stringify([context.principal.ownerId, context.generation, roomId]);
 }
 
-const unavailablePresence: ChannelUiPort = {
-  async agents() { throw new Error('agent presence unavailable'); },
-  subscribeAgents: () => () => undefined,
-  async installCommand() { throw new Error('agent onboarding unavailable'); },
-};
+function hostedPresence(context: Parameters<HumanRoomRenderer>[0]): ChannelUiPort {
+  const agents: ChannelUiPort['agents'] = async (roomId, signal) => {
+    const participants = await context.roomParticipants?.(roomId, signal);
+    if (!participants) throw new Error('agent roster unavailable');
+    return { generation: context.generation, agents: participants.filter(item => item.kind === 'agent').map(item => ({
+      participantId: item.participantId, ownerId: item.ownerId, displayName: item.displayName,
+      ownerDisplayName: participants.find(owner => owner.kind === 'human' && owner.ownerId === item.ownerId)?.displayName ?? 'Channel member',
+      connection: 'unknown' as const, routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown' as const,
+    })) };
+  };
+  return {
+    agents,
+    subscribeAgents(roomId, listener) {
+      const timer = setInterval(() => { const abort = new AbortController(); void agents(roomId, abort.signal).then(listener).catch(() => {}); }, 5_000);
+      return () => clearInterval(timer);
+    },
+    async installCommand() { throw new Error('agent onboarding unavailable'); },
+  };
+}
 
 export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, routes) => (
   <HumanRoom key={`${context.principal.ownerId}:${context.generation}:${route.roomId}`} context={context} roomId={route.roomId}
@@ -234,8 +250,8 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
   [context.principal.ownerId, deviceId, roomId]);
   const room = useMemo(
-    () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
-    [context.generation, roomId],
+    () => createChannelController(hostedPresence(context), { roomId, generation: context.generation }),
+    [context, roomId],
   );
   const recovery = useMemo(() => createBrowserRecoveryPort({
     principal: context.principal, identity: context.identity, device: context.device,
@@ -250,6 +266,13 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     recovery.dispose();
   }, [room, timeline, recovery]);
   const viewer = context.participant?.() ?? null;
+  const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
+  const presence = useSyncExternalStore(room.subscribe, room.getSnapshot, room.getSnapshot);
+  const extraParticipants = presence.agents.flatMap(agent => agent.ownerId ? [{
+    participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const,
+    initialName: agent.displayName,
+  }] : []);
+  const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
   const toolsRoot = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!toolsOnly) return;
@@ -291,6 +314,20 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
+      viewerOwnerId={viewer.ownerId}
+      renameScope={roomId}
+      namesPending={timelineData.namesReady === false}
+      {...(currentNames ? { currentNames } : {})}
+      renameAgent={async (participantId, name, clientTxnId) => {
+        const checked = validateAgentName(name);
+        const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
+        if (!checked.ok || checked.name !== name || viewer.kind !== 'human'
+          || target?.ownerId !== viewer.ownerId || timeline.getSnapshot().membership !== 'joined') return 'rejected';
+        const result = await context.room.send({ roomId, clientTxnId,
+          content: { v: 1, kind: 'agent_rename', agentParticipantId: participantId, body: name } });
+        if (result.kind === 'rejected') return 'rejected';
+        return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
+      }}
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         sponsor={context.principal.verifiedEmail}
@@ -298,6 +335,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
+          extraParticipants={extraParticipants}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

@@ -7,6 +7,8 @@ import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
+import { projectTimelineNames } from '../../features/timeline/names';
+import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Panel } from '../../shell/Panel';
 import { LocalToolsIcon } from '../../shell/icons';
 import type { HumanRouteContext } from '../../composition/human/application';
@@ -157,6 +159,24 @@ export function LocalRoom({
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  const localPresence = useMemo<ChannelUiPort>(() => transport.participants ? ({
+    async agents(channelId, signal) {
+      const result = await transport.participants!(channelId, signal);
+      if (result.kind !== 'done') throw new Error('agent_presence_unavailable');
+      return { generation: context.generation, agents: result.value.filter(person => person.kind === 'agent').map(person => ({
+        participantId: person.participantId, ownerId: person.ownerId, displayName: person.displayName,
+        ownerDisplayName: person.ownerId, connection: 'connected' as const, routeLabel: 'Local agent',
+        lastReceipt: null, acknowledgement: 'unknown' as const,
+      })) };
+    },
+    subscribeAgents(channelId, listener) {
+      const abort = new AbortController();
+      const refresh = () => { void this.agents(channelId, abort.signal).then(listener).catch(() => undefined); };
+      const timer = setInterval(refresh, 5_000);
+      return () => { abort.abort(); clearInterval(timer); };
+    },
+    async installCommand() { throw new Error('local_agent_is_joined'); },
+  }) : unavailablePresence, [context.generation, transport]);
   useEffect(() => {
     if (!evidence) return undefined;
     const timer = setInterval(() => { if (timeline.getSnapshot().items.length > 0) void evidence.refresh(); }, evidencePollMs);
@@ -166,8 +186,8 @@ export function LocalRoom({
     };
   }, [evidence, evidencePollMs, timeline]);
   const channel = useMemo(
-    () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
-    [context.generation, roomId],
+    () => createChannelController(localPresence, { roomId, generation: context.generation }),
+    [context.generation, localPresence, roomId],
   );
   const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
   useEffect(() => () => stopController?.dispose(), [stopController]);
@@ -195,7 +215,9 @@ export function LocalRoom({
     if (state.kind === 'live' && (phase === 'unavailable' || phase === 'partial')) void timeline.loadOlder();
   }, [phase, state.kind, timeline]);
   // New or older rows may carry evidence already projected: reread with them.
-  const items = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().items, () => timeline.getSnapshot().items);
+  const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
+  const items = timelineData.items;
+  const presence = useSyncExternalStore(channel.subscribe, channel.getSnapshot, channel.getSnapshot);
   useEffect(() => {
     if (items.length > 0) void evidence?.refresh();
   }, [evidence, items]);
@@ -207,6 +229,11 @@ export function LocalRoom({
       </Panel>
     );
   }
+  const extraParticipants = presence.agents.flatMap(agent => agent.ownerId ? [{
+    participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const,
+    initialName: agent.displayName,
+  }] : []);
+  const currentNames = projectTimelineNames(timelineData.nameHistory ?? items, viewer, extraParticipants).currentNames;
 
   return (
     <ChannelScreen
@@ -214,6 +241,20 @@ export function LocalRoom({
       title={title}
       description="Local · Plaintext on this device"
       controller={channel}
+      viewerOwnerId={viewer.ownerId}
+      renameScope={roomId}
+      namesPending={timelineData.namesReady === false}
+      currentNames={currentNames}
+      renameAgent={async (participantId, name, clientTxnId) => {
+        const checked = validateAgentName(name);
+        const target = channel.getSnapshot().agents.find(agent => agent.participantId === participantId);
+        if (!checked.ok || checked.name !== name || viewer.kind !== 'human'
+          || target?.ownerId !== viewer.ownerId || state.kind !== 'live') return 'rejected';
+        const result = await context.room.send({ roomId, clientTxnId,
+          content: { v: 1, kind: 'agent_rename', agentParticipantId: participantId, body: name } });
+        if (result.kind === 'rejected') return 'rejected';
+        return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
+      }}
       showPresence={false}
       renderHeaderActions={() => <>
         {listeningController ? <LocalAgentControls controller={listeningController} /> : null}
@@ -233,6 +274,7 @@ export function LocalRoom({
             roomPort={context.room}
             roomId={roomId}
             viewer={viewer}
+            extraParticipants={extraParticipants}
             sendBlockedReason={linkedSendReason(journey) ?? sendBlockedReason(state)}
             pendingStore={pendingStore}
             {...(evidence ? { evidence } : {})}

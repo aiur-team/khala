@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { AgentPresencePanel } from './AgentPresencePanel';
 import type { ChannelController, ChannelView } from './controller';
 
@@ -13,6 +13,22 @@ function controller(view: ChannelView): ChannelController {
 }
 
 describe('AgentPresencePanel', () => {
+  it('shows the encrypted current name and edit control only to the bound owner', () => {
+    const ownerId = 'owner_maya' as OwnerId;
+    const agentId = 'agent_420' as ParticipantId;
+    const agent = { participantId: agentId, ownerId, displayName: 'Codex #420', ownerDisplayName: 'Maya',
+      connection: 'connected' as const, routeLabel: 'Codex CLI', lastReceipt: null,
+      acknowledgement: 'unknown' as const, installCommand: null, installCommandError: false };
+    const props = { controller: controller({ phase: 'ready', agents: [agent] }), renameScope: 'room_1',
+      currentNames: new Map([[agentId, 'Dolan']]), renameAgent: async () => 'accepted' as const };
+    const owner = renderToStaticMarkup(<AgentPresencePanel {...props} viewerOwnerId={ownerId} />);
+    const other = renderToStaticMarkup(<AgentPresencePanel {...props} viewerOwnerId={'owner_theo' as OwnerId} />);
+    expect(owner).toContain('Dolan');
+    expect(owner).toContain('Edit name for Dolan');
+    expect(other).toContain('Dolan');
+    expect(other).not.toContain('Edit name');
+  });
+
   it('announces loading rather than describing an empty ready channel', () => {
     const html = renderToStaticMarkup(
       <AgentPresencePanel controller={controller({ phase: 'loading', agents: [] })} />,

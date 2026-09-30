@@ -235,6 +235,43 @@ describe('createHumanBrowserApi', () => {
     });
   });
 
+  it('resolves agent identity inside an authenticated room scope', async () => {
+    const userId = '@khala_a_test:matrix.example.test';
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: [{ matrixUserId: userId,
+        participantId: 'agent_420', ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' }] }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    const participants = await api.participants.resolve([userId], undefined, 'room_1' as RoomId);
+    expect(participants?.get(userId)).toMatchObject({ kind: 'agent', participantId: 'agent_420', ownerId: 'owner_bob' });
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ userIds: [userId], roomId: 'room_1' }));
+  });
+
+  it('resolves a departed rename target by participant ID within the authorized room', async () => {
+    const userId = '@owner:matrix.example.test';
+    const targetId = 'agent_departed' as never;
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: [
+        { matrixUserId: userId, participantId: 'human_owner', ownerId: 'owner_bob', displayName: 'Maya', kind: 'human' },
+        { matrixUserId: '@departed:matrix.example.test', participantId: targetId, ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' },
+      ] }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    const resolved = await api.participants.resolve([userId], undefined, 'room_1' as RoomId, [targetId]);
+    expect(resolved?.get('@departed:matrix.example.test')).toMatchObject({ participantId: targetId, kind: 'agent' });
+    expect(JSON.parse(String(fetch.mock.calls[1]![1]!.body))).toEqual({ userIds: [userId], roomId: 'room_1', targetParticipantIds: [targetId] });
+  });
+
+  it('distinguishes an omitted target in a successful response from lookup failure', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: [] }))
+      .mockResolvedValueOnce(json(503, {}));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never])).toEqual(new Map());
+    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never])).toBeNull();
+  });
+
   it('binds the channel-request inbox and decisions to human-cookie routes', async () => {
     const requestHandle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
     const projection = {

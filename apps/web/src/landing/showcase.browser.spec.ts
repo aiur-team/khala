@@ -50,9 +50,14 @@ test('public showcase stays local and works across themes and widths', { timeout
     const participantButton = pane.getByRole('button', { name: 'Participants and agents' });
     await participantButton.click();
     assert.equal(await participantButton.getAttribute('aria-expanded'), 'true');
-    assert.equal(await pane.locator('.showcase-app__participants').getByText('Maya’s agent').isVisible(), true);
+    assert.equal(await pane.locator('.showcase-app__participants').getByText('Dolan').isVisible(), true);
     await participantButton.click();
     assert.equal(await participantButton.getAttribute('aria-expanded'), 'false');
+
+    assert.equal(await pane.getByText('Codex #420 is now called Dolan').count(), 1);
+    assert.equal(await pane.getByText('Changed by Maya').count(), 1);
+    assert.equal(await pane.locator('.conversation-message__meta strong').filter({ hasText: 'Codex #420' }).count(), 1);
+    assert.equal(await pane.locator('.conversation-message__meta strong').filter({ hasText: 'Dolan' }).count(), 1);
 
     for (const theme of ['light', 'dark'] as const) {
       if (theme === 'dark') await page.getByRole('button', { name: 'Dark mode' }).click();

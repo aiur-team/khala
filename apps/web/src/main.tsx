@@ -90,6 +90,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     admission: api.admission,
     channelLinks: api.channelLinks,
     participant: matrix.participant,
+    roomParticipants: matrix.roomParticipants,
     closure,
     ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,

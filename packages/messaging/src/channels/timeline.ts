@@ -62,10 +62,11 @@ export async function toEntry(roomId: RoomId, event: SubstrateEvent): Promise<Re
         authorDeviceId: event.authorDeviceId, contentDigest: digest.digest,
       },
       content: event.content,
+      ...(event.targetParticipant ? { targetParticipant: event.targetParticipant } : {}),
       participant: event.participant,
       clientTxnId: event.clientTxnId,
       receivedAt: event.receivedAt,
-    },
+    } as TimelineItem,
   };
 }
 
@@ -93,7 +94,9 @@ export async function timeline(
   }
   // The contract page has no placeholder shape; `observeEntries` carries them.
   const items = [...entries.values()].flatMap(entry => (entry.kind === 'message' ? [entry.item] : []));
-  return ok({ items, nextCursor: page.value.nextCursor, snapshotRevision: page.value.revision });
+  const unavailableEventIds = [...entries.values()].flatMap(entry => entry.kind === 'unavailable' ? [entry.eventId] : []);
+  return ok({ items, nextCursor: page.value.nextCursor, snapshotRevision: page.value.revision,
+    ...(unavailableEventIds.length ? { unavailableEventIds } : {}) });
 }
 
 /** A duplicate or replayed event never adds a row; only a late decryption replaces its placeholder. */
@@ -139,7 +142,7 @@ export class ChannelProjection {
       if (!this.remote.has(item.eventRef.eventId)) {
         this.remote.set(item.eventRef.eventId, {
           kind: 'message',
-          item: { ref: item.eventRef, content: item.content, participant: this.self, clientTxnId: item.clientTxnId, receivedAt: this.now() },
+          item: { ref: item.eventRef, content: item.content, participant: this.self, clientTxnId: item.clientTxnId, receivedAt: this.now() } as TimelineItem,
         });
       }
     } else if (![...this.remote.values()].some(entry => entry.kind === 'message' && entry.item.clientTxnId === item.clientTxnId)) {

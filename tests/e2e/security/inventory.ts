@@ -210,6 +210,9 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'POST /api/agent/room-send/finish', 'POST /api/agent/room-send/rotation',
     'POST /api/agent/room-send/inspect',
   ].map(route => [`http-control:${route}`, notObserved(CONTROL_NO_CONTENT)])),
+  'http-control:POST /api/agent/messaging/participants': notObserved(
+    'binding-authenticated room identity metadata only; no held content or mutable display names; owner/membership checks covered by participant-directory tests',
+  ),
   // Harness adapters. Only the Codex adapter is driven, over its fake app-server.
   'harness-adapter:claude': notObserved(ADAPTER_UNDRIVEN),
   'harness-adapter:claude-app': notObserved(ADAPTER_UNDRIVEN),

@@ -7,6 +7,7 @@ import {
 } from './decode';
 import { type DeviceId, type EventId, type ParticipantId, type RoomId, readId } from './ids';
 import { type ParticipantView, readParticipantView } from './identity';
+import { validateAgentName } from './agent-names';
 
 /**
  * Reference to one authored, immutable event. An edit is another event with another
@@ -22,8 +23,12 @@ export type EventRef = Readonly<{
   contentDigest: string;
 }>;
 
-/** Text message content. The body is retained exactly as authored. */
-export type MessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
+/** Authored content. Rename metadata remains inside the encrypted room event. */
+export type TextMessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
+export type AgentRenameContent = Readonly<{ v: 1; kind: 'agent_rename'; agentParticipantId: ParticipantId; body: string }>;
+/** Encrypted current-name bootstrap; it is metadata, never a second rename. */
+export type AgentNameSnapshotContent = Readonly<{ v: 1; kind: 'agent_name_snapshot'; agentParticipantId: ParticipantId; body: string; sourceEventId: EventId | null }>;
+export type MessageContent = TextMessageContent | AgentRenameContent | AgentNameSnapshotContent;
 
 /**
  * Finite public reasons a timeline event's content cannot be shown. Never a free-text
@@ -70,7 +75,16 @@ export type UnavailableEventRef = Readonly<{
 export type TimelineItem =
   | Readonly<{
       ref: EventRef;
-      content: MessageContent;
+      content: TextMessageContent;
+      participant: ParticipantView;
+      clientTxnId: string | null;
+      /** UTC RFC 3339, local receipt time; not an ordering authority. */
+      receivedAt: string;
+    }>
+  | Readonly<{
+      ref: EventRef;
+      content: AgentRenameContent | AgentNameSnapshotContent;
+      targetParticipant?: ParticipantView;
       participant: ParticipantView;
       clientTxnId: string | null;
       /** UTC RFC 3339, local receipt time; not an ordering authority. */
@@ -108,7 +122,19 @@ export function isContentDigest(value: string): boolean {
  * `digestMessageContent` for a total result.
  */
 export function encodeMessageContent(content: MessageContent): Uint8Array {
-  if (content.v !== 1 || content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
+  if (content.v !== 1) throw new TypeError('unsupported message content version or kind');
+  if ((content.kind === 'agent_rename' || content.kind === 'agent_name_snapshot')) {
+    const participant = decodeWith(() => readId<'ParticipantId'>(content.agentParticipantId, 'agentParticipantId'));
+    const name = validateAgentName(content.body);
+    if (!participant.ok || !name.ok || name.name !== content.body) throw new TypeError('invalid agent rename content');
+    if (content.kind === 'agent_name_snapshot') {
+      const source = content.sourceEventId === null ? null : decodeWith(() => readId<'EventId'>(content.sourceEventId, 'sourceEventId'));
+      if (source !== null && !source.ok) throw new TypeError('invalid snapshot source');
+      return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.agentParticipantId, content.body, content.sourceEventId]));
+    }
+    return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.agentParticipantId, content.body]));
+  }
+  if (content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
   const body = decodeWith(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
   if (!body.ok) throw new TypeError(`invalid message content: ${body.error.path} ${body.error.code}`);
   return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
@@ -184,6 +210,19 @@ export function decodeMessageContent(input: unknown, limits: ContentLimits): Dec
 }
 
 export function readMessageContent(input: unknown, path: string, limits: ContentLimits): MessageContent {
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)
+    && ['agent_rename', 'agent_name_snapshot'].includes((input as Record<string, unknown>).kind as string)) {
+    const snapshot = (input as Record<string, unknown>).kind === 'agent_name_snapshot';
+    const r = object(input, path, snapshot ? ['v', 'kind', 'agentParticipantId', 'body', 'sourceEventId'] : ['v', 'kind', 'agentParticipantId', 'body']);
+    const v = version(r.field('v'), r.at('v'));
+    const kind = literal(r.field('kind'), r.at('kind'), ['agent_rename', 'agent_name_snapshot']);
+    const agentParticipantId = readId<'ParticipantId'>(r.field('agentParticipantId'), r.at('agentParticipantId'));
+    const name = validateAgentName(r.field('body'));
+    if (!name.ok || name.name !== r.field('body')) fail(r.at('body'), 'invalid_value');
+    return kind === 'agent_name_snapshot'
+      ? { v, kind, agentParticipantId, body: name.name, sourceEventId: nullable(r.field('sourceEventId'), value => readId<'EventId'>(value, r.at('sourceEventId'))) }
+      : { v, kind, agentParticipantId, body: name.name };
+  }
   const r = object(input, path, ['v', 'kind', 'body']);
   return {
     v: version(r.field('v'), r.at('v')),
@@ -253,15 +292,20 @@ function isUnavailableItem(item: TimelineItem): item is Extract<TimelineItem, { 
  * `UnavailableEventRef` (no `contentDigest`), never an `EventRef`.
  */
 export function readTimelineItem(input: unknown, path: string, limits: ContentLimits): TimelineItem {
-  const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt']);
+  const hasTarget = typeof input === 'object' && input !== null && Object.hasOwn(input, 'targetParticipant');
+  const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt', ...(hasTarget ? ['targetParticipant'] : [])]);
   const content = readTimelineContent(r.field('content'), r.at('content'), limits);
   const ref = content.kind === 'unavailable'
     ? readUnavailableEventRef(r.field('ref'), r.at('ref'))
     : readEventRef(r.field('ref'), r.at('ref'));
   const participant = readParticipantView(r.field('participant'), r.at('participant'), limits);
   if (participant.participantId !== ref.authorParticipantId) fail(r.at('participant'), 'mismatch');
+  const targetParticipant = hasTarget ? readParticipantView(r.field('targetParticipant'), r.at('targetParticipant'), limits) : undefined;
+  if (targetParticipant && (!(content.kind === 'agent_rename' || content.kind === 'agent_name_snapshot')
+    || targetParticipant.kind !== 'agent' || targetParticipant.participantId !== content.agentParticipantId)) fail(r.at('targetParticipant'), 'mismatch');
   return {
     ref, content, participant,
+    ...(targetParticipant ? { targetParticipant } : {}),
     clientTxnId: nullable(r.field('clientTxnId'), value => identifier(value, r.at('clientTxnId'))),
     receivedAt: utcTimestamp(r.field('receivedAt'), r.at('receivedAt')),
   } as TimelineItem;

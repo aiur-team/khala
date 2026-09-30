@@ -3,7 +3,7 @@
 // this adapter only maps HTTP outcomes onto substrate results and turns the
 // credential-scoped hint stream into live channel updates.
 
-import type { CallOptions, ContentLimits, Disposer, EventId, RoomId, ChannelRejection } from '@khala/contracts/messaging/index';
+import type { CallOptions, ContentLimits, Disposer, EventId, ParticipantView, RoomId, ChannelRejection } from '@khala/contracts/messaging/index';
 import type {
   AcceptedEvent, ChannelSubstrate, CreateLookup, SubstrateEffect, SubstrateEvent, SubstrateRead, SubstrateUpdate,
 } from '../../channels/substrate';
@@ -30,6 +30,8 @@ export interface LocalTransport {
   subscribe(listener: (state: LocalTransportState) => void): Disposer;
   /** Reconnects every hint stream after `stopped`. A no-op in any other state. */
   retry(): void;
+  /** Authenticated channel participants, including stable owner bindings. */
+  participants?(roomId: RoomId, signal?: AbortSignal): Promise<SubstrateRead<readonly ParticipantView[]>>;
 }
 
 export type SessionRead =
@@ -364,6 +366,12 @@ export function createHttpRoomSubstrate(options: HttpRoomSubstrateOptions): Http
 
   const transport: LocalTransport = {
     current: () => state,
+    participants(roomId, signal) {
+      return read(API.channel(roomId), body => {
+        const decoded = decodeChannel(body, options.limits, true);
+        return decoded.ok ? decoded.value.participants : null;
+      }, signal);
+    },
     subscribe(listener) {
       stateListeners.add(listener);
       return () => { stateListeners.delete(listener); };

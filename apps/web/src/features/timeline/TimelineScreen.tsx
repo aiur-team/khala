@@ -6,7 +6,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { EventRef, MessageContent, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
+import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
 import { type EvidenceUnit, isInlineUnit } from '../receipt-evidence/model';
 import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from '../receipt-evidence/ReceiptEvidence';
@@ -17,6 +17,9 @@ import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
 import { ChatComposer, ChatMessage } from '../../ui/conversation';
+import { ChatSystemEvent } from '../../ui/conversation';
+import { projectTimelineNames } from './names';
+import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 
 export interface TimelineScreenProps {
   controller: TimelineController;
@@ -24,6 +27,7 @@ export interface TimelineScreenProps {
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
   viewer: ParticipantView;
+  extraParticipants?: readonly NameParticipant[];
   /** Rendered per row, outside the message-content renderer, keyed by exact `EventRef`. */
   renderReviewAction?: (ref: EventRef) => ReactNode;
   /**
@@ -121,12 +125,12 @@ const CAN_COMPOSE: ReadonlySet<string> = new Set(['joining', 'joined']);
  * text only), but a future producer may, and an `UnavailableEventRef` cannot reach
  * `renderReviewAction`, which is keyed by `EventRef`.
  */
-function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: MessageContent }> {
+function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: { kind: 'text' } }> {
   return item.content.kind === 'text';
 }
 
 export function TimelineScreen({
-  controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   composerPlaceholder = '', unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -203,7 +207,7 @@ export function TimelineScreen({
   // Requests the first history page once on mount so a fresh channel has a
   // cursor to page from; pagination-request state otherwise stays local.
   useEffect(() => {
-    void controller.loadOlder();
+    void controller.loadOlder().then(() => controller.scanNameHistory?.());
   }, [controller]);
 
   useEffect(() => {
@@ -258,7 +262,15 @@ export function TimelineScreen({
     updatePending(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
   }
 
-  const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => item.participant), viewer]);
+  const names = projectTimelineNames(data.nameHistory ?? data.items, viewer, extraParticipants);
+  const attributed = new Map(names.events.map(event => [event.eventId, event]));
+  const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => ({
+    ...item.participant,
+    displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+      : attributed.get(item.ref.eventId)?.kind === 'message'
+      ? (attributed.get(item.ref.eventId) as Extract<typeof names.events[number], { kind: 'message' }>).authorName
+      : item.participant.displayName,
+  })), viewer]);
   // A `failed` or `outcome_unknown` send keeps its body in the pending row, but
   // Send must stay disabled while it's unresolved: otherwise the reader could
   // submit the same text again under a fresh `clientTxnId`, duplicating a
@@ -279,6 +291,10 @@ export function TimelineScreen({
           Loading conversation…
         </p>
       ) : null}
+      {data.namesReady === false ? <p className="timeline__status" role="status">Checking agent names in encrypted history…</p> : null}
+      {data.namesReady === false && (data.phase === 'partial' || data.phase === 'unavailable')
+        ? <button type="button" onClick={() => { void controller.loadOlder().then(() => controller.scanNameHistory?.()); }}>Retry history</button>
+        : null}
       {data.phase === 'partial' ? (
         <p className="timeline__status" role="status">
           Showing part of the conversation. Some history could not be loaded.
@@ -317,6 +333,14 @@ export function TimelineScreen({
             className="timeline__row message-content__unavailable">Message unavailable on this device.</li>;
           const item = row.item;
           const previous = rows[index - 1];
+          const nameEvent = attributed.get(item.ref.eventId);
+          if (item.content.kind === 'agent_name_snapshot') return null;
+          if (item.content.kind === 'agent_rename') return data.namesReady !== false && nameEvent?.kind === 'agent_rename'
+            ? <ChatSystemEvent key={item.ref.eventId} id={item.ref.eventId} actor={nameEvent.actorName}>
+                {nameEvent.previousName} is now called {nameEvent.name}
+              </ChatSystemEvent>
+            : null;
+
           const attribution = attributionFor(item.participant, viewer.ownerId);
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
           const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
@@ -328,7 +352,9 @@ export function TimelineScreen({
                   <EvidenceGroup unit={unit} status={evidenceView.status} />
                 </li>
               ))}
-              <ChatMessage id={item.ref.eventId} author={resolveDisplayName(item.participant)} time={item.receivedAt}
+              <ChatMessage id={item.ref.eventId} author={resolveDisplayName({ ...item.participant,
+                displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+                  : nameEvent?.kind === 'message' ? nameEvent.authorName : item.participant.displayName })} time={item.receivedAt}
                 mine={attribution.isViewerOwned} grouped={previous?.kind === 'message' && previous.item.participant.participantId === item.participant.participantId}
                 kindLabel={ownershipLabel(attribution)} className="timeline__row">
                 {isReadableItem(item) ? (

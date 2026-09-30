@@ -11,7 +11,7 @@ function participant(id: string, kind: 'human' | 'agent', displayName: string) {
   return { participantId: id as ParticipantId, kind, ownerId: `owner_${id}` as OwnerId, displayName, deviceIds: [] as DeviceId[] };
 }
 
-function item(eventId: string, author: ReturnType<typeof participant>, body: string): TimelineItem {
+function item(eventId: string, author: ReturnType<typeof participant>, body: string): Extract<TimelineItem, { content: { kind: 'text' } }> {
   return {
     ref: {
       v: 1,
@@ -43,6 +43,32 @@ const viewer = participant('viewer', 'human', 'Viewer');
 const noopSendPort: Pick<ChannelPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
 
 describe('TimelineScreen', () => {
+  it('renders a verified rename once between historical and later agent bylines', () => {
+    const bot = { ...participant('bot', 'agent', 'Codex #420'), ownerId: viewer.ownerId };
+    const changed = { ...item('E2', viewer, ''), content: {
+      v: 1 as const, kind: 'agent_rename' as const, agentParticipantId: bot.participantId, body: 'Dolan',
+    } } satisfies TimelineItem;
+    const data = { phase: 'ready' as const, items: [item('E1', bot, 'before'), changed, item('E3', bot, 'after')],
+      nextCursor: null, newMessageCount: 0 };
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(html.indexOf('Codex #420')).toBeLessThan(html.indexOf('is now called Dolan'));
+    expect(html.indexOf('is now called Dolan')).toBeLessThan(html.indexOf('>Dolan<'));
+    expect(html.match(/conversation-system-event__text/g)).toHaveLength(1);
+    expect(html).toContain('Changed by Viewer');
+  });
+
+  it('shows a rename before the target agent has sent a message when the roster owns it', () => {
+    const target = 'agent_quiet' as ParticipantId;
+    const change = { ...item('E1', viewer, ''), content: {
+      v: 1 as const, kind: 'agent_rename' as const, agentParticipantId: target, body: 'Dolan',
+    } } satisfies TimelineItem;
+    const html = renderToStaticMarkup(<TimelineScreen
+      controller={fakeController({ phase: 'ready', items: [change], nextCursor: null, newMessageCount: 0 })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      extraParticipants={[{ participantId: target, ownerId: viewer.ownerId, kind: 'agent', initialName: 'Codex #420' }]} />);
+    expect(html).toContain('Codex #420 is now called Dolan');
+  });
+
   it('renders live rows through the shared avatar and grouped bubble component', () => {
     const alice = participant('alice', 'human', 'Alice');
     const data = { phase: 'ready' as const, items: [item('E1', alice, 'first'), item('E2', alice, 'second')], nextCursor: null, newMessageCount: 0 };
@@ -212,4 +238,39 @@ it('renders each unavailable event without claiming an empty conversation or inv
   expect(html).not.toContain('untrusted-author');
   expect(html).not.toContain('Review encrypted');
   expect(html).not.toContain('2026-09-17');
+});
+
+
+it('keeps readable human and agent bodies visible while encrypted history makes agent names incomplete', () => {
+  const bot = participant('bot', 'agent', 'Unverified current name');
+  const human = item('human', viewer, 'Readable human text');
+  const agent = item('agent', bot, 'Readable agent text');
+  const change = { ...item('rename', viewer, ''), content: { v: 1 as const, kind: 'agent_rename' as const,
+    agentParticipantId: bot.participantId, body: 'Unverified rename' } } satisfies TimelineItem;
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'partial',
+    items: [human, agent, change], nextCursor: null, newMessageCount: 0, namesReady: false,
+    rows: [{ kind: 'message', item: human }, { kind: 'unavailable', eventId: 'encrypted' as EventId,
+      receivedAt: '2026-09-17T00:00:00Z' }, { kind: 'message', item: agent }, { kind: 'message', item: change }] })}
+    roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('Readable human text');
+  expect(html).toContain('Readable agent text');
+  expect(html).toContain('Agent name unavailable');
+  expect(html).toContain('Checking agent names');
+  expect(html).toContain('Message unavailable on this device');
+  expect(html).not.toContain('Unverified current name');
+  expect(html).not.toContain('Unverified rename');
+});
+
+
+it('disambiguates unavailable agent names across owners using the displayed fallback', () => {
+  const first = { ...participant('first', 'agent', 'First initial name'), ownerId: 'owner_1234' as OwnerId };
+  const second = { ...participant('second', 'agent', 'Second initial name'), ownerId: 'owner_5678' as OwnerId };
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'partial',
+    items: [item('first-event', first, 'first body'), item('second-event', second, 'second body')],
+    nextCursor: null, newMessageCount: 0, namesReady: false })}
+    roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('Agent name unavailable (#1234)');
+  expect(html).toContain('Agent name unavailable (#5678)');
+  expect(html).not.toContain('First initial name');
+  expect(html).not.toContain('Second initial name');
 });

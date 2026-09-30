@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
+import { createAgentIdentityDirectory } from '../agent/identity-directory';
 import { decodeOwnerId, decodeRoomId } from '@khala/contracts/messaging/index';
 import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
@@ -56,6 +57,10 @@ export interface MatrixSessionIssuer {
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
     | Readonly<{ kind: 'unavailable' }>
   >;
+  resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions, targetParticipantIds?: readonly ParticipantId[]): Promise<
+    Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
+    | Readonly<{ kind: 'forbidden' | 'unavailable' }>
+  >;
 }
 
 export type MatrixParticipant = Readonly<{
@@ -63,6 +68,7 @@ export type MatrixParticipant = Readonly<{
   participantId: ParticipantId;
   ownerId: OwnerId;
   displayName: string;
+  kind?: 'human' | 'agent';
 }>;
 
 export type MatrixHumanServices = Readonly<{
@@ -339,6 +345,91 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const participants = userIds.map(participantFor);
       return participants.every((participant): participant is MatrixParticipant => participant !== null)
         ? { kind: 'ok', participants }
+        : { kind: 'unavailable' };
+    },
+    async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = []) {
+      if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
+      const membership = await membershipForOwner(ownerId, roomId, call);
+      if (membership.kind === 'absent') return { kind: 'forbidden' };
+      if (membership.kind !== 'joined') return { kind: 'unavailable' };
+      const session = await controlLogin(ownerId, call);
+      if (!session) return { kind: 'unavailable' };
+      const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`,
+        { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+      const joined = response.status === 200 ? safeObject((await body(response))?.joined) : null;
+      if (!joined || Object.keys(joined).length > 100)
+        return { kind: 'unavailable' };
+      let historicalState: readonly Record<string, unknown>[] | null | undefined;
+      const canReadIdentity = async (matrixUserId: string): Promise<boolean | null> => {
+        if (Object.hasOwn(joined, matrixUserId)) return true;
+        if (historicalState === undefined) {
+          const state = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state`,
+            { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+          if (state.status !== 200) return null;
+          const value: unknown = state.status === 200 ? await state.json().catch(() => null) : null;
+          historicalState = Array.isArray(value) ? value.flatMap(event => { const object = safeObject(event); return object ? [object] : []; }) : null;
+        }
+        if (historicalState === null) return null;
+        const member = historicalState?.find(event => event.type === 'm.room.member' && event.state_key === matrixUserId);
+        if (typeof member?.event_id !== 'string') return false;
+        const visible = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(member.event_id)}`,
+          { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+        if (visible.status === 403 || visible.status === 404) return false;
+        if (visible.status !== 200) return null;
+        const event = await body(visible);
+        if (!event) return null;
+        return event?.event_id === member.event_id && event?.type === 'm.room.member' && event?.state_key === matrixUserId;
+      };
+      const resolved = new Map<string, MatrixParticipant>();
+      const identities = createAgentIdentityDirectory(options.store);
+      const index = createOwnerRoomIndex(options.store);
+      const bindings = createAgentBindingStore({ store: options.store });
+      for (const userId of userIds) {
+        const human = participantFor(userId);
+        if (human) { resolved.set(userId, human); continue; }
+        let agent = await identities.lookup(roomId, userId);
+        if (!agent && Object.hasOwn(joined, userId)) {
+          // Backfill agents admitted before the identity directory existed.
+          for (const joinedUserId of Object.keys(joined)) {
+            const owner = participantFor(joinedUserId);
+            if (!owner) continue;
+            const indexed = await index.inspect(owner.ownerId, roomId);
+            if (indexed.kind !== 'ok') return { kind: 'unavailable' };
+            for (const item of indexed.value?.bindings ?? []) {
+              const found = await bindings.locateBinding(item.bindingId);
+              if (found.kind !== 'found' || found.address.roomId !== roomId
+                || found.record.binding.ownerId !== owner.ownerId || found.record.binding.generation !== item.generation)
+                return { kind: 'unavailable' };
+              const identity = agentMatrixIdentity(owner.ownerId, found.record.binding, serverName);
+              if (identity.userId !== userId || identity.participantId !== found.record.binding.agentParticipantId) continue;
+              const candidate = { v: 1 as const, roomId, matrixUserId: userId,
+                participantId: identity.participantId, ownerId: owner.ownerId, harness: found.record.binding.harness };
+              if (!await identities.remember(candidate)) return { kind: 'unavailable' };
+              agent = candidate;
+              break;
+            }
+            if (agent) break;
+          }
+        }
+        if (!agent || !await canReadIdentity(agent.matrixUserId)) return { kind: 'unavailable' };
+        resolved.set(userId, { matrixUserId: userId, participantId: agent.participantId,
+          ownerId: agent.ownerId, displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}`,
+          kind: 'agent' });
+      }
+      if (targetParticipantIds.length > 100 || new Set(targetParticipantIds).size !== targetParticipantIds.length) return { kind: 'unavailable' };
+      for (const participantId of targetParticipantIds) {
+        if ([...resolved.values()].some(value => value.participantId === participantId)) continue;
+        const agent = await identities.lookupParticipant(roomId, participantId);
+        // Unreadable and unknown targets are omitted without disclosing directory metadata.
+        if (!agent) continue;
+        const readable = await canReadIdentity(agent.matrixUserId);
+        if (readable === null) return { kind: 'unavailable' };
+        if (!readable) continue;
+        resolved.set(agent.matrixUserId, { matrixUserId: agent.matrixUserId, participantId: agent.participantId,
+          ownerId: agent.ownerId, kind: 'agent', displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}` });
+      }
+      return userIds.every(userId => resolved.has(userId))
+        ? { kind: 'ok', participants: [...resolved.values()] }
         : { kind: 'unavailable' };
     },
   };

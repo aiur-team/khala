@@ -7,6 +7,7 @@ describe('registerAgentHandlers', () => {
 
     expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
       { path: '/api/agent/status', methods: ['GET'] },
+      { path: '/api/agent/messaging/participants', methods: ['POST'] },
       { path: '/api/agent/bootstrap/descriptor', methods: ['GET'] },
       { path: '/api/agent/bootstrap/token', methods: ['POST'] },
       { path: '/api/agent/bootstrap/redeem', methods: ['POST'] },
@@ -41,11 +42,13 @@ describe('registerAgentHandlers', () => {
         ? { code: 'feature_unavailable' }
         : registration.path.startsWith('/api/agent/room-send/')
         ? { code: 'unavailable' }
-        : index >= 8 && index < 11
-        ? { code: 'unavailable' }
-        : index < 8
+        : registration.path === '/api/agent/messaging/participants'
         ? { code: 'feature_unavailable' }
-        : index < 26
+        : index >= 9 && index < 12
+        ? { code: 'unavailable' }
+        : index < 9
+        ? { code: 'feature_unavailable' }
+        : index < 27
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -75,6 +78,7 @@ describe('registerAgentHandlers', () => {
     expect(registrations.slice(start, start + 3)).toEqual([access, create, status]);
     expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
       '/api/agent/status',
+      '/api/agent/messaging/participants',
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/bootstrap/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/device-attestation/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/owner-mailbox/')),

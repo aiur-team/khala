@@ -49,6 +49,16 @@ describe('human channel composition', () => {
     expect(fetchStatus).toHaveBeenCalledOnce();
   });
 
+  it('keeps the authenticated owner binding for edit authorization', async () => {
+    const port = createChannelUiPort({ fetch: async () => new Response(JSON.stringify({ generation: 1, agents: [{
+      participantId: 'agent-1', ownerId: 'owner_maya', displayName: 'Codex #420', ownerDisplayName: 'Maya',
+      connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null,
+      acknowledgement: 'unknown', installCommand: 'khala connect link',
+    }] }), { status: 200 }) });
+    const result = await port.agents('room-1' as RoomId, new AbortController().signal);
+    expect(result.agents[0]?.ownerId).toBe('owner_maya');
+  });
+
   it('fails closed on malformed or content-bearing status responses', async () => {
     const port = createChannelUiPort({
       fetch: async () => new Response(JSON.stringify({

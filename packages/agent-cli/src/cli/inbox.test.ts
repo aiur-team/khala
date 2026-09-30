@@ -68,6 +68,26 @@ afterEach(async () => {
 });
 
 describe('durable inbox', () => {
+  it('keeps current name metadata outside timeline and survives restart without consuming a batch token', async () => {
+    const directory = stateDirectory();
+    const options = { stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 };
+    const first = await openInbox(options);
+    const names = [{ participantId: 'agent-one', name: 'Dolan', sourceEventId: '$rename-one', eventId: '$snapshot-one' }];
+    await first.setCurrentNames!(names);
+    const restarted = await openInbox(options);
+    const consumer = await restarted.acquireCallConsumer!();
+    consumers.push(consumer);
+    expect(await consumer.readBatch({ maxBytes: 1024 })).toBeNull();
+    expect(await consumer.readCurrentNames!()).toEqual(names);
+    await restarted.enqueue(delivery());
+    const batch = await consumer.readBatch({ maxBytes: 1024 });
+    expect(batch?.items).toHaveLength(1);
+    expect(batch?.currentNames).toEqual(names);
+    await restarted.setCurrentNames!([{ ...names[0]!, name: 'Scout', sourceEventId: '$rename-two', eventId: '$snapshot-two' }]);
+    expect((await consumer.readBatch({ maxBytes: 1024 }))?.currentNames?.[0]?.name).toBe('Scout');
+    expect((await consumer.readBatch({ maxBytes: 1024 }))?.token).toBe(batch?.token);
+  });
+
   it('appends once, decodes the payload and deduplicates a release', async () => {
     const inbox = await openInbox({ stateDirectory: stateDirectory(), bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
 

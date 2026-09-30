@@ -3,6 +3,11 @@ import type { InboxBatch } from './inbox.js';
 import { parseReadArguments, renderReadOutput } from './read.js';
 
 describe('read CLI adapter', () => {
+  it('renders current-name metadata independently of an empty ordered timeline', () => {
+    const currentNames = [{ participantId: 'agent-1', name: 'Dolan', eventId: 'snapshot-1', sourceEventId: 'rename-1' }];
+    expect(JSON.parse(renderReadOutput({ kind: 'empty', currentNames }))).toEqual({ ok: true, kind: 'empty', currentNames });
+  });
+
   it('accepts optional binding and acknowledgement flags in either order', () => {
     expect(parseReadArguments([])).toEqual({ bindingId: null });
     expect(parseReadArguments(['--binding', 'binding-1'])).toEqual({ bindingId: 'binding-1' });

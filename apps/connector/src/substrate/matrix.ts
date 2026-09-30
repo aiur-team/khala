@@ -12,16 +12,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from 'playwright-core';
 import type { chromium as Chromium } from 'playwright-core';
-import { encodeMessageContent, type DeviceId, type EventId, type ParticipantId, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, decodeMessageContent, encodeMessageContent, type DeviceId, type EventId, type ParticipantId, type RoomId } from '@khala/contracts/messaging/index';
 import type { ConnectorDevicePort, DeviceActivation, DeviceStatus } from '@khala/connector/bootstrap/ports';
 import type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from '@khala/connector/subscription/adapter';
+import { projectVerifiedName, type NameState } from './name-state';
+import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 
 type BrowserEvent = Readonly<{
   eventId: string; roomId: string; senderUserId: string; senderDeviceId: string | null;
-  body: string | null; failure: 'missing_keys' | 'withheld_unverified' | 'withheld' | 'decrypt_failed' | 'unsupported' | null;
+  receivedAt: string;
+  body: string | null; agentParticipantId: string | null; nameSnapshot?: boolean; nameSourceEventId?: string | null;
+  failure: 'missing_keys' | 'withheld_unverified' | 'withheld' | 'decrypt_failed' | 'unsupported' | null;
 }>;
 type BrowserPage = Readonly<{ events: readonly BrowserEvent[]; nextCursor: string; limited: boolean }>;
 type BrowserOpen = Readonly<{ fingerprint: string; deviceId: string }>;
+const decodedLimits = decodeContentLimits({ maxBodyBytes: 64 * 1024, maxDisplayNameBytes: 80, maxRoomTitleBytes: 256 });
+if (!decodedLimits.ok) throw new Error('matrix_content_limits_invalid');
+const contentLimits = decodedLimits.value;
 
 export type MatrixConnectorInput = Readonly<{
   /** The server-provisioned agent Matrix session. It must be the same device on every restart. */
@@ -34,6 +41,12 @@ export type MatrixConnectorInput = Readonly<{
   profileDirectory: string;
   /** Authenticated mapping from Matrix sender user IDs to Khala participants. */
   participantIdFor: (matrixUserId: string) => ParticipantId | null;
+  resolveParticipants?: (userIds: readonly string[], targetParticipantIds: readonly string[]) => Promise<ReadonlyMap<string, ResolvedAgentParticipant> | null>;
+  onText?: (input: Readonly<{ roomId: string; eventId: string; authorName: string }>) => Promise<boolean>;
+  onCurrentNames?: (names: readonly Readonly<{ participantId: string; name: string; sourceEventId: string | null; eventId: string }>[]) => Promise<boolean>;
+  onRename?: (input: Readonly<{ eventId: EventId; roomId: RoomId; actorParticipantId: ParticipantId; actorDeviceId: DeviceId;
+    receivedAt: string;
+    agentParticipantId: ParticipantId; name: string; canonicalPayload: Uint8Array }>) => Promise<boolean>;
   chromiumExecutablePath?: string;
   browserBundleDirectory?: string;
   /** Exact, packaged Playwright 1.63.0 package root for the installed CLI. */
@@ -195,6 +208,14 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       sending = running.then(() => undefined, () => undefined);
       return running;
     };
+    const namesPath = fileFor(input.profileDirectory, 'names.json');
+    const previousNames = await readFile(namesPath, 'utf8').catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    let namesState: NameState = previousNames === null
+      ? { names: [], seenRenames: [] } : JSON.parse(previousNames);
+    if (!Array.isArray(namesState.names) || !Array.isArray(namesState.seenRenames)) throw new Error('matrix_names_corrupt');
     let closed = false;
     const current = () => { if (closed || !page) throw new Error('matrix_device_closed'); return page; };
     const devices: ConnectorDevicePort = {
@@ -239,20 +260,66 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
           // A limited timeline means Synapse dropped older events. Never advance beyond a gap.
           if (wire.limited) return { kind: 'gap' };
           const events: SourceEvent[] = [];
+          const members = input.resolveParticipants ? await abortable(call<readonly string[]>(current(), 'members'), options?.signal) : [];
+          const senders = [...new Set([...members, ...wire.events.map(event => event.senderUserId)])];
+          const targets = [...new Set(wire.events.map(event => event.agentParticipantId).filter((id): id is string => id !== null))];
+          const participants = input.resolveParticipants ? await input.resolveParticipants(senders, targets) : null;
+          if (input.resolveParticipants && !participants) return { kind: 'unavailable' };
           for (const event of wire.events) {
             // The agent's own encrypted sends are not owner-authored pending work.
             // Skipping them still advances the authenticated Matrix cursor.
             if (event.senderUserId === input.userId) continue;
-            const participant = input.participantIdFor(event.senderUserId);
+            const participant = participants?.get(event.senderUserId)?.participantId
+              ?? input.participantIdFor(event.senderUserId);
             if (!participant) return { kind: 'rejected', code: 'unsupported' };
             const claimedDevice = (event.senderDeviceId ?? 'unknown') as DeviceId;
             const base = { v: 1 as const, roomId: event.roomId as RoomId, eventId: event.eventId as EventId,
               authorParticipantId: participant, authorDeviceId: claimedDevice };
             if (event.failure !== null || event.body === null || event.senderDeviceId === null) {
+              if (input.participantIdFor(event.senderUserId) === null) {
+                if (event.failure === 'missing_keys') return { kind: 'unavailable' };
+                continue;
+              }
+              if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
               events.push({ kind: 'undecryptable', ref: base, reason: event.failure ?? 'decrypt_failed' });
               continue;
             }
-            const canonicalPayload = encodeMessageContent({ v: 1, kind: 'text', body: event.body });
+            const decoded = decodeMessageContent(event.agentParticipantId === null
+              ? { v: 1, kind: 'text', body: event.body }
+              : { v: 1, kind: event.nameSnapshot ? 'agent_name_snapshot' : 'agent_rename', agentParticipantId: event.agentParticipantId, body: event.body,
+                  ...(event.nameSnapshot ? { sourceEventId: event.nameSourceEventId } : {}) }, contentLimits);
+            if (!decoded.ok) {
+              if (input.onText && input.participantIdFor(event.senderUserId) !== null && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+              events.push({ kind: 'undecryptable', ref: base, reason: 'unsupported' });
+              continue;
+            }
+            const canonicalPayload = encodeMessageContent(decoded.value);
+            if (decoded.value.kind === 'agent_rename' || decoded.value.kind === 'agent_name_snapshot') {
+              const rename = decoded.value;
+              const actor = participants?.get(event.senderUserId);
+              const target = [...(participants?.values() ?? [])].find(item => item.participantId === rename.agentParticipantId);
+              if (actor?.kind !== 'human' || target?.kind !== 'agent' || actor.ownerId !== target.ownerId) continue;
+              namesState = projectVerifiedName(namesState, { kind: rename.kind, participantId: rename.agentParticipantId,
+                name: rename.body, eventId: base.eventId,
+                ...(rename.kind === 'agent_name_snapshot' ? { sourceEventId: rename.sourceEventId } : {}) });
+              await writeJson(namesPath, namesState);
+              if (rename.kind === 'agent_name_snapshot') {
+                if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+                continue;
+              }
+              if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+              if (!input.onRename || !await input.onRename({ eventId: base.eventId, roomId: base.roomId,
+                actorDeviceId: claimedDevice,
+                receivedAt: event.receivedAt,
+                actorParticipantId: actor.participantId, agentParticipantId: rename.agentParticipantId,
+                name: rename.body, canonicalPayload })) return { kind: 'unavailable' };
+              continue;
+            }
+            // Review only the owner human's text. The agent's metadata path is separate.
+            if (input.participantIdFor(event.senderUserId) === null) continue;
+            if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId,
+              authorName: namesState.names.find(item => item.participantId === participant)?.name
+                ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
             events.push({ kind: 'decrypted', ref: {
               ...base, contentDigest: `sha256:${createHash('sha256').update(canonicalPayload).digest('hex')}`,
             }, verifiedDeviceId: claimedDevice, canonicalPayload });

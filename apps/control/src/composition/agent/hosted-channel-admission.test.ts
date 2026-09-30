@@ -103,7 +103,7 @@ describe('hosted Matrix channel admission', () => {
       history: 'none' as const };
     expect(await provider.reconcile(request)).toEqual({ kind: 'not_applied' });
     expect(await provider.admit(request)).toEqual({ kind: 'unavailable' });
-    expect(claims.size).toBe(1);
+    expect([...claims.keys()].filter(key => key.startsWith('hosted-channel-admission.v1.'))).toHaveLength(1);
     expect(accountExists).toBe(false);
     expect(joined).toBe(false);
     const callsAfterFailure = fetcher.mock.calls.length;
@@ -130,7 +130,9 @@ describe('hosted Matrix channel admission', () => {
     const restarted = createHostedChannelAdmissionProvider(runtime, { fetch: fetcher }, approvalPort);
     expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'joined' });
     expect(await restarted.reconcile(request)).toEqual({ kind: 'admitted', membership: 'already_joined' });
-    expect(claims.size).toBe(1);
+    expect([...claims.keys()].filter(key => key.startsWith('hosted-channel-admission.v1.'))).toHaveLength(1);
+    expect([...claims.keys()].filter(key => key.startsWith('matrix.agent-identity.v1.'))).toHaveLength(1);
+    expect([...claims.keys()].filter(key => key.startsWith('matrix.agent-participant.v1.'))).toHaveLength(1);
     ownerLoginDenied = true;
     expect(await restarted.reconcile(request)).toEqual({ kind: 'unavailable' });
     ownerLoginDenied = false;

@@ -6,6 +6,8 @@ import {
   type MessageContent, type OwnerId, type ParticipantId, type ParticipantView,
   type RoomId, encodeMessageContent,
 } from '@khala/contracts/messaging/index';
+import { decodeEventId, decodeParticipantId } from '@khala/contracts/messaging/ids';
+import { projectNamesInOrder, validateAgentName, type NameTimelineEvent } from '@khala/contracts/messaging/agent-names';
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
@@ -222,9 +224,22 @@ export function decodeCanonical(bytes: Uint8Array, expectedDigest: string): Mess
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     const raw: unknown = JSON.parse(text);
-    if (!Array.isArray(raw) || raw.length !== 3 || raw[0] !== MESSAGE_ENCODING_V1
-      || raw[1] !== 'text' || typeof raw[2] !== 'string') return null;
-    const content: MessageContent = { v: 1, kind: 'text', body: raw[2] };
+    if (!Array.isArray(raw) || raw[0] !== MESSAGE_ENCODING_V1) return null;
+    let content: MessageContent;
+    if (raw.length === 3 && raw[1] === 'text' && typeof raw[2] === 'string') {
+      content = { v: 1, kind: 'text', body: raw[2] };
+    } else if (raw.length === 4 && raw[1] === 'agent_rename') {
+      const target = decodeParticipantId(raw[2]);
+      const name = validateAgentName(raw[3]);
+      if (!target.ok || !name.ok || name.name !== raw[3]) return null;
+      content = { v: 1, kind: 'agent_rename', agentParticipantId: target.value, body: name.name };
+    } else if (raw.length === 5 && raw[1] === 'agent_name_snapshot') {
+      const target = decodeParticipantId(raw[2]);
+      const name = validateAgentName(raw[3]);
+      const source = raw[4] === null ? null : decodeEventId(raw[4]);
+      if (!target.ok || !name.ok || name.name !== raw[3] || source !== null && !source.ok) return null;
+      content = { v: 1, kind: 'agent_name_snapshot', agentParticipantId: target.value, body: name.name, sourceEventId: source?.value ?? null };
+    } else return null;
     return sameBytes(encodeMessageContent(content), bytes) ? content : null;
   } catch {
     return null;
@@ -426,6 +441,8 @@ export interface ChannelStore {
   channel(input: Readonly<{ channelId: RoomId; participantId: ParticipantId }>): ChannelReadResult;
   listChannels(participantId: ParticipantId): ChannelListResult;
   roster(channelId: RoomId): RosterResult;
+  /** Endpoint-only presentation projection. Call only after authenticating channel access. */
+  nameProjection(channelId: RoomId): ReturnType<typeof projectNamesInOrder> | null;
   participantForDevice(input: Readonly<{ channelId: RoomId; deviceId: DeviceId }>): ProvenanceResult;
   send(input: Readonly<{
     channelId: RoomId;
@@ -751,6 +768,23 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
       } catch { return unavailable(); }
     },
 
+    nameProjection(channelId) {
+      try {
+        return handle.read(db => {
+          const rows = db.prepare('SELECT * FROM events WHERE channel_id = ? ORDER BY sequence').all(channelId) as unknown as EventRow[];
+          const events = storedEvents(db, rows);
+          const roster = api.roster(channelId);
+          if (!events || roster.kind !== 'done') return null;
+          return projectNamesInOrder(roster.participants.map(participant => ({ ...participant, initialName: participant.displayName })),
+            events.map((event): NameTimelineEvent => event.content.kind === 'text'
+              ? { kind: 'message', eventId: event.eventId, authorParticipantId: event.authorParticipantId }
+              : { kind: event.content.kind, eventId: event.eventId, actorParticipantId: event.authorParticipantId,
+                  targetParticipantId: event.content.agentParticipantId, name: event.content.body,
+                  sourceEventId: event.content.kind === 'agent_name_snapshot' ? event.content.sourceEventId : null }));
+        });
+      } catch { return null; }
+    },
+
     participantForDevice(input) {
       if (![input.channelId, input.deviceId].every(isIdentifier)) return unavailable();
       try {
@@ -823,7 +857,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             cause?.rootId ?? null, cause?.depth ?? null,
             authorBinding?.bindingId ?? null, authorBinding?.generation ?? null,
           );
-          db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
+          if (input.content.kind === 'text') db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
             SELECT ?, b.binding_id, b.generation, m.version FROM bindings b
             JOIN memberships member ON member.participant_id = b.participant_id AND member.channel_id = ?
             JOIN discovery_activations admission ON admission.binding_id = b.binding_id

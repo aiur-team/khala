@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import '../../../brand/fonts.css';
 import '../../../brand/tokens.css';
 import '../../../shell/shell.css';
@@ -11,8 +11,11 @@ import { ChannelScreen } from '../ChannelScreen';
 
 const roomId = 'room_harness' as RoomId;
 const scoutId = 'agent_scout' as ParticipantId;
+const builderId = 'agent_builder' as ParticipantId;
+const miraId = 'owner_mira' as OwnerId;
+const theoId = 'owner_theo' as OwnerId;
 let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
-const snapshot: AgentPresenceSnapshot = {
+let snapshot: AgentPresenceSnapshot = {
   generation: 1,
   agents: [{
     participantId: scoutId,
@@ -37,6 +40,9 @@ const port: ChannelUiPort = {
 const controller = createChannelController(port, { roomId, generation: 1 });
 
 function Harness() {
+  const [viewer, setViewer] = useState<OwnerId>(miraId);
+  const [names, setNames] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
+  const [renamed, setRenamed] = useState(false);
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<readonly Readonly<{ body: string; pending: boolean }>[]>([
     { body: 'Can you check the deployment?', pending: false },
@@ -58,6 +64,15 @@ function Harness() {
       title="Release channel"
       description="Coordinate the launch with people and their agents."
       controller={controller}
+      viewerOwnerId={viewer}
+      renameScope={roomId}
+      currentNames={names}
+      renameAgent={async (participantId, name) => {
+        if (viewer !== miraId || participantId !== scoutId) return 'rejected';
+        setNames(new Map([[scoutId, name]]));
+        setRenamed(true);
+        return 'accepted';
+      }}
       renderTimeline={() => (
         <section aria-label="Live timeline">
           <h2>Conversation</h2>
@@ -65,8 +80,24 @@ function Harness() {
           {messages.map((message, index) => (
             <p key={`${index}-${message.body}`}>{message.body} {message.pending ? <span>Sending…</span> : null}</p>
           ))}
+          {renamed ? <p>Scout is now called {names.get(scoutId)} · changed by Mira</p> : null}
           <label>Message <textarea value={draft} onChange={event => setDraft(event.currentTarget.value)} /></label>
           <button type="button" onClick={sendMessage}>Send message</button>
+        </section>
+      )}
+      renderHeaderActions={() => (
+        <section aria-label="Agent controls">
+          <h2>Agent controls</h2>
+          <button type="button" onClick={() => {
+            snapshot = { generation: 1, agents: [
+              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+              { participantId: builderId, ownerId: theoId, displayName: 'Builder', ownerDisplayName: 'Theo',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+            ] };
+            for (const listener of listeners) listener(snapshot);
+          }}>Show two agents</button>
+          <button type="button" onClick={() => setViewer(viewer === miraId ? theoId : miraId)}>Switch human</button>
         </section>
       )}
     />

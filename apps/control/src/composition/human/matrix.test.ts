@@ -5,6 +5,7 @@ import { createMatrixHumanServices } from './matrix';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
+import { createAgentIdentityDirectory } from '../agent/identity-directory';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import { ensureMessagingAccount } from '../../auth/provisioning';
 
@@ -409,6 +410,8 @@ describe('Matrix room sender inventory', () => {
     await bindings.putParticipant({ ownerId: binding.ownerId, roomId: room, agentParticipantId: binding.agentParticipantId,
       expectedBindingId: null, record: { binding, revokedGeneration: null, capability: null } });
     await createOwnerRoomIndex(store).activate(binding, room);
+    await createAgentIdentityDirectory(store).remember({ v: 1, roomId: room, matrixUserId: identity.userId,
+      participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
     const joined: Record<string, unknown> = { [user]: {}, [other]: {}, [identity.userId]: {} };
     const keys: Record<string, Record<string, unknown>> = {
       [user]: { WEB_OFFLINE: device(user, 'WEB_OFFLINE') },
@@ -418,6 +421,7 @@ describe('Matrix room sender inventory', () => {
     const expectedUsers = [user, other, identity.userId].sort();
     let afterQuery: (() => Promise<void>) | undefined;
     let denied = false;
+    let hiddenHistory = false;
     let failures: unknown = {};
     let membershipReads = 0;
     let mutateMembership = false;
@@ -428,12 +432,17 @@ describe('Matrix room sender inventory', () => {
         return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'private-roster-token' });
       }
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer private-roster-token');
+      if (path.includes('/state/m.room.member/')) return denied ? json(403, { errcode: 'M_FORBIDDEN' })
+        : json(200, { membership: 'join' });
       if (path.endsWith('/joined_members')) {
         expect(decodeURIComponent(path)).toContain(room);
         membershipReads++;
         if (denied) return json(403, { errcode: 'M_FORBIDDEN' });
         return json(200, { joined: mutateMembership && membershipReads > 1 ? { [user]: {} } : joined });
       }
+      if (path.endsWith('/state')) return json(200, [{ type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' }]);
+      if (path.includes('/event/')) return hiddenHistory ? json(403, { errcode: 'M_FORBIDDEN' })
+        : json(200, { type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' });
       if (path.endsWith('/keys/query')) {
         const query = JSON.parse(String(init?.body)) as { device_keys: Record<string, string[]> };
         expect(Object.keys(query.device_keys).sort()).toEqual(expectedUsers);
@@ -444,10 +453,36 @@ describe('Matrix room sender inventory', () => {
       throw new Error('unexpected roster request');
     });
     return { matrix: services(fetch, store), store, binding, identity, joined, keys, fetch,
-      deny: () => { denied = true; }, fail: (value: unknown) => { failures = value; },
+      deny: () => { denied = true; }, hideHistory: () => { hiddenHistory = true; }, fail: (value: unknown) => { failures = value; },
       changeMembers: () => { mutateMembership = true; },
       onQuery: (callback: () => Promise<void>) => { afterQuery = callback; } };
   }
+  it('resolves an agent with its indexed owner only for a joined human', async () => {
+    const f = await fixture();
+    const result = await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId]);
+    expect(result).toMatchObject({ kind: 'ok', participants: [
+      { matrixUserId: user, ownerId: principal.ownerId },
+      { matrixUserId: f.identity.userId, kind: 'agent', ownerId: principal.ownerId,
+        participantId: f.identity.participantId },
+    ] });
+    delete f.joined[f.identity.userId];
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', participantId: f.identity.participantId }] });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user], undefined, [f.identity.participantId]))
+      .toMatchObject({ kind: 'ok', participants: [expect.anything(), { kind: 'agent', participantId: f.identity.participantId }] });
+    f.deny();
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toEqual({ kind: 'forbidden' });
+  });
+  it('does not disclose a departed identity by guessed target ID outside the reader history', async () => {
+    const f = await fixture();
+    delete f.joined[f.identity.userId];
+    f.hideHistory();
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [], undefined, [f.identity.participantId]))
+      .toEqual({ kind: 'ok', participants: [] });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toEqual({ kind: 'unavailable' });
+  });
   it('includes offline browser devices from every owner and the exact indexed connector, without tokens', async () => {
     const f = await fixture();
     const result = await f.matrix.inspectRoomSenderDevices(principal.ownerId, room);

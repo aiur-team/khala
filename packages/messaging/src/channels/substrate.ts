@@ -48,6 +48,8 @@ export type SubstrateEvent =
     eventId: EventId;
     authorDeviceId: DeviceId;
     participant: ParticipantView;
+    /** Authenticated historical rename target, resolved within the authorized room. */
+    targetParticipant?: ParticipantView;
     content: MessageContent;
     clientTxnId: string | null;
     receivedAt: string;

@@ -1,5 +1,6 @@
 import {
   decodeDeviceId,
+  decodeParticipantId,
   decodeRoomId,
   type AdmissionPolicy,
   type AuthPrincipal,
@@ -339,11 +340,18 @@ export function createHumanHandlers(
         const authority = await authorized(auth, request);
         if (isResponse(authority)) return authority;
         const value = await readJsonObject(request);
-        if (value === null || !hasExactKeys(value, ['userIds']) || !Array.isArray(value.userIds)
+        if (value === null || !(hasExactKeys(value, ['userIds']) || hasExactKeys(value, ['userIds', 'roomId']) || hasExactKeys(value, ['userIds', 'roomId', 'targetParticipantIds'])) || !Array.isArray(value.userIds)
           || value.userIds.length > 100 || value.userIds.some(userId => typeof userId !== 'string' || userId.length > 255)) {
           return json(400, { code: 'invalid_request' });
         }
-        const result = await messaging.resolveParticipants(value.userIds as string[]);
+        const roomId = value.roomId === undefined ? null : decodeRoomId(value.roomId);
+        if (roomId !== null && !roomId.ok) return json(400, { code: 'invalid_request' });
+        const targets = value.targetParticipantIds === undefined ? [] : Array.isArray(value.targetParticipantIds) ? value.targetParticipantIds.map(decodeParticipantId) : null;
+        if (targets === null || targets.length > 100 || targets.some(target => !target.ok)) return json(400, { code: 'invalid_request' });
+        const targetIds = targets.flatMap(target => target.ok ? [target.value] : []);
+        const result = roomId === null ? await messaging.resolveParticipants(value.userIds as string[])
+          : await messaging.resolveRoomParticipants(authority.ownerId, roomId.value, value.userIds as string[], undefined, targetIds);
+        if (result.kind === 'forbidden') return json(403, { code: 'forbidden' });
         return result.kind === 'ok' ? json(200, { participants: result.participants }) : unavailable();
       }),
     },

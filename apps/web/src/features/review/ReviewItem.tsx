@@ -10,7 +10,7 @@
 import type { ChangeEvent, ReactNode } from 'react';
 import type { MessageContent, TimelineItem } from '@khala/contracts/messaging/index';
 
-export type ReadableTimelineItem = Extract<TimelineItem, { content: MessageContent }>;
+export type ReadableTimelineItem = Extract<TimelineItem, { content: { kind: 'text' } }>;
 
 /**
  * Same control/bidi/invisible character classes `ParticipantView.displayName`
