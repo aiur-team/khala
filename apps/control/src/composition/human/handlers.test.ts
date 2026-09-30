@@ -381,8 +381,9 @@ describe('registerHumanHandlers feature routes', () => {
       expect(Object.isFrozen(registration)).toBe(true);
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
       expect(response.status).toBe(503);
-      expect(await response.json()).toEqual(registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
-        || registration.path.includes('/room-send/')
+      expect(await response.json()).toEqual(registration.path.includes('/room-send/')
+        ? { kind: 'unavailable', stage: 'composition', code: 'route_missing' }
+        : registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
         ? { code: 'unavailable' }
         : registration.path === '/api/human/devices/replacement'
         ? { code: 'feature_unavailable' }

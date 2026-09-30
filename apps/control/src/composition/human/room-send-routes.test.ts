@@ -5,7 +5,7 @@ import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createGateway } from '../../runtime/handler';
 import { createRoomSendFence, senderIdFor } from './room-send-fence';
-import { createMatrixBrowserSenderVerifier, createRoomSendRoutes } from './room-send-routes';
+import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoomSendRoutes } from './room-send-routes';
 import { ownerMatrixUserId } from './matrix-identity';
 
 const roomId = '!send-fence:example' as RoomId;
@@ -19,27 +19,34 @@ const agentUser = '@khala_agent_a:example.test';
 const human = { senderId: senderIdFor(humanUser, 'browser_device'), deviceId: 'browser_device', deviceKey: 'A'.repeat(43) };
 const agent = { senderId: senderIdFor(agentUser, binding.deviceId), deviceId: binding.deviceId, deviceKey: 'B'.repeat(43) };
 
-function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boolean; storeUnavailable?: boolean } = {}) {
+function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boolean; storeUnavailable?: boolean;
+  authThrows?: boolean; membershipThrows?: boolean; senderThrows?: boolean; storeThrows?: boolean } = {}) {
   const underlying = fakeStore(() => T0).store;
-  const store = options.storeUnavailable ? { ...underlying, read: async () => ({ kind: 'unavailable' as const }) } : underlying;
+  const store = options.storeUnavailable || options.storeThrows ? { ...underlying, read: async () => {
+    if (options.storeThrows) throw new Error('secret store error');
+    return { kind: 'unavailable' as const };
+  } } : underlying;
   const fence = createRoomSendFence(store);
   const diagnostics: Array<{ stage: string; code: string }> = [];
   let owner = principal.ownerId;
   let agentGeneration = binding.generation;
   let agentKey = agent.deviceKey;
   const routes = createRoomSendRoutes({ store,
-    auth: { async requireHumanMutation() { return options.authUnavailable ? { kind: 'unavailable' }
+    auth: { async requireHumanMutation() { if (options.authThrows) throw new Error('secret auth error');
+      return options.authUnavailable ? { kind: 'unavailable' }
       : { kind: 'authorized', context: { principal: { ...principal, ownerId: owner } } }; } } as unknown as AuthService,
     capabilities: { async authorize(_request, action) {
       return action === 'publish_own' && agentGeneration === binding.generation
         ? { kind: 'authorized', action, ownerId: binding.ownerId, roomId, binding }
         : { kind: 'refused', status: 401, code: 'binding_superseded' };
     } } as AdapterCapabilities,
-    inspectOwnerMembership: async ownerId => ({ kind: options.membershipUnavailable ? 'unavailable'
-      : ownerId === principal.ownerId ? 'joined' : 'absent' }),
-    verifyBrowserSender: async (identity, deviceId, token) => identity.ownerId === principal.ownerId
+    inspectOwnerMembership: async ownerId => { if (options.membershipThrows) throw new Error('secret room error');
+      return { kind: options.membershipUnavailable ? 'unavailable'
+        : ownerId === principal.ownerId ? 'joined' : 'absent' }; },
+    verifyBrowserSender: async (identity, deviceId, token) => { if (options.senderThrows) throw new Error('secret token error');
+      return identity.ownerId === principal.ownerId
       && deviceId === human.deviceId && token === 'valid-browser-token-123456789'
-      ? { matrixUserId: humanUser, deviceKey: human.deviceKey } : null,
+      ? { matrixUserId: humanUser, deviceKey: human.deviceKey } : null; },
     agentSender: async () => ({ matrixUserId: agentUser, deviceKey: agentKey }),
     diagnostic: entry => diagnostics.push(entry),
   });
@@ -78,6 +85,41 @@ describe('authenticated room send fence routes', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ kind: 'unavailable', stage: 'fence_acquire', code: 'fence_unavailable' });
     expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+  it.each([
+    [{ authThrows: true }, 'auth', 'session_store_unavailable'],
+    [{ membershipThrows: true }, 'membership', 'matrix_unavailable'],
+    [{ senderThrows: true }, 'sender', 'sender_verification_unavailable'],
+    [{ storeThrows: true }, 'fence_acquire', 'fence_unavailable'],
+  ] as const)('logs rejecting acquire adapter %s with a safe stage through the gateway', async (options, stage, code) => {
+    const h = setup(options);
+    const lazy = createLazyRoomSendRoutes(() => h.routes, entry => h.diagnostics.push(entry));
+    const route = lazy.find(item => item.path === '/api/human/room-send/acquire')!;
+    const gateway = createGateway({ registrations: [route], absentPrefixes: [], appOrigin: origin });
+    const response = await gateway(new Request(`${origin}/.netlify/functions/khala-control/human/room-send/acquire`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId, deviceId: human.deviceId, matrixAccessToken: 'valid-browser-token-123456789', clientTxnId: 'txn_safe' }),
+    }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ kind: 'unavailable', stage, code });
+    expect(h.diagnostics).toEqual([{ stage, code }]);
+    expect(JSON.stringify(h.diagnostics)).not.toMatch(/secret/);
+  });
+  it('types rejected async route handlers and a missing composed route', async () => {
+    const diagnostics: Array<{ stage: string; code: string }> = [];
+    const rejected = createLazyRoomSendRoutes(() => [{ path: '/api/human/room-send/acquire', methods: ['POST'],
+      handle: async () => { throw new Error('secret handler error'); } }], entry => diagnostics.push(entry));
+    const missing = createLazyRoomSendRoutes(() => [], entry => diagnostics.push(entry));
+    for (const [route, code] of [[rejected[1]!, 'handle_failed'], [missing[1]!, 'route_missing']] as const) {
+      const gateway = createGateway({ registrations: [route], absentPrefixes: [], appOrigin: origin });
+      const response = await gateway(new Request(`${origin}/api/human/room-send/acquire`, {
+        method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}',
+      }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ kind: 'unavailable', stage: 'composition', code });
+    }
+    expect(diagnostics).toEqual([{ stage: 'composition', code: 'handle_failed' },
+      { stage: 'composition', code: 'route_missing' }]);
   });
   it('verifies the transient browser Matrix token and exact published Curve25519 device key', async () => {
     const userId = ownerMatrixUserId(principal.ownerId, 'example.test');
