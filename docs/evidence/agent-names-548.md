@@ -119,3 +119,19 @@ A regression passes the target projection through timeline entry conversion,
 real controller name scanning, and rendered TimelineScreen. Both adjacent text
 messages remain visible, namesReady becomes true, and the invalid rename is
 absent. All 60 focused web tests, 49 control tests, full typecheck and lint pass.
+
+## Exact-head browser CI regression fixes
+
+CI run 36666765216 exposed two branch-specific failures. An unavailable encrypted
+history event kept namesReady false and the screen suppressed all readable rows.
+Readable human and agent bodies now remain visible; incomplete agent bylines use
+`Agent name unavailable`, and uncertain rename notices stay withheld. A rendered
+regression checks readable bodies, the history warning and encrypted placeholder
+while rejecting unverified names and rename notices.
+
+The internal acceptance driver also interpreted the new author attribution
+column as the body. It now decodes body index 5, preserving the application
+release format. Focused sequential Chromium passed all three tests: timeline
+history/send reconciliation, full internal create/grant/exchange/human message/
+mode/Stop/launcher-close/resume acceptance, and second-launcher/unknown-channel
+refusal. The 39 focused timeline tests, full typecheck and lint passed.

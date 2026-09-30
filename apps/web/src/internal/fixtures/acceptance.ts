@@ -207,8 +207,8 @@ export class AgentSession {
     const acked = await this.read(token);
     if (acked.code !== 0) throw new Error(`${this.name}: khala read --ack failed: ${acked.err}`);
     // Each release's canonical JSON is `[domain, releaseId, bindingId, generation, policy, items]`,
-    // and each item ends with the message body.
+    // Each text item has its body at index 5; attributed releases append an author name.
     const releases = [...first.out.matchAll(/^canonicalReleaseJson:\n(.+)$/gm)].map(match => JSON.parse(match[1]!) as unknown[]);
-    return releases.flatMap(release => (release[5] as unknown[][]).map(item => item.at(-1) as string));
+    return releases.flatMap(release => (release[5] as unknown[][]).map(item => item[5] as string));
   }
 }

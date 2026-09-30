@@ -239,3 +239,24 @@ it('renders each unavailable event without claiming an empty conversation or inv
   expect(html).not.toContain('Review encrypted');
   expect(html).not.toContain('2026-09-17');
 });
+
+
+it('keeps readable human and agent bodies visible while encrypted history makes agent names incomplete', () => {
+  const bot = participant('bot', 'agent', 'Unverified current name');
+  const human = item('human', viewer, 'Readable human text');
+  const agent = item('agent', bot, 'Readable agent text');
+  const change = { ...item('rename', viewer, ''), content: { v: 1 as const, kind: 'agent_rename' as const,
+    agentParticipantId: bot.participantId, body: 'Unverified rename' } } satisfies TimelineItem;
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'partial',
+    items: [human, agent, change], nextCursor: null, newMessageCount: 0, namesReady: false,
+    rows: [{ kind: 'message', item: human }, { kind: 'unavailable', eventId: 'encrypted' as EventId,
+      receivedAt: '2026-09-17T00:00:00Z' }, { kind: 'message', item: agent }, { kind: 'message', item: change }] })}
+    roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('Readable human text');
+  expect(html).toContain('Readable agent text');
+  expect(html).toContain('Agent name unavailable');
+  expect(html).toContain('Checking agent names');
+  expect(html).toContain('Message unavailable on this device');
+  expect(html).not.toContain('Unverified current name');
+  expect(html).not.toContain('Unverified rename');
+});

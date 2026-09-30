@@ -330,12 +330,11 @@ export function TimelineScreen({
         {rows.map((row, index) => {
           if (row.kind === 'unavailable') return <li key={row.eventId} data-event-id={row.eventId}
             className="timeline__row message-content__unavailable">Message unavailable on this device.</li>;
-          if (data.namesReady === false) return null;
           const item = row.item;
           const previous = rows[index - 1];
           const nameEvent = attributed.get(item.ref.eventId);
           if (item.content.kind === 'agent_name_snapshot') return null;
-          if (item.content.kind === 'agent_rename') return nameEvent?.kind === 'agent_rename'
+          if (item.content.kind === 'agent_rename') return data.namesReady !== false && nameEvent?.kind === 'agent_rename'
             ? <ChatSystemEvent key={item.ref.eventId} id={item.ref.eventId} actor={nameEvent.actorName}>
                 {nameEvent.previousName} is now called {nameEvent.name}
               </ChatSystemEvent>
@@ -353,7 +352,8 @@ export function TimelineScreen({
                 </li>
               ))}
               <ChatMessage id={item.ref.eventId} author={resolveDisplayName({ ...item.participant,
-                displayName: nameEvent?.kind === 'message' ? nameEvent.authorName : item.participant.displayName })} time={item.receivedAt}
+                displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+                  : nameEvent?.kind === 'message' ? nameEvent.authorName : item.participant.displayName })} time={item.receivedAt}
                 mine={attribution.isViewerOwned} grouped={previous?.kind === 'message' && previous.item.participant.participantId === item.participant.participantId}
                 kindLabel={ownershipLabel(attribution)} className="timeline__row">
                 {isReadableItem(item) ? (
