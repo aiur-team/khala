@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { hostedAppOrigin, hostedSessionFactory } from './hosted-production.js';
 import type { OpenProductionConnector } from './hosted-production.js';
 import type { AgentClientPort } from '../cli/types.js';
+import { ReadOperation } from './read.js';
 
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
@@ -63,7 +64,14 @@ describe('installed hosted connector factory', () => {
     const principal = `agent_${signer.jkt}` as DiscoveryCredential['requester']['principal'];
     const credential = { credentialRef: 'credential_ref', requester: { principal, origin, sessionGeneration: 0,
       proofKey: { algorithm: 'Ed25519', publicKey: signer.publicKey, thumbprint: signer.jkt } } } as DiscoveryCredential;
-    const discovery = { current: () => credential, authorize: async () => ({ kind: 'authorized' as const, credential }),
+    let discovered = mode === 'create';
+    let dropCurrent = false;
+    let heldOrigin = origin;
+    const heldCredential = () => ({ ...credential, requester: { ...credential.requester, origin: heldOrigin } });
+    const discovery = { current: () => discovered && !dropCurrent ? heldCredential() : null, authorize: async () => {
+      discovered = true;
+      return { kind: 'authorized' as const, credential: heldCredential() };
+    },
       refresh: async () => ({ kind: 'missing' as const }), invalidate() {} };
     const rows = new Map<string, { record: string; revision: number; recoveryKey: Uint8Array | null }>();
     const journal: ChannelAccessActivationStore = {
@@ -88,10 +96,15 @@ describe('installed hosted connector factory', () => {
     let recoveryReachable = false;
     let grants = 0;
     let matrixLogins = 0;
+    let deviceReservations = 0;
+    let deviceActivations = 0;
     const bindings = new Set<string>();
     let admittedBinding: SessionBinding | null = null;
     let nativeAvailable = false;
     let createApproved = false;
+    let candidateApproved = false;
+    let accessApproved = mode === 'create';
+    let connectOperationId = '';
     const diagnostics: unknown[] = [];
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } });
@@ -99,6 +112,10 @@ describe('installed hosted connector factory', () => {
       const url = new URL(String(target));
       calls.push(url.pathname);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      if (url.pathname.endsWith('/authority/challenge')) return reply({ kind: 'issued', nonce: 'N'.repeat(43) });
+      if (url.pathname.endsWith('/authority/candidate')) return reply({ kind: candidateApproved ? 'approved' : 'pending_owner',
+        operationId: body?.operationId, candidateId: 'C'.repeat(43),
+        approveUrl: `${origin}/api/human/channel-discovery/authority/approve?candidate=${'C'.repeat(43)}` }, candidateApproved ? 200 : 202);
       if (url.pathname === '/api/agent/channel-access/create')
         return reply({ v: 1, operationId: body?.operationId, outcome: 'pending_owner' });
       if (url.pathname.endsWith('/status') && url.searchParams.get('operationKind') === 'create')
@@ -106,7 +123,7 @@ describe('installed hosted connector factory', () => {
           outcome: createApproved ? 'approved' : 'pending_owner' });
       if (url.pathname.endsWith('/request') || url.pathname.endsWith('/status'))
         return reply(url.pathname === '/api/agent/channel-link/request'
-          ? { v: 1, kind: 'request', operationId: body?.operationId, outcome: 'approved' }
+          ? { v: 1, kind: 'request', operationId: body?.operationId, outcome: accessApproved ? 'approved' : 'pending_owner' }
           : { v: 1, operationId: body?.operationId ?? url.searchParams.get('operationId'), outcome: 'approved' });
       if (url.pathname.endsWith('/exchange')) {
         const exchange = body as unknown as GrantExchangeRequest;
@@ -151,17 +168,20 @@ describe('installed hosted connector factory', () => {
       throw new Error('unexpected request');
     }) as typeof fetch;
     const openConnector: OpenProductionConnector = async () => ({
-      ports: {} as never, proofSigner: signer,
+      ports: { sessions: { async inspect() { return { kind: 'verified', session: { ...SESSION, generation: 0 } }; } } } as never, proofSigner: signer,
       channelAccess: { journal,
-        devices: { async reserve() { return { kind: 'reserved', deviceId: 'KHALA_device_1' }; },
+        devices: { async reserve() { deviceReservations++; return { kind: 'reserved', deviceId: 'KHALA_device_1' }; },
           async activate(input) { expect(input.matrixSession?.deviceId).toBe(input.deviceId);
+            deviceActivations++;
             if (firstActivation) { firstActivation = false; return { kind: 'unavailable' }; }
             ready.add(input.deviceId); return { kind: 'ready' }; },
           async status(id) { return ready.has(id) ? 'ready' : 'missing'; } },
         trust: { async initialize() { return { kind: 'initialized', mode: 'review', paused: false }; } },
         async admitted(id, value) { retained.set(id, value as never); },
         async recovered(id) { return retained.get(id) ?? null; } },
-      async send(input) { return { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
+      async send(input) { return nativeAvailable && admittedBinding
+        ? { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }
+        : { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
       async status() { return nativeAvailable && admittedBinding
         ? { v: 1, connected: true, binding: admittedBinding, route: 'native_cli_queue', sourceCursor: null,
           readiness: { phase: 'ready', prerequisites: {} as never, errorCode: null } }
@@ -178,11 +198,32 @@ describe('installed hosted connector factory', () => {
       async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
-    expect(await opened.client.requestChannelCreate?.({ title: 'Planning', operationId: 'create_123', origin }))
-      .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
-    expect(calls).toContain('/api/agent/channel-access/create');
+    if (mode === 'create') {
+      expect(await opened.client.requestChannelCreate?.({ title: 'Planning', operationId: 'create_123', origin }))
+        .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
+      expect(calls).toContain('/api/agent/channel-access/create');
+    }
     const link = `${origin}/join/inviteRef123`;
-    if (mode === 'connect') await opened.client.connect(link);
+    if (mode === 'connect') {
+      const first = await opened.client.connect(link);
+      expect(first).toMatchObject({ kind: 'pending', outcome: 'pending_owner' });
+      if (first.kind !== 'pending') throw new Error('expected pending connect');
+      connectOperationId = first.operationId;
+      expect(discovered).toBe(false);
+      expect(calls).not.toContain('/api/agent/channel-access/exchange');
+      expect(rows.size).toBe(0);
+      expect(deviceReservations).toBe(0);
+      expect(deviceActivations).toBe(0);
+      candidateApproved = true;
+      expect(await opened.client.connect(link)).toEqual(first);
+      expect(discovered).toBe(true);
+      expect(calls).toContain('/api/agent/channel-link/request');
+      expect(calls).not.toContain('/api/agent/channel-access/exchange');
+      expect(deviceReservations).toBe(0);
+      expect(deviceActivations).toBe(0);
+      accessApproved = true;
+      await opened.client.connect(link);
+    }
     else {
       expect(await opened.client.channelCreateStatus?.({ operationId: 'create_123', origin }))
         .toEqual({ kind: 'status', status: { v: 1, operationId: 'create_123', outcome: 'pending_owner' } });
@@ -222,8 +263,43 @@ describe('installed hosted connector factory', () => {
     expect(matrixLogins).toBe(1);
     expect([...bindings]).toEqual(['bnd_1']);
     expect((await restarted.client.status()).binding?.bindingId).toBe('bnd_1');
+    if (mode === 'connect') expect(await restarted.client.send({ bindingId: (await restarted.client.status()).binding!.bindingId,
+      clientTxnId: 'txn-1', body: 'hello' }))
+      .toEqual({ kind: 'accepted', clientTxnId: 'txn-1', eventId: 'event-1' });
+    if (mode === 'connect') {
+      const heldBinding = (await restarted.client.status()).binding!;
+      const read = new ReadOperation({ heldBinding,
+        consumer: { async readBatch() { return { token: 'batch-1', items: [] }; }, async release() {} },
+        currentBinding: async () => (await restarted.client.status()).binding });
+      expect(await read.read({ bindingId: heldBinding.bindingId, maxBytes: 1024 }))
+        .toEqual({ kind: 'batch', batch: { token: 'batch-1', items: [] } });
+    }
+    if (mode === 'connect') {
+      const exchangeCount = calls.filter(path => path.endsWith('/exchange')).length;
+      dropCurrent = true;
+      expect(await restarted.client.connect(link)).toEqual({ kind: 'unavailable' });
+      expect(diagnostics).toContainEqual({ component: 'activation', stage: 'activation_no_credential', result: 'unavailable' });
+      expect(calls.filter(path => path.endsWith('/exchange'))).toHaveLength(exchangeCount);
+      expect(JSON.stringify(diagnostics)).not.toContain(link);
+      expect(JSON.stringify(diagnostics)).not.toContain(credential.credentialRef);
+      dropCurrent = false;
+      heldOrigin = 'https://other.example';
+      expect(await restarted.client.channelAccessStatus?.({ operationId: connectOperationId, origin }))
+        .toEqual({ kind: 'unavailable' });
+      expect(diagnostics).toContainEqual({ component: 'activation', stage: 'activation_origin_mismatch', result: 'unavailable' });
+      expect(calls.filter(path => path.endsWith('/exchange'))).toHaveLength(exchangeCount);
+      heldOrigin = origin;
+      const row = rows.get(connectOperationId)!;
+      rows.set(connectOperationId, { ...row, record: JSON.stringify({ ...JSON.parse(row.record) as object,
+        origin: 'https://other.example' }) });
+      expect(await restarted.client.connect(link)).toEqual({ kind: 'unavailable' });
+      expect(diagnostics).toContainEqual({ component: 'activation', stage: 'journal_conflict', result: 'unavailable' });
+      expect(calls.filter(path => path.endsWith('/exchange'))).toHaveLength(exchangeCount);
+    }
     if (mode === 'connect') {
       expect(await restarted.client.connect(`${origin}/channels/room-1`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+      expect(await restarted.client.connect('https://other.example/join/inviteRef123'))
+        .toEqual({ kind: 'refused', code: 'untrusted_origin' });
     }
     await restarted.close();
   });

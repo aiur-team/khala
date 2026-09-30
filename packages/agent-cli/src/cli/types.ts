@@ -65,6 +65,7 @@ export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as r
 
 export type ConnectResult =
   | Readonly<{ kind: 'connected'; binding: SessionBinding; reused: boolean }>
+  | Readonly<{ kind: 'pending'; operationId: string; outcome: 'pending_owner' | 'connecting' | 'repair_required' }>
   | Readonly<{ kind: 'refused'; code: ConnectRefusalCode }>
   | Readonly<{ kind: 'unavailable' }>;
 export type SendResult =

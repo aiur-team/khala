@@ -25,7 +25,8 @@ import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/c
 export const CANONICAL_APP_ORIGIN = 'https://khala.aiur.team';
 
 export type ActivationDiagnostic = Readonly<{
-  stage: 'status_decode' | 'activation_preflight' | 'activation_result' | ActivationUnavailableStage;
+  stage: 'status_decode' | 'activation_preflight' | 'activation_no_credential' | 'activation_origin_mismatch'
+    | 'activation_ports' | 'journal_conflict' | 'activation_result' | ActivationUnavailableStage;
   result: 'unavailable' | 'blocked';
 }>;
 
@@ -133,6 +134,7 @@ export function hostedSessionFactory(options: Readonly<{
           sessionGeneration: credential.requester.sessionGeneration },
         { journal: connector.channelAccess.journal, signer: connector.proofSigner });
         if (journaled === 'unavailable') reportActivation('journal');
+        if (journaled === 'operation_conflict') reportActivation('journal_conflict');
         return journaled === 'journaled';
       },
       candidate: createProofKeyCandidateClient({
@@ -199,15 +201,15 @@ export function hostedSessionFactory(options: Readonly<{
     } : null;
     async function advance(operationId: string, origin: string) {
       const credential = discovery?.current();
-      if (!activationPorts || !credential || credential.requester.origin !== origin) {
-        reportActivation('activation_preflight');
-        return null;
-      }
+      if (!activationPorts) { reportActivation('activation_ports'); return null; }
+      if (!credential) { reportActivation('activation_no_credential'); return null; }
+      if (credential.requester.origin !== origin) { reportActivation('activation_origin_mismatch'); return null; }
       const journaled = await journalChannelAccessRequest({ operationId,
         requester: credential.requester.principal, origin,
         sessionGeneration: credential.requester.sessionGeneration }, activationPorts);
       if (journaled !== 'journaled') {
-        reportActivation(journaled === 'unavailable' ? 'journal' : 'activation_preflight');
+        reportActivation(journaled === 'unavailable' ? 'journal'
+          : journaled === 'operation_conflict' ? 'journal_conflict' : 'activation_preflight');
         return null;
       }
       const result = await activateChannelAccess(operationId, activationPorts);
@@ -324,12 +326,26 @@ export function hostedSessionFactory(options: Readonly<{
         const operationId = createHash('sha256').update(JSON.stringify([
           'khala.hosted.channel-access.v1', link, claim.harness, claim.sessionId, claim.workdir,
         ])).digest('base64url').slice(0, 32);
-        const result = await requestChannelAccess({ target: { kind: 'channel_url', channelUrl: link }, operationId, origin: target.origin });
+        const result = await access.requestChannelAccess({ target: { kind: 'channel_url', channelUrl: link }, operationId, origin: target.origin });
         if (result?.kind !== 'status') return { kind: 'unavailable' as const };
+        const decoded = decodeAccessRequestStatus(result.status);
+        if (!decoded.ok || decoded.value.operationId !== operationId) {
+          reportActivation('status_decode');
+          return { kind: 'unavailable' as const };
+        }
+        if (decoded.value.outcome === 'pending_owner') return { kind: 'pending' as const, operationId, outcome: 'pending_owner' as const };
+        if (!['approved', 'connecting', 'connected', 'repair_required'].includes(decoded.value.outcome)) {
+          return { kind: 'unavailable' as const };
+        }
         const activated = await advance(operationId, target.origin);
         if (activated?.kind === 'connected' && await nativeReady(activated.binding)) return activated;
+        if (activated?.kind === 'pending') return { kind: 'pending' as const, operationId, outcome: 'pending_owner' as const };
+        if (activated?.kind === 'repair_required') return { kind: 'pending' as const, operationId, outcome: 'repair_required' as const };
         if (activated?.kind === 'closed') return { kind: 'refused' as const,
           code: activated.outcome === 'denied' ? 'admission_denied' as const : 'binding_revoked' as const };
+        if (activated && activated.kind !== 'blocked' && activated.kind !== 'unavailable') {
+          return { kind: 'pending' as const, operationId, outcome: 'connecting' as const };
+        }
         return { kind: 'unavailable' as const };
       } },
       inbox: connector.inbox,
