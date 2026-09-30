@@ -359,6 +359,22 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const joined = response.status === 200 ? safeObject((await body(response))?.joined) : null;
       if (!joined || Object.keys(joined).length > 100)
         return { kind: 'unavailable' };
+      let historicalState: readonly Record<string, unknown>[] | null | undefined;
+      const canReadIdentity = async (matrixUserId: string): Promise<boolean> => {
+        if (Object.hasOwn(joined, matrixUserId)) return true;
+        if (historicalState === undefined) {
+          const state = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state`,
+            { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+          const value: unknown = state.status === 200 ? await state.json().catch(() => null) : null;
+          historicalState = Array.isArray(value) ? value.flatMap(event => { const object = safeObject(event); return object ? [object] : []; }) : null;
+        }
+        const member = historicalState?.find(event => event.type === 'm.room.member' && event.state_key === matrixUserId);
+        if (typeof member?.event_id !== 'string') return false;
+        const visible = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(member.event_id)}`,
+          { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+        const event = visible.status === 200 ? await body(visible) : null;
+        return event?.event_id === member.event_id && event?.type === 'm.room.member' && event?.state_key === matrixUserId;
+      };
       const resolved = new Map<string, MatrixParticipant>();
       const identities = createAgentIdentityDirectory(options.store);
       const index = createOwnerRoomIndex(options.store);
@@ -390,7 +406,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
             if (agent) break;
           }
         }
-        if (!agent) return { kind: 'unavailable' };
+        if (!agent || !await canReadIdentity(agent.matrixUserId)) return { kind: 'unavailable' };
         resolved.set(userId, { matrixUserId: userId, participantId: agent.participantId,
           ownerId: agent.ownerId, displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}`,
           kind: 'agent' });
@@ -399,7 +415,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       for (const participantId of targetParticipantIds) {
         if ([...resolved.values()].some(value => value.participantId === participantId)) continue;
         const agent = await identities.lookupParticipant(roomId, participantId);
-        if (!agent) return { kind: 'unavailable' };
+        // Unreadable and unknown targets are omitted without disclosing directory metadata.
+        if (!agent || !await canReadIdentity(agent.matrixUserId)) continue;
         resolved.set(agent.matrixUserId, { matrixUserId: agent.matrixUserId, participantId: agent.participantId,
           ownerId: agent.ownerId, kind: 'agent', displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}` });
       }

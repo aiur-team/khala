@@ -35,6 +35,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import type { NameTimelineEvent } from '@khala/contracts/messaging/agent-names';
 import { publishAgentNameSnapshots } from './name-snapshots';
+import { attachNameTargets } from './name-targets';
 import {
   createBrowserDeviceService,
   createIndexedDbMarkerStore,
@@ -541,18 +542,13 @@ class MatrixSubstrate implements RoomSubstrate {
     await decryptTimelineEvents(active.client, events);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
-    const targets = [...new Set(events.flatMap(event => {
-      const content = event.getContent();
-      return event.getType() === EventType.RoomMessage && content.msgtype === MsgType.Notice
-        && typeof content['com.khala.agent_participant_id'] === 'string' ? [content['com.khala.agent_participant_id'] as ParticipantView['participantId']] : [];
-    }))];
-    const mappings = await this.participants.resolve(senders, undefined, roomId, targets);
+    const mappings = await this.participants.resolve(senders, undefined, roomId);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during participant resolution');
     const crypto = active.client.getCrypto();
     if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
     const devices = await crypto.getUserDeviceInfo(senders, true);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during device attribution');
-    return events.flatMap(event => {
+    const projectedEvents = events.flatMap(event => {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
       if (!sender || !mapping) return [];
@@ -570,15 +566,11 @@ class MatrixSubstrate implements RoomSubstrate {
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
-      if (!projected) return [];
-      if (projected.kind === 'message' && (projected.content.kind === 'agent_rename' || projected.content.kind === 'agent_name_snapshot')) {
-        const targetId = projected.content.agentParticipantId;
-        const targetParticipant = [...mappings.values()].find(value => value.participantId === targetId);
-        if (!targetParticipant) throw new Error('Matrix name target attribution unavailable');
-        return [{ ...projected, targetParticipant }];
-      }
-      return [projected];
+      return projected ? [projected] : [];
     });
+    return attachNameTargets(projectedEvents,
+      targetId => this.participants.resolve([], undefined, roomId, [targetId]),
+      () => this.runtime.active === active);
   }
 
   async timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>): Promise<SubstrateRead<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>> {

@@ -77,6 +77,7 @@ try {
   };
   const owner = await provision('maya'); const existingAgent = await provision('codex');
   const lateHuman = await provision('theo'); const lateAgent = await provision('scout');
+  const retiredAgent = await provision('retired');
   const created = await api('/_matrix/client/v3/createRoom', owner.token, 'POST', { visibility: 'private', invite: [existingAgent.userId], initial_state: [
     { type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } },
     { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
@@ -121,6 +122,11 @@ try {
     throw new Error('decryption_missing');
   };
   if ((await awaitClear(codex, oldRename)).body !== 'Dolan') throw new Error('existing_agent_name_missing');
+  await api(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, owner.token, 'POST', { user_id: retiredAgent.userId });
+  await api(`/_matrix/client/v3/join/${encodeURIComponent(roomId)}`, retiredAgent.token, 'POST', {});
+  const retiredMembership = await api(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(retiredAgent.userId)}`,
+    retiredAgent.token, 'PUT', { membership: 'leave' });
+  if (typeof retiredMembership.event_id !== 'string') throw new Error('retired_membership_missing');
   for (const person of [lateHuman, lateAgent]) {
     await api(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, owner.token, 'POST', { user_id: person.userId });
     await api(`/_matrix/client/v3/join/${encodeURIComponent(roomId)}`, person.token, 'POST', {});
@@ -138,9 +144,13 @@ try {
     if ((await decrypt(peer, oldText)).kind !== 'missing' || (await decrypt(peer, oldRename)).kind !== 'missing') throw new Error('pre_join_history_widened');
     const response = await fetch(`${synapse.baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(priorText)}`, { headers: { authorization: `Bearer ${peer.person.token}` } });
     if (response.status !== 403 && response.status !== 404) throw new Error(`history_access_widened_${response.status}`);
+    const memberResponse = await fetch(`${synapse.baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(retiredMembership.event_id as string)}`,
+      { headers: { authorization: `Bearer ${peer.person.token}` } });
+    if (memberResponse.status !== 403 && memberResponse.status !== 404) throw new Error(`membership_history_access_widened_${memberResponse.status}`);
+
   }
   console.log(JSON.stringify({ kind: 'passed', synapseVersion: synapse.version, participants: 4,
-    encryptedCurrentNameSnapshot: true, lateHumanAndAgentCurrentName: true, priorTextAndRenameUnavailable: true,
+    encryptedCurrentNameSnapshot: true, lateHumanAndAgentCurrentName: true, priorTextAndRenameUnavailable: true, departedMembershipUnavailable: true,
     scope: 'native Matrix encryption/history primitive; production membership publisher validated separately' }));
 } finally {
   await Promise.all(contexts.map(context => context.close()));

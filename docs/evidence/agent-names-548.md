@@ -83,3 +83,25 @@ typecheck, lint, and build pass. After stale temporary files were cleaned by
 the operator, the bounded sequential channel browser test passed using normal
 `/tmp`. The full hosted membership/approval/native-delivery proof remains
 separate and outstanding.
+
+## Target failure isolation and history authorization
+
+The follow-up review of `2c52deee` found that bulk target resolution could fail
+an otherwise readable timeline and that durable departed identity lookup needed
+a readable-history boundary. Sender resolution remains complete and separate;
+validated naming targets resolve individually. Unknown, unreadable, or failing
+target requests retain an unavailable event row without dropping adjacent text.
+Malformed notice content is rejected before target resolution.
+
+Departed identities now require the requesting Matrix user to read the target's
+membership event through `/event`; current joined identities remain covered by
+the authorized roster. Both forward sender lookup and reverse naming-target
+lookup enforce this check. Unknown/unreadable targets disclose no identity
+metadata. The native disposable Synapse 1.161.0 harness confirmed that late
+human and agent members cannot read the retired agent's pre-join membership
+event, alongside encrypted current snapshots and unavailable earlier history.
+
+Validation: 54 focused web tests (including the final malformed-content case),
+49 control tests, full typecheck and lint passed. Native output reports
+`departedMembershipUnavailable: true`. Full hosted delivery proof remains
+outstanding; these results cover the Matrix history primitive and local paths.

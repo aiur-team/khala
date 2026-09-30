@@ -201,6 +201,18 @@ describe('Matrix browser safety boundaries', () => {
     });
   });
 
+  it('drops a malformed notice target before participant target resolution', () => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const participant: ParticipantView = { participantId: 'human_one' as never, ownerId: 'owner_one' as never,
+      kind: 'human', displayName: 'Maya', deviceIds: [] };
+    const event = { getId: () => '$bad', getSender: () => '@maya:example.test', getTs: () => 0,
+      isDecryptionFailure: () => false, getType: () => EventType.RoomMessage, getUnsigned: () => ({}),
+      getContent: () => ({ msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': '' }),
+    } as unknown as MatrixEvent;
+    expect(projectMatrixTimelineEvent(event, participant, 'DEVICE_ONE' as never, limits.value)).toBeNull();
+  });
+
   it.each(['agent_rename', 'agent_name_snapshot'] as const)('preserves %s metadata in the shared Matrix event projection', kind => {
     const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
     if (!limits.ok) throw new Error('invalid test limits');

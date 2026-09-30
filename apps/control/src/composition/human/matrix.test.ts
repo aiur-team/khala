@@ -421,6 +421,7 @@ describe('Matrix room sender inventory', () => {
     const expectedUsers = [user, other, identity.userId].sort();
     let afterQuery: (() => Promise<void>) | undefined;
     let denied = false;
+    let hiddenHistory = false;
     let failures: unknown = {};
     let membershipReads = 0;
     let mutateMembership = false;
@@ -439,6 +440,9 @@ describe('Matrix room sender inventory', () => {
         if (denied) return json(403, { errcode: 'M_FORBIDDEN' });
         return json(200, { joined: mutateMembership && membershipReads > 1 ? { [user]: {} } : joined });
       }
+      if (path.endsWith('/state')) return json(200, [{ type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' }]);
+      if (path.includes('/event/')) return hiddenHistory ? json(403, { errcode: 'M_FORBIDDEN' })
+        : json(200, { type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' });
       if (path.endsWith('/keys/query')) {
         const query = JSON.parse(String(init?.body)) as { device_keys: Record<string, string[]> };
         expect(Object.keys(query.device_keys).sort()).toEqual(expectedUsers);
@@ -449,7 +453,7 @@ describe('Matrix room sender inventory', () => {
       throw new Error('unexpected roster request');
     });
     return { matrix: services(fetch, store), store, binding, identity, joined, keys, fetch,
-      deny: () => { denied = true; }, fail: (value: unknown) => { failures = value; },
+      deny: () => { denied = true; }, hideHistory: () => { hiddenHistory = true; }, fail: (value: unknown) => { failures = value; },
       changeMembers: () => { mutateMembership = true; },
       onQuery: (callback: () => Promise<void>) => { afterQuery = callback; } };
   }
@@ -469,6 +473,15 @@ describe('Matrix room sender inventory', () => {
     f.deny();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toEqual({ kind: 'forbidden' });
+  });
+  it('does not disclose a departed identity by guessed target ID outside the reader history', async () => {
+    const f = await fixture();
+    delete f.joined[f.identity.userId];
+    f.hideHistory();
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [], undefined, [f.identity.participantId]))
+      .toEqual({ kind: 'ok', participants: [] });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toEqual({ kind: 'unavailable' });
   });
   it('includes offline browser devices from every owner and the exact indexed connector, without tokens', async () => {
     const f = await fixture();
