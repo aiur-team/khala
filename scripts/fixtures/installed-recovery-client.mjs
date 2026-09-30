@@ -1,10 +1,10 @@
 import { spawn, execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 /** Stock package, private HOME/state and a stable native label; no inherited credentials. */
-export function installRecoveryClient({ tarball, origin, caFile, sessionId, workdir }) {
+export function installRecoveryClient({ tarball, origin, caFile, sessionId, workdir, chromiumExecutable }) {
   const parsed = new URL(origin);
   if (parsed.protocol !== 'https:' || parsed.hostname !== '127.0.0.1' || parsed.origin !== origin
     || !/^[A-Za-z0-9_-]{1,128}$/u.test(sessionId)) throw new Error('invalid_recovery_fixture');
@@ -21,6 +21,15 @@ export function installRecoveryClient({ tarball, origin, caFile, sessionId, work
   try {
     execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund',
       '--prefix', prefix, path.resolve(tarball)], { env, stdio: 'ignore', timeout: 30_000 });
+    // Provision the real browser at the stock CLI's supported runtime path.
+    // CI installs Playwright Chromium outside system browser locations.
+    if (chromiumExecutable !== undefined) {
+      if (!path.isAbsolute(chromiumExecutable) || !statSync(chromiumExecutable).isFile()
+        || path.basename(chromiumExecutable) !== 'chrome') throw new Error('fixture_browser_invalid');
+      const browserRoot = path.join(prefix, 'node_modules', '@aiur', 'khala', 'dist', 'chromium');
+      mkdirSync(browserRoot, { mode: 0o700 });
+      symlinkSync(path.dirname(chromiumExecutable), path.join(browserRoot, 'chrome-linux64'));
+    }
   } catch {
     rmSync(root, { recursive: true, force: true });
     throw new Error('fixture_package_install_failed');

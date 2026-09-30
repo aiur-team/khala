@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { chromium } from '@playwright/test';
 import { startRecoveryTransport } from './hosted-recovery.mjs';
 import { installRecoveryClient } from './installed-recovery-client.mjs';
 
@@ -25,8 +26,10 @@ test('restarts a packaged and installed Claude MCP entry over the same owned exa
     const packed = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', output], {
       cwd: path.join(repository, 'packages/agent-cli'), encoding: 'utf8', timeout: 30_000,
     }));
+    const chromiumExecutable = chromium.executablePath();
     client = installRecoveryClient({ tarball: path.join(output, packed[0].filename), origin: fixture.origin,
-      caFile: fixture.caFile, sessionId: 'controlled-recovery-session', workdir: repository });
+      caFile: fixture.caFile, sessionId: 'controlled-recovery-session', workdir: repository,
+      ...(existsSync(chromiumExecutable) ? { chromiumExecutable } : {}) });
     const message = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
       name: 'khala_channel_access_status', arguments: { operationId: 'controlled-recovery-operation' },
     } };

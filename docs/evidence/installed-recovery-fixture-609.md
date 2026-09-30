@@ -13,9 +13,13 @@ From the repository root after `pnpm install --frozen-lockfile`:
 pnpm test:recovery-fixture
 ```
 
-Requires Node 22.23.2 or newer, npm with its standard offline package installation
-support, OpenSSL 3, and an installed Chromium supported by the connector (the
-current bundle's browser contract). Packaging uses the repository's bundle script
+The root `pnpm test` gate invokes this command, including in standard CI after
+Playwright Chromium installation. Requires Node 22.23.2 or newer, npm with its
+standard offline package installation support, OpenSSL 3, and a Chromium supported
+by the connector (the current bundle's browser contract). When Playwright Chromium
+is installed, the fixture links that real browser directory into the stock CLI's
+supported runtime location; otherwise a supported system browser is required.
+Packaging uses the repository's bundle script
 and `npm pack --ignore-scripts`, then installs that tarball with scripts disabled
 and offline network resolution. No production settings, tokens, cookies, invites,
 or inherited credential environment are copied into the client.
