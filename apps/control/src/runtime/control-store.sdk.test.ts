@@ -141,6 +141,20 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
     expect(await fixture.store.read(key)).toEqual({ kind: 'absent' });
   });
 
+  it('does not assign a legacy claim to a later same-value record', async () => {
+    const fixture = sdkFixture(() => null);
+    const key = 'channel-access-exchange/superseded';
+    const value = { phase: 'bound' };
+    fixture.entries.set(`site:operations/${key}`, { body: JSON.stringify({ key,
+      digest: JSON.stringify([value, null]) }), etag: 'legacy-ledger' });
+    fixture.entries.set(`site:records/${key}`, { body: JSON.stringify({ operationId: 'later-operation',
+      value, expiresAt: null }), etag: 'later-record' });
+    expect(await fixture.store.compareAndSet({ key, expectedRevision: 'later-record',
+      operationId: `${key}#1.bound.digest`, next: { value: { phase: 'changed' }, expiresAt: null } }))
+      .toEqual({ kind: 'outcome_unknown', operationId: `${key}#1.bound.digest` });
+    expect(await fixture.store.read(key)).toMatchObject({ kind: 'record', record: { operationId: 'later-operation' } });
+  });
+
   it('migrates a proven legacy fragment record before advancing its revision', async () => {
     const fixture = sdkFixture(() => null);
     const base = 'channel-access-operation-binding/legacy';

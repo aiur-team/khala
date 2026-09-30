@@ -213,7 +213,8 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
             // that proof across later phase transitions. The old ledger value
             // itself did not retain the operation ID.
             const record = await readLive(entry.key);
-            if (record.envelope === null || digestOf(record.envelope.value, record.envelope.expiresAt) !== entry.digest) {
+            if (record.envelope === null || !record.envelope.operationId.startsWith(`${oldKey}#`)
+              || digestOf(record.envelope.value, record.envelope.expiresAt) !== entry.digest) {
               return { kind: 'unknown' };
             }
             const value: LegacyLedgerProof = { key: entry.key, digest: entry.digest,
