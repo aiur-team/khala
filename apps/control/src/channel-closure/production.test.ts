@@ -9,7 +9,7 @@ import { createAgentRevocationCleanupRoutes, createRevocationCleanupStore, revoc
 import { operationJournal, journalKey } from '@khala/messaging/revocation/journal';
 import type { OperationRecord } from '@khala/messaging/revocation/operation';
 import { createOwnerCleanupRequests } from './cleanup-requests';
-import { createProtectedClosureConnector } from './production';
+import { createProtectedClosureConnector, registerClosureHandlers } from './production';
 import { createChannelClosureService } from './service';
 
 const roomId = '!closure:example' as RoomId;
@@ -23,6 +23,44 @@ const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 const request = { operationId: 'closure-operation', ownerId: first.ownerId, roomId, expectedRoomRevision: 0 };
 
 describe('production closure mailbox adapter', () => {
+  it('returns a redacted 503 when the human loader rejects before route setup', async () => {
+    const output: string[] = [];
+    const log = vi.spyOn(console, 'info').mockImplementation(value => { output.push(String(value)); });
+    try {
+      const route = registerClosureHandlers({
+        loadHuman: async () => { throw new Error('private-cookie secret-room'); },
+      })[0]!;
+      const response = await route.handle(new Request('https://khala.aiur.team/api/human/channel-closure?cleanup=1'));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ code: 'unavailable' });
+      expect(output).toEqual(['{"component":"channel-closure","stage":"loader_rejected"}']);
+    } finally { log.mockRestore(); }
+  });
+  it('classifies environment and store setup failures without exposing adapter errors', async () => {
+    const output: string[] = [];
+    const log = vi.spyOn(console, 'info').mockImplementation(value => { output.push(String(value)); });
+    const loadHuman = async () => ({ auth: {}, messaging: {} }) as never;
+    const request = new Request('https://khala.aiur.team/api/human/channel-closure?cleanup=1');
+    try {
+      const badEnv = registerClosureHandlers({ loadHuman,
+        readEnv: () => { throw new Error('private-cookie secret-room'); } })[0]!;
+      const envResponse = await badEnv.handle(request);
+      expect(envResponse.status).toBe(503);
+      expect(await envResponse.json()).toEqual({ code: 'unavailable' });
+
+      const badStore = registerClosureHandlers({ loadHuman,
+        readEnv: () => ({ controlStateNamespace: 'test', publicHomeserverOrigin: 'https://matrix.example',
+          invitationHmacSecret: 'test' }) as never,
+        stores: () => { throw new Error('private-cookie secret-room'); } })[0]!;
+      const storeResponse = await badStore.handle(request);
+      expect(storeResponse.status).toBe(503);
+      expect(await storeResponse.json()).toEqual({ code: 'unavailable' });
+      expect(output).toEqual([
+        '{"component":"channel-closure","stage":"environment_rejected"}',
+        '{"component":"channel-closure","stage":"store_initialize_failed"}',
+      ]);
+    } finally { log.mockRestore(); }
+  });
   it.each(['no_removal', 'uia_only', 'legacy_removal'] as const)(
     'requires the revoked endpoint’s durable local Stop before revoke-then-close can leave (%s)', async mode => {
     const store = fakeStore(() => T0).store;
