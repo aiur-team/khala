@@ -189,4 +189,20 @@ describe('channel-access HTTP client', () => {
       ath: createHash('sha256').update(credential.credentialRef).digest('base64url'),
       body_hash: createHash('sha256').update(call!.init.body as string).digest('base64url') });
   });
+
+  it.each([
+    [409, 'proof_mismatch', { kind: 'refused', code: 'binding_conflict' }],
+    [409, 'wrong_device', { kind: 'refused', code: 'binding_conflict' }],
+    [409, 'wrong_generation', { kind: 'refused', code: 'binding_conflict' }],
+    [410, 'closed', { kind: 'refused', code: 'binding_revoked' }],
+    [410, 'expired', { kind: 'refused', code: 'binding_revoked' }],
+    [409, 'operation_mismatch', { kind: 'not_redeemed' }],
+  ] as const)('returns a typed closed result for %s %s', async (status, code, expected) => {
+    const t = transport(() => json(status, { v: 1, kind: 'rejected', code }));
+    const client = createHttpChannelAccessRedeem({ signer, trustedOrigins: [ORIGIN], credential: credentialFor, fetch: t.fetchStub });
+    expect(await client.resume({ operationId: REQUEST.operationId, deviceId: REQUEST.deviceId, origin: ORIGIN }))
+      .toEqual(expected);
+    expect(t.calls).toHaveLength(1);
+    expect(JSON.parse(t.calls[0]!.init.body as string)).not.toHaveProperty('bindingId');
+  });
 });

@@ -524,8 +524,10 @@ local label; key approval applies to that owner's channels, not just the link
 used to find them. The hosted native client can call request, status, exchange,
 redeem, resume, and ready with the approved proof key. A deployed, owner-approved
 Codex and Claude read/send proof is still required before calling the route
-production proven. A lost redeem response before the binding ID is persisted
-cannot currently be resumed by operation ID; #564 tracks that acceptance gap.
+production proven. After a lost redeem response before the binding ID is
+persisted, the client can resume the original admitted binding by operation ID
+with the same proof key, device, and session generation. The installed native
+restart and production read/send acceptance for this path is tracked in #579.
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
 owner for access and returns promptly. `/khala join` uses this same operation
