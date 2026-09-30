@@ -266,7 +266,8 @@ export function TimelineScreen({
   const attributed = new Map(names.events.map(event => [event.eventId, event]));
   const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => ({
     ...item.participant,
-    displayName: attributed.get(item.ref.eventId)?.kind === 'message'
+    displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+      : attributed.get(item.ref.eventId)?.kind === 'message'
       ? (attributed.get(item.ref.eventId) as Extract<typeof names.events[number], { kind: 'message' }>).authorName
       : item.participant.displayName,
   })), viewer]);

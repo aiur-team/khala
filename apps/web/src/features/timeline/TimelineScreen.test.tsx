@@ -260,3 +260,17 @@ it('keeps readable human and agent bodies visible while encrypted history makes 
   expect(html).not.toContain('Unverified current name');
   expect(html).not.toContain('Unverified rename');
 });
+
+
+it('disambiguates unavailable agent names across owners using the displayed fallback', () => {
+  const first = { ...participant('first', 'agent', 'First initial name'), ownerId: 'owner_1234' as OwnerId };
+  const second = { ...participant('second', 'agent', 'Second initial name'), ownerId: 'owner_5678' as OwnerId };
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'partial',
+    items: [item('first-event', first, 'first body'), item('second-event', second, 'second body')],
+    nextCursor: null, newMessageCount: 0, namesReady: false })}
+    roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('Agent name unavailable (#1234)');
+  expect(html).toContain('Agent name unavailable (#5678)');
+  expect(html).not.toContain('First initial name');
+  expect(html).not.toContain('Second initial name');
+});
