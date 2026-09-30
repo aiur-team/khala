@@ -65,6 +65,7 @@ function Harness() {
       description="Coordinate the launch with people and their agents."
       controller={controller}
       viewerOwnerId={viewer}
+      viewerName={viewer === miraId ? 'Mira' : 'Theo'}
       renameScope={roomId}
       currentNames={names}
       renameAgent={async (participantId, name) => {
