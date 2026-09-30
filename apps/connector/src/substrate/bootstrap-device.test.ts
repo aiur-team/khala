@@ -43,7 +43,8 @@ describe('Matrix endpoint credential and device fence', () => {
       };
     };
     const resolveParticipants = vi.fn(async () => new Map());
-    const options = { stateDirectory: state, profileDirectory: path.join(state, 'crypto'), open, resolveParticipants };
+    const diagnostic = vi.fn();
+    const options = { stateDirectory: state, profileDirectory: path.join(state, 'crypto'), open, resolveParticipants, diagnostic };
     const first = createMatrixBootstrapDevice(options);
     const fixed = await first.devices.reserve('operation-123');
     expect(fixed.kind).toBe('reserved');
@@ -59,6 +60,8 @@ describe('Matrix endpoint credential and device fence', () => {
     expect(first.fingerprint()).toBe('signed-ed25519-fingerprint');
     expect(opens[0]?.participantIdFor('@owner:example')).toBe(session.ownerParticipantId);
     expect(opens[0]?.participantIdFor('@stranger:example')).toBeNull();
+    opens[0]?.diagnostic?.({ stage: 'matrix_read_members', result: 'unavailable' });
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'matrix_read_members', result: 'unavailable' });
     await opens[0]?.resolveParticipants?.(['@owner:example'], ['agent_departed']);
     expect(resolveParticipants).toHaveBeenCalledWith(['@owner:example'], ['agent_departed']);
     const credential = path.join(state, 'matrix-session.json');

@@ -224,6 +224,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
     chromiumExecutablePath,
+    diagnostic: reportSubscription,
     resolveParticipants: async (userIds, targetParticipantIds) => {
       if (!binding || !signer || closed || remoteDenied || deliveryStopped) return null;
       const session = await matrixSession();
