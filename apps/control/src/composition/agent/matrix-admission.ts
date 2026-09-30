@@ -117,7 +117,7 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
   async function ensureAccount(identity: ReturnType<typeof agentMatrixIdentity>): Promise<boolean> {
     const profile = await call(`/_matrix/client/v3/profile/${encodeURIComponent(identity.userId)}`);
     if (profile.status === 200) return true;
-    if (profile.status !== 404 || profile.body?.errcode !== 'M_NOT_FOUND') return false;
+    if (profile.status !== 404 || (profile.body?.errcode !== 'M_NOT_FOUND' && profile.body?.errcode !== 'M_UNKNOWN')) return false;
     const nonce = await call('/_synapse/admin/v1/register');
     if (nonce.status !== 200 || typeof nonce.body?.nonce !== 'string') return false;
     const secret = password(identity.userId);
