@@ -7,7 +7,7 @@ import { createChannelDiscoveryCredentialClient,
   type ProofSigner, type SessionClaim, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { decodeAccessRequestStatus } from '@khala/contracts/messaging/index';
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
-import type { HostedOpenDiagnostic } from '@khala/connector-app/composition/production';
+import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 import { sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import type { AgentClientPort, CliDependencies } from '../cli/types.js';

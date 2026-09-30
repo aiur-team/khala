@@ -6,7 +6,7 @@ import type { CandidateDiagnostic } from './proof-key-candidate.js';
 import type { DiscoveryCredentialDiagnostic } from '@khala/connector/bootstrap/channel-discovery';
 import type { ExchangeHttpDiagnostic } from '@khala/connector/bootstrap/index';
 import { STORAGE_ERROR_CODES } from '@khala/connector/storage/errors';
-import type { HostedOpenDiagnostic } from '@khala/connector-app/composition/production';
+import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 
 type Diagnostic = Readonly<{ component: 'proof_key_candidate' | 'discovery_credential' | 'channel_access' | 'activation' | 'activation_exchange_http' }>
   & (CandidateDiagnostic | DiscoveryCredentialDiagnostic | ChannelAccessDiagnostic | ActivationDiagnostic | ExchangeHttpDiagnostic)

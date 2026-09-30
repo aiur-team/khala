@@ -11,6 +11,7 @@ import {
 import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding, type UnverifiedReleasedJob } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 import { STORAGE_ERROR_CODES, StorageError } from '@khala/connector/storage/errors';
 import { createChannelAccessActivationStore } from '@khala/connector/storage/channel-access';
 import { openConnectorStorage } from '@khala/connector/storage/open';
@@ -70,14 +71,6 @@ export function supportedBrowserVersion(output: string): boolean {
   const match = /^(?:Chromium|Google Chrome(?: for Testing)?) (\d+)\./u.exec(output.trim());
   return match !== null && Number(match[1]) >= 150 && Number(match[1]) <= 153;
 }
-
-export type HostedOpenDiagnostic = Readonly<{
-  stage: 'browser_preflight' | 'state_storage' | 'trust_storage' | 'bootstrap_persistence'
-    | 'binding_recovery' | 'device_resume' | 'intake_start' | 'subscription_start'
-    | 'review_resume' | 'connector_bootstrap';
-  result: 'unavailable';
-  errorCode?: (typeof STORAGE_ERROR_CODES)[number];
-}>;
 
 export function subscriptionDiagnostic(state: SubscriptionState) {
   if (state.kind === 'live') return null;
