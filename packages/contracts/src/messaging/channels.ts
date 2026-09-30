@@ -26,6 +26,8 @@ export type ChannelSummary = Readonly<{
 export type RoomSummary = ChannelSummary;
 
 export type TimelinePage = Readonly<{
+  /** Unavailable events in this exact page; absence preserves legacy plaintext producers. */
+  unavailableEventIds?: readonly EventId[];
   items: readonly TimelineItem[];
   /** Opaque; `null` when no older page exists. */
   nextCursor: string | null;
@@ -116,9 +118,11 @@ export function readSendState(input: unknown, path: string): SendState {
  */
 export async function decodeTimelinePage(input: unknown, limits: ContentLimits): Promise<Decoded<TimelinePage>> {
   const decoded = decodeWith(() => {
-    const r = object(input, '', ['items', 'nextCursor', 'snapshotRevision']);
+    const hasUnavailable = typeof input === 'object' && input !== null && Object.hasOwn(input, 'unavailableEventIds');
+    const r = object(input, '', ['items', 'nextCursor', 'snapshotRevision', ...(hasUnavailable ? ['unavailableEventIds'] : [])]);
     return {
       items: readItems(r.field('items'), r.at('items'), limits),
+      ...(hasUnavailable ? { unavailableEventIds: array(r.field('unavailableEventIds'), r.at('unavailableEventIds')).map((id, index) => readId<'EventId'>(id, elementPath(r.at('unavailableEventIds'), index))) } : {}),
       nextCursor: nullable(r.field('nextCursor'), value => identifier(value, r.at('nextCursor'))),
       snapshotRevision: identifier(r.field('snapshotRevision'), r.at('snapshotRevision')),
     };

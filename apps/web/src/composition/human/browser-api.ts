@@ -87,7 +87,7 @@ export type HumanBrowserApi = Readonly<{
   channelLinks: HumanChannelLinks;
   credentials: CredentialSource;
   participants: Readonly<{
-    resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null>;
+    resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
   channelAccess: ChannelAccessInboxPort;
   closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
@@ -324,9 +324,9 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   };
 
   const participants = {
-    async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null> {
+    async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null> {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
-      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds, ...(roomId ? { roomId } : {}) }, signal);
+      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds, ...(roomId ? { roomId } : {}), ...(targetParticipantIds?.length ? { targetParticipantIds } : {}) }, signal);
       if (response === null || response.status !== 200) return null;
       const envelope = await jsonObject(response);
       if (envelope === null || !hasExactKeys(envelope, ['participants']) || !Array.isArray(envelope.participants)) return null;
@@ -345,7 +345,9 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         if (!participant.ok || resolved.has(value.matrixUserId)) return null;
         resolved.set(value.matrixUserId, participant.value);
       }
-      return resolved.size === userIds.length && userIds.every(userId => resolved.has(userId)) ? resolved : null;
+      return userIds.every(userId => resolved.has(userId))
+        && [...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId))
+        && (targetParticipantIds ?? []).every(id => [...resolved.values()].some(participant => participant.participantId === id)) ? resolved : null;
     },
   };
 

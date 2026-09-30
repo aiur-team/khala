@@ -464,6 +464,8 @@ describe('Matrix room sender inventory', () => {
     delete f.joined[f.identity.userId];
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', participantId: f.identity.participantId }] });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user], undefined, [f.identity.participantId]))
+      .toMatchObject({ kind: 'ok', participants: [expect.anything(), { kind: 'agent', participantId: f.identity.participantId }] });
     f.deny();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toEqual({ kind: 'forbidden' });

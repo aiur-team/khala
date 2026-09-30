@@ -316,7 +316,7 @@ describe('admission route handlers', () => {
       method: 'POST', body: JSON.stringify({ userIds: ['@khala_a_x:matrix.example.test'], roomId: 'room_1' }),
     }));
     expect(response.status).toBe(403);
-    expect(resolveRoomParticipants).toHaveBeenCalledWith(principal.ownerId, 'room_1', ['@khala_a_x:matrix.example.test']);
+    expect(resolveRoomParticipants).toHaveBeenCalledWith(principal.ownerId, 'room_1', ['@khala_a_x:matrix.example.test'], undefined, []);
   });
 
   it('authenticates inspection and maps dependency failures to finite unavailable responses', async () => {

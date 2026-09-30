@@ -62,6 +62,7 @@ export async function toEntry(roomId: RoomId, event: SubstrateEvent): Promise<Re
         authorDeviceId: event.authorDeviceId, contentDigest: digest.digest,
       },
       content: event.content,
+      ...(event.targetParticipant ? { targetParticipant: event.targetParticipant } : {}),
       participant: event.participant,
       clientTxnId: event.clientTxnId,
       receivedAt: event.receivedAt,
@@ -93,7 +94,9 @@ export async function timeline(
   }
   // The contract page has no placeholder shape; `observeEntries` carries them.
   const items = [...entries.values()].flatMap(entry => (entry.kind === 'message' ? [entry.item] : []));
-  return ok({ items, nextCursor: page.value.nextCursor, snapshotRevision: page.value.revision });
+  const unavailableEventIds = [...entries.values()].flatMap(entry => entry.kind === 'unavailable' ? [entry.eventId] : []);
+  return ok({ items, nextCursor: page.value.nextCursor, snapshotRevision: page.value.revision,
+    ...(unavailableEventIds.length ? { unavailableEventIds } : {}) });
 }
 
 /** A duplicate or replayed event never adds a row; only a late decryption replaces its placeholder. */

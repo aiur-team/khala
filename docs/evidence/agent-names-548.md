@@ -55,3 +55,31 @@ earlier passing browser and native proofs above remain prior-head evidence.
 The original independent review found no actionable bugs; a follow-up review
 agent could not run because of the session thread limit. The final merge was
 reviewed manually.
+
+## Independent review fixes
+
+The independent review of `b659b671` identified two attribution gaps. Both were
+reproduced with failing tests before the fixes:
+
+- A page with an undecryptable event could incorrectly finish name replay.
+  Contract pages now retain unavailable event IDs. The controller reports
+  incomplete history and withholds decrypted bylines until those events resolve;
+  late-key replacement restores name readiness without losing unavailable rows
+  or the explicit historical IDs introduced by #608.
+- A departed agent with no readable authored message was absent from name
+  replay. The owner-authenticated room participant endpoint now resolves bounded
+  historical target IDs through the durable room identity directory. Naming
+  timeline items carry that authenticated target identity; projection replays
+  the event while retaining owner checks.
+
+CI attempt 2 also exposed an inventory omission for the existing agent
+participant endpoint. Its metadata-only security coverage is now declared,
+and all 14 inventory tests pass. The endpoint returns room identities rather
+than held content or mutable current names.
+
+After these fixes: 75 focused web tests, 56 control authorization/directory
+tests, 20 messaging timeline/name tests, and all 754 contract tests pass. Full
+typecheck, lint, and build pass. After stale temporary files were cleaned by
+the operator, the bounded sequential channel browser test passed using normal
+`/tmp`. The full hosted membership/approval/native-delivery proof remains
+separate and outstanding.

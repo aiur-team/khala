@@ -84,6 +84,7 @@ export type TimelineItem =
   | Readonly<{
       ref: EventRef;
       content: AgentRenameContent | AgentNameSnapshotContent;
+      targetParticipant?: ParticipantView;
       participant: ParticipantView;
       clientTxnId: string | null;
       /** UTC RFC 3339, local receipt time; not an ordering authority. */
@@ -291,15 +292,20 @@ function isUnavailableItem(item: TimelineItem): item is Extract<TimelineItem, { 
  * `UnavailableEventRef` (no `contentDigest`), never an `EventRef`.
  */
 export function readTimelineItem(input: unknown, path: string, limits: ContentLimits): TimelineItem {
-  const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt']);
+  const hasTarget = typeof input === 'object' && input !== null && Object.hasOwn(input, 'targetParticipant');
+  const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt', ...(hasTarget ? ['targetParticipant'] : [])]);
   const content = readTimelineContent(r.field('content'), r.at('content'), limits);
   const ref = content.kind === 'unavailable'
     ? readUnavailableEventRef(r.field('ref'), r.at('ref'))
     : readEventRef(r.field('ref'), r.at('ref'));
   const participant = readParticipantView(r.field('participant'), r.at('participant'), limits);
   if (participant.participantId !== ref.authorParticipantId) fail(r.at('participant'), 'mismatch');
+  const targetParticipant = hasTarget ? readParticipantView(r.field('targetParticipant'), r.at('targetParticipant'), limits) : undefined;
+  if (targetParticipant && (!(content.kind === 'agent_rename' || content.kind === 'agent_name_snapshot')
+    || targetParticipant.kind !== 'agent' || targetParticipant.participantId !== content.agentParticipantId)) fail(r.at('targetParticipant'), 'mismatch');
   return {
     ref, content, participant,
+    ...(targetParticipant ? { targetParticipant } : {}),
     clientTxnId: nullable(r.field('clientTxnId'), value => identifier(value, r.at('clientTxnId'))),
     receivedAt: utcTimestamp(r.field('receivedAt'), r.at('receivedAt')),
   } as TimelineItem;

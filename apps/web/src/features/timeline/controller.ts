@@ -70,6 +70,15 @@ export function createTimelineController(
   let disposed = false;
   let membership: ChannelMembership | null = null;
   let namesReady = false;
+  let nameScanReachedBoundary = false;
+  const unavailableNameEvents = new Set<EventId>();
+  function recordNamePage(page: TimelinePage): void {
+    for (const id of page.unavailableEventIds ?? []) unavailableNameEvents.add(id);
+    for (const item of page.items) {
+      if (item.content.kind === 'unavailable') unavailableNameEvents.add(item.ref.eventId);
+      else unavailableNameEvents.delete(item.ref.eventId);
+    }
+  }
   let hasInitialPage = false;
   // Set on a failed history read, cleared only by a *successful* one — a live
   // snapshot arriving in between must not paper over a known history gap by
@@ -160,11 +169,16 @@ export function createTimelineController(
       const existing = rows.get(rowId(entry));
       if (!existing || entry.kind === 'message') rows.set(rowId(entry), entry);
     }
+    for (const row of rows.values()) {
+      if (row.kind === 'unavailable') unavailableNameEvents.add(row.eventId);
+      else unavailableNameEvents.delete(row.item.ref.eventId);
+    }
+    namesReady = nameScanReachedBoundary && unavailableNameEvents.size === 0;
     recentRows = [...rows.values()];
     recent = recentRows.flatMap(row => row.kind === 'message' ? [row.item] : []);
     itemsDirty = true;
     membership = view.room?.membership ?? membership;
-    phase = historyDegraded ? degradedPhase() : view.room ? 'ready' : 'loading';
+    phase = historyDegraded || nameScanReachedBoundary && !namesReady ? degradedPhase() : view.room ? 'ready' : 'loading';
     // History can publish after its request resolves; source IDs distinguish it
     // from live events even when server timestamps tie or move backwards.
     if (!readerAtLatest && !readingHistory) {
@@ -217,6 +231,7 @@ export function createTimelineController(
     }
     const knownIds = new Set([...older, ...recent].map(item => item.ref.eventId));
     const additions = result.value.items.filter(item => !knownIds.has(item.ref.eventId));
+    recordNamePage(result.value);
     hasInitialPage = true;
     older = [...additions, ...older];
     nextCursor = result.value.nextCursor;
@@ -251,12 +266,18 @@ export function createTimelineController(
           notify();
           return;
         }
+        recordNamePage(result.value);
         const known = new Set([...hiddenOlder, ...older, ...recent].map(item => item.ref.eventId));
         hiddenOlder = [...result.value.items.filter(item => !known.has(item.ref.eventId)), ...hiddenOlder];
         nextCursor = result.value.nextCursor;
         notify();
       }
-      if (!disposed) { namesReady = true; notify(); }
+      if (!disposed) {
+        nameScanReachedBoundary = true;
+        namesReady = unavailableNameEvents.size === 0;
+        if (!namesReady) phase = degradedPhase();
+        notify();
+      }
     })();
     scanInFlight = run.finally(() => { scanInFlight = null; });
     return scanInFlight;

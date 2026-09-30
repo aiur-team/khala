@@ -57,7 +57,7 @@ export interface MatrixSessionIssuer {
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions): Promise<
+  resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions, targetParticipantIds?: readonly ParticipantId[]): Promise<
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
     | Readonly<{ kind: 'forbidden' | 'unavailable' }>
   >;
@@ -347,7 +347,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         ? { kind: 'ok', participants }
         : { kind: 'unavailable' };
     },
-    async resolveRoomParticipants(ownerId, roomId, userIds, call) {
+    async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = []) {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
       const membership = await membershipForOwner(ownerId, roomId, call);
       if (membership.kind === 'absent') return { kind: 'forbidden' };
@@ -395,8 +395,16 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           ownerId: agent.ownerId, displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}`,
           kind: 'agent' });
       }
+      if (targetParticipantIds.length > 100 || new Set(targetParticipantIds).size !== targetParticipantIds.length) return { kind: 'unavailable' };
+      for (const participantId of targetParticipantIds) {
+        if ([...resolved.values()].some(value => value.participantId === participantId)) continue;
+        const agent = await identities.lookupParticipant(roomId, participantId);
+        if (!agent) return { kind: 'unavailable' };
+        resolved.set(agent.matrixUserId, { matrixUserId: agent.matrixUserId, participantId: agent.participantId,
+          ownerId: agent.ownerId, kind: 'agent', displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}` });
+      }
       return userIds.every(userId => resolved.has(userId))
-        ? { kind: 'ok', participants: userIds.map(userId => resolved.get(userId)!) }
+        ? { kind: 'ok', participants: [...resolved.values()] }
         : { kind: 'unavailable' };
     },
   };

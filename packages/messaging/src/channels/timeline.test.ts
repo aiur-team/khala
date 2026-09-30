@@ -176,7 +176,7 @@ describe('timeline page', () => {
       },
     };
     const page = await service.timeline({ roomId: room.roomId, cursor: null, limit: 20 });
-    expect(page).toMatchObject({ kind: 'ok', value: { nextCursor: 'opaque/cursor==', snapshotRevision: 'rev-9' } });
+    expect(page).toMatchObject({ kind: 'ok', value: { nextCursor: 'opaque/cursor==', snapshotRevision: 'rev-9', unavailableEventIds: ['$x'] } });
     if (page.kind === 'ok') expect(page.value.items.map(item => item.ref.eventId)).toEqual(['$a', '$b']);
   });
 

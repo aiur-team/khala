@@ -70,7 +70,7 @@ type ActiveClient = Readonly<{
   generation: number;
 }>;
 type ParticipantResolver = Readonly<{
-  resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId): Promise<ReadonlyMap<string, ParticipantView> | null>;
+  resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null>;
 }>;
 
 function credentials(value: unknown): MatrixCredentials | null {
@@ -541,7 +541,12 @@ class MatrixSubstrate implements RoomSubstrate {
     await decryptTimelineEvents(active.client, events);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
-    const mappings = await this.participants.resolve(senders, undefined, roomId);
+    const targets = [...new Set(events.flatMap(event => {
+      const content = event.getContent();
+      return event.getType() === EventType.RoomMessage && content.msgtype === MsgType.Notice
+        && typeof content['com.khala.agent_participant_id'] === 'string' ? [content['com.khala.agent_participant_id'] as ParticipantView['participantId']] : [];
+    }))];
+    const mappings = await this.participants.resolve(senders, undefined, roomId, targets);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during participant resolution');
     const crypto = active.client.getCrypto();
     if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
@@ -565,7 +570,14 @@ class MatrixSubstrate implements RoomSubstrate {
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
-      return projected ? [projected] : [];
+      if (!projected) return [];
+      if (projected.kind === 'message' && (projected.content.kind === 'agent_rename' || projected.content.kind === 'agent_name_snapshot')) {
+        const targetId = projected.content.agentParticipantId;
+        const targetParticipant = [...mappings.values()].find(value => value.participantId === targetId);
+        if (!targetParticipant) throw new Error('Matrix name target attribution unavailable');
+        return [{ ...projected, targetParticipant }];
+      }
+      return [projected];
     });
   }
 

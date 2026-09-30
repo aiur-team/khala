@@ -6,7 +6,8 @@ export function projectTimelineNames(items: readonly TimelineItem[], viewer: Par
   additional: readonly NameParticipant[] = []) {
   const participants = new Map<string, NameParticipant>();
   for (const participant of additional) participants.set(participant.participantId, participant);
-  for (const participant of [...items.map(item => item.participant), viewer]) {
+  const targets = items.flatMap(item => 'targetParticipant' in item && item.targetParticipant ? [item.targetParticipant] : []);
+  for (const participant of [...targets, ...items.map(item => item.participant), viewer]) {
     if (!participants.has(participant.participantId)) participants.set(participant.participantId, {
       participantId: participant.participantId, ownerId: participant.ownerId,
       kind: participant.kind, initialName: participant.displayName,

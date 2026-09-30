@@ -57,6 +57,36 @@ function fakeChannelPort(pages: Record<string, TimelineItem[]> = {}): { port: Ch
 const room = { roomId, title: null, membership: 'joined' as const, revision: 'rev_1' };
 
 describe('createTimelineController', () => {
+  it('does not declare name replay complete when a paginated rename remains undecryptable', async () => {
+    const port = { observe: () => () => {}, timeline: async () => ok({ items: [item('after', 'alice', 'after rename')],
+      nextCursor: null, snapshotRevision: 'rev_1', unavailableEventIds: ['$missing-rename' as EventId] }) } as unknown as ChannelPort;
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(controller.getSnapshot().namesReady).toBe(false);
+    expect(controller.getSnapshot().phase).toBe('partial');
+    controller.dispose();
+  });
+
+  it('restores complete name replay when late keys resolve an unavailable historical event', async () => {
+    const fake = fakeChannelPort();
+    let emit!: (view: ChannelEntriesView) => void;
+    const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+      emit = listener; return () => {};
+    } }, roomId, { generation: 1 });
+    const missing = { kind: 'unavailable' as const, eventId: '$rename' as EventId,
+      authorParticipantId: 'alice' as ParticipantId, reason: 'missing_key' as const, receivedAt: '2026-09-17T00:00:00Z' };
+    emit({ roomId, room, entries: [missing], historicalEventIds: [missing.eventId], generation: 1, snapshotRevision: 'missing' });
+    await controller.loadOlder();
+    await controller.scanNameHistory?.();
+    expect(controller.getSnapshot().namesReady).toBe(false);
+    const restored = item('$rename', 'alice', 'restored');
+    emit({ roomId, room, entries: [{ kind: 'message', item: restored }], historicalEventIds: [missing.eventId], generation: 1, snapshotRevision: 'restored' });
+    expect(controller.getSnapshot().namesReady).toBe(true);
+    expect(controller.getSnapshot().phase).toBe('ready');
+    controller.dispose();
+  });
+
   it('scans older history for name replay without expanding visible pagination', async () => {
     const port: Pick<ChannelPort, 'observe' | 'timeline'> = {
       observe: () => () => {},
