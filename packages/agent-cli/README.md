@@ -551,11 +551,11 @@ There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 one-time redemption, Matrix device activation, and ready before reporting
 `connected`. This is scoped to the exact Codex or Claude MCP session; shell
 `khala connect` has no provider session to authenticate a hosted request.
-For hosted Claude Code, `connected` enables manual `khala_status`, `khala_read`,
-and `khala_send` MCP calls in that session. The `manual_mcp` route does not
-queue work into Claude or deliver messages automatically. An installed CLI
-bundle must be rebuilt and the Claude MCP session restarted to pick up a new
-client version.
+For hosted Claude Code and Codex 0.159.2, `connected` enables manual
+`khala_status`, `khala_read`, and `khala_send` MCP calls in that exact session.
+The `manual_mcp` route does not queue work or deliver messages automatically.
+An installed CLI bundle must be rebuilt and the MCP session restarted to pick
+up a new client version.
 Production native read and send remain unproven until an owner-approved live
 session exercises both. Output is decoded with the closed
 `decodeAccessRequestStatus` decoder, so any extra field is reported as

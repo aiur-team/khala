@@ -48,6 +48,11 @@ function productionLimits() {
   return limits.value;
 }
 
+async function inspectHarnessSafely(harness: HarnessPort, binding: SessionBinding) {
+  try { return await harness.inspect(binding); }
+  catch { return null; }
+}
+
 const execFileAsync = promisify(execFile);
 function productionSessionDirectory(root: string, session: SessionClaim): string {
   return path.join(root, createHash('sha256').update(JSON.stringify([
@@ -385,44 +390,48 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         openInbox: openHostedInbox,
       });
       const activeHarness = harness;
-      listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
-        current: async () => {
-          if (closed || remoteDenied || deliveryStopped) return false;
-          const held = await readBinding().catch(() => null);
-          return held !== null && sameSessionBinding(held, next)
-            && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
-        },
-        capabilities: async () => {
-          const inspected = await activeHarness.inspect(next);
-          return inspected.support === 'tested' ? inspected : null;
-        },
-      });
-      await listening.application.read();
-      dispatcher = createDispatcher({ ledger: dispatchStorage.ledger,
-        limits: { maxJobsPerCausalRoot: 1, maxConcurrentJobs: 1, busy: 'queue' },
-        harness: activeHarness,
-        boundary: { await: async ({ job, signal }) => {
-          if (signal.aborted || !sameSessionBinding(job.binding, next)) return null;
-          if (!await activeMailbox.authorize().then(value => value === 'active').catch(() => false)
-            || await activeTrust.ensure() !== 'active') return null;
-          const capabilities = await activeHarness.inspect(next);
-          return capabilities.support === 'tested' ? { binding: next, capabilities } : null;
-        } },
-        approvals: dispatchStorage.approvals, payloads: dispatchStorage.payloads,
-        digest: async bytes => sha256Digest(bytes), clock: { now: () => new Date() },
-        newId: kind => `${kind}_${randomUUID()}`, workerId: `hosted_${randomUUID()}`,
-      });
-      const activeDispatcher = dispatcher;
-      review = createReviewControlHandler({ storage, dispatchStorage, releases: activeDispatcher,
-        bindingId: next.bindingId, limits: productionLimits(),
-        room: { members: async roomId => {
-          if (roomId !== session.roomId || deliveryStopped || remoteDenied
-            || await activeMailbox.authorize() !== 'active'
-            || await substrate.source.authorize() !== 'ok') return null;
-          return [session.ownerParticipantId as never, next.agentParticipantId];
-        } },
-      });
-      await review.resumeReleases(next.bindingId);
+      // An unproven Codex version can use explicit MCP tools, but must never
+      // start a listener, review worker, or dispatcher for automatic delivery.
+      if ((await inspectHarnessSafely(activeHarness, next))?.support === 'tested') {
+        listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+          current: async () => {
+            if (closed || remoteDenied || deliveryStopped) return false;
+            const held = await readBinding().catch(() => null);
+            return held !== null && sameSessionBinding(held, next)
+              && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
+          },
+          capabilities: async () => {
+            const inspected = await inspectHarnessSafely(activeHarness, next);
+            return inspected?.support === 'tested' ? inspected : null;
+          },
+        });
+        await listening.application.read();
+        dispatcher = createDispatcher({ ledger: dispatchStorage.ledger,
+          limits: { maxJobsPerCausalRoot: 1, maxConcurrentJobs: 1, busy: 'queue' },
+          harness: activeHarness,
+          boundary: { await: async ({ job, signal }) => {
+            if (signal.aborted || !sameSessionBinding(job.binding, next)) return null;
+            if (!await activeMailbox.authorize().then(value => value === 'active').catch(() => false)
+              || await activeTrust.ensure() !== 'active') return null;
+            const capabilities = await inspectHarnessSafely(activeHarness, next);
+            return capabilities?.support === 'tested' ? { binding: next, capabilities } : null;
+          } },
+          approvals: dispatchStorage.approvals, payloads: dispatchStorage.payloads,
+          digest: async bytes => sha256Digest(bytes), clock: { now: () => new Date() },
+          newId: kind => `${kind}_${randomUUID()}`, workerId: `hosted_${randomUUID()}`,
+        });
+        const activeDispatcher = dispatcher;
+        review = createReviewControlHandler({ storage, dispatchStorage, releases: activeDispatcher,
+          bindingId: next.bindingId, limits: productionLimits(),
+          room: { members: async roomId => {
+            if (roomId !== session.roomId || deliveryStopped || remoteDenied
+              || await activeMailbox.authorize() !== 'active'
+              || await substrate.source.authorize() !== 'ok') return null;
+            return [session.ownerParticipantId as never, next.agentParticipantId];
+          } },
+        });
+        await review.resumeReleases(next.bindingId);
+      }
     }
     schedulePoll();
   }
@@ -664,9 +673,13 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (trusted !== 'active') return unavailable(trusted === 'revoked' ? 'binding_revoked' : 'owner_device_unverified',
           { ...receiving, controls: trusted === 'revoked' ? 'blocked' : 'unknown' });
         const controlled = { ...receiving, controls: 'ready' } as const;
-        if (input.session.harness === 'claude' && held.harness === 'proof-key') {
-          // Claude's installed MCP tools are explicitly invoked by this session. No
-          // Codex harness, listening mode, review worker, or queue is running here.
+        const activeHarness = harness as HarnessPort | null;
+        const inspected = input.session.harness === 'codex' && activeHarness
+          ? await inspectHarnessSafely(activeHarness, held) : null;
+        if (held.harness === 'proof-key' && (input.session.harness === 'claude'
+          || (input.session.harness === 'codex' && inspected?.support !== 'tested'))) {
+          // Explicit MCP calls remain available without claiming automatic delivery.
+          // The dispatch boundary rejects every untested Codex capability.
           return { v: 1 as const, connected: true, binding: held,
             route: 'manual_mcp' as const, sourceCursor: null,
             readiness: { phase: 'ready' as const, prerequisites: { storage: 'ready' as const,
@@ -674,12 +687,12 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
               review: 'blocked' as const, recovery: 'unknown' as const }, errorCode: null },
           };
         }
-        const activeHarness = harness as HarnessPort | null;
         if (!activeHarness) return unavailable('harness_unsupported', { ...controlled, harness: 'unsupported' });
-        const inspected = await activeHarness.inspect(held);
-        if (inspected.support !== 'tested') return unavailable(inspected.support === 'unsupported'
+        const supported = inspected ?? await inspectHarnessSafely(activeHarness, held);
+        if (!supported) return unavailable('harness_unknown', { ...controlled, harness: 'unknown' });
+        if (supported.support !== 'tested') return unavailable(supported.support === 'unsupported'
           ? 'harness_unsupported' : 'harness_unknown', { ...controlled,
-          harness: inspected.support === 'unsupported' ? 'unsupported' : 'unknown' });
+          harness: supported.support === 'unsupported' ? 'unsupported' : 'unknown' });
         const proved = { ...controlled, harness: 'ready' } as const;
         const activeListening = listening as ReturnType<typeof createHostedListeningControl> | null;
         if (!activeListening || (await activeListening.status()).effective === null) {

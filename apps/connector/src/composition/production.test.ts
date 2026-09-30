@@ -26,9 +26,11 @@ describe('installed hosted connector composition', () => {
   });
   afterAll(async () => { await rm(chromiumFixtureDirectory, { recursive: true, force: true }); });
 
-  it('advances an approved Claude session from connecting to manual MCP readiness', async () => {
-    const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
-    const session = { harness: 'claude' as const, sessionId: 'claude-session-1', workdir: '/project' };
+  it.each([
+    ['claude', false], ['codex', false], ['codex', true],
+  ] as const)('advances an approved %s session to manual MCP readiness (inspection throws: %s)', async (harness, inspectionThrows) => {
+    const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), `khala-${harness}-admission-`));
+    const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
       'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
     ])).digest('hex'));
@@ -61,9 +63,18 @@ describe('installed hosted connector composition', () => {
       if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
       throw new Error(`unexpected ${pathname}`);
     }));
+    const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+    if (!limits.ok) throw new Error('test limits invalid');
     const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team', chromiumExecutablePath,
       browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
-      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      sessionInspection: () => ({ inspect: async () => {
+        if (inspectionThrows) throw new Error('optional native inspection unavailable');
+        return harness === 'codex'
+          ? { kind: 'verified' as const, session: { harness: 'codex' as const,
+            sessionId: session.sessionId, generation: 0 },
+            capabilities: nativeCliCapabilities('0.159.2', limits.value) }
+          : { kind: 'missing' as const };
+      } }),
       inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
       openBrowser: async () => undefined,
       openInbox: vi.fn(async (bindingId: string, generation: number, options?: unknown) => {
@@ -96,7 +107,11 @@ describe('installed hosted connector composition', () => {
           route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
             subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'blocked' } } }));
         expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
-          route: 'manual_mcp', binding });
+          route: 'manual_mcp', binding, readiness: { prerequisites: {
+            harness: 'unknown', dispatch: 'blocked', review: 'blocked' } } });
+        if (harness === 'codex') {
+          expect(await connector.listeningModeControl.read()).toEqual({ ok: false, code: 'unavailable' });
+        }
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
         expect(send).toHaveBeenCalledOnce();
@@ -223,7 +238,8 @@ describe('installed hosted connector composition', () => {
       const first = await openProductionConnector(input);
       await vi.waitFor(() => expect(read).toHaveBeenCalled());
       expect(await first.status()).toMatchObject({ connected: true,
-        readiness: { prerequisites: { harness: 'ready' } } });
+        route: 'native_cli_queue', readiness: { prerequisites: {
+          harness: 'ready', dispatch: 'ready', review: 'ready' } } });
       expect((await first.send({ bindingId: binding.bindingId, clientTxnId: 'first-send', body: 'before restart' })).kind)
         .toBe('accepted');
       await first.close();
