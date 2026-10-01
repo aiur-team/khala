@@ -48,6 +48,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
   let gateway; let ownerToken; let candidateApproveUrl; let proofJkt; let requestedDeviceId; let committed;
   let agentMatrixUser;
   let browserOpens = 0; let candidateRequests = 0; let discoveryConsents = 0; let agentDeviceLogins = 0;
+  let agentMatrixSends = 0;
   const participantLookupStatuses = [];
   const grants = new Set(); const bindings = new Set();
   let droppedResolve;
@@ -56,6 +57,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
   try { transport = await startRecoveryTransport({ onDroppedRedeem: () => droppedResolve(), async handle(request) {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith('/_matrix/') || pathname.startsWith('/_synapse/')) {
+      if (request.method === 'PUT' && pathname.includes('/send/m.room.encrypted/')) agentMatrixSends += 1;
       const target = synapse.baseUrl + request.url.slice(transport.origin.length);
       return fetch(target, { method: request.method, headers: request.headers,
         ...(['GET', 'HEAD'].includes(request.method) ? {} : { body: await request.arrayBuffer() }) });
@@ -413,6 +415,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       method: 'tools/call', params: { name: 'khala_send',
         arguments: { message: 'fixture agent reply through installed client' } } });
     assert.equal(nativeSend.result?.structuredContent?.kind, 'accepted');
+    assert.equal(agentMatrixSends, 1, 'native send did not reach Matrix once');
     let ownerSawReply = false;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const page = await ownerBrowser.source.read({ cursor: null, limit: 100 });
@@ -454,13 +457,16 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     const closedSend = await recoveredSession.request({ jsonrpc: '2.0', id: 44,
       method: 'tools/call', params: { name: 'khala_send',
         arguments: { message: 'fixture closed reply' } } });
-    assert.notEqual(closedSend.result?.structuredContent?.kind, 'accepted');
+    assert.equal(closedSend.result?.structuredContent?.kind, 'refused');
+    assert.equal(closedSend.result?.structuredContent?.code, 'not_connected');
+    assert.equal(agentMatrixSends, 1, 'closed native send reached Matrix');
     console.log(JSON.stringify({ scope: 'installed_refusals', wrongProof: true, wrongDevice: true,
       wrongGeneration: true, unexpectedBindingRead: wrongBindingRead.error.code,
       unexpectedBindingSend: wrongBindingSend.error.code,
       ambiguousOperation: ambiguous.status,
       closedSend: closedSend.result?.structuredContent?.kind ?? 'absent',
-      closedCode: closedSend.result?.structuredContent?.code ?? null }));
+      closedCode: closedSend.result?.structuredContent?.code ?? null,
+      agentMatrixSends }));
     console.log(JSON.stringify({ v: 1, scope: 'installed_access_recovery', cliProcesses: 4, browserOpens,
       candidateRequests, discoveryConsents, ownerRequests: ownerRequests.length,
       grants: grants.size, bindings: bindings.size, agentDeviceLogins,

@@ -135,7 +135,9 @@ caller-supplied binding ID with JSON-RPC `-32602`; this is argument validation,
 not a downstream binding authorization proof. A changed replay of one owner
 mailbox operation returns 409. A connected-session check immediately before
 the room closing marker makes the subsequent native send refusal attributable
-to closing rather than a prior disconnect.
+to closing rather than a prior disconnect. The HTTPS Matrix proxy counts one
+encrypted agent send before closing and no additional send afterward; the
+installed tool returns `refused/not_connected` for that closed-room attempt.
 
 The fixture first failed with `repair_required` when Chromium lacked its private
 CA trust pin. After that, it failed with `owner_device_empty` because the owner
