@@ -98,6 +98,16 @@ function port(client: ReviewControlClient, room: RoomPort) {
 }
 
 describe('browser review port', () => {
+  it('keeps exact known pending rows selectable while the connector is offline', async () => {
+    const { client } = scriptedClient(() => ({ kind: 'waiting_for_agent', generation: 0, body: previewBody([refOf(itemA)]) }));
+    const { room, emit } = fakeRoom();
+    const review = port(client, room);
+    emit([itemA, itemB]);
+    await tick();
+    expect(review.snapshot().access).toBe('waiting_for_agent');
+    expect(review.snapshot().pending).toEqual([itemA]);
+    review.dispose();
+  });
   it('keeps the authenticated batch-token receipt as a distinct owner-visible fact', async () => {
     const acknowledged = { v: 2, receiptId: 'receipt_ack_1', releaseId: 'release_1', bindingId,
       generation: 0, kind: 'agent_acknowledged', observedAt: '2026-09-25T10:02:00Z',

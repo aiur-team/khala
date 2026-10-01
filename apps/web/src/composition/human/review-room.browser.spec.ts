@@ -218,6 +218,31 @@ test('selected conversation exposes only pending recipient review and releases t
   });
 });
 
+test('selected conversation queues one exact release from a known offline preview', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&offline-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Message awaiting agent');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Waiting for agent. Known pending messages remain available for review.').waitFor();
+    await review.getByRole('list', { name: 'Pending messages' }).getByText('Message awaiting agent').waitFor();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    const commands = await page.evaluate(() => window.__roomReviewCommands());
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.bindingId, 'binding_1');
+    assert.equal(commands[0]?.expectedBindingGeneration, 0);
+    assert.equal(commands[0]?.selection.length, 1);
+    await page.waitForTimeout(300);
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 1,
+      'offline refresh must not retry the release');
+  });
+});
+
 test('selected review separates two agents and clears on a room switch', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?selected-review&multi-review', async page => {
     await page.evaluate(() => window.__allowReviewTrust());

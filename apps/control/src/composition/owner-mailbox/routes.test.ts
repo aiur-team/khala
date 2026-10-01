@@ -7,7 +7,7 @@ import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createGateway } from '../../runtime/handler';
-import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes, OWNER_MAILBOX_COMPLETE, OWNER_MAILBOX_POLL, OWNER_MAILBOX_RESULT, OWNER_MAILBOX_SUBMIT, OWNER_REVIEW_BINDINGS } from './routes';
+import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes, OWNER_MAILBOX_COMPLETE, OWNER_MAILBOX_POLL, OWNER_MAILBOX_RESULT, OWNER_MAILBOX_SUBMIT, OWNER_REVIEW_BINDINGS, OWNER_REVIEW_STATUS } from './routes';
 import { createOwnerMailbox } from './store';
 
 const origin = 'https://khala.aiur.team';
@@ -237,6 +237,14 @@ describe('hosted owner mailbox routes', () => {
       operationId: command.operationId, outcome: { ok: false, code: 'forbidden' } })).status).toBe(200);
     expect((await env.call(OWNER_MAILBOX_RESULT, 'GET')).status).toBe(200);
     expect((await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as { entries: unknown[] }).entries).toEqual([]);
+  });
+  it('serves owner-scoped offline review status and revokes it with the binding', async () => {
+    const env = await setup();
+    const status = `${OWNER_REVIEW_STATUS}?binding_id=${binding.bindingId}`;
+    expect(await (await env.call(status, 'GET')).json()).toEqual({ v: 1, bindingId: binding.bindingId,
+      generation: binding.generation, status: 'waiting_for_agent', preview: null });
+    expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
+    expect((await env.call(status, 'GET')).status).toBe(403);
   });
 
   it('denies signed-out, departed, revoked and unauthenticated-agent requests', async () => {

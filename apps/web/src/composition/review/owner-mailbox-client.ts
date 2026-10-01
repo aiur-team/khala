@@ -7,6 +7,7 @@ import { browserSessionStorage, createMailboxReadRetry } from '../human/mailbox-
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
 const BINDINGS = '/api/human/owner-mailbox/review-bindings';
+const STATUS = '/api/human/owner-mailbox/review-status';
 
 type Fetch = typeof globalThis.fetch;
 type Reply = Readonly<{ status: number; body: unknown }>;
@@ -76,6 +77,13 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       headers: { accept: 'application/json' } })); }
     catch { return null; }
   }
+  async function waitingPreview(bindingId: BindingId, signal: AbortSignal): Promise<Reply | null> {
+    const url = new URL(STATUS, origin);
+    url.searchParams.set('binding_id', bindingId);
+    try { return await read(await request(url, { method: 'GET', credentials: 'same-origin', signal,
+      headers: { accept: 'application/json' } })); }
+    catch { return null; }
+  }
   async function submit(bindingId: BindingId, operationId: string, kind: 'review_preview' | 'review_approve',
     body: unknown, signal: AbortSignal): Promise<Reply | null> {
     const csrf = await input.csrf();
@@ -135,6 +143,19 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       const existing = created ? null : await result(body.bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(body.bindingId, operationId, 'review_preview', pending.body, signal) : existing;
+      if (first?.status === 200 && object(first.body) && first.body.operationId === operationId
+        && first.body.outcome === null) {
+        const status = await waitingPreview(body.bindingId, signal);
+        if (status?.status === 200 && object(status.body) && status.body.v === 1
+          && status.body.bindingId === body.bindingId && status.body.status === 'waiting_for_agent'
+          && Number.isSafeInteger(status.body.generation) && (status.body.generation as number) >= 0
+          && (status.body.preview === null || object(status.body.preview)
+            && status.body.preview.bindingId === body.bindingId
+            && status.body.preview.bindingGeneration === status.body.generation)) {
+          return { kind: 'waiting_for_agent', generation: status.body.generation as number, body: status.body.preview };
+        }
+        if (status?.status === 401 || status?.status === 403) return { kind: 'refused', code: 'revoked' };
+      }
       const answer = created || first !== existing ? await awaitOutcome(body.bindingId, operationId, first, signal) : first;
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
         && answer.body.outcome !== null) {
@@ -166,9 +187,9 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       const previouslySubmitted = submittedCommands.has(command.commandId);
       submittedCommands.add(command.commandId);
       if (!previouslySubmitted) remember(command);
-      const answer = await awaitOutcome(command.bindingId, command.commandId,
-        previouslySubmitted ? await result(command.bindingId, command.commandId, signal)
-          : await submit(command.bindingId, command.commandId, 'review_approve', command, signal), signal);
+      const first = previouslySubmitted ? await result(command.bindingId, command.commandId, signal)
+        : await submit(command.bindingId, command.commandId, 'review_approve', command, signal);
+      const answer = await awaitOutcome(command.bindingId, command.commandId, first, signal);
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === command.commandId
         && answer.body.outcome !== null) {
         if (object(answer.body.outcome) && answer.body.outcome.ok !== undefined
@@ -178,6 +199,8 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       // A previous attempt with the same command ID may have committed before
       // authorization was lost. This result cannot prove that it did not.
       if (answer?.status === 409) { forget(command); return { kind: 'answered', body: { ok: false, code: 'idempotency_conflict' } }; }
+      if (answer === null && first?.status === 200 && object(first.body)
+        && first.body.operationId === command.commandId && first.body.outcome === null) return { kind: 'waiting_for_agent' };
       return { kind: 'lost' };
     },
   };

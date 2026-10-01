@@ -10,6 +10,7 @@ import { createOwnerMailbox, type OwnerCommandKind, type OwnerMailboxCommand } f
 export const OWNER_MAILBOX_SUBMIT = '/api/human/owner-mailbox/submit';
 export const OWNER_MAILBOX_RESULT = '/api/human/owner-mailbox/result';
 export const OWNER_REVIEW_BINDINGS = '/api/human/owner-mailbox/review-bindings';
+export const OWNER_REVIEW_STATUS = '/api/human/owner-mailbox/review-status';
 export const OWNER_MAILBOX_POLL = '/api/agent/owner-mailbox/poll';
 export const OWNER_MAILBOX_COMPLETE = '/api/agent/owner-mailbox/complete';
 
@@ -166,6 +167,19 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         return result.value === null ? json(404, { code: 'not_found' })
           : json(200, { v: 1, operationId: result.value.operationId, outcome: result.value.outcome });
       } },
+      { path: OWNER_REVIEW_STATUS, methods: ['GET'], async handle(request: Request) {
+        const url = new URL(request.url);
+        const bindingId = url.searchParams.get('binding_id');
+        if (!bindingId || [...url.searchParams.keys()].join(',') !== 'binding_id') return json(400, { code: 'invalid_request' });
+        const authority = await owner(request, bindingId, false);
+        if (authority instanceof Response) return authority;
+        const mailbox = createOwnerMailbox({ store: input.store, binding: authority.binding, roomId: authority.roomId,
+          clock: input.clock, authoritySecret: input.authoritySecret });
+        const preview = await mailbox.lastReviewPreview();
+        if (preview.kind !== 'ok') return unavailable();
+        return json(200, { v: 1, bindingId, generation: authority.binding.generation,
+          status: 'waiting_for_agent', preview: preview.value });
+      } },
     ] satisfies RouteRegistration[]),
     agent: Object.freeze([
       { path: OWNER_MAILBOX_POLL, methods: ['GET'], async handle(request: Request) {
@@ -205,7 +219,8 @@ export function unavailableOwnerMailboxRoutes(): Readonly<{ human: readonly Rout
   const absent = (path: string, method: string): RouteRegistration => Object.freeze({
     path, methods: Object.freeze([method]), handle: async () => unavailable(),
   });
-  return { human: [absent(OWNER_REVIEW_BINDINGS, 'GET'), absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET')],
+  return { human: [absent(OWNER_REVIEW_BINDINGS, 'GET'), absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET'),
+    absent(OWNER_REVIEW_STATUS, 'GET')],
     agent: [absent(OWNER_MAILBOX_POLL, 'GET'), absent(OWNER_MAILBOX_COMPLETE, 'POST')] };
 }
 

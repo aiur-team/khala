@@ -104,6 +104,64 @@ describe('protected hosted owner mailbox endpoint', () => {
       v: 1, commandId: mode.commandId, outcome: 'refused', reason: 'unavailable', effective: null,
     } });
   });
+  it('keeps a pending preview while offline, then completes one exact release on the same session', async () => {
+    const state = fakeStore(() => T0);
+    const roomId = '!room:example' as never;
+    const principal = { ownerId: binding.ownerId, providerIssuer: 'https://issuer.test',
+      providerSubject: 'subject-1' } as never;
+    const bindings = createAgentBindingStore({ store: state.store });
+    expect((await bindings.putParticipant({ ownerId: binding.ownerId, roomId,
+      agentParticipantId: binding.agentParticipantId, expectedBindingId: null,
+      record: { binding, revokedGeneration: null, capability: null } })).kind).toBe('applied');
+    const source = createOwnerMailbox({ store: state.store, binding, roomId, clock: () => T0,
+      authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
+    const auth = { authenticateRequest: async () => ({ kind: 'authenticated', context: { principal } }),
+      requireHumanMutation: async () => ({ kind: 'authorized', context: { principal } }) } as unknown as AuthService;
+    const gateway = { inspectMembership: async () => ({ kind: 'joined', historyReady: false }) } as unknown as AdmissionGateway;
+    const capabilities = { authorize: async () => ({ kind: 'authorized', binding, roomId,
+      ownerId: binding.ownerId }) } as unknown as AdapterCapabilities;
+    const routes = createOwnerMailboxRoutes({ auth, gateway, capabilities, store: state.store,
+      clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes',
+      inspectOwnerMembership: async () => ({ kind: 'joined' }), lookupAgentDevice: async () => null });
+    const ref = { v: 1, roomId, eventId: 'event_1', authorParticipantId: 'peer_agent',
+      authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` };
+    const previewBody = { bindingId: binding.bindingId, candidates: [ref], releaseIds: [] };
+    const previewId = `preview_${createHash('sha256').update(JSON.stringify(previewBody)).digest('hex').slice(0, 32)}_00000001`;
+    const preview = { v: 1, bindingId: binding.bindingId, bindingGeneration: 0, policyVersion: 3,
+      pending: [ref], receipts: [] };
+    expect((await source.submit({ operationId: previewId, kind: 'review_preview', body: previewBody }, principal)).kind).toBe('ok');
+    expect((await source.complete(previewId, { ok: true, preview })).kind).toBe('ok');
+    const statusRoute = routes.human.find(route => route.path.endsWith('/review-status'))!;
+    const status = await statusRoute.handle(new Request(`https://khala.aiur.team${statusRoute.path}?binding_id=${binding.bindingId}`));
+    expect(await status.json()).toMatchObject({ status: 'waiting_for_agent', preview });
+    const operationId = 'offline_approval_one';
+    const approval = { v: 1, commandId: operationId, bindingId: binding.bindingId, roomId,
+      expectedPolicyVersion: 3, expectedBindingGeneration: 0, issuedAt: new Date(T0).toISOString(), selection: [ref] };
+    expect((await source.submit({ operationId, kind: 'review_approve', body: approval }, principal)).kind).toBe('ok');
+    expect((await source.submit({ operationId, kind: 'review_approve', body: approval }, principal)).kind).toBe('ok');
+    expect(await source.result(operationId)).toMatchObject({ kind: 'ok', value: { outcome: null } });
+    const approve = vi.fn(async () => ({ ok: true as const, releaseIds: ['release_12345678' as never] }));
+    const signer = { proof: () => 'proof' } as unknown as ProofSigner;
+    const connector = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding, signer,
+      capability: async () => ({ token: 'C'.repeat(43), scope: ['receive_released', 'ack_delivery'],
+        bindingId: binding.bindingId, generation: binding.generation, expiresAt: Date.now() + 60_000 }),
+      review: { preview: vi.fn(), approve, resumeReleases: vi.fn(), dispose: vi.fn() },
+      stop: vi.fn(), onRevoked: async () => undefined,
+      fetch: async (url, init) => routes.agent.find(route => route.path === new URL(String(url)).pathname)!
+        .handle(new Request(String(url), init)),
+    });
+    // An active authorization/status check sees the same binding but does not execute queued commands.
+    expect(await connector.authorize()).toBe('active');
+    expect(await source.result(operationId)).toMatchObject({ kind: 'ok', value: { outcome: null } });
+    expect(approve).not.toHaveBeenCalled();
+    expect(await connector.pollOnce()).toBe('ok');
+    expect(approve).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ownerId: binding.ownerId }), approval);
+    expect(await source.pending()).toEqual({ kind: 'ok', value: [] });
+    expect(await source.result(operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: true,
+      releaseIds: ['release_12345678'] } } });
+    expect(await connector.pollOnce()).toBe('ok');
+    expect(approve).toHaveBeenCalledTimes(1);
+  });
   it('drains an offline read backlog and a preserved owner write when polling resumes', async () => {
     const state = fakeStore(() => T0);
     const roomId = '!room:example' as never;
