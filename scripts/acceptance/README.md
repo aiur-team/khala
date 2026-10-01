@@ -136,18 +136,19 @@ npm install -g --offline --ignore-scripts --prefix "$PIN" @openai/codex@0.159.3
 CODEX_BIN="$PIN/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
 CODEX_SHA=8bf204b36a2f6dd0dab73aa2f639892e67ef9ac8befccb4a05b1496ebf25c479
 test "$(sha256sum "$CODEX_BIN" | cut -d ' ' -f 1)" = "$CODEX_SHA"
+export npm_config_store_dir="$PWD/.aiur-runtime/pnpm-store"
 mise exec node@22.23.2 -- pnpm acceptance:pack --out "$TMPDIR/khala-803-pack"
 PACK=$(find "$TMPDIR/khala-803-pack" -maxdepth 1 -name 'aiur-khala-*.tgz' -print -quit)
-RUN=$(mise exec node@22.23.2 -- pnpm --silent test:internal:native init "$PACK" --codex-bin "$CODEX_BIN" --codex-sha256 "$CODEX_SHA" | jq -r .directory)
-mise exec node@22.23.2 -- pnpm --silent test:internal:native auth-handoff "$RUN"
-mise exec node@22.23.2 -- pnpm --silent test:internal:native auth "$RUN"
-mise exec node@22.23.2 -- pnpm --silent test:internal:native setup "$RUN"
-mise exec node@22.23.2 -- pnpm --silent test:internal:native start-agents "$RUN" gpt-6-sol opus
+RUN=$(mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs init "$PACK" --codex-bin "$CODEX_BIN" --codex-sha256 "$CODEX_SHA" | jq -r .directory)
+mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs auth-handoff "$RUN"
+mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs auth "$RUN"
+mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs setup "$RUN"
+mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs start-agents "$RUN" gpt-5.3-codex claude-sonnet-4-6 --external-pty
 ```
 
 `auth-handoff` copies only `~/.codex/auth.json` and `~/.claude/.credentials.json` into the mode-0700 run home as mode-0600 files. It never prints credentials or copies `~/.claude.json`. `auth` checks both providers' native login status before PTY launch. If either needs interactive sign-in, complete it under the printed private `HOME`/`CODEX_HOME` and rerun `auth`; do not import general account settings. The private profile and PTYs may contact model providers. Khala's Node transport is constrained to loopback and Chromium uses a loopback-only proxy bypass; outbound attempts are counted without logging destinations.
 
-Attach only to the two tmux sockets printed by `start-agents`. In each fresh native TUI, complete one real model turn, review its native trust dialog, and copy its `/status` session ID. The exact IDs must appear in that run's private native session files. Then:
+`--external-pty` prints two private launcher paths. Run each launcher in its own persistent terminal; this is the recommended path for an Executor driving fresh sessions outside an agent sandbox that reaps detached tmux servers. Without that flag, `start-agents` creates a private tmux socket and prints attach commands. In each fresh native TUI, complete one real model turn, review its native trust dialog, and copy its `/status` session ID. The exact IDs must appear in that run's private native session files. Then:
 
 ```sh
 mise exec node@22.23.2 -- pnpm --silent test:internal:native open "$RUN" '<codex-session-id>' '<claude-session-id>'

@@ -109,6 +109,17 @@ const sessionFile = (run, harness, id) => {
 const childAlive = pid => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
+const shellWord = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+const agentLauncher = (run, name) => {
+  const file = path.join(directory, `${name}-pty.sh`);
+  const env = environment(run);
+  const argv = [run[name], '--model', run.models[name], ...(name === 'codex'
+    ? ['-c', 'check_for_update_on_startup=false', '--no-daemon'] : [])];
+  const lines = ['#!/bin/sh', 'set -eu', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
+    `cd ${shellWord(directory)}`, `exec ${argv.map(shellWord).join(' ')}`];
+  fs.writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o700 });
+  return file;
+};
 const ownerGet = async (run, suffix) => {
   if (!run.browserPort) stage('browser_not_ready');
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${run.browserPort}`);
@@ -193,14 +204,17 @@ async function main() {
     const planned = spawnSync(process.execPath, [run.khala, 'setup', '--dry-run'], { env, encoding: 'utf8', timeout: 30_000 });
     let dry;
     try { dry = JSON.parse(planned.stdout); } catch { stage('setup_plan_report'); }
-    if (!dry.planDigest) stage('setup_plan');
-    const execution = spawnSync(process.execPath, [run.khala, 'setup', '--confirm', dry.planDigest], { env, encoding: 'utf8', timeout: 60_000 });
-    let applied;
-    try { applied = JSON.parse(execution.stdout); } catch { stage('setup_apply_report'); }
-    if (!Array.isArray(applied.harnesses)) stage('setup_apply');
+    if (dry.planDigest) {
+      const execution = spawnSync(process.execPath, [run.khala, 'setup', '--confirm', dry.planDigest], { env, encoding: 'utf8', timeout: 60_000 });
+      let applied;
+      try { applied = JSON.parse(execution.stdout); } catch { stage('setup_apply_report'); }
+      if (!Array.isArray(applied.harnesses)) stage('setup_apply');
+    } else if (dry.operations?.length) stage('setup_plan');
     const claude = status(run).harnesses?.find(item => item.harness === 'claude');
-    if (!claude?.version?.supported || claude.route !== 'native_cli_queue'
-      || claude.components?.some(item => item.state !== 'ready')) stage('claude_setup');
+    // Setup can install the native plugin before a live session has established
+    // its route. Session and binding checks in open/challenge prove delivery.
+    if (!claude?.version?.supported || !claude.components?.length
+      || claude.components.some(item => item.state !== 'ready')) stage('claude_setup');
     process.stdout.write(JSON.stringify({ kind: 'setup_applied', id: run.id, next: 'start-agents, then approve native hook trust in each new PTY' }) + '\n');
     return;
   }
@@ -249,7 +263,8 @@ async function main() {
   if (action === 'start-agents') {
     if (run.agentsStartedAt) stage('agents_already_started');
     const [codexModel, claudeModel] = args;
-    if (args.length !== 2 || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(codexModel ?? '')
+    const externalPtys = args.length === 3 && args[2] === '--external-pty';
+    if (args.length !== 2 && !externalPtys || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(codexModel ?? '')
       || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(claudeModel ?? '')) stage('model_arguments');
     authenticated(run);
     const codexVersion = checked(run.codex, ['--version'], environment(run));
@@ -257,17 +272,19 @@ async function main() {
     run.agentsStartedAt = Date.now();
     run.versions = { codex: codexVersion, claude: claudeVersion };
     run.models = { codex: codexModel, claude: claudeModel };
+    run.ptyMode = externalPtys ? 'external' : 'tmux';
+    const launch = Object.fromEntries(['codex', 'claude'].map(name => [name, agentLauncher(run, name)]));
     save(run);
-    for (const [name, bin] of [['codex', run.codex], ['claude', run.claude]]) {
+    if (!externalPtys) for (const [name] of [['codex', run.codex], ['claude', run.claude]]) {
       tmux(run, ['new-session', '-d', '-s', name, '-c', directory, '-e', `HOME=${run.home}`, '-e', `CODEX_HOME=${path.join(run.home, '.codex')}`,
         '-e', `XDG_STATE_HOME=${path.join(directory, 'state')}`, '-e', `XDG_DATA_HOME=${path.join(directory, 'data')}`,
         '-e', `XDG_CONFIG_HOME=${path.join(directory, 'config')}`, '-e', `TMPDIR=${directory}`,
         '-e', `NODE_OPTIONS=${environment(run).NODE_OPTIONS}`,
-        '-e', `KHALA_INTERNAL_CANARY_DENIAL_FILE=${path.join(directory, 'network-denials')}`, bin,
-        '--model', run.models[name], ...(name === 'codex' ? ['--no-daemon'] : [])]);
+        '-e', `KHALA_INTERNAL_CANARY_DENIAL_FILE=${path.join(directory, 'network-denials')}`, launch[name]]);
     }
     process.stdout.write(JSON.stringify({ kind: 'agents_started', id: run.id, versions: run.versions, models: run.models,
-      attach: ['codex', 'claude'].map(name => `tmux -S ${run.socket} attach -t ${name}`),
+      ptyMode: run.ptyMode, launch: externalPtys ? launch : undefined,
+      attach: externalPtys ? undefined : ['codex', 'claude'].map(name => `tmux -S ${run.socket} attach -t ${name}`),
       next: 'Complete a model turn and native hook trust in each PTY; get both native session IDs, then run open.' }) + '\n');
     return;
   }
@@ -280,7 +297,7 @@ async function main() {
     verifyArtifact(run.tarball, run.tarballSha256);
     if (fileDigest(run.codex) !== run.codexSha256 || checked(run.codex, ['--version'], environment(run))
       !== `codex-cli ${run.codexRoute.endsWith('0.159.3') ? '0.159.3' : '0.160.0'}`) stage('codex_pin_drift');
-    for (const name of ['codex', 'claude']) tmux(run, ['has-session', '-t', name]);
+    if (run.ptyMode !== 'external') for (const name of ['codex', 'claude']) tmux(run, ['has-session', '-t', name]);
     sessionFile(run, 'codex', codexId);
     sessionFile(run, 'claude', claudeId);
     const result = ready(run);
