@@ -184,7 +184,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/agent-bootstrap/authorize', 'POST /api/human/agent-bootstrap/authorize',
     'GET /api/human/owner-device-proof/challenge', 'POST /api/human/owner-device-proof/register',
     'GET /api/human/owner-mailbox/review-bindings', 'POST /api/human/owner-mailbox/submit',
-    'GET /api/human/owner-mailbox/result',
+    'GET /api/human/owner-mailbox/result', 'GET /api/human/owner-mailbox/review-status',
     'GET /api/human/revocation/targets', 'POST /api/human/revocation/revoke',
     'GET /api/human/revocation/status',
     'POST /api/human/room-send/ready', 'POST /api/human/room-send/acquire',
