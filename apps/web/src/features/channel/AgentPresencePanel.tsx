@@ -183,7 +183,6 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
                 <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
               </summary>
               <div className="agent-presence__detail-body">
-                {ownerLabel ? <p>{ownerLabel}</p> : null}
                 {owned ? renderOwnerControls?.(agent) : null}
                 {!namesPending && renameAgent && viewerOwnerId && renameScope && owned ? <RenameAgent
                   agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
