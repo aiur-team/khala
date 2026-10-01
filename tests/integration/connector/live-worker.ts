@@ -115,7 +115,7 @@ try {
     ownerParticipantId: packet.eventRef.authorParticipantId, storage, matrix: substrate,
     // The original issue expressly permits authenticated base fixture release.
     // The real production authority path is separately covered by #43/#49.
-    guard: async () => 'active',
+    guard: async () => ({ kind: 'active' }),
   });
   await waitForPending();
   const claim = { harness: 'codex', sessionId: packet.native.sessionId, workdir: packet.native.workdir };

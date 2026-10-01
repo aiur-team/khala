@@ -26,6 +26,12 @@ describe('opt-in native acceptance gate', () => {
     assert.equal(nativeProofBlock('0.157.1', interactiveCodexCapabilities('0.157.1', limits,
       { state: 'unknown', reason: 'untrusted' })), 'native_hook_mode_unproven');
     assert.equal(nativeProofBlock('0.157.1', null), 'native_hook_mode_unproven');
+    for (const version of ['0.159.2', '0.159.3']) {
+      const current = interactiveCodexCapabilities(version, limits, { state: 'trusted' });
+      assert.equal(current.support, 'unsupported');
+      assert.equal(current.modes.sync.status, 'unknown');
+      assert.equal(nativeProofBlock(version, current), 'native_version_unproven');
+    }
   });
   it('reports not observed without a designated disposable session', async () => {
     assert.deepEqual(await inspectNativeGate(undefined), { kind: 'blocked', code: 'native_fixture_not_supplied' });
