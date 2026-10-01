@@ -288,7 +288,7 @@ describe('installed hosted connector composition', () => {
               async: { status: 'unsupported' } } } });
         expect(await connector.listeningModeControl.set({ commandId: 'manual_mode_0001' as never,
           expectedVersion: 1, requested: 'async', issuedAt: '2026-09-30T00:00:00Z' })).toMatchObject({
-          outcome: 'applied', effective: null, reason: 'support_unsupported' });
+          outcome: 'refused', effective: null, reason: expect.stringContaining('receipt proof') });
         expect(await connector.listeningMode()).toMatchObject({ effective: null });
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
@@ -360,7 +360,7 @@ describe('installed hosted connector composition', () => {
           authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
             authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
           body: { v: 1, commandId: 'manual_sync_0001', bindingId: binding.bindingId,
-            expectedBindingGeneration: 0, expectedVersion: 2, requested: 'sync',
+            expectedBindingGeneration: 0, expectedVersion: 1, requested: 'sync',
             issuedAt: '2026-09-30T00:00:00Z' } });
         await vi.waitFor(() => expect(completions).toHaveLength(2), { timeout: 5_000 });
         expect(completions[1]).toMatchObject({ outcome: { outcome: 'refused', effective: null,

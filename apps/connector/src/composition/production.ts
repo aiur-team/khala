@@ -502,7 +502,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
       reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
-      listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+      const manualListening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
         current: async () => {
           if (closed || remoteDenied || deliveryStopped) return false;
           const held = await readBinding().catch(() => null);
@@ -511,6 +511,20 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         },
         capabilities: async () => manualListeningCapabilities(input.session.harness as 'claude' | 'codex'),
       });
+      listening = { ...manualListening, application: {
+        read: manualListening.application.read,
+        async set(command) {
+          const current = await manualListening.application.read();
+          const support = current.ok ? current.view.support[command.requested] : null;
+          if (support?.status === 'proven' || support?.status === 'experimental') {
+            return manualListening.application.set(command);
+          }
+          return { v: 1 as const, commandId: command.commandId, bindingId: next.bindingId,
+            generation: next.generation, outcome: 'refused' as const,
+            version: command.expectedVersion, requested: command.requested, effective: null,
+            reason: support?.reason ?? (current.ok ? 'capabilities_unavailable' : current.code) };
+        },
+      } };
       await listening.application.read();
       reportSubscription({ stage: 'intake_listening_initialized', result: 'ok' });
     } else if (harness) {
