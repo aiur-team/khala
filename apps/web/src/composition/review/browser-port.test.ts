@@ -100,7 +100,7 @@ function port(client: ReviewControlClient, room: RoomPort) {
 
 describe('browser review port', () => {
   it('routes a status check through reconcile without calling approve', async () => {
-    const { client, commands } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
+    const { client, commands, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
     let checked: ApprovalCommand | null = null;
     client.reconcile = async value => { checked = value; return { kind: 'answered', body: { ok: true, releaseIds: ['release_1'] } }; };
     const { room } = fakeRoom();
@@ -109,6 +109,7 @@ describe('browser review port', () => {
     expect(await review.reconcile(exact, new AbortController().signal)).toEqual({ kind: 'accepted', releaseIds: ['release_1'] });
     expect(checked).toBe(exact);
     expect(commands).toHaveLength(0);
+    expect(requests).toHaveLength(0);
     review.dispose();
   });
   it('keeps exact known pending rows selectable while the connector is offline', async () => {

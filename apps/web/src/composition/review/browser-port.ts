@@ -185,7 +185,6 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
       const outcome: ApprovalUiResult = answer.kind === 'answered' ? toUiResult(command, answer.body)
         : answer.kind === 'waiting_for_agent' ? { kind: 'waiting_for_agent', commandId: command.commandId }
           : { kind: 'outcome_unknown', commandId: command.commandId };
-      if (outcome.kind === 'accepted') void refresh();
       return outcome;
     },
 
