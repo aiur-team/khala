@@ -59,6 +59,12 @@ describe('Matrix endpoint credential and device fence', () => {
     expect(JSON.parse(await readFile(path.join(state, 'matrix-session.json'), 'utf8'))).toEqual(session);
     expect(diagnostic).toHaveBeenCalledWith({ stage: 'matrix_startup_retry', result: 'unavailable' });
     await device.close();
+    const fenced = createMatrixBootstrapDevice({ stateDirectory: state,
+      profileDirectory: path.join(state, 'crypto'), writerLockDiagnostic: diagnostic,
+      open: async () => { throw new Error('page.evaluate: Error: matrix_identity_changed'); } });
+    expect(await fenced.devices.activate(input)).toEqual({ kind: 'failed', reason: 'initialization_failed' });
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'matrix_startup_blocked', result: 'unavailable' });
+    await fenced.close();
   });
 
   it('reserves before admission, stores the endpoint token privately, and reopens the exact SDK identity', async () => {

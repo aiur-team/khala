@@ -142,7 +142,10 @@ export function createMatrixBootstrapDevice(input: Readonly<{
           if (inner.kind !== 'reserved' || inner.deviceId !== fixed.deviceId) return { kind: 'failed', reason: 'initialization_failed' };
           return active.devices.activate(activation);
         } catch (error) {
-          const blocked = error instanceof Error && PERMANENT_STARTUP_ERRORS.has(error.message);
+          // Playwright prefixes browser-thrown errors with its call site and a
+          // stack, so match only our fixed error codes within that wrapper.
+          const blocked = error instanceof Error && [...PERMANENT_STARTUP_ERRORS]
+            .some(code => error.message.includes(code));
           try { input.writerLockDiagnostic?.({
             stage: blocked ? 'matrix_startup_blocked' : 'matrix_startup_retry', result: 'unavailable',
           }); } catch { /* Diagnostics cannot change activation. */ }
