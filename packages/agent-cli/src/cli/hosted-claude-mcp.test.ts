@@ -29,12 +29,13 @@ function request(id: number, name: string, args: Record<string, unknown> = {}) {
   return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })}\n`;
 }
 
-async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: string[], sessionId = SESSION,
-  prejoinRoot?: string, onStderr?: (chunk: string) => void, stateHome?: string) {
+async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: Iterable<string> | AsyncIterable<string>, sessionId = SESSION,
+  prejoinRoot?: string, onStderr?: (chunk: string) => void, stateHome?: string,
+  onOutput?: (output: string) => void) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   let output = '';
-  stdout.on('data', chunk => { output += String(chunk); });
+  stdout.on('data', chunk => { output += String(chunk); onOutput?.(output); });
   stderr.on('data', chunk => { onStderr?.(String(chunk)); });
   const code = await runCli(['mcp-serve'], {
     client: createUnavailableClient(),
@@ -399,7 +400,7 @@ describe('hosted native Claude MCP', () => {
       const bytes = new TextEncoder().encode('{"body":"encrypted release 571"}');
       const digest = (value: Uint8Array) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
       const inbox = await openInbox({ stateDirectory: root, bindingId: binding.bindingId,
-        generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+        generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 1,
         recordAcknowledgement: async value => { receipts.push([...value.releaseIds]); } });
       await inbox.enqueue({ v: 1, releaseId: 'release-571', bindingId: binding.bindingId,
         generation: binding.generation, events: [{ v: 1, roomId: 'room-571' as EventRef['roomId'],
@@ -422,7 +423,7 @@ describe('hosted native Claude MCP', () => {
                 recovery: 'unknown' as const } } } : {}) }; }, send,
           requestChannelAccess: requestChannelAccess as never },
         inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
-          generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+          generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 1,
           recordAcknowledgement: async value => { receipts.push([...value.releaseIds]); } }),
         async close() {},
       }));
@@ -431,8 +432,22 @@ describe('hosted native Claude MCP', () => {
       expect(pending.map(reply => reply.result.structuredContent)).toEqual(Array(3).fill({ kind: 'refused', code: 'not_connected' }));
       expect(send).not.toHaveBeenCalled();
       approved = true;
-      const admitted = await serve(factory, [request(1, 'khala_status'), request(2, 'khala_read'),
-        request(3, 'khala_send', { message: 'one encrypted send' })], SESSION, undefined, undefined, root);
+      let readDelivered!: () => void;
+      const readWritten = new Promise<void>(resolve => { readDelivered = resolve; });
+      const admitted = await serve(factory, (async function* () {
+        yield request(1, 'khala_status');
+        yield request(2, 'khala_read');
+        await readWritten;
+        const nextBytes = new TextEncoder().encode('{"body":"next hook release"}');
+        await inbox.enqueue({ v: 1, releaseId: 'release-572', bindingId: binding.bindingId,
+          generation: binding.generation, events: [{ v: 1, roomId: 'room-571' as EventRef['roomId'],
+            eventId: 'event-572' as EventRef['eventId'], authorParticipantId: 'sender-571' as EventRef['authorParticipantId'],
+            authorDeviceId: 'device-571' as EventRef['authorDeviceId'], contentDigest: digest(nextBytes) }],
+          payloadDigest: digest(nextBytes), payload: nextBytes, receivedAt: '2026-09-29T12:00:01Z' });
+        yield request(3, 'khala_send', { message: 'one encrypted send' });
+      })(), SESSION, undefined, undefined, root, output => {
+        if (output.includes('encrypted release 571')) readDelivered();
+      });
       expect(admitted[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
       expect(admitted[1]?.result.structuredContent).toMatchObject({ kind: 'batch', batch: expect.stringContaining('encrypted release 571') });
       expect(JSON.stringify(admitted)).not.toContain('batchToken');
@@ -440,12 +455,18 @@ describe('hosted native Claude MCP', () => {
       expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bindingId: binding.bindingId,
         body: 'one encrypted send' }), undefined);
       expect(receipts).toEqual([['release-571']]);
+      const hookConsumer = await inbox.acquireCallConsumer!();
+      try {
+        expect((await hookConsumer.readBatch({ maxBytes: 65_536, offerScope: 'hook-after-send' }))?.items
+          .map(item => item.record.releaseId)).toEqual(['release-572']);
+      } finally { await hookConsumer.release(); }
       // A resumed model turn starts a new MCP process. Its first status and
       // explicit read must select the approved generation without joining again.
       const restarted = await serve(factory, [request(4, 'khala_status'), request(5, 'khala_read')],
         SESSION, undefined, undefined, root);
       expect(restarted[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
-      expect(restarted[1]?.result.structuredContent).toEqual({ kind: 'empty' });
+      expect(restarted[1]?.result.structuredContent).toMatchObject({ kind: 'batch',
+        batch: expect.stringContaining('next hook release') });
       expect(receipts).toEqual([['release-571']]);
       expect(send).toHaveBeenCalledTimes(1);
       expect(factory).toHaveBeenCalledWith({ harness: 'claude', sessionId: SESSION });

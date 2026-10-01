@@ -170,6 +170,8 @@ export const mcpServeCommand: CliCommand = {
         if (retainedToken === undefined) return;
         const inbox = await selected.opened.inbox(selected.binding.bindingId, selected.binding.generation);
         const read = new ReadOperation({ heldBinding: selected.binding,
+          // ACK may stage the next release even with maxBytes: 0. Do not mark
+          // that unseen batch as an explicit read; a hook must still offer it.
           consumer: callScopedConsumer(inbox, { signal: deps.signal }),
           currentBinding: async () => (await held())?.binding ?? null });
         await read.read({ bindingId: selected.binding.bindingId, maxBytes: 0,
@@ -237,7 +239,8 @@ export const mcpServeCommand: CliCommand = {
           if (selected?.kind === 'starting') return starting;
           if (selected === null) return { kind: 'refused', code: 'not_connected' };
           try { await acknowledgeRetained(selected); }
-          catch { return { kind: 'refused', code: 'binding_not_held' }; }
+          catch (error) { return { kind: 'refused', code: error instanceof CliError && error.code === 'binding_not_held'
+            ? 'binding_not_held' : 'unavailable' }; }
           const result = await new SendService(selected.opened.client).send(message, selected.binding.bindingId, undefined, deps.signal);
           // A changed binding after the call cannot prove whether the send committed.
           return await current(selected.binding) ? result : { kind: 'outcome_unknown' };
