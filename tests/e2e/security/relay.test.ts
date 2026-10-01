@@ -119,6 +119,8 @@ describe('server-side stores and logs', () => {
     expect(relayAdapterEvidence()).toEqual([
       'apps/connector: matrix-js-sdk',
       'apps/web: matrix-js-sdk',
+      // Local writer coordination, included by the Matrix-path tripwire; no relay I/O.
+      'apps/connector/src/substrate/matrix-writer-lock.ts',
       'apps/connector/src/substrate/matrix.ts',
       'apps/control/src/channel-closure/matrix.ts',
       'apps/control/src/composition/agent/matrix-admission.ts',
