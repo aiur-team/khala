@@ -109,14 +109,33 @@ const sessionFile = (run, harness, id) => {
 const childAlive = pid => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
+const processStart = pid => {
+  try {
+    const proc = `/proc/${pid}`;
+    if (fs.statSync(proc).uid !== process.getuid()) return null;
+    return fs.readFileSync(path.join(proc, 'stat'), 'utf8').split(') ').at(-1).trim().split(/\s+/)[19] ?? null;
+  } catch { return null; }
+};
+const externalProcess = (run, name) => {
+  const file = path.join(directory, `${name}-pty.pid`);
+  if (!exists(file)) return run.sessions?.[name] ? 'untracked' : 'not_started';
+  const match = /^(\d+) (\d+)\n$/.exec(fs.readFileSync(file, 'utf8'));
+  if (!match) return 'untracked';
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid < 2) return 'untracked';
+  return processStart(pid) === match[2] ? 'live' : 'exited';
+};
 const shellWord = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const agentLauncher = (run, name) => {
   const file = path.join(directory, `${name}-pty.sh`);
   const env = environment(run);
   const argv = [run[name], '--model', run.models[name], ...(name === 'codex'
     ? ['-c', 'check_for_update_on_startup=false', '--no-daemon'] : [])];
-  const lines = ['#!/bin/sh', 'set -eu', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
-    `cd ${shellWord(directory)}`, `exec ${argv.map(shellWord).join(' ')}`];
+  const pidFile = path.join(directory, `${name}-pty.pid`);
+  const lines = ['#!/bin/sh', 'set -eu', 'umask 077', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
+    `cd ${shellWord(directory)}`, 'pid=$$', 'start=$(awk \'{print $22}\' "/proc/$pid/stat")',
+    `printf '%s %s\\n' "$pid" "$start" > ${shellWord(pidFile)}`,
+    `exec ${argv.map(shellWord).join(' ')}`];
   fs.writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o700 });
   return file;
 };
@@ -297,7 +316,9 @@ async function main() {
     verifyArtifact(run.tarball, run.tarballSha256);
     if (fileDigest(run.codex) !== run.codexSha256 || checked(run.codex, ['--version'], environment(run))
       !== `codex-cli ${run.codexRoute.endsWith('0.159.3') ? '0.159.3' : '0.160.0'}`) stage('codex_pin_drift');
-    if (run.ptyMode !== 'external') for (const name of ['codex', 'claude']) tmux(run, ['has-session', '-t', name]);
+    if (run.ptyMode === 'external') {
+      for (const name of ['codex', 'claude']) if (externalProcess(run, name) !== 'live') stage(`${name}_external_pty_not_live`);
+    } else for (const name of ['codex', 'claude']) tmux(run, ['has-session', '-t', name]);
     sessionFile(run, 'codex', codexId);
     sessionFile(run, 'claude', claudeId);
     const result = ready(run);
@@ -460,6 +481,8 @@ async function main() {
     const state = { id: run.id, versions: run.versions ?? null, models: run.models ?? null, sessions: run.sessions ?? null,
       channelId: run.channelId ?? null, serverAlive: run.serverPid ? childAlive(run.serverPid) : false,
       browserAlive: run.browserPid ? childAlive(run.browserPid) : false,
+      externalProcesses: run.ptyMode === 'external'
+        ? Object.fromEntries(['codex', 'claude'].map(name => [name, externalProcess(run, name)])) : undefined,
       deniedOutboundAttempts: exists(path.join(directory, 'network-denials'))
         ? fs.readFileSync(path.join(directory, 'network-denials'), 'utf8').split('\n').filter(Boolean).length : 0,
       browserCdp: run.browserPort ? `http://127.0.0.1:${run.browserPort}` : null };
@@ -467,6 +490,11 @@ async function main() {
     return;
   }
   if (action === 'stop' || action === 'destroy') {
+    if (run.ptyMode === 'external') {
+      const states = ['codex', 'claude'].map(name => externalProcess(run, name));
+      if (states.includes('untracked')) stage('external_process_untracked');
+      if (states.includes('live')) stage('external_agents_running');
+    }
     if (run.browserPid && childAlive(run.browserPid)) process.kill(-run.browserPid, 'SIGTERM');
     if (run.serverPid && childAlive(run.serverPid)) process.kill(-run.serverPid, 'SIGTERM');
     for (const name of ['codex', 'claude']) { try { tmux(run, ['kill-session', '-t', name]); } catch { /* already stopped */ } }

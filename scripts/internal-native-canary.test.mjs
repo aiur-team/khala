@@ -56,3 +56,19 @@ test('quoted challenge is visible only in the matching native read result', () =
     codexRow('khala_send', { message: challenge }, { ok: true })], 'codex', challenge, challenge),
   { readCall: true, visible: false, sendCall: false });
 });
+
+test('external cleanup refuses a live recorded PTY process', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-external-'));
+  fs.chmodSync(directory, 0o700);
+  const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8').split(') ').at(-1).trim().split(/\s+/);
+  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), `${process.pid} ${stat[19]}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', ptyMode: 'external' }), { mode: 0o600 });
+  try {
+    for (const action of ['stop', 'destroy']) {
+      const result = spawnSync(process.execPath, ['--import', 'tsx', script, action, directory], { encoding: 'utf8' });
+      assert.equal(result.status, 1);
+      assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_agents_running', directory });
+      assert.equal(fs.existsSync(directory), true);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
