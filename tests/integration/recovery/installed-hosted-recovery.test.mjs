@@ -74,10 +74,6 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       const target = new URL(input.url);
       browserOpens += 1;
       if (target.origin !== transport.origin) return new Response(null, { status: 403 });
-      if (target.pathname === '/api/human/channel-discovery/authority/approve') {
-        candidateApproveUrl = target.href;
-        return new Response(null, { status: 204 });
-      }
       if (target.pathname === '/api/human/channel-discovery/bootstrap/authorize' && ownerToken) {
         const form = new URLSearchParams(target.searchParams);
         form.set('csrf_token', csrfTokenFor(ownerToken));
@@ -105,6 +101,9 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       requestedDeviceId = (await request.clone().json()).deviceId;
     }
     const response = gateway ? await gateway(request) : new Response(null, { status: 503 });
+    if (pathname === '/api/agent/channel-discovery/authority/candidate' && response.status === 202) {
+      candidateApproveUrl = (await response.clone().json()).approveUrl;
+    }
     if (pathname === '/api/agent/messaging/participants') participantLookupStatuses.push(response.status);
     if (pathname === '/api/agent/bootstrap/redeem' && response.status === 200 && committed === undefined) {
       // Snapshot the first committed response; a later resume must not replace
@@ -243,7 +242,7 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
         outcome: result.replies[0]?.result?.structuredContent?.outcome ?? null })}`);
     assert.equal(result.replies[0]?.result?.structuredContent?.outcome, 'pending_owner');
     assert.equal(candidateRequests, 1);
-    assert.equal(browserOpens, 1);
+    assert.equal(browserOpens, 0);
     assert.equal(typeof candidateApproveUrl, 'string');
     const approval = await gateway(new Request(`${transport.origin}/api/human/channel-discovery/authority/approve`, {
       method: 'POST', headers: { origin: transport.origin, cookie: `${SESSION_COOKIE}=${ownerToken}`,
