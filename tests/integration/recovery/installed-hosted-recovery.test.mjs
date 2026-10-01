@@ -521,6 +521,7 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
         'exact pending preview disappeared with the native executor');
     }
     const approved = await ownerReview.review.approve(approvalCommand);
+    let reconciled;
     if (harness === 'claude') {
       assert.equal(approved.kind, 'waiting_for_agent', 'offline release did not remain queued');
       assert.equal(approvalSubmits, 1, 'offline release submitted more than once');
@@ -532,7 +533,6 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       const resumed = await recoveredSession.request({ jsonrpc: '2.0', id: 72,
         method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
       assert.equal(resumed.result?.structuredContent?.connected, true, 'same approved session did not reconnect');
-      let reconciled;
       for (let attempt = 0; attempt < 10; attempt += 1) {
         reconciled = await ownerReview.review.reconcile(approvalCommand);
         if (reconciled.kind === 'answered') break;
@@ -560,18 +560,41 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       ? nativeRead.result?.structuredContent?.batch?.includes(ownerText)
       : nativeRead.result?.content?.some(item => item.type === 'text' && item.text.includes(ownerText)),
     'released owner message absent from native read');
-    const batchText = nativeRead.result?.content?.at(-1)?.text;
-    const ackBatchToken = typeof batchText === 'string' ? batchText.match(/batchToken: ([^\n]+)/u)?.[1] : undefined;
-    if (harness === 'claude') assert.equal(typeof ackBatchToken, 'string', 'native batch token absent');
+    if (harness === 'claude') {
+      const batchText = nativeRead.result.structuredContent.batch;
+      assert.match(batchText, /--- release 1 of 1 ---/u, 'native batch did not contain one release');
+      assert.ok(batchText.includes(reconciled.body.releaseIds[0]), 'native batch carried another release');
+      assert.doesNotMatch(batchText, /^batchToken:/mu, 'Claude native read exposed a private batch token');
+      const beforeAck = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
+        candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+      assert.equal(beforeAck.kind, 'ok');
+      assert.equal(beforeAck.body.receipts.some(receipt => receipt.kind === 'agent_acknowledged'), false,
+        'native read acknowledged the release before a later call');
+    }
     const nativeSend = await recoveredSession.request({ jsonrpc: '2.0', id: 40,
       method: 'tools/call', params: { name: 'khala_send',
-        arguments: { message: 'fixture agent reply through installed client',
-          ...(harness === 'claude' ? { ackBatchToken } : {}) } } });
+        arguments: { message: 'fixture agent reply through installed client' } } });
     assert.equal(nativeSend.result?.structuredContent?.kind, 'accepted');
     if (harness === 'claude') {
       const afterAck = await recoveredSession.request({ jsonrpc: '2.0', id: 73,
         method: 'tools/call', params: { name: 'khala_read', arguments: {} } });
       assert.equal(afterAck.result?.structuredContent?.kind, 'empty', 'acknowledged batch replayed');
+      let acknowledgement;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        acknowledgement = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
+          candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+        if (acknowledgement.kind === 'ok' && acknowledgement.body.receipts.some(receipt =>
+          receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
+          && receipt.bindingId === committed.binding.bindingId
+          && receipt.generation === committed.binding.generation)) break;
+        await delay(500);
+      }
+      assert.equal(acknowledgement.kind, 'ok');
+      assert.equal(acknowledgement.body.receipts.filter(receipt =>
+        receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
+        && receipt.bindingId === committed.binding.bindingId
+        && receipt.generation === committed.binding.generation).length, 1,
+        'one later native call did not produce one authoritative ACK');
     }
     assert.equal(agentMatrixSends, 1, 'native send did not reach Matrix once');
     let ownerSawReply = false;
