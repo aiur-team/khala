@@ -315,7 +315,7 @@
   .khala-owner-shell .khala-content-actions:has(#khala-channel-toolbar){display:flex}
   .khala-channel-drawer{display:inline-flex;flex:none}
   .khala-owner-shell.aiur-shell{grid-template-rows:4rem minmax(0,1fr)}
-  .khala-owner-shell .aiur-shell__brand-section{width:100%;border-right:0}
+  .khala-owner-shell .aiur-shell__brand-section{flex:1 1 auto;width:auto;border-right:0}
   .khala-owner-shell .aiur-shell__title{display:none}
   .khala-owner-shell .aiur-shell__content>.khala-mobile-bar{height:3.5rem;box-sizing:border-box;margin:0;padding:0 .75rem;border-bottom:1px solid var(--khala-line)}
   .khala-owner-shell .aiur-shell__content>.channel-page{height:calc(100% - 3.5rem)}

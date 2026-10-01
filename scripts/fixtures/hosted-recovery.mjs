@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 /** Private CA, loopback-only HTTPS and a bounded adapter request bridge. No request data is logged. */
-export async function startRecoveryTransport({ handle }) {
+export async function startRecoveryTransport({ handle, onDroppedRedeem }) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'khala-recovery-transport-'));
   chmodSync(directory, 0o700);
   const caFile = path.join(directory, 'ca.pem');
@@ -64,6 +64,7 @@ export async function startRecoveryTransport({ handle }) {
           if (admitted) {
             counts.droppedRedeemResponses += 1;
             incoming.socket.destroy();
+            try { onDroppedRedeem?.(); } catch { /* Fixture callback cannot change the committed drop. */ }
             return;
           }
         }
@@ -80,7 +81,7 @@ export async function startRecoveryTransport({ handle }) {
     });
     origin = `https://127.0.0.1:${server.address().port}`;
     return {
-      origin, caFile,
+      origin, caFile, certificateFile,
       receipt: () => ({ v: 1, scope: 'transport_only', ...counts }),
       async close() {
         server.closeAllConnections();
