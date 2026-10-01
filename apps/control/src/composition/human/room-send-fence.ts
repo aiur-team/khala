@@ -137,6 +137,7 @@ export function createRoomSendFence(store: ControlStore) {
     },
     async acquire(roomId: RoomId, sender: SenderIdentity, clientTxnId: string, reopenCancelled = false): Promise<
       | Readonly<{ kind: 'granted'; permitId: string; epoch: number; attempt: number }>
+      | Readonly<{ kind: 'complete'; eventId: string }>
       | Readonly<{ kind: 'held'; epoch: number; operationId: string }>
       | Readonly<{ kind: 'unavailable' }>
     > {
@@ -152,7 +153,11 @@ export function createRoomSendFence(store: ControlStore) {
         const permit = await readPermit(id);
         if (permit.kind === 'unavailable' || listed && permit.kind === 'absent' || permit.kind === 'found'
           && (permit.value.roomId !== roomId || permit.value.senderId !== sender.senderId
-            || permit.value.clientTxnId !== clientTxnId || permit.value.state === 'complete')) return { kind: 'unavailable' };
+            || permit.value.clientTxnId !== clientTxnId)) return { kind: 'unavailable' };
+        if (permit.kind === 'found' && permit.value.state === 'complete') {
+          return permit.value.eventId?.startsWith('$')
+            ? { kind: 'complete', eventId: permit.value.eventId } : { kind: 'unavailable' };
+        }
         if (listed && permit.kind === 'found' && permit.value.state !== 'cancelled') {
           return { kind: 'granted', permitId: id, epoch: current.value.epoch, attempt: permit.value.attempt ?? 0 };
         }

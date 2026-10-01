@@ -8,6 +8,23 @@ const sender = { senderId: 'owner_device_A', deviceId: 'device_A', deviceKey: 'A
 const excludedKey = 'B'.repeat(43);
 
 describe('durable room send fence', () => {
+  it('resolves a completed transaction without granting another send, even during a hold', async () => {
+    const store = fakeStore(() => T0).store;
+    const fence = createRoomSendFence(store);
+    expect(await fence.readySender(roomId, sender)).toBe('applied');
+    expect(await fence.seedRoster(roomId, [sender])).toBe('applied');
+    const first = await fence.acquire(roomId, sender, 'txn_completed');
+    if (first.kind !== 'granted') throw new Error('permit not granted');
+    expect(await fence.finish(roomId, sender.senderId, first.permitId,
+      { kind: 'complete', eventId: '$sent:example' })).toBe('applied');
+    const restarted = createRoomSendFence(store);
+    expect(await restarted.acquire(roomId, sender, 'txn_completed'))
+      .toEqual({ kind: 'complete', eventId: '$sent:example' });
+    expect(await restarted.beginHold(roomId, 'operation_after_send', excludedKey)).toBe('held');
+    expect(await restarted.acquire(roomId, sender, 'txn_completed'))
+      .toEqual({ kind: 'complete', eventId: '$sent:example' });
+    expect(await restarted.acquire(roomId, sender, 'txn_new')).toMatchObject({ kind: 'held' });
+  });
   it('refuses admission against an empty sender snapshot', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
     expect(await fence.seedRoster(roomId, [])).toBe('applied');
