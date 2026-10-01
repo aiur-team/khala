@@ -24,32 +24,34 @@ test('native canary refuses an unproven session before opening a room', () => {
 
 test('Codex evidence requires challenge in completed read result before send', () => {
   const row = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
-  const read = row('khala_read', {}, '{"events":["challenge"]}');
-  const send = row('khala_send', { message: 'reply challenge' }, '{"ok":true}');
+  const read = row('khala_read', {}, '{"events":["challenge"],"batchToken":"token-1"}');
+  const send = row('khala_send', { message: 'reply challenge', ackBatchToken: 'token-1' }, '{"ok":true}');
   assert.deepEqual(modelEvidence([row('khala_read', {}, '{"events":[]}'), send], 'codex', 'challenge', 'reply'),
     { readCall: true, visible: false, sendCall: false });
   assert.deepEqual(modelEvidence([send, read], 'codex', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: false });
   assert.deepEqual(modelEvidence([read, send], 'codex', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'wrong' }, '{"ok":true}')],
+    'codex', 'challenge', 'reply'), { readCall: true, visible: true, sendCall: false });
 });
 
 test('Claude evidence correlates read result by tool_use_id before send', () => {
   const call = (id, name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
   const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
   const read = call('read-1', 'khala_read');
-  const send = call('send-1', 'khala_send', { message: 'reply' });
+  const send = call('send-1', 'khala_send', { message: 'reply', ackBatchToken: 'token-2' });
   assert.deepEqual(modelEvidence([read, result('unrelated', 'challenge'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: false, sendCall: false });
-  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send], 'claude', 'challenge', 'reply'),
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge\nbatchToken: token-2'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: true });
 });
 
 test('quoted challenge is visible only in the matching native read result', () => {
   const challenge = 'Codex send exactly "18 nonce codex"; Claude send exactly "18 nonce claude".';
   const codexRow = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
-  const read = codexRow('khala_read', {}, { content: [{ type: 'text', text: JSON.stringify({ events: [{ body: challenge }] }) }] });
-  const send = codexRow('khala_send', { message: '18 nonce codex' }, { ok: true });
+  const read = codexRow('khala_read', {}, { content: [{ type: 'text', text: JSON.stringify({ events: [{ body: challenge }], batchToken: 'token-3' }) }] });
+  const send = codexRow('khala_send', { message: '18 nonce codex', ackBatchToken: 'token-3' }, { ok: true });
   assert.deepEqual(modelEvidence([read, send], 'codex', challenge, '18 nonce codex'),
     { readCall: true, visible: true, sendCall: true });
   assert.deepEqual(modelEvidence([codexRow('khala_read', {}, { events: [] }),
