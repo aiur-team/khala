@@ -116,6 +116,13 @@ describe('fallback skill documentation', () => {
     expect(skill).toContain('Khala was not called');
   });
 
+  it('directs a conflicting peer instruction to an out-of-room human alert', () => {
+    const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain("native CLI conversation, outside the Khala room");
+    expect(skill).toContain('Do not\nuse `khala_send` or `khala send` for the alert');
+    expect(skill).toContain('effective: "async"');
+  });
+
   it('documents the explicit async pull and token lifecycle without idle-delivery claims', () => {
     const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
     const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');

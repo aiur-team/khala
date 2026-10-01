@@ -44,17 +44,41 @@ describe('hosted listening mode projection', () => {
       }), result: undefined }));
       let current = true;
       let trustedHooks = false;
-      const hosted = createHostedListeningControl({ binding, trust, dispatch,
-        current: async () => current, capabilities: async () => trustedHooks ? capabilities : null });
+      let asyncSupported = false;
+      let dropWrites = false;
+      const guardedDispatch = { ...dispatch, applyEffectivePolicy: (input: Parameters<typeof dispatch.applyEffectivePolicy>[0]) =>
+        dropWrites ? Promise.resolve({ kind: 'applied' as const }) : dispatch.applyEffectivePolicy(input) };
+      const hosted = createHostedListeningControl({ binding, trust, dispatch: guardedDispatch,
+        current: async () => current, capabilities: async () => trustedHooks
+          ? asyncSupported ? { ...capabilities, acknowledgement: 'batch_token_next_call',
+            modes: { ...capabilities.modes, async: { ...sync, route: 'codex-async' } } } : capabilities : null });
       expect(await hosted.status()).toMatchObject({ effective: null });
       trustedHooks = true;
+      dropWrites = true;
+      expect(await hosted.application.read()).toMatchObject({ ok: true, view: { effective: null,
+        effectiveReason: 'projection_unavailable' } });
+      dropWrites = false;
       expect(await hosted.status()).toMatchObject({ bindingId: binding.bindingId, effective: 'sync' });
       const projected = await dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
       expect(projected?.listening).toMatchObject({ version: 2, effective: 'sync', evidenceRevision: 'hook-revision' });
+      asyncSupported = true;
+      const command = { commandId: 'self-async' as never, expectedVersion: 1,
+        requested: 'async' as const, issuedAt: '2026-09-30T12:00:00Z' };
+      expect(await hosted.application.set(command)).toMatchObject({ outcome: 'applied', requested: 'async', effective: 'async' });
+      expect((await dispatch.ledger.transact(tx => tx.policy(binding.bindingId)))?.listening)
+        .toMatchObject({ requested: 'async', effective: 'async' });
+      expect(await hosted.application.set({ ...command, commandId: 'stale-self' as never }))
+        .toMatchObject({ outcome: 'conflict', version: 2 });
+      const restarted = createHostedListeningControl({ binding, trust, dispatch,
+        current: async () => current, capabilities: async () => ({ ...capabilities,
+          acknowledgement: 'batch_token_next_call',
+          modes: { ...capabilities.modes, async: { ...sync, route: 'codex-async' } } }) });
+      expect(await restarted.application.read()).toMatchObject({ ok: true,
+        view: { requested: 'async', effective: 'async', version: 2 } });
       trustedHooks = false;
       expect(await hosted.status()).toMatchObject({ effective: null });
       expect((await dispatch.ledger.transact(tx => tx.policy(binding.bindingId)))?.listening)
-        .toMatchObject({ version: 3, effective: null, evidenceRevision: null });
+        .toMatchObject({ effective: null, evidenceRevision: null });
       current = false;
       expect(await hosted.application.read()).toEqual({ ok: false, code: 'unavailable' });
       expect(await hosted.status()).toMatchObject({ effective: null });

@@ -47,6 +47,12 @@ export function createHostedListeningControl(input: Readonly<{
   async function project(effective: 'steer' | 'sync' | 'async' | null,
     requested: 'steer' | 'sync' | 'async' | null, version: number,
     evidenceRevision: string | null): Promise<boolean> {
+    const confirmed = async () => {
+      if (!await input.current()) return false;
+      const stored = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
+      return stored?.listening.requested === requested && stored.listening.effective === effective
+        && stored.listening.evidenceRevision === (effective === null ? null : evidenceRevision);
+    };
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (!await input.current()) return false;
       const policy = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
@@ -55,13 +61,13 @@ export function createHostedListeningControl(input: Readonly<{
         effective, evidenceRevision: effective === null ? null : evidenceRevision };
       if (policy.listening.version >= version && policy.listening.requested === next.requested
         && policy.listening.effective === next.effective
-        && policy.listening.evidenceRevision === next.evidenceRevision) return true;
+        && policy.listening.evidenceRevision === next.evidenceRevision) return confirmed();
       // The durable control command and the current capability evidence are distinct
       // revisions. A late hook proof or its loss must not rewrite an older ledger version.
       const result = await input.dispatch.applyEffectivePolicy({ binding, policy: { ...policy,
         listening: { version: Math.max(version, policy.listening.version + 1), ...next },
       } });
-      if (result.kind !== 'conflict') return true;
+      if (result.kind !== 'conflict') return confirmed();
       if (result.code !== 'stale_version' && result.code !== 'version_conflict') return false;
     }
     return false;
@@ -82,8 +88,10 @@ export function createHostedListeningControl(input: Readonly<{
       const result = await base.set(command);
       if (result.outcome !== 'applied') return result;
       const current = await read();
-      return current.ok && current.view.effective !== null ? { ...result, effective: current.view.effective }
-        : { ...result, effective: null, reason: current.ok ? current.view.effectiveReason : 'projection_unavailable' };
+      if (!current.ok || current.view.version !== result.version || current.view.requested !== result.requested) {
+        return { ...result, effective: null, reason: 'projection_unavailable' };
+      }
+      return { ...result, effective: current.view.effective, reason: current.view.effectiveReason };
     },
   };
   return {
