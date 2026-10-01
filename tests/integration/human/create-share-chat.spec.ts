@@ -22,13 +22,15 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await alice.getByRole('button', { name: 'Create channel' }).last().click();
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
     await alice.getByRole('button', { name: 'Create channel' }).last().click();
-    const link = alice.getByLabel('Channel link');
-    await expect(link).toHaveValue(/\/join\/[^/?#]+$/u);
-    const shareUrl = await link.inputValue();
-    await alice.getByRole('button', { name: 'Open channel' }).click();
+    await expect(alice).toHaveURL(/\/channels\//u);
     await alice.getByLabel('Message').fill(intro);
     await alice.getByRole('button', { name: 'Send' }).click();
     await expect(alice.getByText(intro)).toBeVisible();
+    await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
+    await alice.getByRole('button', { name: 'Copy my channel link' }).click();
+    await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
+    const shareUrl = await alice.evaluate(() => navigator.clipboard.readText());
+    expect(shareUrl).toMatch(/\/join\/[^/?#]+$/u);
 
     const bob = await bobContext.newPage();
     await bob.goto(shareUrl, { waitUntil: 'networkidle' });
@@ -79,13 +81,16 @@ test('an account without admission cannot read a protected room', async ({ brows
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
     const canary = syntheticCanary('protected');
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
-    const shareUrl = await owner.getByLabel('Channel link').inputValue();
-    const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
-    expect(inviteRef).not.toBeNull();
-    await owner.getByRole('button', { name: 'Open channel' }).click();
+    await expect(owner).toHaveURL(/\/channels\//u);
     await owner.getByLabel('Message').fill(canary);
     await owner.getByRole('button', { name: 'Send' }).click();
     await expect(owner.getByText(canary)).toBeVisible();
+    await ownerContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
+    await owner.getByRole('button', { name: 'Copy my channel link' }).click();
+    await expect(owner.getByText('Copied', { exact: true })).toBeVisible();
+    const shareUrl = await owner.evaluate(() => navigator.clipboard.readText());
+    const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
+    expect(inviteRef).not.toBeNull();
 
     const outsider = await freshPage(outsiderContext, environment);
     await signIn(outsider, environment, environment.users[1]);
