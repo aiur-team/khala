@@ -25,6 +25,7 @@ export interface ControlsClient {
   status(bindingId: BindingId, signal: AbortSignal): Promise<
     | Readonly<{ kind: 'ok'; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' | 'unavailable' }>
+    | Readonly<{ kind: 'waiting_for_agent' }>
     | Readonly<{ kind: 'lost' }>
   >;
   /** Deliberately takes no signal: closing a browser wait is not cancellation. */
@@ -55,7 +56,7 @@ export type BrowserAgentControlsPort = AgentControlsUiPort & Readonly<{
 
 /** The binding's connector could not be reached, or its answer could not be trusted. */
 export class ControlsUnavailableError extends Error {
-  constructor(readonly code: 'forbidden' | 'unavailable' | 'lost') {
+  constructor(readonly code: 'forbidden' | 'unavailable' | 'lost' | 'waiting_for_agent') {
     super(`controls ${code}`);
   }
 }
@@ -135,6 +136,16 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
       status = decoded;
       connection = 'connected';
       return publish()!;
+    }
+    if (answer.kind === 'waiting_for_agent') {
+      connection = 'offline';
+      if (status !== null) {
+        status = { ...status, capabilities: null,
+          policy: { ...status.policy, effectiveMode: null, effectiveVersion: null, paused: null },
+          listening: null, listeningUnavailable: 'connector_unavailable' };
+        publish();
+      }
+      throw new ControlsUnavailableError('waiting_for_agent');
     }
     // Refused or unreachable: the last enforced values stay, labelled offline, never refreshed
     // by guess, and subscribers stop showing the connection as live.

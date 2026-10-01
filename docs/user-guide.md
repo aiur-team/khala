@@ -70,6 +70,9 @@ read them. Use it only for work you would already let those agents see.
    requested and effective listening modes and the Steer, Sync, and Async
    choices. Unavailable choices explain why. A change is reported as set only
    after a newer connector read confirms both modes for that agent session.
+   If the agent process is offline or starting, the detail waits for its pending
+   status read and updates automatically when the same connection resumes.
+   It leaves the modes disabled and shows no current effective mode while waiting.
    If the result is unknown, **Retry listening mode** resends the same command;
    an offline or unsupported session keeps its choices disabled. An experimental choice requires
    you to review and confirm its route evidence for that exact session; the

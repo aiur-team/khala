@@ -82,6 +82,17 @@ function view(overrides: Partial<AgentControlsView> = {}): AgentControlsView {
 }
 
 describe('AgentControlsPanel initial render', () => {
+  it('shows pending reconnect text while listening choices remain disabled', () => {
+    const controller = fakeController(view({ snapshotReceived: false, controlsAvailable: false,
+      policy: { effectiveMode: null, effectiveVersion: null, paused: null, requestedMode: null,
+        requestedVersion: null, requestedPaused: null, acknowledgment: 'pending', errorCode: null },
+      notice: { kind: 'snapshot-error',
+        message: 'Waiting for the agent to reconnect or start. Controls will update automatically.' } }));
+    const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
+    expect(html).toContain('Waiting for the agent to reconnect or start. Controls will update automatically.');
+    expect(html).toContain('Effective policy unknown');
+    expect(html).toContain('disabled=""');
+  });
   it('shows the target scope (owner, agent, room) next to the controls', () => {
     const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} />);
     expect(html).toContain('agent-a');

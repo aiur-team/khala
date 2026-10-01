@@ -76,7 +76,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
       if (next?.status !== 200 || !object(next.body) || next.body.operationId !== operationId) return next;
       if (next.body.outcome !== null) return next;
     }
-    return null;
+    return { status: 200, body: { operationId, outcome: null } };
   }
 
   function completed(answer: Reply | null, operationId: string): Record<string, unknown> | null {
@@ -111,12 +111,15 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
       }
       if (outcome?.code === 'unavailable') retry.delay(bindingId);
       else if (outcome || answer?.status === 401 || answer?.status === 403) retry.clear(bindingId);
-      else if (!signal.aborted) retry.delay(bindingId);
+      else if (!signal.aborted && !(answer?.status === 200 && object(answer.body)
+        && answer.body.operationId === operationId && answer.body.outcome === null)) retry.delay(bindingId);
       if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       if (outcome?.ok === true && 'status' in outcome) return { kind: 'ok', body: outcome.status };
       if (outcome?.ok === false && (outcome.code === 'forbidden' || outcome.code === 'unavailable')) {
         return { kind: 'refused', code: outcome.code };
       }
+      if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
+        && answer.body.outcome === null) return { kind: 'waiting_for_agent' };
       return { kind: 'refused', code: 'unavailable' };
     },
     async setPolicy(command: PolicySetCommand) {

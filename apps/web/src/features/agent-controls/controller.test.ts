@@ -442,6 +442,20 @@ describe('createAgentControlsController — requestPause', () => {
     });
   });
 
+  it('explains a pending owner status without enabling controls', async () => {
+    const error = Object.assign(new Error('pending'), { code: 'waiting_for_agent' });
+    const { ports, emit } = fakePorts({ readSnapshot: () => Promise.reject(error) });
+    const controller = createAgentControlsController(ports, CONFIG);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(controller.getView()).toMatchObject({ controlsAvailable: false,
+      policy: { effectiveMode: null },
+      notice: { message: 'Waiting for the agent to reconnect or start. Controls will update automatically.' } });
+    emit(snapshot());
+    expect(controller.getView()).toMatchObject({ controlsAvailable: true,
+      policy: { effectiveMode: 'review' }, notice: null });
+    controller.dispose();
+  });
+
   it('rejects a stale ack: a superseded request cannot overwrite the winning snapshot', async () => {
     let resolveFirst: ((ack: PolicyAck) => void) | null = null;
     const firstAck = new Promise<PolicyAck>(resolve => {
