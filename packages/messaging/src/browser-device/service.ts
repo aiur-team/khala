@@ -233,7 +233,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
         return ok(await finish(g, deviceView('revoked', g.generation + 1, credentials.deviceId, 'revoked_by_owner')));
       }
       if (credentials.kind === 'unavailable') {
-        await fail('initialization_failed');
+        await fail(credentials.reason ?? 'initialization_failed');
         return unavailable();
       }
       const session = credentials.session;

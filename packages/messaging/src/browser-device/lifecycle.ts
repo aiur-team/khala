@@ -25,7 +25,7 @@ export type CredentialResolution =
   | Readonly<{ kind: 'ok'; session: SubstrateSession }>
   | Readonly<{ kind: 'expired' }>
   | Readonly<{ kind: 'revoked'; deviceId: DeviceId }>
-  | Readonly<{ kind: 'unavailable' }>;
+  | Readonly<{ kind: 'unavailable'; reason?: 'recovery_required' }>;
 
 /** Resolves substrate credentials for the principal the `IdentityPort` reports. */
 export interface CredentialSource {
