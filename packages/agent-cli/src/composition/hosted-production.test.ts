@@ -386,5 +386,43 @@ describe('installed hosted connector factory', () => {
     expect(opened.client.listeningModeControl).toBe(listeningModeControl);
     await opened.close();
     expect(close).toHaveBeenCalledOnce();
+
+    const claude = { harness: 'claude', sessionId: 'claude-session' };
+    const claudeOpened = await factory(claude);
+    const claudeInput = openConnector.mock.calls[1]?.[0];
+    const claudeGeneration = vi.fn(async () => 2);
+    expect(await claudeInput?.sessionInspection(claudeGeneration).inspect({ ...claude, workdir: '/tmp/project' }))
+      .toMatchObject({ kind: 'verified', session: { ...claude, generation: 2 },
+        capabilities: { support: 'unsupported' } });
+    expect(claudeGeneration).toHaveBeenCalledExactlyOnceWith({ ...claude, workdir: '/tmp/project' });
+    expect(claudeOpened.client.listeningModeControl).toBe(listeningModeControl);
+    await claudeOpened.close();
+  });
+
+  it('uses the saved Claude generation for hosted discovery after reconnect', async () => {
+    const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
+    const session = { harness: 'claude', sessionId: 'claude-reconnected' };
+    const inspect = vi.fn(async () => ({ kind: 'verified' as const,
+      session: { ...session, generation: 2 } }));
+    let generation: string | null = null;
+    const factory = hostedSessionFactory({
+      openConnector: async () => ({ ports: { sessions: { inspect } } as never, proofSigner: signer,
+        async send(input) { return { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
+        async listChannels() { return { kind: 'unavailable' }; },
+        async listAgents() { return { kind: 'unavailable' }; },
+        async inbox() { throw new Error('no binding'); }, async close() {} }),
+      stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
+      browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
+      readVersion: async () => null, readClaudeVersion: async () => '2.1.286',
+      inspectHooks: async () => null, resolveCodexExecutable: async () => null,
+      async openBrowser(url) { generation = new URL(url).searchParams.get('generation'); throw new Error('stop before approval'); },
+      async openInbox() { throw new Error('no binding'); },
+    });
+    const opened = await factory(session);
+    expect(await opened.client.listChannels({ origin: null, cursor: null })).toEqual({ kind: 'unavailable' });
+    expect(inspect).toHaveBeenCalledExactlyOnceWith({ ...session, workdir: '/tmp/project' });
+    expect(generation).toBe('2');
+    await opened.close();
   });
 });
