@@ -109,6 +109,13 @@ describe('interactive Claude capabilities', () => {
       .toMatchObject({ version: '2.1.287', support: 'unsupported' });
     expect(installedClaudeCapabilities('2.1.287', limits, processEvidence('2.1.283'), scope))
       .toMatchObject({ version: '2.1.283', support: 'tested' });
+    const firstScope = { ...scope, generation: 0 };
+    expect(installedClaudeCapabilities('2.1.287', limits, {
+      ...processEvidence('2.1.283'), generation: 0,
+    }, firstScope)).toMatchObject({ version: '2.1.283', support: 'tested' });
+    expect(installedClaudeCapabilities('2.1.287', limits, {
+      ...processEvidence('2.1.283'), generation: 1,
+    }, firstScope)).toMatchObject({ version: 'unknown', support: 'unsupported' });
     for (const wrongScope of [
       { ...scope, sessionId: 'other-session' },
       { ...scope, bindingId: 'other-binding' },

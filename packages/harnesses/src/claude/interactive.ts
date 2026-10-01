@@ -137,7 +137,7 @@ export function installedClaudeCapabilities(
   if (!processEvidence || !scope || processEvidence.source !== 'provider_process'
     || !INSPECTED_VERSION.test(processEvidence.version)
     || scope.sessionId.trim() === '' || scope.bindingId.trim() === ''
-    || !Number.isSafeInteger(scope.generation) || scope.generation <= 0
+    || !Number.isSafeInteger(scope.generation) || scope.generation < 0
     || processEvidence.sessionId !== scope.sessionId
     || processEvidence.bindingId !== scope.bindingId
     || processEvidence.generation !== scope.generation
