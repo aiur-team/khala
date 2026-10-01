@@ -22,6 +22,8 @@ test('selected conversation settings close and discard old room authority', { ti
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]!);
     const settings = page.getByLabel('Conversation settings').first();
+    assert.equal(await settings.locator('.conversation-settings__label').isVisible(), false,
+      'the accessible label does not spill outside the circular header button');
     await settings.focus();
     await settings.press('Enter');
     await page.getByRole('button', { name: 'Revoke device device_a' }).waitFor();
