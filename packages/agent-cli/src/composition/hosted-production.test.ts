@@ -386,5 +386,16 @@ describe('installed hosted connector factory', () => {
     expect(opened.client.listeningModeControl).toBe(listeningModeControl);
     await opened.close();
     expect(close).toHaveBeenCalledOnce();
+
+    const claude = { harness: 'claude', sessionId: 'claude-session' };
+    const claudeOpened = await factory(claude);
+    const claudeInput = openConnector.mock.calls[1]?.[0];
+    const claudeGeneration = vi.fn(async () => 2);
+    expect(await claudeInput?.sessionInspection(claudeGeneration).inspect({ ...claude, workdir: '/tmp/project' }))
+      .toMatchObject({ kind: 'verified', session: { ...claude, generation: 2 },
+        capabilities: { support: 'unsupported' } });
+    expect(claudeGeneration).toHaveBeenCalledExactlyOnceWith({ ...claude, workdir: '/tmp/project' });
+    expect(claudeOpened.client.listeningModeControl).toBe(listeningModeControl);
+    await claudeOpened.close();
   });
 });

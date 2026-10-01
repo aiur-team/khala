@@ -116,10 +116,12 @@ export function hostedSessionFactory(options: Readonly<{
       browserBundleDirectory: options.browserBundleDirectory,
       ...(options.chromiumExecutablePath === undefined ? {} : { chromiumExecutablePath: options.chromiumExecutablePath }),
       session: claim,
-      sessionInspection: generationFor => codexMcpSessionInspection({
-        session, workdir: claim.workdir, readVersion: options.readVersion,
-        generation: named => generationFor({ ...named, workdir: claim.workdir }),
-      }),
+      sessionInspection: generationFor => session.harness === 'claude'
+        ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir,
+          readVersion: options.readClaudeVersion ?? (async () => null),
+          generation: named => generationFor({ ...named, workdir: claim.workdir }) })
+        : codexMcpSessionInspection({ session, workdir: claim.workdir, readVersion: options.readVersion,
+          generation: named => generationFor({ ...named, workdir: claim.workdir }) }),
       inspectHostedCodexHooks: async () => session.harness === 'codex' ? options.inspectHooks() : null,
       resolveCodexExecutable: async () => session.harness === 'codex' ? options.resolveCodexExecutable() : null,
       openBrowser: options.openBrowser,
