@@ -184,7 +184,15 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       }
       // A notification has no response on which a mode result could be reported, so it changes nothing.
       if (notification) return success(id, {});
-      if (await hostedActive()) return success(id, toolResult(await guard(async () => options.hosted!.setMode(request))));
+      let useHosted: boolean;
+      try { useHosted = await hostedActive(); }
+      catch { return success(id, toolResult({ kind: 'refused', code: 'unavailable' })); }
+      if (useHosted) {
+        let outcome: Outcome;
+        try { outcome = await options.hosted!.setMode(request); }
+        catch { outcome = { kind: 'outcome_unknown' }; }
+        return success(id, toolResult(outcome));
+      }
       let outcome: Awaited<ReturnType<ClaudeAgentEntry['setMode']>>;
       try {
         outcome = await entry.setMode({

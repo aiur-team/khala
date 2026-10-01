@@ -114,6 +114,23 @@ describe('hosted native Claude MCP', () => {
       ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'binding_not_held' });
   });
 
+  it('reports an unknown mode-write outcome if the post-write binding check fails', async () => {
+    let checks = 0;
+    const set = vi.fn(async (input: { commandId: string }) => ({ commandId: input.commandId,
+      outcome: 'applied', requested: 'steer', effective: null, reason: 'support_unknown', version: 2 }));
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() {
+          if (checks++ > 0) throw new Error('private post-write status failure');
+          return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null };
+        }, listeningModeControl: { read: vi.fn(), set } as never },
+      inbox: async () => { throw new Error('mode must not read inbox'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, 'khala_mode_set', { requested: 'steer', expectedVersion: 1 })]);
+    expect(result[0]?.result.structuredContent).toEqual({ kind: 'outcome_unknown' });
+    expect(set).toHaveBeenCalledOnce();
+  });
+
   it('reoffers a persisted hook batch after MCP restart and ACKs only from a later exact-generation call', async () => {
     const sessionId = randomUUID();
     const stateHome = process.env.TMPDIR ?? os.tmpdir();
