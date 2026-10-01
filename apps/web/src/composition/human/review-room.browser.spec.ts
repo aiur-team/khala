@@ -205,7 +205,7 @@ test('selected conversation exposes only pending recipient review and releases t
     await review.locator('[data-event-id] input[type="checkbox"]').check();
     assert.equal(await page.evaluate(() => window.__roomReviewCommand()), null, 'selection alone never releases');
     await review.getByRole('button', { name: 'Release 1 selected' }).click();
-    await review.getByText('Released', { exact: true }).waitFor();
+    await review.getByRole('status').getByText('Released', { exact: true }).waitFor();
     const sent = await page.evaluate(() => window.__roomReviewCommand());
     assert.equal(sent?.bindingId, 'binding_1');
     assert.equal(sent?.expectedBindingGeneration, 0);
@@ -403,7 +403,7 @@ test('selected review follows a replacement binding generation', { timeout: 90_0
     assert.equal(await review.getByText('To: agent_1').count(), 0);
     await review.locator('[data-event-id] input[type="checkbox"]').check();
     await review.getByRole('button', { name: 'Release 1 selected' }).click();
-    await review.getByText('Released', { exact: true }).waitFor();
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
     const command = await page.evaluate(() => window.__roomReviewCommand());
     assert.equal(command?.bindingId, 'binding_1');
     assert.equal(command?.expectedBindingGeneration, 1);
