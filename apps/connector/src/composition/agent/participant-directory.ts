@@ -26,7 +26,7 @@ export function createAgentParticipantLookup(input: Readonly<{
     let response: Response;
     try {
       response = await transport(url, { method: 'POST', redirect: 'error', credentials: 'omit',
-        headers: { accept: 'application/json', 'content-type': 'application/json',
+        headers: { accept: 'application/json', 'content-type': 'application/json', origin: input.appOrigin,
           authorization: `DPoP ${capability.token}`, dpop: input.signer.proof('POST', url, capability.token) },
         body: JSON.stringify({ roomId: input.roomId, userIds, targetParticipantIds }), signal: AbortSignal.timeout(10_000) });
     } catch { return null; }
