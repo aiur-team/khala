@@ -19,9 +19,9 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(typeof creatorAccessToken).toBe('string');
 
     const intro = syntheticCanary('intro');
-    await alice.getByRole('button', { name: 'Create channel' }).click();
+    await alice.getByRole('button', { name: 'Create channel' }).last().click();
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
-    await alice.getByRole('button', { name: 'Create channel' }).click();
+    await alice.getByRole('button', { name: 'Create channel' }).last().click();
     const link = alice.getByLabel('Channel link');
     await expect(link).toHaveValue(/\/join\/[^/?#]+$/u);
     const shareUrl = await link.inputValue();
@@ -76,9 +76,9 @@ test('an account without admission cannot read a protected room', async ({ brows
   try {
     const owner = await freshPage(ownerContext, environment);
     await signIn(owner, environment, environment.users[0]);
-    await owner.getByRole('button', { name: 'Create channel' }).click();
+    await owner.getByRole('button', { name: 'Create channel' }).last().click();
     const canary = syntheticCanary('protected');
-    await owner.getByRole('button', { name: 'Create channel' }).click();
+    await owner.getByRole('button', { name: 'Create channel' }).last().click();
     const shareUrl = await owner.getByLabel('Channel link').inputValue();
     const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
     expect(inviteRef).not.toBeNull();
