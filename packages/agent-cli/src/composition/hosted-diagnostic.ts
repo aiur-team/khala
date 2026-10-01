@@ -38,6 +38,11 @@ const SUBSCRIPTION_STAGES = [
   'mailbox_poll_execute', 'mailbox_poll_complete',
 ] as const;
 const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap', 'ok'] as const;
+const HARNESS_ROUTE_RESULTS = [
+  'binding_mismatch', 'current_unavailable', 'native_session_mismatch',
+  'native_version_unsupported', 'native_unsupported',
+  'native_tested', 'hooks_unavailable', 'route_tested',
+] as const;
 
 /** The MCP child's stderr may be hidden by its host; retain only fixed diagnostic fields. */
 export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic): void {
@@ -47,7 +52,9 @@ export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic
     stage: native && !(NATIVE_READY_STAGES as readonly string[]).includes(event.stage) ? 'status_exception'
       : subscription && !(SUBSCRIPTION_STAGES as readonly string[]).includes(event.stage) ? 'guard_exception' : event.stage,
     result: subscription && !(SUBSCRIPTION_RESULTS as readonly string[]).includes(event.result)
-      ? 'unavailable' : event.result,
+      ? 'unavailable' : event.component === 'hosted_open' && event.stage === 'harness_route_inspect'
+        && !(HARNESS_ROUTE_RESULTS as readonly string[]).includes(event.result)
+        ? 'native_unsupported' : event.result,
     ...('httpStatus' in event && Number.isInteger(event.httpStatus)
       && event.httpStatus >= 100 && event.httpStatus <= 599 ? { httpStatus: event.httpStatus } : {}),
     ...('pendingCount' in event && Number.isInteger(event.pendingCount)

@@ -4,7 +4,7 @@ import { type HarnessCapabilities, type HarnessPort, type ReleasedJob, type Unve
 import type { SessionClaim, SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { createCodexHarness, createCodexQueueProcessPort, type CodexNativeCliPort } from '@khala/harnesses/codex/index';
 import { CODEX_IDLE_WAKE_NOTICE } from '@khala/harnesses/codex/idle-wake';
-import { unsupportedNativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
+import { NATIVE_CLI_CODEX_VERSIONS, unsupportedNativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import { encodeReleasePayload } from '@khala/policy/release/index';
 import { encodeMessageContent } from '@khala/contracts/messaging/events';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
@@ -16,6 +16,11 @@ export type LocalInbox = Readonly<{
   notifyListener(reason: 'released'): Promise<'notified' | 'unavailable'>;
 }>;
 
+export type HostedCodexRouteDiagnostic = Readonly<{ stage: 'harness_route_inspect'; result:
+  | 'binding_mismatch' | 'current_unavailable' | 'native_unsupported'
+  | 'native_session_mismatch' | 'native_version_unsupported' | 'native_tested'
+  | 'hooks_unavailable' | 'route_tested' }>;
+
 /** The installed Codex adapter uses only exact provider-named session evidence. */
 export function createHostedCodexHarness(input: Readonly<{
   binding: SessionBinding;
@@ -24,6 +29,7 @@ export function createHostedCodexHarness(input: Readonly<{
   current(): Promise<boolean>;
   resolveExecutable(): Promise<string | null>;
   inspectHooks(): Promise<HarnessCapabilities | null>;
+  diagnostic?(event: HostedCodexRouteDiagnostic): void;
   openInbox(bindingId: string, generation: number): Promise<LocalInbox>;
 }>): HarnessPort {
   // The hosted server binds the approved proof key. Codex's queue uses the
@@ -34,19 +40,29 @@ export function createHostedCodexHarness(input: Readonly<{
     : input.binding;
   const clock = { now: () => new Date() };
   const limits = { maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 };
+  const report = (result: HostedCodexRouteDiagnostic['result']) => {
+    try { input.diagnostic?.({ stage: 'harness_route_inspect', result }); }
+    catch { /* Diagnostics never affect delivery. */ }
+  };
   const nativeCli: CodexNativeCliPort = {
     async inspect(sessionId) {
-      if (sessionId !== nativeBinding.sessionId || !await input.current()) return {
-        version: null, session: 'not_owned', bindingId: null, generation: null,
-        platform: process.platform, arch: process.arch,
-      };
+      if (sessionId !== nativeBinding.sessionId || !await input.current().catch(() => false)) {
+        report(sessionId !== nativeBinding.sessionId ? 'native_session_mismatch' : 'current_unavailable');
+        return {
+          version: null, session: 'not_owned', bindingId: null, generation: null,
+          platform: process.platform, arch: process.arch,
+        };
+      }
       const inspected = await input.sessionInspection.inspect(input.claim);
       if (inspected.kind !== 'verified' || inspected.session.harness !== nativeBinding.harness
         || inspected.session.sessionId !== nativeBinding.sessionId
-        || inspected.session.generation !== input.binding.generation) return {
-        version: null, session: 'not_owned', bindingId: null, generation: null,
-        platform: process.platform, arch: process.arch,
-      };
+        || inspected.session.generation !== input.binding.generation) {
+        report('native_session_mismatch');
+        return {
+          version: null, session: 'not_owned', bindingId: null, generation: null,
+          platform: process.platform, arch: process.arch,
+        };
+      }
       return { version: inspected.capabilities.version, session: 'present',
         bindingId: input.binding.bindingId, generation: input.binding.generation,
         platform: process.platform, arch: process.arch };
@@ -89,14 +105,31 @@ export function createHostedCodexHarness(input: Readonly<{
 
   return {
     async inspect(binding) {
-      if (!sameSessionBinding(binding, input.binding) || !await input.current()) {
+      if (!sameSessionBinding(binding, input.binding)) {
+        report('binding_mismatch');
+        return unsupportedNativeCliCapabilities('unknown', limits as never);
+      }
+      if (!await input.current().catch(() => false)) {
+        report('current_unavailable');
         return unsupportedNativeCliCapabilities('unknown', limits as never);
       }
       const native = await core.inspect(nativeBinding);
-      if (native.support !== 'tested' || native.existingSession !== 'native_cli_queue') return native;
-      const hooks = await input.inspectHooks();
-      if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== native.version) return native;
-      return { ...native, modes: hooks.modes, acknowledgement: hooks.acknowledgement };
+      if (native.support !== 'tested' || native.existingSession !== 'native_cli_queue') {
+        report(native.version !== 'unknown' && !NATIVE_CLI_CODEX_VERSIONS.includes(native.version)
+          ? 'native_version_unsupported' : 'native_unsupported');
+        return native;
+      }
+      report('native_tested');
+      const hooks = await input.inspectHooks().catch(() => null);
+      if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== native.version) {
+        report('hooks_unavailable');
+        return { ...native, harness: input.binding.harness };
+      }
+      report('route_tested');
+      // The server stores the owner-approved proof-key binding. Only this adapter
+      // has proved its exact mapping to the inspected Codex session.
+      return { ...native, harness: input.binding.harness, modes: hooks.modes,
+        acknowledgement: hooks.acknowledgement };
     },
     notify: (binding, hint) => sameSessionBinding(binding, input.binding)
       ? core.notify(nativeBinding, hint) : Promise.resolve(),
