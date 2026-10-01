@@ -34,7 +34,7 @@ function docker(args: string[], env: NodeJS.ProcessEnv): string {
 export async function startClosureSynapse(options: Readonly<{ limits?: ClosureSynapseLimits; recoveryFile?: string }> = {}) {
   const override = options.limits ? closureSynapseLimitOverride(options.limits) : null;
   const project = `khala-closure-${randomBytes(8).toString('hex')}`;
-  const configDir = mkdtempSync(path.join(os.homedir(), '.cache', 'khala-345-synapse-'));
+  const configDir = mkdtempSync(path.join(os.tmpdir(), 'khala-345-synapse-'));
   const databasePassword = randomBytes(32).toString('hex');
   const registrationSecret = randomBytes(32).toString('hex');
   const env = { ...process.env, EXPERIMENT_CONFIG_DIR: configDir, EXPERIMENT_DB_PASSWORD: databasePassword };
