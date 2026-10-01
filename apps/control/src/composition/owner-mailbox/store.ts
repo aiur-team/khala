@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import {
   decodeApprovalCommand, decodeApprovalResult, decodeDeliveryLimits, decodeDeliveryReceiptTransport,
-  decodeEventRef, decodeHarnessCapabilities, decodeListeningModeCommand, decodeListeningModeResult,
+  decodeEventRef, decodeHarnessCapabilities, decodeListeningModeCommand, decodeListeningModeResult, decodeOwnerRouteGrantCommand,
   decodeListeningModeView, decodePolicyAck, decodePolicySetCommand, decodeSessionBinding,
   type OwnerAuthority, type SessionBinding,
 } from '@khala/contracts/delivery/index';
@@ -11,7 +11,7 @@ export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 // Stop must remain queueable after the ordinary command budget is exhausted.
 const OWNER_MAILBOX_STOP_RESERVE = 1;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
-export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'listening_set' | 'review_preview' | 'review_approve' | 'channel_stop';
+export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'listening_set' | 'listening_grant' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
   operationId: string;
   kind: OwnerCommandKind;
@@ -72,7 +72,7 @@ export function createOwnerMailbox(input: Readonly<{
       const entry = item as Record<string, JsonValue>;
       if (Object.keys(entry).sort().join(',') !== 'authority,authorityMac,body,kind,operationId,outcome'
         || typeof entry.operationId !== 'string' || !ID.test(entry.operationId)
-        || !['controls_status', 'controls_set', 'listening_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
+        || !['controls_status', 'controls_set', 'listening_set', 'listening_grant', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
         || ids.has(entry.operationId) || !validBody(entry.kind as OwnerCommandKind, entry.body!, binding, roomId)
         || !validPreviewId(entry as unknown as OwnerMailboxCommand)
         || entry.outcome === undefined || !validAuthority(entry, binding, roomId, authoritySecret)
@@ -257,6 +257,11 @@ function validBody(kind: OwnerCommandKind, body: JsonValue, binding: SessionBind
     return decoded.ok && decoded.value.bindingId === binding.bindingId
       && decoded.value.expectedBindingGeneration === binding.generation;
   }
+  if (kind === 'listening_grant') {
+    const decoded = decodeOwnerRouteGrantCommand(body);
+    return decoded.ok && decoded.value.bindingId === binding.bindingId
+      && decoded.value.expectedBindingGeneration === binding.generation;
+  }
   if (kind === 'review_approve') {
     const decoded = decodeApprovalCommand(body, DELIVERY_LIMITS);
     return decoded.ok && decoded.value.bindingId === binding.bindingId && decoded.value.roomId === roomId
@@ -294,6 +299,32 @@ function validOutcome(kind: OwnerCommandKind, outcome: JsonValue, binding: Sessi
     const command = decodeListeningModeCommand(body);
     return result.ok && command.ok && result.value.commandId === command.value.commandId
       && result.value.bindingId === binding.bindingId && result.value.generation === binding.generation;
+  }
+  if (kind === 'listening_grant') {
+    const command = decodeOwnerRouteGrantCommand(body);
+    if (!command.ok || outcome.commandId !== command.value.commandId) return false;
+    if (outcome.outcome === 'refused') return keys(outcome, ['commandId', 'outcome', 'reason'])
+      && typeof outcome.reason === 'string';
+    if ((outcome.outcome !== 'applied' && outcome.outcome !== 'conflict')
+      || !keys(outcome, ['commandId', 'outcome', 'reason', 'view'])) return false;
+    const view = decodeListeningModeView(outcome.view);
+    if (!view.ok || view.value.bindingId !== binding.bindingId
+      || view.value.generation !== binding.generation
+      || outcome.reason === undefined
+      || (outcome.reason !== null && typeof outcome.reason !== 'string')) return false;
+    if (outcome.outcome === 'applied') {
+      if (view.value.version !== command.value.expectedVersion + 1) return false;
+      const grants = command.value.kind.endsWith('experimental_route')
+        ? view.value.experimentalGrants : view.value.hardCancelGrants;
+      const exact = grants.some(grant => grant.mode === command.value.mode
+        && grant.route === command.value.route
+        && grant.harnessVersion === command.value.harnessVersion
+        && grant.evidenceRevision === command.value.evidenceRevision);
+      if (exact !== command.value.kind.startsWith('grant_')) return false;
+    }
+    return view.value.bindingId === binding.bindingId
+      && view.value.generation === binding.generation
+      && (outcome.reason === null || typeof outcome.reason === 'string');
   }
   if (kind === 'controls_set') {
     if (!keys(outcome, ['ok', 'ack']) || outcome.ok !== true) return keys(outcome, ['ok', 'code'])

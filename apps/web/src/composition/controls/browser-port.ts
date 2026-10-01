@@ -11,7 +11,7 @@
 import {
   type BindingId, type ListeningModeCommand, type ListeningModeResult, type OwnerRouteGrantCommand, type PolicyAck,
   type PolicySetCommand, decodePolicyAck,
-  decodeListeningModeResult,
+  decodeListeningModeResult, decodeListeningModeView,
 } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
 import type { AgentControlsSnapshot, AgentControlsUiPort, RouteGrantAck } from '../../features/agent-controls/ports';
@@ -31,6 +31,8 @@ export interface ControlsClient {
   setPolicy(command: PolicySetCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
   setListeningMode(command: ListeningModeCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
+  setRouteGrant(command: OwnerRouteGrantCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
 }
 
@@ -206,7 +208,29 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     },
 
     async submitRouteGrant(command: OwnerRouteGrantCommand): Promise<RouteGrantAck> {
-      return { commandId: command.commandId, outcome: 'refused', reason: 'unavailable' };
+      if (disposed || replaced || command.bindingId !== bindingId
+        || (options.bindingGeneration !== undefined && command.expectedBindingGeneration !== options.bindingGeneration)) {
+        throw new ControlsUnavailableError('unavailable');
+      }
+      const answer = await client.setRouteGrant(command).catch(() => ({ kind: 'lost' as const }));
+      if (answer.kind === 'lost') throw new ControlsUnavailableError('lost');
+      if (answer.kind === 'refused') throw new ControlsUnavailableError(answer.code);
+      const body = answer.body;
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new ControlsUnavailableError('lost');
+      const result = body as Record<string, unknown>;
+      if (result.commandId !== command.commandId || !['applied', 'conflict', 'refused'].includes(String(result.outcome))
+        || (result.reason !== null && typeof result.reason !== 'string')) throw new ControlsUnavailableError('lost');
+      if (result.outcome !== 'refused') {
+        const view = decodeListeningModeView(result.view);
+        if (!view.ok || view.value.bindingId !== bindingId
+          || view.value.generation !== command.expectedBindingGeneration
+          || (result.outcome === 'applied' && view.value.version !== command.expectedVersion + 1)) {
+          throw new ControlsUnavailableError('lost');
+        }
+      }
+      void read().catch(() => undefined);
+      return { commandId: command.commandId,
+        outcome: result.outcome as RouteGrantAck['outcome'], reason: result.reason as string | null };
     },
 
     observation: () => (status === null ? null : projectControls(status, connection)),

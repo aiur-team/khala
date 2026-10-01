@@ -229,6 +229,7 @@ const controls = registerControls({ client: {
     } };
   },
   async setListeningMode() { return { kind: 'lost' as const }; },
+  async setRouteGrant() { return { kind: 'lost' as const }; },
   async setPolicy(next) {
     controlCommands.push(next);
     if (next.expectedBindingGeneration !== activeBinding.generation

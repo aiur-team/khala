@@ -1,4 +1,4 @@
-import type { HarnessCapabilities, ListeningModeCommand, ListeningModeResult, OwnerAuthority, SessionBinding } from '@khala/contracts/delivery/index';
+import { sameSessionBinding, type HarnessCapabilities, type ListeningModeCommand, type ListeningModeResult, type ListeningModeView, type OwnerAuthority, type OwnerRouteGrantCommand, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { ConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createAgentListeningModeAuthority } from './listening-mode-authority';
 import { createHostedListeningModeStore } from '@khala/policy/listening-mode/hosted';
@@ -22,6 +22,10 @@ export function createHostedListeningControl(input: Readonly<{
   owner: Readonly<{
     read(authority: OwnerAuthority): Promise<ListeningModeReadResult>;
     set(authority: OwnerAuthority, command: ListeningModeCommand): Promise<ListeningModeResult>;
+    grant(authority: OwnerAuthority, command: OwnerRouteGrantCommand): Promise<Readonly<{
+      commandId: OwnerRouteGrantCommand['commandId']; outcome: 'applied' | 'conflict' | 'refused';
+      reason: string | null; view?: ListeningModeView;
+    }>>;
   }>;
   status(): Promise<Readonly<{ v: 1; bindingId: SessionBinding['bindingId']; generation: number; effective: 'steer' | 'sync' | 'async' | null }>>;
 }> {
@@ -51,6 +55,17 @@ export function createHostedListeningControl(input: Readonly<{
   async function project(effective: 'steer' | 'sync' | 'async' | null,
     requested: 'steer' | 'sync' | 'async' | null, version: number,
     evidenceRevision: string | null): Promise<boolean> {
+    const confirmed = async (target: { requested: 'steer' | 'sync' | 'async' | null;
+      effective: 'steer' | 'sync' | 'async' | null; evidenceRevision: string | null },
+    minimumVersion: number) => input.dispatch.ledger.transact(tx => {
+      const state = tx.binding(binding.bindingId);
+      const policy = tx.policy(binding.bindingId);
+      return state !== null && !state.revoked && sameSessionBinding(state.binding, binding)
+        && policy !== null && policy.listening.version >= minimumVersion
+        && policy.listening.requested === target.requested
+        && policy.listening.effective === target.effective
+        && policy.listening.evidenceRevision === target.evidenceRevision;
+    });
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (!await input.current()) return false;
       const policy = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
@@ -59,13 +74,14 @@ export function createHostedListeningControl(input: Readonly<{
         effective, evidenceRevision: effective === null ? null : evidenceRevision };
       if (policy.listening.version >= version && policy.listening.requested === next.requested
         && policy.listening.effective === next.effective
-        && policy.listening.evidenceRevision === next.evidenceRevision) return true;
+        && policy.listening.evidenceRevision === next.evidenceRevision) return confirmed(next, version);
       // The durable control command and the current capability evidence are distinct
       // revisions. A late hook proof or its loss must not rewrite an older ledger version.
+      const writeVersion = Math.max(version, policy.listening.version + 1);
       const result = await input.dispatch.applyEffectivePolicy({ binding, policy: { ...policy,
-        listening: { version: Math.max(version, policy.listening.version + 1), ...next },
+        listening: { version: writeVersion, ...next },
       } });
-      if (result.kind !== 'conflict') return true;
+      if (result.kind !== 'conflict') return confirmed(next, writeVersion);
       if (result.code !== 'stale_version' && result.code !== 'version_conflict') return false;
     }
     return false;
@@ -90,7 +106,11 @@ export function createHostedListeningControl(input: Readonly<{
       const result = await base.set(command);
       if (result.outcome !== 'applied') return result;
       const current = await read();
-      return current.ok && current.view.effective !== null ? { ...result, effective: current.view.effective }
+      const latest = await base.read();
+      return current.ok && latest.ok && latest.view.version === result.version
+        && latest.view.requested === result.requested && current.view.version === result.version
+        && current.view.requested === result.requested && current.view.effective !== null
+        ? { ...result, effective: current.view.effective }
         : { ...result, effective: null, reason: current.ok ? current.view.effectiveReason : 'projection_unavailable' };
     },
   };
@@ -114,8 +134,31 @@ export function createHostedListeningControl(input: Readonly<{
         const result = await service.set(authority, { binding, status: 'active' }, capabilities, command);
         if (result.outcome !== 'applied') return result;
         const current = await ownerRead(authority);
-        return current.ok ? { ...result, effective: current.view.effective,
-          reason: current.view.effectiveReason } : { ...result, effective: null, reason: 'projection_unavailable' };
+        const latest = await service.read(authority, { binding, status: 'active' }, await input.capabilities());
+        return current.ok && latest.ok && latest.view.version === result.version
+          && latest.view.requested === command.requested && current.view.version === result.version
+          && current.view.requested === command.requested
+          ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
+          : { ...result, effective: null, reason: 'projection_unavailable' };
+      },
+      async grant(authority, command) {
+        if (!await input.current()) return { commandId: command.commandId,
+          outcome: 'refused' as const, reason: 'unavailable' };
+        const capabilities = await input.capabilities();
+        const context = { binding, status: 'active' as const };
+        const result = command.kind === 'grant_experimental_route'
+          ? await service.grantExperimentalRoute(authority, context, capabilities, command)
+          : command.kind === 'revoke_experimental_route'
+            ? await service.revokeExperimentalRoute(authority, context, capabilities, command)
+            : command.kind === 'grant_hard_cancel'
+              ? await service.grantHardCancel(authority, context, capabilities, command)
+              : await service.revokeHardCancel(authority, context, capabilities, command);
+        if (result.outcome === 'refused') return { commandId: command.commandId, ...result };
+        const projected = await projectedRead({ ok: true, view: result.view });
+        return projected.ok && projected.view.version === result.view.version
+          && projected.view.requested === result.view.requested
+          ? { commandId: command.commandId, ...result, view: projected.view }
+          : { commandId: command.commandId, outcome: 'refused' as const, reason: 'projection_unavailable' };
       },
     },
     async status() {

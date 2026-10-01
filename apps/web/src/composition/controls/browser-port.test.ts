@@ -81,6 +81,7 @@ function scripted() {
     command => ({ kind: 'answered', body: ack(command) });
   let listening: (command: ListeningModeCommand) => Awaited<ReturnType<ControlsClient['setListeningMode']>> =
     () => ({ kind: 'lost' });
+  let grant: () => Awaited<ReturnType<ControlsClient['setRouteGrant']>> = () => ({ kind: 'lost' });
   const commands: PolicySetCommand[] = [];
   const client: ControlsClient = {
     status: async () => status(),
@@ -89,6 +90,7 @@ function scripted() {
       return policy(command);
     },
     async setListeningMode(next) { return listening(next); },
+    async setRouteGrant() { return grant(); },
   };
   return {
     client,
@@ -96,6 +98,7 @@ function scripted() {
     onStatus(next: typeof status) { status = next; },
     onPolicy(next: typeof policy) { policy = next; },
     onListening(next: typeof listening) { listening = next; },
+    onGrant(next: typeof grant) { grant = next; },
   };
 }
 
@@ -229,13 +232,26 @@ describe('browser agent controls port', () => {
     port.dispose();
   });
 
-  it('keeps a lost listening result unknown and refuses unsupported grants', async () => {
+  it('keeps a lost listening result unknown and accepts only exact grant replies', async () => {
     const script = scripted();
     const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
     await expect(port.submitListeningMode({
       v: 1, commandId: 'mode-1' as CommandId, bindingId, expectedBindingGeneration: 0, expectedVersion: 1,
       requested: 'sync', issuedAt: '2026-09-25T10:02:00Z',
     })).rejects.toMatchObject({ code: 'lost' });
+    const grantCommand = { v: 1 as const, kind: 'grant_experimental_route' as const,
+      commandId: 'grant-1' as CommandId, bindingId, expectedBindingGeneration: 0,
+      expectedVersion: 1, mode: 'steer' as const, route: 'codex-steer',
+      harnessVersion: '0.154.0', evidenceRevision: 'proof-1', issuedAt: '2026-09-25T10:02:00Z' };
+    await expect(port.submitRouteGrant(grantCommand)).rejects.toMatchObject({ code: 'lost' });
+    script.onGrant(() => ({ kind: 'answered', body: { commandId: grantCommand.commandId,
+      outcome: 'applied', reason: null, view: { ...statusBody().listening, version: 2 } } }));
+    await expect(port.submitRouteGrant(grantCommand)).resolves.toEqual({
+      commandId: grantCommand.commandId, outcome: 'applied', reason: null,
+    });
+    script.onGrant(() => ({ kind: 'answered', body: { commandId: grantCommand.commandId,
+      outcome: 'applied', reason: null, view: { ...statusBody().listening, bindingId: 'other-binding', version: 2 } } }));
+    await expect(port.submitRouteGrant(grantCommand)).rejects.toMatchObject({ code: 'lost' });
     expect(script.commands).toEqual([]);
     port.dispose();
   });

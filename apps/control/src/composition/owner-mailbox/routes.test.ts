@@ -70,6 +70,26 @@ async function setup(options: { authUnavailable?: boolean; membershipUnavailable
 }
 
 describe('hosted owner mailbox routes', () => {
+  it('accepts a grant only for the signed-in owner and exact binding generation', async () => {
+    const env = await setup();
+    const grant = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-27T00:00:00Z' };
+    const submit = (body: unknown) => env.call(OWNER_MAILBOX_SUBMIT, 'POST', {
+      bindingId: binding.bindingId, operationId: grant.commandId, kind: 'listening_grant', body,
+    });
+    expect((await submit({ ...grant, expectedBindingGeneration: binding.generation + 1 })).status).toBe(409);
+    expect((await submit({ ...grant, bindingId: 'other-binding' })).status).toBe(409);
+    env.setSignedIn(false);
+    expect((await submit(grant)).status).toBe(401);
+    env.setSignedIn(true);
+    expect((await submit(grant)).status).toBe(200);
+    const poll = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as {
+      entries: Array<{ kind: string; authority: { ownerId: string }; body: unknown }>;
+    };
+    expect(poll.entries).toMatchObject([{ kind: 'listening_grant', authority: { ownerId: binding.ownerId }, body: grant }]);
+  });
   it('pins listening writes to the signed-in owner, exact binding and generation', async () => {
     const env = await setup();
     const second = { ...binding, bindingId: 'binding-second', agentParticipantId: 'agent-second',

@@ -1,4 +1,4 @@
-import type { ListeningModeCommand, ListeningModeResult, ListeningModeView, SessionBinding, OwnerAuthority } from '@khala/contracts/delivery/index';
+import type { ListeningModeCommand, ListeningModeResult, ListeningModeView, OwnerRouteGrantCommand, SessionBinding, OwnerAuthority } from '@khala/contracts/delivery/index';
 import type { JsonValue } from '@khala/contracts/messaging/index';
 import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
@@ -15,7 +15,7 @@ const MAX_RESPONSE = 2 * 1024 * 1024;
 const ID = /^[A-Za-z0-9_-]{8,64}$/u;
 type Command = Readonly<{
   operationId: string;
-  kind: 'controls_status' | 'controls_set' | 'listening_set' | 'review_preview' | 'review_approve' | 'channel_stop';
+  kind: 'controls_status' | 'controls_set' | 'listening_set' | 'listening_grant' | 'review_preview' | 'review_approve' | 'channel_stop';
   body: JsonValue;
   authority: OwnerAuthority;
   outcome: null;
@@ -27,7 +27,7 @@ function object(value: unknown): value is Record<string, unknown> {
 function command(value: unknown, binding: SessionBinding): Command | null {
   if (!object(value) || Object.keys(value).sort().join(',') !== 'authority,body,kind,operationId,outcome'
     || typeof value.operationId !== 'string' || !ID.test(value.operationId)
-    || !['controls_status', 'controls_set', 'listening_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(value.kind))
+    || !['controls_status', 'controls_set', 'listening_set', 'listening_grant', 'review_preview', 'review_approve', 'channel_stop'].includes(String(value.kind))
     || value.outcome !== null || !object(value.body) || !object(value.authority)
     || value.authority.ownerId !== binding.ownerId || typeof value.authority.issuer !== 'string'
     || typeof value.authority.subject !== 'string' || typeof value.authority.authorizationId !== 'string'
@@ -58,6 +58,10 @@ export function createProductionOwnerMailbox(input: Readonly<{
   listening?: () => Readonly<{
     read(authority: OwnerAuthority): Promise<Readonly<{ ok: true; view: ListeningModeView }> | Readonly<{ ok: false; code: string }>>;
     set(authority: OwnerAuthority, command: ListeningModeCommand): Promise<ListeningModeResult>;
+    grant(authority: OwnerAuthority, command: OwnerRouteGrantCommand): Promise<Readonly<{
+      commandId: OwnerRouteGrantCommand['commandId']; outcome: 'applied' | 'conflict' | 'refused';
+      reason: string | null; view?: ListeningModeView;
+    }>>;
   }> | null;
   review?: ReviewControlHandler | (() => ReviewControlHandler | null);
   stop(request: LocalStopRequest): Promise<Readonly<{ kind: 'stopped'; receipt: LocalStopReceipt }> | Readonly<{ kind: 'unavailable' }>>;
@@ -140,8 +144,14 @@ export function createProductionOwnerMailbox(input: Readonly<{
       case 'controls_set': return input.controls ? input.controls.setPolicy(entry.authority, entry.body) as Promise<JsonValue> : null;
       case 'listening_set': {
         const listening = input.listening?.();
-        return listening ? await listening.set(entry.authority, entry.body as ListeningModeCommand) as JsonValue
-          : refusedListeningModeResult(entry.body as ListeningModeCommand, 'unavailable') as JsonValue;
+        const result = listening ? await listening.set(entry.authority, entry.body as ListeningModeCommand) : null;
+        return (result ?? refusedListeningModeResult(entry.body as ListeningModeCommand, 'unavailable')) as JsonValue;
+      }
+      case 'listening_grant': {
+        const listening = input.listening?.();
+        const grant = entry.body as OwnerRouteGrantCommand;
+        const result = listening ? await listening.grant(entry.authority, grant) : null;
+        return (result ?? { commandId: grant.commandId, outcome: 'refused', reason: 'unavailable' }) as JsonValue;
       }
       case 'review_preview': {
         const handler = typeof input.review === 'function' ? input.review() : input.review;

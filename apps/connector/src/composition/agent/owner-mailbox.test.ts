@@ -42,8 +42,13 @@ describe('protected hosted owner mailbox endpoint', () => {
     const mode = { v: 1, commandId: 'mode_command_12345678', bindingId: binding.bindingId,
       expectedBindingGeneration: binding.generation, expectedVersion: 1,
       requested: 'sync', issuedAt: '2026-09-26T00:00:00Z' };
+    const grant = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-26T00:00:00Z' };
     const entries = [entry, { ...entry, operationId: mode.commandId,
-      kind: 'listening_set', body: mode }];
+      kind: 'listening_set', body: mode }, { ...entry, operationId: grant.commandId,
+      kind: 'listening_grant', body: grant }];
     const outcomes: Array<{ operationId: string; outcome: Record<string, unknown> }> = [];
     const signer = { proof: () => 'signed-proof' } as unknown as ProofSigner;
     const mailbox = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding, signer,
@@ -64,11 +69,40 @@ describe('protected hosted owner mailbox endpoint', () => {
       },
     });
     expect(await mailbox.pollOnce()).toBe('ok');
-    expect(outcomes).toHaveLength(2);
+    expect(outcomes).toHaveLength(3);
     expect(outcomes[0]?.outcome).toMatchObject({ ok: true, status: { policy: { effectiveVersion: 3 },
       listening: null, listeningUnavailable: 'connector_starting' } });
     expect(outcomes[1]?.outcome).toMatchObject({ v: 1, commandId: mode.commandId,
       outcome: 'refused', reason: 'unavailable', effective: null });
+    expect(outcomes[2]?.outcome).toEqual({ commandId: grant.commandId,
+      outcome: 'refused', reason: 'unavailable' });
+  });
+  it('returns a typed unavailable refusal when an installed listening adapter returns null', async () => {
+    const mode = { v: 1, commandId: 'mode_command_null_12345678', bindingId: binding.bindingId,
+      expectedBindingGeneration: binding.generation, expectedVersion: 1,
+      requested: 'sync', issuedAt: '2026-09-26T00:00:00Z' };
+    let completed: Record<string, unknown> | null = null;
+    const mailbox = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding,
+      signer: { proof: () => 'signed-proof' } as unknown as ProofSigner,
+      capability: async () => ({ token: 'C'.repeat(43), scope: ['receive_released', 'ack_delivery'],
+        bindingId: binding.bindingId, generation: binding.generation, expiresAt: Date.now() + 60_000 }),
+      controls: { status: vi.fn(), setPolicy: vi.fn(), reconcile: vi.fn() },
+      listening: () => ({ read: vi.fn(), set: async () => null }) as never,
+      stop: async () => ({ kind: 'unavailable' }), onRevoked: async () => undefined,
+      fetch: async (_url, init) => {
+        if (init?.method === 'POST') {
+          completed = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return response(200, { v: 1, operationId: mode.commandId });
+        }
+        return response(200, { v: 1, bindingId: binding.bindingId, generation: binding.generation,
+          closing: false, entries: [{ ...entry, operationId: mode.commandId,
+            kind: 'listening_set', body: mode }] });
+      },
+    });
+    expect(await mailbox.pollOnce()).toBe('ok');
+    expect(completed).toMatchObject({ operationId: mode.commandId, outcome: {
+      v: 1, commandId: mode.commandId, outcome: 'refused', reason: 'unavailable', effective: null,
+    } });
   });
   it('processes the server produced 64 pending previews plus reserved Stop without accepting extra commands', async () => {
     const state = fakeStore(() => T0);
