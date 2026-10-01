@@ -122,3 +122,44 @@ Agent prose, comments and closed tickets prove nothing. Absent evidence is `unpr
 A live run still requires owned event-linked receipt facts and a proven mode route. A binding whose CLI has not reported a trusted, proven identity and version leaves unsupported modes unproven (decisions 34 and 37). The runner never promotes a requested model label or an app-server identity into native session proof.
 
 Offline tests: `pnpm test:e2e -- tests/e2e/acceptance`.
+
+## Isolated internal native canary (draft)
+
+`pnpm test:internal:native` is the opt-in, local three-party runner. It uses a clean-tree `acceptance:pack` tarball, two new tmux PTYs, a short private `/tmp/khala-native-*` home, and an isolated headless Chromium profile. It never attaches to an existing agent or browser. The CLI reports the first missing stage as JSON with `kind: "unproven"`; a setup or capability check is not an E2E pass. Only `verify` may produce `pass`, after model-side read/send, exact owner ACKs, peer ACKs, and replies visible following browser reload. The existing packaged smoke remains the fast synthetic route check.
+
+Use Node 22.23.2 and a clean committed checkout. The example pins the cached native Codex 0.159.3 Linux binary; verify the digest before using it. Codex 0.160.0 may be pinned only for the explicit manual MCP path (`setup-manual-codex`); that path proves deliberate `khala_read`/`khala_send`, not Sync, Steer, or idle wake. A version or digest mismatch is `unproven` before room creation.
+
+```sh
+PIN=$(mktemp -d /tmp/khala-codex-pin-XXXXXXXX)
+chmod 700 "$PIN"
+npm install -g --offline --ignore-scripts --prefix "$PIN" @openai/codex@0.159.3
+CODEX_BIN="$PIN/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+CODEX_SHA=8bf204b36a2f6dd0dab73aa2f639892e67ef9ac8befccb4a05b1496ebf25c479
+test "$(sha256sum "$CODEX_BIN" | cut -d ' ' -f 1)" = "$CODEX_SHA"
+mise exec node@22.23.2 -- pnpm acceptance:pack --out "$TMPDIR/khala-803-pack"
+PACK=$(find "$TMPDIR/khala-803-pack" -maxdepth 1 -name 'aiur-khala-*.tgz' -print -quit)
+RUN=$(mise exec node@22.23.2 -- pnpm --silent test:internal:native init "$PACK" --codex-bin "$CODEX_BIN" --codex-sha256 "$CODEX_SHA" | jq -r .directory)
+mise exec node@22.23.2 -- pnpm --silent test:internal:native auth-handoff "$RUN"
+mise exec node@22.23.2 -- pnpm --silent test:internal:native auth "$RUN"
+mise exec node@22.23.2 -- pnpm --silent test:internal:native setup "$RUN"
+mise exec node@22.23.2 -- pnpm --silent test:internal:native start-agents "$RUN" gpt-6-sol opus
+```
+
+`auth-handoff` copies only `~/.codex/auth.json` and `~/.claude/.credentials.json` into the mode-0700 run home as mode-0600 files. It never prints credentials or copies `~/.claude.json`. `auth` checks both providers' native login status before PTY launch. If either needs interactive sign-in, complete it under the printed private `HOME`/`CODEX_HOME` and rerun `auth`; do not import general account settings. The private profile and PTYs may contact model providers. Khala's Node transport is constrained to loopback and Chromium uses a loopback-only proxy bypass; outbound attempts are counted without logging destinations.
+
+Attach only to the two tmux sockets printed by `start-agents`. In each fresh native TUI, complete one real model turn, review its native trust dialog, and copy its `/status` session ID. The exact IDs must appear in that run's private native session files. Then:
+
+```sh
+mise exec node@22.23.2 -- pnpm --silent test:internal:native open "$RUN" '<codex-session-id>' '<claude-session-id>'
+mise exec node@22.23.2 -- pnpm --silent test:internal:native browser "$RUN"
+```
+
+`open` prints a private owner URL and a channel URL. The browser action redeems the owner URL in its own headless profile and prints a CDP loopback endpoint. Use that endpoint to drive the browser independently; `pnpm internal:native:browser "$RUN" ...` is a small CDP helper. Ask each existing model to request the channel through its installed Khala tool, using the channel URL, then review each pending request in the browser:
+
+```sh
+pnpm --silent internal:native:browser "$RUN" approve codex
+pnpm --silent internal:native:browser "$RUN" approve claude
+pnpm --silent test:internal:native challenge "$RUN"
+```
+
+The challenge output is tied to the exact session digests and approved binding generations. Send its `body` through the browser (`printf '%s' "$BODY" | pnpm --silent internal:native:browser "$RUN" send`). In the same PTYs, have each model call `khala_read`, acknowledge as its native route requires, and call `khala_send` with its computed reply. Have each then read and acknowledge the peer reply. Do not paste the challenge text into the PTYs; it must enter through the browser. For each reply, pipe its expected text to `internal:native:browser "$RUN" contains`; that command reloads the page before recording visibility. Finally run `pnpm --silent test:internal:native verify "$RUN"`. It writes sanitized #805 candidate/receipt envelopes only when all gates pass. Run `... stop "$RUN"` to end owned processes or `... destroy "$RUN"` to end them and remove the private home after evidence review.

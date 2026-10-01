@@ -21,6 +21,8 @@
     "build": "pnpm check:boundaries && pnpm -r build",
     "test:browser": "pnpm -r --if-present test:browser",
     "acceptance:live": "tsx --conditions=khala-source scripts/acceptance/main.ts",
+    "test:internal:native": "node --import tsx scripts/internal-native-canary.mjs",
+    "internal:native:browser": "node scripts/internal-native-browser.mjs",
     "acceptance:pack": "node scripts/acceptance-pack.mjs"
   },
   "devDependencies": {
