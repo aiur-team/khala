@@ -293,11 +293,11 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     console.log(JSON.stringify({ scope: 'agent_matrix_preflight', joined, membershipStatus }));
     assert.equal(files(client.stateDirectory).filter(item => item.endsWith('/current-binding.json')).length, 0);
     recoveredSession = client.session();
-    const beforeRegistration = await recoveredSession.request(statusMessage(4));
+    const beforeRegistration = await recoveredSession.request(statusMessage(4), 'restart_activation');
     const beforeRoute = await recoveredSession.request({ jsonrpc: '2.0', id: 45,
-      method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
+      method: 'tools/call', params: { name: 'khala_status', arguments: {} } }, 'pre_owner_route');
     const beforeRead = await recoveredSession.request({ jsonrpc: '2.0', id: 5,
-      method: 'tools/call', params: { name: 'khala_read', arguments: {} } });
+      method: 'tools/call', params: { name: 'khala_read', arguments: {} } }, 'pre_owner_read');
     assert.notEqual(beforeRegistration.result?.structuredContent?.outcome, 'connected');
     assert.notEqual(beforeRoute.result?.structuredContent?.connected, true);
     assert.notEqual(beforeRead.result?.structuredContent?.kind, 'batch');
@@ -330,7 +330,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     let ownerDeviceEmpty = durableStages().some(item => item.stage === 'owner_device_empty');
     for (let attempt = 0; attempt < 30 && !ownerDeviceEmpty; attempt += 1) {
       await delay(500);
-      await recoveredSession.request(statusMessage(50 + attempt));
+      await recoveredSession.request(statusMessage(50 + attempt), 'owner_guard');
       ownerDeviceEmpty = durableStages().some(item => item.stage === 'owner_device_empty');
     }
     assert.equal(ownerDeviceEmpty, true,
@@ -367,7 +367,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     let recoveredReply;
     const recoveryOutcomes = [];
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      recoveredReply = await recoveredSession.request(statusMessage(6 + attempt));
+      recoveredReply = await recoveredSession.request(statusMessage(6 + attempt), 'post_owner_activation');
       recoveryOutcomes.push(recoveredReply?.result?.structuredContent?.outcome ?? 'absent');
       if (recoveredReply?.result?.structuredContent?.outcome === 'connected') break;
       await delay(500);

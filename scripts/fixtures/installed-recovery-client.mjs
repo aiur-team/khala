@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DIAGNOSTIC_COMPONENTS = new Set(['hosted_session', 'hosted_open', 'subscription', 'native_ready', 'activation']);
+const REQUEST_PHASES = new Set(['restart_activation', 'pre_owner_route', 'pre_owner_read',
+  'owner_guard', 'post_owner_activation', 'other']);
+const REQUEST_TOOLS = new Set(['khala_channel_access_status', 'khala_status', 'khala_read', 'khala_send']);
 const STORAGE_CODES = new Set(['unsafe_path', 'missing_state', 'locked', 'corrupt', 'schema_unsupported',
   'storage_full', 'limit_exceeded', 'io_failed', 'closed', 'fenced', 'identity_mismatch',
   'payload_unavailable', 'revoked', 'invalid_input', 'transaction_aborted',
@@ -178,11 +181,21 @@ if (response.status !== 204) process.exit(1);
       child.once('close', () => { processes.delete(child); fail(); });
       return {
         pid: child.pid,
-        request(message) {
+        request(message, phase = 'other') {
           if (closed || pending.has(message.id)) return Promise.reject(new Error('fixture_client_unavailable'));
           return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => { pending.delete(message.id); reject(new Error('fixture_client_timeout'));
-              child.kill('SIGKILL'); }, 15_000);
+            // A status call may start the browser SDK and its bounded 30s
+            // initial sync. Let it return its typed activation outcome first.
+            const tool = REQUEST_TOOLS.has(message.params?.name) ? message.params.name : 'other';
+            const timeoutMs = tool === 'khala_channel_access_status' ? 40_000 : 15_000;
+            const timer = setTimeout(() => {
+              const stages = typedDiagnostics(diagnostics).slice(-5).map(({ component, stage, result }) => ({ component, stage, result }));
+              const snapshot = { phase: REQUEST_PHASES.has(phase) ? phase : 'other', tool,
+                process: closed ? 'closed' : 'alive', pending: pending.size, stages };
+              pending.delete(message.id);
+              reject(new Error(`fixture_client_timeout:${JSON.stringify(snapshot)}`));
+              child.kill('SIGKILL');
+            }, timeoutMs);
             pending.set(message.id, { resolve, reject, timer });
             child.stdin.write(JSON.stringify(message) + '\n');
           });
