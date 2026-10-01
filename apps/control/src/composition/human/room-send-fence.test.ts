@@ -48,6 +48,33 @@ describe('durable room send fence', () => {
     expect(await restarted.releaseHold(roomId, 'replacement_1', 'rotated')).toBe('applied');
     expect(await restarted.acquire(roomId, sender, 'after_admission')).toMatchObject({ kind: 'granted' });
   });
+  it('keeps a post-admission human transaction unsent until two active agent senders rotate', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    const codex = { senderId: 'codex_device', deviceId: 'CODEX', deviceKey: 'C'.repeat(43) };
+    const claude = { senderId: 'claude_device', deviceId: 'CLAUDE', deviceKey: 'D'.repeat(43) };
+    for (const device of [sender, codex, claude]) expect(await fence.readySender(roomId, device)).toBe('applied');
+    expect(await fence.seedRoster(roomId, [sender, codex, claude])).toBe('applied');
+
+    expect(await fence.beginHold(roomId, 'admit_agent', null)).toBe('held');
+    expect(await fence.acquire(roomId, sender, 'txn_canary')).toEqual({
+      kind: 'held', epoch: 1, operationId: 'admit_agent',
+    });
+    expect(await fence.acknowledgeRotation(roomId, sender, 'admit_agent', 1)).toBe('applied');
+    expect(await fence.acknowledgeRotation(roomId, codex, 'admit_agent', 1)).toBe('applied');
+    expect(await fence.rotationStatus(roomId, 'admit_agent')).toBe('pending');
+    expect(await fence.acquire(roomId, sender, 'txn_canary')).toMatchObject({ kind: 'held' });
+    expect(await fence.acknowledgeRotation(roomId, claude, 'admit_agent', 1)).toBe('applied');
+    expect(await fence.releaseHold(roomId, 'admit_agent', 'rotated')).toBe('applied');
+
+    const permitted = await fence.acquire(roomId, sender, 'txn_canary');
+    expect(permitted.kind).toBe('granted');
+    if (permitted.kind !== 'granted') return;
+    expect(await fence.finish(roomId, sender.senderId, permitted.permitId,
+      { kind: 'complete', eventId: '$canary:example' })).toBe('applied');
+    expect(await fence.acquire(roomId, sender, 'txn_canary')).toEqual({
+      kind: 'complete', eventId: '$canary:example',
+    });
+  });
   it('refuses revocation protocol admission until a trusted legacy sender inventory is seeded', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
     expect(await fence.beginHold(roomId, 'operation_unseeded', excludedKey)).toBe('unavailable');
