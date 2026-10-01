@@ -46,6 +46,9 @@ that binding exists. There is no current session per working directory, and
 you never name a session or a binding. Never run `khala` in a
 shell for these verbs, and never place the arguments, a message, or channel
 text in a shell command, argument list, or environment variable.
+If a resumed hosted call reports `connector_starting`, the approved binding is
+still opening. Call `khala_status` again later and read only after it reports
+connected; do not ask for another owner approval.
 
 ## `send`
 
