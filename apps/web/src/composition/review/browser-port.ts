@@ -13,7 +13,6 @@ import type { ChannelSnapshot, OwnerId, RoomId, RoomPort, TimelineItem } from '@
 import type { ReviewView } from '../../features/review/model';
 import type { ApprovalUiResult, ReviewUiPort } from '../../features/review/ports';
 import { candidateRefs, decodeReviewPreview, loadingView, readyView, withoutAccess } from './snapshot';
-import { reviewTrace, reviewTraceId } from './diagnostics';
 
 export type ReviewPreviewRequest = Readonly<{
   bindingId: BindingId;
@@ -56,8 +55,6 @@ export type BrowserReviewPort = ReviewUiPort & Readonly<{ dispose(): void }>;
 
 export function createBrowserReviewPort(options: BrowserReviewPortOptions): BrowserReviewPort {
   const { client, room, roomId, bindingId, viewerOwnerId, limits } = options;
-  const traceId = reviewTraceId();
-  reviewTrace('port.mount', traceId, JSON.stringify([roomId, bindingId, options.bindingGeneration, viewerOwnerId]));
   const listeners = new Set<() => void>();
   const releaseIds: ReleaseId[] = [];
   let view: ReviewView = loadingView(bindingId, viewerOwnerId);
@@ -67,6 +64,8 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   let roomIdentity: string | null = null;
   let request = 0;
   let inFlight: AbortController | null = null;
+  const refreshMs = options.refreshMs ?? 5_000;
+  let lastRefreshAt = -Infinity;
   let disposed = false;
 
   function publish(next: ReviewView): void {
@@ -77,23 +76,18 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
 
   async function refresh(): Promise<void> {
     if (disposed || roomGeneration === null) return;
+    lastRefreshAt = Date.now();
     // Every answer is a complete snapshot; only the newest request may publish one.
     const token = ++request;
     const generation = roomGeneration;
-    if (inFlight) reviewTrace('preview.abort-previous', traceId);
     inFlight?.abort();
     const controller = new AbortController();
     inFlight = controller;
-    reviewTrace('preview.start', traceId);
     const answer = await client.preview(
       { bindingId, candidates: candidateRefs(items, limits.maxSelectionEvents), releaseIds: [...releaseIds] },
       controller.signal,
     ).catch(() => ({ kind: 'lost' as const }));
-    if (disposed || token !== request || generation !== roomGeneration) {
-      reviewTrace('preview.fenced', traceId);
-      return;
-    }
-    reviewTrace(`preview.${answer.kind}`, traceId);
+    if (disposed || token !== request || generation !== roomGeneration) return;
     inFlight = null;
     if (answer.kind === 'ok' || answer.kind === 'waiting_for_agent') {
       if (answer.kind === 'waiting_for_agent' && options.bindingGeneration !== undefined
@@ -106,11 +100,6 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
         return;
       }
       const preview = decodeReviewPreview(answer.body, limits, bindingId);
-      reviewTrace(preview === null ? 'preview.decode-failed' : 'preview.decoded', traceId);
-      const ready = preview !== null && (options.bindingGeneration === undefined
-        || preview.bindingGeneration === options.bindingGeneration)
-        && (answer.kind !== 'waiting_for_agent' || preview.bindingGeneration === answer.generation);
-      reviewTrace(ready ? 'view.ready-publish' : 'view.unavailable-publish', traceId);
       publish(preview === null || (options.bindingGeneration !== undefined
         && preview.bindingGeneration !== options.bindingGeneration)
         || answer.kind === 'waiting_for_agent' && preview.bindingGeneration !== answer.generation
@@ -125,20 +114,18 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
 
   function onRoom(snapshot: ChannelSnapshot): void {
     if (disposed || snapshot.room.roomId !== roomId) return;
-    if (roomGeneration !== null && snapshot.generation < roomGeneration) {
-      reviewTrace('room.old-generation', traceId);
-      return;
-    }
+    if (roomGeneration !== null && snapshot.generation < roomGeneration) return;
     // Snapshot revisions can advance without changing any review input. Repeated
     // equivalent snapshots must not abort the only live owner preview request.
     const identity = JSON.stringify([snapshot.generation, snapshot.room.membership,
       candidateRefs(snapshot.items, limits.maxSelectionEvents)]);
     items = snapshot.items;
     if (identity === roomIdentity) {
-      reviewTrace('room.equivalent', traceId);
+      // Recheck authority after a settled request, without cancelling a slow
+      // preview or issuing one request for every equivalent room notification.
+      if (inFlight === null && Date.now() - lastRefreshAt >= refreshMs) void refresh();
       return;
     }
-    reviewTrace('room.changed', traceId, identity);
     roomIdentity = identity;
     if (snapshot.generation !== roomGeneration || snapshot.room.membership !== roomMembership) {
       // A reconnect or trust change replaces the queue while the new preview loads.
@@ -150,8 +137,6 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   }
 
   const stopRoom = room.observe(roomId, onRoom);
-  reviewTrace('room.observe', traceId);
-  const refreshMs = options.refreshMs ?? 5_000;
   const timer = refreshMs > 0 ? setInterval(() => {
     // A slow answer is never cancelled by the next tick; only new room data supersedes it.
     if (listeners.size > 0 && inFlight === null) void refresh();
@@ -222,7 +207,6 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
     dispose() {
       if (disposed) return;
       disposed = true;
-      reviewTrace('port.dispose', traceId);
       inFlight?.abort();
       if (timer !== null) clearInterval(timer);
       stopRoom();

@@ -104,7 +104,7 @@ describe('browser review port', () => {
     const answers: Array<(answer: Answer) => void> = [];
     const { client, requests, commands } = scriptedClient(() => new Promise<Answer>(resolve => { answers.push(resolve); }));
     const { room, emit } = fakeRoom();
-    const review = port(client, room);
+    const review = createBrowserReviewPort({ client, room, roomId, bindingId, viewerOwnerId: viewer, limits, refreshMs: 60_000 });
     const controller = createReviewController(review);
 
     emit([itemA, { ...itemB, receivedAt: '2026-09-25T10:00:01Z' }]);
@@ -133,6 +133,26 @@ describe('browser review port', () => {
     await tick();
     expect(controller.getSnapshot().view.pending).toEqual([itemB]);
     expect(commands).toHaveLength(0);
+    controller.dispose();
+    review.dispose();
+  });
+  it('keeps one exact selection through a matching preview refresh and submits it once', async () => {
+    const arrival = item('event_c', 'new arrival', 3);
+    const { client, commands } = scriptedClient(() => ({ kind: 'ok', body: previewBody([refOf(itemA), refOf(itemB)]) }));
+    const { room, emit } = fakeRoom();
+    const review = port(client, room);
+    const controller = createReviewController(review);
+    emit([itemA, itemB]);
+    await tick();
+    controller.toggleSelect(refOf(itemA), true);
+    emit([itemA, itemB, arrival]);
+    await tick();
+    expect(controller.getSnapshot().selection.phase).toBe('selected');
+    expect(controller.getSnapshot().view.pending).toEqual([itemA, itemB]);
+    await controller.submit();
+    expect(commands).toHaveLength(1);
+    expect(commands[0]!.selection).toEqual([refOf(itemA)]);
+    expect(commands[0]).toMatchObject({ expectedPolicyVersion: 3, expectedBindingGeneration: 0 });
     controller.dispose();
     review.dispose();
   });
@@ -259,7 +279,7 @@ describe('browser review port', () => {
     emit([itemB]);
     await tick();
     expect(review.snapshot().pending).toEqual([itemB]);
-    emit([itemA, itemB]);
+    emit([itemB]);
     await tick();
     expect(review.snapshot()).toMatchObject({ access: 'revoked', pending: [] });
     emit([itemB]);
@@ -377,6 +397,26 @@ describe('browser review registration', () => {
 });
 
 describe('browser review port lifecycle', () => {
+  it('bounds equivalent snapshot refreshes after a completed preview', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([refOf(itemB)]) }));
+      const { room, emit } = fakeRoom();
+      const review = createBrowserReviewPort({ client, room, roomId, bindingId, viewerOwnerId: viewer, limits, refreshMs: 10 });
+      emit([itemB]);
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < 5; index += 1) emit([itemB]);
+      expect(requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10);
+      emit([itemB]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requests).toHaveLength(2);
+      review.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('removes its abort listener once an approval settles', async () => {
     const { client } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
     const review = port(client, fakeRoom().room);

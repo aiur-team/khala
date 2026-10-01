@@ -19,7 +19,6 @@ import { createReviewController, type ReviewController } from '../../features/re
 import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
-import { reviewTrace, reviewTraceId } from '../review/diagnostics';
 import type { ControlsCapability } from '../controls/register';
 import { AgentControlsPanel, AgentListeningControls, UnavailableListeningModes } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
@@ -170,17 +169,14 @@ function ReviewForBinding({ context, roomId, capability, binding, onReviewStatus
     // The route shell attaches the shared capability in its passive effect.
     // Run after that effect so its route lease owns this port and teardown.
     let active: ReviewController | null = null;
-    const traceId = reviewTraceId();
-    reviewTrace('controller.effect', traceId, identity);
     const timer = setTimeout(() => {
       const port = capability.portFor(context, roomId, binding);
       if (port) {
         active = createReviewController(port);
         setController(active);
-        reviewTrace('controller.mount', traceId, identity);
       }
     }, 0);
-    return () => { reviewTrace('controller.dispose', traceId, identity); clearTimeout(timer); active?.dispose(); };
+    return () => { clearTimeout(timer); active?.dispose(); };
   }, [identity, capability, context, roomId]);
   return controller ? <BindingReview controller={controller} identity={identity} {...(onReviewStatus ? { onReviewStatus } : {})}
     recipientLabel={binding.agentParticipantId} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;

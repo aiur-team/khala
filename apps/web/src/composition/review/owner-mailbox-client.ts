@@ -3,7 +3,6 @@ import type { RoomId } from '@khala/contracts/messaging/index';
 import type { ReviewControlClient, ReviewPreviewRequest } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
 import { browserSessionStorage, createMailboxReadRetry } from '../human/mailbox-retry';
-import { reviewTrace, reviewTraceId } from './diagnostics';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -157,8 +156,6 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const review: ReviewControlClient = {
     recoverUnknown: recoverSaved,
     async preview(body: ReviewPreviewRequest, signal: AbortSignal) {
-      const traceId = reviewTraceId();
-      reviewTrace('transport.preview-enter', traceId);
       if (signal.aborted) return { kind: 'lost' };
       if (!retry.ready(body.bindingId)) return { kind: 'refused', code: 'unavailable' };
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body))));
@@ -185,13 +182,11 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       }
       pendingPreviews.set(body.bindingId, pending);
       const { operationId } = pending;
-      reviewTrace(created ? 'transport.operation-new' : 'transport.operation-reused', traceId, operationId);
       // A timed-out submit may already have committed. Reconcile the exact ID
       // first, and retry only that same command if the server has no record.
       const existing = created ? null : await result(body.bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(body.bindingId, operationId, 'review_preview', pending.body, signal) : existing;
-      reviewTrace(first?.status === 200 ? 'transport.first-200' : 'transport.first-other', traceId, operationId);
       if (first?.status === 200 && object(first.body) && first.body.operationId === operationId
         && first.body.outcome === null) {
         const status = await waitingPreview(body.bindingId, signal);
@@ -206,9 +201,6 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
         if (status?.status === 401 || status?.status === 403) return { kind: 'refused', code: 'revoked' };
       }
       const answer = created || first !== existing ? await awaitOutcome(body.bindingId, operationId, first, signal) : first;
-      reviewTrace(answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
-        ? answer.body.outcome === null ? 'transport.result-pending' : 'transport.result-completed'
-        : 'transport.result-missing-or-mismatch', traceId, operationId);
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
         && answer.body.outcome !== null) {
         pendingPreviews.delete(body.bindingId);
@@ -224,11 +216,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       if (answer?.status !== 200 || !object(answer.body) || answer.body.operationId !== operationId
         || !object(answer.body.outcome)) return { kind: 'refused', code: 'unavailable' };
       const outcome = answer.body.outcome;
-      if (outcome.ok === true && 'preview' in outcome) {
-        reviewTrace('transport.preview-ok', traceId, operationId);
-        return { kind: 'ok', body: outcome.preview };
-      }
-      reviewTrace('transport.preview-other', traceId, operationId);
+      if (outcome.ok === true && 'preview' in outcome) return { kind: 'ok', body: outcome.preview };
       if (outcome.ok === false && ['forbidden', 'revoked', 'unavailable'].includes(String(outcome.code))) {
         return { kind: 'refused', code: outcome.code as 'forbidden' | 'revoked' | 'unavailable' };
       }
