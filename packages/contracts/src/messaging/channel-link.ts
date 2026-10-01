@@ -1,6 +1,47 @@
 // Versioned, grant-free results shared by the browser and native CLI.
 import { type Decoded, decodeWith, fail, identifier, literal, nullable, object, utcTimestamp, version } from './decode';
 import type { AccessRequestOutcome } from './discovery';
+import { decodeChannelAccessRequest, MAX_CHANNEL_URL_BYTES, type ChannelAccessRequest } from './discovery';
+import { decodeRoomId, type RoomId } from './ids';
+
+export type HumanChannelLinkResolveRequest = Readonly<{ v: 1; channelUrl: string }>;
+export type PersonalChannelLinkRequest = Readonly<{ v: 1; roomId: RoomId }>;
+export type AgentChannelLinkRequest = Extract<ChannelAccessRequest, { kind: 'channel_url' }>;
+
+/** A channel link is one exact-origin share URL, without a query or fragment. */
+export function decodeHumanChannelLinkResolveRequest(input: unknown, origin: string): Decoded<HumanChannelLinkResolveRequest> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'channelUrl']);
+    const channelUrl = r.field('channelUrl');
+    if (typeof channelUrl !== 'string') fail(r.at('channelUrl'), 'wrong_type');
+    let url: URL;
+    try { url = new URL(channelUrl); } catch { fail(r.at('channelUrl'), 'invalid_value'); }
+    if (channelUrl.length > MAX_CHANNEL_URL_BYTES || url.href !== channelUrl || url.origin !== origin
+      || url.username || url.password || url.search || url.hash
+      || !/^\/join\/[A-Za-z0-9_-]{8,256}$/u.test(url.pathname)) fail(r.at('channelUrl'), 'invalid_value');
+    return { v: version(r.field('v'), r.at('v')), channelUrl };
+  });
+}
+
+export function decodePersonalChannelLinkRequest(input: unknown): Decoded<PersonalChannelLinkRequest> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'roomId']);
+    const room = decodeRoomId(r.field('roomId'));
+    if (!room.ok) fail(r.at('roomId'), 'invalid_value');
+    return { v: version(r.field('v'), r.at('v')), roomId: room.value };
+  });
+}
+
+export function decodeAgentChannelLinkRequest(input: unknown, origin: string): Decoded<AgentChannelLinkRequest> {
+  return decodeWith(() => {
+    const request = decodeChannelAccessRequest(input, origin);
+    if (!request.ok || request.value.kind !== 'channel_url') fail('', 'invalid_value');
+    if (!decodeHumanChannelLinkResolveRequest({ v: 1, channelUrl: request.value.channelUrl }, origin).ok) {
+      fail('/channelUrl', 'invalid_value');
+    }
+    return request.value;
+  });
+}
 
 export type HumanChannelLinkResult = Readonly<{ v: 1; kind: 'join_required' | 'joined' | 'expired' | 'revoked' | 'forbidden' | 'auth_required' | 'invalid_link' | 'unavailable' }>;
 export type PersonalChannelLinkResult =
