@@ -8,6 +8,17 @@ import { openMatrixConnectorSubstrate, type MatrixConnectorSubstrate } from './m
 import { MatrixWriterLockError } from './matrix-writer-lock';
 import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-open-diagnostic';
 
+// These failures cannot become ready by replaying the same admitted device.
+// Other browser and Matrix startup errors may be transient; keep the operation
+// admitted so the next status call can resume its saved session and crypto profile.
+const PERMANENT_STARTUP_ERRORS = new Set([
+  'matrix_session_changed', 'matrix_session_missing', 'matrix_reservation_conflict',
+  'matrix_reservation_corrupt', 'matrix_origin_untrusted',
+  'matrix_crypto_store_lost', 'matrix_identity_changed', 'matrix_trust_recovery_required',
+  'matrix_browser_bundle_missing', 'matrix_browser_driver_invalid',
+  'matrix_browser_method_missing', 'matrix_invalid_input', 'matrix_names_corrupt',
+]);
+
 /** Endpoint-owned credential file, outside the hosted control plane and the crypto profile. */
 export function createMatrixBootstrapDevice(input: Readonly<{
   stateDirectory: string;
@@ -131,7 +142,16 @@ export function createMatrixBootstrapDevice(input: Readonly<{
           const inner = await active.devices.reserve(activation.operationId);
           if (inner.kind !== 'reserved' || inner.deviceId !== fixed.deviceId) return { kind: 'failed', reason: 'initialization_failed' };
           return active.devices.activate(activation);
-        } catch { return { kind: 'failed', reason: 'initialization_failed' }; }
+        } catch (error) {
+          // Playwright prefixes browser-thrown errors with its call site and a
+          // stack, so match only our fixed error codes within that wrapper.
+          const blocked = error instanceof Error && [...PERMANENT_STARTUP_ERRORS]
+            .some(code => error.message.includes(code));
+          try { input.writerLockDiagnostic?.({
+            stage: blocked ? 'matrix_startup_blocked' : 'matrix_startup_retry', result: 'unavailable',
+          }); } catch { /* Diagnostics cannot change activation. */ }
+          return blocked ? { kind: 'failed', reason: 'initialization_failed' } : { kind: 'unavailable' };
+        }
       },
       async status(deviceId) {
         try {
