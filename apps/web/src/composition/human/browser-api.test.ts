@@ -21,6 +21,15 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
+  it('recognizes a completed send transaction from the room fence', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { kind: 'complete', eventId: '$sent:example' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.roomSend.acquire({ roomId: '!room:example' as RoomId,
+      deviceId: 'DEVICE', matrixAccessToken: 'matrix-token' }, 'txn_completed'))
+      .toEqual({ kind: 'complete', eventId: '$sent:example' });
+  });
   it('decodes personal issuance and human resolution with the current CSRF proof', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))

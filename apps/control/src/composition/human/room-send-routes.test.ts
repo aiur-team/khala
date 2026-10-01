@@ -71,6 +71,18 @@ function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boo
 }
 
 describe('authenticated room send fence routes', () => {
+  it('returns the recorded event for a repeated completed human transaction', async () => {
+    const h = setup();
+    expect((await h.call('human', 'ready')).status).toBe(200);
+    const first = await h.call('human', 'acquire', { clientTxnId: 'txn_completed' });
+    expect(first.status).toBe(200);
+    const permit = await first.json() as { permitId: string };
+    expect((await h.call('human', 'finish', { permitId: permit.permitId,
+      outcome: 'complete', eventId: '$sent:example' })).status).toBe(200);
+    const replay = await h.call('human', 'acquire', { clientTxnId: 'txn_completed' });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ kind: 'complete', eventId: '$sent:example' });
+  });
   it('denies new agent permits after owner Stop while allowing completion of an existing permit', async () => {
     const h = setup();
     expect((await h.call('agent', 'ready')).status).toBe(200);
