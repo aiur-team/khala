@@ -1,5 +1,9 @@
 # Codex 0.160.0 native hosted boundary
 
+The 2026-10-01 recheck of the installed package and native binary returned the
+same version and digest recorded below. The public launcher is a shell script
+with a different digest and is not the executable pin.
+
 2026-10-01, Linux x64. The installed `@openai/codex` package reported
 `codex-cli 0.160.0`. The exact native executable had SHA-256
 `12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad`.
@@ -60,3 +64,47 @@ read, and exact-token ACK with correlation to that binding. If any check differs
 leave the route unsupported and do not send a second release. #787's separately
 pinned 0.159.3 production proof and its live release/read/ACK gate remain
 independent of this 0.160.0 observation.
+
+## Precise unsupported finding and fallback
+
+The missing contract is a model-origin later-call receipt. The synthetic Stop
+continuation attempted a later call, but the sandbox refused it before
+execution. No exact-token ACK or inbox cursor movement was witnessed. A
+hosted-route regression test verifies that a claimed positive hook result
+cannot promote 0.160.0 without its native queue contract. The safe fallback is
+the separately pinned 0.159.3 native route in
+`codex-0159-3-native-sync.md`, subject to its own owner gate. Do not change the
+user's installed binary automatically.
+
+PR #808 defines the broader cross-mode acceptance journey. This finding covers
+only the exact 0.160.0 Codex native route; #787 remains the sole writer of the
+0.159.3 production dispatcher until its handoff.
+
+## Immutable reconnect bundle
+
+Capture a read-only bundle manifest with SHA-256 digests for the exact checkout
+and binary used in each proof. These values pin this checkout; regenerate and
+review the manifest if any file changes. The bundle contains no auth token,
+room key, or rollout.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Codex 0.160.0 native Linux x64 binary | `12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad` |
+| `packages/agent-cli/src/codex/hook.ts` | `8d5ee5dfca60b0498032cb7afcc2c31a647c43a5e4f07e81b7965a93c8b73f62` |
+| `packages/agent-cli/src/codex/hooks-config.ts` | `63958fd6c9f773560794453c3fc3892a68c3af758384256a03b37dd58342a2ce` |
+| `packages/agent-cli/src/composition/codex-installed-wake.ts` | `dc4efd8e33fe3074f70b26603aa3bc85d62018c4ced1dc640c2e40e6611f068d` |
+| `packages/agent-cli/src/composition/read.ts` | `89c539acf2842967a0a51df2e2c26f0e04157690ab6977579239ed8c08d7593c` |
+| `packages/agent-cli/src/cli/inbox.ts` | `c826794a13bb93f2b21b6cd06f441d5e0961c7ed4b5c0dc94cf3f70034cbf6d7` |
+
+For a fresh bounded local test, verify these digests, use private HOME/XDG
+directories, review and trust the exact Khala hook, and hold one test
+binding/generation on one provider thread. Record the thread ID and executable
+digest before release. Send one content-free queue notice, then one released
+marker while retaining an unsubmitted marker. Capture the model's later
+`khala_read` and `khala_send` results on that same thread, the exact returned
+batch token, cursor advancement, and correlated receipt. A wrong thread, stale
+generation, absent trust, revoked binding, duplicate token, or late receipt
+must leave delivery unavailable. After reviewed merge and deployment, the owner
+can repeat the bounded proof in production with explicit approval and an
+owner-selected room. Steer and Sync need separate timing and receipt evidence;
+a manual read/send result cannot promote either mode.
