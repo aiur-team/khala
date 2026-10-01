@@ -215,6 +215,16 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       fixtureBrowser: true, pinnedClaudeProbe: true,
       fixtureBrowserCertificateFile: transport.certificateFile,
       ...(process.platform === 'linux' && existsSync(chromiumExecutable) ? { chromiumExecutable } : {}) });
+    assert.ok(client.browserExecutable, 'installed browser required for native fixture');
+    const preflight = await chromium.launchPersistentContext(path.join(root, 'installed-browser-preflight'), {
+      executablePath: client.browserExecutable, headless: true,
+    });
+    try {
+      const page = await preflight.newPage();
+      const response = await page.goto(`${transport.origin}/_matrix/client/versions`);
+      assert.equal(response?.status(), 200, 'installed browser cannot reach private-CA Matrix proxy');
+    } finally { await preflight.close(); }
+    console.log(JSON.stringify({ scope: 'installed_browser_preflight', privateCaMatrix: 'reachable' }));
     const result = await client.call([{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
       name: 'khala_request_channel_access', arguments: { operationId: 'controlled-candidate-operation', target },
     } }]);
@@ -268,6 +278,19 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     assert.equal(agentDeviceLogins, 1);
     assert.equal(typeof committed?.binding?.bindingId, 'string');
     assert.equal(typeof committed?.matrix_session?.accessToken, 'string');
+    const membershipPath = `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(committed.matrix_session.userId)}`;
+    let membershipStatus = 0;
+    let joined = false;
+    for (let attempt = 0; attempt < 10 && !joined; attempt += 1) {
+      const membership = await fetch(synapse.baseUrl + membershipPath, {
+        headers: { authorization: `Bearer ${committed.matrix_session.accessToken}` },
+      });
+      membershipStatus = membership.status;
+      joined = membership.ok && (await membership.json()).membership === 'join';
+      if (!joined) await delay(250);
+    }
+    assert.equal(joined, true, `admitted Matrix device not joined: status ${membershipStatus}`);
+    console.log(JSON.stringify({ scope: 'agent_matrix_preflight', joined, membershipStatus }));
     assert.equal(files(client.stateDirectory).filter(item => item.endsWith('/current-binding.json')).length, 0);
     recoveredSession = client.session();
     const beforeRegistration = await recoveredSession.request(statusMessage(4));
@@ -278,6 +301,20 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     assert.notEqual(beforeRegistration.result?.structuredContent?.outcome, 'connected');
     assert.notEqual(beforeRoute.result?.structuredContent?.connected, true);
     assert.notEqual(beforeRead.result?.structuredContent?.kind, 'batch');
+    const activationArtifacts = () => {
+      const paths = files(client.stateDirectory);
+      return {
+        matrixSessionStored: paths.some(item => item.endsWith('/matrix-session.json')),
+        browserIdentityStored: paths.some(item => item.endsWith('/matrix-profile/identity.json')),
+        browserReservationStored: paths.some(item => item.endsWith('/matrix-profile/reservations.json')),
+        diagnosticsFilePresent: paths.some(item => item.endsWith(`/diagnostics-${recoveredSession.pid}.jsonl`)),
+      };
+    };
+    assert.notEqual(beforeRegistration.result?.structuredContent?.outcome, 'repair_required',
+      `activation failed before owner registration: ${JSON.stringify({
+        status: beforeRegistration.result?.structuredContent?.outcome ?? 'absent',
+        diagnostics: recoveredSession.diagnostics(), membershipStatus, artifacts: activationArtifacts(),
+      })}`);
     const durableStages = () => {
       const diagnosticFile = files(client.stateDirectory).find(item => item.endsWith(`/diagnostics-${recoveredSession.pid}.jsonl`));
       if (!diagnosticFile) return [];
@@ -297,7 +334,10 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       ownerDeviceEmpty = durableStages().some(item => item.stage === 'owner_device_empty');
     }
     assert.equal(ownerDeviceEmpty, true,
-      `pre-registration owner device guard not exercised: ${JSON.stringify(durableStages().slice(-8))}`);
+      `pre-registration owner device guard not exercised: ${JSON.stringify({
+        durable: durableStages().slice(-8), stderr: recoveredSession.diagnostics(), membershipStatus,
+        artifacts: activationArtifacts(),
+      })}`);
     console.log(JSON.stringify({ scope: 'pre_owner_registration', sessionRoute: 'claude_env',
       status: beforeRegistration.result?.structuredContent?.outcome ?? 'absent',
       route: beforeRoute.result?.structuredContent?.kind ?? 'absent',
