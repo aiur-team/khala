@@ -282,6 +282,14 @@ describe('installed hosted connector composition', () => {
         expect(attestationPaths).toEqual(['/api/agent/device-attestation/challenge', '/api/agent/device-attestation/register']);
         expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { prerequisites: { review: 'ready', dispatch: 'blocked' } } });
+        expect(await connector.listeningModeControl.read()).toMatchObject({ ok: true,
+          view: { bindingId: binding.bindingId, generation: 0, effective: null,
+            support: { steer: { status: 'unsupported' }, sync: { status: 'unsupported' },
+              async: { status: 'unsupported' } } } });
+        expect(await connector.listeningModeControl.set({ commandId: 'manual_mode_0001' as never,
+          expectedVersion: 1, requested: 'async', issuedAt: '2026-09-30T00:00:00Z' })).toMatchObject({
+          outcome: 'applied', effective: null, reason: 'support_unsupported' });
+        expect(await connector.listeningMode()).toMatchObject({ effective: null });
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
         expect(send).toHaveBeenCalledOnce();
@@ -348,9 +356,22 @@ describe('installed hosted connector composition', () => {
           explicitRead: true })).toBeNull();
         await reader.release();
 
+        commands.push({ operationId: 'manual_sync_0001', kind: 'listening_set', outcome: null,
+          authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
+            authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
+          body: { v: 1, commandId: 'manual_sync_0001', bindingId: binding.bindingId,
+            expectedBindingGeneration: 0, expectedVersion: 2, requested: 'sync',
+            issuedAt: '2026-09-30T00:00:00Z' } });
+        await vi.waitFor(() => expect(completions).toHaveLength(2), { timeout: 5_000 });
+        expect(completions[1]).toMatchObject({ outcome: { outcome: 'refused', effective: null,
+          reason: expect.stringContaining('native Sync delivery hook') } });
+        expect(await connector.listeningMode()).toMatchObject({ effective: null });
+
         ownerAuthorized = false;
         expect(await connector.status()).toMatchObject({ connected: false,
           readiness: { errorCode: 'channel_closing' } });
+        expect(await connector.listeningModeControl.read()).toEqual({ ok: false, code: 'unavailable' });
+        expect(await connector.listeningMode()).toMatchObject({ effective: null });
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'revoked-send', body: 'blocked' })).kind).toBe('refused');
         ownerAuthorized = true;

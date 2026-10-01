@@ -40,6 +40,7 @@ import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowle
 import type { HarnessPort } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
+import { manualListeningCapabilities } from './agent/manual-listening';
 import { createAgentParticipantLookup } from './agent/participant-directory';
 import { renameDelivery } from './agent/rename-delivery';
 import { readOrderedPendingReferences } from '@khala/connector/storage/ordered-pending';
@@ -501,6 +502,17 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
       reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
+      listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+        current: async () => {
+          if (closed || remoteDenied || deliveryStopped) return false;
+          const held = await readBinding().catch(() => null);
+          return held !== null && sameSessionBinding(held, next)
+            && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
+        },
+        capabilities: async () => manualListeningCapabilities(input.session.harness as 'claude' | 'codex'),
+      });
+      await listening.application.read();
+      reportSubscription({ stage: 'intake_listening_initialized', result: 'ok' });
     } else if (harness) {
       const activeHarness = harness;
       listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
