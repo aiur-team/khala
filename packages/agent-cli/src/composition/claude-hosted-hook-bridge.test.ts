@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { runHook } from '../../../claude-plugin/hooks/lib/runtime.mjs';
+import { fakeKhala, hookDeps } from '../../../claude-plugin/src/fakes';
 import { claudeHostedHookPaths, startClaudeHostedHookBridge, type ClaudeHostedBoundary } from './claude-hosted-hook-bridge';
 
 const root = process.env.TMPDIR ?? tmpdir();
@@ -48,6 +49,44 @@ function fixture() {
 }
 
 describe('Claude hosted hook receipt bridge', () => {
+  it('keeps the exact internal hook path when a hosted descriptor is empty or refuses', async () => {
+    const f = fixture();
+    const internal = fakeKhala();
+    internal.bind(f.sessionId, 'steer');
+    internal.release(f.sessionId, 'internal after hosted empty');
+    const { deps } = hookDeps(internal.khala, internal.engaged);
+    const hookDepsWithHosted = { ...deps, hostedRoot: root };
+    const postTool = () => runHook('post-tool-use',
+      JSON.stringify({ hook_event_name: 'PostToolUse', session_id: f.sessionId }), hookDepsWithHosted);
+    const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId,
+      port: { ...f.port, pull: async () => null } });
+    const descriptorPath = claudeHostedHookPaths(root, f.sessionId).descriptor;
+    const originalDescriptor = await readFile(descriptorPath, 'utf8');
+    try {
+      expect((await postTool()).stdout).toContain('internal after hosted empty');
+      expect(internal.ops(f.sessionId)).toEqual(['hook', 'pull']);
+
+      internal.agentCall(f.sessionId);
+      internal.release(f.sessionId, 'internal after hosted refusal');
+      const descriptor = JSON.parse(originalDescriptor) as { secret: string };
+      descriptor.secret = 'A'.repeat(43);
+      await writeFile(descriptorPath, JSON.stringify(descriptor));
+      expect((await postTool()).stdout).toContain('internal after hosted refusal');
+      expect(internal.ops(f.sessionId)).toEqual(['hook', 'pull', 'hook', 'pull']);
+      internal.agentCall(f.sessionId);
+      internal.bind(f.sessionId, 'sync');
+      internal.release(f.sessionId, 'internal at Stop');
+      const stopped = await runHook('stop',
+        JSON.stringify({ hook_event_name: 'Stop', session_id: f.sessionId }), hookDepsWithHosted);
+      expect(JSON.parse(stopped.stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('internal at Stop') });
+      expect((await runHook('post-tool-use',
+        JSON.stringify({ hook_event_name: 'PostToolUse', session_id: randomUUID() }), hookDepsWithHosted)).stdout).toBe('');
+    } finally {
+      await writeFile(descriptorPath, originalDescriptor);
+      await bridge.close();
+    }
+  });
+
   it('delivers Steer at the tool boundary and commits only after the exact later call', async () => {
     const f = fixture();
     const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });

@@ -487,8 +487,7 @@ export async function runHook(role, raw, deps) {
     && typeof deps.hostedRoot === 'string') {
     const boundary = role === 'post-tool-use' ? 'post_tool_use' : 'stop';
     const hosted = await hostedHook(deps, input.sessionId, boundary);
-    if (hosted !== null) {
-      if (hosted.kind !== 'batch') return { stdout: '', stderr: '', exitCode: 0 };
+    if (hosted?.kind === 'batch') {
       const notice = `${renderDelivery(hosted.frame)}\nKhala hosted hook receipt: ${hosted.receiptNonce}. `
         + 'After reading this batch, call khala_hook_receipt with this receipt to acknowledge it.';
       return { stdout: role === 'stop' ? JSON.stringify({ decision: 'block', reason: notice })
