@@ -2,7 +2,7 @@
 .conversation-settings>summary{display:flex;align-items:center;gap:.35rem;min-height:44px;cursor:pointer;list-style:none}
 .conversation-settings>summary::-webkit-details-marker{display:none}
 .conversation-settings>summary:focus-visible,.conversation-settings__popover :is(button,summary):focus-visible{outline:2px solid var(--khala-accent);outline-offset:2px}
-.conversation-settings__label{font:inherit}
+.conversation-settings__label{display:none}
 .conversation-settings__popover{position:absolute;right:0;top:calc(100% + .25rem);z-index:10;width:min(28rem,calc(100vw - 1rem));max-height:min(70dvh,42rem);overflow:auto;box-sizing:border-box;padding:.75rem;background:var(--khala-fill-raised);border:1px solid var(--khala-line);border-radius:.5rem;box-shadow:0 12px 32px #0005}
 .conversation-settings__popover .panel{margin:0}
-@media(max-width:600px){.conversation-settings__label{display:none}.conversation-settings__popover{right:-.5rem}}
+@media(max-width:600px){.conversation-settings__popover{right:-.5rem}}
