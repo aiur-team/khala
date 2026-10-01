@@ -1,5 +1,5 @@
 import {
-  decodeChannelAccessRequest, decodeRoomId,
+  decodeAgentChannelLinkRequest, decodeHumanChannelLinkResolveRequest, decodePersonalChannelLinkRequest,
   type AccessRequestStatus, type ChannelAccessRequesterContext,
   type DiscoveryRequester, type OwnerId, type RoomId,
 } from '@khala/contracts/messaging/index';
@@ -28,6 +28,8 @@ export function createChannelLinkHandlers(deps: Readonly<{
   admissionFor?(request: Request): AdmissionService;
   agent?: Readonly<{
     authenticate(request: Request): Promise<AgentLinkAuthentication>;
+    /** Recheck the authenticated sponsor and exact native session before reading the link. */
+    inspectRequester(context: ChannelAccessRequesterContext, sponsorOwnerId: OwnerId): Promise<'current' | 'revoked' | 'unavailable'>;
     inspectMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
     /** Must recheck the invite revision before creating the journal row. */
     submitAccess(input: Readonly<{
@@ -45,9 +47,9 @@ export function createChannelLinkHandlers(deps: Readonly<{
     if (!auth || auth.kind === 'unavailable') return result(503, 'unavailable');
     if (auth.kind === 'signed_out') return result(401, 'auth_required');
     const body = await readBody(request, ['v', 'channelUrl']);
-    if (!body || body.v !== 1 || typeof body.channelUrl !== 'string') return result(400, 'invalid_link');
-    let url: URL;
-    try { url = new URL(body.channelUrl); } catch { return result(400, 'invalid_link'); }
+    const decoded = decodeHumanChannelLinkResolveRequest(body, deps.origin);
+    if (!decoded.ok) return result(400, 'invalid_link');
+    const url = new URL(decoded.value.channelUrl);
     const invite = inviteFromShareLink(url, deps.origin);
     if (invite === null) return result(400, 'invalid_link');
     const state = await safe(() => admissionFor(request).inspect(invite));
@@ -68,9 +70,9 @@ export function createChannelLinkHandlers(deps: Readonly<{
     if (auth.kind === 'rejected') return result(auth.code === 'signed_out' ? 401 : 403,
       auth.code === 'signed_out' ? 'auth_required' : 'forbidden');
     const body = await readBody(request, ['v', 'roomId']);
-    const room = decodeRoomId(body?.roomId);
-    if (!body || body.v !== 1 || !room.ok) return result(400, 'invalid_link');
-    const shared = await safe(() => admissionFor(request).personalLink(room.value));
+    const decoded = decodePersonalChannelLinkRequest(body);
+    if (!decoded.ok) return result(400, 'invalid_link');
+    const shared = await safe(() => admissionFor(request).personalLink(decoded.value.roomId));
     if (!shared || shared.kind === 'unavailable') return result(503, 'unavailable');
     if (shared.kind === 'outcome_unknown') return result(503, 'unavailable');
     if (shared.kind === 'rejected') {
@@ -87,9 +89,12 @@ export function createChannelLinkHandlers(deps: Readonly<{
     const auth = await safe(() => agent.authenticate(request));
     if (!auth || auth.kind === 'unavailable') return result(503, 'unavailable');
     if (auth.kind === 'rejected') return result(auth.code === 'auth_required' ? 401 : 403, auth.code);
+    const requesterState = await safe(() => agent.inspectRequester(auth.context, auth.sponsorOwnerId));
+    if (!requesterState || requesterState === 'unavailable') return result(503, 'unavailable');
+    if (requesterState !== 'current') return result(403, 'forbidden');
     const body = await readBody(request, ['v', 'kind', 'operationId', 'credentialRef', 'channelUrl']);
-    const decoded = decodeChannelAccessRequest(body, auth.requester.origin);
-    if (!decoded.ok || decoded.value.kind !== 'channel_url') return result(400, 'invalid_link');
+    const decoded = decodeAgentChannelLinkRequest(body, deps.origin);
+    if (!decoded.ok) return result(400, 'invalid_link');
     const access = decoded.value;
     if (access.credentialRef !== auth.credentialRef) return result(403, 'forbidden');
     const resolved = await resolveAgentChannelLink({

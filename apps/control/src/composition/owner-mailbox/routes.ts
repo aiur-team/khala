@@ -5,11 +5,12 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
-import { createOwnerMailbox, type OwnerCommandKind, type OwnerMailboxCommand } from './store';
+import { createOwnerMailbox, type MailboxSubmitDiagnostic, type OwnerCommandKind, type OwnerMailboxCommand } from './store';
 
 export const OWNER_MAILBOX_SUBMIT = '/api/human/owner-mailbox/submit';
 export const OWNER_MAILBOX_RESULT = '/api/human/owner-mailbox/result';
 export const OWNER_REVIEW_BINDINGS = '/api/human/owner-mailbox/review-bindings';
+export const OWNER_REVIEW_STATUS = '/api/human/owner-mailbox/review-status';
 export const OWNER_MAILBOX_POLL = '/api/agent/owner-mailbox/poll';
 export const OWNER_MAILBOX_COMPLETE = '/api/agent/owner-mailbox/complete';
 
@@ -21,7 +22,8 @@ function json(status: number, value: unknown): Response {
 function unavailable(): Response { return json(503, { code: 'unavailable' }); }
 export type MailboxFailureStage = 'auth' | 'binding_read' | 'owner_index_read' | 'membership' | 'mailbox_submit' | 'composition';
 export type MailboxFailureCode = 'session_store_unavailable' | 'store_unavailable' | 'matrix_unavailable'
-  | 'submit_failed' | 'load_failed' | 'route_missing' | 'handle_failed';
+  | 'mailbox_full' | 'submit_failed' | 'load_failed' | 'route_missing' | 'handle_failed'
+  | Exclude<MailboxSubmitDiagnostic, 'capacity'>;
 export type MailboxDiagnostic = (entry: Readonly<{ stage: MailboxFailureStage; code: MailboxFailureCode }>) => void;
 function plain(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -32,7 +34,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
 function readCommand(value: unknown): (OwnerMailboxCommand & { bindingId: string }) | null {
   if (!plain(value) || !exact(value, ['bindingId', 'operationId', 'kind', 'body'])
     || typeof value.bindingId !== 'string' || typeof value.operationId !== 'string'
-    || !['controls_status', 'controls_set', 'review_preview', 'review_approve'].includes(String(value.kind))) return null;
+    || !['controls_status', 'controls_set', 'listening_set', 'listening_grant', 'review_preview', 'review_approve'].includes(String(value.kind))) return null;
   return value as OwnerMailboxCommand & { bindingId: string };
 }
 function readCompletion(value: unknown): { bindingId: string; operationId: string; outcome: JsonValue } | null {
@@ -139,8 +141,9 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         const authority = await owner(request, body.bindingId, true);
         if (authority instanceof Response) return authority;
         let mailbox: ReturnType<typeof createOwnerMailbox>;
+        let submitCause: MailboxSubmitDiagnostic | null = null;
         try { mailbox = createOwnerMailbox({ store: input.store, binding: authority.binding, roomId: authority.roomId,
-          clock: input.clock, authoritySecret: input.authoritySecret }); }
+          clock: input.clock, authoritySecret: input.authoritySecret, submitDiagnostic: cause => { submitCause = cause; } }); }
         catch { return submitUnavailable('composition', 'load_failed'); }
         let result: Awaited<ReturnType<typeof mailbox.submit>>;
         try { result = await mailbox.submit({ operationId: body.operationId, kind: body.kind as OwnerCommandKind,
@@ -148,7 +151,8 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         catch { return submitUnavailable('mailbox_submit', 'submit_failed'); }
         return result.kind === 'ok' ? json(200, { v: 1, operationId: result.value.operationId, outcome: result.value.outcome })
           : result.kind === 'conflict' ? json(409, { code: 'operation_conflict' })
-            : submitUnavailable('mailbox_submit', 'store_unavailable');
+            : result.kind === 'capacity' ? submitUnavailable('mailbox_submit', 'mailbox_full')
+            : submitUnavailable('mailbox_submit', submitCause === 'capacity' || submitCause === null ? 'store_unavailable' : submitCause);
       } },
       { path: OWNER_MAILBOX_RESULT, methods: ['GET'], async handle(request: Request) {
         const url = new URL(request.url);
@@ -164,6 +168,19 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         if (result.kind !== 'ok') return unavailable();
         return result.value === null ? json(404, { code: 'not_found' })
           : json(200, { v: 1, operationId: result.value.operationId, outcome: result.value.outcome });
+      } },
+      { path: OWNER_REVIEW_STATUS, methods: ['GET'], async handle(request: Request) {
+        const url = new URL(request.url);
+        const bindingId = url.searchParams.get('binding_id');
+        if (!bindingId || [...url.searchParams.keys()].join(',') !== 'binding_id') return json(400, { code: 'invalid_request' });
+        const authority = await owner(request, bindingId, false);
+        if (authority instanceof Response) return authority;
+        const mailbox = createOwnerMailbox({ store: input.store, binding: authority.binding, roomId: authority.roomId,
+          clock: input.clock, authoritySecret: input.authoritySecret });
+        const preview = await mailbox.lastReviewPreview();
+        if (preview.kind !== 'ok') return unavailable();
+        return json(200, { v: 1, bindingId, generation: authority.binding.generation,
+          status: 'waiting_for_agent', preview: preview.value });
       } },
     ] satisfies RouteRegistration[]),
     agent: Object.freeze([
@@ -204,7 +221,8 @@ export function unavailableOwnerMailboxRoutes(): Readonly<{ human: readonly Rout
   const absent = (path: string, method: string): RouteRegistration => Object.freeze({
     path, methods: Object.freeze([method]), handle: async () => unavailable(),
   });
-  return { human: [absent(OWNER_REVIEW_BINDINGS, 'GET'), absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET')],
+  return { human: [absent(OWNER_REVIEW_BINDINGS, 'GET'), absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET'),
+    absent(OWNER_REVIEW_STATUS, 'GET')],
     agent: [absent(OWNER_MAILBOX_POLL, 'GET'), absent(OWNER_MAILBOX_COMPLETE, 'POST')] };
 }
 

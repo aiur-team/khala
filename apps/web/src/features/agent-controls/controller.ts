@@ -128,6 +128,7 @@ export function createAgentControlsController(
   let listeningDraft: ListeningMode | null = null;
   let listeningSubmission: ListeningSubmission = { kind: 'idle' };
   let listeningCommandId: string | null = null;
+  let listeningUnknownCommand: ListeningModeCommand | null = null;
   let listeningAppliedAck: { attempted: ListeningMode; generation: number; previousVersion: number } | null = null;
   let listeningSubmittedVersion: number | null = null;
   let grantConfirmation: GrantConfirmation | null = null;
@@ -151,6 +152,7 @@ export function createAgentControlsController(
     listeningDraft = null;
     listeningSubmission = { kind: 'idle' };
     listeningCommandId = null;
+    listeningUnknownCommand = null;
     listeningAppliedAck = null;
     listeningSubmittedVersion = null;
     grantConfirmation = null;
@@ -184,6 +186,13 @@ export function createAgentControlsController(
     }
     if (next !== null && listeningBase !== null && next.version < listeningBase.version) return;
     listeningBase = next;
+    if (listeningUnknownCommand && next && next.version > listeningUnknownCommand.expectedVersion) {
+      const attempted = listeningUnknownCommand.requested;
+      listeningUnknownCommand = null;
+      listeningSubmission = next.requested === attempted && next.effective === attempted
+        ? { kind: 'applied', attempted } : { kind: 'conflict', attempted };
+      if (listeningSubmission.kind === 'applied') listeningDraft = null;
+    }
     if (next !== null && listeningAppliedAck !== null
       && next.generation === listeningAppliedAck.generation
       && next.version > listeningAppliedAck.previousVersion) {
@@ -294,6 +303,7 @@ export function createAgentControlsController(
       ...view,
       snapshotReceived: true,
       listening: listeningDisplay(),
+      listeningUnavailableReason: snapshot.listeningUnavailableReason ?? null,
       ownerLabel: ownerLabelFor(snapshot.binding.ownerId, config.viewerOwnerId),
       isViewerOwned,
       revoked: snapshot.bindingStatus === 'revoked',
@@ -528,6 +538,7 @@ export function createAgentControlsController(
     const option = listeningBase.options.find(candidate => candidate.mode === mode);
     if (!option?.selectable) return;
     listeningDraft = mode;
+    if (listeningUnknownCommand?.requested !== mode) listeningUnknownCommand = null;
     if (listeningSubmission.kind !== 'pending') listeningSubmission = { kind: 'idle' };
     publishListening();
   }
@@ -535,6 +546,7 @@ export function createAgentControlsController(
   function applyListeningResult(commandId: string, attempted: ListeningMode, result: ListeningModeResult): void {
     if (disposed || listeningCommandId !== commandId || result.commandId !== commandId) return;
     listeningCommandId = null;
+    listeningUnknownCommand = null;
     if (result.outcome === 'applied') {
       // The ack accepts the command, but only a newer connector snapshot can
       // confirm both the requested and effective modes for this generation.
@@ -576,7 +588,7 @@ export function createAgentControlsController(
     const attempted = listeningDraft;
     const option = listeningBase.options.find(candidate => candidate.mode === attempted);
     if (!option?.selectable || attempted === listeningBase.requested) return;
-    const command: ListeningModeCommand = {
+    const command: ListeningModeCommand = listeningUnknownCommand ?? {
       v: 1,
       commandId: createId() as CommandId,
       bindingId: config.bindingId,
@@ -585,6 +597,13 @@ export function createAgentControlsController(
       requested: attempted,
       issuedAt: new Date().toISOString(),
     };
+    if (command.expectedBindingGeneration !== listeningBase.generation
+      || command.expectedVersion !== listeningBase.version || command.requested !== attempted) {
+      listeningUnknownCommand = null;
+      listeningSubmission = { kind: 'conflict', attempted };
+      publishListening();
+      return;
+    }
     listeningCommandId = command.commandId;
     listeningSubmittedVersion = listeningBase.version;
     listeningSubmission = { kind: 'pending', attempted };
@@ -594,6 +613,7 @@ export function createAgentControlsController(
       .catch(() => {
         if (disposed || listeningCommandId !== command.commandId) return;
         listeningCommandId = null;
+        listeningUnknownCommand = command;
         listeningSubmission = { kind: 'unknown', attempted };
         publishListening();
       });

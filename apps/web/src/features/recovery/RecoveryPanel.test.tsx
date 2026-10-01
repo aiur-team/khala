@@ -82,6 +82,20 @@ function render(current: RecoveryView): string {
   );
 }
 
+it('keeps closure out of conversation settings while preserving revocation and operation status', () => {
+  const current = view();
+  const html = renderToStaticMarkup(<RecoveryPanel ports={unusedPorts()} config={CONFIG}
+    controller={controller(current)} onClosureParticipationEnded={() => {}} showClosureAction={false} />);
+  expect(html).toContain(`Revoke device ${DEVICE_ID}`);
+  expect(html).not.toContain('>Close channel<');
+  expect(html).not.toContain('Confirm channel closure');
+  const pending = renderToStaticMarkup(<RecoveryPanel ports={unusedPorts()} config={CONFIG}
+    controller={controller(view({ operation: operation('closure', 'partial', 'local_cleanup_failed'), allowedActions: [] }))}
+    onClosureParticipationEnded={() => {}} showClosureAction={false} />);
+  expect(pending).toContain('Closure partially complete');
+  expect(pending).toContain('Inspect operation');
+});
+
 type OperationKind = Exclude<RecoveryOperation['kind'], 'idle'>;
 type OperationState<K extends OperationKind> = Extract<RecoveryOperation, { kind: K }>['state'];
 

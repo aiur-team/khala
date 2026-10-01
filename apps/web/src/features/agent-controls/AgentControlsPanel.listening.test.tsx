@@ -118,8 +118,9 @@ function render(options: Options = {}, prepare?: (controller: AgentControlsContr
   return html;
 }
 
-function renderCompact(options: Options = {}): string {
+function renderCompact(options: Options = {}, prepare?: (controller: AgentControlsController) => void): string {
   const controller = controllerFor(snapshot(options));
+  prepare?.(controller);
   const html = renderToStaticMarkup(<AgentListeningControls ports={{} as AgentControlsPorts} config={CONFIG} controller={controller} />);
   controller.dispose();
   return html;
@@ -234,6 +235,25 @@ describe('AgentControlsPanel listening section', () => {
     expect(open).toContain('Missing proof: Ordering under a busy turn is not proved.');
     expect(open).toContain('It does not enable hard cancel.');
     expect(open).toContain('Confirm for this binding');
+  });
+
+  it('uses plain grant labels in the compact agent detail while keeping confirmation consequences', () => {
+    const modes: ModeSupportMap = { ...PROVEN, steer: support('experimental', 'steer') };
+    const closed = renderCompact({ modes });
+    expect(closed).toContain('Allow Steer');
+    expect(closed).not.toContain('Enable experimental route');
+    const open = renderCompact({ modes }, controller => controller.requestGrant('experimental_route', 'steer'));
+    expect(open).toMatch(new RegExp(`Allow Steer for ${LABEL.source}\\?`));
+    expect(open).toContain('It does not stop the agent mid-turn.');
+    expect(open).toContain('Why approval is needed: Ordering under a busy turn is not proved.');
+    expect(open).toContain('Confirm for this agent');
+    expect(open).toContain('<summary>Review supporting details</summary>');
+    const grant: RouteGrant = { v: 1, kind: 'experimental_route', bindingId: BINDING_ID, generation: 2,
+      mode: 'steer', route: 'interactive-codex-steer', harnessVersion: VERSION,
+      evidenceRevision: 'rev-1', grantRevision: 2 };
+    const granted = renderCompact({ modes, experimentalGrants: [grant] });
+    expect(granted).toContain('Remove Steer permission');
+    expect(granted).not.toContain('Revoke experimental route');
   });
 
   it('offers independent revoke actions for an experimental grant and a hard-cancel grant', () => {

@@ -69,7 +69,9 @@ read them. Use it only for work you would already let those agents see.
    bar, then select your agent from the participant list. Its detail shows the
    requested and effective listening modes and the Steer, Sync, and Async
    choices. Unavailable choices explain why. A change is reported as set only
-   after the connector confirms both modes. An experimental choice requires
+   after a newer connector read confirms both modes for that agent session.
+   If the result is unknown, **Retry listening mode** resends the same command;
+   an offline or unsupported session keeps its choices disabled. An experimental choice requires
    you to review and confirm its route evidence for that exact session; the
    grant expires if the route, tested version, or evidence revision changes.
    You can revoke the experimental route from the same detail. Other members'
@@ -125,6 +127,13 @@ expect, not as a claim that it works today.
 
 - **Review before release.** Messages for your agent wait until you preview and
   release them. A sender can queue several messages, and you can release them together.
+  If the agent goes offline after a pending list was verified, that known list
+  remains reviewable. A release is queued for the same agent session and its
+  status can be checked without sending another release, including after a browser
+  reload when its original command is still saved. The selected conversation
+  shows the completed release and agent acknowledgement when that check settles.
+  New pending messages need the
+  connector to return before they appear in review.
 - **Trust and re-arm.** Turning review off for a trusted peer affects future
   messages only; it never releases the backlog. Turning review back on (re-arm)
   makes later messages wait again. Automatic release is closed in this build:

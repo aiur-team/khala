@@ -39,7 +39,7 @@ export interface ReviewController {
   clearSelection(): void;
   /** Submits the current selection as one new command. No-op while a command is `submitting`/`unknown`, or the selection is not `selected`, or access is not `ready`. */
   submit(): Promise<void>;
-  /** Reconciles the last `outcome_unknown` command using its exact identity and bytes, never a freshly reconstructed one. No-op unless submission is `unknown`. */
+  /** Reads the last submitted command's status using its exact identity and bytes. */
   reconcileUnknown(): Promise<void>;
   /** Idempotent; unsubscribes the port observer exactly once. */
   dispose(): void;
@@ -98,6 +98,8 @@ function mapResult(fallbackCommandId: CommandId, result: ApprovalUiResult): Subm
       return { phase: 'released', commandId: fallbackCommandId, releaseIds: result.releaseIds, error: null };
     case 'rejected':
       return { phase: 'rejected', commandId: fallbackCommandId, releaseIds: null, error: result.code };
+    case 'waiting_for_agent':
+      return { phase: 'waiting_for_agent', commandId: fallbackCommandId, releaseIds: null, error: null };
     case 'outcome_unknown':
       // The command already sent is the identity that matters for reconciliation,
       // never whatever commandId happened to come back in the result (U3).
@@ -116,6 +118,13 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   const abortController = new AbortController();
 
   let cachedView: ReviewView = sanitizeView(port.snapshot());
+  if (cachedView.access === 'revoked' || lastCommand && (cachedView.access === 'ready'
+    || cachedView.access === 'waiting_for_agent' && cachedView.pendingKnown !== false)
+    && (cachedView.bindingId !== lastCommand.bindingId
+      || cachedView.bindingGeneration !== lastCommand.expectedBindingGeneration)) {
+    lastCommand = null;
+    submission = EMPTY_SUBMISSION;
+  }
   let cachedData: ReviewData | null = null;
   let dataDirty = true;
 
@@ -151,6 +160,13 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
       selection = emptySelection();
       submission = EMPTY_SUBMISSION;
       lastCommand = null;
+    } else if (lastCommand && (cachedView.access === 'ready'
+      || cachedView.access === 'waiting_for_agent' && cachedView.pendingKnown !== false)
+      && (cachedView.bindingId !== lastCommand.bindingId
+        || cachedView.bindingGeneration !== lastCommand.expectedBindingGeneration)) {
+      selection = emptySelection();
+      submission = EMPTY_SUBMISSION;
+      lastCommand = null;
     } else {
       selection = reconcileSelection(selection, cachedView.pending, bindingContextOf(cachedView));
     }
@@ -160,12 +176,12 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   const unsubscribePort = port.subscribe(onPortChange, abortController.signal);
 
   function toggleSelect(ref: EventRef, checked: boolean): void {
-    if (disposed || cachedView.access !== 'ready') return;
+    if (disposed || !['ready', 'waiting_for_agent'].includes(cachedView.access)) return;
     // While a command is in flight or unresolved, the selection it targets
     // must stay exactly what was submitted — editing it now would silently
     // discard the edit on success (the submitted refs win) or, worse, look
     // like it applies to a reconciled `unknown` command it was never part of.
-    if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
+    if (submission.phase === 'submitting' || submission.phase === 'unknown' || submission.phase === 'waiting_for_agent') return;
     selection = checked ? addRef(selection, ref, bindingContextOf(cachedView), cachedView.pending) : removeRef(selection, ref);
     notify();
   }
@@ -190,7 +206,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     // cleared submission/command authority (`onPortChange`), and a late
     // response — however it resolved — must never resurrect either one
     // (Failure boundaries: revocation wins over a late in-flight response).
-    if (disposed || cachedView.access === 'revoked') return;
+    if (disposed || cachedView.access === 'revoked' || lastCommand !== command) return;
     submission = mapResult(command.commandId, result);
     if (submission.phase === 'released') {
       selection = emptySelection();
@@ -205,17 +221,35 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   }
 
   async function submit(): Promise<void> {
-    if (disposed || cachedView.access !== 'ready') return;
-    if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
+    if (disposed || !['ready', 'waiting_for_agent'].includes(cachedView.access)) return;
+    if (submission.phase === 'submitting' || submission.phase === 'unknown' || submission.phase === 'waiting_for_agent') return;
     const snapshot = toSnapshot(selection);
     if (!snapshot) return;
     await runApprove(buildCommand(newCommandId(), snapshot, cachedView.pending));
   }
 
   async function reconcileUnknown(): Promise<void> {
-    if (disposed || submission.phase !== 'unknown' || !lastCommand) return;
-    await runApprove(lastCommand);
+    if (disposed || !['unknown', 'waiting_for_agent'].includes(submission.phase) || !lastCommand) return;
+    const command = lastCommand;
+    submission = { phase: 'submitting', commandId: command.commandId, releaseIds: null, error: null };
+    notify();
+    let result: ApprovalUiResult;
+    try { result = await port.reconcile(command, abortController.signal); }
+    catch { result = { kind: 'outcome_unknown', commandId: command.commandId }; }
+    if (disposed || cachedView.access === 'revoked' || lastCommand !== command) return;
+    submission = mapResult(command.commandId, result);
+    if (submission.phase === 'released') {
+      selection = emptySelection();
+      lastCommand = null;
+    } else if (submission.phase === 'rejected' && submission.error && STALE_REJECTION_CODES.has(submission.error)) {
+      selection = { ...selection, phase: 'stale' };
+    }
+    notify();
   }
+
+  // A restored command has already crossed the write boundary. Settle it once
+  // after construction so a reloaded selected-room row reflects the ledger.
+  if (lastCommand) queueMicrotask(() => { void reconcileUnknown(); });
 
   function dispose(): void {
     if (disposed) return;

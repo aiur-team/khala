@@ -121,14 +121,13 @@ test('created channel page has one share action that copies a working link', { t
   });
 });
 
-test('channel care route mounts recipient review and recovery outside the chat', { timeout: 90_000 }, async () => {
+test('legacy direct route keeps recipient review and pause controls without conversation settings actions', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?tools', async page => {
-    const care = page.getByRole('main', { name: 'Channel care route' });
-    await care.getByRole('heading', { name: 'Channel care' }).waitFor();
-    assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
-    await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
-    await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
-    assert.equal(await page.locator('.channel-toolbar__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    const care = page.getByRole('main', { name: 'Recipient review route' });
+    await care.getByRole('heading', { name: 'Recipient review' }).first().waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Recipient review' }).first().evaluate(node => node === document.activeElement), true);
+    await care.getByRole('heading', { name: 'Recipient review' }).first().waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Recovery and channel access' }).count(), 0);
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       await mkdir(screenshotDir, { recursive: true });
@@ -136,6 +135,304 @@ test('channel care route mounts recipient review and recovery outside the chat',
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: join(screenshotDir, 'human-channel-care-mobile.png'), fullPage: true });
     }
+  });
+});
+
+test('hosted selected conversation places one settings control beside Share', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?settings', async page => {
+    const toolbar = page.locator('#khala-channel-toolbar');
+    const settings = toolbar.locator('details.conversation-settings > summary');
+    await settings.waitFor();
+    assert.equal(await toolbar.locator('details.conversation-settings').count(), 1);
+    assert.equal(await toolbar.locator('.channel-share').count(), 1);
+    assert.equal(await page.locator('.khala-sidebar__channel-tools').count(), 0);
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0);
+    await toolbar.locator('.channel-participants__chip[title="Agent · agent"]').waitFor();
+    assert.equal(await toolbar.getByText('proof-key:abc123').count(), 0);
+    assert.equal(await toolbar.getByText('Unavailable', { exact: true }).count(), 0);
+    await settings.focus();
+    await settings.press('Enter');
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Close channel' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Delete conversation' }).count(), 0);
+    await settings.press('Escape');
+    assert.equal(await toolbar.locator('details.conversation-settings').getAttribute('open'), null);
+    assert.equal(await settings.evaluate(node => document.activeElement === node), true);
+    await settings.click();
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    await page.locator('.conversation-thread').click({ position: { x: 20, y: 20 } });
+    assert.equal(await toolbar.locator('details.conversation-settings').getAttribute('open'), null);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await settings.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await toolbar.locator('.channel-roster > summary').click();
+    const agentDetail = toolbar.locator('.agent-presence__details').first();
+    await agentDetail.locator('summary').click();
+    assert.equal(await agentDetail.getByText('Connection unavailable').count(), 0);
+    assert.equal(await agentDetail.getByText('proof-key:abc123').count(), 0);
+    await toolbar.locator('.channel-roster > summary').click();
+    await page.locator('[data-theme]').first().evaluate(node => node.setAttribute('data-theme', 'light'));
+    await settings.click();
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    await page.setViewportSize({ width: 320, height: 700 });
+    assert.equal(await settings.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  });
+});
+
+test('selected conversation exposes only pending recipient review and releases the sent event', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const review = page.locator('.recipient-review-disclosure');
+    assert.equal(await review.isVisible(), false, 'zero pending adds no header action');
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Message for my agent');
+    await composer.press('Enter');
+    await review.getByText('Review 1 pending').waitFor();
+    const summary = review.locator('summary');
+    await summary.focus();
+    await summary.press('Enter');
+    await summary.press('Escape');
+    assert.equal(await review.getAttribute('open'), null);
+    assert.equal(await summary.evaluate(node => node === document.activeElement), true);
+    await summary.press('Enter');
+    const row = review.getByRole('list', { name: 'Pending messages' }).getByText('Message for my agent');
+    await row.waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true,
+      'review fits the phone viewport');
+    assert.equal(await review.locator('summary').isVisible(), true);
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    assert.equal(await page.evaluate(() => window.__roomReviewCommand()), null, 'selection alone never releases');
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByRole('status').getByText('Released', { exact: true }).waitFor();
+    const sent = await page.evaluate(() => window.__roomReviewCommand());
+    assert.equal(sent?.bindingId, 'binding_1');
+    assert.equal(sent?.expectedBindingGeneration, 0);
+    assert.equal(sent?.selection.length, 1);
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
+    await review.locator('summary').press('Escape');
+    assert.equal(await review.locator('summary').evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    assert.equal(await review.isVisible(), true, 'the completed release remains inspectable');
+  });
+});
+
+test('selected conversation queues one exact release from a known offline preview', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&offline-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Message awaiting agent');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Waiting for agent. Known pending messages remain available for review.').waitFor();
+    await review.getByRole('list', { name: 'Pending messages' }).getByText('Message awaiting agent').waitFor();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    const commands = await page.evaluate(() => window.__roomReviewCommands());
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.bindingId, 'binding_1');
+    assert.equal(commands[0]?.expectedBindingGeneration, 0);
+    assert.equal(commands[0]?.selection.length, 1);
+    await page.waitForTimeout(300);
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 1,
+      'offline refresh must not retry the release');
+  });
+});
+
+test('selected review separates two agents and clears on a room switch', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&multi-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('For the first agent only');
+    await composer.press('Enter');
+    await review.getByText('Review 2 pending').waitFor();
+    await review.locator('summary').click();
+    const sections = review.locator('.review');
+    await sections.nth(1).waitFor();
+    assert.equal(await sections.nth(0).getByText('For the first agent only').count(), 1);
+    assert.equal(await sections.nth(1).getByText('For the first agent only').count(), 0);
+    assert.equal(await sections.nth(0).getByText('Withheld A').count(), 0);
+    assert.equal(await sections.nth(1).getByText('Withheld A').count(), 1);
+    assert.equal(await sections.nth(1).getByText('To: agent_2').count(), 1);
+    await sections.nth(1).locator('[data-event-id="event_a"] input[type="checkbox"]').check();
+    await sections.nth(1).getByRole('button', { name: 'Release 1 selected' }).click();
+    await sections.nth(1).getByText('Released', { exact: true }).waitFor();
+    const command = await page.evaluate(() => window.__roomReviewCommand());
+    assert.equal(command?.bindingId, 'binding_2');
+    assert.deepEqual(command?.selection.map(ref => ref.eventId), ['event_a']);
+    await review.getByText('Review 1 pending').waitFor();
+    await page.evaluate(() => window.__switchReviewRoom());
+    await page.getByRole('heading', { name: 'Other channel', level: 1 }).waitFor();
+    assert.equal(await page.locator('.recipient-review-disclosure').count(), 0);
+  });
+});
+
+test('unknown release keeps its reconciliation action after the pending queue clears', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&unknown-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Review an uncertain release');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release status unknown').waitFor();
+    await review.locator('summary').press('Escape');
+    await review.locator('summary').getByText('Check release status').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 1,
+      'an unknown outcome never triggers a second release automatically');
+    await review.locator('summary').press('Enter');
+    await review.getByRole('button', { name: 'Check release status' }).click();
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
+    await review.getByRole('status').getByText('Released', { exact: true }).waitFor();
+    const commands = await page.evaluate(() => window.__roomReviewCommands());
+    assert.equal(commands.length, 1, 'status check never submits another release');
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+  });
+});
+
+test('selected review reload reads one persisted release and shows its ACK without another write', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable review fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Released', { exact: true }).waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 1);
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Release acknowledged').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Released', { exact: true }).waitFor();
+    await review.getByText('Batch token returned').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0,
+      'the reloaded page only reads the original command result');
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), {
+      releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
+    });
+    assert.equal(await review.getByRole('button', { name: 'Check release status' }).count(), 0);
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Release acknowledged').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Batch token returned').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), {
+      releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
+    });
+  });
+});
+
+test('selected review reload leaves a queued release queued and status checks read only', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&offline-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable queued fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Check release status').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Release queued for agent').waitFor();
+    await review.getByRole('button', { name: 'Check release status' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 2);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), { releases: [], receipts: [] });
+  });
+});
+
+test('selected review reload keeps an unavailable result unknown across repeated read-only checks', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&unknown-review&unavailable-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable unknown fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release status unknown').waitFor();
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Check release status').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Release status unknown').waitFor();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await review.getByRole('button', { name: 'Check release status' }).click();
+      await review.getByText('Release status unknown').waitFor();
+    }
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 3);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), { releases: [], receipts: [] });
+  });
+});
+
+test('selected review follows a replacement binding generation', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&race', async page => {
+    await page.evaluate(() => window.__releaseOldTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Message for replacement agent');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await page.evaluate(() => window.__setReviewBinding('new'));
+    await review.locator('summary').click();
+    await review.getByText('To: New agent').waitFor();
+    assert.equal(await review.getByText('To: agent_1').count(), 0);
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
+    const command = await page.evaluate(() => window.__roomReviewCommand());
+    assert.equal(command?.bindingId, 'binding_1');
+    assert.equal(command?.expectedBindingGeneration, 1);
+  });
+});
+
+test('invited human cannot see another owner’s recipient review', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&invited-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('A peer message');
+    await composer.press('Enter');
+    await page.locator('.timeline').getByText('A peer message').waitFor();
+    assert.equal(await page.locator('.recipient-review-disclosure').count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Pending release' }).count(), 0);
+  });
+});
+
+test('owner review stays available when the participant roster is temporarily unavailable', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&roster-failure', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Review despite roster outage');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.getByRole('list', { name: 'Pending messages' }).getByText('Review despite roster outage').waitFor();
   });
 });
 
@@ -203,7 +500,7 @@ test('conversation identity timing fixture', { timeout: 90_000 }, async () => {
     const title = page.locator('.channel-roster summary').getByText('Test channel');
     await title.waitFor();
     const titleMs = await page.evaluate(() => performance.now());
-    await page.locator('.channel-participants__chip[title*="Unavailable"]').waitFor();
+    await page.locator('.channel-participants__chip[title*="agent"]').waitFor();
     const connectionMs = await page.evaluate(() => performance.now());
     await page.locator('.channel-participants__chip').getByText('Verified agent').waitFor();
     await page.locator('.channel-participants__chip').getByText('Peer owner').waitFor();
@@ -227,13 +524,14 @@ test('conversation agent controls wait for the selected owner binding and verifi
     await page.locator('.channel-roster > summary').click();
     const agent = page.locator('.agent-presence__details').first();
     await agent.locator('summary').click();
-    await agent.getByText('No verified agent session is available to control.').waitFor();
-    assert.equal(await agent.locator('.agent-controls__compact').count(), 0);
+    await agent.getByText('Verify this agent’s session to choose a listening mode.').waitFor();
+    for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
     await page.evaluate(() => window.__allowReviewTrust());
     await agent.locator('.agent-controls__compact').waitFor();
     await agent.getByRole('heading', { name: 'Listening mode' }).waitFor();
-    await agent.getByText('Listening mode choices are unavailable for this agent session.').waitFor();
-    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).count(), 0);
+    await agent.getByText('Support has not been verified for this session.', { exact: false }).first().waitFor();
+    for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
+    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).isDisabled(), true);
     assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
   }, async page => {
     await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));
@@ -358,18 +656,19 @@ async function identityFixtureRoutes(page: Page): Promise<void> {
 
 test('mounted human room reviews only the selected event for its active binding', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html', async page => {
-    await page.getByText('Waiting for verified agent device trust.').waitFor();
-    assert.equal(await page.getByRole('list', { name: 'Pending messages' }).count(), 0);
+    const care = page.getByRole('complementary', { name: 'Channel care route' });
+    await care.getByText('Waiting for verified agent device trust.').waitFor();
+    assert.equal(await care.getByRole('list', { name: 'Pending messages' }).count(), 0);
     await page.evaluate(() => window.__allowReviewTrust());
-    await page.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').waitFor();
-    await page.getByRole('list', { name: 'Pending messages' }).getByText('Approved B').waitFor();
-    await page.locator('[data-event-id="event_b"] input[type="checkbox"]').check();
-    await page.getByRole('button', { name: 'Release 1 selected' }).click();
-    await page.getByText('Released', { exact: true }).waitFor();
+    await care.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').waitFor();
+    await care.getByRole('list', { name: 'Pending messages' }).getByText('Approved B').waitFor();
+    await care.locator('[data-event-id="event_b"] input[type="checkbox"]').check();
+    await care.getByRole('button', { name: 'Release 1 selected' }).click();
+    await care.getByText('Released', { exact: true }).waitFor();
     const sent = await page.evaluate(() => window.__roomReviewCommand());
     assert.equal(sent?.bindingId, 'binding_1');
     assert.deepEqual(sent?.selection.map(value => value.eventId), ['event_b']);
-    assert.equal(await page.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').count(), 1);
+    assert.equal(await care.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').count(), 1);
   });
 });
 
@@ -434,40 +733,42 @@ test('replacement device cannot see or retry the prior device pending send', { t
 
 test('new binding and account stay current after older trust finishes out of order', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?race=1', async page => {
-    await page.getByText('Waiting for verified agent device trust.').waitFor();
+    const care = page.getByRole('complementary', { name: 'Channel care route' });
+    await care.getByText('Waiting for verified agent device trust.').waitFor();
     await page.evaluate(() => window.__setReviewBinding('new'));
-    await page.getByText('To: New agent').waitFor();
+    await care.getByText('To: New agent').waitFor();
     await page.evaluate(() => window.__releaseOldTrust());
     await page.waitForFunction(() => window.__oldTrustReturned());
-    assert.equal(await page.getByText('To: Old agent').count(), 0);
-    assert.equal(await page.getByText('To: New agent').count(), 1);
+    assert.equal(await care.getByText('To: Old agent').count(), 0);
+    assert.equal(await care.getByText('To: New agent').count(), 1);
 
     // A participant replacement under the same binding/generation/device must
     // lose the prior trust cache entry and wait for its own verification.
     await page.evaluate(() => window.__setReviewBinding('replacement'));
-    await page.getByText('Waiting for verified agent device trust.').waitFor();
-    assert.equal(await page.getByText('To: New agent').count(), 0);
+    await care.getByText('Waiting for verified agent device trust.').waitFor();
+    assert.equal(await care.getByText('To: New agent').count(), 0);
     await page.evaluate(() => window.__releaseReplacementTrust());
-    await page.getByText('To: Replaced identity').waitFor();
+    await care.getByText('To: Replaced identity').waitFor();
 
     // Route/account replacement discards the old route lease and trust cache.
     await page.evaluate(() => window.__switchReviewAccount());
-    await page.getByText('Waiting for verified agent device trust.').waitFor();
-    assert.equal(await page.getByText('To: Replaced identity').count(), 0);
+    await care.getByText('Waiting for verified agent device trust.').waitFor();
+    assert.equal(await care.getByText('To: Replaced identity').count(), 0);
     await page.evaluate(() => window.__releaseAccountTrust());
-    await page.getByText('To: Other account agent').waitFor();
+    await care.getByText('To: Other account agent').waitFor();
   });
 });
 
 test('an older binding lookup cannot restore its recipient after a newer lookup', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?race=1&lookup=1', async page => {
+    const care = page.getByRole('complementary', { name: 'Channel care route' });
     await page.waitForFunction(() => window.__reviewLookupCount() >= 1);
     await page.evaluate(() => window.__setReviewBinding('new'));
-    await page.getByText('To: New agent').waitFor();
+    await care.getByText('To: New agent').waitFor();
     await page.evaluate(() => window.__releaseOldLookup());
     await page.waitForFunction(() => window.__oldLookupReturned());
-    assert.equal(await page.getByText('To: Old agent').count(), 0);
-    assert.equal(await page.getByText('To: New agent').count(), 1);
+    assert.equal(await care.getByText('To: Old agent').count(), 0);
+    assert.equal(await care.getByText('To: New agent').count(), 1);
   });
 });
 

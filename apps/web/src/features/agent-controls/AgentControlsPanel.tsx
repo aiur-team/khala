@@ -208,12 +208,13 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
                 {compact && !option.selectable ? ` ${compactUnavailableReason(option)}` : null}</p>
               {option.canGrantExperimental ? (
                 <button type="button" onClick={() => controller.requestGrant('experimental_route', option.mode)}>
-                  {grant.kind === 'expired' ? 'Review updated evidence' : 'Enable experimental route'}
+                  {compact ? (grant.kind === 'expired' ? `Review ${MODE_LABEL[option.mode]} permission` : `Allow ${MODE_LABEL[option.mode]}`)
+                    : grant.kind === 'expired' ? 'Review updated evidence' : 'Enable experimental route'}
                 </button>
               ) : null}
               {grant.kind !== 'none' && listening.inactiveReason === null ? (
                 <button type="button" onClick={() => controller.revokeGrant('experimental_route', option.mode)}>
-                  Revoke experimental route
+                  {compact ? `Remove ${MODE_LABEL[option.mode]} permission` : 'Revoke experimental route'}
                 </button>
               ) : null}
               {!compact ? <details className="agent-controls__evidence">
@@ -233,7 +234,7 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
           aria-describedby={listening.inactiveReason ? inactiveId : undefined}
           onClick={() => controller.applyListeningMode()}
         >
-          Apply listening mode
+          {listening.submission.kind === 'unknown' ? 'Retry listening mode' : 'Apply listening mode'}
         </button>
       </div>
 
@@ -282,16 +283,23 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
           <h4 id={`${baseId}-confirm-heading`}>
             {confirmation.grantKind === 'hard_cancel'
               ? `Enable hard cancel on ${confirmation.sessionLabel}?`
-              : `Enable experimental ${confirmation.mode} route on ${confirmation.sessionLabel}?`}
+              : compact ? `Allow ${MODE_LABEL[confirmation.mode]} for ${confirmation.sessionLabel}?`
+                : `Enable experimental ${confirmation.mode} route on ${confirmation.sessionLabel}?`}
           </h4>
           {confirmation.expiredChanges ? (
             <p>Your earlier consent expired: {confirmation.expiredChanges.join('; ')}.</p>
           ) : null}
-          <EvidenceLines evidence={confirmation.evidence} />
-          <p>Missing proof: {confirmation.missingProof}</p>
-          <p className="agent-controls__warning">{confirmation.warning}</p>
+          {compact ? <details className="agent-controls__evidence"><summary>Review supporting details</summary>
+            <EvidenceLines evidence={confirmation.evidence} /></details>
+            : <EvidenceLines evidence={confirmation.evidence} />}
+          <p>{compact ? 'Why approval is needed: ' : 'Missing proof: '}{confirmation.missingProof}</p>
+          <p className="agent-controls__warning">{compact && confirmation.grantKind === 'experimental_route'
+            ? `Allowing ${MODE_LABEL[confirmation.mode]} lets you choose it for this agent session only. It does not stop the agent mid-turn.`
+            : confirmation.warning}</p>
           <div className="agent-controls__actions">
-            <button type="button" onClick={() => controller.confirmGrant()}>Confirm for this binding</button>
+            <button type="button" onClick={() => controller.confirmGrant()}>
+              {compact ? 'Confirm for this agent' : 'Confirm for this binding'}
+            </button>
             <button type="button" onClick={() => controller.cancelGrant()}>Cancel</button>
           </div>
         </div>
@@ -331,15 +339,26 @@ function useControlsController({ ports, config, controller: injectedController }
   return { controller, view };
 }
 
+/** A visible choice set without an authorized, confirmed route must remain disabled. */
+export function UnavailableListeningModes({ reason }: { reason: string }) {
+  return <section className="agent-controls__listening"><h3>Listening mode</h3>
+        <div role="group" aria-label="Listening modes">
+          {(['steer', 'sync', 'async'] as const).map(mode => <label key={mode}>
+            <input type="radio" name="listening-unavailable" value={mode} disabled />{MODE_LABEL[mode]}
+          </label>)}
+        </div>
+        <p role="status">{reason}</p></section>;
+}
+
 /** Owner-only conversation detail backed by the same authoritative controller as the full controls panel. */
 export function AgentListeningControls(props: AgentControlsPanelProps) {
   const { controller, view } = useControlsController(props);
   return <div className="agent-controls__compact">
     {view.listening ? <ListeningSection listening={view.listening} controller={controller} compact />
-      : <section className="agent-controls__listening"><h3>Listening mode</h3>
-        <p role="status">{view.snapshotReceived
-          ? 'Listening mode choices are unavailable for this agent session.'
-          : 'Checking this agent’s listening modes…'}</p></section>}
+      : <UnavailableListeningModes reason={view.snapshotReceived
+        ? ('listeningUnavailableReason' in view && typeof view.listeningUnavailableReason === 'string'
+          ? view.listeningUnavailableReason : 'This agent has not confirmed mode support. Check its connection and try again.')
+        : 'Checking this agent’s listening modes…'} />}
     {view.notice ? <p className="agent-controls__notice" role="alert">{view.notice.message}</p> : null}
     {view.notice ? <button type="button" onClick={() => controller.refresh()}>Refresh listening modes</button> : null}
   </div>;

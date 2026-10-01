@@ -62,6 +62,7 @@ export function createHostedAgentChannelLinkRoutes(
               return { ...verified, credentialRef: token };
             },
             inspectMembership: (ownerId, roomId) => active.matrix.inspectOwnerMembership(ownerId, roomId),
+            inspectRequester: (context, sponsorOwnerId) => authority.requesterAuthority.inspectContext(context, sponsorOwnerId),
             async submitAccess(input) {
               const inviteRef = inviteFromShareLink(new URL(input.channelUrl), active.env.publicAppOrigin);
               const target = inviteRef === null ? null

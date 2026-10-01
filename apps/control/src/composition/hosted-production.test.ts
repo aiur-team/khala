@@ -496,6 +496,15 @@ describe('generated hosted production composition', () => {
     }));
     expect(accessRequest.status).toBe(200);
     expect(await accessRequest.json()).toMatchObject({ kind: 'request', outcome: 'pending_owner' });
+    const replayAccess = () => route(new Request(requestPath, { method: 'POST',
+      headers: { origin, 'content-type': 'application/json', authorization: `DPoP ${credential.credential.credentialRef}`,
+        dpop: signedProof('POST', requestPath, credential.credential.credentialRef) },
+      body: JSON.stringify({ v: 1, kind: 'channel_url', operationId: 'b-agent-request',
+        credentialRef: credential.credential.credentialRef, channelUrl: link }),
+    }));
+    const [retry, concurrent] = await Promise.all([replayAccess(), replayAccess()]);
+    expect(await retry.json()).toEqual({ v: 1, kind: 'request', operationId: 'b-agent-request', outcome: 'pending_owner' });
+    expect(await concurrent.json()).toEqual({ v: 1, kind: 'request', operationId: 'b-agent-request', outcome: 'pending_owner' });
     // A stale row must not make the sponsor's entire inbox unavailable.
     const staleInviteRef = 'inv_stale_b';
     const staleInviteKey = digests.inviteKey(staleInviteRef);

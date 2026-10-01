@@ -59,7 +59,64 @@ describe('owner-approved Matrix device trust', () => {
     const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
       undefined, undefined, trustPeer);
     expect(await trust.ensure()).toBe('unavailable');
-    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_trust_peer', result: 'unavailable' });
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'owner_device_trust_peer_other', result: 'unavailable' });
+  });
+  it.each([
+    [new Error('matrix_device_key_missing'), 'device_key_missing'],
+    [new Error('matrix_fingerprint_mismatch'), 'fingerprint_mismatch'],
+    [new Error('matrix_closed'), 'closed'],
+    [new Error('matrix_trust_pending'), 'pending'],
+    [new Error('matrix_trust_compromised'), 'compromised'],
+    [new Error('matrix_verification_failed'), 'verification'],
+    [new Error('page.evaluate: Error: matrix_device_key_missing\n    at khalaMatrix.trustPeer'), 'device_key_missing'],
+  ])('reports the fixed %s trust failure category and retries without trusting', async (error, category) => {
+    const trustPeer = vi.fn(async () => { throw error; });
+    const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
+      undefined, undefined, trustPeer);
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(trustPeer).toHaveBeenCalledTimes(2);
+    expect(diagnostic.mock.calls.map(([event]) => event)).toEqual(Array.from({ length: 2 }, () => ({
+      stage: `owner_device_trust_peer_${category}`, result: 'unavailable',
+    })));
+  });
+  it('refuses an unknown SDK failure and never sends its text or identifiers to diagnostics', async () => {
+    const secret = 'private-owner-device-fingerprint-token';
+    const trustPeer = vi.fn(async () => { throw Object.assign(new Error(secret), {
+      name: secret, errcode: secret, deviceId: secret, fingerprint: secret,
+    }); });
+    const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
+      undefined, undefined, trustPeer);
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({
+      stage: 'owner_device_trust_peer_other', result: 'unavailable',
+    });
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret);
+  });
+  it('does not classify a partial code or an oversized wrapped error', async () => {
+    const errors = [new Error('page.evaluate: matrix_device_key_missing_secret'),
+      new Error(`matrix_device_key_missing${'x'.repeat(8192)}`)];
+    const trustPeer = vi.fn(async () => { throw errors.shift(); });
+    const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
+      undefined, undefined, trustPeer);
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(diagnostic.mock.calls.map(([event]) => event.stage)).toEqual([
+      'owner_device_trust_peer_other', 'owner_device_trust_peer_other',
+    ]);
+  });
+  it('recovers after the pinned key appears without trusting the failed attempt', async () => {
+    const trustPeer = vi.fn().mockRejectedValueOnce(new Error('page.evaluate: Error: matrix_device_key_missing'))
+      .mockResolvedValue(undefined);
+    const { trust, diagnostic } = fixture(async () => list([{ deviceId: 'BROWSER_ONE', fingerprint }]),
+      undefined, undefined, trustPeer);
+    expect(await trust.ensure()).toBe('unavailable');
+    expect(await trust.ensure()).toBe('active');
+    expect(await trust.ensure()).toBe('active');
+    expect(trustPeer).toHaveBeenCalledTimes(2);
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({
+      stage: 'owner_device_trust_peer_device_key_missing', result: 'unavailable',
+    });
   });
   it('trusts only the protected server pin, never keys advertised by an arbitrary Matrix device list', async () => {
     const fetch = vi.fn(async (...args: Parameters<typeof globalThis.fetch>) => {

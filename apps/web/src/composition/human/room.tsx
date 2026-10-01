@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
@@ -9,7 +9,9 @@ import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
-import { ClosureAction, RecoveryPanel } from '../../features/recovery/RecoveryPanel';
+import { ClosureAction } from '../../features/recovery/RecoveryPanel';
+import { createRecoveryController } from '../../features/recovery/controller';
+import { ConversationSettingsDisclosure } from './ConversationSettingsDisclosure';
 import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
 import type { ReviewCapability } from '../review/register';
@@ -18,7 +20,7 @@ import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
-import { AgentControlsPanel, AgentListeningControls } from '../../features/agent-controls/AgentControlsPanel';
+import { AgentControlsPanel, AgentListeningControls, UnavailableListeningModes } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 import { useConversationIndex } from './ConversationIndexRoute';
@@ -152,11 +154,14 @@ export function HumanControls({ context, roomId, review, capability, refreshMs }
     context={context} roomId={roomId} capability={capability} binding={binding} />)}</>;
 }
 
-function ReviewForBinding({ context, roomId, capability, binding }: {
+type ReviewAttention = Readonly<{ pending: number; unresolved: boolean; released: boolean; acknowledged: boolean }>;
+
+function ReviewForBinding({ context, roomId, capability, binding, onReviewStatus }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   capability: ReviewCapability;
   binding: OwnerReviewBinding;
+  onReviewStatus?: (identity: string, status: ReviewAttention | null) => void;
 }) {
   const [controller, setController] = useState<ReviewController | null>(null);
   const identity = reviewIdentity(context, roomId, binding);
@@ -173,8 +178,81 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     }, 0);
     return () => { clearTimeout(timer); active?.dispose(); };
   }, [identity, capability, context, roomId]);
-  return controller ? <ReviewScreen controller={controller} recipientLabel={binding.agentParticipantId}
-    renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
+  return controller ? <BindingReview controller={controller} identity={identity} {...(onReviewStatus ? { onReviewStatus } : {})}
+    recipientLabel={binding.agentParticipantId} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
+}
+
+function BindingReview({ controller, identity, onReviewStatus, recipientLabel }: {
+  controller: ReviewController;
+  identity: string;
+  onReviewStatus?: (identity: string, status: ReviewAttention | null) => void;
+  recipientLabel: string;
+}) {
+  const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const count = data.view.access === 'ready' || data.view.access === 'waiting_for_agent' && data.view.pendingKnown !== false
+    ? data.view.pending.length : 0;
+  const unresolved = data.submission.phase === 'submitting' || data.submission.phase === 'unknown'
+    || data.submission.phase === 'waiting_for_agent';
+  const released = data.submission.phase === 'released';
+  const acknowledged = released && data.view.receipts.some(receipt =>
+    receipt.kind === 'agent_acknowledged' && data.submission.releaseIds?.includes(receipt.releaseId));
+  useEffect(() => {
+    onReviewStatus?.(identity, { pending: count, unresolved, released, acknowledged });
+    return () => onReviewStatus?.(identity, null);
+  }, [identity, count, unresolved, released, acknowledged, onReviewStatus]);
+  return <ReviewScreen controller={controller} recipientLabel={recipientLabel}
+    renderContent={content => <span dir="auto">{content.body}</span>} />;
+}
+
+function PendingRecipientReview({ context, roomId, capability, bindings }: {
+  context: Parameters<HumanRoomRenderer>[0];
+  roomId: ReviewRoomId;
+  capability: ReviewCapability;
+  bindings: readonly OwnerReviewBinding[];
+}) {
+  const [statuses, setStatuses] = useState<ReadonlyMap<string, ReviewAttention>>(new Map());
+  const [open, setOpen] = useState(false);
+  const [focusedAfterClose, setFocusedAfterClose] = useState(false);
+  const summary = useRef<HTMLElement>(null);
+  const onReviewStatus = useCallback((identity: string, status: ReviewAttention | null) => {
+    setStatuses(current => {
+      const previous = current.get(identity);
+      if (previous?.pending === status?.pending && previous?.unresolved === status?.unresolved
+        && previous?.released === status?.released && previous?.acknowledged === status?.acknowledged) return current;
+      const next = new Map(current);
+      if (status) next.set(identity, status);
+      else next.delete(identity);
+      return next;
+    });
+  }, []);
+  const attention = bindings.map(binding => statuses.get(reviewIdentity(context, roomId, binding)));
+  const pending = attention.reduce((total, status) => total + (status?.pending ?? 0), 0);
+  const unresolved = attention.some(status => status?.unresolved);
+  const released = attention.some(status => status?.released);
+  const acknowledged = attention.some(status => status?.acknowledged);
+  if (bindings.length === 0) return null;
+  return <details className="recipient-review-disclosure" hidden={pending === 0 && !unresolved && !released && !open && !focusedAfterClose}
+    onToggle={event => {
+      setOpen(event.currentTarget.open);
+      if (open && !event.currentTarget.open && pending === 0 && !unresolved && !released) {
+        setFocusedAfterClose(event.currentTarget.contains(document.activeElement));
+      }
+    }} onBlur={event => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setFocusedAfterClose(false);
+    }} onKeyDown={event => {
+      if (event.key !== 'Escape' || !event.currentTarget.open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.open = false;
+      summary.current?.focus();
+    }}>
+    <summary ref={summary}>{pending > 0 ? `Review ${pending} pending` : unresolved ? 'Check release status'
+      : acknowledged ? 'Release acknowledged' : released ? 'Released' : 'Recipient review'}</summary>
+    <div className="recipient-review-disclosure__panel" aria-label="Pending recipient review">
+      {bindings.map(binding => <ReviewForBinding key={reviewIdentity(context, roomId, binding)}
+        context={context} roomId={roomId} capability={capability} binding={binding} onReviewStatus={onReviewStatus} />)}
+    </div>
+  </details>;
 }
 
 function useOwnerBindingTrust(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
@@ -288,6 +366,16 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     ...(context.closure ? { closure: context.closure(roomId) } : {}),
     ...(context.revocation ? { revocation: context.revocation(roomId) } : {}),
   }), [context, roomId]);
+  const [recoveryOwner, setRecoveryOwner] = useState<{
+    ports: typeof recovery; roomId: ReviewRoomId; controller: ReturnType<typeof createRecoveryController>;
+  } | null>(null);
+  useEffect(() => {
+    const controller = createRecoveryController(recovery, { roomId, roomRevision: 0 });
+    setRecoveryOwner({ ports: recovery, roomId, controller });
+    return () => controller.dispose();
+  }, [recovery, roomId]);
+  const recoveryController = recoveryOwner?.ports === recovery && recoveryOwner.roomId === roomId
+    ? recoveryOwner.controller : null;
   useEffect(() => () => {
     timeline.dispose();
     room.dispose();
@@ -328,7 +416,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   }
 
   if (toolsOnly) {
-    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'khala-channel-care-title' }}>
+    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Recipient review', labelledBy: 'khala-recipient-review-title' }}>
       {routes ? <a href={routes.roomPath(roomId)} onClick={navigate ? event => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault(); navigate(routes.roomPath(roomId));
@@ -336,7 +424,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />
       <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
-      <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
     </KhalaPageFrame></div>;
   }
 
@@ -355,11 +442,11 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderOwnerControls={agent => {
         if (viewer.kind !== 'human' || agent.ownerId !== viewer.ownerId) return null;
         if (!controls || controls.state !== 'ready' || !review || !trustBinding) {
-          return <p role="status">Listening controls are unavailable right now.</p>;
+          return <div className="agent-controls__compact"><UnavailableListeningModes reason="Mode controls are not ready. Try again later." /></div>;
         }
-        if (trustedBindings === null) return <p role="status">Checking this agent’s session…</p>;
+        if (trustedBindings === null) return <div className="agent-controls__compact"><UnavailableListeningModes reason="Checking this agent’s session…" /></div>;
         const bindings = trustedBindings.bindings.filter(binding => binding.agentParticipantId === agent.participantId);
-        if (bindings.length === 0) return <p role="status">No verified agent session is available to control.</p>;
+        if (bindings.length === 0) return <div className="agent-controls__compact"><UnavailableListeningModes reason="Verify this agent’s session to choose a listening mode." /></div>;
         return bindings.map(binding => <ControlsForBinding
           key={reviewIdentity(context, roomId, binding)} context={context} roomId={roomId}
           capability={controls} binding={binding} compact agentLabel={agent.displayName} />);
@@ -377,7 +464,15 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
-      renderDetailsActions={open => <ClosureAction ports={recovery} config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
+      renderHeaderActions={() => <>
+        {capability && trustedBindings ? <PendingRecipientReview context={context} roomId={roomId}
+          capability={capability} bindings={trustedBindings.bindings} /> : null}
+        <ConversationSettingsDisclosure scope={participantScope}
+          recovery={{ ports: recovery, controller: recoveryController, config: { roomId, roomRevision: 0 },
+            onClosureParticipationEnded: () => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/') }} />
+      </>}
+      renderDetailsActions={open => <ClosureAction ports={recovery} controller={recoveryController}
+        config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
         onClosureParticipationEnded={() => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/')} />}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}

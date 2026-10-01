@@ -44,10 +44,18 @@
 .channel-roster__viewer-name small,.agent-presence__status{color:var(--khala-ink-muted);font-size:.72rem;font-weight:400}
 .channel-roster__role{margin-left:auto;color:var(--khala-ink-muted);font-size:.75rem}
 .channel-toolbar__actions{display:flex;align-items:center;gap:.45rem;flex:none}
+.recipient-review-disclosure{position:relative;flex:none}
+.recipient-review-disclosure[hidden]{display:none}
+.recipient-review-disclosure>summary{padding:.4rem .6rem;border:1px solid var(--khala-accent);border-radius:999px;color:var(--khala-ink);cursor:pointer;font-size:.78rem;white-space:nowrap;list-style:none}
+.recipient-review-disclosure>summary::-webkit-details-marker{display:none}
+.recipient-review-disclosure>summary:focus-visible{outline:2px solid var(--khala-accent);outline-offset:2px}
+.recipient-review-disclosure__panel{box-sizing:border-box;position:absolute;right:0;top:calc(100% + .5rem);z-index:20;width:min(34rem,calc(100vw - 1.5rem));max-height:70dvh;overflow:auto;padding:.75rem;border:1px solid var(--khala-line);border-radius:12px;background:var(--khala-fill-raised);box-shadow:0 12px 35px #0006}
+.recipient-review-disclosure__panel>.review+.review{margin-top:1rem;border-top:1px solid var(--khala-line);padding-top:1rem}
 .conversation-thread__body .timeline{min-height:0}
 .conversation-thread__body .timeline__list{padding:.9rem 1.15rem;gap:.45rem}
 .conversation-thread__body .timeline__row.conversation-message{max-width:min(86%,42rem)}
 @media(max-width:760px){.channel-page .conversation-layout{height:100%;min-height:0}.conversation-thread__body .timeline__row.conversation-message{max-width:88%}.conversation-thread__body .timeline__list{padding:.7rem}.channel-participants{overflow:hidden}.conversation-composer textarea{font-size:16px}.conversation-composer button{width:40px;height:40px}}
+@media(max-width:760px){.recipient-review-disclosure__panel{position:fixed;left:.75rem;right:.75rem;top:3.4rem;width:auto}}
 
 .conversation-thread__body .timeline{height:100%;gap:0}
 .conversation-thread__body .timeline__list{flex:1;max-height:none;min-height:0;padding:1.1rem;gap:.25rem;background:var(--khala-fill)}

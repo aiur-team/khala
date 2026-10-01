@@ -4,7 +4,6 @@ import type { ChannelAccessRequestHandle, IdentityPort } from '@khala/contracts/
 import { AiurShell, ThemeToggle } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
-import { ChannelCareIcon } from '../../shell/icons';
 import type { ShellMode } from '../../shell/types';
 import { ChannelRequestsInbox } from '../../features/channel-access/ChannelRequestsInbox';
 import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRequestsNavEntry';
@@ -32,7 +31,7 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
-  /** Separate channel-care page; the conversation itself has no settings control. */
+  /** Legacy direct route for recipient review. Conversation settings live in the selected room. */
   renderChannelTools?: HumanRoomRenderer;
   createChannelAccess: () => ChannelAccessInboxController;
   capabilities?: readonly HumanCapability[];
@@ -203,14 +202,13 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
   </AiurShell>;
 }
 
-function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, hasChannelTools, children }: {
+function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, children }: {
   application: HumanApplicationHandle;
   createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
   context: HumanRouteContext;
   navigateRoute(path: string): void;
-  hasChannelTools: boolean;
   children: ReactNode;
 }) {
   const [controller] = useState(createController);
@@ -246,10 +244,6 @@ function OwnerShell({ application, createController, routes, chrome, context, na
         onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
         <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button></>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
-    {hasChannelTools && (route.kind === 'channel' || route.kind === 'channel_tools') ? <a className="khala-sidebar__channel-tools aiur-shell__icon-button" href={routes.channelToolsPath(route.roomId)}
-      aria-label="Channel care" title="Channel care"
-      aria-current={route.kind === 'channel_tools' ? 'page' : undefined}
-      onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); setDrawerOpen(false); navigateRoute(routes.channelToolsPath(route.roomId)); }}><ChannelCareIcon /></a> : null}
   </>;
   return (
     <AiurShell
@@ -332,7 +326,7 @@ export function HumanApplicationScreen({
   // shell renders only for a ready snapshot, so agent/discovery credential
   // routes never see owner-only inbox chrome.
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => (
-    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute} hasChannelTools={Boolean(renderChannelTools)}>
+    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
       {children}
     </OwnerShell>
   );

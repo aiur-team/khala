@@ -332,8 +332,10 @@ describe('idle watcher', () => {
     // The turn's Stop delivers it, so no wake is needed.
     expect(reason(await stop(A))).toContain('arrives mid-turn');
     khala.agentCall(A);
+    const watchCalls = khala.ops(A).filter(op => op === 'watch').length;
     const third = watcher(A, true);
     await expect(second).resolves.toEqual(silent);
+    await until(() => khala.ops(A).filter(op => op === 'watch').length > watchCalls);
     await stop(A, true);
 
     const beforeRelease = khala.calls.length;

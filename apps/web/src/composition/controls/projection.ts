@@ -4,8 +4,8 @@
 // request it has not enforced yet stays in `requested` and never reads as effective.
 
 import {
-  type BindingId, type CommandId, type DeliveryReceipt, type HarnessCapabilities, type PolicyAck,
-  type SessionBinding, decodeCommandId, decodeDeliveryReceipt, decodeHarnessCapabilities, decodeSessionBinding,
+  type BindingId, type CommandId, type DeliveryReceipt, type HarnessCapabilities, type ListeningModeView, type PolicyAck,
+  type SessionBinding, decodeCommandId, decodeDeliveryReceipt, decodeHarnessCapabilities, decodeListeningModeView, decodeSessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { AgentControlsSnapshot, PolicySnapshot } from '../../features/agent-controls/ports';
 
@@ -28,9 +28,11 @@ export type ControlsStatus = Readonly<{
   requested: ControlsRequested | null;
   busy: boolean;
   latestReceipt: DeliveryReceipt | null;
+  listening: ListeningModeView | null;
+  listeningUnavailable: 'connector_starting' | 'connector_unavailable' | null;
 }>;
 
-const STATUS_KEYS = 'binding,bindingStatus,busy,capabilities,latestReceipt,policy,requested,v';
+const STATUS_KEYS = 'binding,bindingStatus,busy,capabilities,latestReceipt,listening,listeningUnavailable,policy,requested,v';
 const POLICY_KEYS = 'bindingId,effectiveMode,effectiveVersion,generation,paused';
 const REQUESTED_KEYS = 'commandId,connectorState,errorCode,mode,paused,version';
 const MODES: readonly unknown[] = ['review', 'auto'];
@@ -106,6 +108,16 @@ export function decodeControlsStatus(input: unknown, bindingId: BindingId): Cont
   }
   const policy = decodePolicy(input.policy, binding.value);
   if (policy === null) return null;
+  let listening: ListeningModeView | null = null;
+  if (input.listening === null) {
+    if (input.listeningUnavailable !== 'connector_starting'
+      && input.listeningUnavailable !== 'connector_unavailable') return null;
+  } else {
+    const decoded = decodeListeningModeView(input.listening);
+    if (!decoded.ok || decoded.value.bindingId !== bindingId
+      || decoded.value.generation !== binding.value.generation || input.listeningUnavailable !== null) return null;
+    listening = decoded.value;
+  }
   const requested = decodeRequested(input.requested, policy);
   if (requested === 'invalid') return null;
   return {
@@ -116,6 +128,8 @@ export function decodeControlsStatus(input: unknown, bindingId: BindingId): Cont
     requested,
     busy: input.busy,
     latestReceipt,
+    listening,
+    listeningUnavailable: input.listeningUnavailable as ControlsStatus['listeningUnavailable'],
   };
 }
 
@@ -130,8 +144,15 @@ export function toAgentControlsSnapshot(
     policy: status.policy,
     connection,
     latestReceipt: status.latestReceipt,
-    // No owner listening-mode route is served to the hosted browser yet.
-    listening: null,
+    listening: status.listening === null ? null : {
+      view: status.listening,
+      lastChange: null,
+      siblingBindingIds: [], hardCancel: null, idleDelivery: 'unproven',
+    },
+    listeningUnavailableReason: status.listeningUnavailable === 'connector_starting'
+      ? 'The connector is starting. Listening modes will appear when it is ready.'
+      : status.listeningUnavailable === 'connector_unavailable'
+        ? 'The connector could not read listening modes. Refresh to try again.' : null,
   };
 }
 

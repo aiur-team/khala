@@ -28,11 +28,15 @@ export interface ReviewControlClient {
   recoverUnknown?(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null;
   preview(request: ReviewPreviewRequest, signal: AbortSignal): Promise<
     | Readonly<{ kind: 'ok'; body: unknown }>
+    | Readonly<{ kind: 'waiting_for_agent'; generation: number; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' | 'revoked' | 'unavailable' }>
     | Readonly<{ kind: 'lost' }>
   >;
   /** Deliberately takes no signal: closing a browser wait is not cancellation. */
-  approve(command: ApprovalCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }> | Readonly<{ kind: 'lost' }>>;
+  approve(command: ApprovalCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'waiting_for_agent' }> | Readonly<{ kind: 'lost' }>>;
+  reconcile(command: ApprovalCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'waiting_for_agent' }> | Readonly<{ kind: 'lost' }>>;
 }
 
 export type BrowserReviewPortOptions = Readonly<{
@@ -56,8 +60,12 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   let view: ReviewView = loadingView(bindingId, viewerOwnerId);
   let items: readonly TimelineItem[] = [];
   let roomGeneration: number | null = null;
+  let roomMembership: ChannelSnapshot['room']['membership'] | null = null;
+  let roomIdentity: string | null = null;
   let request = 0;
   let inFlight: AbortController | null = null;
+  const refreshMs = options.refreshMs ?? 5_000;
+  let lastRefreshAt = -Infinity;
   let disposed = false;
 
   function publish(next: ReviewView): void {
@@ -68,6 +76,7 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
 
   async function refresh(): Promise<void> {
     if (disposed || roomGeneration === null) return;
+    lastRefreshAt = Date.now();
     // Every answer is a complete snapshot; only the newest request may publish one.
     const token = ++request;
     const generation = roomGeneration;
@@ -80,9 +89,24 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
     ).catch(() => ({ kind: 'lost' as const }));
     if (disposed || token !== request || generation !== roomGeneration) return;
     inFlight = null;
-    if (answer.kind === 'ok') {
+    if (answer.kind === 'ok' || answer.kind === 'waiting_for_agent') {
+      if (answer.kind === 'waiting_for_agent' && options.bindingGeneration !== undefined
+        && answer.generation !== options.bindingGeneration) {
+        publish(withoutAccess(view, 'unavailable'));
+        return;
+      }
+      if (answer.kind === 'waiting_for_agent' && answer.body === null) {
+        publish({ ...view, access: 'waiting_for_agent', pending: [], pendingKnown: false });
+        return;
+      }
       const preview = decodeReviewPreview(answer.body, limits, bindingId);
-      publish(preview === null ? withoutAccess(view, 'unavailable') : readyView(preview, items, viewerOwnerId));
+      publish(preview === null || (options.bindingGeneration !== undefined
+        && preview.bindingGeneration !== options.bindingGeneration)
+        || answer.kind === 'waiting_for_agent' && preview.bindingGeneration !== answer.generation
+        ? withoutAccess(view, 'unavailable') : {
+        ...readyView(preview, items, viewerOwnerId),
+        access: answer.kind === 'ok' ? 'ready' : 'waiting_for_agent',
+      });
       return;
     }
     publish(withoutAccess(view, answer.kind === 'refused' && answer.code === 'revoked' ? 'revoked' : 'unavailable'));
@@ -91,17 +115,28 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   function onRoom(snapshot: ChannelSnapshot): void {
     if (disposed || snapshot.room.roomId !== roomId) return;
     if (roomGeneration !== null && snapshot.generation < roomGeneration) return;
-    if (snapshot.generation !== roomGeneration) {
-      // A reconnect replaces the whole queue; nothing from the old generation survives.
+    // Snapshot revisions can advance without changing any review input. Repeated
+    // equivalent snapshots must not abort the only live owner preview request.
+    const identity = JSON.stringify([snapshot.generation, snapshot.room.membership,
+      candidateRefs(snapshot.items, limits.maxSelectionEvents)]);
+    items = snapshot.items;
+    if (identity === roomIdentity) {
+      // Recheck authority after a settled request, without cancelling a slow
+      // preview or issuing one request for every equivalent room notification.
+      if (inFlight === null && Date.now() - lastRefreshAt >= refreshMs) void refresh();
+      return;
+    }
+    roomIdentity = identity;
+    if (snapshot.generation !== roomGeneration || snapshot.room.membership !== roomMembership) {
+      // A reconnect or trust change replaces the queue while the new preview loads.
       roomGeneration = snapshot.generation;
+      roomMembership = snapshot.room.membership;
       publish({ ...loadingView(bindingId, viewerOwnerId), receipts: view.receipts });
     }
-    items = snapshot.items;
     void refresh();
   }
 
   const stopRoom = room.observe(roomId, onRoom);
-  const refreshMs = options.refreshMs ?? 5_000;
   const timer = refreshMs > 0 ? setInterval(() => {
     // A slow answer is never cancelled by the next tick; only new room data supersedes it.
     if (listeners.size > 0 && inFlight === null) void refresh();
@@ -139,9 +174,9 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
     async approve(command, signal) {
       if (disposed) return { kind: 'outcome_unknown', commandId: command.commandId };
       const sent = client.approve(command)
-        .then(answer => answer.kind === 'answered'
-          ? toUiResult(command, answer.body)
-          : { kind: 'outcome_unknown', commandId: command.commandId } as const)
+        .then(answer => answer.kind === 'answered' ? toUiResult(command, answer.body)
+          : answer.kind === 'waiting_for_agent' ? { kind: 'waiting_for_agent', commandId: command.commandId } as const
+            : { kind: 'outcome_unknown', commandId: command.commandId } as const)
         .catch(() => ({ kind: 'outcome_unknown', commandId: command.commandId } as const));
       // Settled answers refresh receipts and the queue even if the caller stopped waiting.
       void sent.then(() => refresh());
@@ -157,6 +192,16 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
       } finally {
         stopWaiting();
       }
+    },
+
+    async reconcile(command, signal) {
+      if (disposed || signal.aborted) return { kind: 'outcome_unknown', commandId: command.commandId };
+      const answer = await client.reconcile(command).catch(() => ({ kind: 'lost' as const }));
+      if (disposed || signal.aborted) return { kind: 'outcome_unknown', commandId: command.commandId };
+      const outcome: ApprovalUiResult = answer.kind === 'answered' ? toUiResult(command, answer.body)
+        : answer.kind === 'waiting_for_agent' ? { kind: 'waiting_for_agent', commandId: command.commandId }
+          : { kind: 'outcome_unknown', commandId: command.commandId };
+      return outcome;
     },
 
     dispose() {

@@ -24,7 +24,7 @@ export type ReviewPreview = Readonly<{
   bindingId: BindingId;
   bindingGeneration: number;
   policyVersion: number;
-  /** The requested candidates that are pending for the current generation, byte-for-byte equal. */
+  /** Exact requested candidates still pending and unreleased for the current generation. */
   pending: readonly EventRef[];
   /** Correlated receipts for the requested releases, in ledger order. */
   receipts: readonly DeliveryReceiptTransport[];
@@ -119,7 +119,8 @@ export function readPreview(
     return { ok: false, code: 'unavailable' };
   }
   const pending = request.candidates.filter(candidate =>
-    snapshot.pending.some(record => sameEventRef(record.event, candidate)));
+    snapshot.pending.some(record => sameEventRef(record.event, candidate))
+    && !tx.isEventReleased({ bindingId: snapshot.binding.bindingId, generation: snapshot.binding.generation, event: candidate }));
   const receipts: DeliveryReceiptTransport[] = [];
   for (const releaseId of request.releaseIds) {
     const release = tx.readRelease(releaseId);

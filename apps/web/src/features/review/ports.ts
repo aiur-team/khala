@@ -29,6 +29,7 @@ export type DefiniteApprovalErrorCode = Exclude<ApprovalErrorCode, 'outcome_unkn
 export type ApprovalUiResult =
   | Readonly<{ kind: 'accepted'; releaseIds: readonly ReleaseId[] }>
   | Readonly<{ kind: 'rejected'; code: DefiniteApprovalErrorCode }>
+  | Readonly<{ kind: 'waiting_for_agent'; commandId: CommandId }>
   | Readonly<{ kind: 'outcome_unknown'; commandId: CommandId }>;
 
 export interface ReviewUiPort {
@@ -40,6 +41,8 @@ export interface ReviewUiPort {
   subscribe(listener: () => void, signal: AbortSignal): () => void;
   /** Submits one approval command. Aborting `signal` does not cancel a write already in flight. */
   approve(command: ApprovalCommand, signal: AbortSignal): Promise<ApprovalUiResult>;
+  /** Reads only the result of an already submitted exact command. Never submits or retries it. */
+  reconcile(command: ApprovalCommand, signal: AbortSignal): Promise<ApprovalUiResult>;
 }
 
 export interface ReviewPorts {

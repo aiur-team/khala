@@ -177,6 +177,8 @@ export interface LedgerTx {
    */
   readApprovalSnapshot(input: { bindingId: BindingId; selection: readonly EventRef[] }):
     ApprovalSnapshot | Readonly<{ kind: 'revoked' }> | null;
+  /** Whether this event identity was released for the exact binding generation. */
+  isEventReleased(input: { bindingId: BindingId; generation: number; event: EventRef }): boolean;
   readBinding(bindingId: BindingId): SessionBinding | null;
   /** Records a binding or advances it to a later generation; never rewinds. */
   putBinding(binding: SessionBinding): BindingResult;
@@ -711,6 +713,10 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
       });
       return { kind: 'snapshot', binding, pending, ledgerRevision: readRevision(db) } as const;
     }),
+
+    isEventReleased: guarded(({ bindingId, generation, event }: Parameters<LedgerTx['isEventReleased']>[0]) =>
+      db.prepare(`SELECT 1 FROM release_items WHERE room_id = ? AND event_id = ? AND binding_id = ?
+        AND generation = ?`).get(event.roomId, event.eventId, bindingId, generation) !== undefined),
 
     readBinding: guarded((bindingId: BindingId) => readBinding(bindingId)),
 

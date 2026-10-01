@@ -1,6 +1,7 @@
-import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
+import type { BindingId, ListeningModeCommand, OwnerRouteGrantCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ControlsClient } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
+import { browserSessionStorage, createMailboxReadRetry } from '../human/mailbox-retry';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -17,6 +18,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   csrf: () => Promise<string | null>;
   fetch?: Fetch;
   waitMs?: number;
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }>): ControlsClient {
   const origin = new URL(input.origin);
   if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('controls_origin_invalid');
@@ -24,7 +26,13 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   const waitMs = input.waitMs ?? 8_000;
   const possiblySubmitted = new Set<string>();
   const originalCommands = new Map<string, PolicySetCommand>();
+  const originalModes = new Map<string, ListeningModeCommand>();
+  const originalGrants = new Map<string, OwnerRouteGrantCommand>();
   const pendingStatuses = new Map<BindingId, string>();
+  const storage = input.storage ?? browserSessionStorage();
+  const prefix = `khala.controls.read.v1:${origin.origin}`;
+  const retry = createMailboxReadRetry(storage, prefix);
+  const pendingKey = (bindingId: BindingId) => `${prefix}:pending:${bindingId}`;
 
   async function read(response: Response): Promise<Reply> {
     if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return { status: response.status, body: null };
@@ -42,7 +50,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
     } catch { return null; }
   }
 
-  async function submit(bindingId: BindingId, operationId: string, kind: 'controls_status' | 'controls_set',
+  async function submit(bindingId: BindingId, operationId: string, kind: 'controls_status' | 'controls_set' | 'listening_set' | 'listening_grant',
     body: unknown, signal: AbortSignal): Promise<Reply | null> {
     const csrf = await input.csrf();
     if (signal.aborted) return null;
@@ -62,7 +70,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
     if (first.body.outcome !== null) return first;
     const deadline = Date.now() + waitMs;
     while (!signal.aborted && Date.now() < deadline) {
-      await new Promise<void>(resolve => setTimeout(resolve, 200));
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(2_000, deadline - Date.now())));
       if (signal.aborted) return null;
       const next = await result(bindingId, operationId, signal);
       if (next?.status !== 200 || !object(next.body) || next.body.operationId !== operationId) return next;
@@ -78,24 +86,38 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
 
   return {
     async status(bindingId, signal) {
+      if (!retry.ready(bindingId)) return { kind: 'refused', code: 'unavailable' };
       let operationId = pendingStatuses.get(bindingId);
+      if (!operationId) {
+        try {
+          const saved = storage?.getItem(pendingKey(bindingId));
+          if (saved && /^status_[a-f0-9]{32}$/u.test(saved)) operationId = saved;
+        } catch { /* Continue with a new read identity. */ }
+      }
       const created = operationId === undefined;
       if (!operationId) {
         operationId = `status_${crypto.randomUUID().replaceAll('-', '')}`;
-        pendingStatuses.set(bindingId, operationId);
+        try { storage?.setItem(pendingKey(bindingId), operationId); } catch { /* In-memory identity remains. */ }
       }
+      pendingStatuses.set(bindingId, operationId);
       const existing = created ? null : await result(bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(bindingId, operationId, 'controls_status', { bindingId }, signal) : existing;
-      const answer = await awaitOutcome(bindingId, operationId, first, signal);
-      if (completed(answer, operationId)) pendingStatuses.delete(bindingId);
-      if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
+      const answer = created || first !== existing ? await awaitOutcome(bindingId, operationId, first, signal) : first;
       const outcome = completed(answer, operationId);
+      if (outcome) {
+        pendingStatuses.delete(bindingId);
+        try { storage?.removeItem(pendingKey(bindingId)); } catch { /* Terminal result remains authoritative. */ }
+      }
+      if (outcome?.code === 'unavailable') retry.delay(bindingId);
+      else if (outcome || answer?.status === 401 || answer?.status === 403) retry.clear(bindingId);
+      else if (!signal.aborted) retry.delay(bindingId);
+      if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       if (outcome?.ok === true && 'status' in outcome) return { kind: 'ok', body: outcome.status };
       if (outcome?.ok === false && (outcome.code === 'forbidden' || outcome.code === 'unavailable')) {
         return { kind: 'refused', code: outcome.code };
       }
-      return { kind: 'lost' };
+      return { kind: 'refused', code: 'unavailable' };
     },
     async setPolicy(command: PolicySetCommand) {
       // The controller recreates issuedAt on retry. Pin the first complete wire body:
@@ -120,6 +142,44 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
       if (outcome?.ok === true && 'ack' in outcome) return { kind: 'answered', body: outcome.ack };
       if (outcome?.ok === false && outcome.code === 'forbidden') return { kind: 'refused', code: 'forbidden' };
       return { kind: 'lost' };
+    },
+    async setListeningMode(command: ListeningModeCommand) {
+      const operationId = command.commandId;
+      const original = originalModes.get(operationId);
+      if (original && (original.bindingId !== command.bindingId
+        || original.expectedBindingGeneration !== command.expectedBindingGeneration
+        || original.expectedVersion !== command.expectedVersion || original.requested !== command.requested)) {
+        return { kind: 'lost' };
+      }
+      if (!original) originalModes.set(operationId, command);
+      const signal = AbortSignal.timeout(waitMs);
+      const previousAttempt = possiblySubmitted.has(operationId);
+      possiblySubmitted.add(operationId);
+      const first = await submit(command.bindingId, operationId, 'listening_set', original ?? command, signal);
+      if (first?.status === 401 || first?.status === 403) return previousAttempt
+        ? { kind: 'lost' } : { kind: 'refused', code: 'forbidden' };
+      const answer = await awaitOutcome(command.bindingId, operationId, first, signal);
+      const outcome = completed(answer, operationId);
+      return outcome ? { kind: 'answered', body: outcome } : { kind: 'lost' };
+    },
+    async setRouteGrant(command: OwnerRouteGrantCommand) {
+      const operationId = command.commandId;
+      const original = originalGrants.get(operationId);
+      if (original && (original.bindingId !== command.bindingId || original.kind !== command.kind
+        || original.expectedBindingGeneration !== command.expectedBindingGeneration
+        || original.expectedVersion !== command.expectedVersion || original.mode !== command.mode
+        || original.route !== command.route || original.harnessVersion !== command.harnessVersion
+        || original.evidenceRevision !== command.evidenceRevision)) return { kind: 'lost' };
+      if (!original) originalGrants.set(operationId, command);
+      const signal = AbortSignal.timeout(waitMs);
+      const previousAttempt = possiblySubmitted.has(operationId);
+      possiblySubmitted.add(operationId);
+      const first = await submit(command.bindingId, operationId, 'listening_grant', original ?? command, signal);
+      if (first?.status === 401 || first?.status === 403) return previousAttempt
+        ? { kind: 'lost' } : { kind: 'refused', code: 'forbidden' };
+      const answer = await awaitOutcome(command.bindingId, operationId, first, signal);
+      const outcome = completed(answer, operationId);
+      return outcome ? { kind: 'answered', body: outcome } : { kind: 'lost' };
     },
   };
 }
