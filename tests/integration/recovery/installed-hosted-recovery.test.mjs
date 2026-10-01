@@ -567,9 +567,18 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       // back to the owner approval's original release ID.
       assert.ok(batchText.includes(sentByOwner.eventId), 'native batch carried another event');
       assert.doesNotMatch(batchText, /^batchToken:/mu, 'Claude native read exposed a private batch token');
-      const beforeAck = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
-        candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
-      assert.equal(beforeAck.kind, 'ok');
+      let beforeAck;
+      const beforeAckOutcomes = [];
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        beforeAck = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
+          candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+        beforeAckOutcomes.push(beforeAck.kind);
+        if (beforeAck.kind === 'ok') break;
+        await delay(500);
+      }
+      assert.equal(beforeAck.kind, 'ok', `receipt preview did not settle: ${JSON.stringify({ beforeAckOutcomes,
+        mailboxStages: recoveredSession.diagnostics().filter(item => item.component === 'subscription'
+          && item.stage.startsWith('mailbox_')).slice(-8) })}`);
       assert.equal(beforeAck.body.receipts.some(receipt => receipt.kind === 'agent_acknowledged'), false,
         'native read acknowledged the release before a later call');
     }
@@ -582,16 +591,20 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
         method: 'tools/call', params: { name: 'khala_read', arguments: {} } });
       assert.equal(afterAck.result?.structuredContent?.kind, 'empty', 'acknowledged batch replayed');
       let acknowledgement;
+      const afterAckOutcomes = [];
       for (let attempt = 0; attempt < 10; attempt += 1) {
         acknowledgement = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
           candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+        afterAckOutcomes.push(acknowledgement.kind);
         if (acknowledgement.kind === 'ok' && acknowledgement.body.receipts.some(receipt =>
           receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
           && receipt.bindingId === committed.binding.bindingId
           && receipt.generation === committed.binding.generation)) break;
         await delay(500);
       }
-      assert.equal(acknowledgement.kind, 'ok');
+      assert.equal(acknowledgement.kind, 'ok', `ACK receipt preview did not settle: ${JSON.stringify({ afterAckOutcomes,
+        mailboxStages: recoveredSession.diagnostics().filter(item => item.component === 'subscription'
+          && item.stage.startsWith('mailbox_')).slice(-8) })}`);
       assert.equal(acknowledgement.body.receipts.filter(receipt =>
         receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
         && receipt.bindingId === committed.binding.bindingId
