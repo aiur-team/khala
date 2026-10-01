@@ -74,7 +74,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
     name: HOSTED_HOOK_RECEIPT_TOOL_NAME,
     definition: () => ({
       name: HOSTED_HOOK_RECEIPT_TOOL_NAME,
-      description: 'Acknowledge one hosted Claude hook batch after reading its model-visible context. Pass only the exact opaque receipt from that hook. A room participant cannot issue or select a receipt.',
+      description: 'Acknowledge one hosted hook batch after reading its model-visible context. Pass only the exact opaque receipt from that hook. A channel participant cannot issue or select a receipt.',
       inputSchema: { type: 'object', properties: { receipt: { type: 'string', pattern: '^[A-Za-z0-9_-]{32}$' } },
         required: ['receipt'], additionalProperties: false },
     }),
