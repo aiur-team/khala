@@ -170,7 +170,7 @@ for (const failure of ['unavailable', 'denied'] as const) {
   });
 }
 
-async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
+async function withRoomPage(path: string, run: (page: Page) => Promise<void>, beforeNavigate?: (page: Page) => Promise<void>): Promise<void> {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
   const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-review-room-profile-'));
   let server: PreviewServer | null = null;
@@ -184,6 +184,7 @@ async function withRoomPage(path: string, run: (page: Page) => Promise<void>): P
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
       headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await beforeNavigate?.(page);
     await page.goto(server.resolvedUrls!.local[0]! + path);
     await run(page);
   } finally {
@@ -192,6 +193,131 @@ async function withRoomPage(path: string, run: (page: Page) => Promise<void>): P
     await rm(scratch, { recursive: true, force: true });
     await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
+}
+
+test('conversation identity timing fixture', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing', async page => {
+    const title = page.locator('.channel-roster summary').getByText('Test channel');
+    await title.waitFor();
+    const titleMs = await page.evaluate(() => performance.now());
+    await page.locator('.channel-participants__chip[title*="unknown"]').waitFor();
+    const connectionMs = await page.evaluate(() => performance.now());
+    await page.locator('.channel-participants__chip').getByText('Verified agent').waitFor();
+    await page.locator('.channel-participants__chip').getByText('Peer owner').waitFor();
+    const nameMs = await page.evaluate(() => performance.now());
+    console.log('identity timing ms', JSON.stringify({ title: Math.round(titleMs), connection: Math.round(connectionMs), name: Math.round(nameMs) }));
+    assert.ok(titleMs < nameMs);
+  }, async page => {
+    await page.route('**/api/fixture/participants', async route => {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await route.fulfill({ status: 200, body: '{}' });
+    });
+    await page.route('**/api/fixture/history', async route => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      await route.fulfill({ status: 200, body: '{}' });
+    });
+  });
+});
+
+test('hosted conversation uses one stable top row and an accessible title disclosure', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing', async page => {
+    const title = page.locator('.channel-roster > summary');
+    const row = page.locator('.khala-content-actions');
+    await title.getByText('Test channel').waitFor();
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.waitFor();
+    const before = await composer.boundingBox();
+    await page.locator('.channel-participants__chip').getByText('Verified agent').waitFor();
+    const after = await composer.boundingBox();
+    assert.equal(after?.y, before?.y, 'identity updates do not move the composer');
+    await page.locator('.channel-participants__chip').getByText('Renamed agent').waitFor();
+    assert.equal((await composer.boundingBox())?.y, before?.y, 'fresh name history does not move the composer');
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0);
+    assert.equal(await page.locator('.channel-roster > summary').count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Copy channel invite link' }).count(), 1);
+    await title.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('.channel-roster[open]').count(), 1);
+    assert.equal(await page.locator('.channel-roster__panel').getByText('Peer owner').count(), 1);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.channel-roster[open]').count(), 0);
+    assert.equal(await title.evaluate(node => document.activeElement === node), true);
+    await page.keyboard.press('Space');
+    assert.equal(await page.locator('.channel-roster[open]').count(), 1);
+    await composer.click();
+    assert.equal(await page.locator('.channel-roster[open]').count(), 0);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      const titleBox = await title.boundingBox();
+      const rowBox = await row.boundingBox();
+      assert.ok(titleBox && rowBox && titleBox.y >= rowBox.y && titleBox.y < rowBox.y + rowBox.height);
+      assert.equal(await page.locator('.khala-mobile-bar').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    }
+  }, identityFixtureRoutes);
+});
+
+test('late participant evidence cannot cross an account switch or leave', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing', async page => {
+    await page.locator('.channel-roster > summary').waitFor();
+    await page.evaluate(() => window.__switchReviewAccount());
+    await page.getByText('Other verified agent').waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(await page.getByText('Verified agent', { exact: true }).count(), 0);
+    await page.evaluate(() => window.__leaveRoom());
+    await page.getByText('Outside the channel').waitFor();
+    assert.equal(await page.locator('.channel-roster').count(), 0);
+  }, identityFixtureRoutes);
+});
+
+test('title deletion confirms owner-view closure once; unauthorized owners cannot invoke it', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing', async page => {
+    await page.locator('.channel-roster > summary').click();
+    const action = page.getByRole('button', { name: 'Delete conversation' });
+    await action.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('.recovery-panel__closure-action > button')?.disabled);
+    await action.click();
+    await page.getByRole('heading', { name: 'Close this conversation?' }).waitFor();
+    assert.equal(await page.getByText('Copies already delivered to participants or models cannot be recalled.').count(), 1);
+    assert.deepEqual(await page.evaluate(() => window.__closureCalls()), []);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Delete conversation');
+    assert.equal(await action.evaluate(node => document.activeElement === node), true);
+    assert.deepEqual(await page.evaluate(() => window.__closureCalls()), []);
+    await action.click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).click();
+    await page.waitForFunction(() => window.__closureCalls().length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__navigations()), ['/conversations']);
+  }, identityFixtureRoutes);
+  await withRoomPage('review-room.html?identity-timing&closure-denied', async page => {
+    await page.locator('.channel-roster > summary').click();
+    const action = page.getByRole('button', { name: 'Delete conversation' });
+    await action.waitFor({ state: 'visible' });
+    assert.equal(await action.isDisabled(), true);
+    assert.deepEqual(await page.evaluate(() => window.__closureCalls()), []);
+  }, identityFixtureRoutes);
+  await withRoomPage('review-room.html?identity-timing&closure-unknown', async page => {
+    await page.locator('.channel-roster > summary').click();
+    const action = page.getByRole('button', { name: 'Delete conversation' });
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('.recovery-panel__closure-action > button')?.disabled);
+    await action.click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).click();
+    await page.getByText('Closure outcome unknown').waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__navigations()), []);
+    assert.equal((await page.evaluate(() => window.__closureCalls())).length, 1);
+    assert.equal(await page.getByRole('button', { name: 'Inspect operation' }).count(), 1);
+  }, identityFixtureRoutes);
+});
+
+async function identityFixtureRoutes(page: Page): Promise<void> {
+  await page.route('**/api/fixture/participants', async route => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await route.fulfill({ status: 200, body: '{}' });
+  });
+  await page.route('**/api/fixture/history', async route => {
+    await new Promise(resolve => setTimeout(resolve, 800));
+    await route.fulfill({ status: 200, body: '{}' });
+  });
 }
 
 test('mounted human room reviews only the selected event for its active binding', { timeout: 90_000 }, async () => {
