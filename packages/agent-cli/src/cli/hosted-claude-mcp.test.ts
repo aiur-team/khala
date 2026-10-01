@@ -11,6 +11,7 @@ import type { CliDependencies } from './types.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import { hasProductionBinding } from '@khala/connector-app/composition/production';
+import { claudeProofKeyLabelInspection } from '../composition/hosted-session-inspection.js';
 
 const SESSION = 'native-claude-571';
 const PROOF_SESSION = `agent_${'A'.repeat(43)}`;
@@ -51,6 +52,18 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('keeps an uninspectable installed version unsupported without dropping the session label', async () => {
+    const claim = { harness: 'claude', sessionId: SESSION, workdir: process.cwd() };
+    const inspected = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
+      readVersion: async () => null }).inspect(claim);
+    expect(inspected).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
+      capabilities: { support: 'unsupported', acknowledgement: 'unknown' } });
+    const current = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
+      readVersion: async () => '2.1.286' }).inspect(claim);
+    expect(current).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
+      capabilities: { version: '2.1.286', support: 'experimental' } });
+  });
+
   it('keeps the public refusal generic while reporting a fixed local readiness code', async () => {
     const diagnostics: string[] = [];
     const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
@@ -185,11 +198,71 @@ describe('hosted native Claude MCP', () => {
       expect(admitted[2]?.result.structuredContent).toMatchObject({ kind: 'accepted', eventId: 'event-sent-571' });
       expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bindingId: binding.bindingId,
         body: 'one encrypted send' }), undefined);
-      const restarted = await serve(factory, [request(4, 'khala_read')]);
-      expect(restarted[0]?.result.structuredContent).toMatchObject({ kind: 'batch' });
+      // A resumed model turn starts a new MCP process. Its first status and
+      // explicit read must select the approved generation without joining again.
+      const restarted = await serve(factory, [request(4, 'khala_status'), request(5, 'khala_read')]);
+      expect(restarted[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
+      expect(restarted[1]?.result.structuredContent).toMatchObject({ kind: 'batch',
+        batch: expect.stringContaining('encrypted release 571') });
+      expect(send).toHaveBeenCalledTimes(1);
       expect(factory).toHaveBeenCalledWith({ harness: 'claude', sessionId: SESSION });
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+
+  it('waits for the approved binding intake to start before a resumed status and read', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-resume-'));
+    let clock = 0;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      let processNumber = 0;
+      const opens = vi.fn();
+      const factory: NonNullable<CliDependencies['hostedSession']> = async () => {
+        const process = ++processNumber;
+        if (process === 2) clock = 10_000; // Slow lazy open must not consume the readiness grace period.
+        let checks = 0;
+        opens();
+        return {
+          client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+            async status() {
+              checks += 1;
+              return process === 2 && checks === 1
+                ? { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const,
+                  sourceCursor: null, readiness: { phase: 'degraded' as const, errorCode: 'subscription_starting' as const,
+                    prerequisites: { storage: 'ready' as const, device: 'ready' as const, bootstrap: 'ready' as const,
+                      subscription: 'unknown' as const, controls: 'blocked' as const, harness: 'unknown' as const,
+                      dispatch: 'blocked' as const, review: 'blocked' as const, recovery: 'unknown' as const } } }
+                : { v: 1 as const, connected: true, binding, route: 'manual_mcp' as const, sourceCursor: null };
+            } },
+          inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
+            generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 }),
+          async close() {},
+        };
+      };
+      const first = await serve(factory, [request(1, 'khala_status')]);
+      expect(first[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
+      const resumed = await serve(factory, [request(2, 'khala_status'), request(3, 'khala_read')]);
+      expect(resumed.map(reply => reply.result.structuredContent)).toEqual([
+        { kind: 'status', connected: true }, { kind: 'empty' },
+      ]);
+      expect(opens).toHaveBeenCalledTimes(2);
+    } finally { now.mockRestore(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('reports a typed retry state when an approved binding is still starting', async () => {
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null,
+          readiness: { phase: 'degraded', errorCode: 'subscription_starting', prerequisites: {
+            storage: 'ready', device: 'ready', bootstrap: 'ready', subscription: 'unknown',
+            controls: 'blocked', harness: 'unknown', dispatch: 'blocked', review: 'blocked', recovery: 'unknown',
+          } } } as const; } },
+      inbox: async () => { throw new Error('starting route must not read'); }, async close() {},
+    });
+    const results = await serve(factory, [request(1, 'khala_status'), request(2, 'khala_read')]);
+    expect(results.map(reply => reply.result.structuredContent)).toEqual(Array(2).fill({
+      kind: 'refused', code: 'connector_starting', next: 'retry_status_then_read',
+    }));
+  }, 12_000);
 
   it.each(['wrong-session', 'wrong-device'])('refuses a %s binding during delivery', async mismatch => {
     const wrong = mismatch === 'wrong-session' ? { ...binding, sessionId: 'agent_other' }

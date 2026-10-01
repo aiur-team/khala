@@ -432,6 +432,22 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       method: 'tools/call', params: { name: routeTool, arguments: {} } });
     if (harness === 'claude') {
       assert.equal(afterRoute.result?.structuredContent?.connected, true, 'session route not connected after owner proof');
+      // The saved model session resumes with a new native MCP process. Recheck
+      // status and read before any new owner action or channel join.
+      const beforeResumePid = recoveredSession.pid;
+      await recoveredSession.close();
+      recoveredSession = client.session();
+      assert.notEqual(recoveredSession.pid, beforeResumePid);
+      const resumedStatus = await recoveredSession.request({ jsonrpc: '2.0', id: 70,
+        method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
+      const resumedRead = await recoveredSession.request({ jsonrpc: '2.0', id: 71,
+        method: 'tools/call', params: { name: 'khala_read', arguments: {} } });
+      assert.equal(resumedStatus.result?.structuredContent?.connected, true,
+        'approved binding disappeared on model-turn resume');
+      assert.equal(resumedRead.result?.structuredContent?.kind, 'empty',
+        'resumed native read did not keep the approved route');
+      assert.equal(grants.size, 1, 'resume created a duplicate grant');
+      assert.equal(bindings.size, 1, 'resume created a duplicate binding');
     } else {
       assert.equal(afterRoute.result?.structuredContent?.kind, 'empty', 'Codex session route not ready after owner proof');
     }
