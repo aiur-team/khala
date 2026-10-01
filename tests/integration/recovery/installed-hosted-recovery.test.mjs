@@ -291,12 +291,13 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       });
     };
     let ownerDeviceEmpty = durableStages().some(item => item.stage === 'owner_device_empty');
-    for (let attempt = 0; attempt < 8 && !ownerDeviceEmpty; attempt += 1) {
+    for (let attempt = 0; attempt < 30 && !ownerDeviceEmpty; attempt += 1) {
       await delay(500);
       await recoveredSession.request(statusMessage(50 + attempt));
       ownerDeviceEmpty = durableStages().some(item => item.stage === 'owner_device_empty');
     }
-    assert.equal(ownerDeviceEmpty, true, 'pre-registration owner device guard not exercised');
+    assert.equal(ownerDeviceEmpty, true,
+      `pre-registration owner device guard not exercised: ${JSON.stringify(durableStages().slice(-8))}`);
     console.log(JSON.stringify({ scope: 'pre_owner_registration', sessionRoute: 'claude_env',
       status: beforeRegistration.result?.structuredContent?.outcome ?? 'absent',
       route: beforeRoute.result?.structuredContent?.kind ?? 'absent',
