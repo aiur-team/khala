@@ -352,6 +352,7 @@ export function hostedSessionFactory(options: Readonly<{
           'khala.hosted.channel-access.v1', link, claim.harness, claim.sessionId, claim.workdir,
         ])).digest('base64url').slice(0, 32);
         const result = await access.requestChannelAccess({ target: { kind: 'channel_url', channelUrl: link }, operationId, origin: target.origin });
+        if (result?.kind === 'proof_key_candidate') return { kind: 'pending' as const, operationId, outcome: 'pending_owner' as const };
         if (result?.kind !== 'status') return { kind: 'unavailable' as const };
         const decoded = decodeAccessRequestStatus(result.status);
         if (!decoded.ok || decoded.value.operationId !== operationId) {

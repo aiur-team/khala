@@ -93,6 +93,7 @@ describe('installed hosted connector factory', () => {
     const retained = new Map<string, { binding: SessionBinding; matrixSession: never }>();
     const ready = new Set<string>();
     const calls: string[] = [];
+    const scopedCalls: { path: string; body: Record<string, unknown> | null }[] = [];
     let firstActivation = true;
     let grant = '';
     let redeemed = false;
@@ -116,6 +117,7 @@ describe('installed hosted connector factory', () => {
       const url = new URL(String(target));
       calls.push(url.pathname);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      scopedCalls.push({ path: url.pathname, body });
       if (url.pathname.endsWith('/authority/challenge')) return reply({ kind: 'issued', nonce: 'N'.repeat(43) });
       if (url.pathname.endsWith('/authority/candidate')) return reply({ kind: candidateApproved ? 'approved' : 'pending_owner',
         operationId: body?.operationId, candidateId: 'C'.repeat(43),
@@ -218,6 +220,11 @@ describe('installed hosted connector factory', () => {
       expect(first).toMatchObject({ kind: 'pending', outcome: 'pending_owner' });
       if (first.kind !== 'pending') throw new Error('expected pending connect');
       connectOperationId = first.operationId;
+      expect(scopedCalls.find(call => call.path.endsWith('/authority/candidate'))?.body).toMatchObject({
+        operationId: connectOperationId, target: link, harness: SESSION.harness,
+        sessionId: SESSION.sessionId, generation: 0,
+      });
+      expect(diagnostics).not.toContainEqual(expect.objectContaining({ component: 'proof_key_candidate', result: 'unavailable' }));
       expect(discovered).toBe(false);
       expect(calls).not.toContain('/api/agent/channel-access/exchange');
       expect(rows.size).toBe(0);
@@ -227,6 +234,9 @@ describe('installed hosted connector factory', () => {
       expect(await opened.client.connect(link)).toEqual(first);
       expect(discovered).toBe(true);
       expect(calls).toContain('/api/agent/channel-link/request');
+      expect(scopedCalls.find(call => call.path === '/api/agent/channel-link/request')?.body).toMatchObject({
+        operationId: connectOperationId, channelUrl: link,
+      });
       expect(calls).not.toContain('/api/agent/channel-access/exchange');
       expect(deviceReservations).toBe(0);
       expect(deviceActivations).toBe(0);
@@ -274,6 +284,12 @@ describe('installed hosted connector factory', () => {
     nativeAvailable = true;
     expect(calls).toContain('/api/agent/channel-access/exchange');
     expect(calls).toContain('/api/agent/bootstrap/redeem');
+    if (mode === 'connect') {
+      expect(scopedCalls.find(call => call.path === '/api/agent/channel-access/exchange')?.body)
+        .toMatchObject({ operationId: connectOperationId, sessionGeneration: 0 });
+      expect(scopedCalls.find(call => call.path === '/api/agent/bootstrap/redeem')?.body)
+        .toMatchObject({ operation_id: connectOperationId, session_id: principal, generation: 0 });
+    }
     expect(calls).toContain('/api/agent/channel-access/resume');
     expect(calls).toContain('/api/agent/channel-access/ready');
     expect(calls.filter(path => path === '/api/agent/bootstrap/redeem')).toHaveLength(1);
