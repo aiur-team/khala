@@ -16,6 +16,7 @@
     "test:installed-recovery": "node --import tsx --conditions=khala-source --test-concurrency=1 --test tests/integration/recovery/installed-hosted-recovery.test.mjs",
     "test:recovery-fixture": "node --test scripts/fixtures/*.test.mjs",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
+    "test:external:local": "node infra/preview/external-local.mjs",
     "test:conformance": "node tests/e2e/harness/run.mjs conformance",
     "test:e2e": "node tests/e2e/harness/run.mjs e2e",
     "build": "pnpm check:boundaries && pnpm -r build",

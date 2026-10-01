@@ -19,6 +19,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(typeof creatorAccessToken).toBe('string');
 
     const intro = syntheticCanary('intro');
+    await alice.getByRole('button', { name: 'Create channel' }).click();
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
     await alice.getByLabel('Message 1').fill(intro);
     await alice.getByRole('button', { name: 'Create channel' }).click();
@@ -73,6 +74,7 @@ test('an account without admission cannot read a protected room', async ({ brows
   try {
     const owner = await freshPage(ownerContext, environment);
     await signIn(owner, environment, environment.users[0]);
+    await owner.getByRole('button', { name: 'Create channel' }).click();
     const canary = syntheticCanary('protected');
     await owner.getByLabel('Message 1').fill(canary);
     await owner.getByRole('button', { name: 'Create channel' }).click();
