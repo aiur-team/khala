@@ -563,7 +563,9 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
     if (harness === 'claude') {
       const batchText = nativeRead.result.structuredContent.batch;
       assert.match(batchText, /--- release 1 of 1 ---/u, 'native batch did not contain one release');
-      assert.ok(batchText.includes(reconciled.body.releaseIds[0]), 'native batch carried another release');
+      // The ordered inbox assigns a projection ID; the later receipt maps it
+      // back to the owner approval's original release ID.
+      assert.ok(batchText.includes(sentByOwner.eventId), 'native batch carried another event');
       assert.doesNotMatch(batchText, /^batchToken:/mu, 'Claude native read exposed a private batch token');
       const beforeAck = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
         candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
