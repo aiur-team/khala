@@ -216,10 +216,14 @@ describe('authenticated owner mailbox review client', () => {
       setItem: (key: string, value: string) => { entries.set(key, value); },
       removeItem: (key: string) => { entries.delete(key); } };
     let writes = 0;
+    const reads: string[] = [];
     const fetcher: typeof fetch = async url => {
       if (String(url).endsWith('/submit')) { writes += 1; throw new Error('answer lost'); }
-      if (String(url).includes('/result?')) return json(200, { v: 1, operationId: command.commandId,
-        outcome: { ok: true, releaseIds: ['release_12345678'] } });
+      if (String(url).includes('/result?')) {
+        reads.push(new URL(String(url)).searchParams.get('operation_id') ?? 'missing');
+        return json(200, { v: 1, operationId: command.commandId,
+          outcome: { ok: true, releaseIds: ['release_12345678'] } });
+      }
       throw new Error('unexpected route');
     };
     const options = { origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher, storage };
@@ -229,8 +233,20 @@ describe('authenticated owner mailbox review client', () => {
     expect(after.review.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toEqual(command);
     expect(after.review.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration + 1)).toBeNull();
     expect(await after.review.reconcile(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    const twiceReloaded = createOwnerMailboxReviewClient(options);
+    expect(twiceReloaded.review.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toEqual(command);
+    expect(await twiceReloaded.review.reconcile(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    expect(await twiceReloaded.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
     expect(writes).toBe(1);
-    expect(entries.size).toBe(0);
+    expect(reads).toEqual([command.commandId, command.commandId, command.commandId]);
+    const next = { ...command, commandId: 'command_next_12345678' as typeof command.commandId };
+    expect(await twiceReloaded.review.approve(next)).toEqual({ kind: 'lost' });
+    expect(writes).toBe(2); // A new explicit command can replace the saved completed status.
+    expect(createOwnerMailboxReviewClient(options).review.recoverUnknown?.(
+      command.bindingId, command.roomId, command.expectedBindingGeneration)).toEqual(next);
+    entries.set(`khala.review.unknown.v1:${command.bindingId}:${command.roomId}:${command.expectedBindingGeneration}`, '{bad');
+    expect(createOwnerMailboxReviewClient(options).review.recoverUnknown?.(
+      command.bindingId, command.roomId, command.expectedBindingGeneration)).toBeNull();
   });
 
   it('checks the exact persisted command repeatedly without submitting on unknown or unavailable status', async () => {

@@ -324,6 +324,16 @@ test('selected review reload reads one persisted release and shows its ACK witho
       releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
     });
     assert.equal(await review.getByRole('button', { name: 'Check release status' }).count(), 0);
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Release acknowledged').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Batch token returned').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), {
+      releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
+    });
   });
 });
 
