@@ -23,6 +23,7 @@ import {
   type ClosurePort,
   type ClosureCapability,
   type ClosureRequest,
+  type DeviceId,
   type OwnerId,
   type RoomId,
   type IdentityPort,
@@ -30,7 +31,7 @@ import {
   type OperationResult,
   type ParticipantView,
 } from '@khala/contracts/messaging/index';
-import type { CredentialSource } from '@khala/messaging/browser-device/index';
+import { createIndexedDbMarkerStore, hasOwnerCryptoStore, type CredentialSource } from '@khala/messaging/browser-device/index';
 import type {
   ChannelAccessInboxPort,
   InboxRejection,
@@ -79,6 +80,9 @@ export type HumanBrowserApiOptions = Readonly<{
   fetch?: Fetch;
   timeoutMs?: number;
   deviceIds?: Readonly<{ get(ownerId: string): string | null; put(ownerId: string, deviceId: string): void }>;
+  existingDevice?: (ownerId: OwnerId, deviceId: string | null) => Promise<Readonly<{ markerDeviceId: string | null; hasDivergentCryptoStore: boolean }>>;
+  /** Supply only from an authenticated, owner/device-bound replacement admission. */
+  authorizeReplacement?: (principal: Parameters<CredentialSource['resolve']>[0], deviceId: DeviceId) => Promise<boolean>;
 }>;
 
 export type HumanBrowserApi = Readonly<{
@@ -163,6 +167,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     get: (ownerId: string) => globalThis.localStorage.getItem(`khala.matrix.device.v1:${ownerId}`),
     put: (ownerId: string, deviceId: string) => globalThis.localStorage.setItem(`khala.matrix.device.v1:${ownerId}`, deviceId),
   };
+  const existingDevice = options.existingDevice ?? (async (ownerId: OwnerId, deviceId: string | null) => ({
+    markerDeviceId: (await createIndexedDbMarkerStore().get(ownerId))?.deviceId ?? null,
+    hasDivergentCryptoStore: await hasOwnerCryptoStore(ownerId, deviceId as DeviceId | null),
+  }));
 
   const identityUnavailable = (): IdentityState => ({ kind: 'unavailable', retryable: true });
 
@@ -291,7 +299,16 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       let requestedDeviceId: string;
       try {
         const stored = deviceIds.get(principal.ownerId);
+        const existing = await existingDevice(principal.ownerId, stored);
         requestedDeviceId = stored ?? `KH_WEB_${crypto.randomUUID().replaceAll('-', '')}`;
+        const decodedCandidate = decodeDeviceId(requestedDeviceId);
+        if (!decodedCandidate.ok) return { kind: 'unavailable' };
+        if ((existing.markerDeviceId !== null && existing.markerDeviceId !== stored)
+          || (existing.markerDeviceId === null && existing.hasDivergentCryptoStore)) {
+          if (!options.authorizeReplacement || !await options.authorizeReplacement(principal, decodedCandidate.value)) {
+            return { kind: 'unavailable', reason: 'recovery_required' };
+          }
+        }
         if (stored === null) deviceIds.put(principal.ownerId, requestedDeviceId);
       } catch {
         return { kind: 'unavailable' };

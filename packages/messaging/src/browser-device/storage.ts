@@ -30,6 +30,7 @@ type Db = {
 export type IndexedDbLike = {
   open(name: string, version?: number): OpenReq;
   deleteDatabase(name: string): Req<unknown>;
+  databases?(): Promise<readonly { name?: string }[]>;
 };
 
 const MARKER_DB = 'khala.browser-device.markers';
@@ -98,6 +99,19 @@ export function createIndexedDbMarkerStore(factory: IndexedDbLike | null = scope
  */
 export const cryptoStoreName = (ownerId: OwnerId, deviceId: DeviceId): string =>
   `khala.crypto:${encodeURIComponent(ownerId)}:${encodeURIComponent(deviceId)}`;
+
+/** Only checks for owner-scoped store names; it never opens or adopts old keys. */
+export async function hasOwnerCryptoStore(
+  ownerId: OwnerId,
+  deviceId: DeviceId | null = null,
+  factory: IndexedDbLike | null = scope.indexedDB ?? null,
+): Promise<boolean> {
+  if (!factory?.databases) throw new Error('indexeddb database listing unavailable');
+  const prefix = `khala.crypto:${encodeURIComponent(ownerId)}:`;
+  const expected = deviceId === null ? null : cryptoStoreName(ownerId, deviceId);
+  return (await factory.databases()).some(database => database.name?.startsWith(prefix)
+    && database.name !== expected);
+}
 
 type StorageManagerLike = Readonly<{ persist?(): Promise<boolean> }>;
 
