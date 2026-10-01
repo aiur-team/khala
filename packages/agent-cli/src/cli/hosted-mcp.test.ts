@@ -44,7 +44,97 @@ async function serve(requests: readonly ReturnType<typeof call>[], hostedSession
   return output.trim().split('\n').map(line => JSON.parse(line) as { result: { structuredContent: unknown } });
 }
 
+const startingReadiness = { phase: 'degraded', errorCode: 'subscription_starting', prerequisites: {
+  storage: 'ready', device: 'ready', bootstrap: 'ready', subscription: 'unknown', controls: 'blocked',
+  harness: 'unknown', dispatch: 'blocked', review: 'blocked', recovery: 'unknown',
+} } as const;
+
 describe('installed hosted MCP routing', () => {
+  it('reads through the same approved Codex binding after a new MCP process starts its subscription', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-codex-resume-'));
+    try {
+      const decoded = decodeSessionBinding({ v: 1, bindingId: 'retained-binding', ownerId: 'owner-1',
+        agentParticipantId: 'agent-1', deviceId: 'KHALADEV1', harness: 'codex', sessionId: THREAD, generation: 3 });
+      if (!decoded.ok) throw new Error('invalid binding fixture');
+      const binding = decoded.value;
+      const inbox = vi.fn(async (bindingId: string, generation: number) => openInbox({
+        stateDirectory: root, bindingId, generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+      }));
+      const connect = vi.fn();
+      const pair = vi.fn();
+      let process = 0;
+      let checks = 0;
+      const hostedSession = vi.fn(async () => {
+        process += 1;
+        checks = 0;
+        return { client: { ...createUnavailableClient(), connect, pair,
+          async status() {
+            checks += 1;
+            return process === 2 && checks === 1
+              ? { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const,
+                sourceCursor: null, readiness: startingReadiness }
+              : { v: 1 as const, connected: true, binding, route: 'native_cli_queue' as const, sourceCursor: null };
+          } }, inbox, async close() {} };
+      });
+      const present = vi.fn(async () => true);
+      const first = await serve([call(1, 'khala_read', { threadId: THREAD })], hostedSession, present);
+      const second = await serve([call(2, 'khala_read', { threadId: THREAD })], hostedSession, present);
+      expect(first[0]?.result.structuredContent).toMatchObject({ kind: 'empty' });
+      expect(second[0]?.result.structuredContent).toMatchObject({ kind: 'empty' });
+      expect(inbox).toHaveBeenNthCalledWith(2, binding.bindingId, binding.generation);
+      expect(present).toHaveBeenCalledWith({ harness: 'codex', sessionId: THREAD });
+      expect(connect).not.toHaveBeenCalled();
+      expect(pair).not.toHaveBeenCalled();
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('returns a typed retry after bounded subscription startup without admitting again', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(8_000);
+    try {
+      const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(),
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable',
+          sourceCursor: null, readiness: startingReadiness } as const; } },
+      inbox: async () => { throw new Error('must not open inbox'); }, async close() {} }));
+      const replies = await serve([call(1, 'khala_read', { threadId: THREAD })], hostedSession, async () => true);
+      expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'connector_starting',
+        next: 'retry_status_then_read' });
+    } finally { now.mockRestore(); }
+  });
+
+  it.each(['absent', 'revoked', 'wrong-session', 'wrong-harness', 'wrong-device', 'changed-generation', 'offline'])(
+    'does not grant a resumed read for %s', async scenario => {
+      const decoded = decodeSessionBinding({ v: 1, bindingId: 'retained-binding', ownerId: 'owner-1',
+        agentParticipantId: 'agent-1', deviceId: 'KHALADEV1', harness: 'codex', sessionId: THREAD, generation: 3 });
+      if (!decoded.ok) throw new Error('invalid binding fixture');
+      const binding = decoded.value;
+      const other = scenario === 'wrong-session' ? { ...binding, sessionId: 'other-thread' }
+        : scenario === 'wrong-harness' ? { ...binding, harness: 'other-harness' }
+          : scenario === 'wrong-device' ? { ...binding, deviceId: 'OTHERDEVICE' as typeof binding.deviceId }
+            : { ...binding, generation: 4 };
+      let checks = 0;
+      const inbox = vi.fn(async () => { throw new Error('must not open inbox'); });
+      const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(),
+        async status() {
+          checks += 1;
+          if (scenario === 'offline') return { v: 1 as const, connected: false, binding: null,
+            route: 'unavailable' as const, sourceCursor: null, readiness: { ...startingReadiness,
+              errorCode: 'subscription_offline' as const } };
+          if (scenario === 'revoked' || scenario === 'absent') return { v: 1 as const, connected: false,
+            binding: null, route: 'unavailable' as const, sourceCursor: null, readiness: startingReadiness };
+          return { v: 1 as const, connected: true, binding: checks === 1 ? binding : other,
+            route: 'native_cli_queue' as const, sourceCursor: null };
+        } }, inbox, async close() {} }));
+      const present = vi.fn(async () => scenario !== 'absent' && scenario !== 'revoked');
+      const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(8_000);
+      try {
+        const requests = scenario === 'wrong-device' || scenario === 'changed-generation'
+          ? [call(1, 'khala_read', { threadId: THREAD }), call(2, 'khala_read', { threadId: THREAD })]
+          : [call(1, 'khala_read', { threadId: THREAD })];
+        const replies = await serve(requests, hostedSession, present);
+        expect(replies.at(-1)?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+        expect(inbox).not.toHaveBeenCalled();
+      } finally { now.mockRestore(); }
+    });
   it('routes a create target only through the named hosted session', async () => {
     const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;
     const approvalUrl = `https://khala.aiur.team/api/human/channel-discovery/authority/approve?candidate=${'B'.repeat(43)}`;

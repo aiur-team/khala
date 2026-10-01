@@ -17,6 +17,7 @@ import type { SetupService } from '../setup/plan.js';
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
   'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
+  'connector_starting',
   'internal_unavailable', 'discovery_required',
 ] as const;
 export type CliErrorCode = (typeof CLI_ERROR_CODES)[number];
