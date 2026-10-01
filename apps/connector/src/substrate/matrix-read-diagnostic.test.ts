@@ -146,5 +146,6 @@ it('ingests a verified peer agent as its own participant and excludes its own se
     expect(substrate.participantForDevice(room as never, peer, 'SELF' as never)).toBe('agent_peer');
     expect(substrate.participantForDevice(room as never, own, 'SELF' as never)).toBeNull();
     expect(substrate.participantForDevice('!other:example' as never, peer, 'PEER' as never)).toBeNull();
+    expect(await substrate.reviewMembers()).toEqual(['agent_peer']);
   } finally { await substrate.close(); }
 });

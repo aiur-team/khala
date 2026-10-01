@@ -61,6 +61,8 @@ export type MatrixConnectorSubstrate = Readonly<{
   source: SubscriptionSource;
   /** Participant proved by this device's verified Matrix event in the current room. */
   participantForDevice(roomId: RoomId, senderUserId: string, deviceId: DeviceId): ParticipantId | null;
+  /** Current joined participants from Matrix, resolved through the binding-scoped Control directory. */
+  reviewMembers(): Promise<readonly ParticipantId[] | null>;
   fingerprint: string;
   writerLock: MatrixWriterLockDiagnostic;
   /** Encrypts one agent-authored message with the same durable Matrix device. */
@@ -388,6 +390,22 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       devices, source, fingerprint: identity.fingerprint, writerLock: lock.diagnostic,
       participantForDevice: (roomId, senderUserId, deviceId) =>
         verifiedDevices.get(JSON.stringify([roomId, senderUserId, deviceId])) ?? null,
+      reviewMembers: async () => {
+        if (closed || !input.resolveParticipants) return null;
+        try {
+          const users = await call<readonly string[]>(current(), 'members');
+          const participants = await input.resolveParticipants(users, []);
+          if (!participants) return null;
+          const members: ParticipantId[] = [];
+          for (const userId of users) {
+            const participant = participants.get(userId);
+            if (!participant) return null;
+            if (participant.kind === 'agent' && (!participant.deviceId || !participant.fingerprint)) continue;
+            members.push(participant.participantId);
+          }
+          return members;
+        } catch { return null; }
+      },
       send: (clientTxnId, body) => serializeSend(async () => {
         if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
           || Buffer.byteLength(body) > 64 * 1024) throw new Error('matrix_invalid_send');
