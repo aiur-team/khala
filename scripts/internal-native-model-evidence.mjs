@@ -1,5 +1,13 @@
 const isTool = (name, tool) => new RegExp(`(?:^|__)${tool}$`).test(name);
-const contains = (value, marker) => typeof value === 'string' && value.includes(marker);
+const contains = (value, marker) => {
+  if (typeof value === 'string') {
+    if (value.includes(marker)) return true;
+    try { return contains(JSON.parse(value), marker); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some(item => contains(item, marker));
+  if (value && typeof value === 'object') return Object.values(value).some(item => contains(item, marker));
+  return false;
+};
 
 export function modelEvidence(rows, harness, received, sent) {
   const calls = [];
@@ -32,12 +40,12 @@ export function modelEvidence(rows, harness, received, sent) {
   const reads = calls.filter(call => isTool(call.name, 'khala_read'));
   const successful = reads.flatMap(call => {
     if (harness === 'codex') {
-      return contains(JSON.stringify(call.result), received) ? [{ index: call.index }] : [];
+      return contains(call.result, received) ? [{ index: call.index }] : [];
     }
     return results.filter(result => result.id === call.id && result.index > call.index && !result.error
-      && contains(JSON.stringify(result.content), received));
+      && contains(result.content, received));
   });
   const sendCall = successful.some(read => calls.some(call => call.index > read.index
-    && isTool(call.name, 'khala_send') && contains(JSON.stringify(call.input), sent)));
+    && isTool(call.name, 'khala_send') && contains(call.input, sent)));
   return { readCall: reads.length > 0, visible: successful.length > 0, sendCall };
 }

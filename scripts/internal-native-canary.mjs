@@ -166,12 +166,15 @@ async function main() {
     fs.copyFileSync(tarball, privateTarball);
     fs.chmodSync(privateTarball, 0o600);
     verifyArtifact(privateTarball, provenance.sha256);
-    checked('npm', ['install', '-g', '--offline', '--prefix', path.join(root, 'prefix'), privateTarball], {
+    checked(process.execPath, [path.resolve(path.dirname(process.execPath), '..', 'lib/node_modules/npm/bin/npm-cli.js'),
+      'install', '-g', '--offline', '--ignore-scripts', '--prefix', path.join(root, 'prefix'), privateTarball], {
       ...process.env, npm_config_cache: path.join(root, 'npm-cache'), npm_config_audit: 'false', npm_config_fund: 'false',
     });
     const find = bin => { const result = spawnSync('/usr/bin/which', [bin], { encoding: 'utf8' }); return result.status === 0 ? fs.realpathSync(result.stdout.trim()) : null; };
+    const claudeBinary = find('claude');
+    if (claudeBinary) fs.symlinkSync(claudeBinary, path.join(root, 'bin', 'claude'));
     const run = { v: 1, id: randomBytes(12).toString('hex'), home: path.join(root, 'home'), socket: path.join(root, 'tmux.sock'),
-      khala: fs.realpathSync(path.join(root, 'prefix', 'bin', 'khala')), codex: codexBinary, claude: find('claude'), bin: path.join(root, 'bin'),
+      khala: fs.realpathSync(path.join(root, 'prefix', 'bin', 'khala')), codex: codexBinary, claude: claudeBinary, bin: path.join(root, 'bin'),
       codexSha256, codexRoute: pinnedVersion === 'codex-cli 0.159.3' ? 'sync-pinned-0.159.3' : 'manual-pinned-0.160.0',
       tarball: privateTarball, tarballSha256: provenance.sha256, packageCommit: provenance.commit,
       lockfileSha256: fileDigest(path.join(repositoryRoot, 'pnpm-lock.yaml')), createdAt: Date.now() };
@@ -184,7 +187,9 @@ async function main() {
   }
   const run = load();
   if (action === 'setup') {
-    const env = environment(run);
+    // The canary installs only its two pinned harnesses. Other host CLIs can be
+    // unsupported and make the all-harness setup transaction refuse to apply.
+    const env = { ...environment(run), PATH: `${run.bin}:${path.dirname(process.execPath)}:${path.dirname(run.khala)}` };
     const planned = spawnSync(process.execPath, [run.khala, 'setup', '--dry-run'], { env, encoding: 'utf8', timeout: 30_000 });
     let dry;
     try { dry = JSON.parse(planned.stdout); } catch { stage('setup_plan_report'); }
@@ -192,7 +197,7 @@ async function main() {
     const execution = spawnSync(process.execPath, [run.khala, 'setup', '--confirm', dry.planDigest], { env, encoding: 'utf8', timeout: 60_000 });
     let applied;
     try { applied = JSON.parse(execution.stdout); } catch { stage('setup_apply_report'); }
-    if (run.codexRoute !== 'manual-pinned-0.160.0' && !applied.ok) stage('setup_apply');
+    if (!Array.isArray(applied.harnesses)) stage('setup_apply');
     const claude = status(run).harnesses?.find(item => item.harness === 'claude');
     if (!claude?.version?.supported || claude.route !== 'native_cli_queue'
       || claude.components?.some(item => item.state !== 'ready')) stage('claude_setup');

@@ -44,3 +44,15 @@ test('Claude evidence correlates read result by tool_use_id before send', () => 
   assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: true });
 });
+
+test('quoted challenge is visible only in the matching native read result', () => {
+  const challenge = 'Codex send exactly "18 nonce codex"; Claude send exactly "18 nonce claude".';
+  const codexRow = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
+  const read = codexRow('khala_read', {}, { content: [{ type: 'text', text: JSON.stringify({ events: [{ body: challenge }] }) }] });
+  const send = codexRow('khala_send', { message: '18 nonce codex' }, { ok: true });
+  assert.deepEqual(modelEvidence([read, send], 'codex', challenge, '18 nonce codex'),
+    { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([codexRow('khala_read', {}, { events: [] }),
+    codexRow('khala_send', { message: challenge }, { ok: true })], 'codex', challenge, challenge),
+  { readCall: true, visible: false, sendCall: false });
+});
