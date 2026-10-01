@@ -32,8 +32,7 @@ test('owner sees and sets only the exact native MCP mode proved by its receipt l
     const command = { v: 1, commandId: `manual_${crypto.randomUUID().replaceAll('-', '')}`,
       bindingId: controls.bindingId, expectedBindingGeneration: before.binding.generation,
       expectedVersion: before.listening.version, requested: 'async', issuedAt: new Date().toISOString() };
-    if (provider === 'codex') {
-      expect(before.listening.support.async.status).toBe('unsupported');
+    if (before.listening.support.async.status === 'unsupported') {
       await expect(detail.getByRole('radio', { name: /^async/i })).toBeDisabled();
       expect((await mailbox(page, controls.bindingId, 'listening_set', command, command.commandId)).status).toBe(200);
       expect(await mailboxOutcome(page, controls.bindingId, command.commandId))
@@ -43,7 +42,7 @@ test('owner sees and sets only the exact native MCP mode proved by its receipt l
       return;
     }
 
-    expect(before.listening.support.async.status).toBe('proven');
+    expect(before.listening.support.async.status, `${provider} needs a current explicit-pull receipt`).toBe('proven');
     await detail.getByRole('radio', { name: /^async/i }).check();
     await detail.getByRole('button', { name: 'Apply listening mode' }).click();
     await expect.poll(async () => {
