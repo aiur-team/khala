@@ -1,5 +1,32 @@
 # Live acceptance runner
 
+## Candidate evidence for local E2E lanes
+
+`candidate.ts` exports `allocateNamespace`, `fingerprintEffectiveConfig`,
+`verifyArtifact`, `validateCandidate`, `validateJournal`, and `writeEvidence`.
+Use a new private namespace for **each** run. Measure the source commit,
+lockfile, source inputs and built artifacts before creating the candidate;
+verify artifact bytes against their recorded SHA-256 digests. The installed CLI
+tarball is the `cli` artifact. Record exact native CLI versions and service image
+digests. In dependency-free internal mode, record hosted web, function,
+connector, hook, and plugin components and service images as `N/A`.
+
+The secret-free effective config fingerprint covers stable, allowlisted values;
+record local versus production origin, CSP, and provider differences separately.
+Comparing candidates refuses source/input, build, image, config, native-version,
+and namespace drift. For each operation, supply separate ordered `pending`,
+`released`, `model-consumed`, `acknowledged`, and `durable-browser-visible`
+receipts with the same operation, event, binding and generation IDs. The model
+stages require model-origin evidence; browser visibility requires a durable
+browser-origin observation. A queued release, HTTP response, empty read, or
+optimistic UI state cannot fill those receipts. `writeEvidence` writes an
+exclusive mode `0600` JSON file containing only validated identifiers and
+digests. Never pass credentials, invite URLs, message bodies, ciphertext,
+private keys, browser storage, or raw terminal/service logs into it.
+
+Focused contract tests: `pnpm test:e2e -- tests/e2e/acceptance/candidate.test.ts`.
+This evidence format does not assert that either real three-party canary ran.
+
 Acceptance 2 from [`docs/product/internal-mode/acceptance.md`](../../docs/product/internal-mode/acceptance.md) (AC3). This is a manual script. It creates two `acceptance`-labelled tickets in `aiur-team/khala`, the normal Aiur Executor works them, and the script then checks from durable evidence that the two Executor-owned CLI sessions exchanged messages over one channel.
 
 ```sh
