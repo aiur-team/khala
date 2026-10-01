@@ -100,5 +100,38 @@ CLI activation journal or native read/send in this check. It verifies that the
 fixture can now drop the real client's redemption protocol, not that hosted
 restart recovery is accepted. Full composition remains the next integration step.
 
-Transport and installed-client tests currently run independently. Joining them
-without the real hosted adapters would produce another simulated recovery claim.
+The first-slice transport and installed-client preflight tests ran independently.
+The subsequent integration below joins them through real hosted adapters.
+
+## Installed hosted access and lost response
+
+The next bounded fixture test runs with the other disposable Synapse checks:
+
+```sh
+pnpm test:recovery-synapse
+```
+
+`tests/integration/recovery/installed-hosted-recovery.test.mjs` packages the stock CLI,
+installs its tarball offline, and runs four separate `mcp-serve` processes over
+one private state directory. A fixture browser command handles the owner form
+and loopback discovery callback; its pinned Claude version output is only a
+controlled local label and does not prove a provider session. The private-CA
+HTTPS bridge also forwards Matrix requests to disposable Synapse/Postgres.
+The production hosted route composition and file-backed control store perform
+proof-key approval, discovery consent, access request, owner approval, exchange,
+bootstrap redemption and grant-free resume.
+
+One run observed one owner-visible request, one durable channel-access grant,
+one durable binding, one requested-device Matrix login and one dropped admitted
+redeem response. The first post-approval client process had no local binding
+marker after the drop. A new process using only the same operation ID and state
+saved the original binding and Matrix session in its local admission file, with
+no second grant or requested-device login. The receipt contains only typed
+counts. The generated proof key, owner session, grant, Matrix credentials,
+invite link and message data never enter the receipt.
+
+This proves installed-client grant-free admission recovery. It does not yet
+prove a ready native binding, encrypted read/send, all wrong-tuple and closed
+operation refusals, or the required recovery mutation red-before-green check.
+Those remain part of #609. Production exact-session acceptance remains with
+#579 and #592 and cannot be inferred from this disposable fixture.

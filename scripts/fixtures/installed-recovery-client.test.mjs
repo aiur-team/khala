@@ -38,7 +38,7 @@ test('restarts a packaged and installed Claude MCP entry over the same owned exa
       ok: false, v: 1, error: 'unavailable', operationId: 'controlled-recovery-operation', next: 'reuse_operation_id',
     });
     const ledgers = files(client.stateDirectory).filter(item => item.endsWith('/ledger.sqlite'));
-    assert.equal(ledgers.length, 1, 'preflight must create actual connector state, not merely return an unbound refusal');
+    assert.equal(ledgers.length, 1, `preflight must create actual connector state: ${JSON.stringify(first.diagnostics)}`);
     const inode = statSync(ledgers[0]).ino;
     const second = await client.call([message]);
     assert.notEqual(first.pid, second.pid);
