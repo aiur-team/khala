@@ -43,6 +43,7 @@ describe('metadata-only owner mailbox', () => {
     failure = null;
     expect((await mailbox.submit({ ...command, operationId: 'bounded_recovered' }, principal)).kind).toBe('ok');
   });
+  // Seeding and migrating two 64-entry mailboxes exercises hundreds of filesystem-backed store operations.
   it('admits a preview after two mixed offline mailboxes fill the local blob store', async () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'owner-mailbox-729-'));
     try {
@@ -126,7 +127,7 @@ describe('metadata-only owner mailbox', () => {
         expect(await resumed.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { pending: [] } });
       }
     } finally { await rm(directory, { recursive: true, force: true }); }
-  });
+  }, 20_000);
   it('keeps a verified review snapshot and one exact queued release across connector downtime', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
