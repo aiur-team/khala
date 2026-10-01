@@ -29,7 +29,7 @@ type Document = Readonly<{
   roomId: string;
   entries: readonly OwnerMailboxEntry[];
 }>;
-export type MailboxResult<T> = Readonly<{ kind: 'ok'; value: T }> | Readonly<{ kind: 'conflict' | 'unavailable' }>;
+export type MailboxResult<T> = Readonly<{ kind: 'ok'; value: T }> | Readonly<{ kind: 'conflict' | 'unavailable' | 'capacity' }>;
 const ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const decodedLimits = decodeDeliveryLimits({ maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32 });
 if (!decodedLimits.ok) throw new Error('owner_mailbox_limits_invalid');
@@ -161,17 +161,28 @@ export function createOwnerMailbox(input: Readonly<{
             if (completed.value) entries = entries.filter(item => item.operationId !== entry.operationId);
           }
         }
-        const replaceable = entries.filter(entry => entry.kind === 'review_preview' && entry.outcome !== null);
+        const replaceable = entries.filter(entry => entry.kind !== 'channel_stop'
+          && (entry.kind === 'review_preview' || entry.kind === 'controls_status'));
         while (command.kind !== 'channel_stop'
           && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
           const oldest = replaceable.shift();
           if (!oldest) break;
+          // The result key is the durable decision point. A concurrent agent
+          // completion may win this CAS; then its original result takes precedence.
+          const saved = await archive({ ...oldest, outcome: oldest.outcome ?? { ok: false, code: 'unavailable' } },
+            expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
+          if (saved === 'unavailable') return { kind: 'unavailable' };
+          if (saved === 'conflict') {
+            const winner = await archived(oldest.operationId);
+            if (winner.kind !== 'ok') return winner;
+            if (!winner.value) return { kind: 'unavailable' };
+          }
           entries = entries.filter(entry => entry.operationId !== oldest.operationId);
         }
         if (command.kind === 'channel_stop'
           ? entries.some(entry => entry.kind === 'channel_stop')
           : entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
-          return { kind: 'unavailable' };
+          return { kind: 'capacity' };
         }
         const authority: OwnerAuthority = {
           ownerId: binding.ownerId, issuer: principal.providerIssuer, subject: principal.providerSubject,
