@@ -80,6 +80,8 @@ export type AgentControlsSnapshot = Readonly<{
   latestReceipt: DeliveryReceiptTransport | null;
   /** `null` until the listening-mode store has answered for this binding generation. */
   listening: ListeningModeSnapshot | null;
+  /** Why the connector could not supply a listening read while policy status remains available. */
+  listeningUnavailableReason?: string | null;
 }>;
 
 /**

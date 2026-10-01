@@ -233,7 +233,7 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
           aria-describedby={listening.inactiveReason ? inactiveId : undefined}
           onClick={() => controller.applyListeningMode()}
         >
-          Apply listening mode
+          {listening.submission.kind === 'unknown' ? 'Retry listening mode' : 'Apply listening mode'}
         </button>
       </div>
 
@@ -338,7 +338,7 @@ export function AgentListeningControls(props: AgentControlsPanelProps) {
     {view.listening ? <ListeningSection listening={view.listening} controller={controller} compact />
       : <section className="agent-controls__listening"><h3>Listening mode</h3>
         <p role="status">{view.snapshotReceived
-          ? 'Listening mode choices are unavailable for this agent session.'
+          ? (view.listeningUnavailableReason ?? 'Listening mode choices are unavailable for this agent session.')
           : 'Checking this agent’s listening modes…'}</p></section>}
     {view.notice ? <p className="agent-controls__notice" role="alert">{view.notice.message}</p> : null}
     {view.notice ? <button type="button" onClick={() => controller.refresh()}>Refresh listening modes</button> : null}

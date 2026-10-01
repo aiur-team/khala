@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
+import type { BindingId, ListeningModeCommand, OwnerRouteGrantCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 import { createOwnerMailboxControlsClient } from './owner-mailbox-client';
 
 const origin = 'https://khala.example';
@@ -7,10 +7,57 @@ const bindingId = 'binding_12345678' as BindingId;
 const command = { v: 1, commandId: 'command_12345678', bindingId, roomId: '!room:example',
   expectedPolicyVersion: 3, expectedBindingGeneration: 2, mode: 'review', paused: true,
   peerParticipantId: 'agent-1', issuedAt: '2026-09-27T00:00:00Z' } as unknown as PolicySetCommand;
+const modeCommand: ListeningModeCommand = { v: 1, commandId: 'mode_command_12345678' as never,
+  bindingId, expectedBindingGeneration: 2, expectedVersion: 1,
+  requested: 'steer', issuedAt: '2026-09-27T00:00:00Z' };
+const grantCommand: OwnerRouteGrantCommand = { v: 1, kind: 'grant_experimental_route',
+  commandId: 'grant_command_12345678' as never, bindingId, expectedBindingGeneration: 2,
+  expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+  evidenceRevision: 'proof-1', issuedAt: '2026-09-27T00:00:00Z' };
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body),
   { status, headers: { 'content-type': 'application/json' } });
 
 describe('owner mailbox controls client', () => {
+  it('sends an exact owner grant through CSRF mailbox and pins its retry body', async () => {
+    const bodies: string[] = [];
+    let attempts = 0;
+    const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value', waitMs: 0,
+      fetch: async (_url, init) => {
+        if (init?.method === 'GET') return json(404, { code: 'not_found' });
+        bodies.push(String(init?.body));
+        attempts += 1;
+        if (attempts === 1) throw new Error('response lost');
+        return json(200, { v: 1, operationId: grantCommand.commandId,
+          outcome: { commandId: grantCommand.commandId, outcome: 'applied', reason: null } });
+      } });
+    expect(await client.setRouteGrant(grantCommand)).toEqual({ kind: 'lost' });
+    expect(await client.setRouteGrant({ ...grantCommand, issuedAt: '2026-09-27T00:01:00Z' }))
+      .toMatchObject({ kind: 'answered', body: { commandId: grantCommand.commandId } });
+    expect(bodies).toEqual([bodies[0], bodies[0]]);
+    expect(JSON.parse(bodies[0]!)).toEqual({ bindingId, operationId: grantCommand.commandId,
+      kind: 'listening_grant', body: grantCommand });
+  });
+  it('retries a lost listening response with the exact command and treats a later denial as unknown', async () => {
+    const bodies: string[] = [];
+    let attempts = 0;
+    const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value', waitMs: 0,
+      fetch: async (_url, init) => {
+        if (init?.method === 'GET') return json(404, { code: 'not_found' });
+        bodies.push(String(init?.body));
+        attempts += 1;
+        if (attempts === 1) throw new Error('lost after submit');
+        if (attempts === 2) return json(403, { code: 'forbidden' });
+        return json(200, { v: 1, operationId: modeCommand.commandId,
+          outcome: { v: 1, commandId: modeCommand.commandId, bindingId, generation: 2,
+            outcome: 'applied', version: 2, requested: 'steer', effective: 'steer', reason: null } });
+      } });
+    expect(await client.setListeningMode(modeCommand)).toEqual({ kind: 'lost' });
+    expect(await client.setListeningMode({ ...modeCommand, issuedAt: '2026-09-27T00:01:00Z' })).toEqual({ kind: 'lost' });
+    expect(await client.setListeningMode(modeCommand)).toMatchObject({ kind: 'answered', body: { version: 2 } });
+    expect(bodies).toEqual([bodies[0], bodies[0], bodies[0]]);
+    expect(JSON.parse(bodies[0]!)).toMatchObject({ kind: 'listening_set',
+      operationId: modeCommand.commandId, body: modeCommand });
+  });
   it('reuses an unresolved status operation until completion', async () => {
     const submitted: string[] = [];
     let complete = false;

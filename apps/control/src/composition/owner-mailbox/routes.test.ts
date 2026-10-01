@@ -70,6 +70,60 @@ async function setup(options: { authUnavailable?: boolean; membershipUnavailable
 }
 
 describe('hosted owner mailbox routes', () => {
+  it('accepts a grant only for the signed-in owner and exact binding generation', async () => {
+    const env = await setup();
+    const grant = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-27T00:00:00Z' };
+    const submit = (body: unknown) => env.call(OWNER_MAILBOX_SUBMIT, 'POST', {
+      bindingId: binding.bindingId, operationId: grant.commandId, kind: 'listening_grant', body,
+    });
+    expect((await submit({ ...grant, expectedBindingGeneration: binding.generation + 1 })).status).toBe(409);
+    expect((await submit({ ...grant, bindingId: 'other-binding' })).status).toBe(409);
+    env.setSignedIn(false);
+    expect((await submit(grant)).status).toBe(401);
+    env.setSignedIn(true);
+    expect((await submit(grant)).status).toBe(200);
+    const poll = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as {
+      entries: Array<{ kind: string; authority: { ownerId: string }; body: unknown }>;
+    };
+    expect(poll.entries).toMatchObject([{ kind: 'listening_grant', authority: { ownerId: binding.ownerId }, body: grant }]);
+  });
+  it('pins listening writes to the signed-in owner, exact binding and generation', async () => {
+    const env = await setup();
+    const second = { ...binding, bindingId: 'binding-second', agentParticipantId: 'agent-second',
+      deviceId: 'device-second', sessionId: 'session-second' } as SessionBinding;
+    const foreign = { ...binding, bindingId: 'binding-foreign', ownerId: 'owner-foreign',
+      agentParticipantId: 'agent-foreign', deviceId: 'device-foreign', sessionId: 'session-foreign' } as SessionBinding;
+    for (const item of [second, foreign]) expect((await env.bindings.putParticipant({
+      ownerId: item.ownerId, roomId: '!room:example' as RoomId, agentParticipantId: item.agentParticipantId,
+      expectedBindingId: null, record: { binding: item, revokedGeneration: null, capability: null },
+    })).kind).toBe('applied');
+    const mode = { v: 1, commandId: 'mode_command_12345678', bindingId: binding.bindingId,
+      expectedBindingGeneration: binding.generation, expectedVersion: 1,
+      requested: 'steer', issuedAt: '2026-09-27T00:00:00Z' };
+    const submit = (body: unknown, operationId = mode.commandId, bindingId = binding.bindingId) =>
+      env.call(OWNER_MAILBOX_SUBMIT, 'POST', { bindingId, operationId, kind: 'listening_set', body });
+    expect((await submit({ ...mode, expectedBindingGeneration: 1 })).status).toBe(409);
+    expect((await submit({ ...mode, bindingId: second.bindingId })).status).toBe(409);
+    expect((await submit({ ...mode, bindingId: foreign.bindingId }, mode.commandId, foreign.bindingId)).status).toBe(403);
+    expect((await submit(mode)).status).toBe(200);
+    expect((await submit(mode)).status).toBe(200);
+    expect((await submit({ ...mode, requested: 'sync' })).status).toBe(409);
+    const poll = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as { entries: Array<{ kind: string; authority: { ownerId: string } }> };
+    expect(poll.entries).toMatchObject([{ kind: 'listening_set', authority: { ownerId: binding.ownerId } }]);
+    const result = { v: 1, commandId: mode.commandId, bindingId: binding.bindingId,
+      generation: binding.generation, outcome: 'applied', version: 2,
+      requested: 'steer', effective: 'steer', reason: null };
+    expect((await env.call(OWNER_MAILBOX_COMPLETE, 'POST', { bindingId: binding.bindingId,
+      operationId: mode.commandId, outcome: { ...result, bindingId: second.bindingId } })).status).toBe(409);
+    expect((await env.call(OWNER_MAILBOX_COMPLETE, 'POST', { bindingId: binding.bindingId,
+      operationId: mode.commandId, outcome: result })).status).toBe(200);
+    expect((await submit(mode)).status).toBe(200);
+    env.setSignedIn(false);
+    expect((await submit(mode, 'mode_command_87654321')).status).toBe(401);
+  });
   it.each([
     [{ authUnavailable: true }, 'auth', 'session_store_unavailable'],
     [{ bindingReadUnavailable: true }, 'binding_read', 'store_unavailable'],

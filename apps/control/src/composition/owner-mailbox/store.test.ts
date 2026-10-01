@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { unknownModeSupportMap, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { CompareAndSetInput, ControlStore, JsonValue } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createOwnerMailbox } from './store';
@@ -15,6 +15,44 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('keeps grant command identity and exact binding in typed outcomes', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret });
+    const body = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-27T00:00:00Z' };
+    const command = { operationId: body.commandId, kind: 'listening_grant' as const, body };
+    expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+    expect(await mailbox.complete(command.operationId, { commandId: body.commandId,
+      outcome: 'applied', reason: null, view: { bindingId: binding.bindingId,
+        generation: binding.generation, requested: 'sync', version: 2,
+        experimentalGrants: [{ v: 1, kind: 'experimental_route', bindingId: binding.bindingId,
+          generation: binding.generation, mode: body.mode, route: body.route,
+          harnessVersion: body.harnessVersion, evidenceRevision: body.evidenceRevision,
+          grantRevision: 2 }], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' },
+        effective: null, effectiveReason: 'capabilities_unavailable',
+        support: unknownModeSupportMap('capabilities-unavailable', 'Capabilities unavailable.') } }))
+      .toMatchObject({ kind: 'ok', value: { outcome: { outcome: 'applied' } } });
+    expect((await mailbox.submit({ ...command, body: { ...body, bindingId: 'other-binding' } }, principal)).kind)
+      .toBe('conflict');
+  });
+  it('accepts a policy status with an explicit unavailable listening section', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret });
+    expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+    const status = { v: 1, binding, bindingStatus: 'active', capabilities: null,
+      policy: { bindingId: binding.bindingId, generation: binding.generation,
+        effectiveVersion: 1, effectiveMode: 'review', paused: false },
+      requested: null, busy: false, latestReceipt: null,
+      listening: null, listeningUnavailable: 'connector_starting' };
+    expect((await mailbox.complete(command.operationId, { ok: true, status })).kind).toBe('ok');
+    expect((await mailbox.result(command.operationId))).toMatchObject({ kind: 'ok',
+      value: { outcome: { ok: true, status: { policy: { effectiveVersion: 1 },
+        listening: null, listeningUnavailable: 'connector_starting' } } } });
+  });
   it('does not redeliver archived commands when index retirement fails and recovers full capacity', async () => {
     const state = fakeStore(() => T0);
     let holdRetirement = true;
