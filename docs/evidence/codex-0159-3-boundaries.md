@@ -33,8 +33,10 @@ The installed 0.159.2 and 0.159.3 CLIs both expose `queue --thread --message`,
 the `hooks` feature, and an MCP configuration that `codex mcp list --json`
 parses. These API surfaces do not establish that a queued notice wakes the
 same normally trusted TUI, or that its later Khala read executes and advances
-the exact binding and generation. No such 0.159.2 witness is retained; the
-0.159.3 probe above ended before an executed receipt. The 0.157.1 fixture pin
+the exact binding and generation. A potential 0.159.2 read/ACK witness was
+reported on 2026-10-01, but its retained binding and generation provenance and
+native queued wake have not been independently verified. The 0.159.3 probe
+above ended before an executed receipt. The 0.157.1 fixture pin
 is therefore an evidence boundary, not a demonstrated removal of the APIs in
 newer versions. The native crash gate continues to return
 `native_version_unproven` for both installed versions, before Docker effects.
