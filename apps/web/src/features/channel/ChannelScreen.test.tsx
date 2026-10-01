@@ -10,6 +10,21 @@ const controller: ChannelController = {
 };
 
 describe('ChannelScreen', () => {
+  it('shows verified counts and a checking state in the compact header', () => {
+    const people = [{ participantId: 'human_2' as never, displayName: 'A long participant name' },
+      { participantId: 'human_3' as never, displayName: 'Theo' }];
+    const agents = Array.from({ length: 4 }, (_, index) => ({ participantId: `agent_${index}` as never,
+      displayName: 'Scout', ownerDisplayName: 'Mira', connection: 'unknown' as const,
+      routeLabel: 'Channel agent', acknowledgement: 'unknown' as const, lastReceipt: null,
+      installCommand: null, installCommandError: false }));
+    const ready = renderToStaticMarkup(<ChannelScreen title="A long conversation title" viewerName="Mira"
+      humanParticipants={people} controller={{ ...controller, getSnapshot: () => ({ phase: 'ready', agents }) }} renderTimeline={() => null} />);
+    expect(ready).toContain('3 humans · 4 agents');
+    const loading = renderToStaticMarkup(<ChannelScreen title="A long conversation title" viewerName="Mira"
+      humanParticipants={people} controller={{ ...controller, getSnapshot: () => ({ phase: 'loading', agents }) }} renderTimeline={() => null} />);
+    expect(loading).toContain('class="channel-participants__compact" role="status">Checking participants…');
+    expect(loading).not.toContain('3 humans · 4 agents');
+  });
   it('keeps Matrix routing IDs out of participant names', () => {
     const agentController: ChannelController = {
       ...controller,

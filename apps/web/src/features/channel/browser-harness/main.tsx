@@ -43,6 +43,7 @@ const controller = createChannelController(port, { roomId, generation: 1 });
 
 function Harness() {
   const [viewer, setViewer] = useState<OwnerId>(miraId);
+  const [crowded, setCrowded] = useState(false);
   const [names, setNames] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
   const [renamed, setRenamed] = useState(false);
   const [draft, setDraft] = useState('');
@@ -65,11 +66,15 @@ function Harness() {
     <div className="khala-content-root khala-owner-shell" data-theme="dark">
       <main className="khala-content-main"><div className="khala-content-actions"><div id="khala-channel-toolbar" /></div>
     <ChannelScreen embedded={!new URLSearchParams(location.search).has('standalone')}
-      title="Release channel"
+      title={crowded ? 'A very long release coordination conversation' : 'Release channel'}
       description="Coordinate the launch with people and their agents."
       controller={controller}
       viewerOwnerId={viewer}
       viewerName={viewer === miraId ? 'Mira' : 'Theo'}
+      humanParticipants={crowded ? [
+        { participantId: 'human_long' as ParticipantId, displayName: 'A very long participant name' },
+        { participantId: 'human_third' as ParticipantId, displayName: 'Pat' },
+      ] : []}
       renameScope={roomId}
       currentNames={names}
       renameAgent={async (participantId, name) => {
@@ -113,6 +118,18 @@ function Harness() {
             ] };
             for (const listener of listeners) listener(snapshot);
           }}>Show same-named agents</button>
+          <button type="button" onClick={() => {
+            setCrowded(true);
+            snapshot = { generation: 1, agents: [
+              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+              { participantId: builderId, ownerId: theoId, displayName: 'Builder', ownerDisplayName: 'Theo',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+              { participantId: secondScoutId, displayName: 'Another very long agent name', ownerDisplayName: '',
+                connection: 'unknown', routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown' },
+            ] };
+            for (const listener of listeners) listener(snapshot);
+          }}>Show crowded roster</button>
         </section>
       )}
       renderShare={() => <ChannelSharePanel roomId={roomId} admission={{ share: async () => ({
