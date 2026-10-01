@@ -44,6 +44,68 @@ describe('startSignIn', () => {
 });
 
 describe('completeSignIn', () => {
+  it('consumes a valid error-only cancellation without issuer, then permits a new sign-in', async () => {
+    const h = harness();
+    const callback = await beginAndReturn(h);
+    const url = new URL(callback.url);
+    url.searchParams.delete('code');
+    url.searchParams.set('error', 'access_denied');
+    url.searchParams.set('error_description', 'secret-provider-text');
+    const cancelled = new Request(url, { headers: callback.headers });
+    const result = await h.service.completeSignIn(cancelled);
+    expect(result).toEqual({ kind: 'rejected', code: 'provider_denied', cookies: ['__Host-khala_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'] });
+    expect(JSON.stringify([result, h.logs])).not.toMatch(/secret-provider-text|access_denied|state=/);
+    expect(h.oidc.exchanges).toHaveLength(0);
+    expect(await h.service.completeSignIn(cancelled)).toMatchObject({ kind: 'rejected', code: 'login_replayed' });
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    expect((await signIn(h)).result.kind).toBe('signed_in');
+  });
+
+  it('keeps forged and missing state pending, and does not classify mixed code and error as cancellation', async () => {
+    const h = harness();
+    const callback = await beginAndReturn(h);
+    const url = new URL(callback.url);
+    url.searchParams.delete('code');
+    url.searchParams.set('error', 'access_denied');
+    url.searchParams.delete('state');
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    url.searchParams.set('state', 'forged');
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    url.searchParams.set('state', new URL(callback.url).searchParams.get('state')!);
+    const duplicateState = new URL(url);
+    duplicateState.searchParams.append('state', 'forged');
+    expect(await h.service.completeSignIn(new Request(duplicateState, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    const wrongOrigin = new URL(url);
+    wrongOrigin.host = 'preview.khala.aiur.team';
+    expect(await h.service.completeSignIn(new Request(wrongOrigin, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    const wrongPath = new URL(url);
+    wrongPath.pathname = '/api/human/auth/other';
+    expect(await h.service.completeSignIn(new Request(wrongPath, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    url.searchParams.set('code', 'mixed');
+    h.oidc.failNext({ kind: 'rejected', code: 'invalid_response' });
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toMatchObject({ kind: 'rejected', code: 'invalid_response' });
+    expect(h.oidc.exchanges).toHaveLength(1);
+  });
+
+  it('maps another error-only provider response to a fixed error', async () => {
+    const h = harness();
+    const callback = await beginAndReturn(h);
+    const url = new URL(callback.url);
+    url.searchParams.delete('code');
+    url.searchParams.set('error', 'server_error');
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toMatchObject({ kind: 'rejected', code: 'provider_error' });
+    expect(h.oidc.exchanges).toHaveLength(0);
+  });
+
+  it('keeps an error-only callback typed unavailable when the consume cannot be stored', async () => {
+    const h = harness();
+    const callback = await beginAndReturn(h);
+    const url = new URL(callback.url);
+    url.searchParams.delete('code');
+    url.searchParams.set('error', 'access_denied');
+    h.store.inject('compareAndSet', 'unavailable');
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'unavailable', cookies: ['__Host-khala_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'] });
+  });
   it('mints a Secure HttpOnly host-only session and returns to the stored path', async () => {
     const h = harness();
     const { result } = await signIn(h);

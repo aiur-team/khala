@@ -144,6 +144,21 @@ describe('human handler registration', () => {
 
 describe('auth route handlers', () => {
   it.each([
+    ['provider_denied', '/?sign_in=cancelled'],
+    ['provider_error', '/?sign_in=error'],
+  ] as const)('redirects %s with a cleared cookie and no provider detail', async (code, location) => {
+    const auth = services({ auth: { completeSignIn: vi.fn(async () => ({ kind: 'rejected' as const, code, cookies: ['__Host-khala_login=; Max-Age=0'] })) } });
+    const registrations = createHumanHandlers(async () => auth);
+    const response = await route(registrations, '/api/human/auth/callback').handle(request('/api/human/auth/callback?error=secret&state=secret-state&error_description=secret-description'));
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe(location);
+    expect(response.headers.get('set-cookie')).toBe('__Host-khala_login=; Max-Age=0');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(await response.text()).toBe('');
+    expect(JSON.stringify([...response.headers])).not.toMatch(/secret|state=/);
+  });
+  it.each([
     ['service_init', async () => { throw new Error('secret callback URL and token'); }],
     ['handler_exception', async () => services({ auth: { completeSignIn: vi.fn(async () => { throw new Error('secret callback URL and token'); }) } })],
   ] as const)('reports a fixed callback %s label without exception details', async (stage, load) => {

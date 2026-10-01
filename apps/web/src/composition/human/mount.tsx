@@ -79,6 +79,7 @@ function SignInPanel({ identity, path, isJoin, navigateExternal }: {
   navigateExternal: (url: string) => void;
 }) {
   const [signInFailed, setSignInFailed] = useState(false);
+  const signInOutcome = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('sign_in');
 
   async function signIn() {
     setSignInFailed(false);
@@ -90,6 +91,8 @@ function SignInPanel({ identity, path, isJoin, navigateExternal }: {
   return (
     <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
       <Panel>
+        {signInOutcome === 'cancelled' ? <p role="status">Sign-in was cancelled. Choose Sign in to try again.</p> : null}
+        {signInOutcome === 'error' ? <p role="alert">Sign-in could not be completed. Choose Sign in to try again.</p> : null}
         <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
         {isJoin ? <><p>Humans: sign in to accept this invitation.</p><AgentJoinGuidance /></> : null}
         {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}

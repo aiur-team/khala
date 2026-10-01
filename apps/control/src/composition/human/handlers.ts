@@ -236,6 +236,9 @@ export function createHumanHandlers(
           const response = unavailable();
           return withCookies(response, result.cookies);
         }
+        if (result.code === 'provider_denied' || result.code === 'provider_error') {
+          return redirect(303, result.code === 'provider_denied' ? '/?sign_in=cancelled' : '/?sign_in=error', result.cookies);
+        }
         return withCookies(json(400, { code: result.code }), result.cookies);
       }, onCallbackFailure),
     },
