@@ -23,6 +23,8 @@ export interface RecoveryPanelProps {
   onClosureParticipationEnded: () => void;
   /** Test/composition seam for a controller whose lifetime is owned by its caller. */
   controller?: RecoveryController;
+  /** Closure is presented by the conversation title, not its settings disclosure. */
+  showClosureAction?: boolean;
 }
 
 type Selection =
@@ -215,6 +217,7 @@ function RecoveryPanelContent({
   config,
   onClosureParticipationEnded,
   controller,
+  showClosureAction = true,
 }: RecoveryPanelContentProps) {
   const completedClosures = useRef(new WeakMap<RecoveryController, string>());
   const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
@@ -328,7 +331,7 @@ function RecoveryPanelContent({
               </button>
             );
           })}
-          {view.closure ? (
+          {showClosureAction && view.closure ? (
             <button
               type="button"
               disabled={!view.allowedActions.includes('close_room') || !closureCurrent}
@@ -404,6 +407,7 @@ function OwnedRecoveryPanel({
   ports,
   config,
   onClosureParticipationEnded,
+  showClosureAction = true,
 }: Omit<RecoveryPanelProps, 'controller'>) {
   const [owned, setOwned] = useState<Readonly<{
     controller: RecoveryController;
@@ -442,6 +446,7 @@ function OwnedRecoveryPanel({
       config={config}
       onClosureParticipationEnded={onClosureParticipationEnded}
       controller={controller}
+      showClosureAction={showClosureAction}
     />
   );
 }
@@ -451,6 +456,7 @@ export function RecoveryPanel({
   config,
   onClosureParticipationEnded,
   controller,
+  showClosureAction = true,
 }: RecoveryPanelProps) {
   if (controller) {
     return (
@@ -458,9 +464,10 @@ export function RecoveryPanel({
         config={config}
         onClosureParticipationEnded={onClosureParticipationEnded}
         controller={controller}
+        showClosureAction={showClosureAction}
       />
     );
   }
 
-  return <OwnedRecoveryPanel ports={ports} config={config} onClosureParticipationEnded={onClosureParticipationEnded} />;
+  return <OwnedRecoveryPanel ports={ports} config={config} onClosureParticipationEnded={onClosureParticipationEnded} showClosureAction={showClosureAction} />;
 }
