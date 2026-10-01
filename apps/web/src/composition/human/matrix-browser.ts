@@ -63,6 +63,12 @@ import type { ConversationSummary } from '../../ui/conversation';
 
 const CREATE_EVENT = 'com.aiur.khala.create.v1';
 
+function historyDiagnostic(stage: 'history_participants' | 'history_device_info'): void {
+  if (typeof window === 'undefined' ||
+      (window as Window & { __khalaLocalHistoryDiagnostics?: boolean }).__khalaLocalHistoryDiagnostics !== true) return;
+  window.dispatchEvent(new CustomEvent('khala:local-history-diagnostic', { detail: stage }));
+}
+
 type MatrixCredentials = Readonly<{ homeserverOrigin: string; userId: string; accessToken: string }>;
 type ActiveClient = Readonly<{
   client: MatrixClient;
@@ -545,12 +551,31 @@ class MatrixSubstrate implements RoomSubstrate {
     await decryptTimelineEvents(active.client, events);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
-    const mappings = await this.participants.resolve(senders, undefined, roomId);
-    if (this.runtime.active !== active) throw new Error('Matrix session changed during participant resolution');
+    const mappings = await this.participants.resolve(senders, undefined, roomId).catch(error => {
+      historyDiagnostic('history_participants');
+      throw error;
+    });
+    if (this.runtime.active !== active) {
+      historyDiagnostic('history_participants');
+      throw new Error('Matrix session changed during participant resolution');
+    }
     const crypto = active.client.getCrypto();
-    if (mappings === null || crypto === undefined) throw new Error('Matrix participant attribution unavailable');
-    const devices = await crypto.getUserDeviceInfo(senders, true);
-    if (this.runtime.active !== active) throw new Error('Matrix session changed during device attribution');
+    if (mappings === null) {
+      historyDiagnostic('history_participants');
+      throw new Error('Matrix participant attribution unavailable');
+    }
+    if (crypto === undefined) {
+      historyDiagnostic('history_device_info');
+      throw new Error('Matrix crypto unavailable');
+    }
+    const devices = await crypto.getUserDeviceInfo(senders, true).catch(error => {
+      historyDiagnostic('history_device_info');
+      throw error;
+    });
+    if (this.runtime.active !== active) {
+      historyDiagnostic('history_device_info');
+      throw new Error('Matrix session changed during device attribution');
+    }
     const projectedEvents = events.flatMap(event => {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
@@ -561,6 +586,7 @@ class MatrixSubstrate implements RoomSubstrate {
         : undefined;
       const deviceId = device?.deviceId as DeviceId | undefined;
       if (!event.isDecryptionFailure() && event.getType() === EventType.RoomMessage && deviceId === undefined) {
+        historyDiagnostic('history_device_info');
         throw new Error('Matrix author device attribution unavailable');
       }
       const participant: ParticipantView = {
@@ -573,7 +599,10 @@ class MatrixSubstrate implements RoomSubstrate {
     });
     return attachNameTargets(projectedEvents,
       targetId => this.participants.resolve([], undefined, roomId, [targetId]),
-      () => this.runtime.active === active);
+      () => this.runtime.active === active).catch(error => {
+      historyDiagnostic('history_participants');
+      throw error;
+    });
   }
 
   async timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>): Promise<SubstrateRead<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>> {

@@ -1,12 +1,59 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page, type Response as PlaywrightResponse } from '@playwright/test';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary, verifyMatrixObserver } from './fixtures';
 
 const environment = readLiveHumanEnvironment();
+
+function enableHistoryDiagnostics() {
+  const target = window as Window & { __khalaLocalHistoryDiagnostics?: boolean; __khalaHistoryStages?: string[] };
+  target.__khalaLocalHistoryDiagnostics = true;
+  target.__khalaHistoryStages = [];
+  window.addEventListener('khala:local-history-diagnostic', event => {
+    const stage = (event as CustomEvent<unknown>).detail;
+    if (stage === 'history_participants' || stage === 'history_device_info') target.__khalaHistoryStages!.push(stage);
+  });
+}
+
+async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: string): Promise<void> {
+  const participantStatuses: number[] = [];
+  const onResponse = (response: PlaywrightResponse) => {
+    if (new URL(response.url()).pathname === '/api/human/messaging/participants') participantStatuses.push(response.status());
+  };
+  page.on('response', onResponse);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const row = page.getByRole('list', { name: 'Messages' }).getByText(expectedMessage);
+    try {
+      await expect(row).toBeVisible({ timeout: 30_000 });
+    } catch {
+      const view = await page.evaluate(() => {
+        const target = window as Window & { __khalaHistoryStages?: string[] };
+        const timeline = document.querySelector('.timeline');
+        const historyAlert = [...(timeline?.querySelectorAll('[role="alert"]') ?? [])]
+          .some(node => node.textContent?.includes('Conversation history is unavailable right now.'));
+        const loading = [...(timeline?.querySelectorAll('[role="status"]') ?? [])]
+          .some(node => node.textContent?.includes('Loading conversation…'));
+        const phase = historyAlert ? 'unavailable' : loading ? 'loading'
+          : timeline?.querySelector('.timeline__empty') ? 'ready_empty'
+            : timeline?.querySelector('.timeline__row') ? 'ready_or_partial' : 'absent';
+        return { phase, historyAlert,
+          unavailableRows: timeline?.querySelectorAll('.timeline__row.message-content__unavailable').length ?? 0,
+          stages: (target.__khalaHistoryStages ?? []).filter(stage =>
+            stage === 'history_participants' || stage === 'history_device_info').slice(-8) };
+      });
+      const deviceReadySurface = await page.getByLabel('Message', { exact: true }).isEnabled().catch(() => false);
+      throw new Error(`automatic_history_failed:${JSON.stringify({ ...view, deviceReadySurface,
+        participantStatuses: participantStatuses.slice(-12) })}`);
+    }
+  } finally {
+    page.off('response', onResponse);
+  }
+}
 
 test('two OAuth humans create, share, join, and exchange encrypted attributed messages', async ({ browser }) => {
   test.setTimeout(180_000);
   const aliceContext = await browser.newContext();
   const bobContext = await browser.newContext();
+  await Promise.all([aliceContext.addInitScript(enableHistoryDiagnostics), bobContext.addInitScript(enableHistoryDiagnostics)]);
   try {
     const alice = await freshPage(aliceContext, environment);
     // The control runtime issues the creator's Matrix session to this browser.
@@ -64,25 +111,11 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    await alice.reload({ waitUntil: 'domcontentloaded' });
-    const aliceReply = alice.getByRole('list', { name: 'Messages' }).getByText(reply);
-    const historyUnavailable = alice.getByRole('alert').filter({ hasText: 'Conversation history is unavailable right now.' });
-    await expect(aliceReply.or(historyUnavailable).first()).toBeVisible({ timeout: 30_000 });
-    if (await historyUnavailable.isVisible()) {
-      await alice.getByRole('button', { name: 'Retry history' }).click();
-    }
-    await expect(aliceReply).toBeVisible({ timeout: 30_000 });
+    await requireAutomaticHistoryAfterReload(alice, reply);
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
     await expect(alice.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('Human');
 
-    await bob.reload({ waitUntil: 'domcontentloaded' });
-    const bobReply = bob.getByRole('list', { name: 'Messages' }).getByText(reply);
-    const bobHistoryUnavailable = bob.getByRole('alert').filter({ hasText: 'Conversation history is unavailable right now.' });
-    await expect(bobReply.or(bobHistoryUnavailable).first()).toBeVisible({ timeout: 30_000 });
-    if (await bobHistoryUnavailable.isVisible()) {
-      await bob.getByRole('button', { name: 'Retry history' }).click();
-    }
-    await expect(bobReply).toBeVisible({ timeout: 30_000 });
+    await requireAutomaticHistoryAfterReload(bob, reply);
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);
