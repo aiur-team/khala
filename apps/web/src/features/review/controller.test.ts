@@ -50,6 +50,7 @@ function createFakePort(initial: ReviewView) {
   const listeners = new Set<() => void>();
   let approveImpl: (command: ApprovalCommand) => Promise<ApprovalUiResult> = async () => ({ kind: 'accepted', releaseIds: ['release_1' as ReleaseId] });
   let approveCalls = 0;
+  let reconcileCalls = 0;
 
   const port: ReviewUiPort = {
     snapshot: () => current,
@@ -61,6 +62,10 @@ function createFakePort(initial: ReviewView) {
     },
     approve: async command => {
       approveCalls += 1;
+      return approveImpl(command);
+    },
+    reconcile: async command => {
+      reconcileCalls += 1;
       return approveImpl(command);
     },
   };
@@ -77,6 +82,7 @@ function createFakePort(initial: ReviewView) {
     get approveCalls() {
       return approveCalls;
     },
+    get reconcileCalls() { return reconcileCalls; },
   };
 }
 
@@ -99,7 +105,8 @@ describe('review controller', () => {
     expect(fake.approveCalls).toBe(1);
     done = true;
     await controller.reconcileUnknown();
-    expect(fake.approveCalls).toBe(2);
+    expect(fake.approveCalls).toBe(1);
+    expect(fake.reconcileCalls).toBe(1);
     expect(controller.getSnapshot().submission.phase).toBe('released');
   });
   it('restores an unknown command and reconciles its exact identity without a new selection', async () => {
@@ -112,8 +119,9 @@ describe('review controller', () => {
     fake.setApprove(async command => { received = command; return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] }; });
     const controller = createReviewController(fake.port);
     expect(controller.getSnapshot().submission).toMatchObject({ phase: 'unknown', commandId: unresolved.commandId });
-    await controller.reconcileUnknown();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(received).toBe(unresolved);
+    expect(fake.approveCalls).toBe(0);
     expect(controller.getSnapshot().submission.phase).toBe('released');
     controller.dispose();
   });
@@ -170,7 +178,8 @@ describe('review controller', () => {
     expect(data.submission.phase).toBe('released');
     expect(data.submission.commandId).toBe(commandId);
     expect(data.submission.releaseIds).toEqual(['release_reconciled']);
-    expect(fake.approveCalls).toBe(2);
+    expect(fake.approveCalls).toBe(1);
+    expect(fake.reconcileCalls).toBe(1);
     controller.dispose();
   });
 
@@ -197,6 +206,39 @@ describe('review controller', () => {
     // The late response, once it eventually resolves, cannot be reconciled: authority was already cleared.
     await controller.reconcileUnknown();
     expect(controller.getSnapshot().submission.phase).toBe('idle');
+    controller.dispose();
+  });
+
+  it('a changed binding generation discards a late status answer from the old command', async () => {
+    const fake = createFakePort(view());
+    fake.setApprove(async command => ({ kind: 'outcome_unknown', commandId: command.commandId }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    let finish!: (result: ApprovalUiResult) => void;
+    fake.setApprove(() => new Promise(resolve => { finish = resolve; }));
+    const checking = controller.reconcileUnknown();
+    fake.setView(view({ bindingGeneration: 1 }));
+    finish({ kind: 'accepted', releaseIds: ['release_old' as ReleaseId] });
+    await checking;
+    expect(controller.getSnapshot().submission.phase).toBe('idle');
+    expect(controller.getSnapshot().submission.releaseIds).toBeNull();
+    expect(fake.approveCalls).toBe(1);
+    expect(fake.reconcileCalls).toBe(1);
+    controller.dispose();
+  });
+
+  it('an unavailable preview does not erase an unresolved exact command', async () => {
+    const fake = createFakePort(view({ bindingGeneration: 2 }));
+    fake.setApprove(async command => ({ kind: 'outcome_unknown', commandId: command.commandId }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    const commandId = controller.getSnapshot().submission.commandId;
+    fake.setView(view({ access: 'unavailable', bindingGeneration: 0, pending: [] }));
+    expect(controller.getSnapshot().submission).toMatchObject({ phase: 'unknown', commandId });
+    await controller.reconcileUnknown();
+    expect(fake.reconcileCalls).toBe(1);
     controller.dispose();
   });
 

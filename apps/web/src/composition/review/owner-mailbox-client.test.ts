@@ -49,9 +49,9 @@ describe('authenticated owner mailbox review client', () => {
     expect(await client.review.preview({ bindingId: command.bindingId, candidates: [], releaseIds: [] },
       new AbortController().signal)).toEqual({ kind: 'waiting_for_agent', generation: 2, body: snapshot });
     expect(await client.review.approve(command)).toEqual({ kind: 'waiting_for_agent' });
-    expect(await client.review.approve(command)).toEqual({ kind: 'waiting_for_agent' });
+    expect(await client.review.reconcile(command)).toEqual({ kind: 'waiting_for_agent' });
     complete = true;
-    expect(await client.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    expect(await client.review.reconcile(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
     expect(writes).toBe(1);
   });
   it('keeps the same preview ID and backoff across a tab reload', async () => {
@@ -196,7 +196,7 @@ describe('authenticated owner mailbox review client', () => {
     };
     const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher });
     expect(await client.review.approve(command)).toEqual({ kind: 'lost' });
-    expect(await client.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    expect(await client.review.reconcile(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
     expect(submissions).toBe(1);
   });
 
@@ -228,8 +228,50 @@ describe('authenticated owner mailbox review client', () => {
     const after = createOwnerMailboxReviewClient(options);
     expect(after.review.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toEqual(command);
     expect(after.review.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration + 1)).toBeNull();
-    expect(await after.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    expect(await after.review.reconcile(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
     expect(writes).toBe(1);
     expect(entries.size).toBe(0);
+  });
+
+  it('checks the exact persisted command repeatedly without submitting on unknown or unavailable status', async () => {
+    const entries = new Map<string, string>();
+    const storage = { getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value); },
+      removeItem: (key: string) => { entries.delete(key); } };
+    let writes = 0;
+    const reads: string[] = [];
+    let status = 404;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (init?.method === 'POST') { writes += 1; throw new Error('possible commit'); }
+      reads.push(new URL(String(url)).searchParams.get('operation_id') ?? 'missing');
+      return json(status, { code: status === 403 ? 'forbidden' : 'not_found' });
+    };
+    const options = { origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher, storage };
+    expect(await createOwnerMailboxReviewClient(options).review.approve(command)).toEqual({ kind: 'lost' });
+    const restored = createOwnerMailboxReviewClient(options).review;
+    expect(restored.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toEqual(command);
+    expect(await restored.reconcile(command)).toEqual({ kind: 'lost' });
+    status = 403;
+    expect(await restored.reconcile(command)).toEqual({ kind: 'lost' });
+    expect(writes).toBe(1);
+    expect(reads).toEqual([command.commandId, command.commandId]);
+    expect(await restored.reconcile({ ...command, selection: [] })).toEqual({ kind: 'lost' });
+    expect(reads).toHaveLength(2);
+  });
+
+  it('does not reconcile missing or corrupt persisted command data after reload', async () => {
+    const entries = new Map<string, string>();
+    const storage = { getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value); },
+      removeItem: (key: string) => { entries.delete(key); } };
+    let requests = 0;
+    const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value', storage,
+      fetch: async () => { requests += 1; throw new Error('unexpected network'); } }).review;
+    expect(client.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toBeNull();
+    expect(await client.reconcile(command)).toEqual({ kind: 'lost' });
+    entries.set(`khala.review.unknown.v1:${command.bindingId}:${command.roomId}:${command.expectedBindingGeneration}`, '{bad');
+    expect(client.recoverUnknown?.(command.bindingId, command.roomId, command.expectedBindingGeneration)).toBeNull();
+    expect(await client.reconcile(command)).toEqual({ kind: 'lost' });
+    expect(requests).toBe(0);
   });
 });

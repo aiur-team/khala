@@ -30,7 +30,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('review_origin_invalid');
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   const waitMs = input.waitMs ?? 8_000;
-  const submittedCommands = new Set<string>();
+  const submittedCommands = new Map<string, string>();
   const pendingPreviews = new Map<BindingId, { digest: string; operationId: string; body: ReviewPreviewRequest }>();
   const limits = (() => {
     const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
@@ -43,6 +43,16 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const previewKey = (bindingId: BindingId) => `${readPrefix}:pending:${bindingId}`;
   const key = (bindingId: BindingId, roomId: RoomId, generation: number) =>
     `khala.review.unknown.v1:${bindingId}:${roomId}:${generation}`;
+  const exactCommand = (left: ApprovalCommand, right: ApprovalCommand) =>
+    left.v === right.v && left.commandId === right.commandId && left.roomId === right.roomId && left.bindingId === right.bindingId
+    && left.expectedBindingGeneration === right.expectedBindingGeneration
+    && left.expectedPolicyVersion === right.expectedPolicyVersion && left.issuedAt === right.issuedAt
+    && left.selection.length === right.selection.length && left.selection.every((ref, index) => {
+      const other = right.selection[index];
+      return other && ref.roomId === other.roomId && ref.eventId === other.eventId
+        && ref.authorParticipantId === other.authorParticipantId && ref.authorDeviceId === other.authorDeviceId
+        && ref.contentDigest === other.contentDigest;
+    });
   function pending(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null {
     if (generation === undefined) return null;
     try {
@@ -51,7 +61,6 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       const decoded = decodeApprovalCommand(JSON.parse(raw) as unknown, limits);
       if (!decoded.ok || decoded.value.bindingId !== bindingId || decoded.value.roomId !== roomId
         || decoded.value.expectedBindingGeneration !== generation) return null;
-      submittedCommands.add(decoded.value.commandId);
       return decoded.value;
     } catch { return null; }
   }
@@ -180,12 +189,14 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
     },
     async approve(command: ApprovalCommand) {
       const prior = pending(command.bindingId, command.roomId, command.expectedBindingGeneration);
-      if (prior && prior.commandId !== command.commandId) return { kind: 'lost' };
+      if (prior && !exactCommand(prior, command)) return { kind: 'lost' };
       // Once a write may have happened, reconcile by read only. The browser
       // controller supplies the same command ID for every unknown retry.
       const signal = AbortSignal.timeout(waitMs);
-      const previouslySubmitted = submittedCommands.has(command.commandId);
-      submittedCommands.add(command.commandId);
+      const previouslySubmitted = prior !== null || submittedCommands.has(command.commandId);
+      if (submittedCommands.has(command.commandId)
+        && submittedCommands.get(command.commandId) !== JSON.stringify(command)) return { kind: 'lost' };
+      submittedCommands.set(command.commandId, JSON.stringify(command));
       if (!previouslySubmitted) remember(command);
       const first = previouslySubmitted ? await result(command.bindingId, command.commandId, signal)
         : await submit(command.bindingId, command.commandId, 'review_approve', command, signal);
@@ -199,6 +210,24 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       // A previous attempt with the same command ID may have committed before
       // authorization was lost. This result cannot prove that it did not.
       if (answer?.status === 409) { forget(command); return { kind: 'answered', body: { ok: false, code: 'idempotency_conflict' } }; }
+      if (answer === null && first?.status === 200 && object(first.body)
+        && first.body.operationId === command.commandId && first.body.outcome === null) return { kind: 'waiting_for_agent' };
+      return { kind: 'lost' };
+    },
+    async reconcile(command: ApprovalCommand) {
+      const stored = pending(command.bindingId, command.roomId, command.expectedBindingGeneration);
+      if (stored && !exactCommand(stored, command)) return { kind: 'lost' };
+      if (!stored && submittedCommands.get(command.commandId) !== JSON.stringify(command)) return { kind: 'lost' };
+      const signal = AbortSignal.timeout(Math.max(waitMs, 1_000));
+      const first = await result(command.bindingId, command.commandId, signal);
+      const answer = await awaitOutcome(command.bindingId, command.commandId, first, signal);
+      if (answer?.status === 200 && object(answer.body) && answer.body.operationId === command.commandId) {
+        if (answer.body.outcome === null) return { kind: 'waiting_for_agent' };
+        if (object(answer.body.outcome)) {
+          if (answer.body.outcome.ok !== undefined && answer.body.outcome.code !== 'outcome_unknown') forget(command);
+          return { kind: 'answered', body: answer.body.outcome };
+        }
+      }
       if (answer === null && first?.status === 200 && object(first.body)
         && first.body.operationId === command.commandId && first.body.outcome === null) return { kind: 'waiting_for_agent' };
       return { kind: 'lost' };
