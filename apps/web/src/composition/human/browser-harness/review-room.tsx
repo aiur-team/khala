@@ -35,6 +35,8 @@ const selectedReview = new URLSearchParams(location.search).has('selected-review
 const multiReview = new URLSearchParams(location.search).has('multi-review');
 const invitedReview = new URLSearchParams(location.search).has('invited-review');
 const unknownReview = new URLSearchParams(location.search).has('unknown-review');
+const unavailableReview = new URLSearchParams(location.search).has('unavailable-review');
+const persistedReview = new URLSearchParams(location.search).has('persisted-review');
 const offlineReview = new URLSearchParams(location.search).has('offline-review');
 const rosterFailure = new URLSearchParams(location.search).has('roster-failure');
 const closureDenied = new URLSearchParams(location.search).has('closure-denied');
@@ -79,6 +81,12 @@ const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1
 let command: ApprovalCommand | null = null;
 const reviewCommands: ApprovalCommand[] = [];
 const releasedReviewEvents = new Set<string>();
+const savedReview = persistedReview ? sessionStorage.getItem('khala.test.review.command') : null;
+const restoredReviewCommand = savedReview ? JSON.parse(savedReview) as ApprovalCommand : null;
+const reviewLedger = persistedReview ? JSON.parse(sessionStorage.getItem('khala.test.review.ledger') ?? '{"releases":[],"receipts":[]}') as {
+  releases: string[]; receipts: Array<{ releaseId: string; kind: string }> } : { releases: [], receipts: [] };
+if (restoredReviewCommand) for (const ref of restoredReviewCommand.selection) releasedReviewEvents.add(ref.eventId);
+let reviewResultReads = 0;
 let controlVersion = 3;
 let controlPaused = false;
 const controlCommands: PolicySetCommand[] = [];
@@ -171,6 +179,10 @@ const review = {
     return proofMode ? [selected, secondProofBinding] : multiReview ? [selected, secondReviewBinding] : [selected];
   },
   review: {
+    recoverUnknown(requestBindingId: string, requestRoomId: string, generation?: number) {
+      return restoredReviewCommand?.bindingId === requestBindingId && restoredReviewCommand.roomId === requestRoomId
+        && restoredReviewCommand.expectedBindingGeneration === generation ? restoredReviewCommand : null;
+    },
     async preview(request: { bindingId: string }) {
       const pending = items.filter(value => !releasedReviewEvents.has(value.ref.eventId)
         && (multiReview && request.bindingId === secondReviewBinding.bindingId ? value.ref.eventId === 'event_a'
@@ -179,14 +191,31 @@ const review = {
       return { kind: offlineReview ? 'waiting_for_agent' as const : 'ok' as const,
         generation: activeBinding.generation, body: { v: 1, bindingId: request.bindingId,
         bindingGeneration: selectedReview && !multiReview ? activeBinding.generation : 0,
-        policyVersion: 3, pending: pending.map(value => value.ref), receipts: [] } };
+        policyVersion: 3, pending: pending.map(value => value.ref), receipts: persistedReview && reviewLedger.receipts.length > 0
+          ? [{ v: 2, receiptId: 'receipt_ack_1', releaseId: 'release_b', bindingId: request.bindingId,
+            generation: activeBinding.generation, kind: 'agent_acknowledged', observedAt: '2026-09-27T00:01:00Z',
+            source: 'agent', evidenceRef: 'ack_1', errorCode: null }] : [] } };
     },
     async approve(value: ApprovalCommand) { command = value; reviewCommands.push(value);
+      if (persistedReview) {
+        sessionStorage.setItem('khala.test.review.command', JSON.stringify(value));
+        if (!offlineReview && !unknownReview && !unavailableReview) {
+          reviewLedger.releases.push('release_b');
+          reviewLedger.receipts.push({ releaseId: 'release_b', kind: 'agent_acknowledged' });
+          sessionStorage.setItem('khala.test.review.ledger', JSON.stringify(reviewLedger));
+        }
+      }
       if (offlineReview) return { kind: 'waiting_for_agent' as const };
       if (selectedReview) for (const ref of value.selection) releasedReviewEvents.add(ref.eventId);
       if (unknownReview && reviewCommands.length === 1) return { kind: 'lost' as const };
       return { kind: 'answered' as const,
       body: { ok: true, releaseIds: ['release_b'] } }; },
+    async reconcile() {
+      reviewResultReads += 1;
+      if (unavailableReview) return { kind: 'lost' as const };
+      if (offlineReview) return { kind: 'waiting_for_agent' as const };
+      return { kind: 'answered' as const, body: { ok: true, releaseIds: ['release_b'] } };
+    },
   },
 };
 let allowTrust: (() => void) | null = null;
@@ -203,6 +232,8 @@ declare global { interface Window {
   __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
   __roomReviewCommand: () => ApprovalCommand | null;
   __roomReviewCommands: () => readonly ApprovalCommand[];
+  __reviewResultReads: () => number;
+  __reviewLedger: () => { releases: readonly string[]; receipts: readonly { releaseId: string; kind: string }[] };
   __allowReviewTrust: () => void;
   __reviewLookupCount: () => number;
   __releaseOldLookup: () => void;
@@ -227,6 +258,8 @@ declare global { interface Window {
 window.__shareRequests = () => shareRequests;
 window.__roomReviewCommand = () => command;
 window.__roomReviewCommands = () => reviewCommands;
+window.__reviewResultReads = () => reviewResultReads;
+window.__reviewLedger = () => reviewLedger;
 window.__allowReviewTrust = () => allowTrust?.();
 window.__reviewLookupCount = () => lookupCount;
 window.__releaseOldLookup = () => releaseOldLookup?.();

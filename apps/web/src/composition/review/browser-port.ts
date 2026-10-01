@@ -35,6 +35,8 @@ export interface ReviewControlClient {
   /** Deliberately takes no signal: closing a browser wait is not cancellation. */
   approve(command: ApprovalCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
     | Readonly<{ kind: 'waiting_for_agent' }> | Readonly<{ kind: 'lost' }>>;
+  reconcile(command: ApprovalCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'waiting_for_agent' }> | Readonly<{ kind: 'lost' }>>;
 }
 
 export type BrowserReviewPortOptions = Readonly<{
@@ -174,6 +176,16 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
       } finally {
         stopWaiting();
       }
+    },
+
+    async reconcile(command, signal) {
+      if (disposed || signal.aborted) return { kind: 'outcome_unknown', commandId: command.commandId };
+      const answer = await client.reconcile(command).catch(() => ({ kind: 'lost' as const }));
+      if (disposed || signal.aborted) return { kind: 'outcome_unknown', commandId: command.commandId };
+      const outcome: ApprovalUiResult = answer.kind === 'answered' ? toUiResult(command, answer.body)
+        : answer.kind === 'waiting_for_agent' ? { kind: 'waiting_for_agent', commandId: command.commandId }
+          : { kind: 'outcome_unknown', commandId: command.commandId };
+      return outcome;
     },
 
     dispose() {

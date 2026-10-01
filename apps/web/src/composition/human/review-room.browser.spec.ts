@@ -210,11 +210,11 @@ test('selected conversation exposes only pending recipient review and releases t
     assert.equal(sent?.bindingId, 'binding_1');
     assert.equal(sent?.expectedBindingGeneration, 0);
     assert.equal(sent?.selection.length, 1);
-    await review.getByText('Recipient review', { exact: true }).waitFor();
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
     await review.locator('summary').press('Escape');
     assert.equal(await review.locator('summary').evaluate(node => node === document.activeElement), true);
     await page.keyboard.press('Tab');
-    await review.waitFor({ state: 'hidden' });
+    assert.equal(await review.isVisible(), true, 'the completed release remains inspectable');
   });
 });
 
@@ -293,8 +293,99 @@ test('unknown release keeps its reconciliation action after the pending queue cl
     await review.getByRole('button', { name: 'Check release status' }).click();
     await review.getByText('Released', { exact: true }).waitFor();
     const commands = await page.evaluate(() => window.__roomReviewCommands());
-    assert.equal(commands.length, 2);
-    assert.deepEqual(commands[1], commands[0], 'reconciliation uses the exact original command');
+    assert.equal(commands.length, 1, 'status check never submits another release');
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+  });
+});
+
+test('selected review reload reads one persisted release and shows its ACK without another write', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable review fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Released', { exact: true }).waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 1);
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Release acknowledged').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Released', { exact: true }).waitFor();
+    await review.getByText('Batch token returned').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0,
+      'the reloaded page only reads the original command result');
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), {
+      releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
+    });
+    assert.equal(await review.getByRole('button', { name: 'Check release status' }).count(), 0);
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Release acknowledged').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Batch token returned').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), {
+      releases: ['release_b'], receipts: [{ releaseId: 'release_b', kind: 'agent_acknowledged' }],
+    });
+  });
+});
+
+test('selected review reload leaves a queued release queued and status checks read only', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&offline-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable queued fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Check release status').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Release queued for agent').waitFor();
+    await review.getByRole('button', { name: 'Check release status' }).click();
+    await review.getByText('Release queued for agent').waitFor();
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 2);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), { releases: [], receipts: [] });
+  });
+});
+
+test('selected review reload keeps an unavailable result unknown across repeated read-only checks', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?selected-review&unknown-review&unavailable-review&persisted-review', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    const composer = page.getByRole('textbox', { name: 'Message' });
+    await composer.fill('Disposable unknown fixture');
+    await composer.press('Enter');
+    const review = page.locator('.recipient-review-disclosure');
+    await review.getByText('Review 1 pending').waitFor();
+    await review.locator('summary').click();
+    await review.locator('[data-event-id] input[type="checkbox"]').check();
+    await review.getByRole('button', { name: 'Release 1 selected' }).click();
+    await review.getByText('Release status unknown').waitFor();
+    await page.reload();
+    await page.evaluate(() => window.__allowReviewTrust());
+    await review.locator('summary').getByText('Check release status').waitFor();
+    await review.locator('summary').click();
+    await review.getByText('Release status unknown').waitFor();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await review.getByRole('button', { name: 'Check release status' }).click();
+      await review.getByText('Release status unknown').waitFor();
+    }
+    assert.equal((await page.evaluate(() => window.__roomReviewCommands())).length, 0);
+    assert.equal(await page.evaluate(() => window.__reviewResultReads()), 3);
+    assert.deepEqual(await page.evaluate(() => window.__reviewLedger()), { releases: [], receipts: [] });
   });
 });
 

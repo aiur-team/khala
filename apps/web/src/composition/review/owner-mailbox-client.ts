@@ -1,4 +1,4 @@
-import { decodeApprovalCommand, decodeDeliveryLimits, type ApprovalCommand, type BindingId } from '@khala/contracts/delivery/index';
+import { decodeApprovalCommand, decodeApprovalResult, decodeDeliveryLimits, type ApprovalCommand, type BindingId } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { ReviewControlClient, ReviewPreviewRequest } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
@@ -30,7 +30,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('review_origin_invalid');
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   const waitMs = input.waitMs ?? 8_000;
-  const submittedCommands = new Set<string>();
+  const submittedCommands = new Map<string, string>();
   const pendingPreviews = new Map<BindingId, { digest: string; operationId: string; body: ReviewPreviewRequest }>();
   const limits = (() => {
     const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
@@ -43,25 +43,69 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const previewKey = (bindingId: BindingId) => `${readPrefix}:pending:${bindingId}`;
   const key = (bindingId: BindingId, roomId: RoomId, generation: number) =>
     `khala.review.unknown.v1:${bindingId}:${roomId}:${generation}`;
-  function pending(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null {
+  const completedKey = (bindingId: BindingId, roomId: RoomId, generation: number) =>
+    `khala.review.completed.v1:${bindingId}:${roomId}:${generation}`;
+  const exactCommand = (left: ApprovalCommand, right: ApprovalCommand) =>
+    left.v === right.v && left.commandId === right.commandId && left.roomId === right.roomId && left.bindingId === right.bindingId
+    && left.expectedBindingGeneration === right.expectedBindingGeneration
+    && left.expectedPolicyVersion === right.expectedPolicyVersion && left.issuedAt === right.issuedAt
+    && left.selection.length === right.selection.length && left.selection.every((ref, index) => {
+      const other = right.selection[index];
+      return other && ref.roomId === other.roomId && ref.eventId === other.eventId
+        && ref.authorParticipantId === other.authorParticipantId && ref.authorDeviceId === other.authorDeviceId
+        && ref.contentDigest === other.contentDigest;
+    });
+  function storedCommand(slot: (bindingId: BindingId, roomId: RoomId, generation: number) => string,
+    bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null {
     if (generation === undefined) return null;
     try {
-      const raw = storage?.getItem(key(bindingId, roomId, generation));
+      const raw = storage?.getItem(slot(bindingId, roomId, generation));
       if (!raw) return null;
       const decoded = decodeApprovalCommand(JSON.parse(raw) as unknown, limits);
       if (!decoded.ok || decoded.value.bindingId !== bindingId || decoded.value.roomId !== roomId
         || decoded.value.expectedBindingGeneration !== generation) return null;
-      submittedCommands.add(decoded.value.commandId);
       return decoded.value;
     } catch { return null; }
   }
+  const pending = (bindingId: BindingId, roomId: RoomId, generation?: number) =>
+    storedCommand(key, bindingId, roomId, generation);
+  const completed = (bindingId: BindingId, roomId: RoomId, generation?: number) =>
+    storedCommand(completedKey, bindingId, roomId, generation);
+  function recoverSaved(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null {
+    const active = pending(bindingId, roomId, generation);
+    if (active || generation === undefined) return active;
+    // A corrupt active record cannot be treated as if only an older completed
+    // release existed; the newer command may already have crossed the write boundary.
+    try { if (storage?.getItem(key(bindingId, roomId, generation)) !== null) return null; }
+    catch { return null; }
+    return completed(bindingId, roomId, generation);
+  }
   function remember(command: ApprovalCommand): void {
-    try { storage?.setItem(key(command.bindingId, command.roomId, command.expectedBindingGeneration), JSON.stringify(command)); }
+    try {
+      storage?.setItem(key(command.bindingId, command.roomId, command.expectedBindingGeneration), JSON.stringify(command));
+      storage?.removeItem(completedKey(command.bindingId, command.roomId, command.expectedBindingGeneration));
+    }
     catch { /* Read-only reconciliation remains available in this tab. */ }
   }
   function forget(command: ApprovalCommand): void {
-    try { storage?.removeItem(key(command.bindingId, command.roomId, command.expectedBindingGeneration)); }
+    try {
+      const current = pending(command.bindingId, command.roomId, command.expectedBindingGeneration);
+      if (current && exactCommand(current, command)) {
+        storage?.removeItem(key(command.bindingId, command.roomId, command.expectedBindingGeneration));
+      }
+    }
     catch { /* No authority depends on storage cleanup. */ }
+  }
+  function settle(command: ApprovalCommand, outcome: unknown): void {
+    const decoded = decodeApprovalResult(outcome, limits);
+    if (!decoded.ok || !decoded.value.ok && decoded.value.code === 'outcome_unknown') return;
+    if (decoded.value.ok) {
+      // Keep the last completed command for later read-only reloads. A new
+      // explicit release replaces it when its own pending command is saved.
+      try { storage?.setItem(completedKey(command.bindingId, command.roomId, command.expectedBindingGeneration), JSON.stringify(command)); }
+      catch { return; }
+    }
+    forget(command);
   }
 
   async function read(response: Response): Promise<Reply> {
@@ -110,7 +154,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
     return null;
   }
   const review: ReviewControlClient = {
-    recoverUnknown: pending,
+    recoverUnknown: recoverSaved,
     async preview(body: ReviewPreviewRequest, signal: AbortSignal) {
       if (signal.aborted) return { kind: 'lost' };
       if (!retry.ready(body.bindingId)) return { kind: 'refused', code: 'unavailable' };
@@ -180,25 +224,48 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
     },
     async approve(command: ApprovalCommand) {
       const prior = pending(command.bindingId, command.roomId, command.expectedBindingGeneration);
-      if (prior && prior.commandId !== command.commandId) return { kind: 'lost' };
+      if (prior && !exactCommand(prior, command)) return { kind: 'lost' };
+      const priorCompleted = completed(command.bindingId, command.roomId, command.expectedBindingGeneration);
+      if (priorCompleted?.commandId === command.commandId && !exactCommand(priorCompleted, command)) return { kind: 'lost' };
       // Once a write may have happened, reconcile by read only. The browser
       // controller supplies the same command ID for every unknown retry.
       const signal = AbortSignal.timeout(waitMs);
-      const previouslySubmitted = submittedCommands.has(command.commandId);
-      submittedCommands.add(command.commandId);
+      const previouslySubmitted = prior !== null || priorCompleted?.commandId === command.commandId
+        || submittedCommands.has(command.commandId);
+      if (submittedCommands.has(command.commandId)
+        && submittedCommands.get(command.commandId) !== JSON.stringify(command)) return { kind: 'lost' };
+      submittedCommands.set(command.commandId, JSON.stringify(command));
       if (!previouslySubmitted) remember(command);
       const first = previouslySubmitted ? await result(command.bindingId, command.commandId, signal)
         : await submit(command.bindingId, command.commandId, 'review_approve', command, signal);
       const answer = await awaitOutcome(command.bindingId, command.commandId, first, signal);
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === command.commandId
         && answer.body.outcome !== null) {
-        if (object(answer.body.outcome) && answer.body.outcome.ok !== undefined
-          && answer.body.outcome.code !== 'outcome_unknown') forget(command);
+        settle(command, answer.body.outcome);
         return { kind: 'answered', body: answer.body.outcome };
       }
       // A previous attempt with the same command ID may have committed before
       // authorization was lost. This result cannot prove that it did not.
       if (answer?.status === 409) { forget(command); return { kind: 'answered', body: { ok: false, code: 'idempotency_conflict' } }; }
+      if (answer === null && first?.status === 200 && object(first.body)
+        && first.body.operationId === command.commandId && first.body.outcome === null) return { kind: 'waiting_for_agent' };
+      return { kind: 'lost' };
+    },
+    async reconcile(command: ApprovalCommand) {
+      const stored = pending(command.bindingId, command.roomId, command.expectedBindingGeneration)
+        ?? completed(command.bindingId, command.roomId, command.expectedBindingGeneration);
+      if (stored && !exactCommand(stored, command)) return { kind: 'lost' };
+      if (!stored && submittedCommands.get(command.commandId) !== JSON.stringify(command)) return { kind: 'lost' };
+      const signal = AbortSignal.timeout(Math.max(waitMs, 1_000));
+      const first = await result(command.bindingId, command.commandId, signal);
+      const answer = await awaitOutcome(command.bindingId, command.commandId, first, signal);
+      if (answer?.status === 200 && object(answer.body) && answer.body.operationId === command.commandId) {
+        if (answer.body.outcome === null) return { kind: 'waiting_for_agent' };
+        if (object(answer.body.outcome)) {
+          settle(command, answer.body.outcome);
+          return { kind: 'answered', body: answer.body.outcome };
+        }
+      }
       if (answer === null && first?.status === 200 && object(first.body)
         && first.body.operationId === command.commandId && first.body.outcome === null) return { kind: 'waiting_for_agent' };
       return { kind: 'lost' };

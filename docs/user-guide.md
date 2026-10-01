@@ -127,7 +127,10 @@ expect, not as a claim that it works today.
   release them. A sender can queue several messages, and you can release them together.
   If the agent goes offline after a pending list was verified, that known list
   remains reviewable. A release is queued for the same agent session and its
-  status can be checked when the agent resumes. New pending messages need the
+  status can be checked without sending another release, including after a browser
+  reload when its original command is still saved. The selected conversation
+  shows the completed release and agent acknowledgement when that check settles.
+  New pending messages need the
   connector to return before they appear in review.
 - **Trust and re-arm.** Turning review off for a trusted peer affects future
   messages only; it never releases the backlog. Turning review back on (re-arm)

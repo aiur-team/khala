@@ -154,7 +154,7 @@ export function HumanControls({ context, roomId, review, capability, refreshMs }
     context={context} roomId={roomId} capability={capability} binding={binding} />)}</>;
 }
 
-type ReviewAttention = Readonly<{ pending: number; unresolved: boolean }>;
+type ReviewAttention = Readonly<{ pending: number; unresolved: boolean; released: boolean; acknowledged: boolean }>;
 
 function ReviewForBinding({ context, roomId, capability, binding, onReviewStatus }: {
   context: Parameters<HumanRoomRenderer>[0];
@@ -193,10 +193,13 @@ function BindingReview({ controller, identity, onReviewStatus, recipientLabel }:
     ? data.view.pending.length : 0;
   const unresolved = data.submission.phase === 'submitting' || data.submission.phase === 'unknown'
     || data.submission.phase === 'waiting_for_agent';
+  const released = data.submission.phase === 'released';
+  const acknowledged = released && data.view.receipts.some(receipt =>
+    receipt.kind === 'agent_acknowledged' && data.submission.releaseIds?.includes(receipt.releaseId));
   useEffect(() => {
-    onReviewStatus?.(identity, { pending: count, unresolved });
+    onReviewStatus?.(identity, { pending: count, unresolved, released, acknowledged });
     return () => onReviewStatus?.(identity, null);
-  }, [identity, count, unresolved, onReviewStatus]);
+  }, [identity, count, unresolved, released, acknowledged, onReviewStatus]);
   return <ReviewScreen controller={controller} recipientLabel={recipientLabel}
     renderContent={content => <span dir="auto">{content.body}</span>} />;
 }
@@ -214,7 +217,8 @@ function PendingRecipientReview({ context, roomId, capability, bindings }: {
   const onReviewStatus = useCallback((identity: string, status: ReviewAttention | null) => {
     setStatuses(current => {
       const previous = current.get(identity);
-      if (previous?.pending === status?.pending && previous?.unresolved === status?.unresolved) return current;
+      if (previous?.pending === status?.pending && previous?.unresolved === status?.unresolved
+        && previous?.released === status?.released && previous?.acknowledged === status?.acknowledged) return current;
       const next = new Map(current);
       if (status) next.set(identity, status);
       else next.delete(identity);
@@ -224,11 +228,13 @@ function PendingRecipientReview({ context, roomId, capability, bindings }: {
   const attention = bindings.map(binding => statuses.get(reviewIdentity(context, roomId, binding)));
   const pending = attention.reduce((total, status) => total + (status?.pending ?? 0), 0);
   const unresolved = attention.some(status => status?.unresolved);
+  const released = attention.some(status => status?.released);
+  const acknowledged = attention.some(status => status?.acknowledged);
   if (bindings.length === 0) return null;
-  return <details className="recipient-review-disclosure" hidden={pending === 0 && !unresolved && !open && !focusedAfterClose}
+  return <details className="recipient-review-disclosure" hidden={pending === 0 && !unresolved && !released && !open && !focusedAfterClose}
     onToggle={event => {
       setOpen(event.currentTarget.open);
-      if (open && !event.currentTarget.open && pending === 0 && !unresolved) {
+      if (open && !event.currentTarget.open && pending === 0 && !unresolved && !released) {
         setFocusedAfterClose(event.currentTarget.contains(document.activeElement));
       }
     }} onBlur={event => {
@@ -240,7 +246,8 @@ function PendingRecipientReview({ context, roomId, capability, bindings }: {
       event.currentTarget.open = false;
       summary.current?.focus();
     }}>
-    <summary ref={summary}>{pending > 0 ? `Review ${pending} pending` : unresolved ? 'Check release status' : 'Recipient review'}</summary>
+    <summary ref={summary}>{pending > 0 ? `Review ${pending} pending` : unresolved ? 'Check release status'
+      : acknowledged ? 'Release acknowledged' : released ? 'Released' : 'Recipient review'}</summary>
     <div className="recipient-review-disclosure__panel" aria-label="Pending recipient review">
       {bindings.map(binding => <ReviewForBinding key={reviewIdentity(context, roomId, binding)}
         context={context} roomId={roomId} capability={capability} binding={binding} onReviewStatus={onReviewStatus} />)}
