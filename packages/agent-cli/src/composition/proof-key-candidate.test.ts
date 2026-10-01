@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createProofSigner, type SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { createProofKeyCandidateClient } from './proof-key-candidate.js';
 
@@ -52,9 +52,12 @@ describe('native proof-key candidate client', () => {
       const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey);
       const sessions = { async inspect() { return { kind: 'verified', session: { harness, sessionId, generation: 0 },
         capabilities: {} }; } } as unknown as SessionInspectionPort;
-      const client = createProofKeyCandidateClient({ signer, sessions, origin, fetch: transport });
+      const openBrowser = vi.fn(async () => undefined);
+      const options = { signer, sessions, origin, fetch: transport, openBrowser };
+      const client = createProofKeyCandidateClient(options);
       expect(await client({ target, operationId: 'same-operation', session: { harness, sessionId, workdir: '/workspace' } }))
-        .toMatchObject({ kind: 'pending_owner' });
+        .toMatchObject({ kind: 'pending_owner', candidateId: 'A'.repeat(43) });
+      expect(openBrowser).not.toHaveBeenCalled();
     }
     expect(seen).toMatchObject([
       { sessionId: 'thread-one', operationId: 'same-operation', target },
