@@ -21,7 +21,7 @@ function json(status: number, value: unknown): Response {
 function unavailable(): Response { return json(503, { code: 'unavailable' }); }
 export type MailboxFailureStage = 'auth' | 'binding_read' | 'owner_index_read' | 'membership' | 'mailbox_submit' | 'composition';
 export type MailboxFailureCode = 'session_store_unavailable' | 'store_unavailable' | 'matrix_unavailable'
-  | 'submit_failed' | 'load_failed' | 'route_missing' | 'handle_failed';
+  | 'mailbox_full' | 'submit_failed' | 'load_failed' | 'route_missing' | 'handle_failed';
 export type MailboxDiagnostic = (entry: Readonly<{ stage: MailboxFailureStage; code: MailboxFailureCode }>) => void;
 function plain(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -148,6 +148,7 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         catch { return submitUnavailable('mailbox_submit', 'submit_failed'); }
         return result.kind === 'ok' ? json(200, { v: 1, operationId: result.value.operationId, outcome: result.value.outcome })
           : result.kind === 'conflict' ? json(409, { code: 'operation_conflict' })
+            : result.kind === 'capacity' ? submitUnavailable('mailbox_submit', 'mailbox_full')
             : submitUnavailable('mailbox_submit', 'store_unavailable');
       } },
       { path: OWNER_MAILBOX_RESULT, methods: ['GET'], async handle(request: Request) {

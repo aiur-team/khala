@@ -162,7 +162,69 @@ describe('metadata-only owner mailbox', () => {
     expect(pending.value.map(entry => entry.operationId)).toContain('pending_00000063');
     expect(pending.value.map(entry => entry.operationId)).toContain(stop.operationId);
     expect(await mailbox.submit({ ...stop, operationId: 'another_stop_0001',
-      body: { ...stop.body, operationId: 'another_stop_0001' } }, principal)).toEqual({ kind: 'unavailable' });
+      body: { ...stop.body, operationId: 'another_stop_0001' } }, principal)).toEqual({ kind: 'capacity' });
+  });
+
+  it('archives displaced offline reads before admitting reads and writes', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    for (let i = 0; i < 64; i++) {
+      expect((await mailbox.submit({ ...command, operationId: `offline_${i.toString().padStart(8, '0')}` }, principal)).kind).toBe('ok');
+    }
+    expect((await mailbox.submit({ ...command, operationId: 'offline_new_read' }, principal)).kind).toBe('ok');
+    const approvalId = 'offline_approval_01';
+    const approval = { operationId: approvalId, kind: 'review_approve' as const,
+      body: { v: 1, commandId: approvalId, bindingId: binding.bindingId, roomId: '!room:example',
+        expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(),
+        selection: [{ v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+          authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }] } };
+    expect((await mailbox.submit(approval, principal)).kind).toBe('ok');
+    const restarted = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    for (let i = 0; i < 2; i++) {
+      const old = { ...command, operationId: `offline_${i.toString().padStart(8, '0')}` };
+      expect(await restarted.result(old.operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'unavailable' } } });
+      expect(await restarted.submit(old, principal)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'unavailable' } } });
+      expect(await restarted.complete(old.operationId, { ok: false, code: 'forbidden' })).toEqual({ kind: 'conflict' });
+    }
+    const pending = await restarted.pending();
+    expect(pending.kind).toBe('ok');
+    if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
+    expect(pending.value).toHaveLength(64);
+    expect(pending.value.at(-1)?.operationId).toBe(approvalId);
+    expect(pending.value.filter(item => item.kind === 'review_approve')).toHaveLength(1);
+  });
+
+  it('lets only one terminal result win a compaction and completion race', async () => {
+    const state = fakeStore(() => T0);
+    let releaseArchive!: () => void;
+    let archiveStarted!: () => void;
+    const held = new Promise<void>(resolve => { releaseArchive = resolve; });
+    const entered = new Promise<void>(resolve => { archiveStarted = resolve; });
+    const store: ControlStore = { ...state.store, async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+      const value = input.next.value as { operationId?: string; outcome?: { code?: string } };
+      if (input.key.startsWith('owner-mailbox-result.') && value.operationId === 'race_00000000'
+        && value.outcome?.code === 'unavailable') {
+        archiveStarted();
+        await held;
+      }
+      return state.store.compareAndSet(input);
+    } };
+    const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    for (let i = 0; i < 64; i++) {
+      expect((await mailbox.submit({ ...command, operationId: `race_${i.toString().padStart(8, '0')}` }, principal)).kind).toBe('ok');
+    }
+    const admission = mailbox.submit({ ...command, operationId: 'race_new_read_01' }, principal);
+    await entered;
+    const completed = await mailbox.complete('race_00000000', { ok: false, code: 'forbidden' });
+    releaseArchive();
+    const admitted = await admission;
+    expect(admitted.kind).toBe('ok');
+    const result = await mailbox.result('race_00000000');
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok' || !result.value) throw new Error('missing terminal result');
+    expect(result.value.outcome).toEqual({ ok: false, code: 'forbidden' });
+    expect(completed).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'forbidden' } } });
+    expect((await mailbox.pending()).kind).toBe('ok');
   });
 
   it('keeps one exact command/result under CAS and refuses changed retries and stale generations', async () => {

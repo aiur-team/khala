@@ -50,9 +50,11 @@ describe('acknowledgement capability through channel presence', () => {
   ] as const)('%s stays in the snapshot but outside the participant detail', async (_name, extra, expected) => {
     const snapshot = await statusPort({ generation: 1, agents: [agent(extra)] }).agents('room-1' as RoomId, new AbortController().signal);
     expect(snapshot.agents[0]!.acknowledgement).toBe(expected);
+    expect(snapshot.agents[0]!.connection).toBe('connected');
 
     const html = await renderPanel(extra);
-    expect(html).toContain('Details for Build agent, Connected');
+    expect(html).toContain('aria-label="Details for Build agent"');
+    expect(html).not.toContain('Details for Build agent, Connected');
     expect(html).not.toMatch(/Batch-token return|Last receipt|No delivery receipt yet|unread/i);
   });
 

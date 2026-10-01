@@ -143,7 +143,9 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
       : [];
   let chromiumExecutablePath: string | null = null;
-  for (const candidate of [...systemBrowsers, ...(input.chromiumExecutablePath ? [input.chromiumExecutablePath] : [])]) {
+  // The installed launcher supplies its own verified browser. Prefer that
+  // executable so a host browser cannot bypass its private trust setup.
+  for (const candidate of [...(input.chromiumExecutablePath ? [input.chromiumExecutablePath] : []), ...systemBrowsers]) {
     try {
       await access(candidate, constants.X_OK);
       if (!(await stat(candidate)).isFile()) continue;

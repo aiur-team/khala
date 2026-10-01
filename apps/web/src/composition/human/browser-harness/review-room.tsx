@@ -30,6 +30,7 @@ const controlsEnabled = new URLSearchParams(location.search).has('controls');
 const proofMode = new URLSearchParams(location.search).has('proof');
 const statusRace = new URLSearchParams(location.search).has('status-race');
 const identityTiming = new URLSearchParams(location.search).has('identity-timing');
+const settingsSurface = new URLSearchParams(location.search).has('settings');
 const closureDenied = new URLSearchParams(location.search).has('closure-denied');
 const closureUnknown = new URLSearchParams(location.search).has('closure-unknown');
 const closureCalls: string[] = [];
@@ -103,13 +104,13 @@ const room = {
 } as unknown as RoomPort;
 const shareRequests: Array<{ roomId: string; policy: { kind: string; email?: string } }> = [];
 const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
-  ...(identityTiming ? {
+  ...(identityTiming || settingsSurface ? {
     conversations: { snapshot: () => [{ id: roomId, title: 'Test channel', preview: null, timestamp: null, unreadCount: 0 }], subscribe: () => () => {} },
     roomParticipants: async () => {
-      await fetch('/api/fixture/participants');
+      if (identityTiming) await fetch('/api/fixture/participants');
       return [
         { participantId: 'human_peer', ownerId: 'owner_peer', kind: 'human', displayName: 'Peer owner', deviceIds: [] },
-        { participantId: 'agent_1', ownerId: 'owner_1', kind: 'agent', displayName: 'Verified agent', deviceIds: [] },
+        { participantId: 'agent_1', ownerId: 'owner_1', kind: 'agent', displayName: settingsSurface ? 'proof-key:abc123' : 'Verified agent', deviceIds: [] },
       ];
     },
     closure: () => ({
@@ -280,8 +281,8 @@ const hostedSurface = (currentContext: HumanRouteContext) => {
     capabilities={[]} navigateRoute={path => { navigations.push(path); }} />;
 };
 const testSurface = (currentContext: HumanRouteContext) => toolsRoute
-  ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Channel care route">{renderer.tools(currentContext, route)}</main></div>
-  : identityTiming ? hostedSurface(currentContext)
+  ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Recipient review route">{renderer.tools(currentContext, route)}</main></div>
+  : identityTiming || settingsSurface ? hostedSurface(currentContext)
   : proofMode ? <StrictMode>{renderer(currentContext, route)}</StrictMode>
     : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
 root.render(testSurface(context));
