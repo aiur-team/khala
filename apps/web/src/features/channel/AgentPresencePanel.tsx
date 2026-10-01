@@ -2,7 +2,6 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import type { ChannelAgentView, ChannelController } from './controller';
-import type { AgentConnectionState } from './ports';
 import { participantRosterName } from './participant-name';
 
 export interface AgentPresencePanelProps {
@@ -90,13 +89,6 @@ function RenameAgent({ agent, name, renameAgent, storageKey }: {
     aria-label={`Edit name for ${name}`}>{name === agent.displayName ? 'Name agent' : 'Edit name'}</button>;
 }
 
-const CONNECTION_LABEL: Record<AgentConnectionState, string> = {
-  connected: 'Connected',
-  stale: 'Connection stale',
-  offline: 'Not connected',
-  unknown: 'Connection unavailable',
-};
-
 function defaultCopyText(value: string): Promise<void> {
   return navigator.clipboard.writeText(value);
 }
@@ -164,10 +156,9 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
               event.currentTarget.open = false;
               event.currentTarget.querySelector('summary')?.focus();
             }}>
-              <summary aria-label={`Details for ${name}, ${CONNECTION_LABEL[agent.connection]}`}>
+              <summary aria-label={`Details for ${name}`}>
                 <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
-                <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span>
-                  <span className={`agent-presence__status agent-presence__status--${agent.connection}`}>{CONNECTION_LABEL[agent.connection]}</span></span>
+                <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span></span>
                 <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
               </summary>
               <div className="agent-presence__detail-body">

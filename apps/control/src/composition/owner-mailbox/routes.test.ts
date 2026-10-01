@@ -147,6 +147,25 @@ describe('hosted owner mailbox routes', () => {
     expect(await response.json()).toEqual({ code: 'unavailable', stage: 'mailbox_submit', errorCode: 'store_unavailable' });
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
+  it('distinguishes a full durable-write queue from a backing-store failure', async () => {
+    const env = await setup();
+    const mailbox = createOwnerMailbox({ store: env.state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
+    for (let i = 0; i < 64; i++) {
+      const operationId = `queued_write_${i.toString().padStart(8, '0')}`;
+      expect((await mailbox.submit({ operationId, kind: 'review_approve', body: {
+        v: 1, commandId: operationId, bindingId: binding.bindingId, roomId: '!room:example',
+        expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(),
+        selection: [{ v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+          authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }],
+      } }, principal)).kind).toBe('ok');
+    }
+    const response = await env.call(OWNER_MAILBOX_SUBMIT, 'POST', command);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ code: 'unavailable', stage: 'mailbox_submit', errorCode: 'mailbox_full' });
+    expect(env.diagnostics).toEqual([{ stage: 'mailbox_submit', code: 'mailbox_full' }]);
+    expect((await mailbox.pending()).kind).toBe('ok');
+  });
   it.each([
     [{ authThrows: true }, 'auth', 'session_store_unavailable'],
     [{ bindingReadThrows: true }, 'binding_read', 'store_unavailable'],
