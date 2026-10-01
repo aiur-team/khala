@@ -7,7 +7,11 @@ import { validIdentifier } from './validation.js';
 export const MAX_SEND_BYTES = 65_536;
 export class SendService {
   readonly #client: AgentClientPort;
-  constructor(client: AgentClientPort) { this.#client = client; }
+  readonly #defaultBindingId: BindingId | null;
+  constructor(client: AgentClientPort, defaultBindingId: BindingId | null = null) {
+    this.#client = client;
+    this.#defaultBindingId = defaultBindingId;
+  }
   async send(
     body: string,
     bindingId: BindingId | null = null,
@@ -16,7 +20,7 @@ export class SendService {
   ): Promise<SendResult> {
     if (!validBody(body) || !/^[A-Za-z0-9_-]{8,128}$/.test(clientTxnId)) throw new CliError('invalid_input');
     try {
-      return publicSendResult(await this.#client.send({ bindingId, clientTxnId, body }, signal), clientTxnId);
+      return publicSendResult(await this.#client.send({ bindingId: bindingId ?? this.#defaultBindingId, clientTxnId, body }, signal), clientTxnId);
     } catch {
       return { kind: 'outcome_unknown', clientTxnId };
     }
