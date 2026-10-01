@@ -17,7 +17,8 @@ Version 1 routes:
 session presenting somebody else's link cannot make a pending request. The
 browser may still join through that link as its own authenticated principal.
 The hosted agent route obtains the sponsor owner ID and requester from the
-request-bound signed discovery credential. It rechecks the invite revision and
+request-bound signed discovery credential. It rechecks the sponsor's exact
+approved native session before resolving the URL, rechecks the invite revision, and
 uses the same channel-access journal as the direct hosted request route.
 Approval and admission remain separate.
 For A's room and B's personal link, A remains the room authority while B is the
@@ -25,4 +26,5 @@ link issuer, agent sponsor, and approver of B's agent request. The invite's
 `creatorOwnerId` field records the link issuer; it does not assert room creation.
 
 All responses are versioned, `no-store`, and contain no grant or room key. The
-shared response decoders live in `@khala/contracts/messaging/channel-link`.
+shared request and response decoders live in `@khala/contracts/messaging/channel-link`.
+Both callers submit the same canonical, exact-origin `/join/<inviteRef>` URL.

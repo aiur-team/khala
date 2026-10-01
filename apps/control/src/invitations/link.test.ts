@@ -43,6 +43,7 @@ describe('personal channel links', () => {
     expect(await resolve(a.value.shareUrl, b)).toEqual({ kind: 'use_your_link' });
     expect(await resolve(own.value.shareUrl, b)).toMatchObject({ kind: 'resolved', roomId: ROOM_ID });
     expect(await resolve(own.value.shareUrl, b, { ...context, sessionGeneration: 4 })).toEqual({ kind: 'forbidden' });
+    expect(await resolve(own.value.shareUrl, b, { ...context, sessionFingerprint: '' })).toEqual({ kind: 'forbidden' });
   });
 
   it('fails closed for revoked, expired and cross-origin links', async () => {
