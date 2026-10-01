@@ -129,9 +129,7 @@ export function hostedSessionFactory(options: Readonly<{
       diagnostic: event => options.diagnostic?.({ component: 'hosted_open', ...event }),
       subscriptionDiagnostic: event => options.diagnostic?.({ component: 'subscription', ...event }),
     });
-    const requestSessions = session.harness === 'claude' && options.readClaudeVersion
-      ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir, readVersion: options.readClaudeVersion })
-      : connector.ports.sessions;
+    const requestSessions = connector.ports.sessions;
     const discovery = options.credentialClient ?? (connector.proofSigner ? createChannelDiscoveryCredentialClient({
       signer: connector.proofSigner, sessions: requestSessions,
       trustedOrigins: [options.appOrigin], openBrowser: options.openBrowser,
