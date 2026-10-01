@@ -1226,15 +1226,17 @@ describe('internal channel discovery', () => {
           const chunks = { out: '', err: '' };
           stdout.on('data', chunk => { chunks.out += String(chunk); });
           stderr.on('data', chunk => { chunks.err += String(chunk); });
+          const stdin = new PassThrough();
+          stdin.end(args[0] === 'send' ? 'after resume' : '');
           const stateDirectory = path.join(fixture.root, 'agent-state');
           const code = await runCli(['--internal-descriptor', grantPath, ...args], {
             client: null as never,
             inbox: (bindingId, generation) => openInbox({
               stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
             }),
-            stdin: new PassThrough(), stdout, stderr,
-            internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
-            internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory }),
+            stdin, stdout, stderr,
+            internalClient: async descriptorPath => createInternalClient({ descriptorPath, clock: () => NOW }),
+            internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory, clock: () => NOW }),
           });
           return { code, ...chunks };
         },
@@ -1276,6 +1278,84 @@ describe('internal channel discovery', () => {
       // Nothing secret reaches output: no capability, discovery capability, grant reference or key.
       const streams = first.out + first.err;
       for (const secret of [active.bindingCapability!, a.agent.capability, a.agent.connector.privateKey]) expect(streams).not.toContain(secret);
+    });
+
+    it('restores an ordinary session grant after a same-origin launcher resume', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const old = a.readGrant();
+      const oldCapability = old.bindingCapability!;
+      const before = (await inbox(a.w)).map(entry => [entry.requestHandle, entry.outcome]);
+      const port = a.w.server.port;
+      await a.w.server.close();
+      a.fixture.handle.close();
+      const reopened = openChannelStore({ directory: path.join(a.fixture.root, 'state'), mode: 'existing' });
+      cleanups.push(() => reopened.close());
+      const resumed = await boot(a.fixture, reopened, { now: NOW }, port, {
+        releases: createInternalReleaseFeed({
+          store: createChannelStore(reopened), listeningModes: createSqliteListeningModeRepository(reopened), paused: () => false,
+        }),
+      });
+      expect(resumed.server.origin).toBe(a.w.server.origin);
+      expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(oldCapability) })).status).toBe(401);
+
+      const [status, secondStatus, send] = await Promise.all([
+        a.khala(['status']), a.khala(['status']), a.khala(['send']),
+      ]);
+      expect(status.code).toBe(0);
+      expect(secondStatus.code).toBe(0);
+      expect(JSON.parse(status.out)).toMatchObject({ connected: true, binding: { bindingId: old.bindingId, generation: 1 } });
+      if (send.code !== 0) throw new Error(JSON.stringify(send));
+      const fresh = a.readGrant();
+      expect(fresh.bindingId).toBe(old.bindingId);
+      expect(fresh.bindingCapability).not.toBe(oldCapability);
+      expect((reopened.read(db => db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
+        .get(`participant_${a.agent.principal}`)) as { n: number }).n).toBe(1);
+      expect((await inbox(resumed)).map(entry => [entry.requestHandle, entry.outcome])).toEqual(before);
+      expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(fresh.bindingCapability!) })).status).toBe(200);
+      expect(createChannelStore(reopened).send({
+        channelId, eventId: 'event-after-restart' as never, authorParticipantId: alice.participantId as never,
+        authorDeviceId: aliceDevice, clientTxnId: 'txn-after-restart',
+        content: { v: 1, kind: 'text', body: 'after restart' }, receivedAt: new Date(NOW + 1).toISOString(),
+      }).kind).toBe('stored');
+      expect((await a.khala(['read'])).out).toContain('after restart');
+      const stdin = new PassThrough();
+      stdin.end(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'khala_send', arguments: { message: 'from resumed MCP' } } })}\n`);
+      const stdout = new PassThrough();
+      let output = '';
+      stdout.on('data', chunk => { output += String(chunk); });
+      expect(await runCli(['--internal-descriptor', a.grantPath, 'mcp-serve'], {
+        client: null as never, stdin, stdout, stderr: new PassThrough(),
+        inbox: (bindingId, generation) => openInbox({
+          stateDirectory: path.join(a.fixture.root, 'mcp-state'), bindingId, generation,
+          maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+        }),
+        internalClient: async descriptorPath => createInternalClient({ descriptorPath, clock: () => NOW }),
+        internalDelivery: async descriptorPath => createInternalDelivery({
+          descriptorPath, stateDirectory: path.join(a.fixture.root, 'mcp-state'), clock: () => NOW,
+        }),
+      })).toBe(0);
+      expect(JSON.parse(output).result.structuredContent.kind).toBe('accepted');
+    });
+
+    it('does not recover an old binding across a changed launcher origin', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const old = a.readGrant();
+      const before = (await inbox(a.w)).map(entry => entry.requestHandle);
+      await a.w.server.close();
+      a.fixture.handle.close();
+      const reopened = openChannelStore({ directory: path.join(a.fixture.root, 'state'), mode: 'existing' });
+      cleanups.push(() => reopened.close());
+      const resumed = await boot(a.fixture, reopened, { now: NOW }, 0);
+      expect(resumed.server.origin).not.toBe(a.w.server.origin);
+      const status = await createInternalClient({ descriptorPath: a.grantPath, clock: () => NOW }).status();
+      expect(status).toMatchObject({ connected: false, route: 'unavailable' });
+      expect(a.readGrant()).toEqual(old);
+      expect((await inbox(resumed)).map(entry => entry.requestHandle)).toEqual(before);
     });
 
     it('resumes a lost ready acknowledgement without a second binding or capability', async () => {

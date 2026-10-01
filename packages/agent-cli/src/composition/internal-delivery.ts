@@ -8,6 +8,7 @@ import { type BatchAcknowledgement, type BatchInbox, acquireProcessLock } from '
 import type { InboxDelivery } from '../cli/types.js';
 import { exactKeys, plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { type DescriptorRead, readInternalDescriptor } from './internal.js';
+import { activationPaths, restoreHeldInternalGrant } from './internal-activation.js';
 
 // Moves the local internal server's releases for one held binding generation into
 // that generation's on-disk inbox, where `khala read`, `listen`, MCP and the hooks
@@ -44,6 +45,7 @@ export type InternalDeliveryOptions = Readonly<{
   fetch?: typeof globalThis.fetch;
   readDescriptor?: (file: string) => DescriptorRead;
   timeoutMs?: number;
+  clock?: (() => number) | undefined;
   pageLimit?: number;
   /** Bounds one pull so a busy channel cannot starve the caller. */
   maxPages?: number;
@@ -90,10 +92,25 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const pageLimit = options.pageLimit ?? 50;
   const maxPages = options.maxPages ?? 20;
+  const originMatches = (grant: GrantedDescriptor): boolean => {
+    const launch = readInternalDescriptor(activationPaths(options.descriptorPath).launchPath);
+    return !launch.ok || launch.value.origin === grant.origin;
+  };
+
+  async function refreshedGrant(grant: GrantedDescriptor, held: HeldGeneration, signal?: AbortSignal): Promise<GrantedDescriptor | null> {
+    let reread = currentGrant(readDescriptor, options.descriptorPath, held);
+    if (typeof reread !== 'object' || reread.bindingCapability === grant.bindingCapability) {
+      const outcome = await restoreHeldInternalGrant(options.descriptorPath, held.bindingId, { fetch: fetcher, signal, clock: options.clock });
+      if (outcome !== 'connected') return null;
+      reread = currentGrant(readDescriptor, options.descriptorPath, held);
+    }
+    return typeof reread === 'object' && reread.bindingCapability !== grant.bindingCapability ? reread : null;
+  }
 
   async function fetchPage(
     descriptor: GrantedDescriptor, held: HeldGeneration, cursor: string | null, signal: AbortSignal | undefined,
   ): Promise<Page> {
+    if (!originMatches(descriptor)) return { kind: 'unavailable' };
     const query = new URLSearchParams({ limit: String(pageLimit) });
     if (cursor !== null) query.set('cursor', cursor);
     const target = `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/releases?${query}`;
@@ -123,6 +140,7 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
   }
 
   async function postAcknowledgement(descriptor: GrantedDescriptor, body: string): Promise<number | null> {
+    if (!originMatches(descriptor)) return null;
     const target = `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/acknowledgements`;
     try {
       const response = await fetcher(new URL(target, descriptor.origin), {
@@ -140,6 +158,7 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
   }
 
   async function postBatch(descriptor: GrantedDescriptor, body: string): Promise<string | null> {
+    if (!originMatches(descriptor)) return null;
     const target = `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/acknowledgement-batches`;
     try {
       const response = await fetcher(new URL(target, descriptor.origin), {
@@ -155,13 +174,17 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
 
   return {
     async issueBatch(held, releases) {
-      const grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      let grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (grant === 'revoked' && await restoreHeldInternalGrant(options.descriptorPath, held.bindingId,
+        { fetch: fetcher, clock: options.clock }) === 'connected') {
+        grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      }
       if (typeof grant !== 'object') throw new CliError(grant === 'revoked' ? 'binding_not_held' : 'transport_unavailable');
       const body = JSON.stringify({ v: 1, bindingId: held.bindingId, generation: held.generation, releases });
       let token = await postBatch(grant, body);
       if (token === null) {
-        const reread = currentGrant(readDescriptor, options.descriptorPath, held);
-        if (typeof reread === 'object' && reread.bindingCapability !== grant.bindingCapability) token = await postBatch(reread, body);
+        const reread = await refreshedGrant(grant, held);
+        if (reread) token = await postBatch(reread, body);
       }
       if (token === null) throw new CliError('transport_unavailable');
       return token;
@@ -171,7 +194,11 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
       if (acknowledgement.bindingId !== held.bindingId || acknowledgement.generation !== held.generation) {
         throw new CliError('binding_not_held');
       }
-      const grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      let grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (grant === 'revoked' && await restoreHeldInternalGrant(options.descriptorPath, held.bindingId,
+        { fetch: fetcher, clock: options.clock }) === 'connected') {
+        grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      }
       if (grant === 'revoked') throw new CliError('binding_not_held');
       if (grant === 'unavailable') throw new CliError('transport_unavailable');
       const body = JSON.stringify({
@@ -181,8 +208,8 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
       let status = await postAcknowledgement(grant, body);
       if (status === 401) {
         // As for a pull: activation may have rotated the capability since the file was read.
-        const reread = currentGrant(readDescriptor, options.descriptorPath, held);
-        if (typeof reread === 'object' && reread.bindingCapability !== grant.bindingCapability) {
+        const reread = await refreshedGrant(grant, held);
+        if (reread) {
           status = await postAcknowledgement(reread, body);
         }
       }
@@ -193,7 +220,11 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
     },
 
     async pull(held, openInbox, signal) {
-      const first = currentGrant(readDescriptor, options.descriptorPath, held);
+      let first = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (first === 'revoked' && await restoreHeldInternalGrant(options.descriptorPath, held.bindingId,
+        { fetch: fetcher, signal, clock: options.clock }) === 'connected') {
+        first = currentGrant(readDescriptor, options.descriptorPath, held);
+      }
       if (first === 'unavailable') return 'unavailable';
       if (first === 'revoked') return 'revoked';
       let descriptor: GrantedDescriptor = first;
@@ -219,8 +250,8 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
           if (page.kind === 'revoked') {
             // Activation may have rewritten the descriptor with a fresh capability since it was read
             // for this pull. Only a capability the file no longer holds for this binding is revocation.
-            const reread = currentGrant(readDescriptor, options.descriptorPath, held);
-            if (typeof reread !== 'object' || reread.bindingCapability === descriptor.bindingCapability) return 'revoked';
+            const reread = await refreshedGrant(descriptor, held, signal);
+            if (!reread) return 'revoked';
             descriptor = reread;
             page = await fetchPage(descriptor, held, cursor, signal);
           }
