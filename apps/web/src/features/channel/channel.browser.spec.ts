@@ -107,6 +107,16 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), null, 'Escape closes the roster');
     await disclosure.press('Enter');
     assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '', 'keyboard reopens the roster');
+    await disclosure.click();
+    await page.getByRole('button', { name: 'Show same-named agents' }).click();
+    await disclosure.click();
+    await page.getByLabel('Details for Scout (agent 1)').waitFor({ timeout: 3000 });
+    const secondScout = page.getByLabel('Details for Scout (agent 2)');
+    await secondScout.focus();
+    await secondScout.press('Enter');
+    assert.equal(await secondScout.locator('..').getAttribute('open'), '', 'the second exact agent opens by keyboard on phone');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
+      'two same-named agent controls fit the phone viewport');
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto(url + '?standalone');
     const inlineHeader = page.locator('.conversation-thread__head');

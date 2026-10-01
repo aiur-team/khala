@@ -182,6 +182,15 @@ describe('internal launcher', () => {
     expect(timeline.text).toContain('kept across resume');
     // The old browser session died with the old server generation.
     await expect(call(first.report.origin, { path: '/' })).rejects.toBeTruthy();
+    await second.shutdown();
+    const third = await running(root, { request: { kind: 'resume', channelId: first.report.channelId } });
+    expect(third.report.channelId).toBe(first.report.channelId);
+    const thirdSession = await humanSession(third.report.url);
+    const thirdTimeline = await call(third.report.origin, {
+      path: `/api/v1/channels/${third.report.channelId}/timeline`, headers: thirdSession,
+    });
+    expect(thirdTimeline.status).toBe(200);
+    expect(thirdTimeline.text).toContain('kept across resume');
   });
 
   it('refuses missing, malformed, and already-running resume targets without creating state', async () => {

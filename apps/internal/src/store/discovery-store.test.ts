@@ -195,6 +195,33 @@ describe('internal discovery store', () => {
     expect(bodies(forged)).toEqual(['after']);
   });
 
+  it('keeps only the newest access binding active for one participant after reopen', () => {
+    const target = directory();
+    const first = open(target);
+    seed(first.handle, [['ch_a', 'Alpha']]);
+    const participantId = 'participant_agent' as ParticipantId;
+    const deviceId = 'device_agent' as DeviceId;
+    expect(first.discovery.admit({ providerOperationId: 'admit_1', channelId: 'ch_a', ownerId: owner,
+      participantId, deviceId, displayName: 'Codex' }).kind).toBe('admitted');
+    const binding = (bindingId: string, generation: number) => ({ v: 1 as const, bindingId: bindingId as never,
+      ownerId: owner, agentParticipantId: participantId, deviceId, harness: 'codex', sessionId: 'session_1', generation });
+    const previous = binding('binding_previous', 1);
+    expect(first.discovery.activate({ operationKey: 'op_previous', binding: previous, channelId: 'ch_a',
+      sessionGeneration: 1, history: 'shared' }).kind).toBe('activated');
+    first.handle.close();
+
+    const resumed = open(target, 'existing');
+    const current = binding('binding_current', 2);
+    expect(resumed.discovery.activate({ operationKey: 'op_current', binding: current, channelId: 'ch_a',
+      sessionGeneration: 2, history: 'shared' }).kind).toBe('activated');
+    expect(resumed.discovery.activate({ operationKey: 'op_current', binding: current, channelId: 'ch_a',
+      sessionGeneration: 2, history: 'shared' }).kind).toBe('activated');
+    expect(resumed.handle.read(db => db.prepare('SELECT binding_id, generation, status FROM bindings ORDER BY generation').all()))
+      .toEqual([{ binding_id: previous.bindingId, generation: 1, status: 'revoked' },
+        { binding_id: current.bindingId, generation: 2, status: 'active' }]);
+    resumed.handle.close();
+  });
+
   it('creates or reconciles exactly one secret channel per idempotency key and no agent membership', () => {
     const target = directory();
     const first = open(target);

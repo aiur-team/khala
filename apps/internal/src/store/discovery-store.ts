@@ -504,6 +504,15 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
           if (!joined || db.prepare('SELECT 1 FROM bindings WHERE binding_id = ?').get(binding.bindingId)) {
             return { kind: 'rejected' } as const;
           }
+          // A renewed access operation for this participant supersedes its old
+          // authority in this channel. Keep the rows for history and exact
+          // generation checks, but never expose both as current controls.
+          db.prepare(`
+            UPDATE bindings SET status = 'revoked'
+            WHERE status = 'active' AND participant_id = ? AND binding_id IN (
+              SELECT binding_id FROM discovery_activations WHERE channel_id = ?
+            )
+          `).run(binding.agentParticipantId, input.channelId);
           db.prepare(`
             INSERT INTO bindings (binding_id, generation, owner_id, participant_id, device_id, harness, session_id, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
