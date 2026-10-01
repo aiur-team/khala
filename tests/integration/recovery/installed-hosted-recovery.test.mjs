@@ -469,7 +469,10 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
     assert.ok(bindings.has(committed.binding.bindingId), 'durable binding mismatch');
     assert.equal(discoveryConsents, 3);
     assert.equal(transport.receipt().droppedRedeemResponses, 1);
+    let approvalSubmits = 0;
     const ownerFetch = (url, init) => {
+      if (init?.method === 'POST' && new URL(url).pathname.endsWith('/owner-mailbox/submit')
+        && JSON.parse(init.body).kind === 'review_approve') approvalSubmits += 1;
       const headers = new Headers(init?.headers);
       headers.set('cookie', `${SESSION_COOKIE}=${ownerToken}`);
       headers.set('origin', transport.origin);
@@ -502,13 +505,47 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
     console.log(JSON.stringify({ scope: 'owner_preview', previewOutcomes }));
     assert.equal(preview.kind, 'ok');
     assert.equal(preview.body.pending.length, 1);
-    const approved = await ownerReview.review.approve({ v: 1, commandId: 'fixture-release-one',
+    const approvalCommand = { v: 1, commandId: 'fixture-release-one',
       roomId, bindingId: committed.binding.bindingId,
       expectedPolicyVersion: preview.body.policyVersion,
       expectedBindingGeneration: committed.binding.generation,
-      selection: [ownerRef], issuedAt: new Date().toISOString() });
-    assert.equal(approved.kind, 'answered');
-    assert.equal(approved.body?.ok, true);
+      selection: [ownerRef], issuedAt: new Date().toISOString() };
+    let offlinePid;
+    if (harness === 'claude') {
+      offlinePid = recoveredSession.pid;
+      await recoveredSession.close();
+      recoveredSession = null;
+      const offlineStatus = await ownerFetch(`${transport.origin}/api/human/owner-mailbox/review-status?binding_id=${committed.binding.bindingId}`);
+      assert.equal(offlineStatus.status, 200);
+      assert.deepEqual((await offlineStatus.json()).preview?.pending, preview.body.pending,
+        'exact pending preview disappeared with the native executor');
+    }
+    const approved = await ownerReview.review.approve(approvalCommand);
+    let reconciled;
+    if (harness === 'claude') {
+      assert.equal(approved.kind, 'waiting_for_agent', 'offline release did not remain queued');
+      assert.equal(approvalSubmits, 1, 'offline release submitted more than once');
+      const queued = await ownerFetch(`${transport.origin}/api/human/owner-mailbox/result?binding_id=${committed.binding.bindingId}&operation_id=${approvalCommand.commandId}`);
+      assert.equal(queued.status, 200);
+      assert.equal((await queued.json()).outcome, null, 'offline release completed without the connector');
+      recoveredSession = client.session();
+      assert.notEqual(recoveredSession.pid, offlinePid, 'native executor did not restart');
+      const resumed = await recoveredSession.request({ jsonrpc: '2.0', id: 72,
+        method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
+      assert.equal(resumed.result?.structuredContent?.connected, true, 'same approved session did not reconnect');
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        reconciled = await ownerReview.review.reconcile(approvalCommand);
+        if (reconciled.kind === 'answered') break;
+        await delay(500);
+      }
+      assert.equal(reconciled.kind, 'answered', 'queued release did not settle after reconnect');
+      assert.equal(reconciled.body?.ok, true);
+      assert.equal(reconciled.body?.releaseIds?.length, 1, 'release widened or duplicated');
+      assert.equal(approvalSubmits, 1, 'status reconciliation retried the approval write');
+    } else {
+      assert.equal(approved.kind, 'answered');
+      assert.equal(approved.body?.ok, true);
+    }
     let nativeRead;
     const readOutcomes = [];
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -523,10 +560,57 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
       ? nativeRead.result?.structuredContent?.batch?.includes(ownerText)
       : nativeRead.result?.content?.some(item => item.type === 'text' && item.text.includes(ownerText)),
     'released owner message absent from native read');
+    if (harness === 'claude') {
+      const batchText = nativeRead.result.structuredContent.batch;
+      assert.match(batchText, /--- release 1 of 1 ---/u, 'native batch did not contain one release');
+      // The ordered inbox assigns a projection ID; the later receipt maps it
+      // back to the owner approval's original release ID.
+      assert.ok(batchText.includes(sentByOwner.eventId), 'native batch carried another event');
+      assert.doesNotMatch(batchText, /^batchToken:/mu, 'Claude native read exposed a private batch token');
+      let beforeAck;
+      const beforeAckOutcomes = [];
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        beforeAck = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
+          candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+        beforeAckOutcomes.push(beforeAck.kind);
+        if (beforeAck.kind === 'ok') break;
+        await delay(500);
+      }
+      assert.equal(beforeAck.kind, 'ok', `receipt preview did not settle: ${JSON.stringify({ beforeAckOutcomes,
+        mailboxStages: recoveredSession.diagnostics().filter(item => item.component === 'subscription'
+          && item.stage.startsWith('mailbox_')).slice(-8) })}`);
+      assert.equal(beforeAck.body.receipts.some(receipt => receipt.kind === 'agent_acknowledged'), false,
+        'native read acknowledged the release before a later call');
+    }
     const nativeSend = await recoveredSession.request({ jsonrpc: '2.0', id: 40,
       method: 'tools/call', params: { name: 'khala_send',
         arguments: { message: 'fixture agent reply through installed client' } } });
     assert.equal(nativeSend.result?.structuredContent?.kind, 'accepted');
+    if (harness === 'claude') {
+      const afterAck = await recoveredSession.request({ jsonrpc: '2.0', id: 73,
+        method: 'tools/call', params: { name: 'khala_read', arguments: {} } });
+      assert.equal(afterAck.result?.structuredContent?.kind, 'empty', 'acknowledged batch replayed');
+      let acknowledgement;
+      const afterAckOutcomes = [];
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        acknowledgement = await ownerReview.review.preview({ bindingId: committed.binding.bindingId,
+          candidates: [], releaseIds: reconciled.body.releaseIds }, AbortSignal.timeout(8_000));
+        afterAckOutcomes.push(acknowledgement.kind);
+        if (acknowledgement.kind === 'ok' && acknowledgement.body.receipts.some(receipt =>
+          receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
+          && receipt.bindingId === committed.binding.bindingId
+          && receipt.generation === committed.binding.generation)) break;
+        await delay(500);
+      }
+      assert.equal(acknowledgement.kind, 'ok', `ACK receipt preview did not settle: ${JSON.stringify({ afterAckOutcomes,
+        mailboxStages: recoveredSession.diagnostics().filter(item => item.component === 'subscription'
+          && item.stage.startsWith('mailbox_')).slice(-8) })}`);
+      assert.equal(acknowledgement.body.receipts.filter(receipt =>
+        receipt.kind === 'agent_acknowledged' && receipt.releaseId === reconciled.body.releaseIds[0]
+        && receipt.bindingId === committed.binding.bindingId
+        && receipt.generation === committed.binding.generation).length, 1,
+        'one later native call did not produce one authoritative ACK');
+    }
     assert.equal(agentMatrixSends, 1, 'native send did not reach Matrix once');
     let ownerSawReply = false;
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -539,7 +623,8 @@ test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' :
     }
     assert.equal(ownerSawReply, true, 'owner SDK did not decrypt native send');
     console.log(JSON.stringify({ scope: 'native_review_delivery', ownerPreviewPending: 1,
-      releaseAccepted: true, readOutcomes, nativeSendAccepted: true, ownerDecryptedReply: true }));
+      releaseAccepted: true, queuedWhileOffline: harness === 'claude', approvalSubmits,
+      readOutcomes, nativeAcked: harness === 'claude', nativeSendAccepted: true, ownerDecryptedReply: true }));
     const wrongBindingId = `${committed.binding.bindingId.slice(0, -1)}${committed.binding.bindingId.endsWith('A') ? 'B' : 'A'}`;
     const wrongBindingRead = await recoveredSession.request({ jsonrpc: '2.0', id: 41,
       method: 'tools/call', params: { name: 'khala_read', arguments: { bindingId: wrongBindingId } } });

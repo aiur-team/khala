@@ -128,7 +128,7 @@ describe('hosted owner mailbox routes', () => {
     [{ authUnavailable: true }, 'auth', 'session_store_unavailable'],
     [{ bindingReadUnavailable: true }, 'binding_read', 'store_unavailable'],
     [{ membershipUnavailable: true }, 'membership', 'matrix_unavailable'],
-    [{ mailboxReadUnavailable: true }, 'mailbox_submit', 'store_unavailable'],
+    [{ mailboxReadUnavailable: true }, 'mailbox_submit', 'archive_read_unavailable'],
   ] as const)('reports a bounded submit failure stage for %s', async (options, stage, errorCode) => {
     const env = await setup(options);
     const response = await env.call(OWNER_MAILBOX_SUBMIT, 'POST', command);
@@ -144,7 +144,7 @@ describe('hosted owner mailbox routes', () => {
       method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(command),
     }));
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ code: 'unavailable', stage: 'mailbox_submit', errorCode: 'store_unavailable' });
+    expect(await response.json()).toEqual({ code: 'unavailable', stage: 'mailbox_submit', errorCode: 'archive_read_unavailable' });
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
   it('distinguishes a full durable-write queue from a backing-store failure', async () => {
@@ -164,7 +164,15 @@ describe('hosted owner mailbox routes', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ code: 'unavailable', stage: 'mailbox_submit', errorCode: 'mailbox_full' });
     expect(env.diagnostics).toEqual([{ stage: 'mailbox_submit', code: 'mailbox_full' }]);
-    expect((await mailbox.pending()).kind).toBe('ok');
+    const stopId = 'stop_after_full_writes';
+    expect((await mailbox.submit({ operationId: stopId, kind: 'channel_stop', body: {
+      operationId: stopId, ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0,
+    } }, principal)).kind).toBe('ok');
+    const pending = await mailbox.pending();
+    expect(pending.kind).toBe('ok');
+    if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
+    expect(pending.value).toHaveLength(65);
+    expect(pending.value.at(-1)?.operationId).toBe(stopId);
   });
   it.each([
     [{ authThrows: true }, 'auth', 'session_store_unavailable'],

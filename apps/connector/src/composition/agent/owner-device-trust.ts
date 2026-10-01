@@ -10,6 +10,37 @@ const PATH = '/api/agent/owner-device-proof/lookup';
 const FINGERPRINT = /^[A-Za-z0-9+/]{43}=?$/u;
 const DEVICE = /^[A-Za-z0-9._=-]{1,255}$/u;
 
+type TrustPeerFailure = 'device_key_missing' | 'fingerprint_mismatch' | 'closed'
+  | 'pending' | 'compromised' | 'verification' | 'other';
+
+const TRUST_CODES: ReadonlyArray<readonly [string, TrustPeerFailure]> = [
+  ['matrix_device_key_missing', 'device_key_missing'],
+  ['matrix_fingerprint_mismatch', 'fingerprint_mismatch'],
+  ['matrix_closed', 'closed'],
+  ['matrix_trust_pending', 'pending'],
+  ['matrix_trust_compromised', 'compromised'],
+  ['matrix_trust_recovery_required', 'compromised'],
+  ['matrix_verification_failed', 'verification'],
+  ['matrix_verification_rollback_failed', 'verification'],
+];
+
+/** Only exact, reviewed values leave this boundary. SDK error text never does. */
+function trustPeerFailure(error: unknown): TrustPeerFailure {
+  if (typeof error !== 'object' || error === null) return 'other';
+  let message: unknown;
+  try { message = (error as { message?: unknown }).message; } catch { return 'other'; }
+  if (typeof message !== 'string' || message.length > 8192) return 'other';
+  for (const [code, category] of TRUST_CODES) {
+    const at = message.indexOf(code);
+    if (at < 0) continue;
+    const before = message[at - 1];
+    const after = message[at + code.length];
+    if ((before === undefined || !/[A-Za-z0-9_]/u.test(before))
+      && (after === undefined || !/[A-Za-z0-9_]/u.test(after))) return category;
+  }
+  return 'other';
+}
+
 /** Trusts only public keys the current owner's protected browser registered. */
 export function createOwnerDeviceTrust(input: Readonly<{
   appOrigin: string;
@@ -93,7 +124,10 @@ export function createOwnerDeviceTrust(input: Readonly<{
     for (const peer of pins) {
       if (!trusted.has(peer.deviceId)) {
         try { await input.matrix.trustPeer(input.ownerUserId, peer.deviceId, peer.fingerprint); }
-        catch { reportLocal('owner_device_trust_peer'); return 'unavailable'; }
+        catch (error) {
+          reportLocal(`owner_device_trust_peer_${trustPeerFailure(error)}`);
+          return 'unavailable';
+        }
         trusted.set(peer.deviceId, peer.fingerprint);
       }
     }
