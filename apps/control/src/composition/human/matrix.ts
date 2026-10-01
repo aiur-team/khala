@@ -78,6 +78,8 @@ export type MatrixHumanServices = Readonly<{
   gateway: AdmissionGateway;
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  /** Inspect one published owner device key using the server's bounded control session. */
+  inspectOwnerDeviceKey(ownerId: OwnerId, deviceId: DeviceId, fingerprint: string): Promise<'matched' | 'missing' | 'mismatch' | 'unavailable'>;
   /** Read the durable creator authority for a room; null is never ownership proof. */
   inspectRoomAuthority(roomId: RoomId): Promise<OwnerId | null>;
   /** Only the owner approved by the channel-create workflow may select this substrate. */
@@ -312,6 +314,33 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     } catch {
       return null;
     }
+  }
+
+  async function inspectOwnerDeviceKey(ownerId: OwnerId, deviceId: DeviceId,
+    fingerprint: string): Promise<'matched' | 'missing' | 'mismatch' | 'unavailable'> {
+    const session = await controlLogin(ownerId);
+    if (!session || session.userId !== accountId(ownerId)) return 'unavailable';
+    try {
+      const response = await request('/_matrix/client/v3/keys/query', {
+        method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json',
+          authorization: `Bearer ${session.accessToken}` },
+        body: JSON.stringify({ device_keys: { [session.userId]: [deviceId] } }),
+      });
+      if (response.status !== 200) return 'unavailable';
+      const value = await body(response);
+      const failures = value?.failures === undefined ? {} : safeObject(value.failures);
+      const users = safeObject(value?.device_keys);
+      if (!failures || Object.keys(failures).length || !users) return 'unavailable';
+      if (!Object.hasOwn(users, session.userId)) return 'missing';
+      const devices = safeObject(users[session.userId]);
+      if (!devices) return 'unavailable';
+      if (!Object.hasOwn(devices, deviceId)) return 'missing';
+      const device = safeObject(devices[deviceId]);
+      if (!device || device.user_id !== session.userId || device.device_id !== deviceId) return 'unavailable';
+      const keys = safeObject(device.keys);
+      const observed = keys?.[`ed25519:${deviceId}`];
+      return typeof observed === 'string' ? observed === fingerprint ? 'matched' : 'mismatch' : 'unavailable';
+    } catch { return 'unavailable'; }
   }
 
   const directory: MessagingAccountDirectory = {
@@ -723,5 +752,6 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   }
 
   return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
+    inspectOwnerDeviceKey,
     inspectRoomAuthority: roomAuthority, inspectRoomSenderDevices, channelCreateFor };
 }

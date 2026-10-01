@@ -16,7 +16,23 @@ The server consumes the nonce once and pins only the public fingerprint under th
 owner, room, binding ID, and generation. It rechecks active binding, owner room
 membership, and the closure marker. A replacement binding or generation needs a
 new browser registration. The connector retrieves only these pins through its
-DPoP-bound current binding; it must never trust an unpinned Matrix device-list key.
+DPoP-bound current binding; lookup also requires the exact key to remain published
+by Matrix. A missing or unavailable key fails closed, while a changed fingerprint
+is refused. It must never trust an unpinned Matrix device-list key.
+
+To retire a demonstrably missing pin, first revoke its binding through the normal
+owner-approved revocation flow. Then the signed-in owner can POST
+`/api/human/owner-device-proof/retire` with CSRF protection and the exact JSON
+keys `v:1`, `roomId`, `bindingId`, `generation`, `deviceId`, `currentDeviceId`,
+`currentFingerprint`, and `matrixAccessToken`. The current device must be a
+different owner browser device whose token and published key verify exactly;
+the token is never persisted. Matrix must report
+the key missing twice, more than 15 seconds apart. The first observation returns
+`202`; a later exact match or changed fingerprint blocks retirement. Retirement
+records a durable tombstone before removing the index entry, so a partial index
+write cannot restore the pin. Reconnection after retirement requires a new
+owner-approved binding and browser key registration; an existing connector treats
+a disappearing pin as revocation.
 
 The owner browser must verify the connector's attested public device key before
 sharing room keys. After that trust transition, use the supported Matrix SDK
