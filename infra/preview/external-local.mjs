@@ -295,6 +295,7 @@ async function main() {
     stage = 'browser-smoke';
     const smokeEnv = { ...env, KHALA_E2E_LIVE: '1', KHALA_E2E_DISPOSABLE_ENV: descriptorPath,
       KHALA_E2E_STAGE_DIAGNOSTIC: path.join(scratch, 'browser-stage.json'),
+      KHALA_E2E_RESTART_DIAGNOSTIC: path.join(scratch, 'restart-stage.json'),
       KHALA_E2E_USER_A: env.KHALA_PREVIEW_OIDC_USER_A_EMAIL, KHALA_E2E_USER_A_PASSWORD: passwordA,
       KHALA_E2E_USER_B: env.KHALA_PREVIEW_OIDC_USER_B_EMAIL, KHALA_E2E_USER_B_PASSWORD: passwordB,
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
@@ -355,7 +356,24 @@ async function main() {
     await waitFor(async () => { const stat = await import('node:fs/promises').then(fs => fs.stat(socket)); return stat.isSocket(); }, namespace);
     await waitFor(async () => (await secureGet(`${origin}/api/health`, trustedCert)).status === 200, namespace);
     stage = 'blobs-restart-read';
-    await command('node', ['--import', 'tsx', 'infra/preview/session-restart-smoke.ts', 'after', browserState], { env: smokeEnv, timeout: 60_000 });
+    try {
+      await command('node', ['--import', 'tsx', 'infra/preview/session-restart-smoke.ts', 'after', browserState], { env: smokeEnv, timeout: 60_000 });
+    } catch (error) {
+      try {
+        const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_RESTART_DIAGNOSTIC, 'utf8'));
+        browserDiagnostic = {
+          ...(['browser_launch', 'page_load', 'session_check', 'session_result'].includes(report.stage)
+            ? { restartStage: report.stage } : {}),
+          ...(Number.isInteger(report.navigationStatus) && report.navigationStatus >= 0 && report.navigationStatus <= 599
+            ? { navigationStatus: report.navigationStatus } : {}),
+          ...(Number.isInteger(report.meStatus) && report.meStatus >= 0 && report.meStatus <= 599
+            ? { meStatus: report.meStatus } : {}),
+          ...(typeof report.sessionCookiePresent === 'boolean'
+            ? { sessionCookiePresent: report.sessionCookiePresent } : {}),
+        };
+      } catch { /* diagnostics are optional; never expose raw child output */ }
+      throw error;
+    }
     stage = 'installed-connector';
     const packageDirectory = path.join(root, 'packages/agent-cli');
     const packed = await command('npm', ['pack', '--ignore-scripts', '--pack-destination', scratch], { cwd: packageDirectory, env: smokeEnv });
