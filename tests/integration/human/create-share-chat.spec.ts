@@ -49,7 +49,7 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
   };
   page.on('response', onResponse);
   try {
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    const reloadResponse = await page.reload({ waitUntil: 'domcontentloaded' });
     const row = page.getByRole('list', { name: 'Messages' }).getByText(expectedMessage);
     try {
       await expect(row).toBeVisible({ timeout: 30_000 });
@@ -64,13 +64,17 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
         const phase = historyAlert ? 'unavailable' : loading ? 'loading'
           : timeline?.querySelector('.timeline__empty') ? 'ready_empty'
             : timeline?.querySelector('.timeline__row') ? 'ready_or_partial' : 'absent';
-        return { phase, historyAlert,
+        return { phase, historyAlert, appRendered: Boolean(document.querySelector('#app')?.firstElementChild),
           unavailableRows: timeline?.querySelectorAll('.timeline__row.message-content__unavailable').length ?? 0,
           stages: (target.__khalaHistoryStages ?? []).filter(stage =>
             stage === 'history_participants' || stage === 'history_device_info').slice(-8) };
       });
       const deviceReadySurface = await page.getByLabel('Message', { exact: true }).isEnabled().catch(() => false);
-      recordStage(stage, { ...view, deviceReadySurface, participantStatuses: participantStatuses.slice(-12),
+      const pathname = new URL(page.url()).pathname;
+      const pageRoute = pathname.startsWith('/channels/') ? 'channel'
+        : pathname === '/' ? 'home' : pathname.startsWith('/auth/') ? 'auth' : 'other';
+      recordStage(stage, { ...view, deviceReadySurface, reloadStatus: reloadResponse?.status() ?? 0, pageRoute,
+        participantStatuses: participantStatuses.slice(-12),
         participantRouteStages: participantRouteStages.slice(-12), participantContentTypes: participantContentTypes.slice(-12),
         participantMatrixStages: participantMatrixStages.slice(-12), participantMatrixStatuses: participantMatrixStatuses.slice(-12) });
       throw new Error('automatic_history_failed');

@@ -312,6 +312,10 @@ async function main() {
             ...(typeof report.unavailableRows === 'number' && Number.isSafeInteger(report.unavailableRows)
               ? { unavailableRows: report.unavailableRows } : {}),
             ...(typeof report.deviceReadySurface === 'boolean' ? { deviceReadySurface: report.deviceReadySurface } : {}),
+            ...(typeof report.appRendered === 'boolean' ? { appRendered: report.appRendered } : {}),
+            ...(Number.isInteger(report.reloadStatus) && report.reloadStatus >= 0 && report.reloadStatus <= 599
+              ? { reloadStatus: report.reloadStatus } : {}),
+            ...(['channel', 'home', 'auth', 'other'].includes(report.pageRoute) ? { pageRoute: report.pageRoute } : {}),
             ...(Array.isArray(report.stages) ? { stages: report.stages.filter(value =>
               value === 'history_participants' || value === 'history_device_info').slice(-8) } : {}),
             ...(Array.isArray(report.participantStatuses) ? { participantStatuses: report.participantStatuses.filter(value =>
