@@ -3,6 +3,7 @@ import type { RoomId } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../human/application';
 import type { HumanCapability } from '../human/capabilities';
 import { type BrowserReviewPort, createBrowserReviewPort, type ReviewControlClient } from './browser-port';
+import { reviewTrace, reviewTraceId } from './diagnostics';
 
 export type BrowserReviewDependencies = Readonly<{
   /** The protected human review transport; it attaches owner authority out of band. */
@@ -47,12 +48,15 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
     state: 'ready' as const,
 
     attach(context: HumanRouteContext) {
+      const traceId = reviewTraceId();
+      reviewTrace('capability.attach', traceId, JSON.stringify([context.principal.ownerId, context.generation]));
       const previous = attached.get(context);
       if (previous) disposeAll(previous);
       const ports = new Map<string, BrowserReviewPort>();
       attached.set(context, ports);
       return {
         dispose() {
+          reviewTrace('capability.dispose', traceId);
           if (attached.get(context) === ports) attached.delete(context);
           disposeAll(ports);
         },
