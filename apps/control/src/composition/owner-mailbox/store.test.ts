@@ -79,6 +79,38 @@ describe('metadata-only owner mailbox', () => {
     }
     expect(await mailbox.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { policyVersion: 2 } });
   });
+  it('does not settle pending refs from a losing concurrent approval completion', async () => {
+    const state = fakeStore(() => T0);
+    const ref = { v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+      authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` };
+    let releaseArchive!: () => void;
+    let archiveStarted!: () => void;
+    const held = new Promise<void>(resolve => { releaseArchive = resolve; });
+    const entered = new Promise<void>(resolve => { archiveStarted = resolve; });
+    const store: ControlStore = { ...state.store, async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+      const value = input.next.value as { outcome?: { ok?: boolean }; operationId?: string };
+      if (input.key.startsWith('owner-mailbox-result.') && value.operationId === 'racing_approval_01'
+        && value.outcome?.ok === true) { archiveStarted(); await held; }
+      return state.store.compareAndSet(input);
+    } };
+    const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const previewBody = { bindingId: binding.bindingId, candidates: [ref], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(previewBody)).digest('hex').slice(0, 32);
+    const previewId = `preview_${digest}_00000001`;
+    expect((await mailbox.submit({ operationId: previewId, kind: 'review_preview', body: previewBody }, principal)).kind).toBe('ok');
+    expect((await mailbox.complete(previewId, { ok: true, preview: { v: 1, bindingId: binding.bindingId,
+      bindingGeneration: 2, policyVersion: 3, pending: [ref], receipts: [] } })).kind).toBe('ok');
+    const operationId = 'racing_approval_01';
+    expect((await mailbox.submit({ operationId, kind: 'review_approve', body: { v: 1, commandId: operationId,
+      bindingId: binding.bindingId, roomId: '!room:example', expectedPolicyVersion: 3,
+      expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(), selection: [ref] } }, principal)).kind).toBe('ok');
+    const losing = mailbox.complete(operationId, { ok: true, releaseIds: ['release_12345678'] });
+    await entered;
+    expect((await mailbox.complete(operationId, { ok: false, code: 'forbidden' })).kind).toBe('ok');
+    releaseArchive();
+    expect((await losing).kind).toBe('conflict');
+    expect(await mailbox.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { pending: [ref] } });
+  });
   it('does not redeliver archived commands when index retirement fails and recovers full capacity', async () => {
     const state = fakeStore(() => T0);
     let holdRetirement = true;
