@@ -20,7 +20,8 @@ const capabilities = { v: 3, harness: 'codex', version: '0.154.0', adapterVersio
   limits: decodedLimits.value, evidenceRef: 'hook-proof',
   modes: { steer: support, sync: support, async: unknown }, acknowledgement: 'unknown' } as HarnessCapabilities;
 
-function fixture(options: { drop?: boolean; race?: boolean; experimental?: boolean } = {}) {
+function fixture(options: { drop?: boolean; race?: boolean; experimental?: boolean;
+  drift?: 'unavailable' | 'evidence' } = {}) {
   let state: TrustState = initialTrustState({ roomId: 'room_readback' as never,
     bindingId: binding.bindingId, ownerId: binding.ownerId, generation: 0, policyVersion: 0 });
   let revision = 0;
@@ -55,8 +56,15 @@ function fixture(options: { drop?: boolean; race?: boolean; experimental?: boole
   } as unknown as ConnectorDispatchStorage;
   const tested = options.experimental ? { ...capabilities,
     modes: { ...capabilities.modes, steer: { ...support, status: 'experimental' as const } } } : capabilities;
+  let inspections = 0;
   const hosted = createHostedListeningControl({ binding, trust, dispatch,
-    current: async () => true, capabilities: async () => tested });
+    current: async () => true, capabilities: async () => {
+      inspections += 1;
+      if (inspections > 1 && options.drift === 'unavailable') return null;
+      if (inspections > 1 && options.drift === 'evidence') return { ...tested,
+        modes: { ...tested.modes, sync: { ...support, evidenceRevision: 'hook-revision-new' } } };
+      return tested;
+    } });
   return { hosted, policy: () => policy };
 }
 const owner = { ownerId: binding.ownerId } as never;
@@ -66,6 +74,17 @@ const command = (requested: 'sync' | 'steer', version = 1) => ({ v: 1 as const,
   issuedAt: '2026-09-27T00:00:00Z' });
 
 describe('hosted listening ledger readback', () => {
+  it.each(['unavailable', 'evidence'] as const)(
+    'fails closed when capability %s changes after ledger confirmation', async drift => {
+      const { hosted } = fixture({ drift });
+      expect(await hosted.owner.read(owner)).toMatchObject({ ok: true,
+        view: { requested: 'sync', effective: null, effectiveReason: 'projection_unavailable' } });
+    });
+  it('applies the same capability fence to agent self-read', async () => {
+    const { hosted } = fixture({ drift: 'evidence' });
+    expect(await hosted.application.read()).toMatchObject({ ok: true,
+      view: { requested: 'sync', effective: null, effectiveReason: 'projection_unavailable' } });
+  });
   it('fails closed when dispatch reports applied but drops the write', async () => {
     const { hosted, policy } = fixture({ drop: true });
     expect(await hosted.owner.read(owner)).toMatchObject({ ok: true,

@@ -57,15 +57,18 @@ export function createHostedListeningControl(input: Readonly<{
     evidenceRevision: string | null): Promise<boolean> {
     const confirmed = async (target: { requested: 'steer' | 'sync' | 'async' | null;
       effective: 'steer' | 'sync' | 'async' | null; evidenceRevision: string | null },
-    minimumVersion: number) => input.dispatch.ledger.transact(tx => {
-      const state = tx.binding(binding.bindingId);
-      const policy = tx.policy(binding.bindingId);
-      return state !== null && !state.revoked && sameSessionBinding(state.binding, binding)
-        && policy !== null && policy.listening.version >= minimumVersion
-        && policy.listening.requested === target.requested
-        && policy.listening.effective === target.effective
-        && policy.listening.evidenceRevision === target.evidenceRevision;
-    });
+    minimumVersion: number) => {
+      if (!await input.current()) return false;
+      return input.dispatch.ledger.transact(tx => {
+        const state = tx.binding(binding.bindingId);
+        const policy = tx.policy(binding.bindingId);
+        return state !== null && !state.revoked && sameSessionBinding(state.binding, binding)
+          && policy !== null && policy.listening.version >= minimumVersion
+          && policy.listening.requested === target.requested
+          && policy.listening.effective === target.effective
+          && policy.listening.evidenceRevision === target.evidenceRevision;
+      });
+    };
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (!await input.current()) return false;
       const policy = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
@@ -87,18 +90,25 @@ export function createHostedListeningControl(input: Readonly<{
     return false;
   }
 
-  async function projectedRead(result: Awaited<ReturnType<typeof service.read>>) {
+  async function projectedRead(result: Awaited<ReturnType<typeof service.read>>,
+    reread: () => Promise<ListeningModeReadResult>) {
     if (!result.ok) return result;
     const { view } = result;
     const support = view.effective ? view.support[view.effective] : null;
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
     const applied = await project(view.effective, view.requested, view.version, evidenceRevision);
-    return applied ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
+    const latest = applied && await input.current() ? await reread() : null;
+    return latest?.ok && latest.view.version === view.version && latest.view.requested === view.requested
+      && latest.view.effective === view.effective && latest.view.effectiveReason === view.effectiveReason
+      && JSON.stringify(latest.view.support) === JSON.stringify(view.support)
+      ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
-  async function read() { return projectedRead(await base.read()); }
+  async function read() { return projectedRead(await base.read(), () => base.read()); }
   async function ownerRead(authority: OwnerAuthority) {
     if (!await input.current()) return { ok: false as const, code: 'unavailable' as const };
-    return projectedRead(await service.read(authority, { binding, status: 'active' }, await input.capabilities()));
+    const reread = () => input.capabilities().then(capabilities => service.read(authority,
+      { binding, status: 'active' }, capabilities));
+    return projectedRead(await reread(), reread);
   }
   const application: AgentListeningModeApplication = {
     read,
@@ -156,7 +166,8 @@ export function createHostedListeningControl(input: Readonly<{
               ? await service.grantHardCancel(authority, context, capabilities, command)
               : await service.revokeHardCancel(authority, context, capabilities, command);
         if (result.outcome === 'refused') return { commandId: command.commandId, ...result };
-        const projected = await projectedRead({ ok: true, view: result.view });
+        const projected = await projectedRead({ ok: true, view: result.view },
+          () => input.capabilities().then(latest => service.read(authority, context, latest)));
         return projected.ok && projected.view.version === result.view.version
           && projected.view.requested === result.view.requested
           ? { commandId: command.commandId, ...result, view: projected.view }
