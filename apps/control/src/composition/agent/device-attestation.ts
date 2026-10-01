@@ -14,6 +14,8 @@ export type DeviceAttestation = Readonly<{
   v: 1; ownerId: string; roomId: string; bindingId: string; deviceId: string;
   generation: number; fingerprint: string;
 }>;
+export type DeviceAttestationLookup = Readonly<{ kind: 'found'; attestation: DeviceAttestation }>
+  | Readonly<{ kind: 'absent' | 'unavailable' }>;
 
 export type DeviceAttestationDependencies = Readonly<{
   origin: string;
@@ -72,6 +74,7 @@ function parseBody(value: unknown): Readonly<{
 export function createDeviceAttestationRoutes(deps: DeviceAttestationDependencies): Readonly<{
   agent: readonly RouteRegistration[];
   lookup(binding: SessionBinding): Promise<DeviceAttestation | null>;
+  lookupState(binding: SessionBinding): Promise<DeviceAttestationLookup>;
 }> {
   const origin = new URL(deps.origin);
   const loopback = deps.allowInsecureLoopback === true && origin.protocol === 'http:'
@@ -155,14 +158,23 @@ export function createDeviceAttestationRoutes(deps: DeviceAttestationDependencie
     return saved.kind === 'conflict' ? json(409, { code: 'key_replacement_refused' }) : json(503, { code: 'unavailable' });
   }
 
-  async function lookup(binding: SessionBinding): Promise<DeviceAttestation | null> {
-    if (!await active(binding)) return null;
+  async function lookupState(binding: SessionBinding): Promise<DeviceAttestationLookup> {
+    const current = await deps.capabilities.lookupBinding(binding.bindingId);
+    if (current.kind === 'unavailable') return { kind: 'unavailable' };
+    if (current.kind !== 'found' || current.status !== 'active' || current.ownerId !== binding.ownerId
+      || current.deviceId !== binding.deviceId || current.generation !== binding.generation) return { kind: 'absent' };
     const record = await deps.store.read(key('attestation', binding.bindingId));
-    if (record.kind !== 'record') return null;
+    if (record.kind === 'unavailable') return { kind: 'unavailable' };
+    if (record.kind !== 'record') return { kind: 'absent' };
     const value = record.record.value as unknown as DeviceAttestation;
-    return value.v === 1 && value.ownerId === binding.ownerId && value.bindingId === binding.bindingId
+    return value && value.v === 1 && value.ownerId === binding.ownerId && value.bindingId === binding.bindingId
       && value.deviceId === binding.deviceId && value.generation === binding.generation && FINGERPRINT.test(value.fingerprint)
-      ? value : null;
+      ? { kind: 'found', attestation: value } : { kind: 'unavailable' };
+  }
+
+  async function lookup(binding: SessionBinding): Promise<DeviceAttestation | null> {
+    const result = await lookupState(binding);
+    return result.kind === 'found' ? result.attestation : null;
   }
 
   return {
@@ -171,6 +183,7 @@ export function createDeviceAttestationRoutes(deps: DeviceAttestationDependencie
       { path: DEVICE_REGISTER_PATH, methods: ['POST'], handle: register },
     ]),
     lookup,
+    lookupState,
   };
 }
 

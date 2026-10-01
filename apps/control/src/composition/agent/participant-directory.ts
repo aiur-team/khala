@@ -19,7 +19,11 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
   store: ControlStore;
   capabilities: Pick<AdapterCapabilities, 'authorize' | 'lookupBinding'>;
   sessions: Pick<MatrixSessionIssuer, 'resolveRoomParticipants'>;
-  lookupAgentDevice(binding: SessionBinding): Promise<{ deviceId: string; fingerprint: string } | null>;
+  lookupAgentDevice(binding: SessionBinding): Promise<
+    | { kind: 'found'; deviceId: string; fingerprint: string }
+    | { kind: 'absent' }
+    | { kind: 'unavailable' }
+  >;
 }>): RouteRegistration {
   const bindings = createAgentBindingStore({ store: input.store });
   return { path: AGENT_PARTICIPANTS_PATH, methods: ['POST'], async handle(request) {
@@ -77,7 +81,8 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
         continue;
       }
       const device = await input.lookupAgentDevice(found.record.binding);
-      if (!device) {
+      if (device.kind === 'unavailable') return json(503, { code: 'unavailable' });
+      if (device.kind === 'absent') {
         pinned.push(participant);
         continue;
       }

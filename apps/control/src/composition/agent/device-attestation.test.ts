@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
-import type { SessionBinding } from '@khala/contracts/messaging/index';
+import type { ControlStore, SessionBinding } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
 import { checkProof, thumbprint } from '../../agent-bootstrap/proof';
 import { fakeStore, T0 } from '../../invitations/support.test';
@@ -35,8 +35,14 @@ describe('proof-bound Matrix device attestation', () => {
   it('requires one-use body-signed consent, exact binding and published key; refuses replacement and revoked trust', async () => {
     const proofSigner = signer();
     const backing = fakeStore(() => T0);
+    let storeUnavailable = false;
+    const store: ControlStore = { ...backing.store,
+      read: (key, options) => storeUnavailable && key.startsWith('agent-device.attestation.')
+        ? Promise.resolve({ kind: 'unavailable' }) : backing.store.read(key, options),
+    };
     let current = binding;
     let active = true;
+    let bindingUnavailable = false;
     let published = fingerprint;
     const seen = new Set<string>();
     const capabilities = {
@@ -55,12 +61,13 @@ describe('proof-bound Matrix device attestation', () => {
           ownerId: current.ownerId, roomId: 'room_1' as never, binding: current };
       },
       async lookupBinding() {
+        if (bindingUnavailable) return { kind: 'unavailable' as const };
         return { kind: 'found' as const, ownerId: current.ownerId, generation: current.generation,
           deviceId: current.deviceId, status: active ? 'active' as const : 'revoked' as const };
       },
     };
     const routes = createDeviceAttestationRoutes({
-      origin, store: backing.store, capabilities, publishedFingerprint: async () => published,
+      origin, store, capabilities, publishedFingerprint: async () => published,
       clock: () => T0,
     });
     const request = (path: string, method: 'GET' | 'POST', body?: object, extra?: { nonce: string; bodyHash: string }) => new Request(`${origin}${path}`, {
@@ -83,6 +90,7 @@ describe('proof-bound Matrix device attestation', () => {
     };
 
     expect(await routes.lookup(binding)).toBeNull(); // Matrix's arbitrary device list is not trust.
+    expect(await routes.lookupState(binding)).toEqual({ kind: 'absent' });
     const wrong = await register(await challenge(), 'B'.repeat(43));
     expect(wrong.status).toBe(403);
     expect(await routes.lookup(binding)).toBeNull();
@@ -94,6 +102,13 @@ describe('proof-bound Matrix device attestation', () => {
     const nonce = await challenge();
     expect((await register(nonce, fingerprint)).status).toBe(200);
     expect(await routes.lookup(binding)).toMatchObject({ bindingId: binding.bindingId, fingerprint });
+    expect(await routes.lookupState(binding)).toMatchObject({ kind: 'found', attestation: { fingerprint } });
+    storeUnavailable = true;
+    expect(await routes.lookupState(binding)).toEqual({ kind: 'unavailable' });
+    storeUnavailable = false;
+    bindingUnavailable = true;
+    expect(await routes.lookupState(binding)).toEqual({ kind: 'unavailable' });
+    bindingUnavailable = false;
     expect((await register(nonce, fingerprint)).status).toBe(403); // consumed challenge, even with a fresh proof
 
     published = 'B'.repeat(43);
