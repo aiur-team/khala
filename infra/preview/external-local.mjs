@@ -5,7 +5,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createHash, createHmac, createPublicKey, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream, realpathSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { request as httpsRequest } from 'node:https';
@@ -179,6 +179,12 @@ async function main() {
   let env;
   try {
   await chmod(scratch, 0o700);
+  const privateHome = path.join(scratch, 'home');
+  const privateTmp = path.join(scratch, 'tmp');
+  for (const directory of [privateHome, privateTmp, path.join(scratch, 'xdg'),
+    path.join(scratch, 'xdg-data'), path.join(scratch, 'codex')]) {
+    await mkdir(directory, { mode: 0o700 });
+  }
   const log = path.join(scratch, 'children.log');
   const matrixDir = path.join(scratch, 'matrix');
   const dexDir = path.join(scratch, 'dex');
@@ -312,7 +318,9 @@ async function main() {
     await command('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', prefix, tarball],
       { env: { ...smokeEnv, npm_config_cache: path.join(scratch, 'npm-cache') } });
     const installedCli = path.join(prefix, 'node_modules/@aiur/khala/dist/khala.js');
-    const connectorEnv = { ...smokeEnv };
+    const connectorEnv = { ...smokeEnv, HOME: privateHome, TMPDIR: privateTmp,
+      XDG_CONFIG_HOME: path.join(scratch, 'xdg'), XDG_DATA_HOME: path.join(scratch, 'xdg-data'),
+      CODEX_HOME: path.join(scratch, 'codex') };
     delete connectorEnv.CODEX_THREAD_ID;
     delete connectorEnv.CLAUDE_SESSION_ID;
     const installedStatus = await command('node', [installedCli, 'status'], { env: connectorEnv });
@@ -322,18 +330,21 @@ async function main() {
     if (extraCommand) {
       stage = 'external-consumer';
       const consumerEnv = Object.fromEntries(
-        ['PATH', 'HOME', 'TMPDIR', 'LANG', 'CI', 'PLAYWRIGHT_BROWSERS_PATH']
+        ['PATH', 'LANG', 'CI', 'PLAYWRIGHT_BROWSERS_PATH']
           .filter(key => process.env[key] !== undefined)
           .map(key => [key, process.env[key]]),
       );
       Object.assign(consumerEnv, {
+        HOME: privateHome, TMPDIR: privateTmp,
+        XDG_CONFIG_HOME: path.join(scratch, 'xdg'), XDG_DATA_HOME: path.join(scratch, 'xdg-data'),
+        XDG_STATE_HOME: smokeEnv.XDG_STATE_HOME, CODEX_HOME: path.join(scratch, 'codex'),
         NODE_EXTRA_CA_CERTS: tls.cert, KHALA_E2E_CERT_SPKI: tls.spki,
         KHALA_E2E_LIVE: '1', KHALA_E2E_DISPOSABLE_ENV: descriptorPath,
         KHALA_E2E_USER_A: smokeEnv.KHALA_E2E_USER_A, KHALA_E2E_USER_A_PASSWORD: passwordA,
         KHALA_E2E_USER_B: smokeEnv.KHALA_E2E_USER_B, KHALA_E2E_USER_B_PASSWORD: passwordB,
         KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token,
         KHALA_EXTERNAL_CLI: installedCli, KHALA_EXTERNAL_ORIGIN: origin,
-        KHALA_APP_ORIGIN: origin, XDG_STATE_HOME: smokeEnv.XDG_STATE_HOME,
+        KHALA_APP_ORIGIN: origin,
       });
       await command(extraCommand[0], extraCommand.slice(1), { env: consumerEnv, timeout: 300_000 });
     }

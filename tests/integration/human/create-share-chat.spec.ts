@@ -21,11 +21,14 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     const intro = syntheticCanary('intro');
     await alice.getByRole('button', { name: 'Create channel' }).click();
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
-    await alice.getByLabel('Message 1').fill(intro);
     await alice.getByRole('button', { name: 'Create channel' }).click();
     const link = alice.getByLabel('Channel link');
     await expect(link).toHaveValue(/\/join\/[^/?#]+$/u);
     const shareUrl = await link.inputValue();
+    await alice.getByRole('button', { name: 'Open channel' }).click();
+    await alice.getByLabel('Message').fill(intro);
+    await alice.getByRole('button', { name: 'Send' }).click();
+    await expect(alice.getByText(intro)).toBeVisible();
 
     const bob = await bobContext.newPage();
     await bob.goto(shareUrl, { waitUntil: 'networkidle' });
@@ -50,7 +53,6 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await bob.getByRole('button', { name: 'Send' }).click();
     await expect(bob.getByText(reply)).toBeVisible();
 
-    await alice.getByRole('button', { name: 'Open channel' }).click();
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     await expect(alice.getByText(reply)).toBeVisible();
     await expect(alice.getByText(intro)).toBeVisible();
@@ -76,11 +78,14 @@ test('an account without admission cannot read a protected room', async ({ brows
     await signIn(owner, environment, environment.users[0]);
     await owner.getByRole('button', { name: 'Create channel' }).click();
     const canary = syntheticCanary('protected');
-    await owner.getByLabel('Message 1').fill(canary);
     await owner.getByRole('button', { name: 'Create channel' }).click();
     const shareUrl = await owner.getByLabel('Channel link').inputValue();
     const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
     expect(inviteRef).not.toBeNull();
+    await owner.getByRole('button', { name: 'Open channel' }).click();
+    await owner.getByLabel('Message').fill(canary);
+    await owner.getByRole('button', { name: 'Send' }).click();
+    await expect(owner.getByText(canary)).toBeVisible();
 
     const outsider = await freshPage(outsiderContext, environment);
     await signIn(outsider, environment, environment.users[1]);

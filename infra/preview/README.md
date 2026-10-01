@@ -59,6 +59,8 @@ pnpm test:external:local
 This command creates a fresh private directory and Compose project, builds the
 production web, generated control function and CLI bundle, and serves them
 through Netlify Dev behind a trusted loopback HTTPS origin. It runs the hosted
+`explicit_browser_consent` registration and checks the generated hosted agent
+bootstrap route before browser work begins. It runs the hosted
 human browser suite with real Dex authorization-code/PKCE sign-in, session
 cookies, channel sharing, encrypted Matrix events, and a read-only outsider.
 It then checks the session in a fresh browser after a function restart and
@@ -82,5 +84,8 @@ secret-free descriptor), `KHALA_E2E_LIVE=1`, the two disposable user credential
 variables named by that descriptor, `KHALA_E2E_MATRIX_OBSERVER_TOKEN`,
 `NODE_EXTRA_CA_CERTS`, `KHALA_E2E_CERT_SPKI`, `KHALA_EXTERNAL_CLI` (the installed
 bundle path), and `KHALA_EXTERNAL_ORIGIN`. The child runs after the topology
-smoke and before teardown. This interface provides the substrate for #811; it
+smoke and before teardown. Its environment is limited to these consumer values,
+`KHALA_APP_ORIGIN`, private `HOME`/`TMPDIR`/XDG/CODEX roots, and basic process settings; it does not
+inherit the Dex, Matrix registration, database, or HMAC secrets. This interface
+provides the substrate for #811; it
 does not produce model-visible native receipts or claim three-party acceptance.
