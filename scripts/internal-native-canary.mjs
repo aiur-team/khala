@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { allocateNamespace, fingerprintEffectiveConfig, validateCandidate, validateJournal, verifyArtifact, writeEvidence } from './acceptance/candidate.ts';
+import { modelEvidence } from './internal-native-model-evidence.mjs';
 
 const [action, directory, ...args] = process.argv.slice(2);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -134,24 +135,6 @@ const nativeInterval = (run, harness) => {
   return raw.subarray(offset).toString('utf8').split('\n').filter(Boolean).flatMap(line => {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
-};
-const modelEvidence = (rows, harness, received, sent) => {
-  const calls = rows.flatMap((row, index) => {
-    if (harness === 'codex') {
-      const payload = row.type === 'response_item' && row.payload?.type === 'mcp_tool_call' ? row.payload : null;
-      return payload ? [{ index, name: String(payload.tool ?? payload.name ?? ''), input: JSON.stringify(payload.arguments ?? {}) }] : [];
-    }
-    return row.type === 'assistant' && Array.isArray(row.message?.content)
-      ? row.message.content.filter(item => item?.type === 'tool_use')
-        .map(item => ({ index, name: String(item.name ?? ''), input: JSON.stringify(item.input ?? {}) })) : [];
-  });
-  const read = calls.find(call => /(?:^|__)khala_read$/.test(call.name));
-  const visible = read !== undefined && rows.some((row, index) => index >= read.index
-    && JSON.stringify(row).includes(received)
-    && (harness === 'codex' ? row.type === 'response_item' && row.payload?.type === 'mcp_tool_call'
-      : row.type === 'user' && row.message?.content?.some?.(item => item?.type === 'tool_result')));
-  const sendCall = calls.some(call => /(?:^|__)khala_send$/.test(call.name) && call.input.includes(sent));
-  return { readCall: read !== undefined, visible, sendCall };
 };
 const acknowledged = (facts, eventId, binding) => facts.filter(fact => fact.receipt?.kind === 'agent_acknowledged'
   && fact.receipt.source === 'agent' && fact.receipt.bindingId === binding.bindingId
