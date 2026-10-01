@@ -1,4 +1,4 @@
-import type { SessionBinding, OwnerAuthority } from '@khala/contracts/delivery/index';
+import type { ListeningModeCommand, ListeningModeResult, ListeningModeView, SessionBinding, OwnerAuthority } from '@khala/contracts/delivery/index';
 import type { JsonValue } from '@khala/contracts/messaging/index';
 import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
@@ -7,6 +7,7 @@ import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription
 import type { PolicyControlHandler } from '../controls/control-handler';
 import type { ReviewControlHandler } from '../review/control-handler';
 import type { LocalStopRequest, LocalStopReceipt } from '../closure/local-fence';
+import { refusedListeningModeResult } from '@khala/policy/listening-mode/store';
 
 const POLL = '/api/agent/owner-mailbox/poll';
 const COMPLETE = '/api/agent/owner-mailbox/complete';
@@ -14,7 +15,7 @@ const MAX_RESPONSE = 2 * 1024 * 1024;
 const ID = /^[A-Za-z0-9_-]{8,64}$/u;
 type Command = Readonly<{
   operationId: string;
-  kind: 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
+  kind: 'controls_status' | 'controls_set' | 'listening_set' | 'review_preview' | 'review_approve' | 'channel_stop';
   body: JsonValue;
   authority: OwnerAuthority;
   outcome: null;
@@ -26,7 +27,7 @@ function object(value: unknown): value is Record<string, unknown> {
 function command(value: unknown, binding: SessionBinding): Command | null {
   if (!object(value) || Object.keys(value).sort().join(',') !== 'authority,body,kind,operationId,outcome'
     || typeof value.operationId !== 'string' || !ID.test(value.operationId)
-    || !['controls_status', 'controls_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(value.kind))
+    || !['controls_status', 'controls_set', 'listening_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(value.kind))
     || value.outcome !== null || !object(value.body) || !object(value.authority)
     || value.authority.ownerId !== binding.ownerId || typeof value.authority.issuer !== 'string'
     || typeof value.authority.subject !== 'string' || typeof value.authority.authorizationId !== 'string'
@@ -54,6 +55,10 @@ export function createProductionOwnerMailbox(input: Readonly<{
   signer: ProofSigner;
   capability(): Promise<AdapterCapability | null>;
   controls?: PolicyControlHandler;
+  listening?: () => Readonly<{
+    read(authority: OwnerAuthority): Promise<Readonly<{ ok: true; view: ListeningModeView }> | Readonly<{ ok: false; code: string }>>;
+    set(authority: OwnerAuthority, command: ListeningModeCommand): Promise<ListeningModeResult>;
+  }> | null;
   review?: ReviewControlHandler | (() => ReviewControlHandler | null);
   stop(request: LocalStopRequest): Promise<Readonly<{ kind: 'stopped'; receipt: LocalStopReceipt }> | Readonly<{ kind: 'unavailable' }>>;
   onRevoked(): Promise<void>;
@@ -115,8 +120,29 @@ export function createProductionOwnerMailbox(input: Readonly<{
 
   async function execute(entry: Command): Promise<JsonValue | null> {
     switch (entry.kind) {
-      case 'controls_status': return input.controls ? input.controls.status(entry.authority, entry.body) as Promise<JsonValue> : null;
+      case 'controls_status': {
+        if (!input.controls) return null;
+        const status = await input.controls.status(entry.authority, entry.body);
+        if (!status.ok) return status as JsonValue;
+        let listening: ReturnType<NonNullable<typeof input.listening>> = null;
+        try { listening = input.listening?.() ?? null; } catch { /* Policy status remains usable. */ }
+        if (!listening) return { ok: true, status: { ...status.status,
+          listening: null, listeningUnavailable: 'connector_starting' } } as JsonValue;
+        try {
+          const read = await listening.read(entry.authority);
+          return { ok: true, status: { ...status.status, listening: read.ok ? read.view : null,
+            listeningUnavailable: read.ok ? null : 'connector_unavailable' } } as JsonValue;
+        } catch {
+          return { ok: true, status: { ...status.status,
+            listening: null, listeningUnavailable: 'connector_unavailable' } } as JsonValue;
+        }
+      }
       case 'controls_set': return input.controls ? input.controls.setPolicy(entry.authority, entry.body) as Promise<JsonValue> : null;
+      case 'listening_set': {
+        const listening = input.listening?.();
+        return listening ? await listening.set(entry.authority, entry.body as ListeningModeCommand) as JsonValue
+          : refusedListeningModeResult(entry.body as ListeningModeCommand, 'unavailable') as JsonValue;
+      }
       case 'review_preview': {
         const handler = typeof input.review === 'function' ? input.review() : input.review;
         return handler ? handler.preview(entry.authority, entry.body) as Promise<JsonValue> : null;

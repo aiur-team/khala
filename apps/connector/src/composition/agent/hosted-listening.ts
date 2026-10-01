@@ -1,8 +1,8 @@
-import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { HarnessCapabilities, ListeningModeCommand, ListeningModeResult, OwnerAuthority, SessionBinding } from '@khala/contracts/delivery/index';
 import type { ConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createAgentListeningModeAuthority } from './listening-mode-authority';
 import { createHostedListeningModeStore } from '@khala/policy/listening-mode/hosted';
-import { createListeningModeService } from '@khala/policy/listening-mode/store';
+import { createListeningModeService, type ListeningModeReadResult } from '@khala/policy/listening-mode/store';
 import type { AgentListeningModeApplication } from '@khala/connector/agent/listening-mode';
 import type { TrustStateStore } from '../controls/control-handler';
 import type { TrustState } from '@khala/policy/trust/index';
@@ -19,6 +19,10 @@ export function createHostedListeningControl(input: Readonly<{
   capabilities(): Promise<HarnessCapabilities | null>;
 }>): Readonly<{
   application: AgentListeningModeApplication;
+  owner: Readonly<{
+    read(authority: OwnerAuthority): Promise<ListeningModeReadResult>;
+    set(authority: OwnerAuthority, command: ListeningModeCommand): Promise<ListeningModeResult>;
+  }>;
   status(): Promise<Readonly<{ v: 1; bindingId: SessionBinding['bindingId']; generation: number; effective: 'steer' | 'sync' | 'async' | null }>>;
 }> {
   const binding = input.binding;
@@ -67,14 +71,18 @@ export function createHostedListeningControl(input: Readonly<{
     return false;
   }
 
-  async function read() {
-    const result = await base.read();
+  async function projectedRead(result: Awaited<ReturnType<typeof service.read>>) {
     if (!result.ok) return result;
     const { view } = result;
     const support = view.effective ? view.support[view.effective] : null;
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
     const applied = await project(view.effective, view.requested, view.version, evidenceRevision);
     return applied ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
+  }
+  async function read() { return projectedRead(await base.read()); }
+  async function ownerRead(authority: OwnerAuthority) {
+    if (!await input.current()) return { ok: false as const, code: 'unavailable' as const };
+    return projectedRead(await service.read(authority, { binding, status: 'active' }, await input.capabilities()));
   }
   const application: AgentListeningModeApplication = {
     read,
@@ -88,6 +96,28 @@ export function createHostedListeningControl(input: Readonly<{
   };
   return {
     application,
+    owner: {
+      read: ownerRead,
+      async set(authority, command) {
+        if (!await input.current()) return { v: 1 as const, commandId: command.commandId,
+          bindingId: command.bindingId, generation: command.expectedBindingGeneration,
+          outcome: 'refused' as const, version: command.expectedVersion,
+          requested: command.requested, effective: null, reason: 'unavailable' };
+        const capabilities = await input.capabilities();
+        const support = capabilities?.modes[command.requested];
+        if (!support || (support.status !== 'proven' && support.status !== 'experimental')) {
+          return { v: 1 as const, commandId: command.commandId, bindingId: command.bindingId,
+            generation: command.expectedBindingGeneration, outcome: 'refused' as const,
+            version: command.expectedVersion, requested: command.requested, effective: null,
+            reason: support?.reason ?? 'capabilities_unavailable' };
+        }
+        const result = await service.set(authority, { binding, status: 'active' }, capabilities, command);
+        if (result.outcome !== 'applied') return result;
+        const current = await ownerRead(authority);
+        return current.ok ? { ...result, effective: current.view.effective,
+          reason: current.view.effectiveReason } : { ...result, effective: null, reason: 'projection_unavailable' };
+      },
+    },
     async status() {
       const result = await read();
       return { v: 1, bindingId: binding.bindingId, generation: binding.generation,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   type BindingId, type CommandId, type OwnerId, type ParticipantId, type PolicyAck, type PolicySetCommand,
+  type ListeningModeCommand, type ListeningModeResult,
   type RoomId, type SessionBinding, decodeDeliveryLimits, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { createAgentControlsController } from '../../features/agent-controls/controller';
@@ -55,6 +56,10 @@ function statusBody(overrides: Readonly<{
     requested: overrides.requested ?? null,
     busy: false,
     latestReceipt: null,
+    listeningUnavailable: null,
+    listening: { bindingId, generation, version: 1, requested: 'sync', effective: null,
+      effectiveReason: 'unsupported', support: capabilities.modes,
+      experimentalGrants: [], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' } },
     ...overrides.extra,
   };
 }
@@ -74,6 +79,8 @@ function scripted() {
   let status: () => StatusAnswer | Promise<StatusAnswer> = () => ({ kind: 'ok', body: statusBody() });
   let policy: (command: PolicySetCommand) => PolicyAnswer | Promise<PolicyAnswer> =
     command => ({ kind: 'answered', body: ack(command) });
+  let listening: (command: ListeningModeCommand) => Awaited<ReturnType<ControlsClient['setListeningMode']>> =
+    () => ({ kind: 'lost' });
   const commands: PolicySetCommand[] = [];
   const client: ControlsClient = {
     status: async () => status(),
@@ -81,12 +88,14 @@ function scripted() {
       commands.push(command);
       return policy(command);
     },
+    async setListeningMode(next) { return listening(next); },
   };
   return {
     client,
     commands,
     onStatus(next: typeof status) { status = next; },
     onPolicy(next: typeof policy) { policy = next; },
+    onListening(next: typeof listening) { listening = next; },
   };
 }
 
@@ -100,11 +109,50 @@ function command(commandId: string, overrides: Partial<PolicySetCommand> = {}): 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('browser agent controls port', () => {
+  it('preserves policy controls while the connector listening handler starts', async () => {
+    const script = scripted();
+    script.onStatus(() => ({ kind: 'ok', body: statusBody({ extra: {
+      listening: null, listeningUnavailable: 'connector_starting',
+    } }) }));
+    const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
+    expect(await port.readSnapshot(bindingId)).toMatchObject({ connection: 'connected',
+      policy: { effectiveVersion: 3, effectiveMode: 'review' }, listening: null,
+      listeningUnavailableReason: expect.stringContaining('connector is starting') });
+    port.dispose();
+  });
+  it('reads a supported exact listening session and waits for a newer snapshot after set', async () => {
+    const script = scripted();
+    const support = { status: 'proven' as const, route: 'codex-interactive', testedVersion: '1.0.0',
+      evidenceRef: 'proof', evidenceRevision: 'rev-1', reason: null };
+    const modes = { steer: support, sync: support, async: capabilities.modes.async };
+    let version = 1;
+    let requested: 'sync' | 'steer' = 'sync';
+    script.onStatus(() => ({ kind: 'ok', body: { ...statusBody(),
+      capabilities: { ...capabilities, modes }, listening: {
+        bindingId, generation: 0, version, requested, effective: requested,
+        effectiveReason: null, support: modes, experimentalGrants: [], hardCancelGrants: [],
+        lastChangedBy: version === 1 ? { kind: 'unknown' } : { kind: 'owner', participantId: viewer },
+      } } }));
+    const port = createBrowserAgentControlsPort({ client: script.client, bindingId, bindingGeneration: 0, refreshMs: 0 });
+    expect((await port.readSnapshot(bindingId)).listening?.view).toMatchObject({ version: 1, requested: 'sync', effective: 'sync' });
+    script.onListening(next => ({ kind: 'answered', body: { v: 1, commandId: next.commandId,
+      bindingId, generation: 0, outcome: 'applied', version: 2,
+      requested: 'steer', effective: 'steer', reason: null } satisfies ListeningModeResult }));
+    const mode: ListeningModeCommand = { v: 1, commandId: 'mode-command-1' as CommandId,
+      bindingId, expectedBindingGeneration: 0, expectedVersion: 1, requested: 'steer',
+      issuedAt: '2026-09-25T10:02:00Z' };
+    expect(await port.submitListeningMode(mode)).toMatchObject({ outcome: 'applied', version: 2 });
+    expect((await port.readSnapshot(bindingId)).listening?.view).toMatchObject({ version: 1, effective: 'sync' });
+    version = 2; requested = 'steer';
+    expect((await port.readSnapshot(bindingId)).listening?.view).toMatchObject({ version: 2,
+      requested: 'steer', effective: 'steer', lastChangedBy: { kind: 'owner' } });
+    port.dispose();
+  });
   it('reads the enforced policy and never reads a status for another binding or with smuggled fields', async () => {
     const script = scripted();
     const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
     expect(await port.readSnapshot(bindingId)).toMatchObject({
-      connection: 'connected', listening: null,
+      connection: 'connected', listening: { view: { requested: 'sync', effective: null } },
       policy: { effectiveVersion: 3, effectiveMode: 'review', paused: false, generation: 0 },
     });
     await expect(port.readSnapshot('binding_x' as BindingId)).rejects.toMatchObject({ code: 'forbidden' });
@@ -181,13 +229,13 @@ describe('browser agent controls port', () => {
     port.dispose();
   });
 
-  it('refuses listening and grant commands without writing anything', async () => {
+  it('keeps a lost listening result unknown and refuses unsupported grants', async () => {
     const script = scripted();
     const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
-    expect(await port.submitListeningMode({
+    await expect(port.submitListeningMode({
       v: 1, commandId: 'mode-1' as CommandId, bindingId, expectedBindingGeneration: 0, expectedVersion: 1,
       requested: 'sync', issuedAt: '2026-09-25T10:02:00Z',
-    })).toMatchObject({ outcome: 'refused', effective: null });
+    })).rejects.toMatchObject({ code: 'lost' });
     expect(script.commands).toEqual([]);
     port.dispose();
   });

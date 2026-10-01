@@ -15,6 +15,21 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('accepts a policy status with an explicit unavailable listening section', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret });
+    expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+    const status = { v: 1, binding, bindingStatus: 'active', capabilities: null,
+      policy: { bindingId: binding.bindingId, generation: binding.generation,
+        effectiveVersion: 1, effectiveMode: 'review', paused: false },
+      requested: null, busy: false, latestReceipt: null,
+      listening: null, listeningUnavailable: 'connector_starting' };
+    expect((await mailbox.complete(command.operationId, { ok: true, status })).kind).toBe('ok');
+    expect((await mailbox.result(command.operationId))).toMatchObject({ kind: 'ok',
+      value: { outcome: { ok: true, status: { policy: { effectiveVersion: 1 },
+        listening: null, listeningUnavailable: 'connector_starting' } } } });
+  });
   it('does not redeliver archived commands when index retirement fails and recovers full capacity', async () => {
     const state = fakeStore(() => T0);
     let holdRetirement = true;

@@ -1,4 +1,4 @@
-import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
+import type { BindingId, ListeningModeCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ControlsClient } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
 
@@ -24,6 +24,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   const waitMs = input.waitMs ?? 8_000;
   const possiblySubmitted = new Set<string>();
   const originalCommands = new Map<string, PolicySetCommand>();
+  const originalModes = new Map<string, ListeningModeCommand>();
   const pendingStatuses = new Map<BindingId, string>();
 
   async function read(response: Response): Promise<Reply> {
@@ -42,7 +43,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
     } catch { return null; }
   }
 
-  async function submit(bindingId: BindingId, operationId: string, kind: 'controls_status' | 'controls_set',
+  async function submit(bindingId: BindingId, operationId: string, kind: 'controls_status' | 'controls_set' | 'listening_set',
     body: unknown, signal: AbortSignal): Promise<Reply | null> {
     const csrf = await input.csrf();
     if (signal.aborted) return null;
@@ -120,6 +121,25 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
       if (outcome?.ok === true && 'ack' in outcome) return { kind: 'answered', body: outcome.ack };
       if (outcome?.ok === false && outcome.code === 'forbidden') return { kind: 'refused', code: 'forbidden' };
       return { kind: 'lost' };
+    },
+    async setListeningMode(command: ListeningModeCommand) {
+      const operationId = command.commandId;
+      const original = originalModes.get(operationId);
+      if (original && (original.bindingId !== command.bindingId
+        || original.expectedBindingGeneration !== command.expectedBindingGeneration
+        || original.expectedVersion !== command.expectedVersion || original.requested !== command.requested)) {
+        return { kind: 'lost' };
+      }
+      if (!original) originalModes.set(operationId, command);
+      const signal = AbortSignal.timeout(waitMs);
+      const previousAttempt = possiblySubmitted.has(operationId);
+      possiblySubmitted.add(operationId);
+      const first = await submit(command.bindingId, operationId, 'listening_set', original ?? command, signal);
+      if (first?.status === 401 || first?.status === 403) return previousAttempt
+        ? { kind: 'lost' } : { kind: 'refused', code: 'forbidden' };
+      const answer = await awaitOutcome(command.bindingId, operationId, first, signal);
+      const outcome = completed(answer, operationId);
+      return outcome ? { kind: 'answered', body: outcome } : { kind: 'lost' };
     },
   };
 }

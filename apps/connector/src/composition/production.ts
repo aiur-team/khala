@@ -399,7 +399,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       capability: () => capabilityFor(next).ensure(),
       discardOutboundSession: () => substrate.discardOutboundSession() });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
-      capability: () => capabilityFor(next).ensure(), controls, review: () => review,
+      capability: () => capabilityFor(next).ensure(), controls, listening: () => listening?.owner ?? null, review: () => review,
       stop: request => stop.stop(request),
       onRevoked: async () => { remoteDenied = true; deliveryStopped = true; scheduleCleanup(); },
       diagnostic: reportSubscription,

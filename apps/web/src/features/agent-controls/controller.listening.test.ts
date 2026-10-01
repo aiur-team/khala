@@ -410,6 +410,19 @@ describe('listening mode — stopped session', () => {
 });
 
 describe('listening mode — owner mutation and conflicts', () => {
+  it('retries an unknown mode outcome with the original command identity', async () => {
+    const { controller, submitListeningMode, listening } = await start(fixture(), { failModeSubmit: true });
+    controller.selectListeningMode('steer');
+    controller.applyListeningMode();
+    await flush();
+    expect(listening().submission).toMatchObject({ kind: 'unknown', attempted: 'steer' });
+    controller.applyListeningMode();
+    await flush();
+    const sent = submitListeningMode.mock.calls.map(call => call[0]);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    controller.dispose();
+  });
   it('sends the versioned mode command for the exact binding generation only on apply', async () => {
     const { controller, submitListeningMode, listening } = await start(fixture());
     controller.selectListeningMode('steer');
