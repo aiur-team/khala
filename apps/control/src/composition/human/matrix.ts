@@ -498,7 +498,9 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           // Matrix's 429 already provides a retry interval. A fixed minute
           // here suppresses recovery even after Synapse permits the login.
           const loginKey = `${ownerId}\0${controlDevice(ownerId)}`;
-          controlRetryAfter.set(ownerId, loginRetryAfter.get(loginKey) ?? Date.now() + 60_000);
+          const matrixRetryAfter = loginRetryAfter.get(loginKey);
+          controlRetryAfter.set(ownerId, matrixRetryAfter && matrixRetryAfter > Date.now()
+            ? matrixRetryAfter : Date.now() + 60_000);
         }
       }).finally(() => { if (controlLogins.get(ownerId) === pending) controlLogins.delete(ownerId); });
     }
