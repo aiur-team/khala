@@ -25,6 +25,21 @@ describe('ChannelScreen', () => {
     expect(html).toContain('Agent');
   });
 
+  it('uses a readable agent fallback instead of proof-key labels or connection noise', () => {
+    const agentController: ChannelController = {
+      ...controller,
+      getSnapshot: () => ({ phase: 'ready', agents: [{ participantId: 'agent_1' as never,
+        displayName: 'proof-key:abc123', ownerDisplayName: 'Mira', connection: 'unknown',
+        routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
+        installCommand: null, installCommandError: false }] }),
+    };
+    const html = renderToStaticMarkup(<ChannelScreen title="Release channel" viewerName="Mira"
+      controller={agentController} renderTimeline={() => null} />);
+    expect(html).toContain('Agent');
+    expect(html).not.toContain('proof-key');
+    expect(html).not.toContain('Unavailable');
+  });
+
   it('composes every feature through an injected render slot inside hosted shell content', () => {
     const html = renderToStaticMarkup(
       <ChannelScreen

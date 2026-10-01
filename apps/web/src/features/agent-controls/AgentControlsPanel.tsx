@@ -331,15 +331,26 @@ function useControlsController({ ports, config, controller: injectedController }
   return { controller, view };
 }
 
+/** A visible choice set without an authorized, confirmed route must remain disabled. */
+export function UnavailableListeningModes({ reason }: { reason: string }) {
+  return <section className="agent-controls__listening"><h3>Listening mode</h3>
+        <div role="group" aria-label="Listening modes">
+          {(['steer', 'sync', 'async'] as const).map(mode => <label key={mode}>
+            <input type="radio" name="listening-unavailable" value={mode} disabled />{MODE_LABEL[mode]}
+          </label>)}
+        </div>
+        <p role="status">{reason}</p></section>;
+}
+
 /** Owner-only conversation detail backed by the same authoritative controller as the full controls panel. */
 export function AgentListeningControls(props: AgentControlsPanelProps) {
   const { controller, view } = useControlsController(props);
   return <div className="agent-controls__compact">
     {view.listening ? <ListeningSection listening={view.listening} controller={controller} compact />
-      : <section className="agent-controls__listening"><h3>Listening mode</h3>
-        <p role="status">{view.snapshotReceived
-          ? 'Listening mode choices are unavailable for this agent session.'
-          : 'Checking this agent’s listening modes…'}</p></section>}
+      : <UnavailableListeningModes reason={view.snapshotReceived
+        ? ('listeningUnavailableReason' in view && typeof view.listeningUnavailableReason === 'string'
+          ? view.listeningUnavailableReason : 'This agent has not confirmed mode support. Check its connection and try again.')
+        : 'Checking this agent’s listening modes…'} />}
     {view.notice ? <p className="agent-controls__notice" role="alert">{view.notice.message}</p> : null}
     {view.notice ? <button type="button" onClick={() => controller.refresh()}>Refresh listening modes</button> : null}
   </div>;

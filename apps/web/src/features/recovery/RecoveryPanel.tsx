@@ -231,13 +231,13 @@ function RecoveryPanelContent({
   }, [config.roomId, config.roomRevision, controller]);
 
   useEffect(() => {
-    if (view.operation.kind !== 'closure'
+    if (!showClosureAction || view.operation.kind !== 'closure'
       || (view.operation.state !== 'complete'
         && !(view.operation.state === 'partial' && view.operation.reason === 'local_cleanup_failed'))) return;
     if (completedClosures.current.get(controller) === view.operation.operationId) return;
     completedClosures.current.set(controller, view.operation.operationId);
     onClosureParticipationEnded();
-  }, [controller, onClosureParticipationEnded, view.operation]);
+  }, [controller, onClosureParticipationEnded, showClosureAction, view.operation]);
 
   const history = HISTORY_PRESENTATION[view.history];
   const busy = operationIsPending(view.operation);
@@ -520,7 +520,7 @@ function ClosureActionContent({ controller, config, disclosureOpen, onClosurePar
 }
 
 /** The title menu uses the same owner-scoped controller and closure consequence boundary as channel care. */
-export function ClosureAction({ ports, config, disclosureOpen, onClosureParticipationEnded }: Pick<RecoveryPanelProps,
+function OwnedClosureAction({ ports, config, disclosureOpen, onClosureParticipationEnded }: Pick<RecoveryPanelProps,
   'ports' | 'config' | 'onClosureParticipationEnded'> & { disclosureOpen: boolean }) {
   const [owned, setOwned] = useState<{ ports: RecoveryPorts; roomId: RecoveryControllerConfig['roomId']; roomRevision: number; controller: RecoveryController } | null>(null);
   useEffect(() => {
@@ -533,4 +533,12 @@ export function ClosureAction({ ports, config, disclosureOpen, onClosureParticip
   }
   return <ClosureActionContent controller={owned.controller} config={config} disclosureOpen={disclosureOpen}
     onClosureParticipationEnded={onClosureParticipationEnded} />;
+}
+
+export function ClosureAction({ controller, ...props }: Pick<RecoveryPanelProps,
+  'ports' | 'config' | 'onClosureParticipationEnded'> & { disclosureOpen: boolean; controller?: RecoveryController | null }) {
+  if (controller === null) return <button type="button" disabled>Delete conversation</button>;
+  if (controller) return <ClosureActionContent controller={controller} config={props.config}
+    disclosureOpen={props.disclosureOpen} onClosureParticipationEnded={props.onClosureParticipationEnded} />;
+  return <OwnedClosureAction {...props} />;
 }

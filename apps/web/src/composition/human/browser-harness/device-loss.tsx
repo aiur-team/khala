@@ -81,8 +81,8 @@ const visualController = { getSnapshot: () => visualSnapshot, subscribe: () => (
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
     renderRoom={(context, route) => visualHarness ? <VisualRoom /> : <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}
-    {...(visualHarness ? { renderChannelTools: () => <div className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'visual-channel-care-title' }}>
-      <p>Recipient review, agent controls, and recovery are available here.</p>
+    {...(visualHarness ? { renderChannelTools: () => <div className="channel-tools-page"><KhalaPageFrame model={{ title: 'Recipient review', labelledBy: 'visual-recipient-review-title' }}>
+      <p>Recipient review is available here.</p>
     </KhalaPageFrame></div> } : {})}
     createChannelAccess={() => {
       inboxCount += 1;

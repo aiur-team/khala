@@ -59,7 +59,7 @@ index; only the `+` action opens channel creation.
 The site root `/` belongs to the public landing page (`netlify.toml`), so the
 application routes live below it: `/new` opens the signed-in index, `/join?invite=…`
 admits a shared link, `/channels/<id>` opens a channel, and
-`/channels/<id>/tools` opens channel care from the sidebar. The SPA entry reads
+`/channels/<id>/tools` remains a direct link for recipient review. The SPA entry reads
 an optional `?mount=hosted-content` parameter to boot without standalone chrome,
 then strips it before routing; any other value boots standalone.
 
@@ -69,9 +69,8 @@ owner and participant ID. It then matches the event's claimed Ed25519 key to a
 Matrix device ID. A missing mapping or key match fails closed; sender strings
 and display names never become owner authority.
 
-The separate channel care page mounts recipient review, agent controls, and the
-recovery panel. Closure appears only
-when the protected control API returns a capability for the signed-in owner and
-current channel. A partial result means local cleanup is still unconfirmed;
-the panel keeps the operation identity for inspection. Closure never promises
-erasure of transport, other owners' devices, or model provider copies.
+The selected channel's top navigation places conversation settings beside Share.
+The settings disclosure mounts recovery and access actions from the existing
+owner-scoped controller. Agent controls stay inside that agent's participant
+detail, and Delete conversation stays in the title disclosure. The old tools
+route retains recipient review and legacy pause controls without a sidebar entry.

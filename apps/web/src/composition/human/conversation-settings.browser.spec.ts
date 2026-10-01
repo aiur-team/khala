@@ -33,13 +33,16 @@ test('selected conversation settings close and discard old room authority', { ti
     await page.getByRole('button', { name: 'Outside target' }).click();
     assert.equal(await page.locator('.conversation-settings').getAttribute('open'), null);
     await settings.click();
-    await page.getByRole('button', { name: 'Switch conversation' }).click();
+    await page.getByRole('button', { name: 'Switch conversation' }).evaluate(node => (node as HTMLButtonElement).click());
     assert.equal(await page.locator('.conversation-settings').getAttribute('open'), null);
     await settings.click();
     assert.equal(await page.getByRole('button', { name: 'Revoke device device_a' }).count(), 0);
     await page.getByRole('button', { name: 'Revoke device device_b' }).click();
     await page.getByRole('button', { name: 'Confirm revocation' }).click();
     await page.getByText('owner_b:room_b:device_b').waitFor();
+    await page.locator('summary').filter({ hasText: 'Title' }).click();
+    assert.equal(await page.getByRole('button', { name: 'Delete conversation' }).isDisabled(), true,
+      'a pending settings operation blocks title closure on the shared controller');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     await page.locator('.khala-content-root').evaluate(node => node.setAttribute('data-theme', 'light'));

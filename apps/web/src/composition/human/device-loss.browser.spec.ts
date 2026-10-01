@@ -233,7 +233,10 @@ test('signed-in index remains visible while device initializes and fails', { tim
       await page.waitForFunction(() => window.__lossHarness.activationCount() === 2);
       assert.equal(await page.getByText('Account and device status').count(), 0);
       assert.equal(await page.locator('.khala-owner-shell').count(), 1);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+      const widthState = await page.evaluate(() => ({ viewport: innerWidth, scroll: document.documentElement.scrollWidth,
+        outside: [...document.querySelectorAll<HTMLElement>('body *')].filter(node => node.getBoundingClientRect().right > innerWidth + 1)
+          .slice(0, 5).map(node => ({ tag: node.tagName, className: node.className, right: node.getBoundingClientRect().right })) }));
+      assert.equal(widthState.scroll <= widthState.viewport + 1, true, JSON.stringify(widthState));
       await page.close();
     }
     const readyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -296,15 +299,7 @@ test('owner conversation shell fills desktop and phone with conditional request 
       await mkdir(screenshotDir, { recursive: true });
       await page.screenshot({ path: join(screenshotDir, 'human-desktop.png') });
     }
-    const channelCare = page.getByRole('link', { name: 'Channel care' });
-    assert.equal(await channelCare.getAttribute('title'), 'Channel care');
-    assert.equal((await channelCare.innerText()).trim(), '');
-    await channelCare.focus();
-    assert.equal(await channelCare.evaluate(node => node === document.activeElement), true);
-    await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: 'Channel care' }).waitFor();
-    await page.evaluate(() => window.__lossHarness.navigate('/channels/room_1'));
-    await title.getByText('First channel').waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     assert.equal(await page.locator('.aiur-shell').getAttribute('data-theme'), 'light');
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
@@ -316,7 +311,7 @@ test('owner conversation shell fills desktop and phone with conditional request 
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
     await page.getByRole('button', { name: 'Channels' }).click();
     await page.waitForTimeout(250);
-    assert.equal(await channelCare.isVisible(), true);
+    assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-care.png') });
     await requests.focus();
     assert.equal(await requests.evaluate(node => node === document.activeElement), true);

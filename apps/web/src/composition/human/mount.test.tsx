@@ -229,24 +229,21 @@ describe('HumanApplicationScreen', () => {
     expect(html.indexOf('id="khala-channel-toolbar"')).toBeLessThan(html.indexOf('class="aiur-shell__content"'));
   });
 
-  it('opens channel care as a separate route without adding a chat settings control', async () => {
+  it('keeps the legacy recipient review route without a sidebar conversation settings entry', async () => {
     const channelAccess = await channelAccessController(0);
     const context = readyContext('/channels/room_1');
-    const renderChannelTools = vi.fn(() => <p>Recovery and recipient review</p>);
+    const renderChannelTools = vi.fn(() => <p>Recipient review</p>);
     const props = { identity, routes, renderRoom, renderChannelTools, createChannelAccess: () => channelAccess, capabilities: [] };
     const room = renderToStaticMarkup(<HumanApplicationScreen {...props}
       application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)} />);
-    expect(room).toContain('href="/channels/room_1/tools"');
-    expect(room).toContain('aria-label="Channel care"');
-    expect(room).toContain('title="Channel care"');
-    expect(room).not.toContain('>Channel care</a>');
-    expect(room).not.toContain('Channel settings');
+    expect(room).not.toContain('href="/channels/room_1/tools"');
+    expect(room).not.toContain('aria-label="Channel care"');
     expect(room).not.toContain('Channel requests, 0 pending');
     const toolsContext = readyContext('/channels/room_1/tools');
     const tools = renderToStaticMarkup(<HumanApplicationScreen {...props}
       application={application({ phase: 'ready', path: toolsContext.path, context: toolsContext } as HumanApplicationSnapshot)} />);
-    expect(tools).toContain('Recovery and recipient review');
-    expect(tools).toContain('aria-current="page"');
+    expect(tools).toContain('Recipient review');
+    expect(tools).not.toContain('aria-current="page"');
     expect(renderChannelTools).toHaveBeenCalledWith(toolsContext,
       { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
