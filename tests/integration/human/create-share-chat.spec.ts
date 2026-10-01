@@ -24,8 +24,8 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await alice.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(alice).toHaveURL(/\/channels\//u);
     await alice.getByLabel('Message', { exact: true }).fill(intro);
-    await alice.getByRole('button', { name: 'Send' }).click();
-    await expect(alice.getByText(intro)).toBeVisible();
+    await alice.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
     await alice.getByRole('button', { name: 'Copy my channel link' }).click();
     await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
@@ -49,15 +49,15 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await bob.getByRole('button', { name: 'Open channel' }).click();
     await expect(bob).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     // The current product default is link admission with no earlier history.
-    await expect(bob.getByText(intro)).toHaveCount(0);
+    await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
     const reply = syntheticCanary('reply');
     await bob.getByLabel('Message', { exact: true }).fill(reply);
-    await bob.getByRole('button', { name: 'Send' }).click();
-    await expect(bob.getByText(reply)).toBeVisible();
+    await bob.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect(bob.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    await expect(alice.getByText(reply)).toBeVisible();
-    await expect(alice.getByText(intro)).toBeVisible();
+    await expect(alice.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
+    await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
 
     const rawEvents = await rawRoomMessages(environment, roomId, creatorAccessToken as string);
     expect(rawEvents.filter(event => event.type === 'm.room.encrypted').length).toBeGreaterThanOrEqual(2);
@@ -65,8 +65,8 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
     await bob.reload({ waitUntil: 'networkidle' });
-    await expect(bob.getByText(intro)).toHaveCount(0);
-    await expect(bob.getByText(reply)).toBeVisible();
+    await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
+    await expect(bob.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);
   }
@@ -82,20 +82,23 @@ test('an account without admission cannot read a protected room', async ({ brows
     const canary = syntheticCanary('protected');
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(owner).toHaveURL(/\/channels\//u);
+    const roomId = decodeURIComponent(new URL(owner.url()).pathname.slice('/channels/'.length));
+    expect(roomId).not.toBe('');
     await owner.getByLabel('Message', { exact: true }).fill(canary);
-    await owner.getByRole('button', { name: 'Send' }).click();
-    await expect(owner.getByText(canary)).toBeVisible();
-    await ownerContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
-    await owner.getByRole('button', { name: 'Copy my channel link' }).click();
-    await expect(owner.getByText('Copied', { exact: true })).toBeVisible();
-    const shareUrl = await owner.evaluate(() => navigator.clipboard.readText());
-    const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
-    expect(inviteRef).not.toBeNull();
+    await owner.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect(owner.getByRole('list', { name: 'Messages' }).getByText(canary)).toBeVisible();
 
     const outsider = await freshPage(outsiderContext, environment);
+    const outsiderSessionResponse = outsider.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/human/messaging/session' && response.status() === 200,
+    );
     await signIn(outsider, environment, environment.users[1]);
-    await outsider.goto(`${environment.appOrigin}/channels/${encodeURIComponent(`!not-admitted:${inviteRef}`)}`);
-    await expect(outsider.getByText(canary)).toHaveCount(0);
+    const outsiderSession = await (await outsiderSessionResponse).json() as { session?: { accessToken?: unknown } };
+    expect(typeof outsiderSession.session?.accessToken).toBe('string');
+    await expect(rawRoomMessages(environment, roomId, outsiderSession.session!.accessToken as string))
+      .rejects.toThrow('Matrix event request failed with 403');
+    await outsider.goto(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
+    await expect(outsider.getByRole('list', { name: 'Messages' }).getByText(canary)).toHaveCount(0);
     await expect(outsider.getByRole('alert')).toBeVisible();
   } finally {
     await Promise.all([ownerContext.close(), outsiderContext.close()]);
