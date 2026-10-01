@@ -57,9 +57,13 @@ async function setup() {
       status: current ? 'active' : 'revoked' }; },
   } as unknown as AdapterCapabilities;
   const verifiedTokens: string[] = [];
+  const inspectedKeys: Array<{ ownerId: string; deviceId: string; fingerprint: string }> = [];
   const dependencies: OwnerDeviceProofDependencies = { auth, gateway, capabilities, store: state.store,
     inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }), clock: () => now,
-    inspectOwnerDeviceKey: async () => publishedKey,
+    inspectOwnerDeviceKey: async (ownerId, deviceId, key) => {
+      inspectedKeys.push({ ownerId, deviceId, fingerprint: key });
+      return publishedKey;
+    },
     random: () => new Uint8Array(32).fill(++challengeCount),
     verifyBrowserDevice: async (who, device, key, token) => {
       verifiedTokens.push(token);
@@ -83,7 +87,7 @@ async function setup() {
   const registration = (nonce: string, overrides: Record<string, unknown> = {}) => ({ v: 1, roomId,
     bindingId: binding.bindingId, generation: binding.generation,
     deviceId: browserDeviceId, fingerprint, nonce, matrixAccessToken, ...overrides });
-  return { state, bindings, index, call, challenge, registration, verifiedTokens,
+  return { state, bindings, index, call, challenge, registration, verifiedTokens, inspectedKeys,
     setSignedIn: (value: boolean) => { signedIn = value; },
     setCsrf: (value: boolean) => { csrf = value; },
     setMember: (value: boolean) => { member = value; },
@@ -133,6 +137,9 @@ describe('owner browser Matrix device proof', () => {
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({ v: 1, roomId,
       devices: [{ deviceId: browserDeviceId, fingerprint }] });
+    expect(env.inspectedKeys).toEqual(Array.from({ length: 2 }, () => ({
+      ownerId: binding.ownerId, deviceId: browserDeviceId, fingerprint,
+    })));
     expect(env.verifiedTokens).toEqual([matrixAccessToken]);
     expect([...env.state.records.values()].some(record => JSON.stringify(record.value).includes(matrixAccessToken))).toBe(false);
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, '?device_id=UNREGISTERED')).status).toBe(404);
