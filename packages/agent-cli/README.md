@@ -203,9 +203,13 @@ optional display text; the owner sees them marked as untrusted.
   `"grant": null` after a restart, returns the same binding with a new
   capability and retires the previous one. A revoked binding is never
   reactivated.
-- The server stores only a digest of the capability, so it survives a restart
-  of the same channel. Requests are bound to the loopback origin, so a resume on
-  a different port closes them.
+- Binding capabilities are valid only for the current launcher run. After a
+  same-origin resume, ordinary CLI and MCP use the saved activation journal to
+  restore the same nonrevoked binding with a fresh capability in the session's
+  `grant.json`; the previous capability stays invalid. Stop remains terminal.
+  Requests are bound to the loopback origin. If a resume changes port, use the
+  original origin or start a new discovery and access request; recovery does
+  not silently grant access at the new origin.
 - Anyone who can read your files as the same OS user can copy either file, and
   anyone who can read `active.json` can reissue a descriptor for a session ID
   they know, which revokes the one you hold. This is the accepted v1 limit, not
