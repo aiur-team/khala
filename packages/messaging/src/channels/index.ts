@@ -52,6 +52,7 @@ type Observation = {
   projection: ChannelProjection;
   snapshotListeners: Set<(snapshot: ChannelSnapshot) => void>;
   entryListeners: Set<(view: ChannelEntriesView) => void>;
+  snapshotPublishCount: number;
   dispose: Disposer;
   /** Serialises asynchronous digesting so updates apply in arrival order. */
   queue: Promise<void>;
@@ -96,7 +97,10 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
         await apply(observation.projection);
         if (observations.get(observation.roomId) !== observation || generation() !== current) return;
         const snapshot = observation.projection.snapshot(current);
-        if (snapshot) notify(observation.snapshotListeners, snapshot);
+        if (snapshot) {
+          observation.snapshotPublishCount += 1;
+          notify(observation.snapshotListeners, snapshot);
+        }
         notify(observation.entryListeners, { ...observation.projection.entries(current), historicalEventIds: [...observation.historicalEventIds] });
       })
       .catch(report);
@@ -139,9 +143,11 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
     });
   };
 
-  function register<T>(roomId: RoomId, pick: (observation: Observation) => Set<T>, listener: T): Disposer {
+  function register<T>(roomId: RoomId, pick: (observation: Observation) => Set<T>, listener: T,
+    replay?: (observation: Observation, listener: T) => void): Disposer {
     if (stopped) return () => {};
     let observation = observations.get(roomId);
+    const existing = observation !== undefined;
     if (!observation) {
       const created: Observation = {
         roomId,
@@ -149,6 +155,7 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
         projection: projectionFor(roomId),
         snapshotListeners: new Set(),
         entryListeners: new Set(),
+        snapshotPublishCount: 0,
         dispose: () => {},
         queue: Promise.resolve(),
         historicalEventIds: new Set(),
@@ -159,6 +166,15 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
     }
     const target = observation;
     pick(target).add(listener);
+    if (existing && replay) {
+      const madeIn = generation();
+      const published = target.snapshotPublishCount;
+      target.queue = target.queue.then(() => {
+        if (stopped || observations.get(roomId) !== target || generation() !== madeIn
+          || target.snapshotPublishCount !== published || !pick(target).has(listener)) return;
+        replay(target, listener);
+      }).catch(report);
+    }
     return () => {
       pick(target).delete(listener);
       if (target.snapshotListeners.size === 0 && target.entryListeners.size === 0 && observations.get(roomId) === target) {
@@ -174,7 +190,11 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
     resumeIntro: (batchId, options) => resumeIntro(ctx, batchId, options),
     send: (request, options) => send(ctx, request, options),
     timeline: (request, options) => timeline(ctx, request, options),
-    observe: (roomId, listener) => register(roomId, observation => observation.snapshotListeners, listener),
+    observe: (roomId, listener) => register(roomId, observation => observation.snapshotListeners, listener,
+      (observation, added) => {
+        const snapshot = observation.projection.snapshot(generation());
+        if (snapshot) notify([added], snapshot);
+      }),
     observeEntries: (roomId, listener) => register(roomId, observation => observation.entryListeners, listener),
     stop() {
       stopped = true;

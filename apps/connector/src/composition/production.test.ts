@@ -15,12 +15,30 @@ import { MatrixWriterLockError } from '../substrate/matrix-writer-lock';
 import { revocationStopId } from '../../../control/src/composition/human/revocation-cleanup';
 import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
-import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
+import { hasProductionBinding, openProductionConnector, pollOwnerMailboxBeforeRotation, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 import { publicStatus } from '../../../../packages/agent-cli/src/cli/runtime';
 import { openInbox, type OpenInboxOptions } from '../../../../packages/agent-cli/src/cli/inbox';
 import { encodeMessageContent } from '@khala/contracts/messaging/events';
 
 describe('installed hosted connector composition', () => {
+  it('polls owner commands before slow rotation inspection and keeps polling after rotation failure', async () => {
+    const order: string[] = [];
+    let releaseRotation: (() => void) | null = null;
+    const diagnostic = vi.fn();
+    const mailbox = { pollOnce: vi.fn(async () => { order.push('mailbox'); return 'ok' as const; }) };
+    const roomSend = { pollRotation: vi.fn(async () => {
+      order.push('rotation');
+      await new Promise<void>(resolve => { releaseRotation = resolve; });
+      throw new Error('private rotation failure');
+    }) };
+    const polling = pollOwnerMailboxBeforeRotation(mailbox, roomSend, diagnostic);
+    await vi.waitFor(() => expect(releaseRotation).not.toBeNull());
+    expect(order).toEqual(['mailbox', 'rotation']);
+    releaseRotation!();
+    expect(await polling).toBe('ok');
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({ stage: 'mailbox_rotation', result: 'unavailable' });
+  });
+
   let chromiumFixtureDirectory: string;
   let chromiumExecutablePath: string;
   const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');

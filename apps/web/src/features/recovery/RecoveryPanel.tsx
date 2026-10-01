@@ -471,3 +471,66 @@ export function RecoveryPanel({
 
   return <OwnedRecoveryPanel ports={ports} config={config} onClosureParticipationEnded={onClosureParticipationEnded} showClosureAction={showClosureAction} />;
 }
+
+function ClosureActionContent({ controller, config, disclosureOpen, onClosureParticipationEnded }: {
+  controller: RecoveryController;
+  config: RecoveryControllerConfig;
+  disclosureOpen: boolean;
+  onClosureParticipationEnded: () => void;
+}) {
+  const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
+  const [confirming, setConfirming] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const completed = useRef<string | null>(null);
+  const closure = view.closure;
+  const callable = closure?.available === true && closure.roomId === config.roomId
+    && closure.expectedRoomRevision === config.roomRevision && view.allowedActions.includes('close_room')
+    && canBeginOperation(view.operation);
+
+  useEffect(() => { setConfirming(false); completed.current = null; }, [controller, config.roomId, config.roomRevision]);
+  useEffect(() => { if (!disclosureOpen) setConfirming(false); }, [disclosureOpen]);
+  useEffect(() => {
+    const operation = view.operation;
+    if (operation.kind !== 'closure' || completed.current === operation.operationId
+      || !(operation.state === 'complete' || operation.state === 'partial' && operation.reason === 'local_cleanup_failed')) return;
+    completed.current = operation.operationId;
+    onClosureParticipationEnded();
+  }, [view.operation, onClosureParticipationEnded]);
+
+  return <div className="recovery-panel__closure-action">
+    <button ref={trigger} type="button" disabled={!callable} onClick={() => setConfirming(true)}>Delete conversation</button>
+    {!callable && view.operation.kind === 'idle' ? <p role="note">Deletion from your view is unavailable for this account or channel.</p> : null}
+    {confirming && disclosureOpen && callable && closure ? <div className="recovery-panel__confirmation" role="alert">
+      <h3>Close this conversation?</h3>
+      <p>“Delete conversation” closes this channel and removes it from your view.</p>
+      <ConsequenceList consequences={closure.consequences} />
+      <p>Service retention is governed separately; closure promises no retention window or global erasure.</p>
+      <div className="recovery-panel__confirmation-actions">
+        <button type="button" onClick={() => { setConfirming(false); void controller.beginClosure(); }}>Confirm channel closure</button>
+        <button type="button" onClick={() => { setConfirming(false); requestAnimationFrame(() => trigger.current?.focus()); }}>Cancel</button>
+      </div>
+    </div> : null}
+    {view.operation.kind === 'closure' ? <div className="recovery-panel__operation" role={operationPresentation(view.operation).alert ? 'alert' : 'status'}>
+      <StatusBadge tone={operationPresentation(view.operation).tone} label={operationPresentation(view.operation).label} />
+      <p>{operationPresentation(view.operation).message}</p>
+      <p>Operation: {view.operation.operationId}</p>
+      {operationIsInspectable(view.operation) ? <button type="button" onClick={() => void controller.inspect()}>Inspect operation</button> : null}
+    </div> : null}
+  </div>;
+}
+
+/** The title menu uses the same owner-scoped controller and closure consequence boundary as channel care. */
+export function ClosureAction({ ports, config, disclosureOpen, onClosureParticipationEnded }: Pick<RecoveryPanelProps,
+  'ports' | 'config' | 'onClosureParticipationEnded'> & { disclosureOpen: boolean }) {
+  const [owned, setOwned] = useState<{ ports: RecoveryPorts; roomId: RecoveryControllerConfig['roomId']; roomRevision: number; controller: RecoveryController } | null>(null);
+  useEffect(() => {
+    const controller = createRecoveryController(ports, config);
+    setOwned({ ports, roomId: config.roomId, roomRevision: config.roomRevision, controller });
+    return () => controller.dispose();
+  }, [ports, config.roomId, config.roomRevision, config.createOperationId]);
+  if (owned?.ports !== ports || owned.roomId !== config.roomId || owned.roomRevision !== config.roomRevision) {
+    return <button type="button" disabled>Delete conversation</button>;
+  }
+  return <ClosureActionContent controller={owned.controller} config={config} disclosureOpen={disclosureOpen}
+    onClosureParticipationEnded={onClosureParticipationEnded} />;
+}

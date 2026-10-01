@@ -29,6 +29,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const request = input.fetch ?? globalThis.fetch.bind(globalThis);
   const waitMs = input.waitMs ?? 8_000;
   const submittedCommands = new Set<string>();
+  const pendingPreviews = new Map<BindingId, { digest: string; operationId: string; body: ReviewPreviewRequest }>();
   const limits = (() => {
     const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
     if (!decoded.ok) throw new Error('review_limits_invalid');
@@ -74,6 +75,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   async function submit(bindingId: BindingId, operationId: string, kind: 'review_preview' | 'review_approve',
     body: unknown, signal: AbortSignal): Promise<Reply | null> {
     const csrf = await input.csrf();
+    if (signal.aborted) return null;
     if (!csrf) return { status: 401, body: null };
     try { return await read(await request(new URL(SUBMIT, origin), {
       method: 'POST', credentials: 'same-origin', signal,
@@ -98,11 +100,25 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const review: ReviewControlClient = {
     recoverUnknown: pending,
     async preview(body: ReviewPreviewRequest, signal: AbortSignal) {
+      if (signal.aborted) return { kind: 'lost' };
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body))));
       const digest = Array.from(hash.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
-      const operationId = `preview_${digest}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
-      const answer = await awaitOutcome(body.bindingId, operationId,
-        await submit(body.bindingId, operationId, 'review_preview', body, signal), signal);
+      let pending = pendingPreviews.get(body.bindingId);
+      const created = pending === undefined;
+      if (!pending) {
+        pending = { digest, operationId: `preview_${digest}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`, body };
+        pendingPreviews.set(body.bindingId, pending);
+      }
+      const { operationId } = pending;
+      // A timed-out submit may already have committed. Reconcile the exact ID
+      // first, and retry only that same command if the server has no record.
+      const existing = created ? null : await result(body.bindingId, operationId, signal);
+      const first = existing?.status === 404 || existing === null
+        ? await submit(body.bindingId, operationId, 'review_preview', pending.body, signal) : existing;
+      const answer = await awaitOutcome(body.bindingId, operationId, first, signal);
+      if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
+        && answer.body.outcome !== null) pendingPreviews.delete(body.bindingId);
+      if (pending.digest !== digest) return { kind: 'lost' };
       if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       if (answer?.status !== 200 || !object(answer.body) || answer.body.operationId !== operationId
         || !object(answer.body.outcome)) return { kind: 'lost' };

@@ -25,6 +25,7 @@
 .channel-participants__avatar{display:grid;place-items:center;width:16px;height:16px;flex:none;border-radius:50%;background:var(--khala-accent);color:#fff;font-size:.62rem;font-weight:700}
 .channel-participants__avatar--human{background:#9c5733}
 .channel-participants__name{overflow:hidden;text-overflow:ellipsis}
+.channel-participants__state{font-size:.65rem;color:var(--khala-ink-muted)}
 .channel-participants__more{flex:none}
 .channel-toolbar{display:flex;align-items:center;gap:.7rem;width:100%;min-width:0}
 .channel-roster{flex:1;min-width:0}
