@@ -78,10 +78,6 @@ local adapter for its spawned CLI process only and refuses an unrecognized
 adapter version. Its temporary Netlify config adds HTTPS with a per-run
 certificate so the function sees the same HTTPS callback URL as the browser.
 This is local provider emulation, not deployed Netlify or Google proof.
-The private Synapse config uses a 500-login burst for this disposable run
-because Netlify Dev starts isolated function workers that each request a
-server-only Matrix control session. The report names that local override;
-hosted rate limits and worker reuse are outside this proof.
 
 For a downstream test that needs the live topology, append `--exec` and a
 command to the runner: `node infra/preview/external-local.mjs --exec <command>
