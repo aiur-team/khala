@@ -76,6 +76,10 @@ the separately pinned 0.159.3 native route in
 `codex-0159-3-native-sync.md`, subject to its own owner gate. Do not change the
 user's installed binary automatically.
 
+PR #808 defines the broader cross-mode acceptance journey. This finding covers
+only the exact 0.160.0 Codex native route; #787 remains the sole writer of the
+0.159.3 production dispatcher until its handoff.
+
 ## Immutable reconnect bundle
 
 Capture a read-only bundle manifest with SHA-256 digests for the exact checkout
