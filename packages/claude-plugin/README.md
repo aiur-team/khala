@@ -18,9 +18,22 @@ src/validate.ts              fails on any departure from them
 
 ## Hook runtime
 
+**Hosted proof-key route.** When this exact session's live MCP process has
+opened a private hosted hook socket, `PostToolUse` and `Stop` ask that process
+for its held binding's current effective Steer or Sync mode. A selected batch
+is rendered into native hook context with an opaque one-use receipt. The model
+acknowledges it through `khala_hook_receipt`; the MCP process rechecks the held
+binding and generation and commits the inbox ACK before returning the ordered
+release IDs. A stopped MCP process, pause, revocation or changed generation
+suppresses delivery. This bridge is component-tested but remains unsupported
+for hosted mode claims until a saved-session owner release and model-visible
+receipt are proven; see `docs/evidence/claude-hosted-native-hooks.md`.
+
 **Unbound sessions.** Setup enables the plugin user-wide, so these hooks run in
-every Claude session on the machine. Each hook except `SessionEnd` first checks
-for the session's own grant, `$XDG_STATE_HOME/khala/internal/discovery/<principal>/claude-grant.json`.
+every Claude session on the machine. `PostToolUse` and `Stop` first check for
+that session's live hosted MCP bridge. If it has no batch or refuses, those hooks
+continue through the exact session's internal grant, as the other hooks do. The grant is at
+`$XDG_STATE_HOME/khala/internal/discovery/<principal>/claude-grant.json`.
 The grant must name a binding and carry the transport capability of the current
 `active.json`. That check reads at most three small files and takes about 20 µs.
 A session with an access request outstanding (a non-empty
