@@ -222,6 +222,23 @@ describe('internal discovery store', () => {
     resumed.handle.close();
   });
 
+  it('makes an activated old generation inactive when discovery rotates', () => {
+    const { handle, discovery } = open(directory());
+    seed(handle, [['ch_a', 'Alpha']]);
+    const first = issue(discovery, 'agent_1', 'cap_first');
+    const participantId = `participant_${first.principal}` as ParticipantId;
+    const deviceId = 'device_agent' as DeviceId;
+    expect(discovery.admit({ providerOperationId: 'admit_1', channelId: 'ch_a', ownerId: owner,
+      participantId, deviceId, displayName: 'Codex' }).kind).toBe('admitted');
+    const binding = { v: 1 as const, bindingId: 'binding_1' as never, ownerId: owner, agentParticipantId: participantId,
+      deviceId, harness: 'codex', sessionId: first.sessionDigest, generation: first.generation };
+    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a',
+      sessionGeneration: first.generation, history: 'shared' }).kind).toBe('activated');
+    issue(discovery, first.principal, 'cap_second');
+    expect(handle.read(db => db.prepare('SELECT generation, status FROM bindings WHERE binding_id = ?')
+      .get(binding.bindingId))).toEqual({ generation: 1, status: 'revoked' });
+  });
+
   it('creates or reconciles exactly one secret channel per idempotency key and no agent membership', () => {
     const target = directory();
     const first = open(target);

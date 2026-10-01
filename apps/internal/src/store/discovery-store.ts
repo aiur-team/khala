@@ -271,6 +271,12 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
             input.principal, input.harness, input.sessionDigest, input.displayLabel, input.workspaceLabel, generation,
             input.capabilityDigest, input.proofPublicKey, input.proofThumbprint, input.issuedAt,
           );
+          if (existing) {
+            // The old discovery generation can no longer authenticate. Its
+            // activated bindings must not remain owner-visible as current.
+            db.prepare("UPDATE bindings SET status = 'revoked' WHERE participant_id = ? AND status = 'active'")
+              .run(`participant_${input.principal}`);
+          }
           const row = db.prepare('SELECT * FROM discovery_agents WHERE principal = ?').get(input.principal) as AgentRow;
           return { kind: 'issued', agent: agentFromRow(row) } as const;
         });
