@@ -74,6 +74,8 @@ function submissionStatusLabel(phase: SubmissionState['phase']): string {
       return 'Not released';
     case 'unknown':
       return 'Release status unknown';
+    case 'waiting_for_agent':
+      return 'Release queued for agent';
     default:
       return '';
   }
@@ -126,8 +128,9 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
   const shown = filter === 'selected' ? visible.filter(item => isReadable(item) && selection.refs.some(ref => sameEventRef(ref, item.ref))) : visible;
   const resolveDisplayName = buildDisplayNameResolver(view.pending.map(item => item.participant));
 
-  const canAct = view.access === 'ready';
-  const submissionInFlight = submission.phase === 'submitting' || submission.phase === 'unknown';
+  const canAct = view.access === 'ready' || view.access === 'waiting_for_agent';
+  const submissionInFlight = submission.phase === 'submitting' || submission.phase === 'unknown'
+    || submission.phase === 'waiting_for_agent';
   // Release must be computed from visible, selected, readable items only — a
   // selected ref that somehow is no longer visible never counts, and never
   // reaches the submit path (defense in depth alongside Hide deselecting).
@@ -180,6 +183,11 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
           Pending messages are unavailable right now.
         </p>
       ) : null}
+      {view.access === 'waiting_for_agent' ? (
+        <p className="review__status" role="status">{view.pendingKnown === false
+          ? 'Waiting for agent. Pending status is not yet known.'
+          : 'Waiting for agent. Known pending messages remain available for review.'}</p>
+      ) : null}
       {view.access === 'revoked' ? (
         <p className="review__status review__status--revoked" role="alert">
           You no longer have authority to release to this agent.
@@ -210,7 +218,8 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
       </div>
 
       <ol className="review__list" aria-label="Pending messages" ref={listRef} tabIndex={-1}>
-        {shown.length === 0 ? <li className="review__empty">No pending messages{filter === 'selected' ? ' selected' : ''}.</li> : null}
+        {shown.length === 0 ? <li className="review__empty">{view.access === 'waiting_for_agent' && view.pendingKnown === false
+          ? 'Pending status is not yet known.' : `No pending messages${filter === 'selected' ? ' selected' : ''}.`}</li> : null}
         {shown.map(item =>
           isReadable(item) ? (
             <ReviewItem
@@ -256,7 +265,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
           <p className="review__submission-status" role="status" tabIndex={-1} ref={releaseStatusRef}>
             {submissionStatusLabel(submission.phase)}
             {submission.phase === 'rejected' && submission.error && selection.phase !== 'stale' ? `: ${submission.error}` : ''}
-            {submission.phase === 'unknown' ? (
+            {submission.phase === 'unknown' || submission.phase === 'waiting_for_agent' ? (
               <button type="button" onClick={() => void controller.reconcileUnknown()}>
                 Check release status
               </button>

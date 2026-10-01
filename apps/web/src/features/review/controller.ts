@@ -98,6 +98,8 @@ function mapResult(fallbackCommandId: CommandId, result: ApprovalUiResult): Subm
       return { phase: 'released', commandId: fallbackCommandId, releaseIds: result.releaseIds, error: null };
     case 'rejected':
       return { phase: 'rejected', commandId: fallbackCommandId, releaseIds: null, error: result.code };
+    case 'waiting_for_agent':
+      return { phase: 'waiting_for_agent', commandId: fallbackCommandId, releaseIds: null, error: null };
     case 'outcome_unknown':
       // The command already sent is the identity that matters for reconciliation,
       // never whatever commandId happened to come back in the result (U3).
@@ -160,12 +162,12 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   const unsubscribePort = port.subscribe(onPortChange, abortController.signal);
 
   function toggleSelect(ref: EventRef, checked: boolean): void {
-    if (disposed || cachedView.access !== 'ready') return;
+    if (disposed || !['ready', 'waiting_for_agent'].includes(cachedView.access)) return;
     // While a command is in flight or unresolved, the selection it targets
     // must stay exactly what was submitted — editing it now would silently
     // discard the edit on success (the submitted refs win) or, worse, look
     // like it applies to a reconciled `unknown` command it was never part of.
-    if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
+    if (submission.phase === 'submitting' || submission.phase === 'unknown' || submission.phase === 'waiting_for_agent') return;
     selection = checked ? addRef(selection, ref, bindingContextOf(cachedView), cachedView.pending) : removeRef(selection, ref);
     notify();
   }
@@ -205,15 +207,15 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   }
 
   async function submit(): Promise<void> {
-    if (disposed || cachedView.access !== 'ready') return;
-    if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
+    if (disposed || !['ready', 'waiting_for_agent'].includes(cachedView.access)) return;
+    if (submission.phase === 'submitting' || submission.phase === 'unknown' || submission.phase === 'waiting_for_agent') return;
     const snapshot = toSnapshot(selection);
     if (!snapshot) return;
     await runApprove(buildCommand(newCommandId(), snapshot, cachedView.pending));
   }
 
   async function reconcileUnknown(): Promise<void> {
-    if (disposed || submission.phase !== 'unknown' || !lastCommand) return;
+    if (disposed || !['unknown', 'waiting_for_agent'].includes(submission.phase) || !lastCommand) return;
     await runApprove(lastCommand);
   }
 

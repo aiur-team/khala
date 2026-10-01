@@ -44,7 +44,7 @@ export type SelectionPhase = 'viewing' | 'selected' | 'stale';
  * same `lastCommandId` must be reconciled before a further submission, never
  * replaced by a fresh command (KTD2, U3).
  */
-export type SubmissionPhase = 'idle' | 'submitting' | 'released' | 'rejected' | 'unknown';
+export type SubmissionPhase = 'idle' | 'submitting' | 'waiting_for_agent' | 'released' | 'rejected' | 'unknown';
 
 /**
  * Access/freshness of the whole review view, independent of one selection's
@@ -52,7 +52,7 @@ export type SubmissionPhase = 'idle' | 'submitting' | 'released' | 'rejected' | 
  * (Failure boundaries); `unavailable` means the dependency backing the view
  * could not be reached, not that the channel is empty.
  */
-export type ReviewAccessState = 'loading' | 'ready' | 'revoked' | 'unavailable';
+export type ReviewAccessState = 'loading' | 'ready' | 'waiting_for_agent' | 'revoked' | 'unavailable';
 
 /**
  * Combines the current canonical binding, policy version, permitted pending
@@ -69,5 +69,7 @@ export type ReviewView = Readonly<{
   /** The signed-in reviewer's own `ownerId`, used to tell "your agent" apart from another owner's (R1). */
   viewerOwnerId: OwnerId;
   pending: readonly TimelineItem[];
+  /** False only when no connector-verified pending snapshot exists yet. */
+  pendingKnown?: boolean;
   receipts: readonly DeliveryReceiptTransport[];
 }>;

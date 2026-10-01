@@ -70,7 +70,9 @@ Matrix device ID. A missing mapping or key match fails closed; sender strings
 and display names never become owner authority.
 
 The selected channel's top navigation places conversation settings beside Share.
+When an owner-owned, verified agent has pending recipient review, a counted Review
+disclosure appears in the same row and reuses the binding-scoped review controller.
 The settings disclosure mounts recovery and access actions from the existing
 owner-scoped controller. Agent controls stay inside that agent's participant
 detail, and Delete conversation stays in the title disclosure. The old tools
-route retains recipient review and legacy pause controls without a sidebar entry.
+route retains recipient review and legacy pause controls as a fallback without a sidebar entry.

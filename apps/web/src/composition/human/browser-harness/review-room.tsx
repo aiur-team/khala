@@ -31,15 +31,22 @@ const proofMode = new URLSearchParams(location.search).has('proof');
 const statusRace = new URLSearchParams(location.search).has('status-race');
 const identityTiming = new URLSearchParams(location.search).has('identity-timing');
 const settingsSurface = new URLSearchParams(location.search).has('settings');
+const selectedReview = new URLSearchParams(location.search).has('selected-review');
+const multiReview = new URLSearchParams(location.search).has('multi-review');
+const invitedReview = new URLSearchParams(location.search).has('invited-review');
+const unknownReview = new URLSearchParams(location.search).has('unknown-review');
+const offlineReview = new URLSearchParams(location.search).has('offline-review');
+const rosterFailure = new URLSearchParams(location.search).has('roster-failure');
 const closureDenied = new URLSearchParams(location.search).has('closure-denied');
 const closureUnknown = new URLSearchParams(location.search).has('closure-unknown');
 const closureCalls: string[] = [];
 const navigations: string[] = [];
-const oldBinding = { bindingId, generation: 0, agentParticipantId: identityTiming ? 'agent_1' : race ? 'Old agent' : 'My agent',
+const oldBinding = { bindingId, generation: 0, agentParticipantId: identityTiming || selectedReview ? 'agent_1' : race ? 'Old agent' : 'My agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_OLD', fingerprint: 'A'.repeat(43) } };
 const newBinding = { bindingId, generation: 1, agentParticipantId: 'New agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_NEW', fingerprint: 'B'.repeat(43) } };
 const secondProofBinding = { ...newBinding, bindingId: 'binding_2' as never };
+const secondReviewBinding = { ...oldBinding, bindingId: 'binding_2' as never, agentParticipantId: 'agent_2' };
 const replacedIdentity = { ...newBinding, agentParticipantId: 'Replaced identity' };
 const accountBinding = { ...newBinding, agentParticipantId: 'Other account agent',
   device: { userId: '@other:example', deviceId: 'OTHER_DEVICE', fingerprint: 'C'.repeat(43) } };
@@ -70,6 +77,8 @@ if (confirmed) {
 const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1',
   room: { roomId, title: 'Test channel', membership: 'joined', revision: 'room_1' }, items };
 let command: ApprovalCommand | null = null;
+const reviewCommands: ApprovalCommand[] = [];
+const releasedReviewEvents = new Set<string>();
 let controlVersion = 3;
 let controlPaused = false;
 const controlCommands: PolicySetCommand[] = [];
@@ -77,6 +86,7 @@ let allowOldStatus: (() => void) | null = null;
 const oldStatus = new Promise<void>(resolve => { allowOldStatus = resolve; });
 let oldStatusReturned = false;
 const roomListeners = new Set<(value: ChannelSnapshot) => void>();
+const sentReviewEvents = new Set<string>();
 const room = {
   observe(_roomId: unknown, listener: (value: ChannelSnapshot) => void) {
     roomListeners.add(listener);
@@ -94,7 +104,16 @@ const room = {
       return new Promise<never>(() => {});
     }
     if (original !== null && original !== clientTxnId) return { kind: 'rejected', code: 'operation_mismatch' };
-    const sent = item(clientTxnId, content.body, 'c');
+    const sentBase = item(clientTxnId, content.body, 'c') as Extract<TimelineItem, { content: { kind: 'text' } }>;
+    const sent: TimelineItem = selectedReview ? {
+      ...sentBase,
+      ref: { ...sentBase.ref,
+        authorParticipantId: (invitedReview ? 'human_peer' : 'human_1') as never, authorDeviceId: 'device_1' as never },
+      participant: { participantId: (invitedReview ? 'human_peer' : 'human_1') as never,
+        ownerId: (invitedReview ? 'owner_peer' : 'owner_1') as never,
+        kind: 'human' as const, displayName: invitedReview ? 'Peer owner' : 'Owner', deviceIds: ['device_1' as never] },
+    } : sentBase;
+    if (selectedReview) sentReviewEvents.add(sent.ref.eventId);
     const deferSync = content.body.startsWith('__defer_sync');
     if (!deferSync) items.push(sent);
     sessionStorage.setItem('khala.test.send.confirmed', JSON.stringify({ clientTxnId, body: content.body }));
@@ -103,14 +122,18 @@ const room = {
   },
 } as unknown as RoomPort;
 const shareRequests: Array<{ roomId: string; policy: { kind: string; email?: string } }> = [];
-const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
-  ...(identityTiming || settingsSurface ? {
-    conversations: { snapshot: () => [{ id: roomId, title: 'Test channel', preview: null, timestamp: null, unreadCount: 0 }], subscribe: () => () => {} },
-    roomParticipants: async () => {
+const context = { generation: 1, room, principal: { ownerId: invitedReview ? 'owner_peer' : 'owner_1' },
+  ...(identityTiming || settingsSurface || selectedReview ? {
+    conversations: { snapshot: () => [{ id: roomId, title: 'Test channel', preview: null, timestamp: null, unreadCount: 0 },
+      ...(selectedReview ? [{ id: 'room_2' as never, title: 'Other channel', preview: null, timestamp: null, unreadCount: 0 }] : [])], subscribe: () => () => {} },
+    roomParticipants: async (requestedRoomId: unknown) => {
       if (identityTiming) await fetch('/api/fixture/participants');
+      if (rosterFailure) throw new Error('participant directory unavailable');
+      if (requestedRoomId !== roomId) return [];
       return [
         { participantId: 'human_peer', ownerId: 'owner_peer', kind: 'human', displayName: 'Peer owner', deviceIds: [] },
         { participantId: 'agent_1', ownerId: 'owner_1', kind: 'agent', displayName: settingsSurface ? 'proof-key:abc123' : 'Verified agent', deviceIds: [] },
+        ...(multiReview ? [{ participantId: 'agent_2', ownerId: 'owner_1', kind: 'agent', displayName: 'Second agent', deviceIds: [] }] : []),
       ];
     },
     closure: () => ({
@@ -131,24 +154,38 @@ const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
     return { kind: 'ok' as const, value: { inviteRef: `invite_${shareRequests.length}`,
       shareUrl: `https://khala.example/join/invite_${shareRequests.length}`, expiresAt: null } };
   } },
-  participant: () => ({ participantId: 'human_1', ownerId: 'owner_1', kind: 'human', displayName: 'Owner', deviceIds: [] }),
-  identity: { current: async () => ({ kind: 'signed_in', principal: { ownerId: 'owner_1' } }) },
+  participant: () => ({ participantId: invitedReview ? 'human_peer' : 'human_1',
+    ownerId: invitedReview ? 'owner_peer' : 'owner_1', kind: 'human', displayName: invitedReview ? 'Peer owner' : 'Owner', deviceIds: [] }),
+  identity: { current: async () => ({ kind: 'signed_in', principal: { ownerId: invitedReview ? 'owner_peer' : 'owner_1' } }) },
   device: { current: () => ({ state: 'ready', deviceId: 'device_1', generation: 1 }), observe: () => () => undefined },
 } as unknown as HumanRouteContext;
 let releaseOldLookup: (() => void) | null = null;
 const oldLookup = new Promise<void>(resolve => { releaseOldLookup = resolve; });
 let oldLookupReturned = false;
 const review = {
-  async bindings() {
+  async bindings(requestedRoomId: unknown) {
     lookupCount += 1;
     const selected = activeBinding;
     if (lookupRace && lookupCount === 1) { await oldLookup; oldLookupReturned = true; }
-    return proofMode ? [selected, secondProofBinding] : [selected];
+    if (requestedRoomId !== roomId || invitedReview) return [];
+    return proofMode ? [selected, secondProofBinding] : multiReview ? [selected, secondReviewBinding] : [selected];
   },
   review: {
-    async preview() { return { kind: 'ok' as const, body: { v: 1, bindingId, bindingGeneration: 0,
-      policyVersion: 3, pending: items.map(value => value.ref), receipts: [] } }; },
-    async approve(value: ApprovalCommand) { command = value; return { kind: 'answered' as const,
+    async preview(request: { bindingId: string }) {
+      const pending = items.filter(value => !releasedReviewEvents.has(value.ref.eventId)
+        && (multiReview && request.bindingId === secondReviewBinding.bindingId ? value.ref.eventId === 'event_a'
+          : (!multiReview || request.bindingId === bindingId)
+            && (!selectedReview || sentReviewEvents.has(value.ref.eventId))));
+      return { kind: offlineReview ? 'waiting_for_agent' as const : 'ok' as const,
+        generation: activeBinding.generation, body: { v: 1, bindingId: request.bindingId,
+        bindingGeneration: selectedReview && !multiReview ? activeBinding.generation : 0,
+        policyVersion: 3, pending: pending.map(value => value.ref), receipts: [] } };
+    },
+    async approve(value: ApprovalCommand) { command = value; reviewCommands.push(value);
+      if (offlineReview) return { kind: 'waiting_for_agent' as const };
+      if (selectedReview) for (const ref of value.selection) releasedReviewEvents.add(ref.eventId);
+      if (unknownReview && reviewCommands.length === 1) return { kind: 'lost' as const };
+      return { kind: 'answered' as const,
       body: { ok: true, releaseIds: ['release_b'] } }; },
   },
 };
@@ -165,6 +202,7 @@ const accountTrust = new Promise<void>(resolve => { allowAccount = resolve; });
 declare global { interface Window {
   __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
   __roomReviewCommand: () => ApprovalCommand | null;
+  __roomReviewCommands: () => readonly ApprovalCommand[];
   __allowReviewTrust: () => void;
   __reviewLookupCount: () => number;
   __releaseOldLookup: () => void;
@@ -178,6 +216,7 @@ declare global { interface Window {
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
   __switchReviewDevice: () => void;
+  __switchReviewRoom: () => void;
   __releaseAccountTrust: () => void;
   __controlCommands: () => readonly PolicySetCommand[];
   __releaseOldStatus: () => void;
@@ -187,6 +226,7 @@ declare global { interface Window {
 } }
 window.__shareRequests = () => shareRequests;
 window.__roomReviewCommand = () => command;
+window.__roomReviewCommands = () => reviewCommands;
 window.__allowReviewTrust = () => allowTrust?.();
 window.__reviewLookupCount = () => lookupCount;
 window.__releaseOldLookup = () => releaseOldLookup?.();
@@ -204,7 +244,8 @@ window.__closureCalls = () => closureCalls;
 window.__navigations = () => navigations;
 const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!limits.ok) throw new Error('invalid review limits');
-const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null });
+const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null,
+  ...(selectedReview ? { refreshMs: 75 } : {}) });
 const controls = registerControls({ client: {
   async status(requested) {
     const selected = activeBinding;
@@ -258,7 +299,7 @@ const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_cont
   if (binding.agentParticipantId === accountBinding.agentParticipantId) await accountTrust;
   return true;
 };
-const refreshMs = race || controlsEnabled || proofMode ? 75 : 5_000;
+const refreshMs = race || controlsEnabled || proofMode || selectedReview ? 75 : 5_000;
 const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const routes = createHumanRouteCodec({ origin: location.origin, basePath: '/', allowInsecureLoopback: true });
@@ -276,11 +317,12 @@ const hostedSurface = (currentContext: HumanRouteContext) => {
 };
 const testSurface = (currentContext: HumanRouteContext) => toolsRoute
   ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Recipient review route">{renderer.tools(currentContext, route)}</main></div>
-  : identityTiming || settingsSurface ? hostedSurface(currentContext)
+  : identityTiming || settingsSurface || selectedReview ? hostedSurface(currentContext)
   : proofMode ? <StrictMode>{renderer(currentContext, route)}</StrictMode>
     : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
 root.render(testSurface(context));
 window.__leaveRoom = () => root.render(<p>Outside the channel</p>);
+window.__switchReviewRoom = () => root.render(renderer(context, { kind: 'channel', path: '/channels/room_2', roomId: 'room_2' as never }));
 window.__rerenderRoom = () => root.render(testSurface(context));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;
