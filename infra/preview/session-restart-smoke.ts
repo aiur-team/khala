@@ -19,7 +19,7 @@ try {
   const context = await browser.newContext(mode === 'after' ? { storageState: statePath } : {});
   const page = await context.newPage();
   diagnose('page_load');
-  const navigation = await page.goto(`${environment.appOrigin}/new`, { waitUntil: 'networkidle' });
+  const navigation = await page.goto(`${environment.appOrigin}/new`, { waitUntil: 'domcontentloaded' });
   if (mode === 'before') await signIn(page, environment, environment.users[0]);
   diagnose('session_check', { navigationStatus: navigation?.status() ?? 0,
     sessionCookiePresent: (await context.cookies()).some(cookie => cookie.name.startsWith('khala')) });
