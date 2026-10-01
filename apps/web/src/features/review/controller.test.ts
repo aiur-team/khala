@@ -81,6 +81,27 @@ function createFakePort(initial: ReviewView) {
 }
 
 describe('review controller', () => {
+  it('submits a known offline row once and reconciles the queued command', async () => {
+    const fake = createFakePort(view({ access: 'waiting_for_agent' }));
+    let saved: ApprovalCommand | null = null;
+    let done = false;
+    fake.setApprove(async command => {
+      if (saved) expect(command).toEqual(saved);
+      saved = command;
+      return done ? { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] }
+        : { kind: 'waiting_for_agent', commandId: command.commandId };
+    });
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    expect(controller.getSnapshot().submission.phase).toBe('waiting_for_agent');
+    await controller.submit();
+    expect(fake.approveCalls).toBe(1);
+    done = true;
+    await controller.reconcileUnknown();
+    expect(fake.approveCalls).toBe(2);
+    expect(controller.getSnapshot().submission.phase).toBe('released');
+  });
   it('restores an unknown command and reconciles its exact identity without a new selection', async () => {
     const fake = createFakePort(view());
     const unresolved = { v: 1, commandId: 'command_unresolved' as never, roomId, bindingId,

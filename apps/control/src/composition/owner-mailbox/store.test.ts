@@ -15,6 +15,70 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('keeps a verified review snapshot and one exact queued release across connector downtime', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const previewBody = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(previewBody)).digest('hex').slice(0, 32);
+    const previewId = `preview_${digest}_00000001`;
+    const snapshot = { v: 1, bindingId: binding.bindingId, bindingGeneration: 2, policyVersion: 3,
+      pending: [{ v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+        authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }], receipts: [] };
+    expect((await mailbox.submit({ operationId: previewId, kind: 'review_preview', body: previewBody }, principal)).kind).toBe('ok');
+    expect((await mailbox.complete(previewId, { ok: true, preview: snapshot })).kind).toBe('ok');
+    const resumed = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    expect(await resumed.lastReviewPreview()).toEqual({ kind: 'ok', value: snapshot });
+    const approvalId = 'approval_offline_001';
+    const approval = { operationId: approvalId, kind: 'review_approve' as const,
+      body: { v: 1, commandId: approvalId, bindingId: binding.bindingId, roomId: '!room:example',
+        expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(),
+        selection: snapshot.pending } };
+    expect((await resumed.submit(approval, principal)).kind).toBe('ok');
+    expect((await resumed.submit(approval, principal)).kind).toBe('ok');
+    expect(await resumed.pending()).toMatchObject({ kind: 'ok', value: [{ operationId: approvalId }] });
+    expect((await resumed.complete(approvalId, { ok: true, releaseIds: ['release_12345678'] })).kind).toBe('ok');
+    expect(await resumed.pending()).toEqual({ kind: 'ok', value: [] });
+    expect(await resumed.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { pending: [] } });
+    expect(await resumed.result(approvalId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: true,
+      releaseIds: ['release_12345678'] } } });
+    expect((await resumed.complete(approvalId, { ok: true, releaseIds: ['release_other'] })).kind).toBe('conflict');
+  });
+  it('leaves preview completion pollable when its durable snapshot write fails', async () => {
+    const state = fakeStore(() => T0);
+    let failSnapshot = true;
+    const store: ControlStore = { ...state.store, async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+      if (failSnapshot && input.key.startsWith('owner-review-preview.')) return { kind: 'unavailable' };
+      return state.store.compareAndSet(input);
+    } };
+    const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const body = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
+    const operationId = `preview_${digest}_00000001`;
+    const preview = { v: 1, bindingId: binding.bindingId, bindingGeneration: 2, policyVersion: 3,
+      pending: [], receipts: [] };
+    expect((await mailbox.submit({ operationId, kind: 'review_preview', body }, principal)).kind).toBe('ok');
+    expect((await mailbox.complete(operationId, { ok: true, preview })).kind).toBe('unavailable');
+    expect(await mailbox.pending()).toEqual({ kind: 'unavailable' });
+    failSnapshot = false;
+    expect(await mailbox.pending()).toEqual({ kind: 'ok', value: [] });
+    expect((await mailbox.complete(operationId, { ok: true, preview })).kind).toBe('ok');
+    expect(await mailbox.pending()).toEqual({ kind: 'ok', value: [] });
+    expect(await mailbox.lastReviewPreview()).toEqual({ kind: 'ok', value: preview });
+  });
+  it('keeps the later verified preview when two reads share one clock tick', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const body = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
+    const preview = { v: 1, bindingId: binding.bindingId, bindingGeneration: 2, policyVersion: 3,
+      pending: [], receipts: [] };
+    for (let index = 1; index <= 2; index++) {
+      const operationId = `preview_${digest}_${index.toString(16).padStart(8, '0')}`;
+      expect((await mailbox.submit({ operationId, kind: 'review_preview', body }, principal)).kind).toBe('ok');
+      expect((await mailbox.complete(operationId, { ok: true, preview: { ...preview, policyVersion: index } })).kind).toBe('ok');
+    }
+    expect(await mailbox.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { policyVersion: 2 } });
+  });
   it('does not redeliver archived commands when index retirement fails and recovers full capacity', async () => {
     const state = fakeStore(() => T0);
     let holdRetirement = true;

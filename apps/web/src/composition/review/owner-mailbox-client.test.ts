@@ -14,6 +14,46 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
 
 describe('authenticated owner mailbox review client', () => {
   beforeEach(() => { if (typeof globalThis.sessionStorage !== 'undefined') globalThis.sessionStorage.clear(); });
+  it('types an offline binding with no prior preview as waiting, not a store failure', async () => {
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).includes('/review-status?')) return json(200, { v: 1, bindingId: command.bindingId,
+        generation: 2, status: 'waiting_for_agent', preview: null });
+      const operationId = String(url).endsWith('/submit')
+        ? (JSON.parse(String(init?.body)) as { operationId: string }).operationId
+        : new URL(String(url)).searchParams.get('operation_id');
+      return json(200, { v: 1, operationId, outcome: null });
+    };
+    const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher, waitMs: 0 });
+    expect(await client.review.preview({ bindingId: command.bindingId, candidates: [], releaseIds: [] },
+      new AbortController().signal)).toEqual({ kind: 'waiting_for_agent', generation: 2, body: null });
+  });
+  it('keeps known pending metadata usable offline and reconciles one release identity', async () => {
+    const snapshot = { v: 1, bindingId: command.bindingId, bindingGeneration: 2, policyVersion: 3,
+      pending: command.selection, receipts: [] };
+    let complete = false;
+    let writes = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).includes('/review-status?')) return json(200, { v: 1, bindingId: command.bindingId,
+        generation: 2, status: 'waiting_for_agent', preview: snapshot });
+      if (String(url).endsWith('/submit')) {
+        const body = JSON.parse(String(init?.body)) as { operationId: string; kind: string };
+        if (body.kind === 'review_approve') writes += 1;
+        return json(200, { v: 1, operationId: body.operationId, outcome: null });
+      }
+      const operationId = new URL(String(url)).searchParams.get('operation_id');
+      return json(200, { v: 1, operationId, outcome: complete ? { ok: true, releaseIds: ['release_12345678'] } : null });
+    };
+    const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher, waitMs: 0 });
+    expect(await client.review.preview({ bindingId: command.bindingId, candidates: command.selection, releaseIds: [] },
+      new AbortController().signal)).toEqual({ kind: 'waiting_for_agent', generation: 2, body: snapshot });
+    expect(await client.review.preview({ bindingId: command.bindingId, candidates: [], releaseIds: [] },
+      new AbortController().signal)).toEqual({ kind: 'waiting_for_agent', generation: 2, body: snapshot });
+    expect(await client.review.approve(command)).toEqual({ kind: 'waiting_for_agent' });
+    expect(await client.review.approve(command)).toEqual({ kind: 'waiting_for_agent' });
+    complete = true;
+    expect(await client.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
+    expect(writes).toBe(1);
+  });
   it('keeps the same preview ID and backoff across a tab reload', async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -25,6 +65,7 @@ describe('authenticated owner mailbox review client', () => {
     let reads = 0;
     const body: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
     const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).includes('/review-status?')) return json(503, { code: 'unavailable' });
       if (String(url).endsWith('/submit')) {
         const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
         submitted.push(operationId);
@@ -55,6 +96,7 @@ describe('authenticated owner mailbox review client', () => {
     let complete = false;
     const body: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
     const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).includes('/review-status?')) return json(503, { code: 'unavailable' });
       if (String(url).endsWith('/submit')) {
         const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
         submitted.push(operationId);
