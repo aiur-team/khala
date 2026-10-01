@@ -5,6 +5,7 @@ import { readBounded } from '@khala/connector/bootstrap/discovery';
 const ROOT = '/api/agent/room-send';
 type Grant = Readonly<{ kind: 'granted'; permitId: string }>;
 type Hold = Readonly<{ kind: 'held'; operationId: string; epoch: number }>;
+type Refusal = Readonly<{ kind: 'refused'; code: 'not_connected' | 'binding_not_held' }>;
 function object(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 async function body(response: Response): Promise<Record<string, unknown> | null> {
   if ((response.headers.get('content-type') ?? '').split(';')[0]?.trim() !== 'application/json') return null;
@@ -49,7 +50,7 @@ export function createAgentRoomSendFence(input: Readonly<{
     ready = true;
     return true;
   }
-  async function acquire(clientTxnId: string): Promise<Grant | Hold | null> {
+  async function acquire(clientTxnId: string): Promise<Grant | Hold | Refusal | null> {
     await register();
     const result = await call('acquire', { clientTxnId });
     if (result?.status === 200 && result.body?.kind === 'granted' && typeof result.body.permitId === 'string') {
@@ -58,6 +59,13 @@ export function createAgentRoomSendFence(input: Readonly<{
     if (result?.status === 423 && result.body?.kind === 'held' && typeof result.body.operationId === 'string'
       && Number.isSafeInteger(result.body.epoch)) return { kind: 'held', operationId: result.body.operationId,
       epoch: result.body.epoch as number };
+    if (result?.status === 403 && ['channel_closing', 'owner_membership_required'].includes(String(result.body?.code))) {
+      return { kind: 'refused', code: 'not_connected' };
+    }
+    if (result?.status === 401 && ['binding_revoked', 'binding_superseded'].includes(String(result.body?.code))
+      || result?.status === 403 && result.body?.code === 'binding_superseded') {
+      return { kind: 'refused', code: 'binding_not_held' };
+    }
     return null;
   }
   return {

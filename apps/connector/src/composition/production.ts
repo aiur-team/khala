@@ -274,13 +274,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let remoteDenied = false;
   let deliveryStopped = false;
   let activeSends = 0;
+  let activeReleases = 0;
   let openStage: Exclude<HostedOpenDiagnostic['stage'], 'matrix_writer_recovered'> = 'bootstrap_persistence';
   const sendWaiters: Array<() => void> = [];
 
   async function quiesceDelivery(): Promise<void> {
     deliveryStopped = true;
     await subscription?.stop();
-    if (activeSends > 0) await new Promise<void>(resolve => { sendWaiters.push(resolve); });
+    if (activeSends + activeReleases > 0) await new Promise<void>(resolve => { sendWaiters.push(resolve); });
     await dispatcher?.stop();
   }
 
@@ -427,32 +428,41 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     });
     if (manualRoute) {
       const releases = { enqueue: async (job: UnverifiedReleasedJob) => {
-        if (!sameSessionBinding(job.binding, next) || closed || remoteDenied || deliveryStopped) return 'conflict' as const;
-        const held = await readBinding().catch(error => {
-          if (error instanceof Error && ['production_binding_revoked', 'production_binding_session_changed',
-            'production_binding_ledger_mismatch'].includes(error.message)) return null;
-          throw error;
-        });
-        if (!held || !sameSessionBinding(held, next)) return 'conflict' as const;
-        const authority = await activeMailbox.authorize();
-        if (authority === 'unavailable') throw new Error('manual_release_authority_unavailable');
-        if (authority !== 'active') return 'conflict' as const;
-        const ownerDevice = await activeTrust.ensure();
-        if (ownerDevice === 'unavailable') throw new Error('manual_release_owner_device_unavailable');
-        if (ownerDevice !== 'active') return 'conflict' as const;
-        const committed = await storage.ledger.transaction(tx => tx.readRelease(job.releaseId));
-        if (!committed || !sameSessionBinding(committed.job.binding, next)
-          || committed.job.payloadRef !== job.payloadRef
-          || committed.job.payloadDigest !== job.payloadDigest) return 'conflict' as const;
-        const payload = await dispatchStorage.payloads.read(job.payloadRef, productionLimits().maxPayloadBytes);
-        if (!payload || await verifyReleasePayload(committed.job, payload) !== 'ok') return 'conflict' as const;
-        const inbox = await openRawHostedInbox(next.bindingId, next.generation);
-        const result = await projectionFor(next.bindingId, next.generation).enqueue({
-          v: 1, releaseId: job.releaseId, bindingId: next.bindingId, generation: next.generation,
-          events: committed.job.events, payloadDigest: committed.job.payloadDigest, payload,
-          receivedAt: new Date().toISOString(),
-        }, inbox);
-        return result === 'duplicate' ? 'duplicate' as const : 'queued' as const;
+        activeReleases += 1;
+        try {
+          if (!sameSessionBinding(job.binding, next) || closed || remoteDenied || deliveryStopped) return 'conflict' as const;
+          const held = await readBinding().catch(error => {
+            if (error instanceof Error && ['production_binding_revoked', 'production_binding_session_changed',
+              'production_binding_ledger_mismatch'].includes(error.message)) return null;
+            throw error;
+          });
+          if (!held || !sameSessionBinding(held, next)) return 'conflict' as const;
+          const authority = await activeMailbox.authorize();
+          if (authority === 'unavailable') throw new Error('manual_release_authority_unavailable');
+          if (authority !== 'active') return 'conflict' as const;
+          const ownerDevice = await activeTrust.ensure();
+          if (ownerDevice === 'unavailable') throw new Error('manual_release_owner_device_unavailable');
+          if (ownerDevice !== 'active') return 'conflict' as const;
+          const committed = await storage.ledger.transaction(tx => tx.readRelease(job.releaseId));
+          if (!committed || !sameSessionBinding(committed.job.binding, next)
+            || committed.job.payloadRef !== job.payloadRef
+            || committed.job.payloadDigest !== job.payloadDigest) return 'conflict' as const;
+          const payload = await dispatchStorage.payloads.read(job.payloadRef, productionLimits().maxPayloadBytes);
+          if (!payload || await verifyReleasePayload(committed.job, payload) !== 'ok') return 'conflict' as const;
+          if (closed || remoteDenied || deliveryStopped || await activeMailbox.authorize() !== 'active'
+            || await activeTrust.ensure() !== 'active') return 'conflict' as const;
+          const inbox = await openRawHostedInbox(next.bindingId, next.generation);
+          if (closed || remoteDenied || deliveryStopped) return 'conflict' as const;
+          const result = await projectionFor(next.bindingId, next.generation).enqueue({
+            v: 1, releaseId: job.releaseId, bindingId: next.bindingId, generation: next.generation,
+            events: committed.job.events, payloadDigest: committed.job.payloadDigest, payload,
+            receivedAt: new Date().toISOString(),
+          }, inbox);
+          return result === 'duplicate' ? 'duplicate' as const : 'queued' as const;
+        } finally {
+          activeReleases -= 1;
+          if (activeSends + activeReleases === 0) for (const wake of sendWaiters.splice(0)) wake();
+        }
       } };
       review = createReviewControlHandler({ storage, dispatchStorage, releases,
         bindingId: next.bindingId, limits: productionLimits(),
@@ -685,8 +695,21 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (!held || !sameSessionBinding(held, binding)) {
           return { kind: 'refused' as const, code: 'binding_not_held' as const, clientTxnId: command.clientTxnId };
         }
-        if (!mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {
-          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
+        const sendAuthority = async (): Promise<'active' | 'refused' | 'unavailable'> => {
+          if (!mailbox || !ownerTrust) return 'refused';
+          try {
+            const owner = await mailbox.authorize();
+            if (owner === 'unavailable') return 'unavailable';
+            if (owner !== 'active') return 'refused';
+            const device = await ownerTrust.ensure();
+            return device === 'active' ? 'active' : device === 'unavailable' ? 'unavailable' : 'refused';
+          } catch { return 'unavailable'; }
+        };
+        const initialAuthority = await sendAuthority();
+        if (initialAuthority !== 'active') {
+          return { kind: 'refused' as const,
+            code: initialAuthority === 'unavailable' ? 'transport_unavailable' as const : 'not_connected' as const,
+            clientTxnId: command.clientTxnId };
         }
         const substrate = matrix.substrate();
         if (!substrate) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
@@ -695,13 +718,26 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         }
         const fence = roomSend;
         if (!fence) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
-        const permit = await fence.acquire(command.clientTxnId);
+        const permit = await fence.acquire(command.clientTxnId).catch(() => null);
+        if (permit?.kind === 'refused') return { kind: 'refused' as const,
+          code: permit.code, clientTxnId: command.clientTxnId };
         if (permit?.kind === 'held') {
           if (permit.operationId !== 'rotation_required') await fence.rotate(permit.operationId, permit.epoch);
           return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
         }
         if (permit?.kind !== 'granted') return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
         if (deliveryStopped || remoteDenied || closed) {
+          await fence.finish(permit.permitId, { kind: 'cancelled' });
+          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
+        }
+        const current = await readBinding().catch(() => null);
+        const currentAuthority = await sendAuthority();
+        if (currentAuthority === 'unavailable') {
+          return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        }
+        if (!current || !sameSessionBinding(current, binding)
+          || currentAuthority !== 'active' || subscription.state().kind !== 'live'
+          || deliveryStopped || remoteDenied || closed) {
           await fence.finish(permit.permitId, { kind: 'cancelled' });
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
@@ -718,7 +754,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         }
         finally {
           activeSends -= 1;
-          if (activeSends === 0) for (const wake of sendWaiters.splice(0)) wake();
+          if (activeSends + activeReleases === 0) for (const wake of sendWaiters.splice(0)) wake();
         }
       },
       async status() {

@@ -3,6 +3,7 @@ import type { AuthService } from '../../auth/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createRoomSendFence, senderIdFor, type SenderIdentity } from './room-send-fence';
+import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { ownerMatrixUserId } from './matrix-identity';
 
 const HUMAN = '/api/human/room-send';
@@ -89,11 +90,12 @@ export function createRoomSendRoutes(input: Readonly<{
   diagnostic?: RoomSendDiagnostic;
 }>): readonly RouteRegistration[] {
   const fence = createRoomSendFence(input.store);
+  const ownerRooms = createOwnerRoomIndex(input.store);
   const unavailable = (stage: RoomSendFailureStage, code: RoomSendFailureCode) => {
     try { input.diagnostic?.({ stage, code }); } catch { /* Diagnostics never affect authorization. */ }
     return json(503, { kind: 'unavailable', stage, code });
   };
-  async function principal(request: Request, human: boolean, body: Record<string, unknown>): Promise<Principal | Response> {
+  async function principal(request: Request, human: boolean, body: Record<string, unknown>, action: Action): Promise<Principal | Response> {
     if (human) {
       let auth: Awaited<ReturnType<typeof input.auth.requireHumanMutation>>;
       try { auth = await input.auth.requireHumanMutation(request); }
@@ -120,6 +122,20 @@ export function createRoomSendRoutes(input: Readonly<{
     catch { return unavailable('auth', 'session_store_unavailable'); }
     if (checked.kind !== 'authorized') return json(checked.kind === 'unavailable' ? 503 : checked.status,
       { code: checked.kind === 'unavailable' ? 'unavailable' : checked.code });
+    if (action === 'acquire') {
+      let membership: Awaited<ReturnType<typeof input.inspectOwnerMembership>>;
+      try { membership = await input.inspectOwnerMembership(checked.ownerId, checked.roomId); }
+      catch { return unavailable('membership', 'matrix_unavailable'); }
+      if (membership.kind !== 'joined') return membership.kind === 'unavailable'
+        ? unavailable('membership', 'matrix_unavailable') : json(403, { code: 'owner_membership_required' });
+      let indexed: Awaited<ReturnType<typeof ownerRooms.inspect>>;
+      try { indexed = await ownerRooms.inspect(checked.ownerId, checked.roomId); }
+      catch { return unavailable('auth', 'session_store_unavailable'); }
+      if (indexed.kind !== 'ok') return unavailable('auth', 'session_store_unavailable');
+      if (indexed.value?.marker) return json(403, { code: 'channel_closing' });
+      if (!indexed.value?.bindings.some(item => item.bindingId === checked.binding.bindingId
+        && item.generation === checked.binding.generation)) return json(403, { code: 'binding_superseded' });
+    }
     let verified: Awaited<ReturnType<typeof input.agentSender>>;
     try { verified = await input.agentSender(checked.binding); }
     catch { return unavailable('sender', 'sender_verification_unavailable'); }
@@ -134,7 +150,7 @@ export function createRoomSendRoutes(input: Readonly<{
       let body: unknown;
       try { body = await request.json(); } catch { return json(400, { code: 'invalid_request' }); }
       if (!validBody(body, human, action)) return json(400, { code: 'invalid_request' });
-      const selected = await principal(request, human, body);
+      const selected = await principal(request, human, body, action);
       if (selected instanceof Response) return selected;
       const { roomId, sender } = selected;
       switch (action) {

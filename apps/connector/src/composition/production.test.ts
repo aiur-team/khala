@@ -146,6 +146,10 @@ describe('installed hosted connector composition', () => {
     const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
       headers: { 'content-type': 'application/json' } });
     let ownerAuthorized = true;
+    let closeOnAcquire = false;
+    let denyOnAcquire = false;
+    let outageOnAcquire = false;
+    let authorizationOutagePending = false;
     let ownerTrusted = true;
     let approvalRevoked = false;
     const commands: unknown[] = [];
@@ -163,6 +167,10 @@ describe('installed hosted connector composition', () => {
         return reply({ v: 1, kind: 'attested' });
       }
       if (pathname.endsWith('/owner-mailbox/poll') && approvalRevoked) return new Response(null, { status: 403 });
+      if (pathname.endsWith('/owner-mailbox/poll') && authorizationOutagePending) {
+        authorizationOutagePending = false;
+        return new Response(null, { status: 503 });
+      }
       if (pathname.endsWith('/owner-mailbox/poll')) {
         if (approvalExecuting && ++approvalAuthorizationChecks === 2 && transientOutage) {
           releaseAuthorizationFailed = true;
@@ -181,7 +189,13 @@ describe('installed hosted connector composition', () => {
       if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
         devices: ownerTrusted ? [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] : [] });
       if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
-      if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1' });
+      if (pathname.endsWith('/room-send/acquire')) {
+        if (denyOnAcquire) return new Response(JSON.stringify({ code: 'channel_closing' }), { status: 403,
+          headers: { 'content-type': 'application/json' } });
+        if (outageOnAcquire) authorizationOutagePending = true;
+        if (closeOnAcquire) ownerAuthorized = false;
+        return reply({ kind: 'granted', permitId: 'permit-1' });
+      }
       if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
       throw new Error(`unexpected ${pathname}`);
     }));
@@ -226,6 +240,27 @@ describe('installed hosted connector composition', () => {
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
         expect(send).toHaveBeenCalledOnce();
+        outageOnAcquire = true;
+        expect(await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'retry-after-authority-outage', body: 'eventual reply' }))
+          .toEqual({ kind: 'refused', code: 'transport_unavailable', clientTxnId: 'retry-after-authority-outage' });
+        outageOnAcquire = false;
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'retry-after-authority-outage', body: 'eventual reply' })).kind).toBe('accepted');
+        expect(send).toHaveBeenCalledTimes(2);
+        denyOnAcquire = true;
+        expect(await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'server-stopped-send', body: 'blocked' }))
+          .toEqual({ kind: 'refused', code: 'not_connected', clientTxnId: 'server-stopped-send' });
+        expect(send).toHaveBeenCalledTimes(2);
+        denyOnAcquire = false;
+        closeOnAcquire = true;
+        expect(await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'stop-between-permit-and-send', body: 'blocked' }))
+          .toEqual({ kind: 'refused', code: 'not_connected', clientTxnId: 'stop-between-permit-and-send' });
+        expect(send).toHaveBeenCalledTimes(2);
+        closeOnAcquire = false;
+        ownerAuthorized = true;
         expect(await connector.inbox(binding.bindingId, 0)).toBeDefined();
         expect(input.openInbox).toHaveBeenCalledWith(binding.bindingId, 0, expect.any(Object));
         expect(input.inspectHostedCodexHooks).not.toHaveBeenCalled();
