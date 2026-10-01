@@ -11,6 +11,7 @@ import { chromium } from '@playwright/test';
 import { createSession, SESSION_COOKIE, csrfTokenFor } from '../../../apps/control/src/auth/sessions.ts';
 import { createControlStore } from '../../../apps/control/src/runtime/control-store.ts';
 import { createOwnerRoomIndex } from '../../../apps/control/src/agent-bootstrap/owner-room-index.ts';
+import { createAgentBindingStore } from '../../../apps/control/src/agent-bootstrap/store.ts';
 import { createLocalBlobStores } from '../../../apps/control/src/runtime/local-blob-store.ts';
 import { createGateway } from '../../../apps/control/src/runtime/handler.ts';
 import { registerHostedProductionRoutes } from '../../../apps/control/src/composition/hosted-production.ts';
@@ -36,7 +37,13 @@ function files(directory) {
   });
 }
 
-test('packaged CLI recovers dropped admission and exchanges encrypted messages', { timeout: 180_000 }, async () => {
+for (const { harness, expired } of [
+  { harness: 'claude', expired: false },
+  { harness: 'codex', expired: false },
+  { harness: 'codex', expired: true },
+]) {
+test(`packaged ${harness} CLI ${expired ? 'refuses an expired owner operation' : 'recovers dropped admission and exchanges encrypted messages'}`,
+  { timeout: 180_000 }, async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'khala-installed-candidate-'));
   let synapse;
   try {
@@ -212,7 +219,7 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     const chromiumExecutable = chromium.executablePath();
     client = installRecoveryClient({ tarball: path.join(root, packed[0].filename), origin: transport.origin,
       caFile: transport.caFile, sessionId: 'controlled-candidate-session', workdir: repository,
-      fixtureBrowser: true, pinnedClaudeProbe: true,
+      fixtureBrowser: true, harness, pinnedClaudeProbe: harness === 'claude',
       fixtureBrowserCertificateFile: transport.certificateFile,
       ...(process.platform === 'linux' && existsSync(chromiumExecutable) ? { chromiumExecutable } : {}) });
     assert.ok(client.browserExecutable, 'installed browser required for native fixture');
@@ -229,7 +236,11 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       name: 'khala_request_channel_access', arguments: { operationId: 'controlled-candidate-operation', target },
     } }]);
     assert.deepEqual(result.diagnostics, []);
-    assert.equal(result.replies[0]?.result?.structuredContent?.ok, true);
+    assert.equal(result.replies[0]?.result?.structuredContent?.ok, true,
+      `installed request outcome: ${JSON.stringify({ rpcCode: result.replies[0]?.error?.code ?? null,
+        kind: result.replies[0]?.result?.structuredContent?.kind ?? null,
+        code: result.replies[0]?.result?.structuredContent?.code ?? null,
+        outcome: result.replies[0]?.result?.structuredContent?.outcome ?? null })}`);
     assert.equal(result.replies[0]?.result?.structuredContent?.outcome, 'pending_owner');
     assert.equal(candidateRequests, 1);
     assert.equal(browserOpens, 1);
@@ -256,6 +267,44 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     const ownerRequests = (await inbox.json()).requests;
     assert.equal(ownerRequests.length, 1);
     assert.equal(typeof proofJkt, 'string');
+    const statusMessage = id => ({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+      name: 'khala_channel_access_status', arguments: { operationId: 'controlled-candidate-operation' },
+    } });
+    if (expired) {
+      // Move only this pending operation's durable deadline into the past. The
+      // normal hosted journal must then close it on the installed status call.
+      const key = 'channel-access.journal.v1';
+      const journal = await control.read(key);
+      assert.equal(journal.kind, 'record');
+      const matches = Object.entries(journal.record.value.requests)
+        .filter(([, row]) => row.requestHandle === ownerRequests[0].requestHandle);
+      assert.equal(matches.length, 1);
+      const [operationKey, requestRow] = matches[0];
+      assert.equal((await control.compareAndSet({ key, expectedRevision: journal.record.revision,
+        operationId: 'fixture-expire-owner-operation',
+        next: { value: { ...journal.record.value, requests: { ...journal.record.value.requests,
+          [operationKey]: { ...requestRow, deadline: new Date(Date.now() - 1_000).toISOString() } } },
+        expiresAt: null } })).kind, 'applied');
+      const expiredStatus = await client.call([statusMessage(3)]);
+      assert.equal(new Set([result.pid, retry.pid, expiredStatus.pid]).size, 3);
+      assert.equal(expiredStatus.replies[0]?.result?.structuredContent?.outcome, 'expired');
+      const lateDecision = await gateway(new Request(`${transport.origin}/api/human/channel-access/decision`, {
+        method: 'POST', headers: { origin: transport.origin, cookie: `${SESSION_COOKIE}=${ownerToken}`,
+          'content-type': 'application/json', 'x-khala-csrf': csrfTokenFor(ownerToken) },
+        body: JSON.stringify({ v: 1, requestHandle: ownerRequests[0].requestHandle,
+          expectedRevision: ownerRequests[0].revision, decision: 'approve', operationId: 'fixture-expired-approval' }),
+      }));
+      assert.equal(lateDecision.status, 409);
+      assert.equal((await lateDecision.json()).code, 'expired');
+      assert.equal(grants.size, 0);
+      assert.equal(bindings.size, 0);
+      assert.equal(agentDeviceLogins, 0);
+      assert.equal(transport.receipt().droppedRedeemResponses, 0);
+      console.log(JSON.stringify({ v: 1, scope: 'installed_expired_operation', harness,
+        cliProcesses: 3, ownerRequests: 1, outcome: 'expired', lateApproval: 409, grants: 0, bindings: 0,
+        agentDeviceLogins: 0, droppedRedeemResponses: 0 }));
+      return;
+    }
     const agentIdentity = agentMatrixIdentity(ownerId, { harness: 'proof-key', sessionId: `agent_${proofJkt}`,
       generation: 0 }, synapse.serverName);
     const agentPassword = createHmac('sha256', env.MATRIX_PASSWORD_DERIVATION_SECRET)
@@ -269,9 +318,6 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     });
     const decision = await gateway(decisionRequest);
     assert.equal(decision.status, 200);
-    const statusMessage = id => ({ jsonrpc: '2.0', id, method: 'tools/call', params: {
-      name: 'khala_channel_access_status', arguments: { operationId: 'controlled-candidate-operation' },
-    } });
     const lost = await client.call([statusMessage(3)], { terminateOn: dropped });
     assert.equal(lost.terminated, true);
     assert.equal(transport.receipt().droppedRedeemResponses, 1);
@@ -294,8 +340,9 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     assert.equal(files(client.stateDirectory).filter(item => item.endsWith('/current-binding.json')).length, 0);
     recoveredSession = client.session();
     const beforeRegistration = await recoveredSession.request(statusMessage(4), 'restart_activation');
+    const routeTool = harness === 'claude' ? 'khala_status' : 'khala_read';
     const beforeRoute = await recoveredSession.request({ jsonrpc: '2.0', id: 45,
-      method: 'tools/call', params: { name: 'khala_status', arguments: {} } }, 'pre_owner_route');
+      method: 'tools/call', params: { name: routeTool, arguments: {} } }, 'pre_owner_route');
     const beforeRead = await recoveredSession.request({ jsonrpc: '2.0', id: 5,
       method: 'tools/call', params: { name: 'khala_read', arguments: {} } }, 'pre_owner_read');
     assert.notEqual(beforeRegistration.result?.structuredContent?.outcome, 'connected');
@@ -338,7 +385,8 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
         durable: durableStages().slice(-8), stderr: recoveredSession.diagnostics(), membershipStatus,
         artifacts: activationArtifacts(),
       })}`);
-    console.log(JSON.stringify({ scope: 'pre_owner_registration', sessionRoute: 'claude_env',
+    console.log(JSON.stringify({ scope: 'pre_owner_registration',
+      sessionRoute: harness === 'claude' ? 'claude_env' : 'codex_meta_thread',
       status: beforeRegistration.result?.structuredContent?.outcome ?? 'absent',
       route: beforeRoute.result?.structuredContent?.kind ?? 'absent',
       read: beforeRead.result?.structuredContent?.kind ?? 'absent',
@@ -381,8 +429,12 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       participantLookupStatuses }));
     assert.equal(recoveredReply?.result?.structuredContent?.outcome, 'connected');
     const afterRoute = await recoveredSession.request({ jsonrpc: '2.0', id: 46,
-      method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
-    assert.equal(afterRoute.result?.structuredContent?.connected, true, 'session route not connected after owner proof');
+      method: 'tools/call', params: { name: routeTool, arguments: {} } });
+    if (harness === 'claude') {
+      assert.equal(afterRoute.result?.structuredContent?.connected, true, 'session route not connected after owner proof');
+    } else {
+      assert.equal(afterRoute.result?.structuredContent?.kind, 'empty', 'Codex session route not ready after owner proof');
+    }
     assert.equal(agentDeviceLogins, 1);
     const admissionFiles = files(client.stateDirectory).filter(item => /\/channel-access-[a-f0-9]{64}\.json$/u.test(item));
     assert.equal(admissionFiles.length, 1,
@@ -451,7 +503,10 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
       await delay(500);
     }
     assert.equal(nativeRead.result?.structuredContent?.kind, 'batch');
-    assert.ok(nativeRead.result?.structuredContent?.batch?.includes(ownerText));
+    assert.ok(harness === 'claude'
+      ? nativeRead.result?.structuredContent?.batch?.includes(ownerText)
+      : nativeRead.result?.content?.some(item => item.type === 'text' && item.text.includes(ownerText)),
+    'released owner message absent from native read');
     const nativeSend = await recoveredSession.request({ jsonrpc: '2.0', id: 40,
       method: 'tools/call', params: { name: 'khala_send',
         arguments: { message: 'fixture agent reply through installed client' } } });
@@ -475,10 +530,35 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     const wrongBindingSend = await recoveredSession.request({ jsonrpc: '2.0', id: 42,
       method: 'tools/call', params: { name: 'khala_send',
         arguments: { bindingId: wrongBindingId, message: 'fixture denied reply' } } });
-    // Claude native tools do not accept a caller-selected binding. These
-    // checks prove schema rejection, not a downstream binding authorization.
-    assert.equal(wrongBindingRead.error?.code, -32602, 'unexpected read binding argument accepted');
-    assert.equal(wrongBindingSend.error?.code, -32602, 'unexpected send binding argument accepted');
+    if (harness === 'claude') {
+      // Claude native tools do not accept a caller-selected binding. These
+      // checks prove schema rejection, not downstream authorization.
+      assert.equal(wrongBindingRead.error?.code, -32602, 'unexpected read binding argument accepted');
+      assert.equal(wrongBindingSend.error?.code, -32602, 'unexpected send binding argument accepted');
+    } else {
+      assert.equal(wrongBindingRead.result?.structuredContent?.code, 'binding_not_held');
+      assert.equal(wrongBindingSend.result?.structuredContent?.code, 'not_connected');
+      assert.equal(agentMatrixSends, 1, 'wrong-binding send reached Matrix');
+      const foreignMeta = { threadId: 'other-controlled-session' };
+      const foreignRead = await recoveredSession.request({ jsonrpc: '2.0', id: 48,
+        method: 'tools/call', params: { _meta: foreignMeta, name: 'khala_read', arguments: {} } });
+      const foreignSend = await recoveredSession.request({ jsonrpc: '2.0', id: 49,
+        method: 'tools/call', params: { _meta: foreignMeta, name: 'khala_send',
+          arguments: { message: 'fixture denied foreign reply' } } });
+      const missingMetaRead = await recoveredSession.request({ jsonrpc: '2.0', id: 50,
+        method: 'tools/call', params: { _meta: {}, name: 'khala_read', arguments: {} } });
+      const missingMetaSend = await recoveredSession.request({ jsonrpc: '2.0', id: 51,
+        method: 'tools/call', params: { _meta: {}, name: 'khala_send',
+          arguments: { message: 'fixture denied unlabeled reply' } } });
+      assert.equal(foreignRead.result?.structuredContent?.code, 'not_connected');
+      assert.equal(foreignSend.result?.structuredContent?.code, 'not_connected');
+      assert.equal(missingMetaRead.result?.structuredContent?.code, 'not_connected');
+      assert.equal(missingMetaSend.result?.structuredContent?.code, 'not_connected');
+      assert.equal(agentMatrixSends, 1, 'unlabeled or foreign-thread send reached Matrix');
+      console.log(JSON.stringify({ scope: 'codex_route_refusals', foreignRead: 'not_connected',
+        foreignSend: 'not_connected', missingThreadRead: 'not_connected',
+        missingThreadSend: 'not_connected', agentMatrixSends }));
+    }
     const firstPreviewBody = { bindingId: committed.binding.bindingId, candidates: [], releaseIds: [] };
     const ambiguousOperationId = `preview_${createHash('sha256').update(JSON.stringify(firstPreviewBody)).digest('hex').slice(0, 32)}_deadbeef`;
     const submitPreview = candidates => ownerFetch(`${transport.origin}/api/human/owner-mailbox/submit`, {
@@ -489,26 +569,40 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     assert.equal((await submitPreview([])).status, 200);
     const ambiguous = await submitPreview([ownerRef]);
     assert.equal(ambiguous.status, 409, 'changed operation replay admitted');
-    const beforeClose = await recoveredSession.request({ jsonrpc: '2.0', id: 47,
-      method: 'tools/call', params: { name: 'khala_status', arguments: {} } });
-    assert.equal(beforeClose.result?.structuredContent?.connected, true,
-      'native session disconnected before closing refusal');
-    const closing = await createOwnerRoomIndex(control).markClosing(ownerId, roomId, 'fixture-close-channel', 0);
-    assert.equal(closing.kind, 'ok');
-    const closedSend = await recoveredSession.request({ jsonrpc: '2.0', id: 44,
-      method: 'tools/call', params: { name: 'khala_send',
-        arguments: { message: 'fixture closed reply' } } });
-    assert.equal(closedSend.result?.structuredContent?.kind, 'refused');
-    assert.equal(closedSend.result?.structuredContent?.code, 'not_connected');
-    assert.equal(agentMatrixSends, 1, 'closed native send reached Matrix');
+    const beforeFence = await recoveredSession.request({ jsonrpc: '2.0', id: 47,
+      method: 'tools/call', params: { name: routeTool, arguments: {} } });
+    assert.equal(harness === 'claude' ? beforeFence.result?.structuredContent?.connected
+      : ['empty', 'batch'].includes(beforeFence.result?.structuredContent?.kind), true,
+    'native session disconnected before final refusal');
+    let finalRefusal;
+    if (harness === 'codex') {
+      const changed = await createAgentBindingStore({ store: control }).updateBinding(
+        committed.binding.bindingId, record => ({ ...record,
+          revokedGeneration: record.binding.generation + 1, capability: null }));
+      assert.equal(changed, 'applied', 'fixture binding revocation did not persist');
+      finalRefusal = await recoveredSession.request({ jsonrpc: '2.0', id: 44,
+        method: 'tools/call', params: { name: 'khala_send',
+          arguments: { message: 'fixture revoked reply' } } });
+    } else {
+      const closing = await createOwnerRoomIndex(control).markClosing(ownerId, roomId, 'fixture-close-channel', 0);
+      assert.equal(closing.kind, 'ok');
+      finalRefusal = await recoveredSession.request({ jsonrpc: '2.0', id: 44,
+        method: 'tools/call', params: { name: 'khala_send',
+          arguments: { message: 'fixture closed reply' } } });
+    }
+    assert.equal(finalRefusal.result?.structuredContent?.kind, 'refused');
+    assert.equal(finalRefusal.result?.structuredContent?.code, 'not_connected');
+    assert.equal(agentMatrixSends, 1, 'fenced native send reached Matrix');
     console.log(JSON.stringify({ scope: 'installed_refusals', wrongProof: true, wrongDevice: true,
-      wrongGeneration: true, unexpectedBindingRead: wrongBindingRead.error.code,
-      unexpectedBindingSend: wrongBindingSend.error.code,
+      wrongGeneration: true,
+      wrongBindingRead: harness === 'claude' ? wrongBindingRead.error.code : wrongBindingRead.result.structuredContent.code,
+      wrongBindingSend: harness === 'claude' ? wrongBindingSend.error.code : wrongBindingSend.result.structuredContent.code,
       ambiguousOperation: ambiguous.status,
-      closedSend: closedSend.result?.structuredContent?.kind ?? 'absent',
-      closedCode: closedSend.result?.structuredContent?.code ?? null,
+      finalFence: harness === 'codex' ? 'binding_revoked' : 'room_closing',
+      finalSend: finalRefusal.result?.structuredContent?.kind ?? 'absent',
+      finalCode: finalRefusal.result?.structuredContent?.code ?? null,
       agentMatrixSends }));
-    console.log(JSON.stringify({ v: 1, scope: 'installed_access_recovery', cliProcesses: 4, browserOpens,
+    console.log(JSON.stringify({ v: 1, scope: 'installed_access_recovery', harness, cliProcesses: 4, browserOpens,
       candidateRequests, discoveryConsents, ownerRequests: ownerRequests.length,
       grants: grants.size, bindings: bindings.size, agentDeviceLogins,
       droppedRedeemResponses: 1, originalBindingPreserved: true }));
@@ -523,3 +617,4 @@ test('packaged CLI recovers dropped admission and exchanges encrypted messages',
     if (cleanupFailure) throw cleanupFailure;
   }
 });
+}
