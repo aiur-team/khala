@@ -41,6 +41,16 @@ is therefore an evidence boundary, not a demonstrated removal of the APIs in
 newer versions. The native crash gate continues to return
 `native_version_unproven` for both installed versions, before Docker effects.
 
+A later private, operator-supplied 0.159.2 snapshot was inspected on 2026-10-01.
+Its SQLite ledger passed `quick_check`; the copied current binding matched the
+ledger binding, releases, release items, and an `agent_acknowledged` receipt at
+the same generation. Its provenance note labels native read/ACK as observed,
+but the snapshot contains no saved native rollout or executed-call trace to
+independently bind those operations to the Codex session. It explicitly marks
+queue-hook execution `not_observed`. This supports a narrower ledger/ACK
+finding and does not prove the queued same-session Sync route required by the
+native crash gate. No private identifiers or content are retained here.
+
 ## Reproduce the native observation
 
 With an existing private `$TMPDIR`, the following recreates the isolated hook.
