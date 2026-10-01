@@ -119,8 +119,9 @@ const processStart = pid => {
 const externalProcess = (run, name) => {
   const file = path.join(directory, `${name}-pty.pid`);
   if (!exists(file)) return run.sessions?.[name] ? 'untracked' : 'not_started';
-  const match = /^(\d+) (\d+)\n$/.exec(fs.readFileSync(file, 'utf8'));
+  const match = /^(\d+) (\d+) (pid:\[\d+\])\n$/.exec(fs.readFileSync(file, 'utf8'));
   if (!match) return 'untracked';
+  if (match[3] !== fs.readlinkSync('/proc/self/ns/pid')) return 'unobservable';
   const pid = Number(match[1]);
   if (!Number.isSafeInteger(pid) || pid < 2) return 'untracked';
   return processStart(pid) === match[2] ? 'live' : 'exited';
@@ -134,7 +135,8 @@ const agentLauncher = (run, name) => {
   const pidFile = path.join(directory, `${name}-pty.pid`);
   const lines = ['#!/bin/sh', 'set -eu', 'umask 077', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
     `cd ${shellWord(directory)}`, 'pid=$$', 'start=$(awk \'{print $22}\' "/proc/$pid/stat")',
-    `printf '%s %s\\n' "$pid" "$start" > ${shellWord(pidFile)}`,
+    'namespace=$(readlink /proc/self/ns/pid)',
+    `printf '%s %s %s\\n' "$pid" "$start" "$namespace" > ${shellWord(pidFile)}`,
     `exec ${argv.map(shellWord).join(' ')}`];
   fs.writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o700 });
   return file;
@@ -493,6 +495,7 @@ async function main() {
     if (run.ptyMode === 'external') {
       const states = ['codex', 'claude'].map(name => externalProcess(run, name));
       if (states.includes('untracked')) stage('external_process_untracked');
+      if (states.includes('unobservable')) stage('external_process_unobservable');
       if (states.includes('live')) stage('external_agents_running');
     }
     if (run.browserPid && childAlive(run.browserPid)) process.kill(-run.browserPid, 'SIGTERM');

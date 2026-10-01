@@ -61,7 +61,7 @@ test('external cleanup refuses a live recorded PTY process', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-external-'));
   fs.chmodSync(directory, 0o700);
   const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8').split(') ').at(-1).trim().split(/\s+/);
-  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), `${process.pid} ${stat[19]}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), `${process.pid} ${stat[19]} ${fs.readlinkSync('/proc/self/ns/pid')}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', ptyMode: 'external' }), { mode: 0o600 });
   try {
     for (const action of ['stop', 'destroy']) {
@@ -70,5 +70,17 @@ test('external cleanup refuses a live recorded PTY process', () => {
       assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_agents_running', directory });
       assert.equal(fs.existsSync(directory), true);
     }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('external cleanup refuses a process in another PID namespace', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-external-'));
+  fs.chmodSync(directory, 0o700);
+  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), '2 123 pid:[999999999]\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', ptyMode: 'external' }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'destroy', directory], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_process_unobservable', directory });
+    assert.equal(fs.existsSync(directory), true);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
