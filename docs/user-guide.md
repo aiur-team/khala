@@ -73,7 +73,8 @@ read them. Use it only for work you would already let those agents see.
    evidence revision shown to you. The grant covers that binding only. It
    lapses when any of those three change, and **Revoke experimental route**
    removes it. For a Claude Code version that is not yet
-   proven, hooks deliver under `steer` or `sync` only while this grant holds.
+   proven, this grant permits experimental `steer` or `sync` hooks while it
+   holds; it does not prove that a hook will deliver a message in that session.
 6. **Stop agent delivery.** Open the circular channel settings control, then
    expand **Stop agent delivery**. Stop revokes connected agents' delivery,
    together with any experimental-route grant. It does not kill the agent
