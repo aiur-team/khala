@@ -27,15 +27,15 @@ describe('AgentPresencePanel', () => {
   it('gives same-named agents distinct keyboard-selectable identities', () => {
     const agents = [agent, { ...agent, participantId: 'agent_other' as ParticipantId }];
     const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents })} />);
-    expect(html).toContain('Details for Scout (agent 1)');
-    expect(html).toContain('Details for Scout (agent 2)');
+    expect(html).toContain('Details for Scout (agent 1), Unavailable');
+    expect(html).toContain('Details for Scout (agent 2), Unavailable');
     expect(html.match(/<summary /g)).toHaveLength(2);
   });
 
   it('shows a readable identity without technical connection diagnostics', () => {
     const html = render(otherId);
     expect(html).toContain('Details for Scout');
-    expect(html).not.toContain('Not connected');
+    expect(html).toContain('Unavailable');
     expect(html).toContain('Maya’s agent');
     for (const diagnostic of ['Route', 'Batch-token return', 'Last receipt', 'Queued for delivery', 'Khala skill']) {
       expect(html).not.toContain(diagnostic);
@@ -63,17 +63,30 @@ describe('AgentPresencePanel', () => {
   it('never turns an unverified connection into Connected', () => {
     const html = render(ownerId, { ...agent, connection: 'unknown' });
     expect(html).toContain('Details for Scout');
+    expect(html).toContain('Checking connection…');
     expect(html).not.toContain('Connection unavailable');
     expect(html).not.toContain('Connection unknown');
     expect(html).not.toMatch(/>Connected</);
   });
 
-  it('hides Matrix routing IDs and uses a human-readable fallback', () => {
+  it('shows Connected only with confirmed connection evidence', () => {
+    expect(render(otherId, { ...agent, connection: 'connected' })).toContain('>Connected</span>');
+    expect(render(otherId, { ...agent, connection: 'offline' })).not.toContain('>Connected</span>');
+  });
+
+  it('hides Matrix routing IDs without inventing an owner label', () => {
     const html = render(otherId, { ...agent, displayName: '@khala:matrix.example.test', ownerDisplayName: '@maya:matrix.example.test' });
     expect(html).toContain('Details for Agent');
-    expect(html).toContain('Another member’s agent');
+    expect(html).not.toContain('Another member’s agent');
+    expect(html).not.toContain('Owned by');
     expect(html).not.toContain('@khala:matrix.example.test');
     expect(html).not.toContain('@maya:matrix.example.test');
+  });
+
+  it('omits the owner label when the owner name is blank', () => {
+    const html = render(otherId, { ...agent, ownerDisplayName: '  ' });
+    expect(html).not.toContain('’s agent');
+    expect(html).not.toContain('Channel member');
   });
 
   it('hides proof-key labels in agent details', () => {
