@@ -8,7 +8,7 @@ import '../../../features/channel/channel.css';
 import '../../../features/timeline/timeline.css';
 import '../../../features/recovery/recovery.css';
 import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
-  type PolicySetCommand } from '@khala/contracts/delivery/index';
+  type ListeningModeCommand, type PolicySetCommand } from '@khala/contracts/delivery/index';
 import { CLOSURE_CONSEQUENCES, type ChannelSnapshot, type RoomPort, type TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
 import { createHumanRoomRenderer } from '../room';
@@ -27,6 +27,7 @@ const bindingId = 'binding_1' as never;
 const race = new URLSearchParams(location.search).has('race');
 const lookupRace = new URLSearchParams(location.search).has('lookup');
 const controlsEnabled = new URLSearchParams(location.search).has('controls');
+const manualClaudeProven = new URLSearchParams(location.search).has('manual-claude-proven');
 const proofMode = new URLSearchParams(location.search).has('proof');
 const statusRace = new URLSearchParams(location.search).has('status-race');
 const identityTiming = new URLSearchParams(location.search).has('identity-timing');
@@ -90,6 +91,19 @@ let reviewResultReads = 0;
 let controlVersion = 3;
 let controlPaused = false;
 const controlCommands: PolicySetCommand[] = [];
+const listeningCommands: ListeningModeCommand[] = [];
+let listeningVersion = 1;
+let listeningRequested: 'sync' | 'async' = 'sync';
+let listeningEffective: 'async' | null = null;
+const manualModes = {
+  steer: { status: 'unsupported' as const, route: 'hosted-manual-mcp-claude-steer', evidenceRef: null,
+    evidenceRevision: null, reason: 'This hosted MCP binding has no native Steer delivery hook.' },
+  sync: { status: 'unsupported' as const, route: 'hosted-manual-mcp-claude-sync', evidenceRef: null,
+    evidenceRevision: null, reason: 'This hosted MCP binding has no native Sync delivery hook.' },
+  async: { status: 'proven' as const, route: 'hosted-manual-mcp-claude-explicit-pull', testedVersion: '1.2.3',
+    evidenceRef: 'docs/evidence/hosted-manual-mcp.md', evidenceRevision: 'fixture-read-ack',
+    reason: 'The agent reads the approved batch explicitly; native hooks do not inject it.' },
+};
 let allowOldStatus: (() => void) | null = null;
 const oldStatus = new Promise<void>(resolve => { allowOldStatus = resolve; });
 let oldStatusReturned = false;
@@ -271,6 +285,7 @@ window.__trustCalls = () => trustCalls;
 window.__releaseReplacementTrust = () => allowReplacement?.();
 window.__releaseAccountTrust = () => allowAccount?.();
 window.__controlCommands = () => controlCommands;
+window.__listeningCommands = () => listeningCommands;
 window.__releaseOldStatus = () => allowOldStatus?.();
 window.__oldStatusReturned = () => oldStatusReturned;
 window.__closureCalls = () => closureCalls;
@@ -288,8 +303,14 @@ const controls = registerControls({ client: {
     return { kind: 'ok' as const, body: {
       v: 1, binding: { v: 1, bindingId: selected.bindingId, ownerId,
         agentParticipantId: selected.agentParticipantId, deviceId: 'device_agent',
-        harness: 'codex', sessionId: `session_${selected.generation}`, generation: selected.generation },
-      bindingStatus: 'active', capabilities: { v: 3, harness: 'codex', version: '0.157.1',
+        harness: manualClaudeProven ? 'claude' : 'codex',
+        sessionId: `session_${selected.generation}`, generation: selected.generation },
+      bindingStatus: 'active', capabilities: manualClaudeProven ? { v: 3, harness: 'claude', version: '1.2.3',
+        adapterVersion: 'hosted-manual-mcp-1', support: 'tested', existingSession: 'unknown',
+        immediateNotification: 'unsupported', busy: 'unknown', receiptEvidence: [],
+        reconcileByReleaseId: 'unsupported', limits: limits.value,
+        evidenceRef: 'docs/evidence/hosted-manual-mcp.md', modes: manualModes,
+        acknowledgement: 'batch_token_next_call' } : { v: 3, harness: 'codex', version: '0.157.1',
         adapterVersion: '0.157.1', support: 'tested', existingSession: 'native_cli_queue',
         immediateNotification: 'native_cli_queue', busy: 'queue', receiptEvidence: [],
         reconcileByReleaseId: 'while_queued', limits: limits.value, evidenceRef: 'native-proof',
@@ -297,13 +318,31 @@ const controls = registerControls({ client: {
       policy: { bindingId: selected.bindingId, generation: selected.generation,
         effectiveVersion: controlVersion, effectiveMode: 'review', paused: controlPaused },
       requested: null, busy: false, latestReceipt: null, listeningUnavailable: null,
-      listening: { bindingId: selected.bindingId, generation: selected.generation, version: 1,
-        requested: 'sync', effective: null, effectiveReason: 'unsupported',
-        support: unknownModeSupportMap('test', 'no primary mode proof', '0.157.1'),
+      listening: { bindingId: selected.bindingId, generation: selected.generation, version: listeningVersion,
+        requested: listeningRequested, effective: listeningEffective,
+        effectiveReason: listeningEffective === null ? 'unsupported' : null,
+        support: manualClaudeProven ? manualModes : unknownModeSupportMap('test', 'no primary mode proof', '0.157.1'),
         experimentalGrants: [], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' } },
     } };
   },
-  async setListeningMode() { return { kind: 'lost' as const }; },
+  async setListeningMode(command) {
+    if (!manualClaudeProven || command.bindingId !== activeBinding.bindingId
+      || command.expectedBindingGeneration !== activeBinding.generation || command.requested !== 'async') {
+      return { kind: 'lost' as const };
+    }
+    listeningCommands.push(command);
+    const applied = command.expectedVersion === listeningVersion;
+    if (applied) {
+      listeningVersion += 1;
+      listeningRequested = 'async';
+      listeningEffective = 'async';
+    }
+    return { kind: 'answered' as const, body: { v: 1 as const, commandId: command.commandId,
+      bindingId: command.bindingId, generation: activeBinding.generation,
+      outcome: applied ? 'applied' as const : 'conflict' as const,
+      version: listeningVersion, requested: listeningRequested, effective: listeningEffective,
+      reason: applied ? null : 'stale_version' } };
+  },
   async setRouteGrant() { return { kind: 'lost' as const }; },
   async setPolicy(next) {
     controlCommands.push(next);

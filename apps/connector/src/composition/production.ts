@@ -399,11 +399,31 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       capability: () => capabilityFor(next).ensure(), registerOwnDevice: () => attestation.ensure(),
       matrix: substrate, diagnostic: reportSubscription });
     const activeTrust = ownerTrust;
+    const inspectManualCapabilities = async () => {
+      const inspected = await sessionInspector.inspect(input.session).catch(() => null);
+      if (inspected?.kind !== 'verified'
+        || inspected.session.harness !== input.session.harness
+        || inspected.session.sessionId !== input.session.sessionId
+        || inspected.session.generation !== next.generation) return null;
+      const proof = await manualReadProof(acknowledgementRecorder, next, manualReadWitness);
+      return manualListeningCapabilities(next, input.session.harness as 'claude' | 'codex',
+        inspected.capabilities.version, proof);
+    };
     const controls = createPolicyControlHandler({ dispatchStorage, trust,
       roomId: session.roomId as never, bindingId: next.bindingId,
-      // The same bound, current-session inspection used at the dispatch boundary.
-      // An absent or failed inspection remains unknown; it never grants controls.
-      capabilities: async () => harness ? await harness.inspect(next).catch(() => null) : null });
+      // A manual MCP route has no harness instance. Reuse its exact inspected
+      // session and receipt witness so the owner sees the same supported modes
+      // as the listening ledger, and fail closed if this route is no longer live.
+      capabilities: async () => {
+        if (!manualRoute) return harness ? await harness.inspect(next).catch(() => null) : null;
+        if (closed || remoteDenied || deliveryStopped || subscription?.state().kind !== 'live') return null;
+        const held = await readBinding().catch(() => null);
+        if (!held || !sameSessionBinding(held, next)) return null;
+        const authorized = await activeMailbox.authorize().catch(() => null);
+        const trusted = authorized === 'active' ? await activeTrust.ensure().catch(() => null) : null;
+        if (authorized !== 'active' || trusted !== 'active') return null;
+        return inspectManualCapabilities();
+      } });
     const stop = createLocalClosureFence({ storage, binding: next, roomId: session.roomId,
       stateDirectory: sessionDirectory, clock: Date.now,
       quiesce: quiesceDelivery,
@@ -527,16 +547,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           return held !== null && sameSessionBinding(held, next)
             && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
         },
-        capabilities: async () => {
-          const inspected = await sessionInspector.inspect(input.session).catch(() => null);
-          const currentSession = inspected?.kind === 'verified'
-            && inspected.session.harness === input.session.harness
-            && inspected.session.sessionId === input.session.sessionId
-            && inspected.session.generation === next.generation;
-          const version = currentSession ? inspected.capabilities.version : 'unknown';
-          const proof = currentSession ? await manualReadProof(acknowledgementRecorder, next, manualReadWitness) : null;
-          return manualListeningCapabilities(next, input.session.harness as 'claude' | 'codex', version, proof);
-        },
+        capabilities: inspectManualCapabilities,
       });
       listening = { ...manualListening, application: {
         read: manualListening.application.read,

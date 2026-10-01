@@ -379,6 +379,17 @@ describe('installed hosted connector composition', () => {
         await vi.waitFor(() => expect(completions).toHaveLength(3), { timeout: 5_000 });
         expect(completions[2]).toMatchObject({ outcome: { outcome: 'applied', effective: 'async' } });
         expect(await connector.listeningMode()).toMatchObject({ effective: 'async' });
+        commands.push({ operationId: 'manual_status_0001', kind: 'controls_status', outcome: null,
+          authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
+            authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
+          body: { bindingId: binding.bindingId } });
+        await vi.waitFor(() => expect(completions).toHaveLength(4), { timeout: 5_000 });
+        expect(completions[3]).toMatchObject({ outcome: { ok: true, status: {
+          binding, capabilities: { harness, support: 'tested', acknowledgement: 'batch_token_next_call',
+            modes: { steer: { status: 'unsupported' }, sync: { status: 'unsupported' },
+              async: { status: 'proven' } } },
+          listening: { bindingId: binding.bindingId, generation: 0, requested: 'async', effective: 'async' },
+        } } });
 
         ownerAuthorized = false;
         expect(await connector.status()).toMatchObject({ connected: false,
@@ -410,7 +421,7 @@ describe('installed hosted connector composition', () => {
       vi.unstubAllGlobals();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 20_000);
 
   it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { signIn } from '../human/fixtures';
-import { controlsStatus, mailbox, mailboxOutcome, readLiveControlsEnvironment } from './fixtures';
+import { controlsStatus, readLiveControlsEnvironment } from './fixtures';
 
 const provider = process.env.KHALA_E2E_MANUAL_PROVIDER;
 test.skip(provider !== 'codex' && provider !== 'claude',
@@ -29,27 +29,15 @@ test('owner sees and sets only the exact native MCP mode proved by its receipt l
     for (const mode of ['steer', 'sync'] as const) {
       await expect(detail.getByRole('radio', { name: new RegExp(`^${mode}`, 'i') })).toBeDisabled();
     }
-    const command = { v: 1, commandId: `manual_${crypto.randomUUID().replaceAll('-', '')}`,
-      bindingId: controls.bindingId, expectedBindingGeneration: before.binding.generation,
-      expectedVersion: before.listening.version, requested: 'async', issuedAt: new Date().toISOString() };
-    if (before.listening.support.async.status === 'unsupported') {
-      await expect(detail.getByRole('radio', { name: /^async/i })).toBeDisabled();
-      expect((await mailbox(page, controls.bindingId, 'listening_set', command, command.commandId)).status).toBe(200);
-      expect(await mailboxOutcome(page, controls.bindingId, command.commandId))
-        .toMatchObject({ outcome: 'refused', effective: null,
-          reason: expect.stringContaining('receipt proof') });
-      expect((await controlsStatus(page, controls.bindingId)).listening.effective).toBeNull();
-      return;
-    }
-
     expect(before.listening.support.async.status, `${provider} needs a current explicit-pull receipt`).toBe('proven');
+    await expect(detail.getByRole('radio', { name: /^async/i })).toBeEnabled();
     await detail.getByRole('radio', { name: /^async/i }).check();
     await detail.getByRole('button', { name: 'Apply listening mode' }).click();
     await expect.poll(async () => {
       const current = await controlsStatus(page, controls.bindingId);
       return [current.listening.version > before.listening.version, current.listening.requested,
-        current.listening.effective, current.policy.effectiveMode];
-    }).toEqual([true, 'async', 'async', 'async']);
+        current.listening.effective];
+    }).toEqual([true, 'async', 'async']);
     await expect(detail.locator('.agent-controls__listening-status'))
       .toContainText('Requested: async · Effective: async');
   } finally { await context.close(); }

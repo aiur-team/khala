@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
-import type { ApprovalCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
+import type { ApprovalCommand, ListeningModeCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 
 declare global { interface Window {
   __shareRequests: () => readonly { roomId: string; policy: { kind: string; email?: string } }[];
@@ -23,6 +23,7 @@ declare global { interface Window {
   __switchReviewAccount: () => void;
   __releaseAccountTrust: () => void;
   __controlCommands: () => readonly PolicySetCommand[];
+  __listeningCommands: () => readonly ListeningModeCommand[];
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
 } }
@@ -533,6 +534,33 @@ test('conversation agent controls wait for the selected owner binding and verifi
     for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
     assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).isDisabled(), true);
     assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
+  }, async page => {
+    await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/api/fixture/history', route => route.fulfill({ status: 200, body: '{}' }));
+  });
+});
+
+test('proved manual Claude Async is owner selectable and reads back from the exact session', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing&controls=1&manual-claude-proven', async page => {
+    await page.evaluate(() => window.__allowReviewTrust());
+    await page.locator('.channel-roster > summary').click();
+    const agent = page.locator('.agent-presence__details').first();
+    await agent.locator('summary').click();
+    const asyncMode = agent.locator('input[type="radio"][value="async"]');
+    await asyncMode.waitFor();
+    assert.equal(await agent.locator('input[type="radio"][value="steer"]').isDisabled(), true);
+    assert.equal(await agent.locator('input[type="radio"][value="sync"]').isDisabled(), true);
+    assert.equal(await asyncMode.isDisabled(), false);
+    await asyncMode.check();
+    await agent.getByRole('button', { name: 'Apply listening mode' }).click();
+    await agent.locator('.agent-controls__listening-status')
+      .getByText('Requested: async · Effective: async', { exact: false }).waitFor();
+    const commands = await page.evaluate(() => window.__listeningCommands());
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.expectedBindingGeneration, 0);
+    assert.equal(commands[0]?.expectedVersion, 1);
+    assert.equal(commands[0]?.requested, 'async');
+    assert.equal(await asyncMode.isChecked(), true);
   }, async page => {
     await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));
     await page.route('**/api/fixture/history', route => route.fulfill({ status: 200, body: '{}' }));
