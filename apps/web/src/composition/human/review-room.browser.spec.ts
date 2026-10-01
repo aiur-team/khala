@@ -291,7 +291,8 @@ test('unknown release keeps its reconciliation action after the pending queue cl
       'an unknown outcome never triggers a second release automatically');
     await review.locator('summary').press('Enter');
     await review.getByRole('button', { name: 'Check release status' }).click();
-    await review.getByText('Released', { exact: true }).waitFor();
+    await review.locator('summary').getByText('Released', { exact: true }).waitFor();
+    await review.getByRole('status').getByText('Released', { exact: true }).waitFor();
     const commands = await page.evaluate(() => window.__roomReviewCommands());
     assert.equal(commands.length, 1, 'status check never submits another release');
     assert.equal(await page.evaluate(() => window.__reviewResultReads()), 1);
