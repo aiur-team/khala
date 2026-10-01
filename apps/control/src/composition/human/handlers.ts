@@ -62,7 +62,7 @@ function localParticipantStage(response: Response, stage: 'service_loader' | 'fe
   diagnostic?: Readonly<{ stage: 'membership' | 'control_login' | 'joined_members'; status: number }>): Response {
   if (response.status !== 503 || process.env.KHALA_LOCAL_EXTERNAL_DIAGNOSTICS !== '1') return response;
   const headers = new Headers(response.headers);
-  headers.set('x-khala-local-participant-stage', stage);
+  if (!headers.has('x-khala-local-participant-stage')) headers.set('x-khala-local-participant-stage', stage);
   if (diagnostic) {
     headers.set('x-khala-local-matrix-stage', diagnostic.stage);
     headers.set('x-khala-local-matrix-status', String(diagnostic.status));

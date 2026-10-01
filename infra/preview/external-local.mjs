@@ -199,7 +199,11 @@ async function main() {
     const result = await command('mkpasswd', ['-m', 'bcrypt', '-R', '10', '-s'], { input: value });
     return result.stdout.trim();
   };
-  env = { ...process.env,
+  const inheritedToolEnv = Object.fromEntries(['PATH', 'LANG', 'LC_ALL', 'CI', 'PLAYWRIGHT_BROWSERS_PATH']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  env = { ...inheritedToolEnv, HOME: privateHome, TMPDIR: privateTmp,
+    XDG_DATA_HOME: path.join(scratch, 'xdg-data'), XDG_STATE_HOME: path.join(scratch, 'state'),
+    CODEX_HOME: path.join(scratch, 'codex'),
     KHALA_ENVIRONMENT: 'preview', KHALA_STATE_NAMESPACE: project,
     KHALA_MATRIX_SERVER_NAME: `${runId}.matrix.invalid`, KHALA_MATRIX_PUBLIC_ORIGIN: origin,
     KHALA_MATRIX_REGISTRATION_SHARED_SECRET: secret(), KHALA_DB_HOST: 'postgres', KHALA_DB_PORT: '5432',

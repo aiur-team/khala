@@ -214,6 +214,37 @@ describe('createMatrixHumanServices', () => {
     }
   });
 
+  it('retries a rate-limited control login after Synapse permits it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-28T20:00:00Z'));
+    try {
+      const roomId = '!room:matrix.example.test' as RoomId;
+      const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+      let logins = 0;
+      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+        if (path.endsWith('/login')) {
+          logins += 1;
+          if (logins === 1) return json(429, { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 500 });
+          const request = JSON.parse(String(init?.body)) as { device_id: string };
+          return json(200, { user_id: userId, device_id: request.device_id, access_token: 'control-token' });
+        }
+        if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
+        throw new Error(`unexpected request ${path}`);
+      });
+      const matrix = services(fetch);
+      const inspect = () => matrix.gateway.inspectMembership({ principal, roomId, history: 'none' });
+      expect((await inspect()).kind).toBe('unavailable');
+      expect((await inspect()).kind).toBe('unavailable');
+      expect(logins).toBe(1);
+      vi.setSystemTime(new Date('2026-09-28T20:00:00.501Z'));
+      expect((await inspect()).kind).toBe('joined');
+      expect(logins).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('treats Synapse missing-profile M_UNKNOWN as absent, but refuses other unknown 404s', async () => {
     for (const [error, expected] of [
       ['No row found (profiles)', 'absent'],
