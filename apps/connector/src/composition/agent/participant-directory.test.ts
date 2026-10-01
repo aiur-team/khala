@@ -10,6 +10,7 @@ describe('agent participant lookup', () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
       expect(init?.body).toBe(JSON.stringify({ roomId: '!room:matrix.test', userIds: ['@agent:matrix.test'],
         targetParticipantIds: ['agent_departed'] }));
+      expect(new Headers(init?.headers).get('origin')).toBe('https://khala.example');
       expect(new Headers(init?.headers).get('authorization')).toBe('DPoP capability');
       expect(new Headers(init?.headers).get('dpop')).toBe('signed-proof');
       return new Response(JSON.stringify({ participants: [{ matrixUserId: '@agent:matrix.test',
