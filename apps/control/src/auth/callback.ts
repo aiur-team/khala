@@ -113,9 +113,9 @@ export async function completeSignIn(
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
   const callback = new URL(request.url);
-  const state = callback.searchParams.get('state');
+  const states = callback.searchParams.getAll('state');
   // A forged callback keeps the login cookie, so it cannot cancel a sign-in in progress.
-  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || state === null || !safeEqual(state, login.state)) {
+  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || states.length !== 1 || !safeEqual(states[0]!, login.state)) {
     return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
   }
 
@@ -132,8 +132,9 @@ export async function completeSignIn(
   // Google may omit iss on an error response. Its issuer check then throws
   // before the SDK can classify access_denied. Only classify an error-only
   // callback after the browser binding has been validated and consumed.
-  if (callback.searchParams.has('error') && !callback.searchParams.has('code')) {
-    return reject(callback.searchParams.get('error') === 'access_denied' ? 'provider_denied' : 'provider_error');
+  const errors = callback.searchParams.getAll('error');
+  if (errors.length === 1 && errors[0] && !callback.searchParams.has('code')) {
+    return reject(errors[0] === 'access_denied' ? 'provider_denied' : 'provider_error');
   }
 
   const exchanged = await orUnavailable(() => deps.oidc.exchangeCode({

@@ -72,6 +72,9 @@ describe('completeSignIn', () => {
     url.searchParams.set('state', 'forged');
     expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
     url.searchParams.set('state', new URL(callback.url).searchParams.get('state')!);
+    const duplicateState = new URL(url);
+    duplicateState.searchParams.append('state', 'forged');
+    expect(await h.service.completeSignIn(new Request(duplicateState, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
     const wrongOrigin = new URL(url);
     wrongOrigin.host = 'preview.khala.aiur.team';
     expect(await h.service.completeSignIn(new Request(wrongOrigin, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
