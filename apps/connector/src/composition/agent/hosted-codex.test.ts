@@ -79,6 +79,29 @@ describe('hosted Codex harness authority', () => {
       expect(events).toEqual(['native_version_unsupported', 'binding_mismatch']);
     } finally { await harness.close(); }
   });
+  it('does not promote 0.160.0 from a hook claim without a native queue contract', async () => {
+    const approved = { ...binding, harness: 'proof-key', sessionId: 'agent_approved_key' };
+    const native = nativeCliCapabilities('0.160.0', limits.value);
+    let hookInspections = 0;
+    let enqueues = 0;
+    const harness = createHostedCodexHarness({ binding: approved,
+      claim: { harness: 'codex', sessionId: binding.sessionId, workdir: '/project' },
+      sessionInspection: { inspect: async () => ({ kind: 'verified' as const,
+        session: { harness: 'codex', sessionId: binding.sessionId, generation: 0 }, capabilities: native }) },
+      current: async () => true, resolveExecutable: async () => null,
+      inspectHooks: async () => { hookInspections += 1; return { ...native, support: 'tested' }; },
+      openInbox: async () => ({ enqueue: async () => { enqueues += 1; return 'appended'; },
+        notifyListener: async () => 'notified' }),
+    });
+    try {
+      const result = await harness.inspect(approved);
+      expect(result.support).toBe('unsupported');
+      expect(result.acknowledgement).toBe('unknown');
+      expect(routeSnapshot(result, approved, 'sync', 'hook-revision')).toBeNull();
+      expect(hookInspections).toBe(0);
+      expect(enqueues).toBe(0);
+    } finally { await harness.close(); }
+  });
   it('reports a transient current-session inspection failure without granting a route', async () => {
     const diagnostics: string[] = [];
     const harness = createHostedCodexHarness({ binding,
