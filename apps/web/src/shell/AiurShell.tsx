@@ -12,7 +12,7 @@ export function ThemeToggle({ theme }: Readonly<{ theme: ThemePort }>) {
   ><ThemeIcon /></button>;
 }
 
-export function AiurShell({ mode, brandHref = '/new', className = '', title, navigation, sidebar, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
+export function AiurShell({ mode, brandHref = '/new', className = '', title, headerContent, navigation, sidebar, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
   if (mode === 'hosted-content') {
     return (
       <div className={`khala-content-root${sidebar ? ' khala-content-root--channels' : ''}${className ? ` ${className}` : ''}`} data-theme={theme.theme}>
@@ -28,10 +28,12 @@ export function AiurShell({ mode, brandHref = '/new', className = '', title, nav
         <div className="aiur-shell__brand-section"><a className="aiur-shell__brand" href={brandHref}>
           <img src={aiurLogo} alt="" width="1215" height="1068" />
           <span>KHALA</span>
-        </a><div className="aiur-shell__actions">
+        </a></div>
+        {headerContent}
+        <div className="aiur-shell__actions">
           <ThemeToggle theme={theme} />
           {actions}
-        </div></div>
+        </div>
         {title ? <h1 className="aiur-shell__title" dir="auto">{title}</h1> : null}
       </header>
       <nav className="aiur-shell__nav" aria-label="Main navigation">

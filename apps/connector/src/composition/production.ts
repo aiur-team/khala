@@ -81,6 +81,21 @@ export function subscriptionDiagnostic(state: SubscriptionState) {
   return { prerequisite: 'unknown' as const, errorCode: 'subscription_starting' as const };
 }
 
+/** Owner commands cannot be starved by an unrelated outbound-session inspection. */
+export async function pollOwnerMailboxBeforeRotation(
+  mailbox: Pick<ReturnType<typeof createProductionOwnerMailbox>, 'pollOnce'>,
+  roomSend: Pick<ReturnType<typeof createAgentRoomSendFence>, 'pollRotation'> | null,
+  diagnostic: (event: HostedSubscriptionDiagnostic) => void,
+): Promise<'ok' | 'unavailable' | 'revoked'> {
+  let outcome: 'ok' | 'unavailable' | 'revoked';
+  try { outcome = await mailbox.pollOnce(); }
+  catch { diagnostic({ stage: 'mailbox_poll_fetch', result: 'unavailable' }); outcome = 'unavailable'; }
+  if (outcome === 'revoked') return outcome;
+  try { await roomSend?.pollRotation(); }
+  catch { diagnostic({ stage: 'mailbox_rotation', result: 'unavailable' }); }
+  return outcome;
+}
+
 /**
  * One installed native session owns one endpoint state lease. The connector is
  * opened lazily by a provider-named MCP invocation, not by a shell environment
@@ -299,8 +314,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       pollTimer = null;
       if (!mailbox || closed) return;
       try {
-        await roomSend?.pollRotation();
-        if (await mailbox.pollOnce() === 'revoked') { remoteDenied = true; scheduleCleanup(); }
+        const outcome = await pollOwnerMailboxBeforeRotation(mailbox, roomSend, reportSubscription);
+        if (outcome === 'revoked') { remoteDenied = true; scheduleCleanup(); }
       } finally {
         polling = null;
         if (!closed && !remoteDenied) {
@@ -309,6 +324,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         }
       }
     };
+    reportSubscription({ stage: 'mailbox_poll_scheduled', result: 'ok' });
     polling = run();
   }
 
@@ -427,6 +443,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           : { kind: trusted, stage: 'owner_device_guard' as const };
       },
     });
+    reportSubscription({ stage: 'intake_subscription_started', result: 'ok' });
     if (manualRoute) {
       const releases = { enqueue: async (job: UnverifiedReleasedJob) => {
         activeReleases += 1;
@@ -481,6 +498,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       });
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
+      reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
     } else if (harness) {
       const activeHarness = harness;
       listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
@@ -496,6 +514,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         },
       });
       await listening.application.read();
+      reportSubscription({ stage: 'intake_listening_initialized', result: 'ok' });
       dispatcher = createDispatcher({ ledger: dispatchStorage.ledger,
         limits: { maxJobsPerCausalRoot: 1, maxConcurrentJobs: 1, busy: 'queue' },
         harness: activeHarness,
@@ -522,6 +541,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       });
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
+      reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
     }
     schedulePoll();
   }

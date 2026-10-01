@@ -35,6 +35,9 @@
 }
 
 .aiur-shell__brand-section{display:flex;flex:1;align-items:center;justify-content:space-between;gap:.5rem;min-width:0}
+.aiur-shell__topbar:has(#khala-channel-toolbar){position:relative;z-index:2;gap:.65rem}
+.aiur-shell__topbar:has(#khala-channel-toolbar) .aiur-shell__brand-section{flex:none}
+.aiur-shell__topbar #khala-channel-toolbar{flex:1}
 .aiur-shell__title{min-width:0;margin:0;font-size:1rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .khala-content-actions {
@@ -241,7 +244,6 @@
 .khala-owner-shell .khala-content-actions{height:4rem;box-sizing:border-box;border-bottom:1px solid var(--khala-line)}
 .khala-owner-shell .khala-content-actions:has(#khala-channel-toolbar){position:relative;z-index:2;gap:.5rem}
 #khala-channel-toolbar{flex:1;min-width:0}
-#khala-channel-toolbar-mobile{flex:1;min-width:0}
 .khala-channel-drawer{display:none}
 .khala-owner-shell .khala-content-main>.channel-page{height:calc(100dvh - 4rem)}
 .khala-owner-shell .khala-content-main>.channel-tools-page{height:calc(100dvh - 4rem)}
@@ -305,6 +307,11 @@
 }
 
 @media (max-width: 959px) {
+  .khala-owner-shell.aiur-shell:has(#khala-channel-toolbar){grid-template-rows:4rem minmax(0,1fr)}
+  .khala-owner-shell.aiur-shell:has(#khala-channel-toolbar) .aiur-shell__brand-section{width:auto}
+  .khala-owner-shell.aiur-shell:has(#khala-channel-toolbar) .aiur-shell__brand span{display:none}
+  .khala-owner-shell.aiur-shell:has(#khala-channel-toolbar) .aiur-shell__topbar{padding:0 .65rem;gap:.4rem}
+  .khala-owner-shell.aiur-shell:has(#khala-channel-toolbar) .aiur-shell__content>.channel-page{height:100%}
   .khala-owner-shell .khala-content-actions:has(#khala-channel-toolbar){display:flex}
   .khala-channel-drawer{display:inline-flex;flex:none}
   .khala-owner-shell.aiur-shell{grid-template-rows:4rem minmax(0,1fr)}
@@ -318,7 +325,6 @@
   .khala-owner-shell .khala-content-main:has(#khala-channel-toolbar)>.channel-page{height:calc(100dvh - 4rem)}
   .khala-owner-shell .khala-content-main>.channel-tools-page{height:calc(100dvh - 3.5rem)}
   .khala-owner-shell .khala-content-main>.khala-mobile-bar{height:3.5rem;box-sizing:border-box;margin:0;padding:0 .75rem;border-bottom:1px solid var(--khala-line)}
-  .khala-owner-shell .khala-mobile-bar:has(#khala-channel-toolbar-mobile){position:relative;z-index:2}
   .khala-owner-shell .khala-content-main{height:100dvh}
   .khala-owner-shell .khala-mobile-bar>h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .aiur-shell--channels{grid-template-columns:minmax(0,1fr);grid-template-rows:4rem 1fr}

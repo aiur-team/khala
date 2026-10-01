@@ -283,7 +283,9 @@ test('owner conversation shell fills desktop and phone with conditional request 
     const brand = await page.locator('.aiur-shell__brand').boundingBox();
     const theme = await page.getByRole('button', { name: 'Toggle color theme' }).boundingBox();
     const logout = await page.getByRole('button', { name: 'Log out' }).boundingBox();
-    assert.ok(brand && theme && logout && brand.x < theme.x && theme.x < logout.x && logout.x + logout.width < 261);
+    const topbar = await page.locator('.aiur-shell__topbar').boundingBox();
+    assert.ok(brand && theme && logout && topbar && brand.x < theme.x && theme.x < logout.x
+      && logout.x + logout.width <= topbar.x + topbar.width);
     assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopWidth), '0px');
     assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopLeftRadius), '0px');
     const main = await page.locator('.aiur-shell__content').boundingBox();
@@ -308,8 +310,8 @@ test('owner conversation shell fills desktop and phone with conditional request 
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    await page.locator('#khala-channel-toolbar-mobile .channel-roster').waitFor();
-    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'local phone uses its mobile bar for channel details');
+    await page.locator('#khala-channel-toolbar .channel-roster').waitFor();
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'local phone uses the top navigation for channel details');
     assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).count(), 1);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
     await page.getByRole('button', { name: 'Channels' }).click();

@@ -29,6 +29,7 @@ export interface AiurShellProps {
   brandHref?: string;
   className?: string;
   title?: string;
+  headerContent?: ReactNode;
   navigation: NavigationItem[];
   sidebar?: ReactNode;
   actions?: ReactNode;

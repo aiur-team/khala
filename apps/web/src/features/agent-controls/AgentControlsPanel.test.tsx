@@ -73,6 +73,7 @@ function view(overrides: Partial<AgentControlsView> = {}): AgentControlsView {
     unavailableReason: null,
     capabilityDetail: null,
     retryAvailable: false,
+    snapshotReceived: true,
     notice: null,
     receiptDetail: null,
     listening: null,
