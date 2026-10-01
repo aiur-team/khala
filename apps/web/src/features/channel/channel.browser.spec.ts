@@ -85,7 +85,8 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await page.locator('.channel-roster__panel').getByText('Route').first().isVisible(), false,
       'technical diagnostics stay inside agent details');
     await page.getByLabel('Details for Scout').click();
-    assert.equal(await page.locator('.channel-roster__panel').getByText('Route').first().isVisible(), true);
+    assert.equal(await page.locator('.channel-roster__panel').getByText('Route').first().isVisible(), false,
+      'agent details omit route diagnostics');
     assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);
     await page.getByRole('button', { name: 'Edit name for Scout' }).click();
