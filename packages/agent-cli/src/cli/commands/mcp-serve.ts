@@ -220,7 +220,8 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
     bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null };
   const sessions = new Map<string, Routed>();
   type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
-  const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null }>();
+  const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null;
+    startupDeadline: number | null }>();
   try {
     await runMcpServer({
       input: deps.stdin,
@@ -262,18 +263,37 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
         if (entry === undefined) {
           if (!PREJOIN_TOOLS.has(toolName)
             && deps.hostedBindingPresent && !await deps.hostedBindingPresent(session)) return null;
-          entry = { opened: await deps.hostedSession(session), bound: null };
+          entry = { opened: await deps.hostedSession(session), bound: null, startupDeadline: null };
           hosted.set(session.sessionId, entry);
         }
-        const hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+        let hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+        if (!PREJOIN_TOOLS.has(toolName) && hostedStatus.readiness?.errorCode === 'subscription_starting'
+          && !hostedStatus.connected && deps.hostedBindingPresent && await deps.hostedBindingPresent(session)) {
+          // The saved binding can precede the new process's intake subscription.
+          // Bound the wait across calls to this MCP process, even on repeated retries.
+          const deadline = entry.startupDeadline ??= Date.now() + 8_000;
+          while (!hostedStatus.connected && hostedStatus.readiness?.errorCode === 'subscription_starting'
+            && Date.now() < deadline) {
+            await delay(Math.min(500, deadline - Date.now()), undefined, { signal: deps.signal });
+            hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+          }
+          if (!hostedStatus.connected && hostedStatus.readiness?.errorCode === 'subscription_starting') {
+            // A removed approval must never be presented as an ordinary startup retry.
+            if (!await deps.hostedBindingPresent(session)) return null;
+            throw new CliError('connector_starting');
+          }
+        }
         if (!hostedStatus.connected || hostedStatus.binding === null) {
           return PREJOIN_TOOLS.has(toolName)
             ? pairingCollaborators(entry.opened.client) : null;
         }
+        if (!PREJOIN_TOOLS.has(toolName) && deps.hostedBindingPresent
+          && !await deps.hostedBindingPresent(session)) return null;
         const storedSessionId = entry.opened.client.storedSessionId?.(session.harness, session.sessionId) ?? session.sessionId;
         if (!([session.harness, 'proof-key'].includes(hostedStatus.binding.harness))
           || hostedStatus.binding.sessionId !== storedSessionId) return null;
-        if (entry.bound === null || !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) {
+        if (entry.bound !== null && !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) return null;
+        if (entry.bound === null) {
           entry.bound = {
             binding: hostedStatus.binding,
             collaborators: await boundCollaborators(deps, entry.opened.client, entry.opened.inbox, hostedStatus.binding),

@@ -57,7 +57,8 @@ export async function executeReadTool(input: ExecuteReadToolInput): Promise<Read
 }
 
 export function readToolFailure(code: CliErrorCode): ReadToolFailure {
-  const safe = { kind: 'refused', code } as const;
+  const safe = { kind: 'refused', code,
+    ...(code === 'connector_starting' ? { next: 'retry_status_then_read' as const } : {}) } as const;
   return {
     kind: 'error',
     primaryResult: {
