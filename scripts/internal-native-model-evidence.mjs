@@ -75,3 +75,8 @@ export function modelEvidence(rows, harness, received, sent) {
   }));
   return { readCall: reads.length > 0, visible: successful.length > 0, sendCall };
 }
+
+export const acknowledged = (facts, eventId, binding) => facts.filter(fact => fact.receipt?.kind === 'agent_acknowledged'
+  && fact.receipt.source === 'agent' && typeof fact.receipt.receiptId === 'string' && fact.receipt.receiptId.length > 0
+  && fact.receipt.bindingId === binding.bindingId && fact.receipt.generation === binding.generation
+  && fact.events?.some(event => event.eventId === eventId));

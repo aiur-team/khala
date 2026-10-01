@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { allocateNamespace, fingerprintEffectiveConfig, validateCandidate, validateJournal, verifyArtifact, writeEvidence } from './acceptance/candidate.ts';
-import { modelEvidence } from './internal-native-model-evidence.mjs';
+import { acknowledged, modelEvidence } from './internal-native-model-evidence.mjs';
 
 const [action, directory, ...args] = process.argv.slice(2);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -168,9 +168,6 @@ const nativeInterval = (run, harness) => {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
 };
-const acknowledged = (facts, eventId, binding) => facts.filter(fact => fact.receipt?.kind === 'agent_acknowledged'
-  && fact.receipt.source === 'agent' && fact.receipt.bindingId === binding.bindingId
-  && fact.receipt.generation === binding.generation && fact.events?.some(event => event.eventId === eventId));
 
 async function main() {
   if (action === 'init') {

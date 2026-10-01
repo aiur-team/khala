@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { modelEvidence } from './internal-native-model-evidence.mjs';
+import { acknowledged, modelEvidence } from './internal-native-model-evidence.mjs';
 
 const script = path.resolve('scripts/internal-native-canary.mjs');
 
@@ -87,4 +87,16 @@ test('external cleanup refuses a process in another PID namespace', () => {
     assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_process_unobservable', directory });
     assert.equal(fs.existsSync(directory), true);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('ack proof rejects a receipt for another event, binding, generation or source', () => {
+  const binding = { bindingId: 'bound', generation: 3 };
+  const fact = { receipt: { kind: 'agent_acknowledged', source: 'agent', receiptId: 'r1', bindingId: 'bound', generation: 3 },
+    events: [{ eventId: 'challenge' }] };
+  assert.deepEqual(acknowledged([fact], 'challenge', binding), [fact]);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, source: 'server' } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, bindingId: 'foreign' } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, generation: 2 } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, events: [{ eventId: 'other' }] }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, receiptId: null } }], 'challenge', binding), []);
 });
