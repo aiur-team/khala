@@ -110,7 +110,7 @@ export async function hasOwnerCryptoStore(
   const prefix = `khala.crypto:${encodeURIComponent(ownerId)}:`;
   const expected = deviceId === null ? null : cryptoStoreName(ownerId, deviceId);
   return (await factory.databases()).some(database => database.name?.startsWith(prefix)
-    && !database.name.endsWith('.probe') && database.name !== expected);
+    && database.name !== expected);
 }
 
 type StorageManagerLike = Readonly<{ persist?(): Promise<boolean> }>;
