@@ -1,9 +1,10 @@
 # Installed recovery fixture foundations
 
-This slice supplies isolated HTTPS response-loss transport and a stock packaged CLI
-process runner. **It does not prove lost-response binding recovery, Matrix login
-reuse, native agent read/send, or production acceptance.** Issues #609 and #579
-remain open. No application behavior changes here.
+The first slice supplied isolated HTTPS response-loss transport and a stock
+packaged CLI process runner. Later sections record installed recovery and native
+read/send in the disposable fixture. **None of these runs proves production
+acceptance.** Issues #609 and #579 remain open. No application behavior changes
+are made here.
 
 ## Bounded command
 
@@ -55,26 +56,12 @@ when the HTTPS bridge returned the adapter response normally. After adding the
 socket drop they passed. This is red-before-green evidence for the **transport
 mechanism only**, not a pre-fix recovery regression in application code.
 
-## Remaining integration
+## Integration status
 
-1. Compose real hosted authority/discovery, exact-session approval, access
-   exchange/redeem/resume, owner mailbox/trust and send-authorization adapters
-   into `startRecoveryTransport({ handle })`. The handler must await a durable
-   server commit before returning an admitted response. Add persistent binding,
-   grant and real Matrix login counters; adapter response counts are not substitutes.
-2. Start disposable Synapse/Postgres with the existing
-   `tests/integration/fixtures/closure-synapse.ts` helper and hard resource limits.
-   Keep fixture authorities private and isolated from production.
-3. Establish an approved proof key, private discovery credential and real native
-   session through the fixture control endpoint. Use `installRecoveryClient` with
-   the generated CA/origin and exact session/workdir; do not inject CLI collaborators.
-4. Record only a keyed pre-redeem journal, commit the server redemption, drop its
-   response, then call the installed client again from a new process using its
-   existing state without a binding ID. Assert original binding, one grant and one
-   Matrix login, then actual fixture read/send and owner-visible reply.
-5. Exercise wrong proof/device/generation, denied/revoked/expired and ambiguous
-   operation typed refusals against the composed service. Record only typed
-   outcomes and counts. Keep production acceptance separately open.
+The later installed-hosted test below composes real hosted routes and disposable
+Synapse/Postgres, exercises dropped redemption and restart, and verifies encrypted
+native read/send through the packaged CLI. Remaining refusal and route coverage is
+listed at the end of this document.
 
 ## Real connector protocol regression
 
@@ -105,11 +92,14 @@ The subsequent integration below joins them through real hosted adapters.
 
 ## Installed hosted access and lost response
 
-The next bounded fixture test runs with the other disposable Synapse checks:
+Run the installed proof alone with one test worker:
 
 ```sh
-pnpm test:recovery-synapse
+pnpm test:installed-recovery
 ```
+
+The CI `pnpm test:recovery-synapse` command also uses one worker for all disposable
+Synapse checks. Synapse and Postgres retain the fixture's CPU, memory and PID limits.
 
 `tests/integration/recovery/installed-hosted-recovery.test.mjs` packages the stock CLI,
 installs its tarball offline, and runs four separate `mcp-serve` processes over
@@ -130,8 +120,45 @@ no second grant or requested-device login. The receipt contains only typed
 counts. The generated proof key, owner session, grant, Matrix credentials,
 invite link and message data never enter the receipt.
 
-This proves installed-client grant-free admission recovery. It does not yet
-prove a ready native binding, encrypted read/send, all wrong-tuple and closed
-operation refusals, or the required recovery mutation red-before-green check.
-Those remain part of #609. Production exact-session acceptance remains with
-#579 and #592 and cannot be inferred from this disposable fixture.
+The continued fixture now creates an encrypted room, starts a real owner Matrix SDK
+device in a separate persistent browser profile and waits for its device key to
+appear in Synapse. The owner registers that exact device through the protected
+proof route. The first installed client is killed immediately after the proxy
+drops the committed redeem response; its local binding is still absent. The
+restarted installed MCP process remains alive through native readiness, owner
+preview, one exact release, `khala_read` and `khala_send`. The owner SDK decrypts
+the native reply. The typed receipt records one grant, one binding, one requested
+device Matrix login, one drop, one pending owner item, and accepted read/send.
+Wrong owner fingerprint, device and binding generation are refused before the
+valid owner proof is registered. The installed Claude tool schema rejects a
+caller-supplied binding ID with JSON-RPC `-32602`; this is argument validation,
+not a downstream binding authorization proof. A changed replay of one owner
+mailbox operation returns 409. A connected-session check immediately before
+the room closing marker makes the subsequent native send refusal attributable
+to closing rather than a prior disconnect.
+
+The fixture first failed with `repair_required` when Chromium lacked its private
+CA trust pin. After that, it failed with `owner_device_empty` because the owner
+SDK device and protected proof were absent. The final test observes that guard
+and a `not_connected` read on the live restarted process before owner proof
+registration; the same process later reports a connected session route and
+passes read/send. The installed fixture selects a Claude session from
+`KHALA_MCP_HARNESS=claude` and `CLAUDE_CODE_SESSION_ID`. It does not exercise
+Codex's `_meta.threadId` selector. A one-shot post-restart call had hidden
+native readiness because it closed the MCP process before subscription settled.
+Each failure was observed before the corresponding fixture change and the bounded
+installed test passed afterward. A deliberate mutation making the connector's
+resume path unavailable failed the installed test at the required response-drop
+boundary: the first post-approval process never reached committed redemption.
+After restoring that production code, the exact one-worker installed command
+passed with four CLI processes, one grant, one binding, one requested-device
+Matrix login and one dropped response. The recovered binding tuple and Matrix
+session matched the first committed response. This mutation checks that the
+installed test depends on the real resume path; it does not simulate a second
+redeem after the response drop.
+
+Exact revoked and expired operation checks and the Codex route comparison remain
+for #609. An earlier clock-advanced native send refused with `not_connected`;
+that probe was removed because it did not prove an expired operation. The fixture uses no
+production secrets and makes no production acceptance claim; real exact-session
+acceptance remains with #579 and #592.
