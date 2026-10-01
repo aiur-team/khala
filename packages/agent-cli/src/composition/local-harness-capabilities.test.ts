@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { codexHooksFragment } from '../codex/hooks-config.js';
+import { codexMcpBlock } from '../setup/adapters/codex.js';
 import type { SetupEnvironment } from '../setup/types.js';
 import { inspectHostedCodexHooks, localHarness, localHarnessCapabilities } from './local-harness-capabilities.js';
 
@@ -69,6 +70,19 @@ describe('local harness capabilities', () => {
     expect(codex!.modes.async.status).toBe('unknown');
     await claim(binding('codex'));
     expect(runs).toEqual(['/usr/bin/codex --version']);
+  });
+
+  it('requires the matching 0.160.0 MCP state root as well as trusted hooks', async () => {
+    const launcher = '/home/user/.local/share/khala/bin/khala';
+    const pinned = codexMcpBlock(launcher, '/home/user/.local/state');
+    const older = codexMcpBlock(launcher);
+    const wrongRoot = codexMcpBlock(launcher, '/elsewhere/state');
+    const ready = await localHarnessCapabilities(() => environment({ version: '0.160.0', config: TRUST + pinned }))(binding('codex'));
+    expect(ready).toMatchObject({ support: 'tested', modes: { sync: { status: 'proven' } } });
+    for (const config of [TRUST, TRUST + older, TRUST + wrongRoot, TRUST + pinned + older]) {
+      const claim = await localHarnessCapabilities(() => environment({ version: '0.160.0', config }))(binding('codex'));
+      expect(claim).toMatchObject({ support: 'unsupported', modes: { sync: { status: 'unknown' } } });
+    }
   });
 
   it('claims nothing for untrusted hooks, an unproven version, a missing Codex, or an unknown harness', async () => {

@@ -22,7 +22,7 @@ import type {
 } from '../types.js';
 
 /** Certified absent-home fallback for native MCP listing and enabled hooks; never a hosted-request admission gate. */
-export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3']);
+export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3', '0.160.0']);
 export const CODEX_MCP_ENTRY = 'mcp_servers.khala';
 export const CODEX_HOOKS_ENTRY = 'hooks.khala';
 
@@ -83,10 +83,11 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
 /** The exact bytes Khala owns in `config.toml`. JSON string escapes are valid TOML basic strings. */
-export function codexMcpBlock(launcher: string): string {
+export function codexMcpBlock(launcher: string, stateHome?: string): string {
   return '# Khala MCP server, managed by `npx @aiur/khala setup`; `npx @aiur/khala remove` deletes this table.\n'
     + '[mcp_servers.khala]\n'
     + `command = ${JSON.stringify(launcher)}\n`
+    + (stateHome === undefined ? '' : `env = { XDG_STATE_HOME = ${JSON.stringify(stateHome)} }\n`)
     + 'args = ["mcp-serve"]\n';
 }
 
@@ -190,6 +191,8 @@ type Component = Readonly<{ component: SetupComponent; state: ComponentState }>;
 /** Everything `plan` needs, kept off the observation so foreign bytes can never reach a result. */
 type CodexInspection = Readonly<{
   paths: CodexPaths;
+  mcpBlock: string;
+  alternateMcpBlock: string;
   skill: Target;
   hooks: Target;
   config: Target;
@@ -254,7 +257,7 @@ function hooksState(target: Target, config: Target, launcher: string, diagnostic
   return review.state === 'awaiting_hook_review' ? 'awaiting_hook_review' : 'drifted';
 }
 
-function mcpState(target: Target, block: string, diagnostics: SetupDiagnostic[]): ComponentState {
+function mcpState(target: Target, block: string, alternateBlock: string, diagnostics: SetupDiagnostic[]): ComponentState {
   const content = text(target.bytes);
   if (target.bytes !== null && content === null) {
     diagnostics.push(diagnostic('codex_config_unreadable', `${target.path} is not UTF-8 text.`, 'mcp_entry'));
@@ -269,8 +272,10 @@ function mcpState(target: Target, block: string, diagnostics: SetupDiagnostic[])
   }
   // Only Khala's exact table counts: a missing, edited, or duplicated entry is drift, never ready.
   const rest = content === null ? null : withoutMcpBlock(content, block);
-  if (rest === null || definesKhalaMcpServer(rest)) return 'drifted';
-  return 'ready';
+  if (rest !== null && !definesKhalaMcpServer(rest)) return 'ready';
+  // Either exact Khala-owned table can migrate in place; edits and duplicates cannot.
+  const alternateRest = content === null ? null : withoutMcpBlock(content, alternateBlock);
+  return alternateRest !== null && !definesKhalaMcpServer(alternateRest) ? 'absent' : 'drifted';
 }
 
 function diagnostic(code: string, message: string, component?: SetupComponent): SetupDiagnostic {
@@ -304,7 +309,7 @@ const NOTHING: CodexExecutablePlan = { operations: [], contents: new Map(), entr
 const BLOCKED: readonly ComponentState[] = ['drifted', 'conflict'];
 
 function planSetup(inspection: CodexInspection, assets: CodexSetupAssets): CodexExecutablePlan {
-  const { paths, skill, hooks, config } = inspection;
+  const { paths, skill, hooks, config, mcpBlock, alternateMcpBlock } = inspection;
   const operations: SetupOperation[] = [];
   const contents = new Map<Sha256Digest, Uint8Array>();
   const state = (component: SetupComponent) => inspection.components.find(item => item.component === component)!.state;
@@ -328,16 +333,18 @@ function planSetup(inspection: CodexInspection, assets: CodexSetupAssets): Codex
   }
   if (state('mcp_entry') === 'absent') {
     const current = text(config.bytes) ?? '';
+    const alternateRest = config.managed === undefined ? null : withoutMcpBlock(current, alternateMcpBlock);
+    const baseline = alternateRest === null ? current : alternateRest;
     operations.push({
       id: 'codex:mcp_entry:set', harness: 'codex', component: 'mcp_entry', path: config.path, type: 'config_entry_set',
-      entry: CODEX_MCP_ENTRY, preimage: config.hash, postimage: put(encoder.encode(withMcpBlock(current, codexMcpBlock(paths.launcher)))),
+      entry: CODEX_MCP_ENTRY, preimage: config.hash, postimage: put(encoder.encode(withMcpBlock(baseline, mcpBlock))),
     });
   }
   return { operations, contents, entryOwnedPaths: [config.path] };
 }
 
 function planRemove(inspection: CodexInspection): CodexExecutablePlan {
-  const { paths, skill, hooks, config } = inspection;
+  const { skill, hooks, config, mcpBlock, alternateMcpBlock } = inspection;
   const operations: SetupOperation[] = [];
   const contents = new Map<Sha256Digest, Uint8Array>();
   // Whole-file paths go back to their pre-Khala baseline; the executor proves the bytes.
@@ -351,7 +358,9 @@ function planRemove(inspection: CodexInspection): CodexExecutablePlan {
   }
   // `config.toml` loses exactly Khala's table; every other byte, trust records included, stays.
   const entry = config.managed;
-  const rest = entry === undefined || config.hash === null ? null : withoutMcpBlock(text(config.bytes) ?? '', codexMcpBlock(paths.launcher));
+  const content = text(config.bytes) ?? '';
+  const rest = entry === undefined || config.hash === null ? null
+    : withoutMcpBlock(content, mcpBlock) ?? withoutMcpBlock(content, alternateMcpBlock);
   if (entry !== undefined && config.hash !== null && rest !== null) {
     const base = { id: 'codex:mcp_entry:remove', harness: 'codex', component: 'mcp_entry', path: config.path } as const;
     if (rest.length === 0 && entry.baseline.hash === null) {
@@ -423,11 +432,16 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
         readTarget(environment, paths.hooks, manifest),
         readTarget(environment, paths.config, manifest),
       ]);
+      const legacyMcpBlock = codexMcpBlock(paths.launcher);
+      const pinnedMcpBlock = codexMcpBlock(paths.launcher, environment.xdgStateHome);
+      // 0.160.0 does not reliably inherit the operator's private state root in its MCP child.
+      const mcpBlock = detection.version === '0.160.0' ? pinnedMcpBlock : legacyMcpBlock;
+      const alternateMcpBlock = detection.version === '0.160.0' ? legacyMcpBlock : pinnedMcpBlock;
       const skillDirectory = await environment.probe.listDirectory(path.dirname(paths.skill));
       const components: Component[] = [
         { component: 'skill', state: skillState(skill, skillDirectory, desiredSkill) },
         { component: 'hooks', state: hooksState(hooks, config, paths.launcher, diagnostics) },
-        { component: 'mcp_entry', state: mcpState(config, codexMcpBlock(paths.launcher), diagnostics) },
+        { component: 'mcp_entry', state: mcpState(config, mcpBlock, alternateMcpBlock, diagnostics) },
       ];
       if (detection.supported && detection.executable !== null) {
         let nativeHooks = false;
@@ -460,7 +474,7 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
         route: detection.supported ? 'unknown' : 'unavailable',
         diagnostics,
       };
-      inspections.set(observation, { paths, skill, hooks, config, skillDirectory, components });
+      inspections.set(observation, { paths, mcpBlock, alternateMcpBlock, skill, hooks, config, skillDirectory, components });
       return observation;
     },
 

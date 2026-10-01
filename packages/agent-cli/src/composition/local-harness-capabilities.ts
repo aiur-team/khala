@@ -4,7 +4,7 @@ import { CODEX_NATIVE_SYNC_VERSIONS, interactiveCodexCapabilities } from '@khala
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { codexHookReviewState } from '../codex/hooks-config.js';
 import { parseClaudeVersion } from '../setup/adapters/claude.js';
-import { codexPaths, parseCodexVersion } from '../setup/adapters/codex.js';
+import { codexMcpBlock, codexPaths, definesKhalaMcpServer, parseCodexVersion, withoutMcpBlock } from '../setup/adapters/codex.js';
 import type { SetupEnvironment } from '../setup/types.js';
 import type { LocalHarnessCapabilities, LocalHarnessObservation } from './internal-listening-mode.js';
 
@@ -41,13 +41,19 @@ async function inspectCodex(environment: SetupEnvironment): Promise<Inspection> 
   if (version === null) return NOTHING;
   const paths = codexPaths(environment);
   const hooks = await readText(environment, paths.hooks);
+  const configToml = await readText(environment, paths.config);
   let hooksJson: unknown = null;
   try { hooksJson = hooks === null ? null : JSON.parse(hooks) as unknown; } catch { hooksJson = null; }
   const review = codexHookReviewState({
-    hooksPath: paths.hooks, hooksJson, configToml: await readText(environment, paths.config), launcher: paths.launcher,
+    hooksPath: paths.hooks, hooksJson, configToml, launcher: paths.launcher,
   });
+  const rest = version === '0.160.0' && configToml !== null
+    ? withoutMcpBlock(configToml, codexMcpBlock(paths.launcher, environment.xdgStateHome)) : null;
+  const deliveryReview = version === '0.160.0' && (rest === null || definesKhalaMcpServer(rest))
+    ? { state: 'unknown' as const, reason: 'Codex MCP child lacks the exact Khala state-root configuration.' }
+    : review;
   return {
-    capabilities: interactiveCodexCapabilities(version, LOCAL_DELIVERY_LIMITS, review),
+    capabilities: interactiveCodexCapabilities(version, LOCAL_DELIVERY_LIMITS, deliveryReview),
     observation: CODEX_NATIVE_SYNC_VERSIONS.includes(version)
       ? { version, hookReview: review.state, platform: process.platform, arch: process.arch }
       : { version, hookReview: review.state },

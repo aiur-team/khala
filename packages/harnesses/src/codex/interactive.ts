@@ -11,23 +11,26 @@ export const CODEX_INTERACTIVE_ADAPTER_VERSION = 'native-hooks-1';
 export const CODEX_INTERACTIVE_EVIDENCE_REF = 'docs/product/internal-mode/interactive-codex.md#mode-matrix';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REF = 'docs/evidence/codex-0157-native-cli.md#sync-hook';
 export const CODEX_INTERACTIVE_0159_EVIDENCE_REF = 'docs/evidence/codex-0159-3-native-sync.md';
+export const CODEX_INTERACTIVE_0160_EVIDENCE_REF = 'docs/evidence/codex-0160-native-boundary.md';
 /** Changes whenever the proof is re-run, so consent derived from an older proof lapses. */
 export const CODEX_INTERACTIVE_EVIDENCE_REVISION = 'interactive-codex-2026-09-25';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REVISION = 'interactive-codex-0157-2026-09-27';
 export const CODEX_INTERACTIVE_0159_EVIDENCE_REVISION = 'interactive-codex-0159-2026-10-01';
+export const CODEX_INTERACTIVE_0160_EVIDENCE_REVISION = 'interactive-codex-0160-2026-10-01';
 
 /** Exact versions whose TUI passed every mode cell under normal trust settings. */
 export const CODEX_INTERACTIVE_VERSIONS: readonly string[] = ['0.154.0', '0.156.1'];
 /** The newer Sol-capable CLI is promoted only for a separately observed sync hook. */
 export const CODEX_NATIVE_SYNC_VERSION = '0.157.1';
-export const CODEX_NATIVE_SYNC_VERSIONS: readonly string[] = [CODEX_NATIVE_SYNC_VERSION, '0.159.3'];
+export const CODEX_NATIVE_SYNC_VERSIONS: readonly string[] = [CODEX_NATIVE_SYNC_VERSION, '0.159.3', '0.160.0'];
 
-const syncEvidenceRef = (version: string) => version === '0.159.3'
-  ? CODEX_INTERACTIVE_0159_EVIDENCE_REF : CODEX_INTERACTIVE_0157_EVIDENCE_REF;
+const syncEvidenceRef = (version: string) => version === '0.160.0' ? CODEX_INTERACTIVE_0160_EVIDENCE_REF
+  : version === '0.159.3' ? CODEX_INTERACTIVE_0159_EVIDENCE_REF : CODEX_INTERACTIVE_0157_EVIDENCE_REF;
 
 /** A new native version must receive a new consent revision, without invalidating old sessions. */
 export function codexInteractiveEvidenceRevision(version: string): string {
-  return version === '0.159.3' ? CODEX_INTERACTIVE_0159_EVIDENCE_REVISION
+  return version === '0.160.0' ? CODEX_INTERACTIVE_0160_EVIDENCE_REVISION
+    : version === '0.159.3' ? CODEX_INTERACTIVE_0159_EVIDENCE_REVISION
     : version === '0.157.1' ? CODEX_INTERACTIVE_0157_EVIDENCE_REVISION : CODEX_INTERACTIVE_EVIDENCE_REVISION;
 }
 

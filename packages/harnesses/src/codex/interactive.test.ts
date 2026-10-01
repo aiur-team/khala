@@ -149,10 +149,25 @@ describe('interactive Codex capabilities', () => {
     expect(interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
       undefined, 'available', { platform: 'linux', arch: 'arm64' }).support).toBe('unsupported');
     expect(interactiveCodexCapabilities('0.159.2', limits, { state: 'trusted' }).support).toBe('unsupported');
+  });
+
+  it('limits exact 0.160.0 to trusted Linux x64 Sync with a retained hook receipt', () => {
+    const receipt = { proven: true, route: 'hook', version: '0.160.0' } as const;
+    const proven = interactiveCodexCapabilities('0.160.0', limits, { state: 'trusted' }, receipt,
+      'available', { platform: 'linux', arch: 'x64' });
+    expect(proven).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call',
+      immediateNotification: 'native_cli_queue', evidenceRef: 'docs/evidence/codex-0160-native-boundary.md' });
+    expect(Object.values(proven.modes).map(mode => mode.status)).toEqual(['unknown', 'proven', 'unknown']);
+    expect(interactiveCodexCapabilities('0.160.0', limits, { state: 'unknown', reason: 'untrusted' },
+      receipt, 'available').support).toBe('unsupported');
+    expect(interactiveCodexCapabilities('0.160.0', limits, { state: 'trusted' }, receipt,
+      'available', { platform: 'linux', arch: 'arm64' }).support).toBe('unsupported');
     expect(interactiveCodexCapabilities('0.160.0', limits, { state: 'trusted' },
-      { proven: true, route: 'hook', version: '0.160.0' }, 'available')).toMatchObject({
-      support: 'unsupported', acknowledgement: 'unknown', existingSession: 'unknown',
-    });
+      { proven: true, route: 'hook', version: '0.159.3' }, 'available').acknowledgement).toBe('unknown');
+    expect(interactiveCodexCapabilities('0.160.0', limits, { state: 'trusted' },
+      undefined, 'available').acknowledgement).toBe('unknown');
+    expect(interactiveCodexCapabilities('0.160.1', limits, { state: 'trusted' }, receipt,
+      'available').support).toBe('unsupported');
   });
 
   it('claims the native queue notification only while the idle wake works', () => {
