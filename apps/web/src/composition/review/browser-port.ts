@@ -60,8 +60,12 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   let view: ReviewView = loadingView(bindingId, viewerOwnerId);
   let items: readonly TimelineItem[] = [];
   let roomGeneration: number | null = null;
+  let roomMembership: ChannelSnapshot['room']['membership'] | null = null;
+  let roomIdentity: string | null = null;
   let request = 0;
   let inFlight: AbortController | null = null;
+  const refreshMs = options.refreshMs ?? 5_000;
+  let lastRefreshAt = -Infinity;
   let disposed = false;
 
   function publish(next: ReviewView): void {
@@ -72,6 +76,7 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
 
   async function refresh(): Promise<void> {
     if (disposed || roomGeneration === null) return;
+    lastRefreshAt = Date.now();
     // Every answer is a complete snapshot; only the newest request may publish one.
     const token = ++request;
     const generation = roomGeneration;
@@ -110,17 +115,28 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   function onRoom(snapshot: ChannelSnapshot): void {
     if (disposed || snapshot.room.roomId !== roomId) return;
     if (roomGeneration !== null && snapshot.generation < roomGeneration) return;
-    if (snapshot.generation !== roomGeneration) {
-      // A reconnect replaces the whole queue; nothing from the old generation survives.
+    // Snapshot revisions can advance without changing any review input. Repeated
+    // equivalent snapshots must not abort the only live owner preview request.
+    const identity = JSON.stringify([snapshot.generation, snapshot.room.membership,
+      candidateRefs(snapshot.items, limits.maxSelectionEvents)]);
+    items = snapshot.items;
+    if (identity === roomIdentity) {
+      // Recheck authority after a settled request, without cancelling a slow
+      // preview or issuing one request for every equivalent room notification.
+      if (inFlight === null && Date.now() - lastRefreshAt >= refreshMs) void refresh();
+      return;
+    }
+    roomIdentity = identity;
+    if (snapshot.generation !== roomGeneration || snapshot.room.membership !== roomMembership) {
+      // A reconnect or trust change replaces the queue while the new preview loads.
       roomGeneration = snapshot.generation;
+      roomMembership = snapshot.room.membership;
       publish({ ...loadingView(bindingId, viewerOwnerId), receipts: view.receipts });
     }
-    items = snapshot.items;
     void refresh();
   }
 
   const stopRoom = room.observe(roomId, onRoom);
-  const refreshMs = options.refreshMs ?? 5_000;
   const timer = refreshMs > 0 ? setInterval(() => {
     // A slow answer is never cancelled by the next tick; only new room data supersedes it.
     if (listeners.size > 0 && inFlight === null) void refresh();
