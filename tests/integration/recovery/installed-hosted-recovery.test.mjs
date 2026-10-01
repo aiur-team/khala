@@ -13,6 +13,7 @@ import { createLocalBlobStores } from '../../../apps/control/src/runtime/local-b
 import { createGateway } from '../../../apps/control/src/runtime/handler.ts';
 import { registerHostedProductionRoutes } from '../../../apps/control/src/composition/hosted-production.ts';
 import { ownerMatrixUserId } from '../../../apps/control/src/composition/human/matrix-identity.ts';
+import { sameSessionBinding } from '../../../packages/contracts/src/delivery/binding.ts';
 import { agentMatrixIdentity } from '../../../apps/control/src/composition/agent/matrix-admission.ts';
 import { thumbprint } from '../../../apps/control/src/agent-bootstrap/proof.ts';
 import { createDigests } from '../../../apps/control/src/invitations/internal.ts';
@@ -84,7 +85,9 @@ test('packaged CLI files an owner-visible access request through fixture HTTPS a
       requestedDeviceId = (await request.clone().json()).deviceId;
     }
     const response = gateway ? await gateway(request) : new Response(null, { status: 503 });
-    if (pathname === '/api/agent/bootstrap/redeem' && response.status === 200) {
+    if (pathname === '/api/agent/bootstrap/redeem' && response.status === 200 && committed === undefined) {
+      // Snapshot the first committed response; a later resume must not replace
+      // the evidence that the proxy dropped from the first client process.
       committed = await response.clone().json();
     }
     return response;
@@ -216,6 +219,7 @@ test('packaged CLI files an owner-visible access request through fixture HTTPS a
     assert.equal(transport.receipt().droppedRedeemResponses, 1);
     assert.equal(agentDeviceLogins, 1);
     assert.equal(typeof committed?.binding?.bindingId, 'string');
+    assert.equal(typeof committed?.matrix_session?.accessToken, 'string');
     assert.equal(files(client.stateDirectory).filter(item => item.endsWith('/current-binding.json')).length, 0);
     const recovered = await client.call([statusMessage(4)]);
     assert.equal(new Set([result.pid, retry.pid, lost.pid, recovered.pid]).size, 4);
@@ -225,7 +229,14 @@ test('packaged CLI files an owner-visible access request through fixture HTTPS a
     assert.equal(admissionFiles.length, 1,
       `recovered outcome: ${recovered.replies[0]?.result?.structuredContent?.outcome}`);
     const localAdmission = JSON.parse(readFileSync(admissionFiles[0], 'utf8'));
-    assert.ok(localAdmission.binding.bindingId === committed.binding.bindingId, 'local admission binding mismatch');
+    assert.ok(sameSessionBinding(localAdmission.binding, committed.binding), 'original binding tuple mismatch');
+    const matrixFields = ['accessToken', 'baseUrl', 'deviceId', 'ownerParticipantId', 'ownerUserId', 'roomId', 'userId'];
+    assert.ok(localAdmission.matrixSession && typeof localAdmission.matrixSession === 'object'
+      && Object.keys(localAdmission.matrixSession).sort().join(',') === matrixFields.slice().sort().join(',')
+      && matrixFields.every(field => typeof committed.matrix_session[field] === 'string'
+        && committed.matrix_session[field].length > 0
+        && localAdmission.matrixSession[field] === committed.matrix_session[field]),
+    'original Matrix session mismatch');
     assert.equal(grants.size, 1);
     assert.equal(bindings.size, 1);
     assert.ok(bindings.has(committed.binding.bindingId), 'durable binding mismatch');
