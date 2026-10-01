@@ -9,6 +9,7 @@ import type { HumanRouteContext } from '../human/application';
 import { registerHumanCapabilities } from '../human/capabilities';
 import { type ControlsClient, createBrowserAgentControlsPort } from './browser-port';
 import { registerControls } from './register';
+import { createOwnerMailboxControlsClient } from './owner-mailbox-client';
 
 const bindingId = 'binding_b' as BindingId;
 const roomId = 'room_controls' as RoomId;
@@ -112,6 +113,44 @@ function command(commandId: string, overrides: Partial<PolicySetCommand> = {}): 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('browser agent controls port', () => {
+  it('recovers an offline owner status after the same connector completes it', async () => {
+    const storageValues = new Map<string, string>();
+    const storage = { getItem: (key: string) => storageValues.get(key) ?? null,
+      setItem: (key: string, value: string) => { storageValues.set(key, value); },
+      removeItem: (key: string) => { storageValues.delete(key); } };
+    let operationId = '';
+    let completed = false;
+    const submissions: string[] = [];
+    let submissionsAtCompletion = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+        submissions.push(operationId);
+      } else {
+        expect(new URL(String(url)).searchParams.get('operation_id')).toBe(operationId);
+        if (completed && submissionsAtCompletion === 0) submissionsAtCompletion = submissions.length;
+      }
+      return new Response(JSON.stringify({ v: 1, operationId,
+        outcome: completed ? { ok: true, status: statusBody() } : null }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const client = createOwnerMailboxControlsClient({ origin: 'https://khala.example',
+      csrf: async () => 'csrf', fetch: fetcher, waitMs: 0, storage });
+    const port = createBrowserAgentControlsPort({ client, bindingId, refreshMs: 5 });
+    const seen: number[] = [];
+    const dispose = port.subscribe(bindingId, snapshot => {
+      if (snapshot.policy.effectiveVersion !== null) seen.push(snapshot.policy.effectiveVersion);
+    });
+    await expect(port.readSnapshot(bindingId)).rejects.toMatchObject({ code: 'waiting_for_agent' });
+    expect(submissions).toHaveLength(1);
+    completed = true;
+    // The observer's next interval reconciles the same ID.
+    await vi.waitFor(() => expect(seen).toContain(3));
+    expect(submissionsAtCompletion).toBe(1);
+    expect([...storageValues.keys()].filter(key => key.includes(':pending:'))).toHaveLength(0);
+    dispose();
+    port.dispose();
+  });
   it('preserves policy controls while the connector listening handler starts', async () => {
     const script = scripted();
     script.onStatus(() => ({ kind: 'ok', body: statusBody({ extra: {

@@ -317,7 +317,8 @@ export function createAgentControlsController(
         // A new authoritative snapshot is the dismissal path for a request-failed
         // notice (model.ts: "dismiss-by-refresh") — the human asked to see the
         // current truth, so a stale failure notice does not linger past it.
-        : generationChanged || view.notice?.kind === 'request-failed' ? null : view.notice,
+        : generationChanged || view.notice?.kind === 'request-failed' || view.notice?.kind === 'snapshot-error'
+          ? null : view.notice,
       receiptDetail: generationChanged
         ? null
         : snapshot.latestReceipt ? receiptLabel(snapshot.latestReceipt) : view.receiptDetail,
@@ -521,9 +522,13 @@ export function createAgentControlsController(
   function readSnapshot(): void {
     port.readSnapshot(config.bindingId).then(snapshot => {
       if (!disposed) applySnapshot(snapshot);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (disposed) return;
-      view = { ...view, notice: { kind: 'snapshot-error', message: 'Could not load the current policy. Refresh to try again.' } };
+      const waiting = error instanceof Error && 'code' in error && error.code === 'waiting_for_agent';
+      view = { ...view, controlsAvailable: waiting ? false : view.controlsAvailable,
+        notice: { kind: 'snapshot-error', message: waiting
+          ? 'Waiting for the agent to reconnect or start. Controls will update automatically.'
+          : 'Could not load the current policy. Refresh to try again.' } };
       notify();
     });
   }

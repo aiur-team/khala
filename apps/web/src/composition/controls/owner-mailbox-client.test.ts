@@ -59,7 +59,7 @@ describe('owner mailbox controls client', () => {
       operationId: modeCommand.commandId, body: modeCommand });
   });
   beforeEach(() => { if (typeof globalThis.sessionStorage !== 'undefined') globalThis.sessionStorage.clear(); });
-  it('keeps the same status ID and backoff across a tab reload', async () => {
+  it('keeps the same status ID across a tab reload', async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const values = new Map<string, string>();
@@ -68,6 +68,7 @@ describe('owner mailbox controls client', () => {
       removeItem: (key: string) => { values.delete(key); } };
     const submitted: string[] = [];
     let reads = 0;
+    let complete = false;
     const fetcher: typeof fetch = async (url, init) => {
       if (String(url).endsWith('/submit')) {
         const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
@@ -76,22 +77,23 @@ describe('owner mailbox controls client', () => {
       }
       reads += 1;
       return json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'),
-        outcome: { ok: true, status: {} } });
+        outcome: complete ? { ok: true, status: {} } : null });
     };
     const create = () => createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
       fetch: fetcher, waitMs: 0, storage });
     const signal = new AbortController().signal;
-    expect(await create().status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
-    expect(await create().status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await create().status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
+    expect(await create().status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
     expect(submitted).toHaveLength(1);
-    expect(reads).toBe(0);
+    expect(reads).toBe(1);
+    complete = true;
     now += 15_000;
     expect(await create().status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
     expect(submitted).toHaveLength(1);
-    expect(reads).toBe(1);
+    expect(reads).toBe(2);
     clock.mockRestore();
   });
-  it('bounds result requests during and after the first offline wait', async () => {
+  it('rechecks only the same result while the agent is offline', async () => {
     let submissions = 0;
     let results = 0;
     const fetcher: typeof fetch = async (url, init) => {
@@ -104,14 +106,14 @@ describe('owner mailbox controls client', () => {
       return json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'), outcome: null });
     };
     const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
-      fetch: fetcher, waitMs: 120 });
+      fetch: fetcher, waitMs: 0 });
     const signal = new AbortController().signal;
-    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
     for (let i = 0; i < 10; i++) {
-      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
     }
     expect(submissions).toBe(1);
-    expect(results).toBe(1);
+    expect(results).toBe(10);
   });
   it('uses in-memory retry state when browser storage is blocked', async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
@@ -120,14 +122,16 @@ describe('owner mailbox controls client', () => {
     try {
       let submissions = 0;
       const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value', waitMs: 0,
-        fetch: async (_url, init) => {
-          submissions += 1;
-          return json(200, { v: 1, operationId: (JSON.parse(String(init?.body)) as { operationId: string }).operationId,
+        fetch: async (url, init) => {
+          if (init?.method !== 'GET') submissions += 1;
+          return json(200, { v: 1, operationId: init?.method === 'GET'
+            ? new URL(String(url)).searchParams.get('operation_id')
+            : (JSON.parse(String(init?.body)) as { operationId: string }).operationId,
             outcome: null });
         } });
       const signal = new AbortController().signal;
-      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
-      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
       expect(submissions).toBe(1);
     } finally {
       if (original) Object.defineProperty(globalThis, 'sessionStorage', original);
@@ -153,10 +157,10 @@ describe('owner mailbox controls client', () => {
     const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
       fetch: fetcher, waitMs: 0 });
     const signal = new AbortController().signal;
-    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
-    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
     expect(submitted).toHaveLength(1);
-    expect(reads).toBe(0);
+    expect(reads).toBe(1);
     complete = true;
     now += 15_000;
     expect(await client.status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
@@ -164,6 +168,23 @@ describe('owner mailbox controls client', () => {
     expect(submitted).toHaveLength(2);
     expect(submitted[1]).not.toBe(submitted[0]);
     clock.mockRestore();
+  });
+
+  it('keeps a store failure distinct from an earlier pending result', async () => {
+    let failed = false;
+    const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value', waitMs: 0,
+      fetch: async (url, init) => {
+        if (init?.method === 'GET') return failed
+          ? json(503, { code: 'unavailable' })
+          : json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'), outcome: null });
+        return json(200, { v: 1,
+          operationId: (JSON.parse(String(init?.body)) as { operationId: string }).operationId, outcome: null });
+      } });
+    const signal = new AbortController().signal;
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'waiting_for_agent' });
+    failed = true;
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
   });
 
   it('uses the protected owner route and unwraps exact status and policy outcomes', async () => {

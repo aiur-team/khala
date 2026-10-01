@@ -588,7 +588,9 @@ test('late participant evidence cannot cross an account switch or leave', { time
   await withRoomPage('review-room.html?identity-timing', async page => {
     await page.locator('.channel-roster > summary').waitFor();
     await page.evaluate(() => window.__switchReviewAccount());
-    await page.getByText('Other verified agent').waitFor();
+    await page.locator('.channel-participants__chip').getByText('Other verified agent').waitFor();
+    assert.equal(await page.locator('.conversation-thread').getByText('Other verified agent').count(), 1,
+      'the new participant name may also appear in the conversation');
     await page.waitForTimeout(300);
     assert.equal(await page.getByText('Verified agent', { exact: true }).count(), 0);
     await page.evaluate(() => window.__leaveRoom());
