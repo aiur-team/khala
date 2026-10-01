@@ -52,6 +52,11 @@ export class ChannelAccessService {
       && (ACCESS_REFUSAL_CODES as readonly string[]).includes(result.code)) {
       return failure(result.code as AccessRefusalCode, operationId);
     }
+    if (result.kind === 'proof_key_candidate' && typeof result.candidateId === 'string'
+      && /^[A-Za-z0-9_-]{43}$/u.test(result.candidateId)) {
+      return { ok: true, v: 1, operationId, outcome: 'pending_owner', stage: 'proof_key_candidate',
+        candidateId: result.candidateId, next: 'approve_proof_key' };
+    }
     if (result.kind !== 'status') return failure('unavailable', operationId);
     // Anything beyond `v`, `operationId`, and `outcome` fails the closed decoder
     // and is never forwarded; a status for a different operation is unusable.

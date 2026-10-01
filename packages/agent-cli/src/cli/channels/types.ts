@@ -64,6 +64,7 @@ export type AccessStatusInput = Readonly<{ operationId: string; origin: string |
 // `status` stays `unknown` so the access service decodes it with the closed contract decoder.
 export type ChannelAccessResult =
   | Readonly<{ kind: 'status'; status: unknown }>
+  | Readonly<{ kind: 'proof_key_candidate'; candidateId: string }>
   | Readonly<{ kind: 'handoff'; approvalUrl: string }>
   | Readonly<{ kind: 'refused'; code: AccessRefusalCode }>
   | Readonly<{ kind: 'unavailable' }>;
@@ -78,8 +79,9 @@ export type AccessErrorCode = AccessRefusalCode | 'unavailable';
  * What the caller should do next. `reuse_operation_id` means the call may be
  * repeated only under the same operation ID; a new ID could create a second request.
  */
-export type AccessNextAction = 'repair_connector' | 'reuse_operation_id' | 'copy_your_link';
+export type AccessNextAction = 'repair_connector' | 'reuse_operation_id' | 'copy_your_link' | 'approve_proof_key';
 /** The exact object printed by the access commands and returned by the access MCP tools. */
 export type AccessOutput =
   | Readonly<{ ok: true; v: 1; operationId: string; outcome: AccessRequestOutcome; next: AccessNextAction | null }>
+  | Readonly<{ ok: true; v: 1; operationId: string; outcome: 'pending_owner'; stage: 'proof_key_candidate'; candidateId: string; next: 'approve_proof_key' }>
   | Readonly<{ ok: false; v: 1; error: AccessErrorCode; operationId: string; next: AccessNextAction | null }>;

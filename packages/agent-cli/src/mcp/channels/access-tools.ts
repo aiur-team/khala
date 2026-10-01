@@ -23,7 +23,7 @@ export const requestChannelAccessTool: McpTool = {
   name: REQUEST_CHANNEL_ACCESS_TOOL_NAME,
   definition: () => ({
     name: REQUEST_CHANNEL_ACCESS_TOOL_NAME,
-    description: 'Ask the channel owner for access to a Khala channel, named by a listingRef from khala_list_channels or a channel URL. Returns promptly, usually pending_owner: the owner decides in their own UI and nothing here grants access. Retries reuse the operationId; if next is reuse_operation_id or repair_connector, follow it instead of requesting again.',
+    description: 'Ask the channel owner for access to a Khala channel, named by a listingRef from khala_list_channels or a channel URL. A pending_owner result with stage proof_key_candidate means the owner must first review the candidate at /api/human/channel-discovery/authority/approve?candidate=<candidateId> while signed in; no channel request has been filed yet. A pending_owner result without that stage is a filed request in the owner channel-access inbox. Reuse the operationId after proof-key approval. Never publish the candidate ID or approval link. If next is reuse_operation_id or repair_connector, follow it instead of requesting again.',
     inputSchema: {
       type: 'object',
       properties: {

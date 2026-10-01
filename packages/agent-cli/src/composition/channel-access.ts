@@ -169,8 +169,7 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
           candidate = await options.candidate({ target: input.target.channelUrl,
             operationId: input.operationId, session: options.session }, signal);
         } catch { return unavailable('candidate'); }
-        if (candidate.kind === 'pending_owner') return { kind: 'status', status: { v: 1,
-          operationId: input.operationId, outcome: 'pending_owner' } };
+        if (candidate.kind === 'pending_owner') return { kind: 'proof_key_candidate', candidateId: candidate.candidateId };
         if (candidate.kind === 'rejected') return refused('discovery_denied');
         if (candidate.kind !== 'approved') return unavailable('candidate');
       }
