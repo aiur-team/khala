@@ -5,7 +5,7 @@ import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { readBounded } from '@khala/connector/bootstrap/discovery';
 
 export type ResolvedAgentParticipant = Readonly<{ participantId: ParticipantId; ownerId: OwnerId;
-  kind: 'human' | 'agent'; initialName: string }>;
+  kind: 'human' | 'agent'; initialName: string; deviceId?: string; fingerprint?: string }>;
 
 const PATH = '/api/agent/messaging/participants';
 
@@ -50,9 +50,14 @@ export function createAgentParticipantLookup(input: Readonly<{
           && !targetParticipantIds.includes(item.participantId as string)
         || participants.has(item.matrixUserId) || typeof item.participantId !== 'string'
         || typeof item.ownerId !== 'string' || typeof item.displayName !== 'string'
-        || item.displayName.length > 256 || item.kind !== undefined && item.kind !== 'human' && item.kind !== 'agent') return null;
+        || item.displayName.length > 256 || item.kind !== undefined && item.kind !== 'human' && item.kind !== 'agent'
+        || (item.deviceId !== undefined || item.fingerprint !== undefined)
+          && (item.kind !== 'agent' || typeof item.deviceId !== 'string' || typeof item.fingerprint !== 'string'
+            || !/^[A-Za-z0-9._=-]{1,255}$/u.test(item.deviceId)
+            || !/^[A-Za-z0-9+/]{43}=?$/u.test(item.fingerprint))) return null;
       participants.set(item.matrixUserId, { participantId: item.participantId as ParticipantId,
-        ownerId: item.ownerId as OwnerId, kind: item.kind === 'agent' ? 'agent' : 'human', initialName: item.displayName });
+        ownerId: item.ownerId as OwnerId, kind: item.kind === 'agent' ? 'agent' : 'human', initialName: item.displayName,
+        ...(item.deviceId === undefined ? {} : { deviceId: item.deviceId as string, fingerprint: item.fingerprint as string }) });
     }
     return userIds.every(id => participants.has(id))
       && targetParticipantIds.every(id => [...participants.values()].some(item => item.participantId === id))

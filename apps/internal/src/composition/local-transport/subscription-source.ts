@@ -28,6 +28,8 @@ function sourceEvent(event: StoredEvent): SourceEvent {
   return {
     kind: 'decrypted',
     ref,
+    // The local store's participant ID is its authenticated sender identity.
+    verifiedSenderUserId: event.authorParticipantId,
     verifiedDeviceId: event.authorDeviceId,
     canonicalPayload: new Uint8Array(event.canonicalPayload),
   };
@@ -94,7 +96,8 @@ export function createLocalSubscriptionSource(input: LocalSubscriptionSourceInpu
           deviceId: request.deviceId,
         });
         if (result.kind === 'unavailable') return 'unavailable';
-        return result.participantId as DeliveryParticipantId | null;
+        return result.participantId === request.senderUserId
+          ? result.participantId as DeliveryParticipantId : null;
       } catch {
         return 'unavailable';
       }

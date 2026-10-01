@@ -476,7 +476,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           if (roomId !== session.roomId || closed || remoteDenied || deliveryStopped
             || await activeMailbox.authorize() !== 'active' || await activeTrust.ensure() !== 'active'
             || await substrate.source.authorize() !== 'ok') return null;
-          return [session.ownerParticipantId as never, next.agentParticipantId];
+          return substrate.reviewMembers();
         } },
       });
       openStage = 'review_resume';
@@ -517,7 +517,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           if (roomId !== session.roomId || deliveryStopped || remoteDenied
             || await activeMailbox.authorize() !== 'active'
             || await substrate.source.authorize() !== 'ok') return null;
-          return [session.ownerParticipantId as never, next.agentParticipantId];
+          return substrate.reviewMembers();
         } },
       });
       openStage = 'review_resume';

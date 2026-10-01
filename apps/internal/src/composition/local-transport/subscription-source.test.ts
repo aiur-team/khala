@@ -174,6 +174,7 @@ describe('local subscription source replay', () => {
           authorDeviceId: alice.deviceIds[0],
           contentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         },
+        verifiedSenderUserId: alice.participantId,
         verifiedDeviceId: alice.deviceIds[0],
         canonicalPayload: encodeMessageContent(text('hello')),
       }],
@@ -235,19 +236,27 @@ describe('local subscription source replay', () => {
     const store = fresh();
     const { provenance, source } = transport(store);
     expect(send(store, 1, alice, 'before leaving')).toMatchObject({ kind: 'stored' });
-    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: alice.participantId, deviceId: alice.deviceIds[0]! }))
       .toBe(alice.participantId);
-    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: bob.deviceIds[0]! }))
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: bob.participantId, deviceId: bob.deviceIds[0]! }))
       .toBe(bob.participantId);
-    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: 'unknown' as DeviceId }))
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: alice.participantId, deviceId: bob.deviceIds[0]! }))
+      .toBeNull();
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: alice.participantId, deviceId: 'unknown' as DeviceId }))
       .toBeNull();
     expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'left' }))
       .toMatchObject({ kind: 'done' });
-    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: alice.participantId, deviceId: alice.deviceIds[0]! }))
       .toBe(alice.participantId);
     expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'revoked' }))
       .toMatchObject({ kind: 'done' });
-    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
+    expect(await provenance.participantForDevice({ roomId: channelId,
+      senderUserId: alice.participantId, deviceId: alice.deviceIds[0]! }))
       .toBe(alice.participantId);
     expect(await source.read({ cursor: null, limit: 10 })).toMatchObject({
       kind: 'page',

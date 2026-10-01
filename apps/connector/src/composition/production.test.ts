@@ -70,6 +70,8 @@ describe('installed hosted connector composition', () => {
       if (++attempts === 1) throw new MatrixWriterLockError('active_writer');
       return {
         fingerprint: 'signed-ed25519-fingerprint', writerLock: { kind: 'stale_recovered' },
+        participantForDevice: () => null,
+        reviewMembers: async () => null,
         devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined,
@@ -108,8 +110,10 @@ describe('installed hosted connector composition', () => {
   });
 
   it.each([
-    ['claude', false, false], ['codex', false, false], ['claude', true, false], ['claude', false, true],
-  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (early outage: %s, final outage: %s)', async (harness, transientOutage, finalRecheckOutage) => {
+    ['claude', false, false, false], ['codex', false, false, false],
+    ['claude', true, false, false], ['claude', false, true, false],
+    ['claude', false, false, true],
+  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (early outage: %s, final outage: %s, peer: %s)', async (harness, transientOutage, finalRecheckOutage, peer) => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
     const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
@@ -120,12 +124,14 @@ describe('installed hosted connector composition', () => {
     const roomId = '!claude:example';
     const payloadA = encodeMessageContent({ v: 1, kind: 'text', body: 'held A' });
     const payloadB = encodeMessageContent({ v: 1, kind: 'text', body: 'approved B' });
-    const event = (id: string, payload: Uint8Array) => ({ kind: 'decrypted' as const,
+    const event = (id: string, payload: Uint8Array, fromPeer = false) => ({ kind: 'decrypted' as const,
       ref: { v: 1 as const, roomId: roomId as never, eventId: id as never,
-        authorParticipantId: 'owner_participant' as never, authorDeviceId: 'OWNER_DEVICE' as never,
-        contentDigest: sha256Digest(payload) }, verifiedDeviceId: 'OWNER_DEVICE' as never,
+        authorParticipantId: (fromPeer ? 'peer_participant' : 'owner_participant') as never,
+        authorDeviceId: (fromPeer ? 'PEER_DEVICE' : 'OWNER_DEVICE') as never,
+        contentDigest: sha256Digest(payload) }, verifiedSenderUserId: fromPeer ? '@peer:example' : '@owner:example',
+      verifiedDeviceId: (fromPeer ? 'PEER_DEVICE' : 'OWNER_DEVICE') as never,
       canonicalPayload: payload });
-    const events = [event('event_A', payloadA), event('event_B', payloadB)];
+    const events = [event('event_A', payloadA), event('event_B', payloadB, peer)];
     let onText: MatrixConnectorInput['onText'];
     const read = vi.fn(async () => {
       for (const item of events) await onText?.({ roomId, eventId: item.ref.eventId, authorName: 'Owner' });
@@ -136,6 +142,11 @@ describe('installed hosted connector composition', () => {
       onText = options.onText;
       return ({
       fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
+      participantForDevice: (_room, userId) => (userId === '@peer:example' ? 'peer_participant' : 'owner_participant') as never,
+      reviewMembers: async () => [
+        'owner_participant', `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
+        ...(peer ? ['peer_participant'] : []),
+      ] as never,
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -367,6 +378,8 @@ describe('installed hosted connector composition', () => {
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
       return { fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
+        participantForDevice: () => null,
+        reviewMembers: async () => null,
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },

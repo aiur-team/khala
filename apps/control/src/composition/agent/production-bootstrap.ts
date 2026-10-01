@@ -144,6 +144,12 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const participantDirectory = createAgentParticipantDirectoryRoute({
       store: active.store, capabilities: bootstrap.capabilities, sessions: active.matrix.sessions,
+      lookupAgentDevice: async binding => {
+        const result = await attestation.lookupState(binding);
+        return result.kind === 'found'
+          ? { kind: 'found' as const, deviceId: result.attestation.deviceId,
+            fingerprint: result.attestation.fingerprint } : result;
+      },
     });
     const revocation = createOwnerRevocationRoutes({
       auth: active.auth, store: active.store, capabilities: bootstrap.capabilities,
