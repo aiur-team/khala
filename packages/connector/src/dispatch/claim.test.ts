@@ -291,8 +291,13 @@ describe('eligibility and transactional claim', () => {
       expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'queued', reason: null });
 
       w.harness.route = { ...w.harness.route, harness: 'proof-key' };
-      dispatcher.wake();
-      await dispatcher.idle();
+      const restarted = w.dispatcher();
+      expect(await restarted.enqueue(one.job)).toBe('duplicate');
+      expect(await restarted.enqueue(two.job)).toBe('duplicate');
+      await restarted.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      restarted.wake();
+      await restarted.idle();
       expect(w.harness.submittedIds()).toEqual(['release-1', 'release-2']);
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'accepted' });
       expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'accepted' });
