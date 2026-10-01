@@ -167,6 +167,13 @@ export const mcpServeCommand: CliCommand = {
         return selected?.kind === 'held' && sameHeldBinding(binding, selected.binding);
       };
       const starting = { kind: 'refused', code: 'connector_starting', next: 'retry_status_then_read' } as const;
+      const hostedMode = async () => {
+        const selected = await held();
+        if (selected?.kind === 'starting') return starting;
+        if (selected === null) return { kind: 'refused', code: 'not_connected' };
+        const mode = new ListeningModeOperation({ application: selected.opened.client.listeningModeControl ?? null });
+        return { selected, mode };
+      };
       const hostedTools = {
         selectAccessRoute(internal: boolean) { localAccessRequested = internal; },
         async active() {
@@ -186,6 +193,29 @@ export const mcpServeCommand: CliCommand = {
           return selected?.kind === 'starting' ? starting
             : selected === null ? { kind: 'refused', code: 'not_connected' }
             : { kind: 'status', connected: true };
+        },
+        async mode() {
+          const route = await hostedMode();
+          if (!('selected' in route) || !route.selected || !route.mode) return route;
+          const view = await route.mode.get();
+          if (view.kind !== 'view') return { kind: 'refused', code: view.kind === 'refused' ? view.reason : 'unavailable' };
+          if (!await current(route.selected.binding)) return { kind: 'refused', code: 'binding_not_held' };
+          return { kind: 'mode', requested: view.requested, effective: view.effective,
+            effectiveReason: view.effectiveReason, version: view.version,
+            support: Object.fromEntries(Object.entries(view.support).map(([name, proof]) =>
+              [name, proof.status === 'unknown' ? 'unproven' : proof.status])), acknowledgement: 'unknown' };
+        },
+        async setMode(request: { requested: 'steer' | 'sync' | 'async'; expectedVersion: number }) {
+          const route = await hostedMode();
+          if (!('selected' in route) || !route.selected || !route.mode) return route;
+          const result = await route.mode.set(request);
+          if (result.kind === 'refused') return result.reason === 'outcome_unknown'
+            ? { kind: 'outcome_unknown' } : { kind: 'refused', code: result.reason };
+          if (!await current(route.selected.binding)) return { kind: 'outcome_unknown' };
+          if (result.kind === 'conflict') return { kind: 'conflict', reason: 'stale_version', current: result.current };
+          return result.kind === 'applied' ? { kind: 'applied', requested: result.requested,
+            effective: result.effective, effectiveReason: result.effectiveReason, version: result.version }
+            : { kind: 'refused', code: 'unavailable' };
         },
         async acknowledgeHookReceipt(receipt: string) {
           if (!hookBridge) return { kind: 'refused', code: 'unavailable' };

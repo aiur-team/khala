@@ -54,6 +54,83 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('routes mode reads and writes through the saved hosted session', async () => {
+    const read = vi.fn(async () => ({ ok: true as const, view: { requested: 'sync', effective: 'sync',
+      effectiveReason: null, version: 4, support: Object.fromEntries(['steer', 'sync', 'async'].map(mode =>
+        [mode, { status: mode === 'async' ? 'unknown' : 'proven', route: 'native', testedVersion: null,
+          evidenceRef: null, evidenceRevision: null, reason: null }])) } }));
+    const set = vi.fn(async (input: { commandId: string }) => ({ commandId: input.commandId,
+      outcome: 'applied', requested: 'steer', effective: 'steer', reason: null, version: 5 }));
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null }; },
+        listeningModeControl: { read, set } as never },
+      inbox: async () => { throw new Error('mode must not open inbox'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, 'khala_mode_get'),
+      request(2, 'khala_mode_set', { requested: 'steer', expectedVersion: 4 })]);
+    expect(result[0]?.result.structuredContent).toMatchObject({ kind: 'mode', version: 4,
+      support: { steer: 'proven', sync: 'proven', async: 'unproven' } });
+    expect(result[1]?.result.structuredContent).toMatchObject({ kind: 'applied', version: 5 });
+    expect(read).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ requested: 'steer', expectedVersion: 4 }));
+  });
+
+  it('refuses hosted mode calls when the saved proof-key session differs', async () => {
+    const read = vi.fn();
+    const set = vi.fn();
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => 'agent_other',
+        async status() { return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null }; },
+        listeningModeControl: { read, set } as never },
+      inbox: async () => { throw new Error('wrong session'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, 'khala_mode_get'),
+      request(2, 'khala_mode_set', { requested: 'steer', expectedVersion: 0 })]);
+    expect(result.map(reply => reply.result.structuredContent)).toEqual(Array(2).fill({ kind: 'refused', code: 'not_connected' }));
+    expect(read).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it.each(['khala_mode_get', 'khala_mode_set'])('does not report %s across a generation change', async name => {
+    let checks = 0;
+    const read = vi.fn(async () => ({ ok: true as const, view: { requested: 'sync', effective: null,
+      effectiveReason: 'support_unknown', version: 1, support: Object.fromEntries(['steer', 'sync', 'async'].map(mode =>
+        [mode, { status: 'unknown', route: 'native', testedVersion: null,
+          evidenceRef: null, evidenceRevision: null, reason: null }])) } }));
+    const set = vi.fn(async (input: { commandId: string }) => ({ commandId: input.commandId,
+      outcome: 'applied', requested: 'steer', effective: null, reason: 'support_unknown', version: 2 }));
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: true,
+          binding: checks++ === 0 ? binding : { ...binding, generation: binding.generation + 1 },
+          route: 'manual_mcp', sourceCursor: null }; },
+        listeningModeControl: { read, set } as never },
+      inbox: async () => { throw new Error('mode must not read inbox'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, name,
+      name === 'khala_mode_set' ? { requested: 'steer', expectedVersion: 1 } : {})]);
+    expect(result[0]?.result.structuredContent).toEqual(name === 'khala_mode_set'
+      ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'binding_not_held' });
+  });
+
+  it('reports an unknown mode-write outcome if the post-write binding check fails', async () => {
+    let checks = 0;
+    const set = vi.fn(async (input: { commandId: string }) => ({ commandId: input.commandId,
+      outcome: 'applied', requested: 'steer', effective: null, reason: 'support_unknown', version: 2 }));
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() {
+          if (checks++ > 0) throw new Error('private post-write status failure');
+          return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null };
+        }, listeningModeControl: { read: vi.fn(), set } as never },
+      inbox: async () => { throw new Error('mode must not read inbox'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, 'khala_mode_set', { requested: 'steer', expectedVersion: 1 })]);
+    expect(result[0]?.result.structuredContent).toEqual({ kind: 'outcome_unknown' });
+    expect(set).toHaveBeenCalledOnce();
+  });
+
   it('reoffers a persisted hook batch after MCP restart and ACKs only from a later exact-generation call', async () => {
     const sessionId = randomUUID();
     const stateHome = process.env.TMPDIR ?? os.tmpdir();
@@ -210,7 +287,7 @@ describe('hosted native Claude MCP', () => {
     }
   }, 15_000);
 
-  it('keeps an uninspectable installed version unsupported without dropping the session label', async () => {
+  it('keeps PATH-only Claude versions unsupported without dropping the session label', async () => {
     const claim = { harness: 'claude', sessionId: SESSION, workdir: process.cwd() };
     const inspected = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
       readVersion: async () => null }).inspect(claim);
@@ -219,7 +296,7 @@ describe('hosted native Claude MCP', () => {
     const current = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
       readVersion: async () => '2.1.286' }).inspect(claim);
     expect(current).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
-      capabilities: { version: '2.1.286', support: 'experimental' } });
+      capabilities: { version: 'unknown', support: 'unsupported', acknowledgement: 'unknown' } });
   });
 
   it('keeps the public refusal generic while reporting a fixed local readiness code', async () => {
@@ -330,6 +407,7 @@ describe('hosted native Claude MCP', () => {
       const send = vi.fn(async (input: { bindingId: string | null; clientTxnId: string }) => ({
         kind: 'accepted' as const, clientTxnId: input.clientTxnId, eventId: 'event-sent-571',
       }));
+      const requestChannelAccess = vi.fn();
       const factory = vi.fn(async () => ({
         client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
           async status() { return { v: 1 as const, connected: approved, binding: approved ? binding : null,
@@ -338,7 +416,8 @@ describe('hosted native Claude MCP', () => {
               prerequisites: { storage: 'ready' as const, device: 'ready' as const,
                 bootstrap: 'ready' as const, subscription: 'ready' as const, controls: 'ready' as const,
                 harness: 'unknown' as const, dispatch: 'blocked' as const, review: 'blocked' as const,
-                recovery: 'unknown' as const } } } : {}) }; }, send },
+                recovery: 'unknown' as const } } } : {}) }; }, send,
+          requestChannelAccess: requestChannelAccess as never },
         inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
           generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 }),
         async close() {},
@@ -364,6 +443,7 @@ describe('hosted native Claude MCP', () => {
         batch: expect.stringContaining('encrypted release 571') });
       expect(send).toHaveBeenCalledTimes(1);
       expect(factory).toHaveBeenCalledWith({ harness: 'claude', sessionId: SESSION });
+      expect(requestChannelAccess).not.toHaveBeenCalled();
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 

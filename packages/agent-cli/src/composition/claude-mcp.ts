@@ -53,6 +53,8 @@ export type ClaudeToolOptions = Readonly<{
     send(message: string): Promise<Outcome>;
     read(): Promise<Outcome>;
     status(): Promise<Outcome>;
+    mode(): Promise<Outcome>;
+    setMode(request: ListeningModeSetRequest): Promise<Outcome>;
     roster(): Promise<Outcome>;
     acknowledgeHookReceipt?(receipt: string): Promise<Outcome>;
   }>;
@@ -154,7 +156,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
       if (notification) return success(id, {});
       return success(id, toolResult(await guard(async () => await hostedActive()
-        ? Promise.resolve({ kind: 'refused', code: 'unavailable' }) : entry.mode())));
+        ? options.hosted!.mode() : entry.mode())));
     },
   };
 
@@ -182,7 +184,15 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       }
       // A notification has no response on which a mode result could be reported, so it changes nothing.
       if (notification) return success(id, {});
-      if (await hostedActive()) return success(id, toolResult({ kind: 'refused', code: 'unavailable' }));
+      let useHosted: boolean;
+      try { useHosted = await hostedActive(); }
+      catch { return success(id, toolResult({ kind: 'refused', code: 'unavailable' })); }
+      if (useHosted) {
+        let outcome: Outcome;
+        try { outcome = await options.hosted!.setMode(request); }
+        catch { outcome = { kind: 'outcome_unknown' }; }
+        return success(id, toolResult(outcome));
+      }
       let outcome: Awaited<ReturnType<ClaudeAgentEntry['setMode']>>;
       try {
         outcome = await entry.setMode({

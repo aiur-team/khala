@@ -116,10 +116,12 @@ export function hostedSessionFactory(options: Readonly<{
       browserBundleDirectory: options.browserBundleDirectory,
       ...(options.chromiumExecutablePath === undefined ? {} : { chromiumExecutablePath: options.chromiumExecutablePath }),
       session: claim,
-      sessionInspection: generationFor => codexMcpSessionInspection({
-        session, workdir: claim.workdir, readVersion: options.readVersion,
-        generation: named => generationFor({ ...named, workdir: claim.workdir }),
-      }),
+      sessionInspection: generationFor => session.harness === 'claude'
+        ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir,
+          readVersion: options.readClaudeVersion ?? (async () => null),
+          generation: named => generationFor({ ...named, workdir: claim.workdir }) })
+        : codexMcpSessionInspection({ session, workdir: claim.workdir, readVersion: options.readVersion,
+          generation: named => generationFor({ ...named, workdir: claim.workdir }) }),
       inspectHostedCodexHooks: async () => session.harness === 'codex' ? options.inspectHooks() : null,
       resolveCodexExecutable: async () => session.harness === 'codex' ? options.resolveCodexExecutable() : null,
       openBrowser: options.openBrowser,
@@ -127,9 +129,7 @@ export function hostedSessionFactory(options: Readonly<{
       diagnostic: event => options.diagnostic?.({ component: 'hosted_open', ...event }),
       subscriptionDiagnostic: event => options.diagnostic?.({ component: 'subscription', ...event }),
     });
-    const requestSessions = session.harness === 'claude' && options.readClaudeVersion
-      ? claudeProofKeyLabelInspection({ session, workdir: claim.workdir, readVersion: options.readClaudeVersion })
-      : connector.ports.sessions;
+    const requestSessions = connector.ports.sessions;
     const discovery = options.credentialClient ?? (connector.proofSigner ? createChannelDiscoveryCredentialClient({
       signer: connector.proofSigner, sessions: requestSessions,
       trustedOrigins: [options.appOrigin], openBrowser: options.openBrowser,
@@ -352,6 +352,7 @@ export function hostedSessionFactory(options: Readonly<{
           'khala.hosted.channel-access.v1', link, claim.harness, claim.sessionId, claim.workdir,
         ])).digest('base64url').slice(0, 32);
         const result = await access.requestChannelAccess({ target: { kind: 'channel_url', channelUrl: link }, operationId, origin: target.origin });
+        if (result?.kind === 'proof_key_candidate') return { kind: 'pending' as const, operationId, outcome: 'pending_owner' as const };
         if (result?.kind !== 'status') return { kind: 'unavailable' as const };
         const decoded = decodeAccessRequestStatus(result.status);
         if (!decoded.ok || decoded.value.operationId !== operationId) {

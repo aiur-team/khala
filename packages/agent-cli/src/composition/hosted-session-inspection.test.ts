@@ -43,6 +43,22 @@ describe('installed Codex MCP session inspection', () => {
 });
 
 describe('installed Claude proof-key label inspection', () => {
+  it('uses the connector saved generation for the exact Claude session', async () => {
+    const session = { harness: 'claude', sessionId: 'claude-session' };
+    const claim = { ...session, workdir: CLAIM.workdir };
+    const generation = vi.fn(async () => 2);
+    const inspect = claudeProofKeyLabelInspection({ session, workdir: CLAIM.workdir,
+      readVersion: async () => '2.1.286', generation });
+    expect(await inspect.inspect(claim)).toMatchObject({ kind: 'verified',
+      session: { ...session, generation: 2 }, capabilities: { support: 'unsupported' } });
+    expect(generation).toHaveBeenCalledExactlyOnceWith(session);
+    expect(await inspect.inspect({ ...claim, sessionId: 'another-session' })).toEqual({ kind: 'missing' });
+    expect(generation).toHaveBeenCalledOnce();
+    expect(await claudeProofKeyLabelInspection({ session, workdir: CLAIM.workdir,
+      readVersion: async () => null, generation: async () => null }).inspect(claim))
+      .toEqual({ kind: 'unavailable' });
+  });
+
   it.each(['2.1.284', '2.1.285'])('accepts the current exact session on %s as experimental', async version => {
     const inspect = claudeProofKeyLabelInspection({ session: { harness: 'claude', sessionId: 'claude-session' },
       workdir: CLAIM.workdir, readVersion: async () => version });

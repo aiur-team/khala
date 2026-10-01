@@ -103,13 +103,25 @@ describe('Claude plugin MCP entry', () => {
     const { adapter } = server();
     const client = inProcessClient(adapter, CREDENTIAL_A);
     const send = vi.fn(client.send);
+    const read = vi.fn(client.read);
+    const mode = vi.fn(client.mode);
+    const setMode = vi.fn(client.setMode);
     const listChannels = vi.fn(client.listChannels);
     const hostedSession = vi.fn(async () => { throw new Error('internal binding must not open hosted connector'); });
-    const { responses } = await serve({ ...client, send, listChannels }, [request(1, 'khala_send', { message: 'internal' }),
-      request(2, 'khala_status'), request(3, 'khala_list_channels')], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
+    const { responses } = await serve({ ...client, send, read, mode, setMode, listChannels },
+      [request(1, 'khala_send', { message: 'internal' }), request(2, 'khala_read'),
+        request(3, 'khala_status'), request(4, 'khala_mode_get'),
+        request(5, 'khala_mode_set', { requested: 'steer', expectedVersion: 1 }),
+        request(6, 'khala_list_channels')], { CLAUDE_CODE_SESSION_ID: 's-1' }, {}, hostedSession);
     expect(responses[0]!.result!.structuredContent).toMatchObject({ kind: 'accepted' });
-    expect(responses[1]!.result!.structuredContent).toMatchObject({ kind: 'mode' });
+    expect(responses[1]!.result!.structuredContent).toMatchObject({ kind: 'empty' });
+    expect(responses[2]!.result!.structuredContent).toMatchObject({ kind: 'mode' });
+    expect(responses[3]!.result!.structuredContent).toMatchObject({ kind: 'mode' });
+    expect(responses[4]!.result!.structuredContent).toMatchObject({ kind: 'applied' });
     expect(send).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledOnce();
+    expect(mode).toHaveBeenCalledTimes(2);
+    expect(setMode).toHaveBeenCalledOnce();
     expect(listChannels).toHaveBeenCalledOnce();
     expect(hostedSession).not.toHaveBeenCalled();
   });
