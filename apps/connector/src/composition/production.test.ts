@@ -274,7 +274,7 @@ describe('installed hosted connector composition', () => {
         await vi.waitFor(() => expect(releaseAcquire).not.toBeNull());
         expect(await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'overlapping-send', body: 'one send' }))
-          .toEqual({ kind: 'refused', code: 'listener_busy', clientTxnId: 'overlapping-send' });
+          .toEqual({ kind: 'refused', code: 'transport_unavailable', clientTxnId: 'overlapping-send' });
         blockAcquire = false;
         releaseAcquire!();
         expect((await overlapping).kind).toBe('accepted');

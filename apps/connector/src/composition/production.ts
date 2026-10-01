@@ -694,7 +694,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       },
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
         if (inFlightSendTxnIds.has(command.clientTxnId)) {
-          return { kind: 'refused' as const, code: 'listener_busy' as const, clientTxnId: command.clientTxnId };
+          return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
         }
         inFlightSendTxnIds.add(command.clientTxnId);
         try {
