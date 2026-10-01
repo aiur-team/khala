@@ -131,7 +131,9 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
     }
     // Snapshot revisions can advance without changing any review input. Repeated
     // equivalent snapshots must not abort the only live owner preview request.
-    const identity = JSON.stringify([snapshot.generation, snapshot.room.membership, snapshot.items]);
+    const identity = JSON.stringify([snapshot.generation, snapshot.room.membership,
+      candidateRefs(snapshot.items, limits.maxSelectionEvents)]);
+    items = snapshot.items;
     if (identity === roomIdentity) {
       reviewTrace('room.equivalent', traceId);
       return;
@@ -144,7 +146,6 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
       roomMembership = snapshot.room.membership;
       publish({ ...loadingView(bindingId, viewerOwnerId), receipts: view.receipts });
     }
-    items = snapshot.items;
     void refresh();
   }
 

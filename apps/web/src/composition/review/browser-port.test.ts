@@ -107,7 +107,7 @@ describe('browser review port', () => {
     const review = port(client, room);
     const controller = createReviewController(review);
 
-    emit([itemA, itemB]);
+    emit([itemA, { ...itemB, receivedAt: '2026-09-25T10:00:01Z' }]);
     emit([itemA, itemB]);
     emit([itemA, itemB]);
     expect(requests).toHaveLength(1);
