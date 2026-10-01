@@ -290,7 +290,7 @@ describe('installed hosted connector composition', () => {
         if (harness === 'claude') {
           const mode = await connector.listeningModeControl.read();
           expect(mode).toMatchObject({ ok: true, view: { effective: null } });
-          if (mode.ok) expect(await connector.listeningModeControl.set({ commandId: 'mode-without-harness-proof',
+          if (mode.ok) expect(await connector.listeningModeControl.set({ commandId: 'mode-without-harness-proof' as never,
             expectedVersion: mode.view.version, requested: 'sync', issuedAt: '2026-09-30T00:00:00Z' }))
             .toMatchObject({ outcome: 'applied', effective: null });
         }
