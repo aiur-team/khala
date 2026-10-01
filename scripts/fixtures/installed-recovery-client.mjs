@@ -6,10 +6,11 @@ import path from 'node:path';
 
 /** Stock package, private HOME/state and a stable native label; no inherited credentials. */
 export function installRecoveryClient({ tarball, origin, caFile, sessionId, workdir, chromiumExecutable,
-  fixtureBrowser = false, fixtureBrowserCertificateFile, pinnedClaudeProbe = false }) {
+  fixtureBrowser = false, fixtureBrowserCertificateFile, harness = 'claude', pinnedClaudeProbe = false }) {
   const parsed = new URL(origin);
   if (parsed.protocol !== 'https:' || parsed.hostname !== '127.0.0.1' || parsed.origin !== origin
-    || !/^[A-Za-z0-9_-]{1,128}$/u.test(sessionId)) throw new Error('invalid_recovery_fixture');
+    || !/^[A-Za-z0-9_-]{1,128}$/u.test(sessionId)
+    || !['claude', 'codex'].includes(harness)) throw new Error('invalid_recovery_fixture');
   const root = mkdtempSync(path.join(os.tmpdir(), 'khala-installed-recovery-'));
   chmodSync(root, 0o700);
   const home = path.join(root, 'home');
@@ -37,10 +38,19 @@ if (response.status !== 204) process.exit(1);
     writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n[ "$1" = "--version" ] || exit 1\nprintf "2.1.284 (Claude Code)\\n"\n',
       { mode: 0o700 });
   }
+  if (harness === 'codex') {
+    // Fixture-only version probe; the owner-approved key remains the hosted
+    // authority. This does not prove a real provider thread exists.
+    writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\n[ "$1" = "--version" ] || exit 1\nprintf "codex-cli 0.157.1\\n"\n',
+      { mode: 0o700 });
+  }
   const env = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`, HOME: home, XDG_STATE_HOME: state,
     XDG_CONFIG_HOME: path.join(home, 'config'), XDG_DATA_HOME: path.join(home, 'data'),
-    CODEX_HOME: path.join(home, 'codex'), KHALA_APP_ORIGIN: origin,
-    KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId, NODE_EXTRA_CA_CERTS: caFile };
+    CODEX_HOME: path.join(home, 'codex'), KHALA_APP_ORIGIN: origin, NODE_EXTRA_CA_CERTS: caFile,
+    ...(harness === 'claude' ? { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId } : {}) };
+  const withSessionMeta = message => harness === 'codex' && message.method === 'tools/call'
+    ? { ...message, params: { ...message.params,
+      _meta: Object.hasOwn(message.params, '_meta') ? message.params._meta : { threadId: sessionId } } } : message;
   try {
     execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund',
       '--prefix', prefix, path.resolve(tarball)], { env, stdio: 'ignore', timeout: 30_000 });
@@ -130,7 +140,7 @@ if (response.status !== 204) process.exit(1);
           }
           catch { reject(new Error('fixture_client_invalid_reply')); }
         });
-        child.stdin.end(messages.map(message => JSON.stringify(message) + '\n').join(''));
+        child.stdin.end(messages.map(message => JSON.stringify(withSessionMeta(message)) + '\n').join(''));
       });
     },
     /** Keep the installed MCP process alive while owner review and native tools run. */
@@ -173,7 +183,7 @@ if (response.status !== 204) process.exit(1);
             const timer = setTimeout(() => { pending.delete(message.id); reject(new Error('fixture_client_timeout'));
               child.kill('SIGKILL'); }, 15_000);
             pending.set(message.id, { resolve, reject, timer });
-            child.stdin.write(JSON.stringify(message) + '\n');
+            child.stdin.write(JSON.stringify(withSessionMeta(message)) + '\n');
           });
         },
         diagnostics() {
