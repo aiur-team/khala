@@ -3,7 +3,9 @@ import { decodeClosureConnectorReceipt, type AuthPrincipal, type ClosureConnecto
 import { createProductionHumanServiceLoader } from '../composition/human/production';
 import { createOwnerRoomClosureConnector } from '../composition/owner-mailbox/closure';
 import { createControlStore, type BlobsStoreLike } from '../runtime/control-store';
+import { localBlobStores } from '../runtime/local-blob-store';
 import { readHumanServerEnv } from '../runtime/env';
+import { localOidcEnabled } from '../auth/local-oidc';
 import type { RouteRegistration } from '../runtime/handler';
 import { createChannelClosureHandlers } from './handler';
 import { createOwnerCleanupRequests } from './cleanup-requests';
@@ -46,6 +48,7 @@ type ProductionClosureDependencies = Readonly<{
   loadHuman?: ReturnType<typeof createProductionHumanServiceLoader>;
   readEnv?: () => ReturnType<typeof readHumanServerEnv>;
   stores?: (name: string) => BlobsStoreLike;
+  env?: NodeJS.ProcessEnv;
 }>;
 
 export function registerClosureHandlers(dependencies: ProductionClosureDependencies = {}): readonly RouteRegistration[] {
@@ -76,7 +79,8 @@ export function registerClosureHandlers(dependencies: ProductionClosureDependenc
           return new Response(JSON.stringify({ code: 'unavailable' }), { status: 503 });
         }
         try {
-          const storeFor = dependencies.stores ?? ((name: string) => getStore(name) as unknown as BlobsStoreLike);
+          const storeFor = dependencies.stores ?? (localOidcEnabled(dependencies.env ?? process.env)
+            ? localBlobStores : (name: string) => getStore(name) as unknown as BlobsStoreLike);
           // A warm function retains the control adapter, but Netlify's Blobs
           // credential belongs to the current invocation. Bind at each operation.
           const contextualStore = (name: string): BlobsStoreLike => ({
