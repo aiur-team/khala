@@ -226,3 +226,67 @@ test('AgentControlsPanel listening mode: keyboard selection, conflict recovery, 
     await rm(chromiumProfileRoot, { recursive: true, force: true });
   }
 });
+
+test('title disclosure gives only its owner compact listening controls on desktop and phone', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-presence-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-presence-profile-'));
+  const presenceHarnessRoot = join(here, '../../composition/human/presence-browser-harness');
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: presenceHarnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: presenceHarnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true,
+      args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    await page.goto(server.resolvedUrls!.local[0]!);
+    const title = page.locator('#khala-channel-toolbar .channel-roster > summary');
+    await title.click();
+    assert.equal(await page.locator('#khala-channel-toolbar .channel-roster').getAttribute('open'), '');
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'no duplicate conversation header');
+    const scout = page.locator('summary[aria-label^="Details for Scout"]');
+    const builder = page.locator('summary[aria-label^="Details for Builder"]');
+    await builder.click();
+    assert.equal(await page.getByText('Theo’s agent').count(), 1);
+    assert.equal(await page.locator('.agent-presence__details').nth(1).locator('.agent-controls__compact').count(), 0,
+      'other owner has identity only');
+    assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);
+    await scout.click();
+    const detail = page.locator('.agent-presence__details').first();
+    const status = detail.locator('.agent-controls__listening-status');
+    await status.getByText('Requested: sync · Effective: sync').waitFor();
+    assert.equal(await detail.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
+    assert.equal(await detail.locator('input[value="steer"]').isDisabled(), true);
+    assert.equal(await detail.getByText('Needs your approval for this session.').count(), 1);
+    for (const [width, height] of [[1200, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      assert.equal(await detail.locator('input[value="async"]').isVisible(), true);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    }
+    const asyncMode = detail.locator('input[value="async"]');
+    await asyncMode.check();
+    await page.getByRole('button', { name: 'Simulate agent mode change' }).evaluate(node => (node as HTMLButtonElement).click());
+    await detail.getByRole('button', { name: 'Apply listening mode' }).click();
+    await status.getByText(/Another actor changed the listening mode first/).waitFor();
+    assert.equal(await asyncMode.evaluate(node => node === document.activeElement), true);
+    assert.equal(await page.locator('#mode-submits').innerText(), '1');
+    await detail.getByRole('button', { name: 'Apply listening mode' }).click();
+    await status.getByText(/Requested: async · Effective: async.*Listening mode set to async\./).waitFor();
+    assert.equal(await page.locator('#mode-submits').innerText(), '2');
+    await asyncMode.focus();
+    await asyncMode.press('Escape');
+    assert.equal(await detail.getAttribute('open'), null, 'Escape closes the agent detail');
+    assert.equal(await scout.evaluate(node => node === document.activeElement), true);
+    await scout.press('Escape');
+    assert.equal(await page.locator('#khala-channel-toolbar .channel-roster').getAttribute('open'), null,
+      'a second Escape closes the title disclosure');
+    assert.equal(await title.evaluate(node => node === document.activeElement), true);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
