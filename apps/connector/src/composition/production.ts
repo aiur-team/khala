@@ -40,7 +40,7 @@ import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowle
 import type { HarnessPort } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
-import { manualListeningCapabilities, manualReadProof } from './agent/manual-listening';
+import { createManualReadWitness, manualListeningCapabilities, manualReadProof } from './agent/manual-listening';
 import { createAgentParticipantLookup } from './agent/participant-directory';
 import { renameDelivery } from './agent/rename-delivery';
 import { readOrderedPendingReferences } from '@khala/connector/storage/ordered-pending';
@@ -183,7 +183,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   });
   const dispatchStorage = createConnectorDispatchStorage(storage);
   const acknowledgementRecorder = createAcknowledgementRecorder(storage);
-  type Acknowledgement = Readonly<{ bindingId: string; generation: number; releaseIds: readonly string[] }>;
+  const manualReadWitness = createManualReadWitness();
+  type Acknowledgement = Readonly<{ bindingId: string; generation: number; token: string; releaseIds: readonly string[] }>;
   type OpenInbox = (bindingId: string, generation: number, options?: Readonly<{
     recordAcknowledgement?: (acknowledgement: Acknowledgement) => Promise<void>;
   }>) => Promise<LocalInbox>;
@@ -211,6 +212,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         releaseIds: releases as never,
       });
       if (result.kind === 'refused') throw new Error('acknowledgement_refused');
+      if (manualRoute) manualReadWitness.acknowledge(bindingId, generation, acknowledgement.token, releases);
     },
     }).then(inbox => new Proxy(inbox, { get(target, property, receiver) {
       if (property === 'enqueue') return (delivery: Parameters<LocalInbox['enqueue']>[0]) => {
@@ -220,6 +222,22 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         return target.enqueue(delivery);
       };
       const value = Reflect.get(target, property, receiver);
+      if (property === 'acquireCallConsumer' && manualRoute && typeof value === 'function') {
+        return async () => {
+          const consumer = await value.call(target) as { readBatch(input: { explicitRead?: boolean }): Promise<{ token: string } | null> };
+          return new Proxy(consumer, { get(reader, key, readerReceiver) {
+            if (key === 'readBatch') return async (input: { explicitRead?: boolean }) => {
+              const batch = input.explicitRead === true
+                ? await manualReadWitness.withinExplicitRead(() => reader.readBatch(input))
+                : await reader.readBatch(input);
+              if (input.explicitRead === true && batch) manualReadWitness.offer(bindingId, generation, batch.token);
+              return batch;
+            };
+            const method = Reflect.get(reader, key, readerReceiver);
+            return typeof method === 'function' ? method.bind(reader) : method;
+          } });
+        };
+      }
       return typeof value === 'function' ? value.bind(target) : value;
     } }));
   };
@@ -516,7 +534,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
             && inspected.session.sessionId === input.session.sessionId
             && inspected.session.generation === next.generation;
           const version = currentSession ? inspected.capabilities.version : 'unknown';
-          const proof = currentSession ? await manualReadProof(acknowledgementRecorder, next) : null;
+          const proof = currentSession ? await manualReadProof(acknowledgementRecorder, next, manualReadWitness) : null;
           return manualListeningCapabilities(next, input.session.harness as 'claude' | 'codex', version, proof);
         },
       });

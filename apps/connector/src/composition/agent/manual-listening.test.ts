@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeHarnessCapabilities } from '@khala/contracts/delivery/index';
-import { manualListeningCapabilities, manualReadProof } from './manual-listening';
+import { createManualReadWitness, manualListeningCapabilities, manualReadProof } from './manual-listening';
 
 const binding = { v: 1 as const, bindingId: 'binding_manual' as never,
   ownerId: 'owner_manual' as never, agentParticipantId: 'agent_manual' as never,
@@ -30,14 +30,32 @@ describe('hosted manual listening capability', () => {
       ...ack, bindingId: 'foreign' as never }).modes.async.status).toBe('unsupported');
   });
 
-  it('finds only an authenticated ACK for this binding and generation', async () => {
-    const receipt = (bindingId: string, generation: number) => ({
-      receipt: { kind: 'agent_acknowledged', source: 'agent', bindingId, generation },
+  it('rejects a hook ACK after manual restart until a fresh explicit read and token return', async () => {
+    const receipt = (bindingId: string, generation: number, releaseId: string) => ({
+      receipt: { kind: 'agent_acknowledged', source: 'agent', bindingId, generation, releaseId },
     });
-    const recorder = { readReceiptOutbox: async () => [receipt('foreign', 2), receipt(binding.bindingId, 1),
-      receipt(binding.bindingId, 2)] } as never;
-    expect(await manualReadProof(recorder, binding)).toEqual(ack);
-    expect(await manualReadProof({ readReceiptOutbox: async () => [receipt('foreign', 2)] } as never, binding)).toBeNull();
-    expect(await manualReadProof({ readReceiptOutbox: async () => { throw Error('offline'); } }, binding)).toBeNull();
+    const rows = [receipt('foreign', 2, 'foreign-release'), receipt(binding.bindingId, 1, 'prior-generation'),
+      receipt(binding.bindingId, 2, 'old-hook-release')];
+    const recorder = { readReceiptOutbox: async () => rows } as never;
+    // A new manual connector starts with no route witness even though its old hook ACK remains in the ledger.
+    const witness = createManualReadWitness();
+    witness.acknowledge(binding.bindingId, 2, 'old-hook-token', ['old-hook-release']);
+    expect(await manualReadProof(recorder, binding, witness)).toBeNull();
+    witness.offer(binding.bindingId, 1, 'wrong-generation-token');
+    await witness.withinExplicitRead(async () => witness.acknowledge(binding.bindingId, 2,
+      'wrong-generation-token', ['old-hook-release']));
+    expect(await manualReadProof(recorder, binding, witness)).toBeNull();
+    witness.offer(binding.bindingId, 2, 'manual-read-token');
+    rows.push(receipt(binding.bindingId, 2, 'new-manual-release'));
+    witness.acknowledge(binding.bindingId, 2, 'manual-read-token', ['new-manual-release']);
+    expect(await manualReadProof(recorder, binding, witness)).toBeNull();
+    witness.offer(binding.bindingId, 2, 'manual-read-token');
+    await witness.withinExplicitRead(async () => witness.acknowledge(binding.bindingId, 2,
+      'manual-read-token', ['new-manual-release']));
+    expect(await manualReadProof(recorder, binding, witness)).toEqual(ack);
+    expect(await manualReadProof({ readReceiptOutbox: async () => [receipt('foreign', 2, 'foreign-release')] } as never,
+      binding, witness)).toBeNull();
+    expect(await manualReadProof({ readReceiptOutbox: async () => { throw Error('offline'); } }, binding,
+      witness)).toBeNull();
   });
 });

@@ -12,11 +12,14 @@ Read-only inspection of the corresponding connector ledgers found one release
 and **no** `agent_acknowledged` receipt for the Codex proof-key binding. Its
 Async mode therefore remains unsupported. The Claude proof-key binding had two
 releases and two `agent_acknowledged` receipts, both matching its current
-binding and generation. The connector permits Async only when it re-reads such
-an exact agent-origin receipt while the same owner-approved session and binding
-remain current. It then projects the mode to the dispatch ledger and reads it
-back before reporting it effective. A new generation, an unavailable session
-inspection, or an unreadable receipt ledger closes this claim.
+binding and generation. Those older receipts do not record whether a hook or
+an explicit MCP read delivered the batch. After each manual-route start, the
+connector requires a new batch returned by an explicit call and its token
+acknowledged in a later explicit call. It matches that route witness to the
+durable agent-origin receipt before permitting Async, then projects the mode
+to the dispatch ledger and reads it back before reporting it effective. A
+restart, new generation, unavailable session inspection, or unreadable
+receipt ledger closes this claim until new manual read/ACK evidence arrives.
 
 Codex's hosted `codex-hook` fallback can select a binding and inspect its mode,
 but this production observation did not test delivery from that hook. Claude's

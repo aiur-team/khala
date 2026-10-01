@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { decodeDeliveryLimits, type HarnessCapabilities, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { AcknowledgementRecorder } from '@khala/connector/storage/acknowledgements';
 
@@ -15,10 +16,39 @@ export type ManualReadProof = Readonly<{
   source: 'agent';
 }>;
 
+/** Process-local route witness: a hook ACK from before this manual session cannot prove a pull. */
+export function createManualReadWitness() {
+  const explicitReadCall = new AsyncLocalStorage<boolean>();
+  const offered = new Map<string, Readonly<{ bindingId: string; generation: number }>>();
+  const acknowledged = new Map<string, string>();
+  const bindingKey = (bindingId: string, generation: number) => JSON.stringify([bindingId, generation]);
+  return {
+    withinExplicitRead<T>(read: () => Promise<T>): Promise<T> { return explicitReadCall.run(true, read); },
+    offer(bindingId: string, generation: number, token: string) {
+      offered.set(token, { bindingId, generation });
+      if (offered.size > 100) offered.delete(offered.keys().next().value!);
+    },
+    acknowledge(bindingId: string, generation: number, token: string, releaseIds: readonly string[]) {
+      const issued = offered.get(token);
+      offered.delete(token);
+      if (explicitReadCall.getStore() === true && issued?.bindingId === bindingId
+        && issued.generation === generation && releaseIds.length > 0) {
+        acknowledged.set(bindingKey(bindingId, generation), releaseIds[0]!);
+      }
+    },
+    includes(bindingId: string, generation: number, releaseId: string) {
+      return acknowledged.get(bindingKey(bindingId, generation)) === releaseId;
+    },
+  };
+}
+
+export type ManualReadWitness = ReturnType<typeof createManualReadWitness>;
+
 /** Only an agent-returned token for this exact binding generation opens explicit pull. */
 export async function manualReadProof(
   recorder: Pick<AcknowledgementRecorder, 'readReceiptOutbox'>,
   binding: SessionBinding,
+  witness: Pick<ManualReadWitness, 'includes'>,
 ): Promise<ManualReadProof | null> {
   try {
     // A full page without a match stays unsupported. Never infer proof from a
@@ -27,7 +57,8 @@ export async function manualReadProof(
     const match = page.find(entry => entry.receipt.kind === 'agent_acknowledged'
       && entry.receipt.source === 'agent'
       && entry.receipt.bindingId === binding.bindingId
-      && entry.receipt.generation === binding.generation);
+      && entry.receipt.generation === binding.generation
+      && witness.includes(binding.bindingId, binding.generation, entry.receipt.releaseId));
     return match ? { bindingId: binding.bindingId, generation: binding.generation,
       kind: 'agent_acknowledged', source: 'agent' } : null;
   } catch { return null; }
