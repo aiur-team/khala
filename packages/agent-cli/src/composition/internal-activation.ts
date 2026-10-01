@@ -13,7 +13,8 @@ import {
   INTERNAL_ACTIVE_DESCRIPTOR_FILE, type InternalDescriptor, encodeInternalDescriptor, isGrantedDescriptor,
 } from '@khala/contracts/internal/descriptor';
 import {
-  INTERNAL_CONNECTOR_KEY_FILE, INTERNAL_GRANT_DESCRIPTOR_FILE, type InternalDiscoveryDescriptor, parseInternalConnectorKey,
+  INTERNAL_CONNECTOR_KEY_FILE, INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_GRANT_DESCRIPTOR_FILE,
+  type InternalDiscoveryDescriptor, parseInternalConnectorKey,
 } from '@khala/contracts/internal/discovery-descriptor';
 import {
   type AccessRequestOutcome, type GrantExchangeRejection, type StableAgentPrincipal, decodeAccessRequestStatus,
@@ -161,6 +162,24 @@ export async function restoreInternalGrant(options: InternalGrantRestoreOptions)
     descriptorPath: options.descriptorPath, descriptor: discovery.selection.descriptor, origin: discovery.selection.origin,
     operationId, fetch: options.fetch, signal: options.signal, clock: options.clock,
   });
+}
+
+// One refused capability may be observed by status, MCP and delivery together.
+// Share the activation so they cannot race to rewrite the same grant.
+const pendingRestores = new Map<string, Promise<InternalActivationOutcome>>();
+
+export function restoreHeldInternalGrant(
+  grantPath: string, bindingId: string, options: Pick<InternalGrantRestoreOptions, 'fetch' | 'signal' | 'clock'> = {},
+): Promise<InternalActivationOutcome> {
+  const key = JSON.stringify([grantPath, bindingId]);
+  const pending = pendingRestores.get(key);
+  if (pending) return pending;
+  const running = restoreInternalGrant({
+    descriptorPath: path.join(path.dirname(grantPath), INTERNAL_DISCOVERY_DESCRIPTOR_FILE),
+    bindingId, ...options,
+  }).catch(() => 'unavailable' as const).finally(() => pendingRestores.delete(key));
+  pendingRestores.set(key, running);
+  return running;
 }
 
 /** The journaled operation that connected `bindingId`, if any. */

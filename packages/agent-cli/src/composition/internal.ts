@@ -11,7 +11,7 @@ import type {
   AccessRequestResult, AgentClientPort, AgentStatus, SendRefusalCode, SendResult,
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
-import { activateInternalAccess, activationPaths, releaseRevokedGrant } from './internal-activation.js';
+import { activateInternalAccess, activationPaths, releaseRevokedGrant, restoreHeldInternalGrant } from './internal-activation.js';
 import { createInternalChannelCreate } from './internal-channel-create.js';
 import {
   type LocalHarnessCapabilities, type LocalHarnessObservation, createInternalListeningMode,
@@ -158,7 +158,7 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
   }
 
   async function heldBinding(descriptor: GrantedDescriptor, signal: AbortSignal | undefined) {
-    const reply = await request(descriptor, descriptor.bindingCapability, AGENT_BINDING_PATH, { method: 'GET' }, signal);
+    const reply = await grantedRequest(descriptor, AGENT_BINDING_PATH, { method: 'GET' }, signal);
     if (reply.status === 401 || reply.status === 403) return 'revoked' as const;
     if (reply.status !== 200 || !plainObject(reply.body)) return 'unavailable' as const;
     const binding = publicBinding(reply.body.binding);
@@ -166,12 +166,36 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     return binding.bindingId === descriptor.bindingId ? binding : 'revoked' as const;
   }
 
+  async function grantedRequest(
+    descriptor: GrantedDescriptor, target: string, init: Readonly<{ method: 'GET' | 'POST'; body?: unknown }>,
+    signal: AbortSignal | undefined,
+  ): Promise<Reply> {
+    // A resumed launcher at another port is a different origin. Never send the old
+    // bearer to that endpoint or use discovery to broaden the old request.
+    const launch = readInternalDescriptor(activationPaths(options.descriptorPath).launchPath);
+    if (launch.ok && launch.value.origin !== descriptor.origin) return { status: 503, body: null };
+    const first = await request(descriptor, descriptor.bindingCapability, target, init, signal);
+    if (first.status !== 401) return first;
+    const latest = current();
+    if (!latest || (isGrantedDescriptor(latest) && latest.bindingId !== descriptor.bindingId)) return first;
+    if (!isGrantedDescriptor(latest) || latest.bindingCapability === descriptor.bindingCapability) {
+      const restored = await restoreHeldInternalGrant(options.descriptorPath, descriptor.bindingId, {
+        fetch: fetcher, signal, clock: options.clock,
+      });
+      if (restored !== 'connected') return first;
+    }
+    const refreshed = current();
+    return refreshed && isGrantedDescriptor(refreshed) && refreshed.bindingId === descriptor.bindingId
+      && refreshed.bindingCapability !== descriptor.bindingCapability
+      ? request(refreshed, refreshed.bindingCapability, target, init, signal) : first;
+  }
+
   const modes = createInternalListeningMode({
     descriptor: () => {
       const descriptor = current();
       return descriptor !== null && isGrantedDescriptor(descriptor) ? descriptor : null;
     },
-    call: (descriptor, target, init, signal) => request(descriptor, descriptor.bindingCapability, target, init, signal),
+    call: grantedRequest,
     capabilities: options.capabilities ?? (async () => null),
     ...(options.observation ? { observation: options.observation } : {}),
   });
@@ -213,10 +237,20 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       if (descriptor === null) return refused(discoverySelection().kind === 'selected' ? 'not_connected' : 'transport_unavailable');
       if (!isGrantedDescriptor(descriptor)) return refused('not_connected');
       if (input.bindingId !== null && input.bindingId !== descriptor.bindingId) return refused('binding_not_held');
+      let sending: GrantedDescriptor = descriptor;
+      const launch = readInternalDescriptor(activationPaths(options.descriptorPath).launchPath);
+      if (launch.ok && launch.value.transportCapability !== descriptor.transportCapability) {
+        const held = await heldBinding(descriptor, signal).catch(() => 'unavailable' as const);
+        if (held === 'revoked') return refused('binding_not_held');
+        if (held === 'unavailable') return refused('transport_unavailable');
+        const refreshed = current();
+        if (!refreshed || !isGrantedDescriptor(refreshed) || refreshed.bindingId !== descriptor.bindingId) return refused('binding_not_held');
+        sending = refreshed;
+      }
       let reply: Reply;
       try {
-        reply = await request(descriptor, descriptor.bindingCapability,
-          `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/messages`,
+        reply = await grantedRequest(sending,
+          `/api/v1/channels/${encodeURIComponent(sending.channelId)}/messages`,
           { method: 'POST', body: { clientTxnId: input.clientTxnId, content: { v: 1, kind: 'text', body: input.body } } },
           signal);
       } catch {
