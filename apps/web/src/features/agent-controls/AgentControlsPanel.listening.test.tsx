@@ -5,7 +5,7 @@ import type {
   RouteGrant,
 } from '@khala/contracts/delivery/index';
 import { decodeDeliveryLimits, unknownModeSupportMap } from '@khala/contracts/delivery/index';
-import { AgentControlsPanel } from './AgentControlsPanel';
+import { AgentControlsPanel, AgentListeningControls } from './AgentControlsPanel';
 import { createAgentControlsController, type AgentControlsConfig, type AgentControlsController } from './controller';
 import type { AgentControlsPorts, AgentControlsSnapshot, ListeningModeSnapshot } from './ports';
 
@@ -118,6 +118,13 @@ function render(options: Options = {}, prepare?: (controller: AgentControlsContr
   return html;
 }
 
+function renderCompact(options: Options = {}): string {
+  const controller = controllerFor(snapshot(options));
+  const html = renderToStaticMarkup(<AgentListeningControls ports={{} as AgentControlsPorts} config={CONFIG} controller={controller} />);
+  controller.dispose();
+  return html;
+}
+
 function listeningSection(html: string): string {
   const start = html.indexOf('agent-controls__listening"');
   expect(start).toBeGreaterThan(-1);
@@ -127,6 +134,23 @@ function listeningSection(html: string): string {
 const LABEL = /Codex CLI 0\.154\.0 · [0-9a-f]{4}/;
 
 describe('AgentControlsPanel listening section', () => {
+  it('keeps the conversation control concise while showing all three choices and authoritative state', () => {
+    const html = renderCompact();
+    expect(html).toContain('Requested: sync · Effective: sync');
+    expect(html).toContain('Reach the agent at the next safe point while it works.');
+    expect(html).toContain('Hold messages until the agent reaches a safe pause.');
+    expect(html).toContain('Let the agent collect messages when it chooses to read.');
+    expect(html).not.toContain('Hard cancel');
+    expect(html).not.toContain('Secondary evidence');
+    expect(html).not.toContain('Agent delivery controls');
+  });
+
+  it('explains unsupported choices and leaves them disabled in the conversation', () => {
+    const html = renderCompact({ modes: UNKNOWN, effective: null, effectiveReason: 'support_unknown' });
+    expect(html).toContain('Support has not been verified for this session.');
+    expect(html.match(/type="radio"[^>]*disabled=""/g)?.length).toBe(3);
+    expect(html).toContain('Requested: sync · Effective: waiting');
+  });
   it('waits for listening state without offering any mode control', () => {
     const controller = controllerFor({ ...snapshot(), listening: null });
     const html = renderToStaticMarkup(<AgentControlsPanel ports={{} as AgentControlsPorts} config={CONFIG} controller={controller} />);

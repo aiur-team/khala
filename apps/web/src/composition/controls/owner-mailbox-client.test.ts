@@ -11,6 +11,31 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
   { status, headers: { 'content-type': 'application/json' } });
 
 describe('owner mailbox controls client', () => {
+  it('reuses an unresolved status operation until completion', async () => {
+    const submitted: string[] = [];
+    let complete = false;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+        submitted.push(operationId);
+        return json(200, { v: 1, operationId, outcome: complete ? { ok: true, status: {} } : null });
+      }
+      const operationId = new URL(String(url)).searchParams.get('operation_id');
+      return json(200, { v: 1, operationId, outcome: complete ? { ok: true, status: {} } : null });
+    };
+    const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 0 });
+    const signal = new AbortController().signal;
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'lost' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'lost' });
+    expect(submitted).toHaveLength(1);
+    complete = true;
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
+    expect(submitted).toHaveLength(2);
+    expect(submitted[1]).not.toBe(submitted[0]);
+  });
+
   it('uses the protected owner route and unwraps exact status and policy outcomes', async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetcher: typeof fetch = async (url, init) => {

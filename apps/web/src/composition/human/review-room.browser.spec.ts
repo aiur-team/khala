@@ -203,7 +203,7 @@ test('conversation identity timing fixture', { timeout: 90_000 }, async () => {
     const title = page.locator('.channel-roster summary').getByText('Test channel');
     await title.waitFor();
     const titleMs = await page.evaluate(() => performance.now());
-    await page.locator('.channel-participants__chip[title*="unknown"]').waitFor();
+    await page.locator('.channel-participants__chip[title*="Unavailable"]').waitFor();
     const connectionMs = await page.evaluate(() => performance.now());
     await page.locator('.channel-participants__chip').getByText('Verified agent').waitFor();
     await page.locator('.channel-participants__chip').getByText('Peer owner').waitFor();
@@ -219,6 +219,25 @@ test('conversation identity timing fixture', { timeout: 90_000 }, async () => {
       await new Promise(resolve => setTimeout(resolve, 800));
       await route.fulfill({ status: 200, body: '{}' });
     });
+  });
+});
+
+test('conversation agent controls wait for the selected owner binding and verified device', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?identity-timing&controls=1', async page => {
+    await page.locator('.channel-roster > summary').click();
+    const agent = page.locator('.agent-presence__details').first();
+    await agent.locator('summary').click();
+    await agent.getByText('No verified agent session is available to control.').waitFor();
+    assert.equal(await agent.locator('.agent-controls__compact').count(), 0);
+    await page.evaluate(() => window.__allowReviewTrust());
+    await agent.locator('.agent-controls__compact').waitFor();
+    await agent.getByRole('heading', { name: 'Listening mode' }).waitFor();
+    await agent.getByText('Listening mode choices are unavailable for this agent session.').waitFor();
+    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).count(), 0);
+    assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
+  }, async page => {
+    await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));
+    await page.route('**/api/fixture/history', route => route.fulfill({ status: 200, body: '{}' }));
   });
 });
 
