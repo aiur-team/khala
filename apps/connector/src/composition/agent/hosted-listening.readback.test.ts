@@ -21,7 +21,7 @@ const capabilities = { v: 3, harness: 'codex', version: '0.154.0', adapterVersio
   modes: { steer: support, sync: support, async: unknown }, acknowledgement: 'unknown' } as HarnessCapabilities;
 
 function fixture(options: { drop?: boolean; race?: boolean; experimental?: boolean;
-  drift?: 'unavailable' | 'evidence' } = {}) {
+  drift?: 'unavailable' | 'evidence'; driftAfter?: number } = {}) {
   let state: TrustState = initialTrustState({ roomId: 'room_readback' as never,
     bindingId: binding.bindingId, ownerId: binding.ownerId, generation: 0, policyVersion: 0 });
   let revision = 0;
@@ -60,8 +60,8 @@ function fixture(options: { drop?: boolean; race?: boolean; experimental?: boole
   const hosted = createHostedListeningControl({ binding, trust, dispatch,
     current: async () => true, capabilities: async () => {
       inspections += 1;
-      if (inspections > 1 && options.drift === 'unavailable') return null;
-      if (inspections > 1 && options.drift === 'evidence') return { ...tested,
+      if (inspections > (options.driftAfter ?? 1) && options.drift === 'unavailable') return null;
+      if (inspections > (options.driftAfter ?? 1) && options.drift === 'evidence') return { ...tested,
         modes: { ...tested.modes, sync: { ...support, evidenceRevision: 'hook-revision-new' } } };
       return tested;
     } });
@@ -85,6 +85,16 @@ describe('hosted listening ledger readback', () => {
     expect(await hosted.application.read()).toMatchObject({ ok: true,
       view: { requested: 'sync', effective: null, effectiveReason: 'projection_unavailable' } });
   });
+  it.each(['owner', 'agent'] as const)(
+    'does not report %s set effective when evidence changes on the final result read', async actor => {
+      const { hosted } = fixture({ drift: 'evidence', driftAfter: 3 });
+      const result = actor === 'owner'
+        ? await hosted.owner.set(owner, command('sync'))
+        : await hosted.application.set({ commandId: 'agent_set_12345678' as never,
+          expectedVersion: 1, requested: 'sync', issuedAt: '2026-09-27T00:00:00Z' });
+      expect(result).toMatchObject({ outcome: 'applied', effective: null,
+        reason: 'projection_unavailable' });
+    });
   it('fails closed when dispatch reports applied but drops the write', async () => {
     const { hosted, policy } = fixture({ drop: true });
     expect(await hosted.owner.read(owner)).toMatchObject({ ok: true,

@@ -45,6 +45,8 @@ export function createHostedListeningControl(input: Readonly<{
     },
   };
   const service = createListeningModeService(createHostedListeningModeStore(host));
+  const sameView = (left: ListeningModeView, right: ListeningModeView) =>
+    JSON.stringify(left) === JSON.stringify(right);
   const base = createAgentListeningModeAuthority(binding, {
     async resolve(bindingId) {
       if (bindingId !== binding.bindingId || !await input.current()) return { kind: 'unavailable' };
@@ -98,9 +100,7 @@ export function createHostedListeningControl(input: Readonly<{
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
     const applied = await project(view.effective, view.requested, view.version, evidenceRevision);
     const latest = applied && await input.current() ? await reread() : null;
-    return latest?.ok && latest.view.version === view.version && latest.view.requested === view.requested
-      && latest.view.effective === view.effective && latest.view.effectiveReason === view.effectiveReason
-      && JSON.stringify(latest.view.support) === JSON.stringify(view.support)
+    return latest?.ok && sameView(latest.view, view)
       ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
   async function read() { return projectedRead(await base.read(), () => base.read()); }
@@ -117,12 +117,10 @@ export function createHostedListeningControl(input: Readonly<{
       if (result.outcome !== 'applied') return result;
       const current = await read();
       const latest = await base.read();
-      return current.ok && latest.ok && latest.view.version === result.version
-        && latest.view.requested === result.requested && latest.view.effective === current.view.effective
-        && current.view.version === result.version
-        && current.view.requested === result.requested && current.view.effective !== null
-        ? { ...result, effective: current.view.effective }
-        : { ...result, effective: null, reason: current.ok ? current.view.effectiveReason : 'projection_unavailable' };
+      return current.ok && latest.ok && sameView(latest.view, current.view)
+        && current.view.version === result.version && current.view.requested === result.requested
+        ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
+        : { ...result, effective: null, reason: 'projection_unavailable' };
     },
   };
   return {
@@ -146,10 +144,8 @@ export function createHostedListeningControl(input: Readonly<{
         if (result.outcome !== 'applied') return result;
         const current = await ownerRead(authority);
         const latest = await service.read(authority, { binding, status: 'active' }, await input.capabilities());
-        return current.ok && latest.ok && latest.view.version === result.version
-          && latest.view.requested === command.requested && latest.view.effective === current.view.effective
-          && current.view.version === result.version
-          && current.view.requested === command.requested
+        return current.ok && latest.ok && sameView(latest.view, current.view)
+          && current.view.version === result.version && current.view.requested === command.requested
           ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
           : { ...result, effective: null, reason: 'projection_unavailable' };
       },
