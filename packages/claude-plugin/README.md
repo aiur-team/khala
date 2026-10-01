@@ -31,8 +31,8 @@ receipt are proven; see `docs/evidence/claude-hosted-native-hooks.md`.
 
 **Unbound sessions.** Setup enables the plugin user-wide, so these hooks run in
 every Claude session on the machine. `PostToolUse` and `Stop` first check for
-that session's live hosted MCP bridge; other hooks, and those two when no bridge
-exists, check the session's internal grant at
+that session's live hosted MCP bridge. If it has no batch or refuses, those hooks
+continue through the exact session's internal grant, as the other hooks do. The grant is at
 `$XDG_STATE_HOME/khala/internal/discovery/<principal>/claude-grant.json`.
 The grant must name a binding and carry the transport capability of the current
 `active.json`. That check reads at most three small files and takes about 20 µs.

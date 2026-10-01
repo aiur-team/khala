@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { runHook } from '../../../claude-plugin/hooks/lib/runtime.mjs';
+import { fakeKhala, hookDeps } from '../../../claude-plugin/src/fakes';
 import { claudeHostedHookPaths, startClaudeHostedHookBridge, type ClaudeHostedBoundary } from './claude-hosted-hook-bridge';
 
 const root = process.env.TMPDIR ?? tmpdir();
@@ -43,10 +44,49 @@ function fixture() {
   return { sessionId, port, hook, pulls, acknowledgements,
     mode: (value: 'steer' | 'sync' | null) => { mode = value; },
     pause: () => { paused = true; }, resume: () => { paused = false; },
-    generation: (value: number) => { held = binding(value); } };
+    generation: (value: number) => { held = binding(value); },
+    bindingId: (value: string) => { held = { ...held, bindingId: value as SessionBinding['bindingId'] }; } };
 }
 
 describe('Claude hosted hook receipt bridge', () => {
+  it('keeps the exact internal hook path when a hosted descriptor is empty or refuses', async () => {
+    const f = fixture();
+    const internal = fakeKhala();
+    internal.bind(f.sessionId, 'steer');
+    internal.release(f.sessionId, 'internal after hosted empty');
+    const { deps } = hookDeps(internal.khala, internal.engaged);
+    const hookDepsWithHosted = { ...deps, hostedRoot: root };
+    const postTool = () => runHook('post-tool-use',
+      JSON.stringify({ hook_event_name: 'PostToolUse', session_id: f.sessionId }), hookDepsWithHosted);
+    const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId,
+      port: { ...f.port, pull: async () => null } });
+    const descriptorPath = claudeHostedHookPaths(root, f.sessionId).descriptor;
+    const originalDescriptor = await readFile(descriptorPath, 'utf8');
+    try {
+      expect((await postTool()).stdout).toContain('internal after hosted empty');
+      expect(internal.ops(f.sessionId)).toEqual(['hook', 'pull']);
+
+      internal.agentCall(f.sessionId);
+      internal.release(f.sessionId, 'internal after hosted refusal');
+      const descriptor = JSON.parse(originalDescriptor) as { secret: string };
+      descriptor.secret = 'A'.repeat(43);
+      await writeFile(descriptorPath, JSON.stringify(descriptor));
+      expect((await postTool()).stdout).toContain('internal after hosted refusal');
+      expect(internal.ops(f.sessionId)).toEqual(['hook', 'pull', 'hook', 'pull']);
+      internal.agentCall(f.sessionId);
+      internal.bind(f.sessionId, 'sync');
+      internal.release(f.sessionId, 'internal at Stop');
+      const stopped = await runHook('stop',
+        JSON.stringify({ hook_event_name: 'Stop', session_id: f.sessionId }), hookDepsWithHosted);
+      expect(JSON.parse(stopped.stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('internal at Stop') });
+      expect((await runHook('post-tool-use',
+        JSON.stringify({ hook_event_name: 'PostToolUse', session_id: randomUUID() }), hookDepsWithHosted)).stdout).toBe('');
+    } finally {
+      await writeFile(descriptorPath, originalDescriptor);
+      await bridge.close();
+    }
+  });
+
   it('delivers Steer at the tool boundary and commits only after the exact later call', async () => {
     const f = fixture();
     const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
@@ -67,7 +107,7 @@ describe('Claude hosted hook receipt bridge', () => {
     } finally { await bridge.close(); }
   });
 
-  it('delivers Sync at Stop and invalidates receipts on pause or generation change', async () => {
+  it('delivers Sync at Stop and invalidates receipts on pause, generation or binding change', async () => {
     const f = fixture(); f.mode('sync');
     const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
     try {
@@ -84,6 +124,11 @@ describe('Claude hosted hook receipt bridge', () => {
       expect(next).toBeDefined();
       f.generation(2);
       expect(await bridge.acknowledge(next!)).toBe('stale');
+      const afterGeneration = await f.hook('stop');
+      const last = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(afterGeneration.stdout)?.[1];
+      expect(last).toBeDefined();
+      f.bindingId('other-binding');
+      expect(await bridge.acknowledge(last!)).toBe('stale');
       expect(f.acknowledgements).toEqual([]);
     } finally { await bridge.close(); }
   });
@@ -93,7 +138,7 @@ describe('Claude hosted hook receipt bridge', () => {
     const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
     await expect(startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port }))
       .rejects.toThrow('active_hook_bridge_exists');
-    const descriptor = JSON.parse(await readFile(claudeHostedHookPaths(root, f.sessionId).descriptor, 'utf8')) as { socketPath: string };
+    const descriptor = JSON.parse(await readFile(claudeHostedHookPaths(root, f.sessionId).descriptor, 'utf8')) as { socketPath: string; secret: string };
     const wrong = await new Promise<string>(resolve => {
       const socket = createConnection(descriptor.socketPath);
       let output = '';
@@ -102,6 +147,14 @@ describe('Claude hosted hook receipt bridge', () => {
       socket.on('data', chunk => { output += chunk.toString(); if (output.includes('\n')) { resolve(output); socket.destroy(); } });
     });
     expect(wrong).toContain('unsupported');
+    const wrongSession = await new Promise<string>(resolve => {
+      const socket = createConnection(descriptor.socketPath);
+      let output = '';
+      socket.on('connect', () => socket.write(JSON.stringify({ v: 1, sessionId: randomUUID(),
+        boundary: 'post_tool_use', secret: descriptor.secret }) + '\n'));
+      socket.on('data', chunk => { output += chunk.toString(); if (output.includes('\n')) { resolve(output); socket.destroy(); } });
+    });
+    expect(wrongSession).toContain('unsupported');
     const first = await f.hook('post-tool-use');
     const nonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(first.stdout)?.[1];
     await bridge.close();
