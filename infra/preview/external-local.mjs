@@ -113,6 +113,18 @@ async function createCertificate(privateDir) {
 async function renderConfigs(env) {
   await command('node', ['infra/messaging/check.ts', '--environment', 'preview', '--render-only'], { env });
   await command('node', ['infra/preview/render-dex.ts'], { env });
+  await setDisposableLoginBurst(env);
+}
+
+async function setDisposableLoginBurst(env) {
+  // Netlify Dev starts more isolated function workers than the hosted warm
+  // runtime. Keep the disposable Synapse login burst above that local churn.
+  const homeserver = path.join(env.KHALA_CONFIG_DIR, 'homeserver.yaml');
+  const rendered = await readFile(homeserver, 'utf8');
+  const original = 'rc_login:\n  address:\n    per_second: 1\n    burst_count: 30\n  account:\n    per_second: 0.5\n    burst_count: 20';
+  if (rendered.split(original).length !== 2) throw new Error('disposable_login_config_mismatch');
+  await writeFile(homeserver, rendered.replace(original,
+    'rc_login:\n  address:\n    per_second: 1\n    burst_count: 500\n  account:\n    per_second: 0.5\n    burst_count: 500'), { mode: 0o600 });
 }
 
 async function composeCommand(args, env) {
@@ -239,6 +251,7 @@ async function main() {
     stage = 'matrix-boundary';
     const checkEnv = { ...env, KHALA_MATRIX_CHECK_ORIGIN: `http://127.0.0.1:${synapsePort}`, KHALA_ALLOW_INSECURE_LOOPBACK: 'true' };
     await command('node', ['infra/messaging/check.ts', '--environment', 'preview'], { env: checkEnv });
+    await setDisposableLoginBurst(env);
     const observer = await registerObserver(checkEnv.KHALA_MATRIX_CHECK_ORIGIN, env.KHALA_MATRIX_REGISTRATION_SHARED_SECRET);
     stage = 'build-artifacts';
     await command('pnpm', ['--filter', '@khala/control', 'build:functions'], { env });
@@ -402,7 +415,7 @@ async function main() {
       artifacts: { functionSha256: await hash(path.join(root, 'infra/netlify/functions-generated/khala-control.mjs')),
         webSha256: await hash(path.join(root, 'apps/web/dist/index.html')),
         connectorSha256: await hash(path.join(root, 'packages/agent-cli/dist/khala.js')) },
-      scopes: { project, control: env.CONTROL_STATE_NAMESPACE, origin },
+      scopes: { project, control: env.CONTROL_STATE_NAMESPACE, origin, disposableLoginBurst: 500 },
       versions: { docker: versions[0].stdout.trim(), netlify: versions[1].stdout.trim(), synapse: '1.161.0', dex: '2.43.1' } }) + '\n');
   } finally {
     if (gateway) await new Promise(resolve => gateway.close(resolve));
