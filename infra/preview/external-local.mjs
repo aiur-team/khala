@@ -304,7 +304,8 @@ async function main() {
       try {
         const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_STAGE_DIAGNOSTIC, 'utf8'));
         const allowed = new Set(['alice-create', 'alice-send', 'alice-share', 'bob-join', 'bob-send',
-          'matrix-ciphertext', 'alice-history', 'bob-history', 'outsider-create', 'outsider-denial']);
+          'matrix-ciphertext', 'alice-history', 'bob-history', 'outsider-create', 'outsider-signin',
+          'outsider-room', 'outsider-send', 'outsider-denial']);
         if (allowed.has(report.stage)) {
           browserDiagnostic = { stage: report.stage,
             ...(report.phase === 'loading' || report.phase === 'unavailable' || report.phase === 'ready_empty'

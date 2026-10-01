@@ -4,7 +4,8 @@ import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, synthetic
 
 const environment = readLiveHumanEnvironment();
 type BrowserStage = 'alice-create' | 'alice-send' | 'alice-share' | 'bob-join' | 'bob-send'
-  | 'matrix-ciphertext' | 'alice-history' | 'bob-history' | 'outsider-create' | 'outsider-denial';
+  | 'matrix-ciphertext' | 'alice-history' | 'bob-history' | 'outsider-create' | 'outsider-signin'
+  | 'outsider-room' | 'outsider-send' | 'outsider-denial';
 
 function recordStage(stage: BrowserStage, details: Record<string, unknown> = {}): void {
   const file = process.env.KHALA_E2E_STAGE_DIAGNOSTIC;
@@ -169,13 +170,16 @@ test('an account without admission cannot read a protected room', async ({ brows
   try {
     recordStage('outsider-create');
     const owner = await freshPage(ownerContext, environment);
+    recordStage('outsider-signin');
     await signIn(owner, environment, environment.users[0]);
+    recordStage('outsider-room');
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
     const canary = syntheticCanary('protected');
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(owner).toHaveURL(/\/channels\//u);
     const roomId = decodeURIComponent(new URL(owner.url()).pathname.slice('/channels/'.length));
     expect(roomId).not.toBe('');
+    recordStage('outsider-send');
     await owner.getByLabel('Message', { exact: true }).fill(canary);
     await owner.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(owner.locator('.timeline__row:not(.timeline__row--pending)', { hasText: canary })).toBeVisible({ timeout: 30_000 });
