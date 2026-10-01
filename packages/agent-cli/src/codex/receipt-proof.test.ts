@@ -185,6 +185,17 @@ describe('Codex hook route receipt proof, derived from real code', () => {
     });
   });
 
+  it.each([
+    ['session', { ...BINDING, sessionId: 'other-session' }],
+    ['generation', { ...BINDING, generation: BINDING.generation + 1 }],
+  ])('does not accept a next-call token from the wrong %s', async (_name, held) => {
+    const observation = await observe({ held });
+    expect(observation).toMatchObject({ authenticatedBinding: false, tokenReturned: false,
+      receiptCorrelated: false });
+    expect(assessCodexReceiptConformance(observation, { version: VERSION, route: 'hook' }))
+      .toMatchObject({ proven: false, gaps: expect.arrayContaining(['binding_unauthenticated']) });
+  });
+
   it('is not proven when the reader is not on the same inbox as the hook', async () => {
     const observation = await observe({ otherInbox: true });
     expect(observation.sharedInbox).toBe(false);

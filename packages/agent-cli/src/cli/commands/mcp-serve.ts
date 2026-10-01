@@ -1,4 +1,5 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { BatchInbox } from '../inbox.js';
 import { isClaudeMcpEntry, runClaudeMcpServer, sessionOperationId } from '../../composition/claude-mcp.js';
 import { CLAUDE_SESSION_ENV } from '../../composition/claude-agent.js';
@@ -72,6 +73,7 @@ export const mcpServeCommand: CliCommand = {
       let retainedToken: string | undefined;
       let sessionBinding: SessionBinding | null = null;
       let localAccessRequested = false;
+      let startupDeadline: number | null = null;
       const heldDiagnostic = (stage: 'connector_unready' | 'binding_absent' | 'harness_mismatch'
         | 'session_mismatch' | 'binding_changed', errorCode?: string | null) => {
         const code = errorCode && (AGENT_READINESS_ERRORS as readonly string[]).includes(errorCode)
@@ -82,7 +84,21 @@ export const mcpServeCommand: CliCommand = {
       const held = async () => {
         const opened = await open();
         if (!opened || !validIdentifier(sessionId)) return null;
-        const status = publicStatus(await opened.client.status(deps.signal));
+        let status = publicStatus(await opened.client.status(deps.signal));
+        // A resumed MCP process opens its connector lazily. The existing binding
+        // can be present while the intake subscription is still starting; do
+        // not turn that short startup window into a lost-session refusal.
+        const deadline = !status.connected && status.readiness?.errorCode === 'subscription_starting'
+          ? (startupDeadline ??= Date.now() + 8_000) : 0;
+        while (!status.connected && status.readiness?.errorCode === 'subscription_starting'
+          && Date.now() < deadline) {
+          await delay(Math.min(500, deadline - Date.now()), undefined, { signal: deps.signal });
+          status = publicStatus(await opened.client.status(deps.signal));
+        }
+        if (!status.connected && status.readiness?.errorCode === 'subscription_starting') {
+          heldDiagnostic('connector_unready', 'subscription_starting');
+          return { kind: 'starting' as const };
+        }
         const binding = status.binding;
         const storedSession = opened.client.storedSessionId?.('claude', sessionId) ?? sessionId;
         if (!status.connected) { heldDiagnostic('connector_unready', status.readiness?.errorCode); return null; }
@@ -93,12 +109,13 @@ export const mcpServeCommand: CliCommand = {
           heldDiagnostic('binding_changed'); return null;
         }
         sessionBinding = binding;
-        return { opened, binding };
+        return { kind: 'held' as const, opened, binding };
       };
       const current = async (binding: SessionBinding) => {
         const selected = await held();
-        return selected !== null && sameHeldBinding(binding, selected.binding);
+        return selected?.kind === 'held' && sameHeldBinding(binding, selected.binding);
       };
+      const starting = { kind: 'refused', code: 'connector_starting', next: 'retry_status_then_read' } as const;
       const hostedTools = {
         selectAccessRoute(internal: boolean) { localAccessRequested = internal; },
         async active() {
@@ -115,11 +132,13 @@ export const mcpServeCommand: CliCommand = {
         },
         async status() {
           const selected = await held();
-          return selected === null ? { kind: 'refused', code: 'not_connected' }
+          return selected?.kind === 'starting' ? starting
+            : selected === null ? { kind: 'refused', code: 'not_connected' }
             : { kind: 'status', connected: true };
         },
         async send(message: string) {
           const selected = await held();
+          if (selected?.kind === 'starting') return starting;
           if (selected === null) return { kind: 'refused', code: 'not_connected' };
           const result = await new SendService(selected.opened.client).send(message, selected.binding.bindingId, undefined, deps.signal);
           // A changed binding after the call cannot prove whether the send committed.
@@ -127,6 +146,7 @@ export const mcpServeCommand: CliCommand = {
         },
         async read() {
           const selected = await held();
+          if (selected?.kind === 'starting') return starting;
           if (selected === null) return { kind: 'refused', code: 'not_connected' };
           const inbox = await selected.opened.inbox(selected.binding.bindingId, selected.binding.generation);
           const consumer = callScopedConsumer(inbox, { signal: deps.signal, explicitRead: true });
@@ -150,6 +170,7 @@ export const mcpServeCommand: CliCommand = {
         },
         async roster() {
           const selected = await held();
+          if (selected?.kind === 'starting') return starting;
           if (selected === null) return { kind: 'refused', code: 'session_not_bound' };
           const roster = await selected.opened.client.listAgents({ bindingId: selected.binding.bindingId }, deps.signal);
           return roster.kind === 'listed' ? { kind: 'roster', roster: roster.roster }
@@ -199,7 +220,8 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
     bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null };
   const sessions = new Map<string, Routed>();
   type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
-  const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null }>();
+  const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null;
+    startupDeadline: number | null }>();
   try {
     await runMcpServer({
       input: deps.stdin,
@@ -241,18 +263,37 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
         if (entry === undefined) {
           if (!PREJOIN_TOOLS.has(toolName)
             && deps.hostedBindingPresent && !await deps.hostedBindingPresent(session)) return null;
-          entry = { opened: await deps.hostedSession(session), bound: null };
+          entry = { opened: await deps.hostedSession(session), bound: null, startupDeadline: null };
           hosted.set(session.sessionId, entry);
         }
-        const hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+        let hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+        if (!PREJOIN_TOOLS.has(toolName) && hostedStatus.readiness?.errorCode === 'subscription_starting'
+          && !hostedStatus.connected && deps.hostedBindingPresent && await deps.hostedBindingPresent(session)) {
+          // The saved binding can precede the new process's intake subscription.
+          // Bound the wait across calls to this MCP process, even on repeated retries.
+          const deadline = entry.startupDeadline ??= Date.now() + 8_000;
+          while (!hostedStatus.connected && hostedStatus.readiness?.errorCode === 'subscription_starting'
+            && Date.now() < deadline) {
+            await delay(Math.min(500, deadline - Date.now()), undefined, { signal: deps.signal });
+            hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+          }
+          if (!hostedStatus.connected && hostedStatus.readiness?.errorCode === 'subscription_starting') {
+            // A removed approval must never be presented as an ordinary startup retry.
+            if (!await deps.hostedBindingPresent(session)) return null;
+            throw new CliError('connector_starting');
+          }
+        }
         if (!hostedStatus.connected || hostedStatus.binding === null) {
           return PREJOIN_TOOLS.has(toolName)
             ? pairingCollaborators(entry.opened.client) : null;
         }
+        if (!PREJOIN_TOOLS.has(toolName) && deps.hostedBindingPresent
+          && !await deps.hostedBindingPresent(session)) return null;
         const storedSessionId = entry.opened.client.storedSessionId?.(session.harness, session.sessionId) ?? session.sessionId;
         if (!([session.harness, 'proof-key'].includes(hostedStatus.binding.harness))
           || hostedStatus.binding.sessionId !== storedSessionId) return null;
-        if (entry.bound === null || !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) {
+        if (entry.bound !== null && !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) return null;
+        if (entry.bound === null) {
           entry.bound = {
             binding: hostedStatus.binding,
             collaborators: await boundCollaborators(deps, entry.opened.client, entry.opened.inbox, hostedStatus.binding),

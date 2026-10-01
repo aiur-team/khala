@@ -368,6 +368,32 @@ describe('review control handler', () => {
 });
 
 describe('review preview access', () => {
+  it('omits a released event across repeated previews and a ledger reopen', async () => {
+    const { storage, state } = await seeded();
+    const handler = handlerFor(storage, sink());
+    const request = { bindingId, candidates: [refA, refB], releaseIds: [] };
+
+    const before = await handler.preview(authority, request);
+    expect(before.ok && before.preview.pending).toEqual([refA, refB]);
+    expect(await handler.approve(authority, command('approve-b-7', [refA])))
+      .toEqual({ ok: true, releaseIds: ['release_1'] });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const after = await handler.preview(authority, request);
+      expect(after.ok && after.preview.pending).toEqual([refB]);
+    }
+    expect(await handler.approve(authority, command('approve-b-8', [refA])))
+      .toEqual({ ok: false, code: 'stale_content' });
+
+    await storage.close();
+    const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
+    opened.push(reopened);
+    const reopenedHandler = handlerFor(reopened, sink());
+    const afterReopen = await reopenedHandler.preview(authority, request);
+    expect(afterReopen.ok && afterReopen.preview.pending).toEqual([refB]);
+    expect(await reopenedHandler.preview(otherOwner, request)).toEqual({ ok: false, code: 'forbidden' });
+  });
+
   it('answers another owner exactly like an unknown binding and never lists pending refs', async () => {
     const { storage } = await seeded();
     const handler = handlerFor(storage, sink());

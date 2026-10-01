@@ -141,6 +141,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
         allowInsecureLoopback: localAuth,
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
+      inspectOwnerDeviceKey: active.matrix.inspectOwnerDeviceKey,
     });
     const participantDirectory = createAgentParticipantDirectoryRoute({
       store: active.store, capabilities: bootstrap.capabilities, sessions: active.matrix.sessions,

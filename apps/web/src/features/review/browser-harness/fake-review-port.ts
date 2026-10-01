@@ -100,6 +100,8 @@ export function createFakeReviewPort() {
       notify();
       return { kind: 'accepted', releaseIds: [releaseId] };
     },
+    reconcile: async (command: ApprovalCommand): Promise<ApprovalUiResult> =>
+      ({ kind: 'outcome_unknown', commandId: command.commandId }),
   };
 
   return {

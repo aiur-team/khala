@@ -24,6 +24,22 @@ const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 const request = { operationId: 'closure-operation', ownerId: first.ownerId, roomId, expectedRoomRevision: 0 };
 
 describe('production closure mailbox adapter', () => {
+  it('reads cleanup requests from the local control store when local auth is enabled', async () => {
+    const route = registerClosureHandlers({
+      loadHuman: async () => ({ auth: {
+        authenticateRequest: async () => ({ kind: 'authenticated', context: { principal } }),
+      }, messaging: {} }) as never,
+      readEnv: () => ({ controlStateNamespace: 'closure-local-auth-test',
+        publicHomeserverOrigin: 'http://127.0.0.1:8008', invitationHmacSecret: authoritySecret }) as never,
+      env: { NODE_ENV: 'development', KHALA_LOCAL_AUTH: 'enabled',
+        PUBLIC_APP_ORIGIN: 'http://localhost:8888', PUBLIC_HOMESERVER_ORIGIN: 'http://127.0.0.1:8008' },
+    })[0]!;
+
+    const response = await route.handle(new Request('http://localhost:8888/api/human/channel-closure?cleanup=1'));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ kind: 'ok', value: [] });
+  });
+
   it('rebinds the Blobs client for cleanup reads after a warm credential expires', async () => {
     let credential: 'expired' | 'fresh' = 'expired';
     const stores = vi.fn((name: string): BlobsStoreLike => {

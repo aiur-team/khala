@@ -8,7 +8,8 @@ import type { AdmissionGateway } from '../../invitations/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { ownerMatrixUserId } from '../human/matrix-identity';
 import { createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes,
-  OWNER_DEVICE_CHALLENGE, OWNER_DEVICE_LOOKUP, OWNER_DEVICE_REGISTER } from './owner-device-proof';
+  OWNER_DEVICE_CHALLENGE, OWNER_DEVICE_LOOKUP, OWNER_DEVICE_REGISTER, OWNER_DEVICE_RETIRE } from './owner-device-proof';
+import type { OwnerDeviceProofDependencies } from './owner-device-proof';
 
 const origin = 'https://khala.aiur.team';
 const roomId = '!owner-proof:example' as RoomId;
@@ -19,6 +20,7 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
   providerSubject: 'owner-subject', verifiedEmail: 'owner@example.test',
   sessionExpiresAt: new Date(T0 + 60_000).toISOString() } as AuthPrincipal;
 const browserDeviceId = 'BROWSER_DEVICE';
+const currentDeviceId = 'CURRENT_BROWSER';
 const fingerprint = 'A'.repeat(43);
 const matrixAccessToken = 'test-browser-token-never-persist';
 
@@ -36,6 +38,8 @@ async function setup() {
   let current = true;
   let browserVerified = true;
   let verifiedFingerprint = fingerprint;
+  let publishedKey: 'matched' | 'missing' | 'mismatch' | 'unavailable' = 'matched';
+  let now = T0;
   let challengeCount = 0;
   let owner = principal;
   let agentBinding = binding;
@@ -53,15 +57,17 @@ async function setup() {
       status: current ? 'active' : 'revoked' }; },
   } as unknown as AdapterCapabilities;
   const verifiedTokens: string[] = [];
-  const routes = createOwnerDeviceProofRoutes({ auth, gateway, capabilities, store: state.store,
-    inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }), clock: () => T0,
+  const dependencies: OwnerDeviceProofDependencies = { auth, gateway, capabilities, store: state.store,
+    inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }), clock: () => now,
+    inspectOwnerDeviceKey: async () => publishedKey,
     random: () => new Uint8Array(32).fill(++challengeCount),
     verifyBrowserDevice: async (who, device, key, token) => {
       verifiedTokens.push(token);
-      return browserVerified && who.ownerId === binding.ownerId && device === browserDeviceId
+      return browserVerified && who.ownerId === binding.ownerId && (device === browserDeviceId || device === currentDeviceId)
         && key === verifiedFingerprint && token === matrixAccessToken ? 'verified' : 'mismatch';
     },
-  });
+  };
+  let routes = createOwnerDeviceProofRoutes(dependencies);
   async function call(path: string, method = 'GET', body?: unknown, query = ''): Promise<Response> {
     const route = [...routes.human, ...routes.agent].find(item => item.path === path)!;
     return route.handle(new Request(`${origin}${path}${query}`, { method,
@@ -85,7 +91,10 @@ async function setup() {
     setAgentBinding: (value: SessionBinding) => { agentBinding = value; },
     setOwner: (value: AuthPrincipal) => { owner = value; },
     setBrowserVerified: (value: boolean) => { browserVerified = value; },
-    setVerifiedFingerprint: (value: string) => { verifiedFingerprint = value; } };
+    setVerifiedFingerprint: (value: string) => { verifiedFingerprint = value; },
+    setPublishedKey: (value: typeof publishedKey) => { publishedKey = value; },
+    advance: (ms: number) => { now += ms; },
+    restart: () => { routes = createOwnerDeviceProofRoutes(dependencies); } };
 }
 
 describe('owner browser Matrix device proof', () => {
@@ -192,6 +201,104 @@ describe('owner browser Matrix device proof', () => {
     env.setCurrent(true);
     expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(403);
+  });
+
+  it('rechecks the exact published key and reconnects only after it appears', async () => {
+    const env = await setup();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    env.setPublishedKey('missing');
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(503);
+    expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(503);
+    env.advance(15_001);
+    env.restart();
+    env.setPublishedKey('matched');
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(200);
+    env.setPublishedKey('mismatch');
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(403);
+    env.setPublishedKey('unavailable');
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(503);
+  });
+
+  it('retires a missing key only after revocation and two separated observations', async () => {
+    const env = await setup();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    const body = { v: 1, roomId, bindingId: binding.bindingId, generation: binding.generation, deviceId: browserDeviceId,
+      currentDeviceId, currentFingerprint: fingerprint, matrixAccessToken };
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', { ...body, currentDeviceId: browserDeviceId })).status).toBe(400);
+    env.setPublishedKey('missing');
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(403);
+    expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', { ...body, generation: binding.generation + 1 })).status).toBe(403);
+    env.setBrowserVerified(false);
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(403);
+    env.setBrowserVerified(true);
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
+    env.advance(15_000);
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
+    env.advance(1);
+    env.setPublishedKey('matched');
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(409);
+    env.setPublishedKey('mismatch');
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(409);
+    env.setPublishedKey('unavailable');
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(503);
+    env.setPublishedKey('missing');
+    env.restart();
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
+    env.advance(15_001);
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(200);
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(200);
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(403);
+    expect([...env.state.records.values()].some(record => JSON.stringify(record.value).includes(matrixAccessToken))).toBe(false);
+  });
+
+  it('keeps a durable tombstone through failed index cleanup and restart', async () => {
+    const env = await setup();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
+    env.setPublishedKey('missing');
+    const body = { v: 1, roomId, bindingId: binding.bindingId, generation: binding.generation, deviceId: browserDeviceId,
+      currentDeviceId, currentFingerprint: fingerprint, matrixAccessToken };
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
+    env.advance(15_001);
+    const original = env.state.store.compareAndSet.bind(env.state.store);
+    Object.defineProperty(env.state.store, 'compareAndSet', { configurable: true, value: async (input: { key: string }) =>
+      input.key.startsWith('owner-device-index.v2.') ? { kind: 'unavailable' } : original(input as never) });
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(503);
+    const absenceKey = env.state.keys('owner-device-absence.v1.')[0]!;
+    expect((env.state.records.get(absenceKey)?.value as { retired?: boolean }).retired).toBe(true);
+    const indexKey = env.state.keys('owner-device-index.v2.')[0]!;
+    expect((env.state.records.get(indexKey)?.value as { deviceIds: string[] }).deviceIds).toEqual([browserDeviceId]);
+    Object.defineProperty(env.state.store, 'compareAndSet', { configurable: true, value: original });
+    env.restart();
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(200);
+    expect((env.state.records.get(indexKey)?.value as { deviceIds: string[] }).deviceIds).toEqual([]);
+  });
+
+  it('does not retire when a concurrent key recovery clears absence evidence', async () => {
+    const env = await setup();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
+    env.setPublishedKey('missing');
+    const body = { v: 1, roomId, bindingId: binding.bindingId, generation: binding.generation, deviceId: browserDeviceId,
+      currentDeviceId, currentFingerprint: fingerprint, matrixAccessToken };
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
+    env.advance(15_001);
+    const original = env.state.store.compareAndSet.bind(env.state.store);
+    Object.defineProperty(env.state.store, 'compareAndSet', { configurable: true, value: async (input: {
+      key: string; expectedRevision: string; operationId: string }) => {
+      if (input.operationId.startsWith('owner-device-retire.')) {
+        await original({ key: input.key, expectedRevision: input.expectedRevision,
+          operationId: 'test-key-recovered', next: { value: { v: 1, firstMissingAt: null }, expiresAt: null } });
+      }
+      return original(input as never);
+    } });
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(503);
+    const absenceKey = env.state.keys('owner-device-absence.v1.')[0]!;
+    expect(env.state.records.get(absenceKey)?.value).toEqual({ v: 1, firstMissingAt: null });
+    Object.defineProperty(env.state.store, 'compareAndSet', { configurable: true, value: original });
+    env.restart();
+    expect((await env.call(OWNER_DEVICE_RETIRE, 'POST', body)).status).toBe(202);
   });
 
   it('blocks lookup after owner leaves the room or closure begins', async () => {

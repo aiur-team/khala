@@ -10,6 +10,7 @@ import { registerHumanCapabilities } from '../human/capabilities';
 import { createBrowserReviewPort, type ReviewControlClient, type ReviewPreviewRequest } from './browser-port';
 import { registerReview } from './register';
 import { receiptLabel } from '../../features/review/receipt-labels';
+import { createReviewController } from '../../features/review/controller';
 
 const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!decoded.ok) throw new Error('limits');
@@ -80,6 +81,7 @@ function scriptedClient(answer: (request: ReviewPreviewRequest) => Answer | Prom
       commands.push(command);
       return approval();
     },
+    reconcile() { return approval(); },
   };
   return { client, requests, commands, setApproval: (next: typeof approval) => { approval = next; } };
 }
@@ -98,6 +100,75 @@ function port(client: ReviewControlClient, room: RoomPort) {
 }
 
 describe('browser review port', () => {
+  it('keeps one preview live across equivalent snapshots and fences a changed generation', async () => {
+    const answers: Array<(answer: Answer) => void> = [];
+    const { client, requests, commands } = scriptedClient(() => new Promise<Answer>(resolve => { answers.push(resolve); }));
+    const { room, emit } = fakeRoom();
+    const review = createBrowserReviewPort({ client, room, roomId, bindingId, viewerOwnerId: viewer, limits, refreshMs: 60_000 });
+    const controller = createReviewController(review);
+
+    emit([itemA, { ...itemB, receivedAt: '2026-09-25T10:00:01Z' }]);
+    emit([itemA, itemB]);
+    emit([itemA, itemB]);
+    expect(requests).toHaveLength(1);
+    answers[0]!({ kind: 'ok', body: previewBody([refOf(itemA), refOf(itemB)]) });
+    await tick();
+    expect(controller.getSnapshot().view.pending).toEqual([itemA, itemB]);
+    expect(controller.getSnapshot().view.access).toBe('ready');
+    controller.toggleSelect(refOf(itemB), true);
+    expect(controller.getSnapshot().selection.phase).toBe('selected');
+    emit([itemA, itemB]);
+    expect(requests).toHaveLength(1);
+    expect(controller.getSnapshot().selection.phase).toBe('selected');
+    expect(commands).toHaveLength(0);
+
+    emit([itemA, itemB], 2);
+    expect(requests).toHaveLength(2);
+    emit([itemB], 2);
+    expect(requests).toHaveLength(3);
+    answers[1]!({ kind: 'ok', body: previewBody([refOf(itemA), refOf(itemB)]) });
+    await tick();
+    expect(controller.getSnapshot().view.access).toBe('loading');
+    answers[2]!({ kind: 'ok', body: previewBody([refOf(itemB)]) });
+    await tick();
+    expect(controller.getSnapshot().view.pending).toEqual([itemB]);
+    expect(commands).toHaveLength(0);
+    controller.dispose();
+    review.dispose();
+  });
+  it('keeps one exact selection through a matching preview refresh and submits it once', async () => {
+    const arrival = item('event_c', 'new arrival', 3);
+    const { client, commands } = scriptedClient(() => ({ kind: 'ok', body: previewBody([refOf(itemA), refOf(itemB)]) }));
+    const { room, emit } = fakeRoom();
+    const review = port(client, room);
+    const controller = createReviewController(review);
+    emit([itemA, itemB]);
+    await tick();
+    controller.toggleSelect(refOf(itemA), true);
+    emit([itemA, itemB, arrival]);
+    await tick();
+    expect(controller.getSnapshot().selection.phase).toBe('selected');
+    expect(controller.getSnapshot().view.pending).toEqual([itemA, itemB]);
+    await controller.submit();
+    expect(commands).toHaveLength(1);
+    expect(commands[0]!.selection).toEqual([refOf(itemA)]);
+    expect(commands[0]).toMatchObject({ expectedPolicyVersion: 3, expectedBindingGeneration: 0 });
+    controller.dispose();
+    review.dispose();
+  });
+  it('routes a status check through reconcile without calling approve', async () => {
+    const { client, commands, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
+    let checked: ApprovalCommand | null = null;
+    client.reconcile = async value => { checked = value; return { kind: 'answered', body: { ok: true, releaseIds: ['release_1'] } }; };
+    const { room } = fakeRoom();
+    const review = port(client, room);
+    const exact = command('command_checked');
+    expect(await review.reconcile(exact, new AbortController().signal)).toEqual({ kind: 'accepted', releaseIds: ['release_1'] });
+    expect(checked).toBe(exact);
+    expect(commands).toHaveLength(0);
+    expect(requests).toHaveLength(0);
+    review.dispose();
+  });
   it('keeps exact known pending rows selectable while the connector is offline', async () => {
     const { client } = scriptedClient(() => ({ kind: 'waiting_for_agent', generation: 0, body: previewBody([refOf(itemA)]) }));
     const { room, emit } = fakeRoom();
@@ -326,6 +397,26 @@ describe('browser review registration', () => {
 });
 
 describe('browser review port lifecycle', () => {
+  it('bounds equivalent snapshot refreshes after a completed preview', async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([refOf(itemB)]) }));
+      const { room, emit } = fakeRoom();
+      const review = createBrowserReviewPort({ client, room, roomId, bindingId, viewerOwnerId: viewer, limits, refreshMs: 10 });
+      emit([itemB]);
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < 5; index += 1) emit([itemB]);
+      expect(requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10);
+      emit([itemB]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requests).toHaveLength(2);
+      review.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('removes its abort listener once an approval settles', async () => {
     const { client } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
     const review = port(client, fakeRoom().room);

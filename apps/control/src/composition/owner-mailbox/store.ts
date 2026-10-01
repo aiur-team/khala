@@ -10,6 +10,8 @@ import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 // Stop must remain queueable after the ordinary command budget is exhausted.
 const OWNER_MAILBOX_STOP_RESERVE = 1;
+const MAX_UNRESOLVED_READS_PER_KIND = 8;
+const SUBMIT_ATTEMPTS = 64;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
 export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'listening_set' | 'listening_grant' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
@@ -31,6 +33,8 @@ type Document = Readonly<{
   entries: readonly OwnerMailboxEntry[];
 }>;
 export type MailboxResult<T> = Readonly<{ kind: 'ok'; value: T }> | Readonly<{ kind: 'conflict' | 'unavailable' | 'capacity' }>;
+export type MailboxSubmitDiagnostic = 'index_read_unavailable' | 'archive_read_unavailable'
+  | 'archive_write_unavailable' | 'index_cas_unavailable' | 'index_cas_exhausted' | 'capacity';
 const ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const decodedLimits = decodeDeliveryLimits({ maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32 });
 if (!decodedLimits.ok) throw new Error('owner_mailbox_limits_invalid');
@@ -43,8 +47,9 @@ export function createOwnerMailbox(input: Readonly<{
   roomId: string;
   clock: () => number;
   authoritySecret: string;
+  submitDiagnostic?: (cause: MailboxSubmitDiagnostic) => void;
 }>) {
-  const { store, binding, roomId, clock, authoritySecret } = input;
+  const { store, binding, roomId, clock, authoritySecret, submitDiagnostic } = input;
   if (authoritySecret.length < 32) throw new Error('owner mailbox authority secret too short');
   const key = `owner-mailbox.v1.${createHash('sha256').update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
   // Completed commands live at stable per-operation keys. The bounded document
@@ -207,14 +212,14 @@ export function createOwnerMailbox(input: Readonly<{
       if (!ID.test(command.operationId) || !validBody(command.kind, command.body, binding, roomId)
         || !validPreviewId(command)) return { kind: 'conflict' };
       if (principal.ownerId !== binding.ownerId || !principal.providerIssuer || !principal.providerSubject) return { kind: 'conflict' };
-      for (let attempt = 0; attempt < 8; attempt++) {
+      for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
         const prior = await archived(command.operationId);
-        if (prior.kind !== 'ok') return prior;
+        if (prior.kind !== 'ok') { submitDiagnostic?.('archive_read_unavailable'); return prior; }
         if (prior.value) return prior.value.kind === command.kind && sameValue(prior.value.body, command.body)
           && prior.value.authority.issuer === principal.providerIssuer && prior.value.authority.subject === principal.providerSubject
           ? { kind: 'ok', value: prior.value } : { kind: 'conflict' };
         const current = await read();
-        if (current.kind !== 'ok') return current;
+        if (current.kind !== 'ok') { submitDiagnostic?.('index_read_unavailable'); return current; }
         const { document, revision, expiresAt } = current.value;
         const existing = document.entries.find(entry => entry.operationId === command.operationId);
         if (existing) return existing.kind === command.kind && sameValue(existing.body, command.body)
@@ -223,36 +228,48 @@ export function createOwnerMailbox(input: Readonly<{
         // An archive write always precedes removal from this poll index. Legacy
         // completed previews may be compacted because their IDs bind the body.
         let entries = [...document.entries];
+        const readOnly = command.kind === 'review_preview' || command.kind === 'controls_status';
         if (command.kind !== 'channel_stop'
-          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES
+          && (!readOnly || !entries.some(entry => entry.kind === 'review_preview' || entry.kind === 'controls_status'))) {
           for (const entry of entries) {
             if (entry.kind === 'channel_stop') continue;
             const completed = await archived(entry.operationId);
-            if (completed.kind !== 'ok') return completed;
+            if (completed.kind !== 'ok') { submitDiagnostic?.('archive_read_unavailable'); return completed; }
             if (completed.value) entries = entries.filter(item => item.operationId !== entry.operationId);
           }
         }
         const replaceable = entries.filter(entry => entry.kind !== 'channel_stop'
           && (entry.kind === 'review_preview' || entry.kind === 'controls_status'));
-        while (command.kind !== 'channel_stop'
-          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
-          const oldest = replaceable.shift();
+        // A legacy full mailbox may have 32 reads of each kind. Migrate it a
+        // little at a time so one owner request does not need dozens of blob writes.
+        let evictions = 0;
+        while (command.kind !== 'channel_stop' && evictions < 2 && (
+          entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES
+          || readOnly && entries.filter(entry => entry.kind === command.kind && entry.outcome === null).length >= MAX_UNRESOLVED_READS_PER_KIND
+        )) {
+          const preferred = readOnly && entries.filter(entry => entry.kind === command.kind && entry.outcome === null).length >= MAX_UNRESOLVED_READS_PER_KIND
+            ? replaceable.findIndex(entry => entry.kind === command.kind && entry.outcome === null) : -1;
+          const oldest = preferred < 0 ? replaceable.shift() : replaceable.splice(preferred, 1)[0];
           if (!oldest) break;
           // The result key is the durable decision point. A concurrent agent
           // completion may win this CAS; then its original result takes precedence.
           const saved = await archive({ ...oldest, outcome: oldest.outcome ?? { ok: false, code: 'unavailable' } },
             expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
-          if (saved === 'unavailable') return { kind: 'unavailable' };
+          if (saved === 'unavailable') { submitDiagnostic?.('archive_write_unavailable'); return { kind: 'unavailable' }; }
           if (saved === 'conflict') {
             const winner = await archived(oldest.operationId);
-            if (winner.kind !== 'ok') return winner;
-            if (!winner.value) return { kind: 'unavailable' };
+            if (winner.kind !== 'ok' || !winner.value) {
+              submitDiagnostic?.('archive_read_unavailable'); return { kind: 'unavailable' };
+            }
           }
           entries = entries.filter(entry => entry.operationId !== oldest.operationId);
+          evictions++;
         }
         if (command.kind === 'channel_stop'
           ? entries.some(entry => entry.kind === 'channel_stop')
           : entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          submitDiagnostic?.('capacity');
           return { kind: 'capacity' };
         }
         const authority: OwnerAuthority = {
@@ -264,8 +281,11 @@ export function createOwnerMailbox(input: Readonly<{
         const saved = await write({ ...document, entries: [...entries, entry] }, revision,
           expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
         if (saved === 'applied') return { kind: 'ok', value: entry };
-        if (saved === 'unavailable') return { kind: 'unavailable' };
+        if (saved === 'unavailable') { submitDiagnostic?.('index_cas_unavailable'); return { kind: 'unavailable' }; }
+        // Give a competing writer a chance to advance the index before retrying.
+        await new Promise(resolve => setTimeout(resolve, attempt % 4));
       }
+      submitDiagnostic?.('index_cas_exhausted');
       return { kind: 'unavailable' };
     },
     /** Agent route calls only after current DPoP binding/generation authorization. */
