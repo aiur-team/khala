@@ -60,6 +60,8 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   let view: ReviewView = loadingView(bindingId, viewerOwnerId);
   let items: readonly TimelineItem[] = [];
   let roomGeneration: number | null = null;
+  let roomMembership: ChannelSnapshot['room']['membership'] | null = null;
+  let roomIdentity: string | null = null;
   let request = 0;
   let inFlight: AbortController | null = null;
   let disposed = false;
@@ -110,9 +112,15 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   function onRoom(snapshot: ChannelSnapshot): void {
     if (disposed || snapshot.room.roomId !== roomId) return;
     if (roomGeneration !== null && snapshot.generation < roomGeneration) return;
-    if (snapshot.generation !== roomGeneration) {
-      // A reconnect replaces the whole queue; nothing from the old generation survives.
+    // Snapshot revisions can advance without changing any review input. Repeated
+    // equivalent snapshots must not abort the only live owner preview request.
+    const identity = JSON.stringify([snapshot.generation, snapshot.room.membership, snapshot.items]);
+    if (identity === roomIdentity) return;
+    roomIdentity = identity;
+    if (snapshot.generation !== roomGeneration || snapshot.room.membership !== roomMembership) {
+      // A reconnect or trust change replaces the queue while the new preview loads.
       roomGeneration = snapshot.generation;
+      roomMembership = snapshot.room.membership;
       publish({ ...loadingView(bindingId, viewerOwnerId), receipts: view.receipts });
     }
     items = snapshot.items;
