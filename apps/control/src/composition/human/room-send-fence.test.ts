@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RoomId } from '@khala/contracts/messaging/index';
+import type { CompareAndSetInput, ControlStore, JsonValue, RoomId } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createRoomSendFence } from './room-send-fence';
 
@@ -129,6 +129,33 @@ describe('durable room send fence', () => {
       { kind: 'cancelled' }, retried.attempt)).toBe('applied');
     expect(await restarted.drained(roomId, 'operation_retry')).toBe('drained');
     expect(await restarted.acquire(roomId, sender, 'txn_retry', true)).toMatchObject({ kind: 'held' });
+  });
+
+  it('recovers the stored attempt after the permit write succeeds but the room write fails', async () => {
+    const backing = fakeStore(() => T0);
+    let failRoomSave = false;
+    const store: ControlStore = { ...backing.store, async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+      if (failRoomSave && input.key.startsWith('room-send-fence.v1.')) {
+        failRoomSave = false;
+        return { kind: 'unavailable' as const };
+      }
+      return backing.store.compareAndSet(input);
+    } };
+    const fence = createRoomSendFence(store);
+    expect(await fence.readySender(roomId, sender)).toBe('applied');
+    expect(await fence.seedRoster(roomId, [sender])).toBe('applied');
+    failRoomSave = true;
+    expect(await fence.acquire(roomId, sender, 'txn_orphaned')).toEqual({ kind: 'unavailable' });
+    expect((await fence.inspect(roomId)).kind).toBe('found');
+    const restarted = createRoomSendFence(store);
+    const retried = await restarted.acquire(roomId, sender, 'txn_orphaned');
+    expect(retried).toMatchObject({ kind: 'granted', attempt: 0 });
+    if (retried.kind !== 'granted') throw new Error('permit recovery failed');
+    expect(await restarted.beginHold(roomId, 'operation_orphaned', excludedKey)).toBe('held');
+    expect(await restarted.drained(roomId, 'operation_orphaned')).toBe('pending');
+    expect(await restarted.finish(roomId, sender.senderId, retried.permitId,
+      { kind: 'cancelled' }, retried.attempt)).toBe('applied');
+    expect(await restarted.drained(roomId, 'operation_orphaned')).toBe('drained');
   });
 
   it('uses the current verified Matrix sender snapshot while retaining no hidden legacy sender', async () => {

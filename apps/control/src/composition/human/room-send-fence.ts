@@ -167,7 +167,8 @@ export function createRoomSendFence(store: ControlStore) {
         }
         const initial: Permit = { v: 1, roomId, senderId: sender.senderId, clientTxnId,
           permitId: id, state: 'active', eventId: null,
-          attempt: permit.kind === 'found' ? (permit.value.attempt ?? 0) + 1 : 0 };
+          attempt: permit.kind === 'found'
+            ? (permit.value.attempt ?? 0) + (permit.value.state === 'cancelled' ? 1 : 0) : 0 };
         if (permit.kind === 'absent' || permit.value.state === 'cancelled') {
           const prepared = await settleWrite(guarded, { key: permitKey(id),
             expectedRevision: permit.kind === 'absent' ? null : permit.revision,
