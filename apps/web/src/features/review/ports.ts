@@ -29,6 +29,7 @@ export type DefiniteApprovalErrorCode = Exclude<ApprovalErrorCode, 'outcome_unkn
 export type ApprovalUiResult =
   | Readonly<{ kind: 'accepted'; releaseIds: readonly ReleaseId[] }>
   | Readonly<{ kind: 'rejected'; code: DefiniteApprovalErrorCode }>
+  | Readonly<{ kind: 'waiting_for_agent'; commandId: CommandId }>
   | Readonly<{ kind: 'outcome_unknown'; commandId: CommandId }>;
 
 export interface ReviewUiPort {

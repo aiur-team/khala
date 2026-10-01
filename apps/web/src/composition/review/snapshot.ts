@@ -94,6 +94,7 @@ export function readyView(
     policyVersion: preview.policyVersion,
     viewerOwnerId,
     pending,
+    pendingKnown: true,
     receipts: preview.receipts,
   };
 }

@@ -35,6 +35,7 @@ const selectedReview = new URLSearchParams(location.search).has('selected-review
 const multiReview = new URLSearchParams(location.search).has('multi-review');
 const invitedReview = new URLSearchParams(location.search).has('invited-review');
 const unknownReview = new URLSearchParams(location.search).has('unknown-review');
+const offlineReview = new URLSearchParams(location.search).has('offline-review');
 const rosterFailure = new URLSearchParams(location.search).has('roster-failure');
 const closureDenied = new URLSearchParams(location.search).has('closure-denied');
 const closureUnknown = new URLSearchParams(location.search).has('closure-unknown');
@@ -175,11 +176,13 @@ const review = {
         && (multiReview && request.bindingId === secondReviewBinding.bindingId ? value.ref.eventId === 'event_a'
           : (!multiReview || request.bindingId === bindingId)
             && (!selectedReview || sentReviewEvents.has(value.ref.eventId))));
-      return { kind: 'ok' as const, body: { v: 1, bindingId: request.bindingId,
+      return { kind: offlineReview ? 'waiting_for_agent' as const : 'ok' as const,
+        generation: activeBinding.generation, body: { v: 1, bindingId: request.bindingId,
         bindingGeneration: selectedReview && !multiReview ? activeBinding.generation : 0,
         policyVersion: 3, pending: pending.map(value => value.ref), receipts: [] } };
     },
     async approve(value: ApprovalCommand) { command = value; reviewCommands.push(value);
+      if (offlineReview) return { kind: 'waiting_for_agent' as const };
       if (selectedReview) for (const ref of value.selection) releasedReviewEvents.add(ref.eventId);
       if (unknownReview && reviewCommands.length === 1) return { kind: 'lost' as const };
       return { kind: 'answered' as const,

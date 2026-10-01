@@ -127,6 +127,10 @@ expect, not as a claim that it works today.
 
 - **Review before release.** Messages for your agent wait until you preview and
   release them. A sender can queue several messages, and you can release them together.
+  If the agent goes offline after a pending list was verified, that known list
+  remains reviewable. A release is queued for the same agent session and its
+  status can be checked when the agent resumes. New pending messages need the
+  connector to return before they appear in review.
 - **Trust and re-arm.** Turning review off for a trusted peer affects future
   messages only; it never releases the backlog. Turning review back on (re-arm)
   makes later messages wait again. Automatic release is closed in this build:
