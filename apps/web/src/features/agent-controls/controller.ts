@@ -292,6 +292,7 @@ export function createAgentControlsController(
 
     view = {
       ...view,
+      snapshotReceived: true,
       listening: listeningDisplay(),
       ownerLabel: ownerLabelFor(snapshot.binding.ownerId, config.viewerOwnerId),
       isViewerOwned,

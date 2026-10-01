@@ -337,7 +337,9 @@ export function AgentListeningControls(props: AgentControlsPanelProps) {
   return <div className="agent-controls__compact">
     {view.listening ? <ListeningSection listening={view.listening} controller={controller} compact />
       : <section className="agent-controls__listening"><h3>Listening mode</h3>
-        <p role="status">Checking this agent’s listening modes…</p></section>}
+        <p role="status">{view.snapshotReceived
+          ? 'Listening mode choices are unavailable for this agent session.'
+          : 'Checking this agent’s listening modes…'}</p></section>}
     {view.notice ? <p className="agent-controls__notice" role="alert">{view.notice.message}</p> : null}
     {view.notice ? <button type="button" onClick={() => controller.refresh()}>Refresh listening modes</button> : null}
   </div>;

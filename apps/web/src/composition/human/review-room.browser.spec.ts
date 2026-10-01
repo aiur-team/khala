@@ -229,6 +229,8 @@ test('conversation agent controls wait for the selected owner binding and verifi
     await page.evaluate(() => window.__allowReviewTrust());
     await agent.locator('.agent-controls__compact').waitFor();
     await agent.getByRole('heading', { name: 'Listening mode' }).waitFor();
+    await agent.getByText('Listening mode choices are unavailable for this agent session.').waitFor();
+    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).count(), 0);
     assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
   }, async page => {
     await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));
