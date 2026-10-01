@@ -13,6 +13,8 @@ connector, hook, and plugin components and service images as `N/A`.
 
 The secret-free effective config fingerprint covers stable, allowlisted values;
 record local versus production origin, CSP, and provider differences separately.
+The origin must be exactly an HTTP(S) origin, with no invite path, query, or
+credentials. An external candidate must include at least one service-image digest.
 Comparing candidates refuses source/input, build, image, config, native-version,
 and namespace drift. For each operation, supply separate ordered `pending`,
 `released`, `model-consumed`, `acknowledged`, and `durable-browser-visible`

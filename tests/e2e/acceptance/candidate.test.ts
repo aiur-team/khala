@@ -32,6 +32,7 @@ describe('candidate evidence', () => {
     expect(() => validateCandidate({ ...next, components: { ...next.components, web: { input: b, artifact: b } } }, first)).toThrow(/source\/input mismatch/);
     expect(() => validateCandidate({ ...next, nativeVersions: { codex: '1.2.4' } }, first)).toThrow(/wrong native version/);
     expect(() => validateCandidate(first, first)).toThrow(/reused namespace/);
+    expect(() => validateCandidate({ ...next, images: {} })).toThrow(/service-image digest/);
   });
   it('requires a model-origin receipt and one exact event/binding generation', () => {
     expect(() => validateJournal(journal)).not.toThrow();
@@ -56,6 +57,10 @@ describe('candidate evidence', () => {
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       expect(() => writeEvidence(directory, run, journal)).toThrow(/EEXIST/);
       expect(() => writeEvidence(directory, { ...run, token: 'secret' } as Candidate, journal)).toThrow(/unexpected diagnostic/);
+      const invite = { ...run, differences: { ...run.differences, origin: 'https://example.test/invite/abc' }, namespace: allocateNamespace(directory) };
+      expect(() => writeEvidence(directory, invite, journal)).toThrow(/origin-only URL/);
+      expect(fs.existsSync(path.join(directory, `${invite.namespace}.json`))).toBe(false);
+      expect(() => validateCandidate({ ...run, nativeVersions: { codex: 'invite-token' } })).toThrow(/sensitive/);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
 });

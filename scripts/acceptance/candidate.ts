@@ -22,6 +22,7 @@ export type Candidate = Readonly<{
 const sha = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
 const safe = /^[a-zA-Z0-9._/@:+-]{1,160}$/;
+const sensitive = /invite|token|secret|credential|password|bearer|private.?key|ciphertext|storage|\/\/|\?/i;
 const namespacePattern = /^candidate-[a-f0-9]{24}$/;
 const components: Component[] = ['web', 'function', 'cli', 'connector', 'hook', 'plugin'];
 const hosted: Component[] = ['web', 'function', 'connector', 'hook', 'plugin'];
@@ -29,7 +30,15 @@ const allowedDifferences = new Set(['origin', 'csp', 'provider']);
 const candidateKeys = ['lane', 'sourceCommit', 'lockfileSha256', 'components', 'configSha256', 'images', 'nativeVersions', 'differences', 'namespace'];
 
 function requireSafe(value: string, name: string): void {
-  if (!safe.test(value)) throw new Error(`${name}: sensitive or invalid diagnostic content`);
+  if (!safe.test(value) || sensitive.test(value)) throw new Error(`${name}: sensitive or invalid diagnostic content`);
+}
+function requireOrigin(value: string): void {
+  try {
+    const parsed = new URL(value);
+    if (parsed.origin !== value || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('invalid origin');
+  } catch {
+    throw new Error('origin: expected an origin-only URL without invite or credential data');
+  }
 }
 function requireDigest(value: string, name: string): void {
   if (!sha.test(value)) throw new Error(`${name}: expected sha256 digest`);
@@ -60,12 +69,14 @@ export function validateCandidate(candidate: Candidate, baseline?: Candidate): v
     if (value === 'N/A' && candidate.lane !== 'internal') throw new Error(`${name}: external image missing`);
     if (value !== 'N/A') requireDigest(value, `${name} image`);
   }
+  if (candidate.lane === 'external' && Object.keys(candidate.images).length === 0) throw new Error('external candidate requires a service-image digest');
   if (!Object.keys(candidate.nativeVersions).length) throw new Error('missing native version');
   for (const [name, version] of Object.entries(candidate.nativeVersions)) {
     requireSafe(name, 'native name');
     requireSafe(version, `${name} native version`);
   }
-  for (const field of ['origin', 'csp', 'provider'] as const) requireSafe(candidate.differences[field], field);
+  requireOrigin(candidate.differences.origin);
+  for (const field of ['csp', 'provider'] as const) requireSafe(candidate.differences[field], field);
   if (baseline) {
     if (candidate.namespace === baseline.namespace) throw new Error('reused namespace');
     if (candidate.sourceCommit !== baseline.sourceCommit || candidate.lockfileSha256 !== baseline.lockfileSha256) throw new Error('source/input mismatch');
