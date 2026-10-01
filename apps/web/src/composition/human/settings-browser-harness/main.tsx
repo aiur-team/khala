@@ -30,7 +30,11 @@ function fakeController(owner: OwnerId, roomId: RoomId, deviceId: DeviceId): Rec
       listeners.forEach(listener => listener());
       return null;
     },
-    beginClosure: async () => null,
+    beginClosure: async () => {
+      view = { ...view, operation: { kind: 'closure', operationId: `${owner}:${roomId}:close`, state: 'pending', reason: null } };
+      listeners.forEach(listener => listener());
+      return null;
+    },
     inspect: async () => null,
     cancel: () => {},
     dispose: () => {},

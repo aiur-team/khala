@@ -47,6 +47,16 @@ test('selected conversation settings close and discard old room authority', { ti
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     await page.locator('.khala-content-root').evaluate(node => node.setAttribute('data-theme', 'light'));
     assert.equal(await settings.isVisible(), true);
+    await page.reload();
+    await page.locator('summary').filter({ hasText: 'Title' }).click();
+    await page.getByRole('button', { name: 'Delete conversation' }).click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).click();
+    await page.getByLabel('Conversation settings').first().click();
+    const settingsPanel = page.locator('.conversation-settings__popover');
+    await settingsPanel.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await settingsPanel.getByRole('button', { name: 'Close channel' }).count(), 0);
+    assert.equal(await settingsPanel.getByRole('button', { name: 'Delete conversation' }).count(), 0);
+    assert.equal(await settingsPanel.getByText('Close channel room_a?', { exact: true }).count(), 0);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

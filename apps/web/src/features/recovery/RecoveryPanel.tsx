@@ -263,7 +263,7 @@ function RecoveryPanelContent({
   async function submitSelection(): Promise<void> {
     if (selection?.kind === 'revocation' && selectedTarget !== undefined) {
       await controller.beginRevocation(selectedTarget);
-    } else if (selection?.kind === 'closure' && closureCurrent && view.allowedActions.includes('close_room')) {
+    } else if (showClosureAction && selection?.kind === 'closure' && closureCurrent && view.allowedActions.includes('close_room')) {
       await controller.beginClosure();
     }
   }
@@ -299,7 +299,7 @@ function RecoveryPanelContent({
         )}
       </div>
 
-      {view.operation.kind === 'closure' && view.closure ? (
+      {showClosureAction && view.operation.kind === 'closure' && view.closure ? (
         <div className="recovery-panel__confirmation">
           <h3>Channel {view.closure.roomId}</h3>
           {view.operation.state === 'failed' || view.operation.state === 'outcome_unknown' ? (
@@ -369,7 +369,7 @@ function RecoveryPanelContent({
         </div>
       ) : null}
 
-      {selection?.kind === 'closure' && closureCurrent && view.closure && actionsAvailable ? (
+      {showClosureAction && selection?.kind === 'closure' && closureCurrent && view.closure && actionsAvailable ? (
         <div className="recovery-panel__confirmation" role="alert">
           <h3>Close channel {view.closure.roomId}?</h3>
           <ConsequenceList consequences={view.closure.consequences} />
@@ -383,7 +383,7 @@ function RecoveryPanelContent({
 
       {view.operation.kind !== 'idle' ? (
         <div className="recovery-panel__operation-actions">
-          {busy ? (
+          {busy && (showClosureAction || view.operation.kind !== 'closure') ? (
             <button type="button" disabled>
               {view.operation.kind === 'recovery'
                 ? 'Recovery in progress'

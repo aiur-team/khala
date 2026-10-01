@@ -208,12 +208,13 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
                 {compact && !option.selectable ? ` ${compactUnavailableReason(option)}` : null}</p>
               {option.canGrantExperimental ? (
                 <button type="button" onClick={() => controller.requestGrant('experimental_route', option.mode)}>
-                  {grant.kind === 'expired' ? 'Review updated evidence' : 'Enable experimental route'}
+                  {compact ? (grant.kind === 'expired' ? `Review ${MODE_LABEL[option.mode]} permission` : `Allow ${MODE_LABEL[option.mode]}`)
+                    : grant.kind === 'expired' ? 'Review updated evidence' : 'Enable experimental route'}
                 </button>
               ) : null}
               {grant.kind !== 'none' && listening.inactiveReason === null ? (
                 <button type="button" onClick={() => controller.revokeGrant('experimental_route', option.mode)}>
-                  Revoke experimental route
+                  {compact ? `Remove ${MODE_LABEL[option.mode]} permission` : 'Revoke experimental route'}
                 </button>
               ) : null}
               {!compact ? <details className="agent-controls__evidence">
@@ -282,16 +283,23 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
           <h4 id={`${baseId}-confirm-heading`}>
             {confirmation.grantKind === 'hard_cancel'
               ? `Enable hard cancel on ${confirmation.sessionLabel}?`
-              : `Enable experimental ${confirmation.mode} route on ${confirmation.sessionLabel}?`}
+              : compact ? `Allow ${MODE_LABEL[confirmation.mode]} for ${confirmation.sessionLabel}?`
+                : `Enable experimental ${confirmation.mode} route on ${confirmation.sessionLabel}?`}
           </h4>
           {confirmation.expiredChanges ? (
             <p>Your earlier consent expired: {confirmation.expiredChanges.join('; ')}.</p>
           ) : null}
-          <EvidenceLines evidence={confirmation.evidence} />
-          <p>Missing proof: {confirmation.missingProof}</p>
-          <p className="agent-controls__warning">{confirmation.warning}</p>
+          {compact ? <details className="agent-controls__evidence"><summary>Review supporting details</summary>
+            <EvidenceLines evidence={confirmation.evidence} /></details>
+            : <EvidenceLines evidence={confirmation.evidence} />}
+          <p>{compact ? 'Why approval is needed: ' : 'Missing proof: '}{confirmation.missingProof}</p>
+          <p className="agent-controls__warning">{compact && confirmation.grantKind === 'experimental_route'
+            ? `Allowing ${MODE_LABEL[confirmation.mode]} lets you choose it for this agent session only. It does not stop the agent mid-turn.`
+            : confirmation.warning}</p>
           <div className="agent-controls__actions">
-            <button type="button" onClick={() => controller.confirmGrant()}>Confirm for this binding</button>
+            <button type="button" onClick={() => controller.confirmGrant()}>
+              {compact ? 'Confirm for this agent' : 'Confirm for this binding'}
+            </button>
             <button type="button" onClick={() => controller.cancelGrant()}>Cancel</button>
           </div>
         </div>
