@@ -55,11 +55,11 @@ describe('hosted native Claude MCP', () => {
   it('keeps an uninspectable installed version unsupported without dropping the session label', async () => {
     const claim = { harness: 'claude', sessionId: SESSION, workdir: process.cwd() };
     const inspected = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
-      readVersion: async () => null }).inspect(claim);
+      readVersion: async () => null, generation: async () => 2 }).inspect(claim);
     expect(inspected).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
       capabilities: { support: 'unsupported', acknowledgement: 'unknown' } });
     const current = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
-      readVersion: async () => '2.1.286' }).inspect(claim);
+      readVersion: async () => '2.1.286', generation: async () => 2 }).inspect(claim);
     expect(current).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
       capabilities: { version: '2.1.286', support: 'experimental' } });
   });
