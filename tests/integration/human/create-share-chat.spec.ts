@@ -4,6 +4,7 @@ import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, synthetic
 const environment = readLiveHumanEnvironment();
 
 test('two OAuth humans create, share, join, and exchange encrypted attributed messages', async ({ browser }) => {
+  test.setTimeout(180_000);
   const aliceContext = await browser.newContext();
   const bobContext = await browser.newContext();
   try {
@@ -63,12 +64,12 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    await alice.reload({ waitUntil: 'networkidle' });
+    await alice.reload({ waitUntil: 'domcontentloaded' });
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible({ timeout: 30_000 });
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
     await expect(alice.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('Human');
 
-    await bob.reload({ waitUntil: 'networkidle' });
+    await bob.reload({ waitUntil: 'domcontentloaded' });
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
   } finally {

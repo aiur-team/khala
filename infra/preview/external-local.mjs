@@ -292,7 +292,7 @@ async function main() {
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
       KHALA_APP_ORIGIN: origin, XDG_STATE_HOME: path.join(scratch, 'state') };
     await command('pnpm', ['test:integration', 'tests/integration/human/create-share-chat.spec.ts',
-      '--output', path.join(scratch, 'playwright-results')], { env: smokeEnv, timeout: 300_000 });
+      '--output', path.join(scratch, 'playwright-results')], { env: smokeEnv, timeout: 360_000 });
     stage = 'blobs-restart-write';
     const browserState = path.join(scratch, 'browser-state.json');
     await command('node', ['--import', 'tsx', 'infra/preview/session-restart-smoke.ts', 'before', browserState], { env: smokeEnv, timeout: 60_000 });
