@@ -57,6 +57,23 @@ async function accepted(h: ReturnType<typeof harness>, input = request()) {
 }
 
 describe('channel access journal creation', () => {
+  it('keeps the same invite and operation ID distinct for two native proof-key requesters', async () => {
+    const h = harness();
+    const codex = request({ requester: 'agent_codex_proof', sessionFingerprint: 'codex_session', harness: 'codex' });
+    const claude = request({ requester: 'agent_claude_proof', sessionFingerprint: 'claude_session', harness: 'claude' });
+    const first = await accepted(h, codex);
+    const second = await accepted(h, claude);
+    expect(second.requestHandle).not.toBe(first.requestHandle);
+    expect(await h.journal.create(codex)).toEqual(first);
+    expect(await h.journal.create(claude)).toEqual(second);
+    expect(await h.journal.inspect(request({ ...claude, requester: codex.requester }))).toEqual({ kind: 'unavailable' });
+    const owner = await h.journal.listOwner({ ownerId: 'owner_1' });
+    expect(owner.kind).toBe('found');
+    if (owner.kind !== 'found') throw new Error('owner inbox unavailable');
+    expect(owner.requests.map(entry => entry.requestHandle).sort()).toEqual([first.requestHandle, second.requestHandle].sort());
+    expect(await h.journal.listOwner({ ownerId: 'owner_2' })).toMatchObject({ kind: 'found', requests: [] });
+  });
+
   it('reconciles exact retries, rejects changed bindings, and settles a lost response', async () => {
     const h = harness();
     h.inject('compareAndSet', 'lose_response');

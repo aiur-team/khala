@@ -55,6 +55,18 @@ async function mcpCall(client: AgentClientPort, name: string, args: Record<strin
 }
 
 describe('khala channels request-access', () => {
+  it('identifies a proof-key candidate without disclosing its approval URL or claiming a filed request', async () => {
+    const candidateId = 'A'.repeat(43);
+    const client = accessClient({ requestChannelAccess: async () => ({ kind: 'proof_key_candidate', candidateId }) });
+    const command = await cli(client, ['channels', 'request-access', URL_TARGET]);
+    const tool = await mcpCall(client, 'khala_request_channel_access', { target: URL_TARGET });
+    for (const output of [command.json(), tool.result.result.structuredContent]) {
+      expect(output).toMatchObject({ outcome: 'pending_owner', stage: 'proof_key_candidate',
+        candidateId, next: 'approve_proof_key' });
+      expect(JSON.stringify(output)).not.toContain('approveUrl');
+    }
+    expect(command.code).toBe(0);
+  });
   it('returns pending with a stable operation ID and passes a channel URL through', async () => {
     const requestChannelAccess = vi.fn<NonNullable<AgentClientPort['requestChannelAccess']>>(
       async input => status(input.operationId, 'pending_owner'),

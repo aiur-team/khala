@@ -30,6 +30,12 @@ The first `pending_owner` returned to a hosted agent can be this key candidate,
 before a channel-access journal row exists. Once the owner approves the key,
 the agent must repeat the original channel URL request with its original
 operation ID; channel-access status cannot find the request until then.
+The native result marks this case with `stage: "proof_key_candidate"` and a
+`candidateId`. The signed-in owner can open
+`/api/human/channel-discovery/authority/approve?candidate=<candidateId>` on the
+same Khala origin to review it. Keep the candidate ID and approval page private.
+A later `pending_owner` without that stage means the channel request was filed
+and is in the owner's channel-access inbox.
 
 An owner can revoke the approved key from its approval page. A replacement
 requires a new signed candidate and another owner approval. Reusing the same

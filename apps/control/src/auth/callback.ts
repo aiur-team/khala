@@ -80,7 +80,7 @@ export async function startSignIn(deps: SignInDeps, returnPath: string): Promise
 }
 
 export type CallbackRejection =
-  | 'login_expired' | 'login_replayed' | 'state_mismatch' | 'provider_denied' | 'invalid_response' | 'mapping_conflict'
+  | 'login_expired' | 'login_replayed' | 'state_mismatch' | 'provider_denied' | 'provider_error' | 'invalid_response' | 'mapping_conflict'
   | ClaimRejection;
 
 export type CallbackResult =
@@ -113,9 +113,9 @@ export async function completeSignIn(
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
   const callback = new URL(request.url);
-  const state = callback.searchParams.get('state');
+  const states = callback.searchParams.getAll('state');
   // A forged callback keeps the login cookie, so it cannot cancel a sign-in in progress.
-  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || state === null || !safeEqual(state, login.state)) {
+  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || states.length !== 1 || !safeEqual(states[0]!, login.state)) {
     return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
   }
 
@@ -128,6 +128,14 @@ export async function completeSignIn(
   });
   if (consume.kind === 'conflict') return reject('login_replayed');
   if (consume.kind !== 'applied') return unavailable('login_consume', clear);
+
+  // Google may omit iss on an error response. Its issuer check then throws
+  // before the SDK can classify access_denied. Only classify an error-only
+  // callback after the browser binding has been validated and consumed.
+  const errors = callback.searchParams.getAll('error');
+  if (errors.length === 1 && errors[0] && !callback.searchParams.has('code')) {
+    return reject(errors[0] === 'access_denied' ? 'provider_denied' : 'provider_error');
+  }
 
   const exchanged = await orUnavailable(() => deps.oidc.exchangeCode({
     callbackUrl: request.url,

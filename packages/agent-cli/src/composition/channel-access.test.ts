@@ -128,9 +128,7 @@ describe('HTTP channel access', () => {
     const request = { target: { kind: 'channel_url' as const, channelUrl: `${origin}/join/inviteRef123` },
       operationId: 'op-1', origin: null };
 
-    await expect(port.requestChannelAccess(request)).resolves.toEqual({ kind: 'status', status: {
-      v: 1, operationId: 'op-1', outcome: 'pending_owner',
-    } });
+    await expect(port.requestChannelAccess(request)).resolves.toEqual({ kind: 'proof_key_candidate', candidateId: 'candidate-1' });
     expect(posted).toEqual([]);
     expect(held.authorize).not.toHaveBeenCalled();
 
