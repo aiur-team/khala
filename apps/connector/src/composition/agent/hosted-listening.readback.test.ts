@@ -65,7 +65,7 @@ function fixture(options: { drop?: boolean; race?: boolean; experimental?: boole
         modes: { ...tested.modes, sync: { ...support, evidenceRevision: 'hook-revision-new' } } };
       return tested;
     } });
-  return { hosted, policy: () => policy };
+  return { hosted, trust, dispatch, policy: () => policy };
 }
 const owner = { ownerId: binding.ownerId } as never;
 const command = (requested: 'sync' | 'steer', version = 1) => ({ v: 1 as const,
@@ -107,6 +107,33 @@ describe('hosted listening ledger readback', () => {
     const { hosted } = fixture({ race: true });
     expect(await hosted.owner.set(owner, command('sync'))).toMatchObject({
       outcome: 'applied', effective: null, reason: 'projection_unavailable' });
+  });
+  it('never advances the ledger from an older owner read after a newer mode command', async () => {
+    const { hosted: newer, trust, dispatch, policy } = fixture();
+    expect(await newer.owner.set(owner, command('steer'))).toMatchObject({
+      outcome: 'applied', version: 2, requested: 'steer' });
+    let releaseRead!: () => void;
+    const heldRead = new Promise<void>(resolve => { releaseRead = resolve; });
+    let capturedRead!: () => void;
+    const captured = new Promise<void>(resolve => { capturedRead = resolve; });
+    let inspections = 0;
+    const older = createHostedListeningControl({ binding, trust, dispatch,
+      current: async () => true,
+      capabilities: async () => {
+        inspections += 1;
+        if (inspections === 2) { capturedRead(); await heldRead; }
+        return capabilities;
+      } });
+    const staleRead = older.owner.read(owner);
+    await captured;
+    expect(await newer.owner.set(owner, command('sync', 2))).toMatchObject({
+      outcome: 'applied', version: 3, requested: 'sync', effective: 'sync' });
+    const confirmedLedger = policy().listening;
+    releaseRead();
+    expect(await staleRead).toMatchObject({ ok: true,
+      view: { requested: 'steer', effective: null, effectiveReason: 'projection_unavailable' } });
+    expect(policy().listening).toEqual(confirmedLedger);
+    expect(policy().listening).toMatchObject({ requested: 'sync', effective: 'sync' });
   });
   it('projects an owner grant and exact experimental mode from the shared store', async () => {
     const { hosted, policy } = fixture({ experimental: true });

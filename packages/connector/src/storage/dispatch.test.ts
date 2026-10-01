@@ -275,6 +275,21 @@ describe('durable dispatch storage', () => {
     expect(await dispatch.ledger.transact(tx => tx.binding(bindingId))).toEqual({ binding: binding(0), revoked: true });
   });
 
+  it('keeps the newer listening source when a stale read proposes a higher projection version', async () => {
+    const { storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const current = testPolicy({ version: 3, armedAt: 3,
+      listening: { version: 3, sourceVersion: 3, requested: 'sync',
+        effective: 'sync', evidenceRevision: 'sync-proof' } });
+    expect(await dispatch.applyEffectivePolicy({ binding: binding(0), policy: current }))
+      .toEqual({ kind: 'applied' });
+    const stale = { ...current, listening: { version: 4, sourceVersion: 2,
+      requested: 'async' as const, effective: null, evidenceRevision: null } };
+    expect(await dispatch.applyEffectivePolicy({ binding: binding(0), policy: stale }))
+      .toEqual({ kind: 'conflict', code: 'stale_version' });
+    expect(await dispatch.ledger.transact(tx => tx.policy(bindingId))).toEqual(current);
+  });
+
   it('does not reuse an older generation policy after binding replacement', async () => {
     const { storage } = await fresh();
     const dispatch = createConnectorDispatchStorage(storage);
