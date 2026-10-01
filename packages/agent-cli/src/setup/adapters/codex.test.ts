@@ -211,6 +211,8 @@ describe('Codex detection', () => {
     expect((await observe()).observation.detection.supported).toBe(false);
     version = 'codex-cli 0.159.4\n';
     expect((await observe()).observation.detection.supported).toBe(false);
+    version = 'codex-cli 0.160.0\n';
+    expect((await observe()).observation.detection.supported).toBe(false);
     version = 'codex-cli 0.159.2\n';
     expect((await observe()).observation.detection.supported).toBe(true);
     mcpProbeFails = false;

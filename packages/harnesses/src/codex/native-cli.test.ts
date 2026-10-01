@@ -73,7 +73,7 @@ describe('Codex native CLI route selection', () => {
     expect(selected.inbox.deliveries).toHaveLength(1);
   });
 
-  it('admits the separately witnessed 0.159.3 native queue and refuses 0.159.2', async () => {
+  it('admits the separately witnessed 0.159.3 native queue and refuses unwitnessed versions', async () => {
     const selected = nativeHarness();
     selected.cli.inspection = { ...selected.cli.inspection, version: '0.159.3' };
     await expect(selected.harness.inspect(binding())).resolves.toMatchObject({
@@ -83,6 +83,16 @@ describe('Codex native CLI route selection', () => {
     const adjacent = nativeHarness();
     adjacent.cli.inspection = { ...adjacent.cli.inspection, version: '0.159.2' };
     await expect(adjacent.harness.inspect(binding())).resolves.toMatchObject({ support: 'unsupported' });
+    const newer = nativeHarness();
+    newer.cli.inspection = { ...newer.cli.inspection, version: '0.160.0' };
+    await expect(newer.harness.inspect(binding())).resolves.toMatchObject({
+      support: 'unsupported', version: '0.160.0', acknowledgement: 'unknown',
+    });
+    await expect(newer.harness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
+      kind: 'failed', errorCode: 'harness_unavailable',
+    });
+    expect(newer.cli.argv).toEqual([]);
+    expect(newer.inbox.deliveries).toEqual([]);
   });
 
   it('does not turn 0.157.1 native evidence into hosted app-server support', async () => {
