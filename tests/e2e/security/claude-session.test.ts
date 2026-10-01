@@ -9,8 +9,8 @@
 // channel no Claude session is granted; the `approved` canary sits in the granted
 // session's own channel. An unbound bystander session must carry neither.
 //
-// This world's launcher claims the exact Claude Code version with a proven native
-// route: `pull` and `read` deliver with batch-token acknowledgement, while the
+// This world's launcher has source-only experimental Claude support:
+// `pull` and `read` deliver with batch-token acknowledgement, while the
 // default `sync` request requires an owner's experimental grant. The approved canary is the
 // positive control: it reaches the granted session's own delivery surfaces, and only
 // those. The pending canary reaches nothing, and the bystander carries neither. The
@@ -129,7 +129,7 @@ describe('Claude session surfaces never carry content the session was not releas
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
       expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
-      expect(text, surface).toContain('"support":{"steer":"proven","sync":"experimental","async":"proven"}');
+      expect(text, surface).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
       expect(text, surface).toContain('"acknowledgement":"batch_token_next_call"');
     }
     // The agent may request a mode, but cannot grant its own experimental route.
@@ -137,7 +137,7 @@ describe('Claude session surfaces never carry content the session was not releas
     expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required","version":2');
     const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
     expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
-    expect(status).toContain('"support":{"steer":"proven","sync":"experimental","async":"proven"}');
+    expect(status).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {
