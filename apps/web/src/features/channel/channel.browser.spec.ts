@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,8 +30,15 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.goto(url);
 
-    await page.getByRole('heading', { name: 'Release channel', level: 1 }).waitFor();
+    await page.getByText('Release channel').first().waitFor();
     await page.getByRole('button', { name: 'Send message' }).waitFor();
+    const toolbar = page.locator('#khala-channel-toolbar');
+    const disclosure = toolbar.locator('.channel-roster > summary');
+    await disclosure.waitFor();
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'channel uses one top bar');
+    const thread = await page.locator('.conversation-thread').boundingBox();
+    const main = await page.locator('.khala-content-main').boundingBox();
+    assert.ok(thread && main && thread.width >= main.width - 2, 'thread fills available content width');
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     assert.equal(await page.locator('.conversation-detail').count(), 0);
 
@@ -52,18 +59,61 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     await page.reload();
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     await page.getByRole('button', { name: 'Show two agents' }).click();
-    await page.getByText('Agent names', { exact: true }).click();
-    await page.getByRole('heading', { name: 'Builder' }).waitFor();
+    assert.equal(await page.locator('.channel-participants__chip').count(), 3);
+    assert.equal(await page.locator('.channel-participants__chip').last().evaluate(node => getComputedStyle(node).display !== 'none'), true,
+      'the last known agent remains reachable in the narrow participant row');
+    await disclosure.click();
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '');
+    await page.getByRole('button', { name: 'Copy channel invite link' }).click();
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '', 'share leaves the roster open');
+    await page.getByText('Builder', { exact: true }).last().waitFor();
+    const compactPanel = await page.locator('.channel-roster__panel').boundingBox();
+    assert.ok(compactPanel && compactPanel.height < 180, 'the roster stays compact at phone width');
+    assert.equal(await page.getByRole('button', { name: 'Send message' }).isVisible(), true);
+    if (process.env.KHALA_ROSTER_SCREENSHOT_DIR) {
+      await mkdir(process.env.KHALA_ROSTER_SCREENSHOT_DIR, { recursive: true });
+      for (const width of [390, 1200]) {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+        for (const theme of ['dark', 'light']) {
+          await page.locator('.khala-content-root').evaluate((node, value) => node.setAttribute('data-theme', value), theme);
+          await page.screenshot({ path: join(process.env.KHALA_ROSTER_SCREENSHOT_DIR, `roster-${width}-${theme}.png`) });
+        }
+      }
+      await page.locator('.khala-content-root').evaluate(node => node.setAttribute('data-theme', 'dark'));
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
+    assert.equal(await page.locator('.channel-roster__panel').getByText('Route').first().isVisible(), false,
+      'technical diagnostics stay inside agent details');
+    await page.getByLabel('Details for Scout').click();
+    assert.equal(await page.locator('.channel-roster__panel').getByText('Route').first().isVisible(), true);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 0);
     await page.getByRole('button', { name: 'Edit name for Scout' }).click();
     await page.getByRole('textbox', { name: 'Agent name' }).fill('Dolan');
     await page.getByRole('button', { name: 'Save name' }).click();
     await page.getByText('Scout is now called Dolan · changed by Mira').waitFor();
-    await page.getByRole('heading', { name: 'Dolan' }).waitFor();
+    await page.getByLabel('Details for Dolan').waitFor();
+    await disclosure.click();
     await page.getByRole('button', { name: 'Switch human' }).click();
+    await disclosure.click();
+    await page.getByLabel('Details for Builder').click();
+    await page.getByRole('button', { name: 'Edit name for Builder' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Edit name for Dolan' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Edit name for Builder' }).count(), 1);
+    await disclosure.focus();
+    await disclosure.press('Escape');
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), null, 'Escape closes the roster');
+    await disclosure.press('Enter');
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '', 'keyboard reopens the roster');
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto(url + '?standalone');
+    const inlineHeader = page.locator('.conversation-thread__head');
+    await inlineHeader.locator('summary').click();
+    await inlineHeader.getByRole('heading', { name: 'Release channel' }).waitFor();
+    const headerBox = await inlineHeader.boundingBox();
+    const panelBox = await page.locator('.channel-roster__panel').boundingBox();
+    assert.ok(headerBox && panelBox && panelBox.y >= headerBox.y + headerBox.height - 1 && panelBox.y < 200,
+      'standalone participant details expand directly below their header');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

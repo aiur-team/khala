@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from 'playwright-core';
@@ -15,7 +15,9 @@ import type { chromium as Chromium } from 'playwright-core';
 import { decodeContentLimits, decodeMessageContent, encodeMessageContent, type DeviceId, type EventId, type ParticipantId, type RoomId } from '@khala/contracts/messaging/index';
 import type { ConnectorDevicePort, DeviceActivation, DeviceStatus } from '@khala/connector/bootstrap/ports';
 import type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from '@khala/connector/subscription/adapter';
+import type { HostedSubscriptionDiagnostic } from '@khala/connector/subscription/diagnostic';
 import { projectVerifiedName, type NameState } from './name-state';
+import { acquireMatrixWriterLock, type MatrixWriterLockDiagnostic } from './matrix-writer-lock';
 import type { ResolvedAgentParticipant } from '../composition/agent/participant-directory';
 
 type BrowserEvent = Readonly<{
@@ -47,6 +49,7 @@ export type MatrixConnectorInput = Readonly<{
   onRename?: (input: Readonly<{ eventId: EventId; roomId: RoomId; actorParticipantId: ParticipantId; actorDeviceId: DeviceId;
     receivedAt: string;
     agentParticipantId: ParticipantId; name: string; canonicalPayload: Uint8Array }>) => Promise<boolean>;
+  diagnostic?: (event: HostedSubscriptionDiagnostic) => void;
   chromiumExecutablePath?: string;
   browserBundleDirectory?: string;
   /** Exact, packaged Playwright 1.63.0 package root for the installed CLI. */
@@ -57,6 +60,7 @@ export type MatrixConnectorSubstrate = Readonly<{
   devices: ConnectorDevicePort;
   source: SubscriptionSource;
   fingerprint: string;
+  writerLock: MatrixWriterLockDiagnostic;
   /** Encrypts one agent-authored message with the same durable Matrix device. */
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   /** Explicit trust only after an authenticated owner-approved fingerprint attestation. */
@@ -142,10 +146,7 @@ async function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> 
   finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
 }
 
-/**
- * Opens exactly one writer. A stale lock after abrupt death is a deliberate repair gate:
- * the operator checks the old process is gone before removing that one owned lock.
- */
+/** Opens exactly one writer, recovering a dead owner's profile under a kernel guard. */
 export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> {
   if (!input.baseUrl.startsWith('https://') && !input.baseUrl.startsWith('http://127.0.0.1:'))
     throw new Error('matrix_origin_untrusted');
@@ -157,9 +158,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     ? path.join(input.browserDriverDirectory, 'index.js') : requireDriver.resolve('playwright-core');
   const driver = requireDriver(driverPath) as { chromium: typeof Chromium };
   if (!driver.chromium || typeof driver.chromium.launchPersistentContext !== 'function') throw new Error('matrix_browser_driver_invalid');
-  const lockPath = fileFor(input.profileDirectory, 'writer.lock');
-  const lock: FileHandle = await open(lockPath, 'wx', 0o600).catch(() => { throw new Error('matrix_device_locked'); });
-  await lock.writeFile(String(process.pid));
+  const lock = await acquireMatrixWriterLock(input.profileDirectory);
   let context: BrowserContext | null = null;
   let server: Server | null = null;
   let page: Page | null = null;
@@ -253,19 +252,28 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       },
       listen(listener) { if (!closed) listeners.add(listener); return () => { listeners.delete(listener); }; },
       async read({ cursor, limit }, options): Promise<SourceRead> {
-        if (closed) return { kind: 'unavailable' };
+        const unavailable = (stage: HostedSubscriptionDiagnostic['stage']): SourceRead => {
+          try { input.diagnostic?.({ stage, result: 'unavailable' }); }
+          catch { /* Diagnostics cannot change a Matrix read. */ }
+          return { kind: 'unavailable' };
+        };
+        if (closed) return unavailable('matrix_read_closed');
         if (limit < 1 || limit > 100 || !Number.isSafeInteger(limit)) return { kind: 'rejected', code: 'unsupported' };
+        let stage: HostedSubscriptionDiagnostic['stage'] = 'matrix_read_bridge';
         try {
           const wire = await abortable(call<BrowserPage>(current(), 'read', cursor, limit), options?.signal);
           // A limited timeline means Synapse dropped older events. Never advance beyond a gap.
           if (wire.limited) return { kind: 'gap' };
           const events: SourceEvent[] = [];
+          stage = 'matrix_read_members';
           const members = input.resolveParticipants ? await abortable(call<readonly string[]>(current(), 'members'), options?.signal) : [];
           const senders = [...new Set([...members, ...wire.events.map(event => event.senderUserId)])];
           const targets = [...new Set(wire.events.map(event => event.agentParticipantId).filter((id): id is string => id !== null))];
+          stage = 'matrix_read_participants';
           const participants = input.resolveParticipants ? await input.resolveParticipants(senders, targets) : null;
-          if (input.resolveParticipants && !participants) return { kind: 'unavailable' };
+          if (input.resolveParticipants && !participants) return unavailable(stage);
           for (const event of wire.events) {
+            stage = 'matrix_read_processing';
             // The agent's own encrypted sends are not owner-authored pending work.
             // Skipping them still advances the authenticated Matrix cursor.
             if (event.senderUserId === input.userId) continue;
@@ -277,10 +285,11 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               authorParticipantId: participant, authorDeviceId: claimedDevice };
             if (event.failure !== null || event.body === null || event.senderDeviceId === null) {
               if (input.participantIdFor(event.senderUserId) === null) {
-                if (event.failure === 'missing_keys') return { kind: 'unavailable' };
+                if (event.failure === 'missing_keys') return unavailable('matrix_read_missing_keys');
                 continue;
               }
-              if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
               events.push({ kind: 'undecryptable', ref: base, reason: event.failure ?? 'decrypt_failed' });
               continue;
             }
@@ -289,7 +298,8 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               : { v: 1, kind: event.nameSnapshot ? 'agent_name_snapshot' : 'agent_rename', agentParticipantId: event.agentParticipantId, body: event.body,
                   ...(event.nameSnapshot ? { sourceEventId: event.nameSourceEventId } : {}) }, contentLimits);
             if (!decoded.ok) {
-              if (input.onText && input.participantIdFor(event.senderUserId) !== null && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onText && input.participantIdFor(event.senderUserId) !== null && !await input.onText({ roomId: base.roomId, eventId: base.eventId, authorName: participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
               events.push({ kind: 'undecryptable', ref: base, reason: 'unsupported' });
               continue;
             }
@@ -299,27 +309,31 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
               const actor = participants?.get(event.senderUserId);
               const target = [...(participants?.values() ?? [])].find(item => item.participantId === rename.agentParticipantId);
               if (actor?.kind !== 'human' || target?.kind !== 'agent' || actor.ownerId !== target.ownerId) continue;
+              stage = 'matrix_read_names';
               namesState = projectVerifiedName(namesState, { kind: rename.kind, participantId: rename.agentParticipantId,
                 name: rename.body, eventId: base.eventId,
                 ...(rename.kind === 'agent_name_snapshot' ? { sourceEventId: rename.sourceEventId } : {}) });
               await writeJson(namesPath, namesState);
               if (rename.kind === 'agent_name_snapshot') {
-                if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+                stage = 'matrix_read_callback';
+                if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return unavailable(stage);
                 continue;
               }
-              if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return { kind: 'unavailable' };
+              stage = 'matrix_read_callback';
+              if (input.onCurrentNames && !await input.onCurrentNames(namesState.names)) return unavailable(stage);
               if (!input.onRename || !await input.onRename({ eventId: base.eventId, roomId: base.roomId,
                 actorDeviceId: claimedDevice,
                 receivedAt: event.receivedAt,
                 actorParticipantId: actor.participantId, agentParticipantId: rename.agentParticipantId,
-                name: rename.body, canonicalPayload })) return { kind: 'unavailable' };
+                name: rename.body, canonicalPayload })) return unavailable(stage);
               continue;
             }
             // Review only the owner human's text. The agent's metadata path is separate.
             if (input.participantIdFor(event.senderUserId) === null) continue;
+            stage = 'matrix_read_callback';
             if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId,
               authorName: namesState.names.find(item => item.participantId === participant)?.name
-                ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return { kind: 'unavailable' };
+                ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
             events.push({ kind: 'decrypted', ref: {
               ...base, contentDigest: `sha256:${createHash('sha256').update(canonicalPayload).digest('hex')}`,
             }, verifiedDeviceId: claimedDevice, canonicalPayload });
@@ -327,12 +341,12 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
           return { kind: 'page', events, nextCursor: wire.nextCursor, caughtUp: wire.events.length < limit };
         } catch (error) {
           const reason = error instanceof Error ? error.message : '';
-          return reason.includes('matrix_authority_lost') ? { kind: 'rejected', code: 'authority_lost' } : { kind: 'unavailable' };
+          return reason.includes('matrix_authority_lost') ? { kind: 'rejected', code: 'authority_lost' } : unavailable(stage);
         }
       },
     };
     return {
-      devices, source, fingerprint: identity.fingerprint,
+      devices, source, fingerprint: identity.fingerprint, writerLock: lock.diagnostic,
       send: (clientTxnId, body) => serializeSend(async () => {
         if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
           || Buffer.byteLength(body) > 64 * 1024) throw new Error('matrix_invalid_send');
@@ -364,18 +378,18 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
         listeners.clear();
         try { await call<void>(current(), 'close'); } catch { /* browser may have stopped */ }
         closed = true;
-        await context?.close();
-        await new Promise<void>(resolve => server?.close(() => resolve()));
-        await lock.close();
-        await rm(lockPath, { force: true });
+        try {
+          await context?.close();
+          await new Promise<void>(resolve => server?.close(() => resolve()));
+        } finally { await lock.close(); }
       },
     };
   } catch (error) {
     try { if (page) await call<void>(page, 'close'); } catch { /* ignore during failure cleanup */ }
-    await context?.close();
-    if (server) await new Promise<void>(resolve => server?.close(() => resolve()));
-    await lock.close();
-    await rm(lockPath, { force: true });
+    try {
+      await context?.close();
+      if (server) await new Promise<void>(resolve => server?.close(() => resolve()));
+    } finally { await lock.close(); }
     throw error;
   }
 }

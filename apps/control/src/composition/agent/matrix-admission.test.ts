@@ -34,7 +34,8 @@ function fakeMatrix() {
     const bearer = init?.headers && new Headers(init.headers).get('authorization')?.slice('Bearer '.length);
     if (path.startsWith('/_matrix/client/v3/profile/')) {
       const userId = decodeURIComponent(path.slice('/_matrix/client/v3/profile/'.length));
-      return passwords.has(userId) ? reply(200, {}) : reply(404, { errcode: 'M_NOT_FOUND' });
+      // Synapse returns M_UNKNOWN for a profile that has not been registered.
+      return passwords.has(userId) ? reply(200, {}) : reply(404, { errcode: 'M_UNKNOWN' });
     }
     if (path === '/_synapse/admin/v1/register' && !init?.method) return reply(200, { nonce: 'nonce-1' });
     if (path === '/_synapse/admin/v1/register' && init?.method === 'POST') {

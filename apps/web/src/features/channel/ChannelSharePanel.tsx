@@ -75,7 +75,7 @@ export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = co
   const actionLabel = channelLinks ? 'Copy my channel link' : 'Copy channel invite link';
   return <section className="channel-share" aria-label="Share channel">
     <button type="button" className="aiur-shell__icon-button" aria-label={actionLabel} title={actionLabel} onClick={() => void copy()} disabled={link.status === 'busy' || copying}>
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V2m-5 5 5-5 5 5"/><path d="M4 13v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/></svg>
     </button>
     {link.error ? <p className="channel-share__feedback" role="alert">Could not prepare a link. Try again.</p> : null}
     {copied === 'copied' ? <p className="channel-share__feedback" role="status">Copied</p> : null}

@@ -277,8 +277,8 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       collapsed={chrome.collapsed}
       onCollapsedChange={chrome.onCollapsedChange}
     >
-      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{channelTitle ? <h1 dir="auto">{channelTitle}</h1> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
-      <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button>{channelTitle ? <h1 dir="auto">{channelTitle}</h1> : <span>{selectedTitle}</span>}{chrome.mode === 'hosted-content' ? hostedActions : null}</div>
+      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{route.kind === 'channel' ? <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> : channelTitle ? <h1 dir="auto">{channelTitle}</h1> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
+      {route.kind !== 'channel' || chrome.mode !== 'hosted-content' ? <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button>{route.kind === 'channel' ? <div id="khala-channel-toolbar-mobile" /> : channelTitle ? <h1 dir="auto">{channelTitle}</h1> : <span>{selectedTitle}</span>}{chrome.mode === 'hosted-content' ? hostedActions : null}</div> : null}
       <ChannelAccessContext.Provider value={controller}>{children}</ChannelAccessContext.Provider>
       {creating ? <CreateChannelDialog context={context}
         returnFocus={restoreCreateFocus}

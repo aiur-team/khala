@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { SessionInspectionPort } from '@khala/connector/bootstrap/index';
-import { nativeCliCapabilities, NATIVE_CLI_CODEX_VERSIONS } from '@khala/harnesses/codex/capabilities';
+import { nativeCliCapabilities, NATIVE_CLI_CODEX_VERSIONS, unsupportedNativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
 import { LOCAL_DELIVERY_LIMITS } from './local-harness-capabilities.js';
 import type { HarnessSession } from './session-grant.js';
@@ -37,12 +37,15 @@ export function codexMcpSessionInspection(input: Readonly<{
         || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
       try {
         const [version, generation] = await Promise.all([input.readVersion(), input.generation(input.session)]);
-        if (version === null || !NATIVE_CLI_CODEX_VERSIONS.includes(version)) return { kind: 'unsupported' };
+        // The MCP caller supplied this exact session label; owner approval of
+        // its proof key remains separate. Version only controls delivery claims.
         if (generation === null || !Number.isSafeInteger(generation) || generation < 0) return { kind: 'unavailable' };
         return {
           kind: 'verified',
           session: { harness: 'codex', sessionId: input.session.sessionId, generation },
-          capabilities: nativeCliCapabilities(version, LOCAL_DELIVERY_LIMITS),
+          capabilities: version !== null && NATIVE_CLI_CODEX_VERSIONS.includes(version)
+            ? nativeCliCapabilities(version, LOCAL_DELIVERY_LIMITS)
+            : unsupportedNativeCliCapabilities(version ?? 'unknown', LOCAL_DELIVERY_LIMITS),
         };
       } catch {
         return { kind: 'unavailable' };
@@ -62,7 +65,6 @@ export function claudeProofKeyLabelInspection(input: Readonly<{
       || claim.sessionId !== input.session.sessionId || claim.workdir !== input.workdir
       || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
     const version = await input.readVersion().catch(() => null);
-    if (version !== '2.1.284') return { kind: 'unsupported' };
     return { kind: 'verified', session: { harness: 'claude', sessionId: input.session.sessionId, generation: 0 },
       capabilities: installedClaudeCapabilities(version, LOCAL_DELIVERY_LIMITS) };
   } };

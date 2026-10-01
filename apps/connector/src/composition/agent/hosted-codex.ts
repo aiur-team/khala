@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { type HarnessCapabilities, type HarnessPort, type ReleasedJob, sameSessionBinding } from '@khala/contracts/delivery/index';
+import { type HarnessCapabilities, type HarnessPort, type ReleasedJob, type UnverifiedReleasedJob, sameSessionBinding } from '@khala/contracts/delivery/index';
 import type { SessionClaim, SessionInspectionPort } from '@khala/connector/bootstrap/index';
 import { createCodexHarness, createCodexQueueProcessPort, type CodexNativeCliPort } from '@khala/harnesses/codex/index';
 import { CODEX_IDLE_WAKE_NOTICE } from '@khala/harnesses/codex/idle-wake';
@@ -109,7 +109,7 @@ export function createHostedCodexHarness(input: Readonly<{
   };
 }
 
-async function verifyReleasePayload(job: ReleasedJob, bytes: Uint8Array): Promise<'ok' | 'digest_mismatch' | 'event_mismatch'> {
+export async function verifyReleasePayload(job: UnverifiedReleasedJob, bytes: Uint8Array): Promise<'ok' | 'digest_mismatch' | 'event_mismatch'> {
   if (`sha256:${createHash('sha256').update(bytes).digest('hex')}` !== job.payloadDigest) return 'digest_mismatch';
   let tuple: unknown;
   try { tuple = JSON.parse(new TextDecoder('utf8', { fatal: true }).decode(bytes)) as unknown; }

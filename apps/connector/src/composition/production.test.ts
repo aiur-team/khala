@@ -7,23 +7,283 @@ import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/deli
 import { openConnectorStorage } from '@khala/connector/storage/open';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
+import { sha256Digest } from '@khala/connector/storage/payloads';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { nativeCliCapabilities } from '@khala/harnesses/codex/capabilities';
 import type { MatrixConnectorInput, MatrixConnectorSubstrate } from '../substrate/matrix';
+import { MatrixWriterLockError } from '../substrate/matrix-writer-lock';
 import { revocationStopId } from '../../../control/src/composition/human/revocation-cleanup';
 import { createLocalClosureFence } from './closure/local-fence';
 import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
+import { publicStatus } from '../../../../packages/agent-cli/src/cli/runtime';
+import { openInbox, type OpenInboxOptions } from '../../../../packages/agent-cli/src/cli/inbox';
+import { encodeMessageContent } from '@khala/contracts/messaging/events';
 
 describe('installed hosted connector composition', () => {
   let chromiumFixtureDirectory: string;
   let chromiumExecutablePath: string;
+  const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+  const getgid = Object.getOwnPropertyDescriptor(process, 'getgid');
   beforeAll(async () => {
+    Object.defineProperty(process, 'getuid', { configurable: true, value: undefined });
+    Object.defineProperty(process, 'getgid', { configurable: true, value: undefined });
     chromiumFixtureDirectory = await mkdtemp(path.join(os.tmpdir(), 'khala-test-chromium-'));
     chromiumExecutablePath = path.join(chromiumFixtureDirectory, 'chromium');
     await writeFile(chromiumExecutablePath, '#!/bin/sh\nprintf "Chromium 153.0.0.0\\n"\n', { mode: 0o700 });
   });
-  afterAll(async () => { await rm(chromiumFixtureDirectory, { recursive: true, force: true }); });
+  afterAll(async () => {
+    await rm(chromiumFixtureDirectory, { recursive: true, force: true });
+    if (getuid) Object.defineProperty(process, 'getuid', getuid);
+    if (getgid) Object.defineProperty(process, 'getgid', getgid);
+  });
+
+  it('reports only a fixed storage stage and code when a second connector cannot open', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-open-diagnostic-'));
+    const diagnostics: unknown[] = [];
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
+      chromiumExecutablePath, browserBundleDirectory: path.join(directory, 'unused-browser'),
+      session: { harness: 'claude', sessionId: 'owned-session', workdir: '/project' },
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined, openInbox: async () => undefined,
+      diagnostic: (event: unknown) => diagnostics.push(event),
+    };
+    try {
+      const first = await openProductionConnector(input);
+      try {
+        await expect(openProductionConnector(input)).rejects.toThrow();
+        expect(diagnostics).toEqual([{ stage: 'state_storage', result: 'unavailable', errorCode: 'locked' }]);
+      } finally { await first.close(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it('forwards active and recovered writer-lock stages through the installed diagnostic sink', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-writer-diagnostic-'));
+    const session = { harness: 'codex', sessionId: 'writer-diagnostic', workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const diagnostics: unknown[] = [];
+    let attempts = 0;
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      if (++attempts === 1) throw new MatrixWriterLockError('active_writer');
+      return {
+        fingerprint: 'signed-ed25519-fingerprint', writerLock: { kind: 'stale_recovered' },
+        devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
+          activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+        source: { authorize: async () => 'ok', listen: () => () => undefined,
+          read: async () => ({ kind: 'page', events: [], nextCursor: '', caughtUp: true }) },
+        send: async () => ({ eventId: '$event:example' }), trustPeer: async () => undefined,
+        removeOwnDevice: async () => 'removed', discardOutboundSession: async () => true,
+        close: async () => undefined,
+      };
+    };
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
+      chromiumExecutablePath, browserBundleDirectory: path.join(directory, 'unused-browser'), session,
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined, openInbox: async () => undefined,
+      diagnostic: (event: unknown) => diagnostics.push(event), openMatrix,
+    };
+    try {
+      const connector = await openProductionConnector(input);
+      try {
+        const reservation = await connector.ports.devices.reserve('operation-123');
+        expect(reservation.kind).toBe('reserved');
+        if (reservation.kind !== 'reserved') return;
+        await writeFile(path.join(sessionDirectory, 'matrix-session.json'), JSON.stringify({
+          baseUrl: 'https://matrix.example', userId: '@agent:example', deviceId: reservation.deviceId,
+          accessToken: 'a'.repeat(64), roomId: '!room:example', ownerUserId: '@owner:example',
+          ownerParticipantId: `human_${'b'.repeat(40)}`,
+        }));
+        expect(await connector.ports.devices.status(reservation.deviceId)).toBe('unavailable');
+        expect(await connector.ports.devices.status(reservation.deviceId)).toBe('ready');
+        expect(diagnostics).toEqual([
+          { stage: 'matrix_writer_active', result: 'unavailable' },
+          { stage: 'matrix_writer_recovered', result: 'recovered' },
+        ]);
+      } finally { await connector.close(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    ['claude', false], ['codex', false], ['claude', true],
+  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (transient outage: %s)', async (harness, transientOutage) => {
+    const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
+    const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const matrixUserId = '@claude-agent:example';
+    const agentFingerprint = 'A'.repeat(43);
+    const roomId = '!claude:example';
+    const payloadA = encodeMessageContent({ v: 1, kind: 'text', body: 'held A' });
+    const payloadB = encodeMessageContent({ v: 1, kind: 'text', body: 'approved B' });
+    const event = (id: string, payload: Uint8Array) => ({ kind: 'decrypted' as const,
+      ref: { v: 1 as const, roomId: roomId as never, eventId: id as never,
+        authorParticipantId: 'owner_participant' as never, authorDeviceId: 'OWNER_DEVICE' as never,
+        contentDigest: sha256Digest(payload) }, verifiedDeviceId: 'OWNER_DEVICE' as never,
+      canonicalPayload: payload });
+    const events = [event('event_A', payloadA), event('event_B', payloadB)];
+    let onText: MatrixConnectorInput['onText'];
+    const read = vi.fn(async () => {
+      for (const item of events) await onText?.({ roomId, eventId: item.ref.eventId, authorName: 'Owner' });
+      return { kind: 'page' as const, events, nextCursor: 'cursor-1', caughtUp: true };
+    });
+    const send = vi.fn(async () => ({ eventId: '$claude-sent:example' }));
+    const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      onText = options.onText;
+      return ({
+      fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
+      devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
+        activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+      source: { authorize: async () => 'ok', listen: () => () => undefined, read },
+      send, trustPeer: async () => undefined, removeOwnDevice: async () => 'removed',
+      discardOutboundSession: async () => true, close: async () => undefined,
+      });
+    };
+    const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
+      headers: { 'content-type': 'application/json' } });
+    let ownerAuthorized = true;
+    let ownerTrusted = true;
+    let approvalRevoked = false;
+    const commands: unknown[] = [];
+    const completions: unknown[] = [];
+    let approvalExecuting = false;
+    let approvalAuthorizationChecks = 0;
+    let releaseAuthorizationFailed = false;
+    const attestationPaths: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const pathname = new URL(String(url)).pathname;
+      if (pathname.startsWith('/api/agent/device-attestation/')) attestationPaths.push(pathname);
+      if (pathname.endsWith('/device-attestation/challenge')) return reply({ v: 1, nonce: 'N'.repeat(43), expiresAt: Date.now() + 60_000 });
+      if (pathname.endsWith('/device-attestation/register')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ fingerprint: agentFingerprint });
+        return reply({ v: 1, kind: 'attested' });
+      }
+      if (pathname.endsWith('/owner-mailbox/poll') && approvalRevoked) return new Response(null, { status: 403 });
+      if (pathname.endsWith('/owner-mailbox/poll')) {
+        if (approvalExecuting && ++approvalAuthorizationChecks === 2 && transientOutage) {
+          releaseAuthorizationFailed = true;
+          approvalExecuting = false;
+          return new Response(null, { status: 503 });
+        }
+        const entries = commands.splice(0);
+        if (entries.length > 0) approvalExecuting = true;
+        return reply({ v: 1, bindingId: 'binding-claude', generation: 0,
+          closing: !ownerAuthorized, entries });
+      }
+      if (pathname.endsWith('/owner-mailbox/complete')) {
+        completions.push(JSON.parse(String(init?.body)));
+        return reply({ v: 1, operationId: 'approve_B_0001' });
+      }
+      if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
+        devices: ownerTrusted ? [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] : [] });
+      if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
+      if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1' });
+      if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
+      throw new Error(`unexpected ${pathname}`);
+    }));
+    const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team', chromiumExecutablePath,
+      browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
+      openBrowser: async () => undefined,
+      openInbox: vi.fn(async (bindingId: string, generation: number, options?: Pick<OpenInboxOptions, 'recordAcknowledgement'>) => {
+        expect([bindingId, generation, options]).toEqual(['binding-claude', 0, expect.any(Object)]);
+        return openInbox({ stateDirectory: path.join(directory, 'inbox'), bindingId, generation,
+          maxPayloadBytes: 64 * 1024, maxSelectionEvents: 20,
+          ...(options?.recordAcknowledgement ? { recordAcknowledgement: options.recordAcknowledgement } : {}) });
+      }),
+    };
+    try {
+      const connector = await openProductionConnector(input);
+      try {
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_not_established' } });
+        const reservation = await connector.ports.devices.reserve('approved-operation');
+        expect(reservation.kind).toBe('reserved');
+        if (reservation.kind !== 'reserved' || !connector.proofSigner) throw new Error('missing admission proof');
+        const binding = { v: 1, bindingId: 'binding-claude', ownerId: 'owner-claude',
+          agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
+          deviceId: reservation.deviceId, harness: 'proof-key', sessionId: `agent_${connector.proofSigner.jkt}`,
+          generation: 0 } as SessionBinding;
+        const matrixSession = { baseUrl: 'https://matrix.example', userId: matrixUserId,
+          deviceId: reservation.deviceId, accessToken: 'exact-device-access-token', roomId,
+          ownerUserId: '@owner:example', ownerParticipantId: 'owner_participant' };
+        expect(await connector.ports.devices.activate({ operationId: 'approved-operation',
+          deviceId: reservation.deviceId, binding, matrixSession,
+          capability: { token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
+            scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000 },
+        })).toEqual({ kind: 'ready' });
+        await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: true,
+          route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
+            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'ready' } } }));
+        expect(attestationPaths).toEqual(['/api/agent/device-attestation/challenge', '/api/agent/device-attestation/register']);
+        expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
+          route: 'manual_mcp', binding, readiness: { prerequisites: { review: 'ready', dispatch: 'blocked' } } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'claude-send', body: 'manual reply' })).kind).toBe('accepted');
+        expect(send).toHaveBeenCalledOnce();
+        expect(await connector.inbox(binding.bindingId, 0)).toBeDefined();
+        expect(input.openInbox).toHaveBeenCalledWith(binding.bindingId, 0, expect.any(Object));
+        expect(input.inspectHostedCodexHooks).not.toHaveBeenCalled();
+        expect(input.resolveCodexExecutable).not.toHaveBeenCalled();
+        const before = await connector.inbox(binding.bindingId, 0);
+        const beforeConsumer = await before.acquireCallConsumer!();
+        expect(await beforeConsumer.readBatch({ maxBytes: 64 * 1024, explicitRead: true })).toBeNull();
+        await beforeConsumer.release();
+        commands.push({ operationId: 'approve_B_0001', kind: 'review_approve', outcome: null,
+          authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
+            authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
+          body: { v: 1, commandId: 'approve_B_0001', roomId, bindingId: binding.bindingId,
+            expectedPolicyVersion: 0, expectedBindingGeneration: 0, selection: [events[1]!.ref],
+            issuedAt: '2026-09-30T00:00:00Z' } });
+        await vi.waitFor(() => expect(completions).toHaveLength(1), { timeout: 5_000 });
+        expect(completions[0]).toMatchObject({ outcome: { ok: true } });
+        if (transientOutage) expect(releaseAuthorizationFailed).toBe(true);
+        const approved = await connector.inbox(binding.bindingId, 0);
+        if (transientOutage) expect(await approved.readNext()).toBeNull();
+        await vi.waitFor(async () => expect(await approved.readNext()).not.toBeNull(), { timeout: 5_000 });
+        const reader = await approved.acquireCallConsumer!();
+        const batch = await reader.readBatch({ maxBytes: 64 * 1024, explicitRead: true });
+        expect(batch?.items).toHaveLength(1);
+        expect(Buffer.from(batch!.items[0]!.payload).toString()).toContain('approved B');
+        expect(Buffer.from(batch!.items[0]!.payload).toString()).not.toContain('held A');
+        expect(await reader.readBatch({ maxBytes: 64 * 1024, acknowledgeToken: batch!.token,
+          explicitRead: true })).toBeNull();
+        await reader.release();
+
+        ownerAuthorized = false;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'channel_closing' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'revoked-send', body: 'blocked' })).kind).toBe('refused');
+        ownerAuthorized = true;
+        ownerTrusted = false;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'untrusted-send', body: 'blocked' })).kind).toBe('refused');
+        await rm(path.join(sessionDirectory, 'current-binding.json'));
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'lost-binding-send', body: 'blocked' })).kind).toBe('refused');
+        await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
+        approvalRevoked = true;
+        expect(await connector.status()).toMatchObject({ connected: false,
+          readiness: { errorCode: 'binding_revoked' } });
+        expect((await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'revoked-approval-send', body: 'blocked' })).kind).toBe('refused');
+      } finally { await connector.close(); }
+      expect(await hasProductionBinding(directory, { ...session, sessionId: 'different-session' })).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));
@@ -36,6 +296,7 @@ describe('installed hosted connector composition', () => {
     const matrixUserId = '@active-agent:example';
     const roomId = '!active:example';
     const deviceId = 'DEVICE_ACTIVE';
+    const agentFingerprint = 'D'.repeat(43);
     const read = vi.fn(async () => ({ kind: 'page' as const, events: [], nextCursor: 'cursor-1', caughtUp: true }));
     const send = vi.fn(async (clientTxnId: string, body: string) => {
       if (!clientTxnId || !body) throw new Error('test send missing transaction or body');
@@ -44,7 +305,7 @@ describe('installed hosted connector composition', () => {
     const opens: MatrixConnectorInput[] = [];
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
-      return { fingerprint: 'active-device-fingerprint',
+      return { fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -64,7 +325,7 @@ describe('installed hosted connector composition', () => {
       binding = { v: 1, bindingId: 'binding-active-restart', ownerId: 'owner-active',
         agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
         deviceId, harness: 'proof-key', sessionId: `agent_${signer.jkt}`, generation: 0 } as SessionBinding;
-      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: 'active-device-fingerprint' }))
+      expect(await storage.bindDeviceIdentity({ deviceId: binding.deviceId, fingerprint: agentFingerprint }))
         .toEqual({ kind: 'bound' });
       expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       expect(await createConnectorDispatchStorage(storage).applyEffectivePolicy({ binding,
@@ -84,8 +345,13 @@ describe('installed hosted connector composition', () => {
         accessToken: 'exact-device-access-token', roomId, ownerUserId: '@owner:example',
         ownerParticipantId: 'owner_participant',
       }));
-      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith('/device-attestation/challenge')) return reply({ v: 1, nonce: 'N'.repeat(43), expiresAt: Date.now() + 60_000 });
+        if (pathname.endsWith('/device-attestation/register')) {
+          expect(JSON.parse(String(init?.body))).toMatchObject({ fingerprint: agentFingerprint });
+          return reply({ v: 1, kind: 'attested' });
+        }
         if (pathname.endsWith('/owner-mailbox/poll')) return reply({ v: 1,
           bindingId: binding.bindingId, generation: 0, closing: false, entries: [] });
         if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,

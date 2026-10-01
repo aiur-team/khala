@@ -176,7 +176,7 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
 
     // Send: the human's message is accepted and reconciled into the durable timeline.
     const composer = page.getByRole('textbox', { name: 'Message' });
-    assert.equal(await composer.getAttribute('placeholder'), '');
+    assert.equal(await composer.getAttribute('placeholder'), null);
     const oneLineHeight = await composer.evaluate(element => element.clientHeight);
     await composer.fill('first line\nsecond line\nthird line');
     const threeLineSize = await composer.evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight, inline: element.style.height }));
@@ -184,12 +184,17 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
       'three lines are fully visible without scrolling');
     const wrappedDraft = 'A saved draft should stay readable when the conversation becomes narrow. '.repeat(2);
     await composer.fill(wrappedDraft);
-    const wideDraftHeight = await composer.evaluate(element => element.clientHeight);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight > height, wideDraftHeight);
+    await page.waitForFunction(() => {
+      const draft = document.querySelector<HTMLTextAreaElement>('#conversation-draft')!;
+      return draft.clientWidth < window.innerWidth && draft.scrollHeight <= draft.clientHeight + 2;
+    });
     assert.equal(await composer.inputValue(), wrappedDraft, 'resizing keeps the existing draft');
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.waitForFunction(height => document.querySelector<HTMLTextAreaElement>('#conversation-draft')!.clientHeight <= height + 2, wideDraftHeight);
+    await page.waitForFunction(() => {
+      const draft = document.querySelector<HTMLTextAreaElement>('#conversation-draft')!;
+      return draft.clientHeight >= 138 || draft.scrollHeight <= draft.clientHeight + 2;
+    });
     await composer.fill(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n'));
     await page.waitForFunction(() => {
       const input = document.querySelector<HTMLTextAreaElement>('#conversation-draft');

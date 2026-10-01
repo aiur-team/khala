@@ -543,6 +543,15 @@ owner approves that key, run `request-access` again with the same channel URL
 and `operationId` (or omit `--operation` again to reuse the target-derived ID)
 to file the separate access request. Nothing here grants access.
 
+Native `khala_connect` follows the same approval sequence with a stable
+operation ID for the exact link and session. While the proof key or channel
+request awaits owner approval, it returns
+`{"ok":true,"operationId":...,"outcome":"pending_owner","next":"human_approve"}`.
+After each approval, call `khala_connect` again with the same link. `connecting`
+returns `next: "retry_same_link"`; `repair_required` returns
+`next: "repair_connector"`. A binding appears only after native admission and
+readiness. The pending response contains no link, proof key, or credential.
+
 `khala channels access-status --operation <id>` reads the same filed access
 operation once. Do not use it to check an unfiled proof-key candidate.
 There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
@@ -551,6 +560,13 @@ There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
 one-time redemption, Matrix device activation, and ready before reporting
 `connected`. This is scoped to the exact Codex or Claude MCP session; shell
 `khala connect` has no provider session to authenticate a hosted request.
+For hosted Claude Code and unproven Codex versions, `connected` enables manual
+`khala_status`, `khala_read`, and `khala_send` MCP calls in that exact session.
+An owner must approve each pending event before its bytes reach `khala_read`;
+an explicit read and batch acknowledgement advances the inbox. The `manual_mcp`
+route does not queue work into the agent or deliver messages automatically. An
+installed CLI bundle must be rebuilt and the MCP session restarted to pick up
+a new client version.
 Production native read and send remain unproven until an owner-approved live
 session exercises both. Output is decoded with the closed
 `decodeAccessRequestStatus` decoder, so any extra field is reported as
@@ -710,8 +726,8 @@ its footprint cannot be declared up front.
 
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
-| 2.1.283, 2.1.284 | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies the planned footprint in private homes. Route proof remains exact-version: 2.1.284 is experimental pending a live model read/send. |
-| any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
+| CLI exposes plugin and MCP commands | supported setup | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. Delivery claims remain version specific; 2.1.284 and 2.1.285 are experimental pending live model read/send. |
+| CLI lacks plugin or MCP commands | unsupported | nothing | Setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
 bytes or absence, and drift refuses the whole removal. Absent Claude plans
@@ -775,8 +791,21 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 
 | Codex | Support |
 | --- | --- |
-| 0.154.0, 0.157.1, 0.158.0, 0.159.0, 0.159.1 | Supported setup; native delivery claims remain exact-version and route-specific |
-| Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
+| CLI exposes native MCP listing | Supported skill and MCP setup; hook setup requires the enabled native hooks feature. Delivery claims remain version and route specific. On 0.159.2, an exact MCP session can submit a hosted request, while queue and hook delivery remain unproven. |
+| CLI lacks native MCP listing | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
+
+`mcp_entry: ready` describes the current config file, not the tools loaded into
+an already-running Codex session. After installing the entry, check that the
+**same session** actually exposes `mcp__khala__khala_connect` or
+`mcp__khala__khala_request_channel_access` before attempting hosted access.
+Codex 0.159.2 has no `codex mcp` reload command; if those tools are absent,
+exit the Codex process and resume that conversation in the same terminal with
+`codex resume` after confirming the entry is enabled. Confirm the resumed
+session's identity and model-visible tool inventory before submitting one
+owner-approved access request. A resumed conversation is a new MCP process, so
+neither the existing config nor a shell `khala connect` proves the request or
+delivery succeeded. An overall setup `drifted` state can also come from an
+unrelated harness; inspect the Codex component states separately.
 
 ## OpenCode setup adapter
 

@@ -11,6 +11,10 @@ const ACTIONS = ['ready', 'acquire', 'finish', 'rotation', 'inspect'] as const;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 type Action = typeof ACTIONS[number];
 type Principal = Readonly<{ roomId: RoomId; sender: SenderIdentity }>;
+export type RoomSendFailureStage = 'auth' | 'membership' | 'sender' | 'fence_acquire' | 'composition';
+export type RoomSendFailureCode = 'session_store_unavailable' | 'matrix_unavailable' | 'fence_unavailable'
+  | 'sender_verification_unavailable' | 'load_failed' | 'route_missing' | 'handle_failed';
+export type RoomSendDiagnostic = (entry: Readonly<{ stage: RoomSendFailureStage; code: RoomSendFailureCode }>) => void;
 function object(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function json(status: number, value: unknown): Response { return new Response(JSON.stringify(value), { status,
   headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } }); }
@@ -82,26 +86,43 @@ export function createRoomSendRoutes(input: Readonly<{
   inspectOwnerMembership(ownerId: AuthPrincipal['ownerId'], roomId: RoomId): Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
   verifyBrowserSender: BrowserSenderVerifier;
   agentSender(binding: SessionBinding): Promise<Readonly<{ matrixUserId: string; deviceKey: string }> | null>;
+  diagnostic?: RoomSendDiagnostic;
 }>): readonly RouteRegistration[] {
   const fence = createRoomSendFence(input.store);
+  const unavailable = (stage: RoomSendFailureStage, code: RoomSendFailureCode) => {
+    try { input.diagnostic?.({ stage, code }); } catch { /* Diagnostics never affect authorization. */ }
+    return json(503, { kind: 'unavailable', stage, code });
+  };
   async function principal(request: Request, human: boolean, body: Record<string, unknown>): Promise<Principal | Response> {
     if (human) {
-      const auth = await input.auth.requireHumanMutation(request);
-      if (auth.kind !== 'authorized') return json(auth.kind === 'unavailable' ? 503 : 403, { code: 'forbidden' });
+      let auth: Awaited<ReturnType<typeof input.auth.requireHumanMutation>>;
+      try { auth = await input.auth.requireHumanMutation(request); }
+      catch { return unavailable('auth', 'session_store_unavailable'); }
+      if (auth.kind !== 'authorized') return auth.kind === 'unavailable'
+        ? unavailable('auth', 'session_store_unavailable') : json(403, { code: 'forbidden' });
       const room = decodeRoomId(body.roomId);
       if (!room.ok || !ID.test(String(body.deviceId))) return json(400, { code: 'invalid_request' });
-      const membership = await input.inspectOwnerMembership(auth.context.principal.ownerId, room.value);
-      if (membership.kind !== 'joined') return json(membership.kind === 'unavailable' ? 503 : 403, { code: 'forbidden' });
-      const verified = await input.verifyBrowserSender(auth.context.principal, body.deviceId as string,
-        body.matrixAccessToken as string);
+      let membership: Awaited<ReturnType<typeof input.inspectOwnerMembership>>;
+      try { membership = await input.inspectOwnerMembership(auth.context.principal.ownerId, room.value); }
+      catch { return unavailable('membership', 'matrix_unavailable'); }
+      if (membership.kind !== 'joined') return membership.kind === 'unavailable'
+        ? unavailable('membership', 'matrix_unavailable') : json(403, { code: 'forbidden' });
+      let verified: Awaited<ReturnType<BrowserSenderVerifier>>;
+      try { verified = await input.verifyBrowserSender(auth.context.principal, body.deviceId as string,
+        body.matrixAccessToken as string); }
+      catch { return unavailable('sender', 'sender_verification_unavailable'); }
       if (!verified) return json(403, { code: 'device_unverified' });
       return { roomId: room.value, sender: { senderId: senderIdFor(verified.matrixUserId, body.deviceId as string),
         deviceId: body.deviceId as string, deviceKey: verified.deviceKey } };
     }
-    const checked = await input.capabilities.authorize(request, 'publish_own');
+    let checked: Awaited<ReturnType<typeof input.capabilities.authorize>>;
+    try { checked = await input.capabilities.authorize(request, 'publish_own'); }
+    catch { return unavailable('auth', 'session_store_unavailable'); }
     if (checked.kind !== 'authorized') return json(checked.kind === 'unavailable' ? 503 : checked.status,
       { code: checked.kind === 'unavailable' ? 'unavailable' : checked.code });
-    const verified = await input.agentSender(checked.binding);
+    let verified: Awaited<ReturnType<typeof input.agentSender>>;
+    try { verified = await input.agentSender(checked.binding); }
+    catch { return unavailable('sender', 'sender_verification_unavailable'); }
     if (!verified) return json(503, { code: 'unavailable' });
     return { roomId: checked.roomId, sender: { senderId: senderIdFor(verified.matrixUserId, checked.binding.deviceId),
       deviceId: checked.binding.deviceId, deviceKey: verified.deviceKey } };
@@ -122,8 +143,11 @@ export function createRoomSendRoutes(input: Readonly<{
           return json(result === 'applied' ? 200 : result === 'held' ? 423 : 503, { kind: result });
         }
         case 'acquire': {
-          const result = await fence.acquire(roomId, sender, body.clientTxnId as string);
-          return json(result.kind === 'granted' ? 200 : result.kind === 'held' ? 423 : 503, result);
+          let result: Awaited<ReturnType<typeof fence.acquire>>;
+          try { result = await fence.acquire(roomId, sender, body.clientTxnId as string); }
+          catch { return unavailable('fence_acquire', 'fence_unavailable'); }
+          return result.kind === 'unavailable' ? unavailable('fence_acquire', 'fence_unavailable')
+            : json(result.kind === 'granted' ? 200 : 423, result);
         }
         case 'finish': {
           const outcome = body.outcome === 'complete' ? { kind: 'complete' as const, eventId: body.eventId as string }
@@ -147,11 +171,24 @@ export function createRoomSendRoutes(input: Readonly<{
   return Object.freeze([...ACTIONS.map(action => route(true, action)), ...ACTIONS.map(action => route(false, action))]);
 }
 
-export function createLazyRoomSendRoutes(load: () => readonly RouteRegistration[]): readonly RouteRegistration[] {
+export function createLazyRoomSendRoutes(load: () => readonly RouteRegistration[], diagnostic?: RoomSendDiagnostic): readonly RouteRegistration[] {
   return Object.freeze([HUMAN, AGENT].flatMap(base => ACTIONS.map(action => Object.freeze({
     path: `${base}/${action}`, methods: Object.freeze(['POST']), async handle(request: Request) {
-      const selected = load().find(route => route.path === `${base}/${action}`);
-      return selected ? selected.handle(request) : json(503, { code: 'unavailable' });
+      let selected: RouteRegistration | undefined;
+      try { selected = load().find(route => route.path === `${base}/${action}`); }
+      catch {
+        try { diagnostic?.({ stage: 'composition', code: 'load_failed' }); } catch { /* diagnostic only */ }
+        return json(503, { kind: 'unavailable', stage: 'composition', code: 'load_failed' });
+      }
+      if (selected) {
+        try { return await selected.handle(request); }
+        catch {
+          try { diagnostic?.({ stage: 'composition', code: 'handle_failed' }); } catch { /* diagnostic only */ }
+          return json(503, { kind: 'unavailable', stage: 'composition', code: 'handle_failed' });
+        }
+      }
+      try { diagnostic?.({ stage: 'composition', code: 'route_missing' }); } catch { /* diagnostic only */ }
+      return json(503, { kind: 'unavailable', stage: 'composition', code: 'route_missing' });
     },
   }))));
 }

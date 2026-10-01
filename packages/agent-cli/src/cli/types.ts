@@ -50,7 +50,7 @@ export type SendRefusalCode = (typeof SEND_REFUSAL_CODES)[number];
 // The CLI reports contract `unsupported` as `unavailable`: both fail closed, while
 // `unavailable` describes the installed component before live composition exists.
 type AgentRouteFromContract<Route extends string> = Route extends 'unsupported' ? 'unavailable' : Route;
-export type AgentRoute = AgentRouteFromContract<HarnessCapabilities['existingSession']>;
+export type AgentRoute = AgentRouteFromContract<HarnessCapabilities['existingSession']> | 'manual_mcp';
 const AGENT_ROUTE_MEMBERS = {
   unknown: true,
   unavailable: true,
@@ -59,11 +59,13 @@ const AGENT_ROUTE_MEMBERS = {
   agent_installed_listener: true,
   opencode_plugin: true,
   native_hooks: true,
+  manual_mcp: true,
 } as const satisfies Record<AgentRoute, true>;
 export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as readonly AgentRoute[];
 
 export type ConnectResult =
   | Readonly<{ kind: 'connected'; binding: SessionBinding; reused: boolean }>
+  | Readonly<{ kind: 'pending'; operationId: string; outcome: 'pending_owner' | 'connecting' | 'repair_required' }>
   | Readonly<{ kind: 'refused'; code: ConnectRefusalCode }>
   | Readonly<{ kind: 'unavailable' }>;
 export type SendResult =

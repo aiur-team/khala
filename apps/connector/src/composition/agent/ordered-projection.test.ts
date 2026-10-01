@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,16 @@ import type { LocalInbox } from './hosted-codex';
 
 type Delivery = Parameters<LocalInbox['enqueue']>[0];
 const directories: string[] = [];
+const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+const getgid = Object.getOwnPropertyDescriptor(process, 'getgid');
+beforeAll(() => {
+  Object.defineProperty(process, 'getuid', { configurable: true, value: undefined });
+  Object.defineProperty(process, 'getgid', { configurable: true, value: undefined });
+});
+afterAll(() => {
+  if (getuid) Object.defineProperty(process, 'getuid', getuid);
+  if (getgid) Object.defineProperty(process, 'getgid', getgid);
+});
 afterEach(async () => { await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))); });
 async function journal() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ordered-projection-'));
@@ -38,6 +48,22 @@ function inbox() {
 }
 
 describe('durable ordered agent projection', () => {
+  it('allows an approved later event through a manual inbox without waking a model', async () => {
+    const projection = createOrderedProjection(await journal(), { manualRead: true });
+    const notified: string[] = [];
+    const sink = inbox();
+    const manual = { ...sink.port, async notifyListener(reason: 'released') {
+      notified.push(reason); return 'notified' as const;
+    } };
+    await projection.observe('room_one', 'A', 'Owner');
+    await projection.observe('room_one', 'B', 'Owner');
+    await projection.enqueue(release(['B'], 'release_B'), manual);
+    expect(sink.deliveries.map(item => item.events[0]!.eventId)).toEqual(['B']);
+    expect(notified).toEqual([]);
+    expect(await projection.acknowledge([sink.deliveries[0]!.releaseId])).toEqual(['release_B']);
+    expect(await projection.enqueue(release(['B'], 'release_B'), manual)).toBe('duplicate');
+    expect(sink.deliveries).toHaveLength(1);
+  });
   it('upgrades committed legacy pending intake before later renames using ledger order despite reversed timestamps', async () => {
     const filename = await journal();
     const directory = path.join(path.dirname(filename), 'legacy-state');

@@ -29,6 +29,7 @@ export type TimelineData = Readonly<{
   /** Complete allowed history when the background name replay reaches its boundary. */
   nameHistory?: readonly TimelineItem[];
   namesReady?: boolean;
+  nameScan?: 'checking' | 'ready' | 'retryable' | 'unavailable';
   rows?: readonly TimelineRow[];
   nextCursor: string | null;
   newMessageCount: number;
@@ -71,6 +72,7 @@ export function createTimelineController(
   let membership: ChannelMembership | null = null;
   let namesReady = false;
   let nameScanReachedBoundary = false;
+  let nameScanFailure = false;
   const unavailableNameEvents = new Set<EventId>();
   function recordNamePage(page: TimelinePage): void {
     for (const id of page.unavailableEventIds ?? []) unavailableNameEvents.add(id);
@@ -118,7 +120,9 @@ export function createTimelineController(
         const decoded = row.kind === 'unavailable' ? olderById.get(row.eventId) : undefined;
         return decoded ? { kind: 'message' as const, item: decoded } : row;
       })];
-    cachedData = { phase, items, rows, nameHistory, namesReady,
+    const nameScan = nameScanFailure ? 'retryable' : nameScanReachedBoundary
+      ? unavailableNameEvents.size > 0 ? 'unavailable' : 'ready' : 'checking';
+    cachedData = { phase, items, rows, nameHistory, namesReady, nameScan,
       nextCursor: hiddenOlder.length > 0 ? 'cached' : nextCursor, newMessageCount, membership };
 
     dataDirty = false;
@@ -173,7 +177,7 @@ export function createTimelineController(
       if (row.kind === 'unavailable') unavailableNameEvents.add(row.eventId);
       else unavailableNameEvents.delete(row.item.ref.eventId);
     }
-    namesReady = nameScanReachedBoundary && unavailableNameEvents.size === 0;
+    namesReady = nameScanReachedBoundary && unavailableNameEvents.size === 0 && !nameScanFailure;
     recentRows = [...rows.values()];
     recent = recentRows.flatMap(row => row.kind === 'message' ? [row.item] : []);
     itemsDirty = true;
@@ -249,18 +253,27 @@ export function createTimelineController(
     if (scanInFlight) return scanInFlight;
     const run = (async () => {
       if (inFlightLoadOlder) await inFlightLoadOlder;
-      if (!hasInitialPage) return;
+      if (!hasInitialPage) {
+        nameScanFailure = true;
+        namesReady = false;
+        notify();
+        return;
+      }
       while (!disposed && nextCursor !== null) {
         const requestedCursor = nextCursor;
         const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
         if (disposed) return;
         if (result.kind !== 'ok') {
+          nameScanFailure = true;
+          namesReady = false;
           historyDegraded = degradedPhase();
           phase = historyDegraded;
           notify();
           return;
         }
         if (result.value.nextCursor === requestedCursor) {
+          nameScanFailure = true;
+          namesReady = false;
           historyDegraded = degradedPhase();
           phase = historyDegraded;
           notify();
@@ -273,6 +286,7 @@ export function createTimelineController(
         notify();
       }
       if (!disposed) {
+        nameScanFailure = false;
         nameScanReachedBoundary = true;
         namesReady = unavailableNameEvents.size === 0;
         if (!namesReady) phase = degradedPhase();

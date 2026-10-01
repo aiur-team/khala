@@ -64,6 +64,29 @@ function access(origin: string, held = credentials(credential(origin)), extra: P
 }
 
 describe('HTTP channel access', () => {
+  it('reports only fixed failure stages and HTTP status, without request data', async () => {
+    const origin = 'https://khala.aiur.team';
+    const diagnostic = vi.fn();
+    const request = { target: { kind: 'channel_url' as const, channelUrl: `${origin}/join/inviteRef123` },
+      operationId: 'op-1', origin: null };
+    await expect(access(origin, credentials(null), { diagnostic, candidate: async () => ({ kind: 'unavailable' }) })
+      .requestChannelAccess(request)).resolves.toEqual({ kind: 'unavailable' });
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'candidate', result: 'unavailable' });
+
+    diagnostic.mockClear();
+    await expect(access(origin, credentials(credential(origin)), { diagnostic, fetch: async () => { throw new Error('secret'); } })
+      .requestChannelAccess(request)).resolves.toEqual({ kind: 'unavailable' });
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'http_transport', result: 'unavailable' });
+
+    diagnostic.mockClear();
+    await expect(access(origin, credentials(credential(origin)), { diagnostic,
+      fetch: async () => new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } }) })
+      .requestChannelAccess(request)).resolves.toEqual({ kind: 'unavailable' });
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'http_response', result: 'unavailable', httpStatus: 503 });
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('inviteRef123');
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('secret');
+  });
+
   it('waits for exact-session approval before sending a hosted create intent', async () => {
     const posted: unknown[] = [];
     const origin = await loopback(async (request, response) => {

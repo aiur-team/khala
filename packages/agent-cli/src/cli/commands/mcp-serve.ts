@@ -20,7 +20,7 @@ import { CONNECT_TOOL_NAME } from '../../mcp/connect.js';
 import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
-import type { AgentClientPort, CliCommand, CliDependencies } from '../types.js';
+import { AGENT_READINESS_ERRORS, type AgentClientPort, type CliCommand, type CliDependencies } from '../types.js';
 import { validIdentifier } from '../validation.js';
 
 export const mcpServeCommand: CliCommand = {
@@ -32,7 +32,10 @@ export const mcpServeCommand: CliCommand = {
       type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
       let hosted: Hosted | null = null;
       const open = async () => {
-        if (!validIdentifier(sessionId) || !deps.hostedSession) return null;
+        if (!validIdentifier(sessionId) || !deps.hostedSession) {
+          deps.stderr.write('{"component":"hosted_session","stage":"session_identifier","result":"unavailable"}\n');
+          return null;
+        }
         if (hosted === null) {
           try { hosted = await deps.hostedSession({ harness: 'claude', sessionId }); }
           catch (error) {
@@ -69,15 +72,26 @@ export const mcpServeCommand: CliCommand = {
       let retainedToken: string | undefined;
       let sessionBinding: SessionBinding | null = null;
       let localAccessRequested = false;
+      const heldDiagnostic = (stage: 'connector_unready' | 'binding_absent' | 'harness_mismatch'
+        | 'session_mismatch' | 'binding_changed', errorCode?: string | null) => {
+        const code = errorCode && (AGENT_READINESS_ERRORS as readonly string[]).includes(errorCode)
+          ? errorCode : undefined;
+        deps.stderr.write(JSON.stringify({ component: 'hosted_session', stage, result: 'unavailable',
+          ...(code ? { errorCode: code } : {}) }) + '\n');
+      };
       const held = async () => {
         const opened = await open();
         if (!opened || !validIdentifier(sessionId)) return null;
         const status = publicStatus(await opened.client.status(deps.signal));
         const binding = status.binding;
         const storedSession = opened.client.storedSessionId?.('claude', sessionId) ?? sessionId;
-        if (!status.connected || binding === null || !['claude', 'proof-key'].includes(binding.harness)
-          || binding.sessionId !== storedSession) return null;
-        if (sessionBinding !== null && !sameHeldBinding(sessionBinding, binding)) return null;
+        if (!status.connected) { heldDiagnostic('connector_unready', status.readiness?.errorCode); return null; }
+        if (binding === null) { heldDiagnostic('binding_absent'); return null; }
+        if (!['claude', 'proof-key'].includes(binding.harness)) { heldDiagnostic('harness_mismatch'); return null; }
+        if (binding.sessionId !== storedSession) { heldDiagnostic('session_mismatch'); return null; }
+        if (sessionBinding !== null && !sameHeldBinding(sessionBinding, binding)) {
+          heldDiagnostic('binding_changed'); return null;
+        }
         sessionBinding = binding;
         return { opened, binding };
       };

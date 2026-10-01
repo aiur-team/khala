@@ -32,6 +32,14 @@ export type HttpChannelAccessOptions = Readonly<{
   beforeChannelRequest?: (input: Readonly<{ operationId: string; origin: string }>, credential: DiscoveryCredential) => Promise<boolean>;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** Fixed local failure stages only; never include a URL, operation ID, credential or thrown error. */
+  diagnostic?: (event: ChannelAccessDiagnostic) => void;
+}>;
+
+export type ChannelAccessDiagnostic = Readonly<{
+  stage: 'candidate' | 'credential' | 'preflight' | 'http_transport' | 'http_response';
+  result: 'unavailable';
+  httpStatus?: number;
 }>;
 
 export function createHttpChannelAccess(options: HttpChannelAccessOptions): ChannelAccessPort & ChannelCreatePort {
@@ -42,19 +50,27 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
   if (!trusted.has(options.defaultOrigin)) throw new Error('the default origin must be a trusted origin');
   const transport = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const unavailable = (stage: ChannelAccessDiagnostic['stage'], httpStatus?: number) => {
+    try { options.diagnostic?.({ stage, result: 'unavailable', ...(httpStatus === undefined ? {} : { httpStatus }) }); }
+    catch { /* Diagnostics cannot change a request outcome. */ }
+    return { kind: 'unavailable' } as const;
+  };
 
   async function credentialFor(origin: string, signal: AbortSignal | undefined): Promise<DiscoveryCredential | ChannelAccessResult> {
     const held = options.credentials.current();
     if (held !== null && held.requester.origin === origin) return held;
-    const authorized = await options.credentials.authorize(
-      { origin, session: options.session }, signal === undefined ? undefined : { signal },
-    );
+    let authorized: Awaited<ReturnType<ChannelDiscoveryCredentialClient['authorize']>>;
+    try {
+      authorized = await options.credentials.authorize(
+        { origin, session: options.session }, signal === undefined ? undefined : { signal },
+      );
+    } catch { return unavailable('credential'); }
     if (authorized.kind === 'denied') return refused('discovery_denied');
     if (authorized.kind === 'rejected') {
       return refused(authorized.code === 'untrusted_origin' ? 'untrusted_origin' : 'discovery_required');
     }
     if (authorized.kind === 'cancelled' || authorized.kind === 'timed_out') return refused('discovery_required');
-    return authorized.kind === 'authorized' ? authorized.credential : { kind: 'unavailable' };
+    return authorized.kind === 'authorized' ? authorized.credential : unavailable('credential');
   }
 
   async function call(
@@ -66,7 +82,10 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
     if (!trusted.has(origin)) return refused('untrusted_origin');
     const credential = await credentialFor(origin, signal);
     if ('kind' in credential) return credential;
-    if (beforeSend && !await beforeSend(credential)) return { kind: 'unavailable' };
+    if (beforeSend) {
+      try { if (!await beforeSend(credential)) return unavailable('preflight'); }
+      catch { return unavailable('preflight'); }
+    }
     const { target, method, body } = build(credential);
     const rawBody = body === undefined ? undefined : JSON.stringify(body);
     const timeout = AbortSignal.timeout(timeoutMs);
@@ -88,11 +107,11 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
         signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
       });
     } catch {
-      return { kind: 'unavailable' };
+      return unavailable('http_transport');
     }
     if (response.status >= 300 && response.status < 400) {
       await discard(response);
-      return redirectsOffOrigin(response, target) ? refused('untrusted_origin') : { kind: 'unavailable' };
+      return redirectsOffOrigin(response, target) ? refused('untrusted_origin') : unavailable('http_response', response.status);
     }
     if (response.status !== 200) {
       if (response.status === 409 && target.pathname === CHANNEL_LINK_REQUEST_PATH) {
@@ -103,7 +122,7 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
             if (decoded.ok && decoded.value.kind === 'use_your_link') return refused('sponsor_link_required');
           }
         } catch { /* A malformed refusal remains unavailable. */ }
-        return { kind: 'unavailable' };
+        return unavailable('http_response', response.status);
       }
       await discard(response);
       if (response.status === 401) {
@@ -111,26 +130,26 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
         return refused('discovery_required');
       }
       const code = STATUS_REFUSALS.get(response.status);
-      return code === undefined ? { kind: 'unavailable' } : refused(code);
+      return code === undefined ? unavailable('http_response', response.status) : refused(code);
     }
     const mediaType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
     if (mediaType !== 'application/json') {
       await discard(response);
-      return { kind: 'unavailable' };
+      return unavailable('http_response', response.status);
     }
     try {
       const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
-      if (bytes === null) return { kind: 'unavailable' };
+      if (bytes === null) return unavailable('http_response', response.status);
       const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
       if (target.pathname === CHANNEL_LINK_REQUEST_PATH) {
         const decoded = decodeAgentChannelLinkResult(value);
         return decoded.ok && decoded.value.kind === 'request'
           ? { kind: 'status', status: { v: 1, operationId: decoded.value.operationId, outcome: decoded.value.outcome } }
-          : { kind: 'unavailable' };
+          : unavailable('http_response', response.status);
       }
       return { kind: 'status', status: value };
     } catch {
-      return { kind: 'unavailable' };
+      return unavailable('http_response', response.status);
     }
   }
 
@@ -145,12 +164,15 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
       const origin = input.origin ?? named ?? options.defaultOrigin;
       if (!trusted.has(origin)) return refused('untrusted_origin');
       if (options.credentials.current() === null && input.target.kind === 'channel_url' && options.candidate) {
-        const candidate = await options.candidate({ target: input.target.channelUrl,
-          operationId: input.operationId, session: options.session }, signal);
+        let candidate: CandidateOutcome;
+        try {
+          candidate = await options.candidate({ target: input.target.channelUrl,
+            operationId: input.operationId, session: options.session }, signal);
+        } catch { return unavailable('candidate'); }
         if (candidate.kind === 'pending_owner') return { kind: 'status', status: { v: 1,
           operationId: input.operationId, outcome: 'pending_owner' } };
         if (candidate.kind === 'rejected') return refused('discovery_denied');
-        if (candidate.kind !== 'approved') return { kind: 'unavailable' };
+        if (candidate.kind !== 'approved') return unavailable('candidate');
       }
       return call(origin, signal, credential => ({
         target: new URL(input.target.kind === 'channel_url' ? CHANNEL_LINK_REQUEST_PATH : CHANNEL_ACCESS_REQUEST_PATH, origin),

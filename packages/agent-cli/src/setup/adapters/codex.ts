@@ -13,6 +13,7 @@ import { codexHookCommand, codexHookReviewState, codexHooksFragment } from '../.
 import { CODEX_HOOK_EVENTS } from '../../codex/hook.js';
 import { plainObject } from '../../cli/validation.js';
 import { codexAppSetupEntries } from '../../composition/codex-app.js';
+import { CodexHomeMissingProbeError } from '../detect.js';
 import { sha256 } from '../filesystem.js';
 import { MANIFEST_FILE, parseManifest, type ManifestEntry, type SetupManifest } from '../manifest.js';
 import type {
@@ -20,8 +21,8 @@ import type {
   SetupEnvironment, SetupOperation, SetupPlanRequest, Sha256Digest,
 } from '../types.js';
 
-/** Exact Codex versions whose skill, hook, and MCP layout this adapter has proven. */
-export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1']);
+/** Certified versions used when a fresh home prevents the native probe; never a hosted-request admission gate. */
+export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1', '0.159.2']);
 export const CODEX_MCP_ENTRY = 'mcp_servers.khala';
 export const CODEX_HOOKS_ENTRY = 'hooks.khala';
 
@@ -54,6 +55,23 @@ export function codexPaths(environment: Pick<SetupEnvironment, 'home' | 'xdgData
 export function parseCodexVersion(output: string): string | null {
   const match = /^codex-cli ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)\s*$/.exec(output.trim());
   return match === null ? null : match[1]!;
+}
+
+/** A readable ancestor that lacks the next path entry proves a fresh Codex home. */
+async function codexHomeAbsent(environment: SetupEnvironment): Promise<boolean> {
+  let child = codexPaths(environment).codexHome;
+  for (let parent = path.dirname(child); parent !== child; parent = path.dirname(child)) {
+    const entries = await environment.probe.listDirectory(parent);
+    if (entries !== null) return !entries.includes(path.basename(child));
+    child = parent;
+  }
+  return false;
+}
+
+async function knownFreshCodex(environment: SetupEnvironment, version: string | null): Promise<boolean> {
+  if (version === null || !CODEX_SUPPORTED_VERSIONS.includes(version)) return false;
+  try { return await codexHomeAbsent(environment); }
+  catch { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +301,7 @@ export type CodexExecutablePlan = Readonly<{
 }>;
 
 const NOTHING: CodexExecutablePlan = { operations: [], contents: new Map(), entryOwnedPaths: [] };
-const BLOCKED: readonly ComponentState[] = ['drifted', 'conflict', 'unsupported'];
+const BLOCKED: readonly ComponentState[] = ['drifted', 'conflict'];
 
 function planSetup(inspection: CodexInspection, assets: CodexSetupAssets): CodexExecutablePlan {
   const { paths, skill, hooks, config } = inspection;
@@ -375,15 +393,25 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
     async detect(environment): Promise<HarnessDetection> {
       const executable = await environment.probe.resolveExecutable('codex');
       if (executable === null) return { executable: null, version: null, supported: false };
-      let output: string;
+      let version: string | null = null;
       try {
-        output = await environment.probe.runVersion(executable, ['--version']);
-      } catch {
-        return { executable, version: null, supported: false };
+        version = parseCodexVersion(await environment.probe.runVersion(executable, ['--version']));
+      } catch { /* Version is diagnostic data, not an MCP authorization gate. */ }
+      // Probe the actual native surfaces setup uses. The version is diagnostic
+      // data; a new compatible CLI can use the same MCP and hook layout.
+      let supported = false;
+      let mcp: string | null = null;
+      try {
+        mcp = await environment.probe.runVersion(executable, ['mcp', 'list', '--json']);
+      } catch (error) {
+        // Known versions refuse this probe when CODEX_HOME does not exist yet.
+        supported = error instanceof CodexHomeMissingProbeError && await knownFreshCodex(environment, version);
       }
-      const version = parseCodexVersion(output);
-      // An unparseable version is still a detected Codex, distinct from an absent one.
-      return { executable, version: version ?? 'unknown', supported: version !== null && CODEX_SUPPORTED_VERSIONS.includes(version) };
+      if (mcp !== null) {
+        try { supported = Array.isArray(JSON.parse(mcp)); }
+        catch { /* A malformed native listing never authorizes setup. */ }
+      }
+      return { executable, version: version ?? 'unknown', supported };
     },
 
     async inspect(environment, detection): Promise<HarnessObservation> {
@@ -401,9 +429,26 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
         { component: 'hooks', state: hooksState(hooks, config, paths.launcher, diagnostics) },
         { component: 'mcp_entry', state: mcpState(config, codexMcpBlock(paths.launcher), diagnostics) },
       ];
+      if (detection.supported && detection.executable !== null) {
+        let nativeHooks = false;
+        try {
+          const features = await environment.probe.runVersion(detection.executable, ['features', 'list']);
+          nativeHooks = /^hooks\s+\S+\s+true\s*$/m.test(features);
+        } catch (error) {
+          // The same first-run CODEX_HOME refusal also hides native hook support.
+          nativeHooks = error instanceof CodexHomeMissingProbeError
+            && await knownFreshCodex(environment, detection.version);
+        }
+        if (!nativeHooks && !BLOCKED.includes(components[1]!.state)) {
+          components[1] = { component: 'hooks', state: 'unsupported' };
+          diagnostics.push({ ...diagnostic('codex_hooks_unavailable',
+            'This Codex CLI does not report enabled native hooks; MCP requests can be configured, but hook delivery is unavailable.', 'hooks'),
+          severity: 'warning' });
+        }
+      }
       if (detection.executable !== null && !detection.supported) {
-        diagnostics.push(diagnostic('codex_version_unsupported',
-          `Codex ${detection.version ?? 'unknown'} is not a supported version (${CODEX_SUPPORTED_VERSIONS.join(', ')}).`));
+        diagnostics.push(diagnostic('codex_mcp_unavailable',
+          'The installed Codex CLI did not expose a readable native MCP listing; setup cannot configure its MCP request route.'));
       }
       // The Codex desktop app and cloud tasks are reported whether or not a Codex CLI is
       // detected. Their entries only diagnose; they never add an operation.

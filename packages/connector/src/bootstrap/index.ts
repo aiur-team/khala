@@ -40,6 +40,7 @@ export {
   type ActivationRead,
   type ActivationRecord,
   type ActivationResult,
+  type ActivationUnavailableStage,
   type ActivationWrite,
   type ChannelAccessActivationPorts,
   type ChannelAccessActivationStore,
@@ -65,6 +66,7 @@ export {
 } from './channel-access-activation';
 export {
   type ChannelAccessHttpOptions,
+  type ExchangeHttpDiagnostic,
   CHANNEL_ACCESS_EXCHANGE_PATH,
   CHANNEL_ACCESS_READY_PATH,
   CHANNEL_ACCESS_STATUS_PATH,

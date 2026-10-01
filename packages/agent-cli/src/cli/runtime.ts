@@ -56,6 +56,11 @@ export function waitForSignal(signal: AbortSignal | undefined, milliseconds: num
 export function publicConnectResult(value: unknown) {
   if (!plainObject(value)) throw new CliError('transport_unavailable');
   if (value.kind === 'unavailable') return { kind: 'unavailable' } as const;
+  if (value.kind === 'pending' && validIdentifier(value.operationId)
+    && ['pending_owner', 'connecting', 'repair_required'].includes(String(value.outcome))) {
+    return { kind: 'pending', operationId: value.operationId,
+      outcome: value.outcome as 'pending_owner' | 'connecting' | 'repair_required' } as const;
+  }
   if (value.kind === 'refused' && typeof value.code === 'string'
     && (CONNECT_REFUSAL_CODES as readonly string[]).includes(value.code)) {
     return { kind: 'refused', code: value.code as ConnectRefusalCode } as const;
@@ -88,10 +93,14 @@ export function publicStatus(value: unknown): AgentStatus {
       if (!(AGENT_READINESS_STATES as readonly unknown[]).includes(state)) throw new CliError('transport_unavailable');
       return [key, state];
     })) as AgentReadiness['prerequisites'];
+    const manualMcpReady = value.route === 'manual_mcp' && binding?.harness === 'proof-key'
+      && AGENT_READINESS_PREREQUISITES.slice(0, 5).every(key => prerequisites[key] === 'ready')
+      && prerequisites.harness === 'unknown' && prerequisites.dispatch === 'blocked'
+      && (prerequisites.review === 'blocked' || prerequisites.review === 'ready');
     if ((input.phase === 'ready') !== (input.errorCode === null)
       || value.connected !== (input.phase === 'ready')
       || (input.phase === 'ready' && AGENT_READINESS_PREREQUISITES.slice(0, 8)
-        .some(key => prerequisites[key] !== 'ready'))) throw new CliError('transport_unavailable');
+        .some(key => prerequisites[key] !== 'ready') && !manualMcpReady)) throw new CliError('transport_unavailable');
     readiness = { phase: input.phase as AgentReadiness['phase'], prerequisites,
       errorCode: input.errorCode as AgentReadiness['errorCode'] };
   }

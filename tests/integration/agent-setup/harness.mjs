@@ -1,8 +1,7 @@
 // Black-box harness for the setup acceptance suite. It installs the packed `@aiur/khala`
 // tarball into an empty prefix outside this repository and drives the installed bin against
 // synthetic homes. Harnesses are fake `claude`/`codex`/`opencode` executables that answer
-// `--version` and record every argv they receive; setup never needs more of them, because
-// every adapter mutates through guarded direct edits.
+// `--version` and native capability probes, recording every argv they receive.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -13,7 +12,7 @@ import { PACKAGE_NAME, gatePackage } from '../../../scripts/agent-cli-package-ga
 
 export const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
-/** The versions each adapter certifies today; anything else is a detected, unsupported harness. */
+/** Default fake banners for the integration fixtures. */
 export const SUPPORTED = Object.freeze({
   claude: '2.1.283 (Claude Code)',
   codex: 'codex-cli 0.154.0',
@@ -123,12 +122,13 @@ function resolveHostTool(tool) {
 }
 
 /**
- * Puts a fake harness on the machine's PATH that prints `version` for `--version`. When
+ * Puts a fake harness on the machine's PATH. Native surfaces are explicit fixture
+ * behavior; a banner alone never makes a CLI usable. When
  * `<root>/<name>.hold-at` names its call count, that call creates `<name>.held` and waits
  * (below the CLI's 5 s probe deadline) while `<name>.hold` exists: a deterministic point
  * inside a setup run, since the executor replans, and so probes, under its lock.
  */
-export function installHarness(machine, name, version) {
+export function installHarness(machine, name, version, nativeSurface = version === SUPPORTED[name]) {
   const log = shellQuote(path.join(machine.argv, `${name}.log`));
   const file = suffix => shellQuote(path.join(machine.root, `${name}.${suffix}`));
   const script = `#!/bin/sh
@@ -138,7 +138,14 @@ if [ -f ${file('hold-at')} ] && [ "$(wc -l < ${log})" -eq "$(cat ${file('hold-at
   n=0
   while [ -f ${file('hold')} ] && [ $n -lt 80 ]; do sleep 0.05; n=$((n + 1)); done
 fi
-printf '%s\\n' ${shellQuote(version)}
+case "$*" in
+  '--version') printf '%s\\n' ${shellQuote(version)} ;;
+  'mcp list --json') ${name === 'codex' && nativeSurface ? "printf '%s\\n' '[]'" : 'exit 2'} ;;
+  'features list') ${name === 'codex' && nativeSurface ? "printf '%s\\n' 'hooks stable true'" : 'exit 2'} ;;
+  'mcp list --help') ${name === 'claude' && nativeSurface ? "printf '%s\\n' 'Usage: claude mcp list'" : 'exit 2'} ;;
+  'plugin list --help') ${name === 'claude' && nativeSurface ? "printf '%s\\n' 'Usage: claude plugin list'" : 'exit 2'} ;;
+  *) exit 2 ;;
+esac
 `;
   fs.writeFileSync(path.join(machine.bin, name), script, { mode: 0o755 });
 }

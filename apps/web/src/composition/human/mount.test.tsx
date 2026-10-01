@@ -210,7 +210,8 @@ describe('HumanApplicationScreen', () => {
     );
     expect(room).toContain('live room');
     expect(room).toContain('aria-label="Log out"');
-    expect(room).toContain('<div class="khala-content-actions"><h1 dir="auto">Encrypted conversation</h1>');
+    expect(room).toContain('<div class="khala-content-actions"><button');
+    expect(room).toContain('id="khala-channel-toolbar"');
     expect(room.indexOf('aria-label="Toggle color theme"')).toBeLessThan(room.indexOf('aria-label="Log out"'));
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
@@ -257,7 +258,7 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('class="aiur-shell__brand" href="/conversations"');
     expect(html).toContain('href="/conversations"');
     expect(html).toContain('aria-label="Create channel"');
-    expect(html).toContain('<strong>Channels</strong>');
+    expect(html).toContain('<strong>Conversations</strong>');
     expect(html).not.toContain('class="aiur-shell__nav-label">Khala</span>');
     expect(html).toContain('<h1 id="khala-channel-requests-title">Channel requests</h1>');
     expect(html).not.toContain('<h2>Channel requests</h2>');

@@ -131,12 +131,13 @@ describe('TimelineScreen', () => {
     expect(html).toMatch(/<textarea[^>]*disabled/);
   });
 
-  it('shows "partial" as an explicit degraded state distinct from "unavailable" and "ready"', () => {
+  it('keeps partial history readable without a redundant history notice', () => {
     const data = { phase: 'partial' as const, items: [item('E1', participant('alice', 'human', 'Alice'), 'hi')], nextCursor: null, newMessageCount: 0 };
     const html = renderToStaticMarkup(
       <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />,
     );
-    expect(html).toContain('part of the conversation');
+    expect(html).toContain('hi');
+    expect(html).not.toContain('part of the conversation');
     expect(html).not.toContain('unavailable right now');
   });
 
@@ -259,6 +260,18 @@ it('keeps readable human and agent bodies visible while encrypted history makes 
   expect(html).toContain('Message unavailable on this device');
   expect(html).not.toContain('Unverified current name');
   expect(html).not.toContain('Unverified rename');
+});
+
+it('keeps retry and composing available without a redundant missing-key notice', () => {
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({
+    phase: 'partial', items: [item('recent', viewer, 'New message')], nextCursor: null,
+    newMessageCount: 0, namesReady: false, nameScan: 'unavailable', membership: 'joined',
+  })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).not.toContain('open the original profile');
+  expect(html).toContain('Retry history');
+  expect(html).not.toContain('Checking agent names');
+  expect(html).toContain('New message');
+  expect(html).not.toContain('textarea disabled');
 });
 
 

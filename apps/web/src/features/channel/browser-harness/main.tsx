@@ -8,6 +8,7 @@ import '../channel.css';
 import { createChannelController } from '../controller';
 import type { AgentPresenceSnapshot, ChannelUiPort } from '../ports';
 import { ChannelScreen } from '../ChannelScreen';
+import { ChannelSharePanel } from '../ChannelSharePanel';
 
 const roomId = 'room_harness' as RoomId;
 const scoutId = 'agent_scout' as ParticipantId;
@@ -60,11 +61,14 @@ function Harness() {
   }
 
   return (
-    <ChannelScreen
+    <div className="khala-content-root khala-owner-shell" data-theme="dark">
+      <main className="khala-content-main"><div className="khala-content-actions"><div id="khala-channel-toolbar" /></div>
+    <ChannelScreen embedded={!new URLSearchParams(location.search).has('standalone')}
       title="Release channel"
       description="Coordinate the launch with people and their agents."
       controller={controller}
       viewerOwnerId={viewer}
+      viewerName={viewer === miraId ? 'Mira' : 'Theo'}
       renameScope={roomId}
       currentNames={names}
       renameAgent={async (participantId, name) => {
@@ -100,7 +104,12 @@ function Harness() {
           <button type="button" onClick={() => setViewer(viewer === miraId ? theoId : miraId)}>Switch human</button>
         </section>
       )}
+      renderShare={() => <ChannelSharePanel roomId={roomId} admission={{ share: async () => ({
+        kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null },
+      }) }} onCopy={async () => ({ ok: true })} />}
     />
+      </main>
+    </div>
   );
 }
 

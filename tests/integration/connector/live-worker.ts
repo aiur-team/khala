@@ -64,6 +64,8 @@ try {
     profileDirectory: packet.matrixProfile, browserBundleDirectory: packet.browserBundleDirectory,
     participantIdFor: userId => userId === packet.alice.user_id ? packet.eventRef.authorParticipantId : null,
   });
+  assert.equal(substrate.writerLock.kind, mode === 'recovery' ? 'stale_recovered' : 'acquired',
+    'restart recovers only the dead Matrix profile writer');
   const identity = await storage.bindDeviceIdentity({
     deviceId: packet.binding.deviceId, fingerprint: substrate.fingerprint,
   });

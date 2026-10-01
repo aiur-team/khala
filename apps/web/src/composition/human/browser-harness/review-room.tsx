@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../../brand/fonts.css';
 import '../../../brand/tokens.css';
@@ -12,6 +13,7 @@ import type { HumanRouteContext } from '../application';
 import { createHumanRoomRenderer } from '../room';
 import { registerReview } from '../../review/register';
 import { registerControls } from '../../controls/register';
+import { createOwnerDeviceClient } from '../../review/owner-device-client';
 import '../../../features/review/review.css';
 import '../../../features/agent-controls/agent-controls.css';
 
@@ -20,11 +22,13 @@ const bindingId = 'binding_1' as never;
 const race = new URLSearchParams(location.search).has('race');
 const lookupRace = new URLSearchParams(location.search).has('lookup');
 const controlsEnabled = new URLSearchParams(location.search).has('controls');
+const proofMode = new URLSearchParams(location.search).has('proof');
 const statusRace = new URLSearchParams(location.search).has('status-race');
 const oldBinding = { bindingId, generation: 0, agentParticipantId: race ? 'Old agent' : 'My agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_OLD', fingerprint: 'A'.repeat(43) } };
 const newBinding = { bindingId, generation: 1, agentParticipantId: 'New agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_NEW', fingerprint: 'B'.repeat(43) } };
+const secondProofBinding = { ...newBinding, bindingId: 'binding_2' as never };
 const replacedIdentity = { ...newBinding, agentParticipantId: 'Replaced identity' };
 const accountBinding = { ...newBinding, agentParticipantId: 'Other account agent',
   device: { userId: '@other:example', deviceId: 'OTHER_DEVICE', fingerprint: 'C'.repeat(43) } };
@@ -96,7 +100,7 @@ const review = {
     lookupCount += 1;
     const selected = activeBinding;
     if (lookupRace && lookupCount === 1) { await oldLookup; oldLookupReturned = true; }
-    return [selected];
+    return proofMode ? [selected, secondProofBinding] : [selected];
   },
   review: {
     async preview() { return { kind: 'ok' as const, body: { v: 1, bindingId, bindingGeneration: 0,
@@ -110,6 +114,7 @@ const trustReady = new Promise<void>(resolve => { allowTrust = resolve; });
 let allowOld: (() => void) | null = null;
 const oldTrust = new Promise<void>(resolve => { allowOld = resolve; });
 let oldTrustReturned = false;
+let trustCalls = 0;
 let allowReplacement: (() => void) | null = null;
 const replacementTrust = new Promise<void>(resolve => { allowReplacement = resolve; });
 let allowAccount: (() => void) | null = null;
@@ -124,6 +129,9 @@ declare global { interface Window {
   __setReviewBinding: (kind: 'new' | 'replacement') => void;
   __releaseOldTrust: () => void;
   __oldTrustReturned: () => boolean;
+  __trustCalls: () => number;
+  __leaveRoom: () => void;
+  __rerenderRoom: () => void;
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
   __switchReviewDevice: () => void;
@@ -141,6 +149,7 @@ window.__oldLookupReturned = () => oldLookupReturned;
 window.__setReviewBinding = kind => { activeBinding = kind === 'new' ? newBinding : replacedIdentity; };
 window.__releaseOldTrust = () => allowOld?.();
 window.__oldTrustReturned = () => oldTrustReturned;
+window.__trustCalls = () => trustCalls;
 window.__releaseReplacementTrust = () => allowReplacement?.();
 window.__releaseAccountTrust = () => allowAccount?.();
 window.__controlCommands = () => controlCommands;
@@ -186,22 +195,34 @@ const controls = registerControls({ client: {
 }, bindingFor: () => null, refreshMs: 75 });
 let attachment = capability.attach(context);
 let controlsAttachment = controls.attach(context);
-const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_context, _roomId, binding) => {
+const ownerDevice = createOwnerDeviceClient({ origin: location.origin, allowInsecureLoopback: true,
+  csrf: async () => 'test-csrf' });
+const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_context, _roomId, binding, signal) => {
+  if (proofMode) {
+    const registered = await ownerDevice.register(roomId, binding.bindingId, binding.generation,
+      { deviceId: 'owner_device', fingerprint: 'D'.repeat(43), matrixAccessToken: 'transient-token' }, signal);
+    if (!registered || signal.aborted) return false;
+    trustCalls += 1;
+    return true;
+  }
   if (!race) { await trustReady; return true; }
   if (binding.agentParticipantId === oldBinding.agentParticipantId) { await oldTrust; oldTrustReturned = true; }
   if (binding.agentParticipantId === replacedIdentity.agentParticipantId) await replacementTrust;
   if (binding.agentParticipantId === accountBinding.agentParticipantId) await accountTrust;
   return true;
 };
-const refreshMs = race || controlsEnabled ? 75 : 5_000;
+const refreshMs = race || controlsEnabled || proofMode ? 75 : 5_000;
 const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const root = createRoot(document.getElementById('app')!);
 const toolsRoute = new URLSearchParams(location.search).has('tools');
 const testSurface = (currentContext: HumanRouteContext) => toolsRoute
   ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Channel care route">{renderer.tools(currentContext, route)}</main></div>
-  : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
+  : proofMode ? <StrictMode>{renderer(currentContext, route)}</StrictMode>
+    : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
 root.render(testSurface(context));
+window.__leaveRoom = () => root.render(<p>Outside the channel</p>);
+window.__rerenderRoom = () => root.render(testSurface(context));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;
   controlVersion = 3;
