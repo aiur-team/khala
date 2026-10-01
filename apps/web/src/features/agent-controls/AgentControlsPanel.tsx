@@ -234,7 +234,7 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
           aria-describedby={listening.inactiveReason ? inactiveId : undefined}
           onClick={() => controller.applyListeningMode()}
         >
-          Apply listening mode
+          {listening.submission.kind === 'unknown' ? 'Retry listening mode' : 'Apply listening mode'}
         </button>
       </div>
 

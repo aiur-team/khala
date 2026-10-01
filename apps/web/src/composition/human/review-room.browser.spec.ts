@@ -529,9 +529,9 @@ test('conversation agent controls wait for the selected owner binding and verifi
     await page.evaluate(() => window.__allowReviewTrust());
     await agent.locator('.agent-controls__compact').waitFor();
     await agent.getByRole('heading', { name: 'Listening mode' }).waitFor();
-    await agent.getByText('This agent has not confirmed mode support. Check its connection and try again.').waitFor();
+    await agent.getByText('Support has not been verified for this session.', { exact: false }).first().waitFor();
     for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
-    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).count(), 0);
+    assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).isDisabled(), true);
     assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
   }, async page => {
     await page.route('**/api/fixture/participants', route => route.fulfill({ status: 200, body: '{}' }));

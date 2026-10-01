@@ -296,9 +296,15 @@ const controls = registerControls({ client: {
         modes: unknownModeSupportMap('test', 'no primary mode proof', '0.157.1'), acknowledgement: 'unknown' },
       policy: { bindingId: selected.bindingId, generation: selected.generation,
         effectiveVersion: controlVersion, effectiveMode: 'review', paused: controlPaused },
-      requested: null, busy: false, latestReceipt: null,
+      requested: null, busy: false, latestReceipt: null, listeningUnavailable: null,
+      listening: { bindingId: selected.bindingId, generation: selected.generation, version: 1,
+        requested: 'sync', effective: null, effectiveReason: 'unsupported',
+        support: unknownModeSupportMap('test', 'no primary mode proof', '0.157.1'),
+        experimentalGrants: [], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' } },
     } };
   },
+  async setListeningMode() { return { kind: 'lost' as const }; },
+  async setRouteGrant() { return { kind: 'lost' as const }; },
   async setPolicy(next) {
     controlCommands.push(next);
     if (next.expectedBindingGeneration !== activeBinding.generation

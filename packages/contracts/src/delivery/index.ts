@@ -45,7 +45,7 @@ export {
   type ModeSupport, type ModeSupportMap, type OwnerRouteGrantCommand, type RouteGrant,
   ACKNOWLEDGEMENT_SUPPORT, LISTENING_MODES, LISTENING_MODE_RESULT_OUTCOMES, MODE_SUPPORT_STATUSES,
   OWNER_ROUTE_GRANT_COMMAND_KINDS,
-  decodeListeningMode, decodeListeningModeCommand, decodeListeningModeResult, decodeModeSupport,
+  decodeListeningMode, decodeListeningModeCommand, decodeListeningModeResult, decodeListeningModeView, decodeModeSupport,
   decodeModeSupportMap, decodeOwnerRouteGrantCommand, initialListeningMode, routeGrantMatches,
   unknownModeSupport, unknownModeSupportMap, UNKNOWN_LISTENING_MODE_ACTOR, readListeningModeActor,
 } from './listening-mode';

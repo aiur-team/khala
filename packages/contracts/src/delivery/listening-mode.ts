@@ -148,6 +148,44 @@ export type ListeningModeView = ListeningModeControl & Readonly<{
   support: ModeSupportMap;
 }>;
 
+/** Strict wire decoder for the owner mailbox's content-free connector snapshot. */
+export function decodeListeningModeView(input: unknown): Decoded<ListeningModeView> {
+  return decodeWith(() => {
+    const r = object(input, '', ['bindingId', 'generation', 'requested', 'version', 'experimentalGrants',
+      'hardCancelGrants', 'lastChangedBy', 'effective', 'effectiveReason', 'support']);
+    const grants = (value: unknown, field: string): readonly RouteGrant[] => {
+      if (!Array.isArray(value) || value.length > 32) fail(field, 'invalid_field');
+      return value.map((item, index) => {
+        const at = `${field}.${index}`;
+        const g = object(item, at, ['v', 'kind', 'bindingId', 'generation', 'mode', 'route',
+          'harnessVersion', 'evidenceRevision', 'grantRevision']);
+        return { v: version(g.field('v'), g.at('v')),
+          kind: literal(g.field('kind'), g.at('kind'), ['experimental_route', 'hard_cancel'] as const),
+          bindingId: readId<'BindingId'>(g.field('bindingId'), g.at('bindingId')),
+          generation: safeInteger(g.field('generation'), g.at('generation')),
+          mode: literal(g.field('mode'), g.at('mode'), LISTENING_MODES),
+          route: identifier(g.field('route'), g.at('route')),
+          harnessVersion: identifier(g.field('harnessVersion'), g.at('harnessVersion')),
+          evidenceRevision: identifier(g.field('evidenceRevision'), g.at('evidenceRevision')),
+          grantRevision: safeInteger(g.field('grantRevision'), g.at('grantRevision')) };
+      });
+    };
+    const view: ListeningModeView = { bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
+      generation: safeInteger(r.field('generation'), r.at('generation')),
+      requested: nullable(r.field('requested'), value => literal(value, r.at('requested'), LISTENING_MODES)),
+      version: safeInteger(r.field('version'), r.at('version')),
+      experimentalGrants: grants(r.field('experimentalGrants'), r.at('experimentalGrants')),
+      hardCancelGrants: grants(r.field('hardCancelGrants'), r.at('hardCancelGrants')),
+      lastChangedBy: readListeningModeActor(r.field('lastChangedBy'), r.at('lastChangedBy')),
+      effective: nullable(r.field('effective'), value => literal(value, r.at('effective'), LISTENING_MODES)),
+      effectiveReason: nullable(r.field('effectiveReason'), value => requiredReason(value, r.at('effectiveReason'))),
+      support: readModeSupportMap(r.field('support'), r.at('support')) };
+    if ([...view.experimentalGrants, ...view.hardCancelGrants].some(grant =>
+      grant.bindingId !== view.bindingId || grant.generation !== view.generation)) fail('grants', 'invalid_field');
+    return view;
+  });
+}
+
 const join = (field: string, key: string) => field.length === 0 ? key : `${field}.${key}`;
 
 function requiredReason(input: unknown, field: string): string {

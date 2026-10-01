@@ -11,6 +11,7 @@
 import {
   type BindingId, type ListeningModeCommand, type ListeningModeResult, type OwnerRouteGrantCommand, type PolicyAck,
   type PolicySetCommand, decodePolicyAck,
+  decodeListeningModeResult, decodeListeningModeView,
 } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
 import type { AgentControlsSnapshot, AgentControlsUiPort, RouteGrantAck } from '../../features/agent-controls/ports';
@@ -28,6 +29,10 @@ export interface ControlsClient {
   >;
   /** Deliberately takes no signal: closing a browser wait is not cancellation. */
   setPolicy(command: PolicySetCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
+  setListeningMode(command: ListeningModeCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
+  setRouteGrant(command: OwnerRouteGrantCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
 }
 
@@ -186,18 +191,46 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
 
     submitPolicy,
 
-    // The hosted controls transport serves no owner listening-mode route. The panel's
-    // listening section stays hidden (`listening: null`), so this is a refusal, never a write.
     async submitListeningMode(command: ListeningModeCommand): Promise<ListeningModeResult> {
-      return {
-        v: 1, commandId: command.commandId, bindingId: command.bindingId, generation: command.expectedBindingGeneration,
-        outcome: 'refused', version: command.expectedVersion, requested: command.requested, effective: null,
-        reason: 'unavailable',
-      };
+      if (disposed || replaced || command.bindingId !== bindingId
+        || (options.bindingGeneration !== undefined && command.expectedBindingGeneration !== options.bindingGeneration)) {
+        throw new ControlsUnavailableError('unavailable');
+      }
+      const answer = await client.setListeningMode(command).catch(() => ({ kind: 'lost' as const }));
+      if (answer.kind === 'lost') throw new ControlsUnavailableError('lost');
+      if (answer.kind === 'refused') throw new ControlsUnavailableError(answer.code);
+      const decoded = decodeListeningModeResult(answer.body);
+      if (!decoded.ok || decoded.value.commandId !== command.commandId
+        || decoded.value.bindingId !== command.bindingId
+        || decoded.value.generation !== command.expectedBindingGeneration) throw new ControlsUnavailableError('lost');
+      void read().catch(() => undefined);
+      return decoded.value;
     },
 
     async submitRouteGrant(command: OwnerRouteGrantCommand): Promise<RouteGrantAck> {
-      return { commandId: command.commandId, outcome: 'refused', reason: 'unavailable' };
+      if (disposed || replaced || command.bindingId !== bindingId
+        || (options.bindingGeneration !== undefined && command.expectedBindingGeneration !== options.bindingGeneration)) {
+        throw new ControlsUnavailableError('unavailable');
+      }
+      const answer = await client.setRouteGrant(command).catch(() => ({ kind: 'lost' as const }));
+      if (answer.kind === 'lost') throw new ControlsUnavailableError('lost');
+      if (answer.kind === 'refused') throw new ControlsUnavailableError(answer.code);
+      const body = answer.body;
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new ControlsUnavailableError('lost');
+      const result = body as Record<string, unknown>;
+      if (result.commandId !== command.commandId || !['applied', 'conflict', 'refused'].includes(String(result.outcome))
+        || (result.reason !== null && typeof result.reason !== 'string')) throw new ControlsUnavailableError('lost');
+      if (result.outcome !== 'refused') {
+        const view = decodeListeningModeView(result.view);
+        if (!view.ok || view.value.bindingId !== bindingId
+          || view.value.generation !== command.expectedBindingGeneration
+          || (result.outcome === 'applied' && view.value.version !== command.expectedVersion + 1)) {
+          throw new ControlsUnavailableError('lost');
+        }
+      }
+      void read().catch(() => undefined);
+      return { commandId: command.commandId,
+        outcome: result.outcome as RouteGrantAck['outcome'], reason: result.reason as string | null };
     },
 
     observation: () => (status === null ? null : projectControls(status, connection)),

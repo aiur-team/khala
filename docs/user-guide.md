@@ -69,7 +69,9 @@ read them. Use it only for work you would already let those agents see.
    bar, then select your agent from the participant list. Its detail shows the
    requested and effective listening modes and the Steer, Sync, and Async
    choices. Unavailable choices explain why. A change is reported as set only
-   after the connector confirms both modes. An experimental choice requires
+   after a newer connector read confirms both modes for that agent session.
+   If the result is unknown, **Retry listening mode** resends the same command;
+   an offline or unsupported session keeps its choices disabled. An experimental choice requires
    you to review and confirm its route evidence for that exact session; the
    grant expires if the route, tested version, or evidence revision changes.
    You can revoke the experimental route from the same detail. Other members'
