@@ -101,6 +101,11 @@ describe('batch acknowledgement recording', () => {
     expect(stored.map(entry => entry.correlation)).toEqual(['correlated', 'correlated', 'correlated']);
     const outbox = await recorder.readReceiptOutbox();
     expect(outbox.map(entry => entry.receipt)).toEqual(result.receipts);
+    expect(await recorder.readAgentAcknowledgement(PRINCIPAL, 'release_2' as ReleaseId))
+      .toEqual(result.receipts[1]);
+    expect(await recorder.readAgentAcknowledgement(PRINCIPAL, 'missing_release' as ReleaseId)).toBeNull();
+    expect(await recorder.readAgentAcknowledgement({ ...PRINCIPAL, generation: 1 }, 'release_2' as ReleaseId))
+      .toBeNull();
     expect(new Set(outbox.map(entry => entry.evidenceRef))).toEqual(new Set(['ack_evidence_1']));
     // Each entry names its release's channel events by identity only: no digest, no content.
     expect(outbox.map(entry => entry.events)).toEqual(['event_0_0', 'event_1_0', 'event_2_0']

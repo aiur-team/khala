@@ -31,12 +31,12 @@ describe('hosted manual listening capability', () => {
   });
 
   it('rejects a hook ACK after manual restart until a fresh explicit read and token return', async () => {
-    const receipt = (bindingId: string, generation: number, releaseId: string) => ({
-      receipt: { kind: 'agent_acknowledged', source: 'agent', bindingId, generation, releaseId },
-    });
+    const receipt = (bindingId: string, generation: number, releaseId: string) =>
+      ({ kind: 'agent_acknowledged', source: 'agent', bindingId, generation, releaseId });
     const rows = [receipt('foreign', 2, 'foreign-release'), receipt(binding.bindingId, 1, 'prior-generation'),
       receipt(binding.bindingId, 2, 'old-hook-release')];
-    const recorder = { readReceiptOutbox: async () => rows } as never;
+    const recorder = { readAgentAcknowledgement: async (_principal: unknown, releaseId: string) =>
+      rows.find(row => row.releaseId === releaseId) ?? null } as never;
     // A new manual connector starts with no route witness even though its old hook ACK remains in the ledger.
     const witness = createManualReadWitness();
     witness.acknowledge(binding.bindingId, 2, 'old-hook-token', ['old-hook-release']);
@@ -53,9 +53,9 @@ describe('hosted manual listening capability', () => {
     await witness.withinExplicitRead(async () => witness.acknowledge(binding.bindingId, 2,
       'manual-read-token', ['new-manual-release']));
     expect(await manualReadProof(recorder, binding, witness)).toEqual(ack);
-    expect(await manualReadProof({ readReceiptOutbox: async () => [receipt('foreign', 2, 'foreign-release')] } as never,
+    expect(await manualReadProof({ readAgentAcknowledgement: async () => receipt('foreign', 2, 'new-manual-release') } as never,
       binding, witness)).toBeNull();
-    expect(await manualReadProof({ readReceiptOutbox: async () => { throw Error('offline'); } }, binding,
+    expect(await manualReadProof({ readAgentAcknowledgement: async () => { throw Error('offline'); } }, binding,
       witness)).toBeNull();
   });
 });

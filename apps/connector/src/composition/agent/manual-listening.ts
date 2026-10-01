@@ -39,6 +39,9 @@ export function createManualReadWitness() {
     includes(bindingId: string, generation: number, releaseId: string) {
       return acknowledged.get(bindingKey(bindingId, generation)) === releaseId;
     },
+    latest(bindingId: string, generation: number) {
+      return acknowledged.get(bindingKey(bindingId, generation)) ?? null;
+    },
   };
 }
 
@@ -46,20 +49,19 @@ export type ManualReadWitness = ReturnType<typeof createManualReadWitness>;
 
 /** Only an agent-returned token for this exact binding generation opens explicit pull. */
 export async function manualReadProof(
-  recorder: Pick<AcknowledgementRecorder, 'readReceiptOutbox'>,
+  recorder: Pick<AcknowledgementRecorder, 'readAgentAcknowledgement'>,
   binding: SessionBinding,
-  witness: Pick<ManualReadWitness, 'includes'>,
+  witness: Pick<ManualReadWitness, 'latest'>,
 ): Promise<ManualReadProof | null> {
   try {
-    // A full page without a match stays unsupported. Never infer proof from a
-    // cursor that could skip another row at the same ledger revision.
-    const page = await recorder.readReceiptOutbox({ limit: 100 });
-    const match = page.find(entry => entry.receipt.kind === 'agent_acknowledged'
-      && entry.receipt.source === 'agent'
-      && entry.receipt.bindingId === binding.bindingId
-      && entry.receipt.generation === binding.generation
-      && witness.includes(binding.bindingId, binding.generation, entry.receipt.releaseId));
-    return match ? { bindingId: binding.bindingId, generation: binding.generation,
+    const releaseId = witness.latest(binding.bindingId, binding.generation);
+    if (releaseId === null) return null;
+    const receipt = await recorder.readAgentAcknowledgement({ bindingId: binding.bindingId,
+      generation: binding.generation }, releaseId as never);
+    return receipt?.kind === 'agent_acknowledged' && receipt.source === 'agent'
+      && receipt.bindingId === binding.bindingId && receipt.generation === binding.generation
+      && receipt.releaseId === releaseId
+      ? { bindingId: binding.bindingId, generation: binding.generation,
       kind: 'agent_acknowledged', source: 'agent' } : null;
   } catch { return null; }
 }

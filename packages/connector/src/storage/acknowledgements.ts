@@ -57,6 +57,8 @@ export type OutboxEntry = Readonly<{
 export interface AcknowledgementRecorder {
   /** Commits one receipt and one outbox entry per release, or nothing. */
   recordBatchAcknowledgement(input: AcknowledgementInput): Promise<AcknowledgementResult>;
+  /** Reads the exact durable agent receipt without paging unrelated outbox rows. */
+  readAgentAcknowledgement(principal: AgentPrincipal, releaseId: ReleaseId): Promise<DeliveryReceiptTransport | null>;
   /** Outbox entries after `afterRevision`, oldest first; the projection owns checkpoints. */
   readReceiptOutbox(input?: { afterRevision?: number; limit?: number }): Promise<readonly OutboxEntry[]>;
 }
@@ -233,6 +235,21 @@ export function createAcknowledgementRecorder(
         }
         return { kind: 'recorded', evidenceRef, receipts };
       });
+    },
+
+    async readAgentAcknowledgement(principal, releaseId) {
+      const ctx = context(storage);
+      const exact = { bindingId: requireIdentifier(principal.bindingId) as BindingId,
+        generation: requireCount(principal.generation) };
+      const id = agentAcknowledgementReceiptId(exact, requireIdentifier(releaseId) as ReleaseId);
+      const row = ctx.db.prepare(`SELECT r.receipt FROM receipts r
+        JOIN receipt_outbox o ON o.receipt_id = r.receipt_id WHERE r.receipt_id = ?`).get(id) as
+        { receipt: string } | undefined;
+      if (!row) return null;
+      const receipt = parseReceipt(row.receipt);
+      return receipt.kind === 'agent_acknowledged' && receipt.source === 'agent'
+        && receipt.bindingId === exact.bindingId && receipt.generation === exact.generation
+        && receipt.releaseId === releaseId ? receipt : null;
     },
 
     async readReceiptOutbox(page = {}) {
