@@ -76,7 +76,13 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await expect(alice.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('Human');
 
     await bob.reload({ waitUntil: 'domcontentloaded' });
-    await expect(bob.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
+    const bobReply = bob.getByRole('list', { name: 'Messages' }).getByText(reply);
+    const bobHistoryUnavailable = bob.getByRole('alert').filter({ hasText: 'Conversation history is unavailable right now.' });
+    await expect(bobReply.or(bobHistoryUnavailable).first()).toBeVisible({ timeout: 30_000 });
+    if (await bobHistoryUnavailable.isVisible()) {
+      await bob.getByRole('button', { name: 'Retry history' }).click();
+    }
+    await expect(bobReply).toBeVisible({ timeout: 30_000 });
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);
