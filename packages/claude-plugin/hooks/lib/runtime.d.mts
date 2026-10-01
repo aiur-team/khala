@@ -12,6 +12,8 @@ export type HookDependencies = Readonly<{
   khala(op: KhalaOp, sessionId: string, flags?: readonly string[], stdin?: string): Promise<KhalaResult>;
   /** Owner-private per-launch key. Only the hook runtime reads it. */
   terminalKeyPath: string;
+  /** Optional owner-private route to the live hosted MCP process. */
+  hostedRoot?: string;
   stateRoot: string;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -43,6 +45,7 @@ export function describeDelivery(input: Readonly<{
 export function readWatcher(deps: HookDependencies, sessionId: string): Promise<string | null>;
 export function defaultDependencies(env?: Readonly<Record<string, string | undefined>>, command?: string): HookDependencies;
 export function claudeGrantPath(internalRoot: string, sessionId: string): string;
+export function hostedHookDescriptorPath(root: string, sessionId: string): string | null;
 export function claudeWakeSignalPath(stateRoot: string, sessionId: string): string | null;
 export function sessionGranted(internalRoot: string, sessionId: string): Promise<boolean>;
 export function claudeOutstandingPath(internalRoot: string, sessionId: string): string;
