@@ -16,6 +16,7 @@ export interface ChannelScreenProps {
   controller: ChannelController;
   viewerOwnerId?: OwnerId;
   viewerName?: string;
+  humanParticipants?: readonly Readonly<{ participantId: ParticipantId; displayName: string }>[];
   currentNames?: ReadonlyMap<ParticipantId, string>;
   namesPending?: boolean;
   renameAgent?: (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
@@ -23,6 +24,7 @@ export interface ChannelScreenProps {
   renderTimeline: () => ReactNode;
   renderShare?: () => ReactNode;
   renderHeaderActions?: () => ReactNode;
+  renderDetailsActions?: (open: boolean) => ReactNode;
   showPresence?: boolean;
   onBack?: () => void;
   embedded?: boolean;
@@ -31,45 +33,61 @@ export interface ChannelScreenProps {
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
 export type RoomScreenProps = ChannelScreenProps;
 
-function ChannelParticipants({ controller, currentNames, namesPending, description, viewerName }: Pick<ChannelScreenProps, 'controller' | 'currentNames' | 'namesPending' | 'description' | 'viewerName'>) {
-  const { agents } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+function ChannelParticipants({ controller, currentNames, description, viewerName, humanParticipants }: Pick<ChannelScreenProps, 'controller' | 'currentNames' | 'description' | 'viewerName' | 'humanParticipants'>) {
+  const { agents, phase } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   return <div className="channel-participants" aria-label="Channel participants">
     {description ? <span className="channel-participants__context">{description}</span> : null}
     {viewerName ? <span className="channel-participants__chip" title={`${participantRosterName(viewerName, 'You')} · human`}><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{participantRosterName(viewerName, 'You')}</span></span> : null}
+    {humanParticipants?.map(participant => {
+      const name = participantRosterName(participant.displayName, 'Channel member');
+      return <span key={participant.participantId} className="channel-participants__chip" title={`${name} · human`}><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{name}</span></span>;
+    })}
+    {phase === 'loading' ? <span role="status">Checking participants…</span> : null}
+    {phase === 'unavailable' ? <span role="status">Participants unavailable</span> : null}
     {agents.slice(0, 4).map(agent => {
-      const name = namesPending ? 'Agent name unavailable' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+      const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
       return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · ${agent.connection}`}>
         <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{name}</span>
+        <span className="channel-participants__state">{agent.connection === 'unknown' ? 'Unknown' : agent.connection === 'connected' ? 'Connected' : agent.connection === 'stale' ? 'Stale' : 'Offline'}</span>
       </span>;
     })}
     {agents.length > 4 ? <span className="channel-participants__more">+{agents.length - 4}</span> : null}
   </div>;
 }
 
-export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, viewerName, currentNames, namesPending, renameAgent, renameScope,
-  renderTimeline, renderShare, renderHeaderActions, onBack, embedded = false }: ChannelScreenProps) {
+export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, viewerName, humanParticipants, currentNames, namesPending, renameAgent, renameScope,
+  renderTimeline, renderShare, renderHeaderActions, renderDetailsActions, onBack, embedded = false }: ChannelScreenProps) {
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   const [rosterOpen, setRosterOpen] = useState(false);
   const roster = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!embedded) { setToolbarTarget(null); return; }
-    const hosted = document.getElementById('khala-channel-toolbar');
-    if (hosted) { setToolbarTarget(hosted); return; }
-    const narrow = window.matchMedia('(max-width: 959px)');
-    const update = () => setToolbarTarget(narrow.matches ? document.getElementById('khala-channel-toolbar-mobile') : null);
-    narrow.addEventListener('change', update);
-    update();
-    return () => narrow.removeEventListener('change', update);
+    setToolbarTarget(document.getElementById('khala-channel-toolbar'));
   }, [embedded]);
+  useEffect(() => {
+    if (!rosterOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!roster.current?.contains(event.target as Node)) {
+        roster.current!.open = false;
+        requestAnimationFrame(() => {
+          if (roster.current?.contains(document.activeElement)) roster.current.querySelector('summary')?.focus();
+        });
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, [rosterOpen]);
   const toolbar = <div className="channel-toolbar">
     {onBack ? <button type="button" className="conversation-thread__back" onClick={onBack} aria-label="All conversations">‹</button> : null}
     <details ref={roster} className="channel-roster" onToggle={event => setRosterOpen(event.currentTarget.open)} onKeyDown={event => {
       if (event.key === 'Escape' && roster.current?.open) { event.preventDefault(); roster.current.open = false; roster.current.querySelector('summary')?.focus(); }
     }}>
-      <summary aria-label={`Channel participants and agents for ${title}`}><span className="channel-roster__summary">{toolbarTarget ? <h1 dir="auto">{title}</h1> : <h2 dir="auto">{title}</h2>}<ChannelParticipants controller={controller} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(description ? { description } : {})} {...(viewerName ? { viewerName } : {})} /></span><span className="channel-roster__chevron" aria-hidden="true">⌄</span></summary>
+      <summary aria-label={`Channel participants and agents for ${title}`}><span className="channel-roster__summary">{toolbarTarget ? <h1 dir="auto">{title}</h1> : <h2 dir="auto">{title}</h2>}<ChannelParticipants controller={controller} {...(humanParticipants ? { humanParticipants } : {})} {...(currentNames ? { currentNames } : {})} {...(description ? { description } : {})} {...(viewerName ? { viewerName } : {})} /></span><span className="channel-roster__chevron" aria-hidden="true">⌄</span></summary>
       <div className="channel-roster__panel" aria-label="Channel participants and agents">
         {viewerName ? <div className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(viewerName, 'You')}<small>Human</small></span><span className="channel-roster__role">You</span></div> : null}
+        {humanParticipants?.map(participant => <div key={participant.participantId} className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(participant.displayName, 'Channel member').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(participant.displayName, 'Channel member')}<small>Human</small></span></div>)}
         {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} /> : null}
+        {renderDetailsActions?.(rosterOpen)}
       </div>
     </details>
     <div className="channel-toolbar__actions">{renderHeaderActions?.()}{renderShare?.()}</div>
