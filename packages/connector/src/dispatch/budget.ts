@@ -14,6 +14,7 @@ import type {
 const POLICY_KEYS = ['armedAt', 'expiresAt', 'listening', 'paused', 'version'];
 const LIMIT_KEYS = ['busy', 'maxConcurrentJobs', 'maxJobsPerCausalRoot'];
 const LISTENING_KEYS = ['effective', 'evidenceRevision', 'requested', 'version'];
+const LISTENING_SOURCE_KEYS = ['effective', 'evidenceRevision', 'requested', 'sourceVersion', 'version'];
 const BUSY_POLICIES: readonly unknown[] = ['queue', 'wait', 'reject'];
 const MODES: readonly unknown[] = LISTENING_MODES;
 
@@ -25,9 +26,12 @@ function exactKeys(value: object, expected: readonly string[]): boolean {
 }
 
 function usableListening(input: unknown): input is DispatchListening {
-  if (typeof input !== 'object' || input === null || !exactKeys(input, LISTENING_KEYS)) return false;
+  if (typeof input !== 'object' || input === null
+    || (!exactKeys(input, LISTENING_KEYS) && !exactKeys(input, LISTENING_SOURCE_KEYS))) return false;
   const listening = input as Record<string, unknown>;
   if (!Number.isSafeInteger(listening.version) || (listening.version as number) < 0) return false;
+  if ('sourceVersion' in listening && (!Number.isSafeInteger(listening.sourceVersion)
+    || (listening.sourceVersion as number) < 0)) return false;
   if (!MODES.includes(listening.requested)) return false;
   if (listening.effective === null) return listening.evidenceRevision === null;
   return MODES.includes(listening.effective)

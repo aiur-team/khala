@@ -73,6 +73,7 @@ export type AgentControlsView = Readonly<{
   receiptDetail: string | null;
   /** Listening-mode section; `null` until the store has answered for this binding generation. */
   listening: ListeningDisplay | null;
+  listeningUnavailableReason?: string | null;
 }>;
 
 export const INITIAL_POLICY_DISPLAY: PolicyDisplay = {
@@ -124,6 +125,7 @@ export function initialAgentControlsView(input: Readonly<{
     notice: null,
     receiptDetail: null,
     listening: null,
+    listeningUnavailableReason: null,
   };
 }
 
@@ -558,7 +560,7 @@ const SUBMISSION_TEXT = {
   pending: (mode: ListeningMode) => `Requesting ${mode}…`,
   applied: (mode: ListeningMode) => `Listening mode set to ${mode}.`,
   conflict: (mode: ListeningMode) => `Another actor changed the listening mode first. Your choice (${mode}) was not submitted; review the refreshed state and apply it again if you still want it.`,
-  unknown: (mode: ListeningMode) => `Could not reach the connector; the outcome of ${mode} is unknown. Refresh before trying again.`,
+  unknown: (mode: ListeningMode) => `Could not reach the connector; the outcome of ${mode} is unknown. Retry uses the same command.`,
 } as const;
 
 /** Text for the permanently mounted listening status region. */

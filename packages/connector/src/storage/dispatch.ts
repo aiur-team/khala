@@ -215,6 +215,7 @@ function canonicalPolicy(policy: DispatchPolicy): DispatchPolicy {
     expiresAt: policy.expiresAt,
     listening: {
       version: policy.listening.version,
+      ...(policy.listening.sourceVersion === undefined ? {} : { sourceVersion: policy.listening.sourceVersion }),
       requested: policy.listening.requested,
       effective: policy.listening.effective,
       evidenceRevision: policy.listening.evidenceRevision,
@@ -411,6 +412,10 @@ export function createConnectorDispatchStorage(storage: ConnectorStorage): Conne
           const { listening, ...rest } = policy;
           if (policy.version < current.version) return { kind: 'conflict', code: 'stale_version' };
           if (storedListening !== null && listening.version < storedListening.version) {
+            return { kind: 'conflict', code: 'stale_version' };
+          }
+          if (storedListening?.sourceVersion !== undefined
+            && (listening.sourceVersion === undefined || listening.sourceVersion < storedListening.sourceVersion)) {
             return { kind: 'conflict', code: 'stale_version' };
           }
           const samePolicyVersion = policy.version === current.version;

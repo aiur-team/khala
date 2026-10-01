@@ -92,7 +92,7 @@ export function sameProcessRunning(witness: ProcessWitness): boolean {
 
 type MailboxAnswer = Readonly<{ status: number; body: unknown }>;
 /** Uses the browser's actual session cookie and /me CSRF value, never injected authority. */
-export async function mailbox(page: Page, bindingId: string, kind: 'controls_status' | 'controls_set', body: unknown,
+export async function mailbox(page: Page, bindingId: string, kind: 'controls_status' | 'controls_set' | 'listening_set', body: unknown,
   operationId = `controls_${crypto.randomUUID().replaceAll('-', '')}`): Promise<MailboxAnswer & { operationId: string }> {
   return page.evaluate(async ({ bindingId, kind, body, operationId }) => {
     const meResponse = await fetch('/api/human/me', { credentials: 'same-origin' });
@@ -137,5 +137,9 @@ export async function controlsStatus(page: Page, bindingId: string) {
     binding: { bindingId: string; generation: number; agentParticipantId: string; sessionId: string };
     policy: { effectiveVersion: number | null; effectiveMode: string | null; paused: boolean | null };
     bindingStatus: string;
+    listening: { bindingId: string; generation: number; version: number;
+      requested: 'steer' | 'sync' | 'async' | null; effective: 'steer' | 'sync' | 'async' | null;
+      support: Record<'steer' | 'sync' | 'async', { status: string; reason: string | null }>;
+      lastChangedBy: { kind: string } };
   };
 }

@@ -34,7 +34,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
 function readCommand(value: unknown): (OwnerMailboxCommand & { bindingId: string }) | null {
   if (!plain(value) || !exact(value, ['bindingId', 'operationId', 'kind', 'body'])
     || typeof value.bindingId !== 'string' || typeof value.operationId !== 'string'
-    || !['controls_status', 'controls_set', 'review_preview', 'review_approve'].includes(String(value.kind))) return null;
+    || !['controls_status', 'controls_set', 'listening_set', 'listening_grant', 'review_preview', 'review_approve'].includes(String(value.kind))) return null;
   return value as OwnerMailboxCommand & { bindingId: string };
 }
 function readCompletion(value: unknown): { bindingId: string; operationId: string; outcome: JsonValue } | null {
