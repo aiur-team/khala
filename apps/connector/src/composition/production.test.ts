@@ -84,7 +84,9 @@ describe('installed hosted connector composition', () => {
     ])).digest('hex'));
     const diagnostics: unknown[] = [];
     let attempts = 0;
+    let selectedBrowser: string | undefined;
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
+      selectedBrowser = options.chromiumExecutablePath;
       if (++attempts === 1) throw new MatrixWriterLockError('active_writer');
       return {
         fingerprint: 'signed-ed25519-fingerprint', writerLock: { kind: 'stale_recovered' },
@@ -119,6 +121,7 @@ describe('installed hosted connector composition', () => {
         }));
         expect(await connector.ports.devices.status(reservation.deviceId)).toBe('unavailable');
         expect(await connector.ports.devices.status(reservation.deviceId)).toBe('ready');
+        expect(selectedBrowser).toBe(chromiumExecutablePath);
         expect(diagnostics).toEqual([
           { stage: 'matrix_writer_active', result: 'unavailable' },
           { stage: 'matrix_writer_recovered', result: 'recovered' },
