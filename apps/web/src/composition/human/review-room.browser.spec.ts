@@ -52,6 +52,13 @@ test('normal conversation registers owner proof and trusts each admitted agent o
     await page.waitForTimeout(250);
     assert.equal(await page.evaluate(() => window.__trustCalls()), 2);
     assert.equal(requests.length, requestsBeforeRerender, 'rerender does not register again');
+    await page.evaluate(() => window.__setReviewBinding('new'));
+    await page.waitForFunction(() => window.__trustCalls() === 3);
+    assert.equal(registrationBodies.length, 3, 'new binding registers without a room reload');
+    assert.deepEqual(registrationBodies.map(body => {
+      const registered = body as { bindingId: string; generation: number };
+      return [registered.bindingId, registered.generation];
+    }), [['binding_1', 0], ['binding_2', 1], ['binding_1', 1]]);
   });
 });
 
