@@ -36,7 +36,12 @@ export type RoomScreenProps = ChannelScreenProps;
 
 function ChannelParticipants({ controller, currentNames, description, viewerName, humanParticipants }: Pick<ChannelScreenProps, 'controller' | 'currentNames' | 'description' | 'viewerName' | 'humanParticipants'>) {
   const { agents, phase } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const humanCount = (viewerName ? 1 : 0) + (humanParticipants?.length ?? 0);
+  const compactStatus = phase === 'ready'
+    ? `${viewerName !== undefined || humanParticipants !== undefined ? `${humanCount} ${humanCount === 1 ? 'human' : 'humans'}` : 'Participants'} · ${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`
+    : phase === 'loading' ? 'Checking participants…' : 'Participants unavailable';
   return <div className="channel-participants" aria-label="Channel participants">
+    <span className="channel-participants__compact" role="status">{compactStatus}</span>
     {description ? <span className="channel-participants__context">{description}</span> : null}
     {viewerName ? <span className="channel-participants__chip" title={`${participantRosterName(viewerName, 'You')} · human`}><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{participantRosterName(viewerName, 'You')}</span></span> : null}
     {humanParticipants?.map(participant => {

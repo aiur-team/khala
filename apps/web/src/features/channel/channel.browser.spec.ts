@@ -60,8 +60,8 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     await page.getByRole('button', { name: 'Show two agents' }).click();
     assert.equal(await page.locator('.channel-participants__chip').count(), 3);
-    assert.equal(await page.locator('.channel-participants__chip').last().evaluate(node => getComputedStyle(node).display !== 'none'), true,
-      'the last known agent remains reachable in the narrow participant row');
+    assert.equal(await page.locator('.channel-participants__compact').isVisible(), true);
+    assert.equal(await page.locator('.channel-participants__compact').textContent(), '1 human · 2 agents');
     await disclosure.click();
     assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '');
     await page.getByRole('button', { name: 'Copy channel invite link' }).click();
@@ -117,6 +117,27 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await secondScout.locator('..').getAttribute('open'), '', 'the second exact agent opens by keyboard on phone');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
       'two same-named agent controls fit the phone viewport');
+    await disclosure.click();
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), null);
+    await page.getByRole('button', { name: 'Show crowded roster' }).click();
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), null);
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.locator('.channel-participants__compact').textContent(), '3 humans · 3 agents');
+      assert.equal(await page.locator('.channel-participants__compact').isVisible(), true);
+      const titleBox = await disclosure.getByRole('heading', { name: 'A very long release coordination conversation' }).boundingBox();
+      assert.ok(titleBox && titleBox.width >= 100, `${width}px title keeps readable space`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true,
+        `${width}px crowded roster has no horizontal overflow`);
+      await disclosure.click();
+      await page.locator('.agent-presence__details > summary').first().waitFor();
+      assert.equal(await page.getByLabel('Details for Scout, Connected, Mira’s agent').count(), 1,
+        JSON.stringify(await page.locator('.agent-presence__details > summary').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))));
+      assert.equal(await page.getByLabel('Details for Builder, Connected, Your agent').count(), 1);
+      assert.equal(await page.getByLabel('Details for Another very long agent name, Checking connection…').count(), 1);
+      assert.equal(await page.getByRole('button', { name: 'Edit name for Scout' }).count(), 0);
+      await disclosure.click();
+    }
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto(url + '?standalone');
     const inlineHeader = page.locator('.conversation-thread__head');

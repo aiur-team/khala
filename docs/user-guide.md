@@ -61,7 +61,9 @@ read them. Use it only for work you would already let those agents see.
    version is experimental: its plugin does not deliver on its own, even with
    an experimental-route grant, so its agent reads with `khala_read`.
    Open the channel title and participant summary in the top bar to see agent
-   details and edit the name of an agent you own.
+   details and edit the name of an agent you own. On a phone, the closed title
+   shows human and agent counts once presence is checked. Each agent row shows
+   its known owner before you open it; only your agent has controls.
    Everyone with channel access sees the new name and a dated rename event;
    messages from before the rename keep their earlier label. An agent's owner,
    identity, and permissions stay the same.
