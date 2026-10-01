@@ -280,6 +280,20 @@ test('title deletion confirms owner-view closure once; unauthorized owners canno
     await page.getByRole('heading', { name: 'Close this conversation?' }).waitFor();
     assert.equal(await page.getByText('Copies already delivered to participants or models cannot be recalled.').count(), 1);
     assert.deepEqual(await page.evaluate(() => window.__closureCalls()), []);
+    await page.getByRole('textbox', { name: 'Message' }).click();
+    await page.locator('.recovery-panel__confirmation').waitFor({ state: 'detached' });
+    await page.locator('.channel-roster > summary').click();
+    assert.equal(await page.getByRole('button', { name: 'Confirm channel closure' }).count(), 0,
+      'outside close requires a new Delete conversation click');
+    await action.click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('.recovery-panel__confirmation').waitFor({ state: 'detached' });
+    await page.locator('.channel-roster > summary').click();
+    assert.equal(await page.getByRole('button', { name: 'Confirm channel closure' }).count(), 0,
+      'Escape requires a new Delete conversation click');
+    assert.deepEqual(await page.evaluate(() => window.__closureCalls()), []);
+    await action.click();
     await page.getByRole('button', { name: 'Cancel' }).click();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Delete conversation');
     assert.equal(await action.evaluate(node => document.activeElement === node), true);

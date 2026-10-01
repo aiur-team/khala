@@ -465,9 +465,10 @@ export function RecoveryPanel({
   return <OwnedRecoveryPanel ports={ports} config={config} onClosureParticipationEnded={onClosureParticipationEnded} />;
 }
 
-function ClosureActionContent({ controller, config, onClosureParticipationEnded }: {
+function ClosureActionContent({ controller, config, disclosureOpen, onClosureParticipationEnded }: {
   controller: RecoveryController;
   config: RecoveryControllerConfig;
+  disclosureOpen: boolean;
   onClosureParticipationEnded: () => void;
 }) {
   const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
@@ -480,6 +481,7 @@ function ClosureActionContent({ controller, config, onClosureParticipationEnded 
     && canBeginOperation(view.operation);
 
   useEffect(() => { setConfirming(false); completed.current = null; }, [controller, config.roomId, config.roomRevision]);
+  useEffect(() => { if (!disclosureOpen) setConfirming(false); }, [disclosureOpen]);
   useEffect(() => {
     const operation = view.operation;
     if (operation.kind !== 'closure' || completed.current === operation.operationId
@@ -491,7 +493,7 @@ function ClosureActionContent({ controller, config, onClosureParticipationEnded 
   return <div className="recovery-panel__closure-action">
     <button ref={trigger} type="button" disabled={!callable} onClick={() => setConfirming(true)}>Delete conversation</button>
     {!callable && view.operation.kind === 'idle' ? <p role="note">Deletion from your view is unavailable for this account or channel.</p> : null}
-    {confirming && callable && closure ? <div className="recovery-panel__confirmation" role="alert">
+    {confirming && disclosureOpen && callable && closure ? <div className="recovery-panel__confirmation" role="alert">
       <h3>Close this conversation?</h3>
       <p>“Delete conversation” closes this channel and removes it from your view.</p>
       <ConsequenceList consequences={closure.consequences} />
@@ -511,8 +513,8 @@ function ClosureActionContent({ controller, config, onClosureParticipationEnded 
 }
 
 /** The title menu uses the same owner-scoped controller and closure consequence boundary as channel care. */
-export function ClosureAction({ ports, config, onClosureParticipationEnded }: Pick<RecoveryPanelProps,
-  'ports' | 'config' | 'onClosureParticipationEnded'>) {
+export function ClosureAction({ ports, config, disclosureOpen, onClosureParticipationEnded }: Pick<RecoveryPanelProps,
+  'ports' | 'config' | 'onClosureParticipationEnded'> & { disclosureOpen: boolean }) {
   const [owned, setOwned] = useState<{ ports: RecoveryPorts; roomId: RecoveryControllerConfig['roomId']; roomRevision: number; controller: RecoveryController } | null>(null);
   useEffect(() => {
     const controller = createRecoveryController(ports, config);
@@ -522,5 +524,6 @@ export function ClosureAction({ ports, config, onClosureParticipationEnded }: Pi
   if (owned?.ports !== ports || owned.roomId !== config.roomId || owned.roomRevision !== config.roomRevision) {
     return <button type="button" disabled>Delete conversation</button>;
   }
-  return <ClosureActionContent controller={owned.controller} config={config} onClosureParticipationEnded={onClosureParticipationEnded} />;
+  return <ClosureActionContent controller={owned.controller} config={config} disclosureOpen={disclosureOpen}
+    onClosureParticipationEnded={onClosureParticipationEnded} />;
 }

@@ -24,7 +24,7 @@ export interface ChannelScreenProps {
   renderTimeline: () => ReactNode;
   renderShare?: () => ReactNode;
   renderHeaderActions?: () => ReactNode;
-  renderDetailsActions?: () => ReactNode;
+  renderDetailsActions?: (open: boolean) => ReactNode;
   showPresence?: boolean;
   onBack?: () => void;
   embedded?: boolean;
@@ -87,7 +87,7 @@ export function ChannelScreen({ title, description, theme = 'dark', controller, 
         {viewerName ? <div className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(viewerName, 'You')}<small>Human</small></span><span className="channel-roster__role">You</span></div> : null}
         {humanParticipants?.map(participant => <div key={participant.participantId} className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(participant.displayName, 'Channel member').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(participant.displayName, 'Channel member')}<small>Human</small></span></div>)}
         {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} /> : null}
-        {renderDetailsActions?.()}
+        {renderDetailsActions?.(rosterOpen)}
       </div>
     </details>
     <div className="channel-toolbar__actions">{renderHeaderActions?.()}{renderShare?.()}</div>

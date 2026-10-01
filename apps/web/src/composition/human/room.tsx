@@ -367,7 +367,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
-      renderDetailsActions={() => <ClosureAction ports={recovery} config={{ roomId, roomRevision: 0 }}
+      renderDetailsActions={open => <ClosureAction ports={recovery} config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
         onClosureParticipationEnded={() => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/')} />}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
