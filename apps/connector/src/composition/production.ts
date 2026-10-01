@@ -118,7 +118,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   /** Inject the Matrix transport in composition tests while retaining the production credential fence. */
   openMatrix?: typeof openMatrixConnectorSubstrate;
 }>) {
-  const reportOpen = (stage: Exclude<HostedOpenDiagnostic['stage'], 'matrix_writer_recovered'>, error?: unknown) => {
+  const reportOpen = (stage: Exclude<HostedOpenDiagnostic['stage'], 'matrix_writer_recovered' | 'harness_route_inspect'>, error?: unknown) => {
     const code = error instanceof StorageError && STORAGE_ERROR_CODES.includes(error.code) ? error.code : undefined;
     try { input.diagnostic?.({ stage, result: 'unavailable', ...(code ? { errorCode: code } : {}) }); }
     catch { /* Diagnostics cannot change startup behavior. */ }
@@ -416,6 +416,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     if (input.session.harness === 'codex') {
       harness = createHostedCodexHarness({ binding: next, claim: input.session,
         sessionInspection: sessionInspector,
+        diagnostic: event => { try { input.diagnostic?.(event); } catch { /* Read-only diagnostics. */ } },
         current: async () => {
           if (closed || remoteDenied || deliveryStopped) return false;
           const held = await readBinding().catch(() => null);

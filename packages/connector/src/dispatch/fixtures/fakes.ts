@@ -110,9 +110,11 @@ export function makeRelease(input: Readonly<{
   generation?: number;
   policyVersion?: number;
   payload?: Uint8Array;
+  harness?: string;
 }>): Release {
   const policyVersion = input.policyVersion ?? POLICY_VERSION;
-  const bound = binding(input.bindingId ?? 'bind-1', input.generation ?? 0);
+  const bound = { ...binding(input.bindingId ?? 'bind-1', input.generation ?? 0),
+    harness: input.harness ?? 'codex' };
   const event: EventRef = {
     v: 1,
     roomId: 'room-1' as EventRef['roomId'],

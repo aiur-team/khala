@@ -28,6 +28,21 @@ it('persists a hosted open storage code without error text or identifiers', () =
   });
 });
 
+it('retains only typed hosted harness route outcomes', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'harness_route_inspect',
+    result: 'route_tested', privateSession: 'must-not-appear' } as never);
+  recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'harness_route_inspect',
+    result: 'private-release', privateMessage: 'must-not-appear' } as never);
+  const written = fs.readFileSync(path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`), 'utf8');
+  expect(written).not.toContain('must-not-appear');
+  expect(written).not.toContain('private-release');
+  expect(written.trim().split('\n').map(line => JSON.parse(line))).toEqual([
+    { component: 'hosted_open', stage: 'harness_route_inspect', result: 'route_tested' },
+    { component: 'hosted_open', stage: 'harness_route_inspect', result: 'native_unsupported' },
+  ]);
+});
+
 it('persists fixed Matrix writer stages without owner details', () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
   recordHostedDiagnostic(root, { component: 'hosted_open', stage: 'matrix_writer_active',

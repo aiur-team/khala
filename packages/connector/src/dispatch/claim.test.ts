@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BindingId, HarnessCapabilities } from '@khala/contracts/delivery/index';
-import { type World, binding, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
+import { type World, binding, makeRelease, provenModes, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
 import type { DispatchPolicy, Dispatcher } from './types';
 
 describe('eligibility and transactional claim', () => {
@@ -268,6 +268,36 @@ describe('eligibility and transactional claim', () => {
   });
 
   describe('harness route', () => {
+    it('holds a proof-key queue head until the inspected native route is projected to its binding', async () => {
+      const w = await world();
+      const approved = { ...binding('bind-1'), harness: 'proof-key', sessionId: 'agent-approved-key' };
+      await w.ledger.transact(tx => tx.setBinding({ binding: approved, revoked: false }));
+      const first = makeRelease({ releaseId: 'release-1', harness: 'proof-key' });
+      const second = makeRelease({ releaseId: 'release-2', harness: 'proof-key' });
+      const rewrite = (release: typeof first) => ({ ...release,
+        job: { ...release.job, binding: approved } });
+      const one = w.add(rewrite(first));
+      const two = w.add(rewrite(second));
+      w.harness.route = { harness: 'codex', version: '0.159.3',
+        existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue',
+        modes: provenModes({ steer: { testedVersion: '0.159.3' },
+          sync: { testedVersion: '0.159.3' }, async: { testedVersion: '0.159.3' } }) };
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(one.job);
+      await dispatcher.enqueue(two.job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'harness_unsupported' });
+      expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'queued', reason: null });
+
+      w.harness.route = { ...w.harness.route, harness: 'proof-key' };
+      dispatcher.wake();
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1', 'release-2']);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'accepted' });
+      expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'accepted' });
+    });
+
     it('submits through a tested native CLI queue route with evidence', async () => {
       const w = await world();
       w.harness.route = { existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue' };
