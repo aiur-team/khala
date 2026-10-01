@@ -13,6 +13,7 @@ import type { HostedOpenDiagnostic } from '@khala/connector/bootstrap/hosted-ope
 // admitted so the next status call can resume its saved session and crypto profile.
 const PERMANENT_STARTUP_ERRORS = new Set([
   'matrix_session_changed', 'matrix_session_missing', 'matrix_reservation_conflict',
+  'matrix_reservation_corrupt', 'matrix_origin_untrusted',
   'matrix_crypto_store_lost', 'matrix_identity_changed', 'matrix_trust_recovery_required',
   'matrix_browser_bundle_missing', 'matrix_browser_driver_invalid',
   'matrix_browser_method_missing', 'matrix_invalid_input', 'matrix_names_corrupt',
