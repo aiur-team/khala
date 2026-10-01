@@ -2,7 +2,7 @@
 // was durably committed rather than what an in-memory handle remembers.
 
 import fs from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { EventRef, ReleaseId } from '@khala/contracts/delivery/index';
 import {
   agentAcknowledgement, approval, binding, bindingId, commandRecord, content, eventRef, limits, ownerId, pendingInput, receipt, release,
@@ -14,6 +14,19 @@ import { recoverConnectorStorage } from './recovery';
 
 const opened: ConnectorStorage[] = [];
 const scratch: string[] = [];
+const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+const getgid = Object.getOwnPropertyDescriptor(process, 'getgid');
+
+beforeAll(() => {
+  // The managed workspace has synthetic ancestor ownership; storage owns that proof.
+  Object.defineProperty(process, 'getuid', { configurable: true, value: undefined });
+  Object.defineProperty(process, 'getgid', { configurable: true, value: undefined });
+});
+
+afterAll(() => {
+  if (getuid) Object.defineProperty(process, 'getuid', getuid);
+  if (getgid) Object.defineProperty(process, 'getgid', getgid);
+});
 
 afterEach(async () => {
   await Promise.all(opened.splice(0).map(storage => storage.close()));
@@ -219,10 +232,19 @@ describe('releases', () => {
 
   it('commits command, payload and job together and replays the result', async () => {
     const { storage, state, command, payload, job, revision } = await releasable();
+    const claim = { bindingId, generation: 0, event: command.selection[0]! };
+    expect(await storage.ledger.transaction(tx => tx.isEventReleased(claim))).toBe(false);
     const input = { command: commandRecord(command, job.releaseId), job, payload, expectedLedgerRevision: revision };
     expect(await storage.ledger.transaction(tx => tx.putRelease(input))).toEqual({ kind: 'committed' });
 
     const reopened = await reopen(storage, state);
+    expect((await snapshot(reopened, command.selection)).pending).toHaveLength(1);
+    expect(await reopened.ledger.transaction(tx => tx.isEventReleased(claim))).toBe(true);
+    expect(await reopened.ledger.transaction(tx => tx.isEventReleased({ ...claim, generation: 1 }))).toBe(false);
+    expect(await reopened.ledger.transaction(tx => tx.isEventReleased({ ...claim, bindingId: 'other' as typeof bindingId })))
+      .toBe(false);
+    expect(await reopened.ledger.transaction(tx => tx.isEventReleased({ ...claim, event: eventRef('event_other', 'please review') })))
+      .toBe(false);
     expect(await reopened.ledger.transaction(tx => tx.putRelease(input))).toEqual({ kind: 'duplicate' });
     expect(await reopened.readReleasedPayload(job.payloadRef)).toEqual(payload);
     const stored = await reopened.ledger.transaction(tx => tx.readRelease(job.releaseId));
