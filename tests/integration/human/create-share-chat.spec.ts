@@ -56,6 +56,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible();
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
+    await alice.reload({ waitUntil: 'networkidle' });
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(reply)).toBeVisible({ timeout: 30_000 });
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
 
