@@ -21,6 +21,52 @@ const binding = (deviceId: string): SessionBinding => ({
 }) as SessionBinding;
 
 describe('Matrix endpoint credential and device fence', () => {
+  it('retries a transient browser startup with the same saved Matrix session', async () => {
+    state = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-matrix-device-'));
+    const opened: MatrixConnectorInput[] = [];
+    const diagnostic = vi.fn();
+    const device = createMatrixBootstrapDevice({ stateDirectory: state,
+      profileDirectory: path.join(state, 'crypto'), writerLockDiagnostic: diagnostic,
+      open: async input => {
+        opened.push(input);
+        if (opened.length === 1) throw new Error('matrix_sync_unavailable');
+        return {
+          fingerprint: 'same-device-fingerprint', writerLock: { kind: 'acquired' },
+          participantForDevice: () => null, reviewMembers: async () => null,
+          devices: { reserve: async () => ({ kind: 'reserved', deviceId: input.deviceId }),
+            activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
+          source: { authorize: async () => 'ok', listen: () => () => undefined,
+            read: async () => ({ kind: 'page', events: [], nextCursor: '', caughtUp: true }) },
+          send: async () => ({ eventId: '$event:example.test' }), trustPeer: async () => undefined,
+          removeOwnDevice: async () => 'removed', discardOutboundSession: async () => true,
+          close: async () => undefined,
+        };
+      },
+    });
+    const fixed = await device.devices.reserve('operation-123');
+    expect(fixed.kind).toBe('reserved');
+    if (fixed.kind !== 'reserved') return;
+    const session = matrix(fixed.deviceId);
+    const input = { deviceId: fixed.deviceId, binding: binding(fixed.deviceId), operationId: 'operation-123',
+      matrixSession: session,
+      capability: { token, scope: ['publish_own', 'receive_released', 'ack_delivery'] as const,
+        bindingId: 'binding-1', generation: 0, expiresAt: Date.now() + 60_000 } };
+    expect(await device.devices.activate(input)).toEqual({ kind: 'unavailable' });
+    expect(await device.devices.activate(input)).toEqual({ kind: 'ready' });
+    expect(opened).toHaveLength(2);
+    expect(opened[0]?.deviceId).toBe(fixed.deviceId);
+    expect(opened[1]?.deviceId).toBe(fixed.deviceId);
+    expect(JSON.parse(await readFile(path.join(state, 'matrix-session.json'), 'utf8'))).toEqual(session);
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'matrix_startup_retry', result: 'unavailable' });
+    await device.close();
+    const fenced = createMatrixBootstrapDevice({ stateDirectory: state,
+      profileDirectory: path.join(state, 'crypto'), writerLockDiagnostic: diagnostic,
+      open: async () => { throw new Error('page.evaluate: Error: matrix_identity_changed'); } });
+    expect(await fenced.devices.activate(input)).toEqual({ kind: 'failed', reason: 'initialization_failed' });
+    expect(diagnostic).toHaveBeenCalledWith({ stage: 'matrix_startup_blocked', result: 'unavailable' });
+    await fenced.close();
+  });
+
   it('reserves before admission, stores the endpoint token privately, and reopens the exact SDK identity', async () => {
     state = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-matrix-device-'));
     const opens: MatrixConnectorInput[] = [];

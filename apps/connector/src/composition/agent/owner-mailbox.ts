@@ -65,6 +65,13 @@ export function createProductionOwnerMailbox(input: Readonly<{
       ...(httpStatus === undefined ? {} : { httpStatus }) }); }
     catch { /* Diagnostics cannot change authorization. */ }
   };
+  const reportPoll = (stage: HostedSubscriptionDiagnostic['stage'],
+    result: HostedSubscriptionDiagnostic['result'], httpStatus?: number, pendingCount?: number) => {
+    try { input.diagnostic?.({ stage, result,
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      ...(pendingCount === undefined ? {} : { pendingCount }) }); }
+    catch { /* Diagnostics cannot change mailbox processing. */ }
+  };
   const url = new URL(input.appOrigin);
   if (url.protocol !== 'https:' || url.origin !== input.appOrigin) throw new Error('mailbox_origin_invalid');
   const transport = input.fetch ?? fetch;
@@ -72,6 +79,7 @@ export function createProductionOwnerMailbox(input: Readonly<{
   const completeUrl = `${input.appOrigin}${COMPLETE}`;
   let closed = false;
   let inFlight: Promise<'ok' | 'unavailable' | 'revoked'> | null = null;
+  let lastPendingCount: number | null = null;
 
   function validPoll(value: unknown): value is Record<string, unknown> & { closing: boolean; entries: unknown[] } {
     if (!object(value) || value.v !== 1 || value.bindingId !== input.binding.bindingId
@@ -149,25 +157,42 @@ export function createProductionOwnerMailbox(input: Readonly<{
   async function pollOnce(): Promise<'ok' | 'unavailable' | 'revoked'> {
       if (closed) return 'unavailable';
       const polled = await call('GET', pollUrl);
-      if (!polled) return 'unavailable';
+      if (!polled) { reportPoll('mailbox_poll_fetch', 'unavailable'); return 'unavailable'; }
       if (polled.status === 401 || polled.status === 403) {
+        reportPoll('mailbox_poll_fetch', 'revoked', polled.status);
         closed = true;
         await input.onRevoked();
         return 'revoked';
       }
-      if (polled.status !== 200 || !validPoll(polled.body)) return 'unavailable';
+      if (polled.status !== 200 || !validPoll(polled.body)) {
+        reportPoll('mailbox_poll_fetch', 'unavailable', polled.status);
+        return 'unavailable';
+      }
       const entries = polled.body.entries.map(value => command(value, input.binding));
-      if (entries.some(value => value === null)) return 'unavailable';
+      if (entries.some(value => value === null)) {
+        reportPoll('mailbox_poll_entries', 'unavailable', polled.status);
+        return 'unavailable';
+      }
+      if (lastPendingCount !== entries.length) {
+        reportPoll('mailbox_poll_entries', 'ok', polled.status, entries.length);
+        lastPendingCount = entries.length;
+      }
       for (const entry of entries) {
         if (!entry || closed) return 'unavailable';
         let result: JsonValue | null;
-        try { result = await execute(entry); } catch { return 'unavailable'; }
-        if (result === null) return 'unavailable';
+        try { result = await execute(entry); }
+        catch { reportPoll('mailbox_poll_execute', 'unavailable'); return 'unavailable'; }
+        if (result === null) { reportPoll('mailbox_poll_execute', 'unavailable'); return 'unavailable'; }
+        reportPoll('mailbox_poll_execute', 'ok');
         const completed = await call('POST', completeUrl, {
           bindingId: input.binding.bindingId, operationId: entry.operationId, outcome: result,
         });
         if (!completed || completed.status !== 200 || !object(completed.body)
-          || completed.body.v !== 1 || completed.body.operationId !== entry.operationId) return 'unavailable';
+          || completed.body.v !== 1 || completed.body.operationId !== entry.operationId) {
+          reportPoll('mailbox_poll_complete', 'unavailable', completed?.status);
+          return 'unavailable';
+        }
+        reportPoll('mailbox_poll_complete', 'ok', completed.status);
         if (entry.kind === 'channel_stop') { closed = true; return 'revoked'; }
       }
       // Closure can precede the durable stop command. Keep polling until its
