@@ -4,6 +4,21 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, syml
 import os from 'node:os';
 import path from 'node:path';
 
+const DIAGNOSTIC_COMPONENTS = new Set(['hosted_session', 'hosted_open', 'subscription', 'native_ready', 'activation']);
+const STORAGE_CODES = new Set(['unsafe_path', 'missing_state', 'locked', 'corrupt', 'schema_unsupported',
+  'storage_full', 'limit_exceeded', 'io_failed', 'closed', 'fenced', 'identity_mismatch',
+  'payload_unavailable', 'revoked', 'invalid_input', 'transaction_aborted',
+  'async_transaction', 'nested_transaction']);
+function typedDiagnostics(output) {
+  return output.trim().split('\n').filter(Boolean).flatMap(line => {
+    try {
+      const { component, stage, result, errorCode } = JSON.parse(line);
+      return DIAGNOSTIC_COMPONENTS.has(component) && typeof stage === 'string' && typeof result === 'string'
+        ? [{ component, stage, result, ...(STORAGE_CODES.has(errorCode) ? { errorCode } : {}) }] : [];
+    } catch { return []; }
+  }).slice(-20);
+}
+
 /** Stock package, private HOME/state and a stable native label; no inherited credentials. */
 export function installRecoveryClient({ tarball, origin, caFile, sessionId, workdir, chromiumExecutable,
   fixtureBrowser = false, fixtureBrowserCertificateFile, harness = 'claude', pinnedClaudeProbe = false }) {
@@ -86,6 +101,8 @@ if (response.status !== 204) process.exit(1);
   const processes = new Set();
   return {
     stateDirectory: state,
+    browserExecutable: chromiumExecutable === undefined ? null
+      : path.join(prefix, 'node_modules', '@aiur', 'khala', 'dist', 'chromium', 'chrome-linux64', 'chrome'),
     /** Replies stay private. Callers must emit only whitelisted typed receipt fields. */
     call(messages, { terminateOn } = {}) {
       return new Promise((resolve, reject) => {
@@ -129,13 +146,7 @@ if (response.status !== 204) process.exit(1);
             return;
           }
           try {
-            const events = diagnostics.trim().split('\n').filter(Boolean).flatMap(line => {
-              try {
-                const value = JSON.parse(line);
-                return value?.component === 'hosted_session' && value.stage === 'open'
-                  && value.result === 'unavailable' ? [{ component: 'hosted_session', stage: 'open', result: 'unavailable' }] : [];
-              } catch { return []; }
-            });
+            const events = typedDiagnostics(diagnostics);
             resolve({ pid: child.pid, replies: output.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)), diagnostics: events });
           }
           catch { reject(new Error('fixture_client_invalid_reply')); }
@@ -187,14 +198,7 @@ if (response.status !== 204) process.exit(1);
           });
         },
         diagnostics() {
-          return diagnostics.trim().split('\n').filter(Boolean).flatMap(line => {
-            try {
-              const { component, stage, result } = JSON.parse(line);
-              return ['hosted_open', 'subscription', 'native_ready', 'activation'].includes(component)
-                && typeof stage === 'string' && typeof result === 'string'
-                ? [{ component, stage, result }] : [];
-            } catch { return []; }
-          }).slice(-20);
+          return typedDiagnostics(diagnostics);
         },
         async close() {
           if (!closed) child.stdin.end();
