@@ -40,7 +40,8 @@ async function decrypted(n: number, overrides: DecryptedOverrides = {}): Promise
     v: 1, roomId: ROOM, eventId: `E${n}` as EventId, authorParticipantId: ALICE,
     authorDeviceId: overrides.authorDeviceId ?? ALICE_DEVICE, contentDigest: digest.digest,
   };
-  return { kind: 'decrypted', ref, verifiedDeviceId: overrides.verifiedDeviceId ?? ALICE_DEVICE, canonicalPayload: encodeMessageContent(content) };
+  return { kind: 'decrypted', ref, verifiedSenderUserId: '@alice:example',
+    verifiedDeviceId: overrides.verifiedDeviceId ?? ALICE_DEVICE, canonicalPayload: encodeMessageContent(content) };
 }
 
 function undecryptable(n: number, reason: UnavailableReason): SourceEvent {

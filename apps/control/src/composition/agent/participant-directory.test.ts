@@ -29,8 +29,11 @@ describe('agent participant directory', () => {
       matrixUserId: '@khala_a_x:matrix.example.test', participantId: binding.agentParticipantId,
       ownerId: binding.ownerId, displayName: 'Codex #mira', kind: 'agent' as const,
     }] }));
+    let pinState: 'found' | 'absent' | 'unavailable' = 'found';
     const route = createAgentParticipantDirectoryRoute({ store: state.store, capabilities,
-      sessions: { resolveRoomParticipants } });
+      sessions: { resolveRoomParticipants }, lookupAgentDevice: async () => pinState === 'found' ? ({
+        kind: 'found', deviceId: binding.deviceId, fingerprint: 'A'.repeat(43),
+      }) : { kind: pinState } });
     const request = (room: string) => new Request('https://khala.example' + route.path, { method: 'POST',
       body: JSON.stringify({ roomId: room, userIds: ['@khala_a_x:matrix.example.test'],
         targetParticipantIds: ['agent_departed'] }) });
@@ -38,11 +41,22 @@ describe('agent participant directory', () => {
     expect(response.status).toBe(200);
     expect((await response.json() as { participants: unknown }).participants).toEqual(expect.arrayContaining([
       expect.objectContaining({ participantId: 'agent_departed', matrixUserId: '@departed:matrix.example.test' }),
+      expect.objectContaining({ participantId: binding.agentParticipantId, deviceId: binding.deviceId,
+        fingerprint: 'A'.repeat(43) }),
     ]));
     expect(resolveRoomParticipants).toHaveBeenCalledWith(binding.ownerId, roomId, ['@khala_a_x:matrix.example.test']);
     expect((await route.handle(request('!other:matrix.example.test'))).status).toBe(403);
+    pinState = 'absent';
+    const unpinned = await route.handle(request(roomId));
+    expect(unpinned.status).toBe(200);
+    expect((await unpinned.json() as { participants: unknown[] }).participants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ participantId: binding.agentParticipantId }),
+    ]));
+    pinState = 'unavailable';
+    expect((await route.handle(request(roomId))).status).toBe(503);
+    pinState = 'found';
     active = false;
     expect((await route.handle(request(roomId))).status).toBe(403);
-    expect(resolveRoomParticipants).toHaveBeenCalledTimes(1);
+    expect(resolveRoomParticipants).toHaveBeenCalledTimes(3);
   });
 });
