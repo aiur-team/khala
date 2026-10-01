@@ -52,6 +52,21 @@ async function channelAccessController(count = 1) {
 }
 
 describe('HumanApplicationScreen', () => {
+  it.each([
+    ['?sign_in=cancelled&state=secret-state', 'Sign-in was cancelled. Choose Sign in to try again.'],
+    ['?sign_in=error&error_description=secret-description', 'Sign-in could not be completed. Choose Sign in to try again.'],
+  ])('shows a fixed retry message for %s without reflecting query details', (search, message) => {
+    vi.stubGlobal('window', { location: { search } });
+    try {
+      const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'signed_out', path: '/', context: null })}
+        identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => { throw new Error('not used'); }} />);
+      expect(html).toContain(message);
+      expect(html).not.toMatch(/secret-state|secret-description/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('renders signed-out and unavailable states explicitly', async () => {
     const channelAccess = await channelAccessController();
     const signedOut = renderToStaticMarkup(

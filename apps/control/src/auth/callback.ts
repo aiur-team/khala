@@ -80,7 +80,7 @@ export async function startSignIn(deps: SignInDeps, returnPath: string): Promise
 }
 
 export type CallbackRejection =
-  | 'login_expired' | 'login_replayed' | 'state_mismatch' | 'provider_denied' | 'invalid_response' | 'mapping_conflict'
+  | 'login_expired' | 'login_replayed' | 'state_mismatch' | 'provider_denied' | 'provider_error' | 'invalid_response' | 'mapping_conflict'
   | ClaimRejection;
 
 export type CallbackResult =
@@ -128,6 +128,13 @@ export async function completeSignIn(
   });
   if (consume.kind === 'conflict') return reject('login_replayed');
   if (consume.kind !== 'applied') return unavailable('login_consume', clear);
+
+  // Google may omit iss on an error response. Its issuer check then throws
+  // before the SDK can classify access_denied. Only classify an error-only
+  // callback after the browser binding has been validated and consumed.
+  if (callback.searchParams.has('error') && !callback.searchParams.has('code')) {
+    return reject(callback.searchParams.get('error') === 'access_denied' ? 'provider_denied' : 'provider_error');
+  }
 
   const exchanged = await orUnavailable(() => deps.oidc.exchangeCode({
     callbackUrl: request.url,
