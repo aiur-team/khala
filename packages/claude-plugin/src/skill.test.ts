@@ -93,6 +93,9 @@ describe('bundled /khala skill', () => {
 
   it('keeps the full skill consistent about the unsafe-message mode exception', () => {
     expect(skill).toContain('request `async` with the returned version');
+    expect(skill).toContain('native CLI conversation, outside the Khala room');
+    expect(skill).toContain('Do not\nuse `khala_send` or `khala send` for the alert');
+    expect(skill).toContain('effective: "async"');
     expect(skill).toContain('This help path does not change the listening mode');
     expect(skill).not.toMatch(/(?:this skill|\/khala) never changes the listening mode/i);
   });
