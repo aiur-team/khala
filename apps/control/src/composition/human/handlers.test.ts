@@ -358,6 +358,7 @@ describe('registerHumanHandlers feature routes', () => {
       { path: '/api/human/owner-mailbox/review-bindings', methods: ['GET'] },
       { path: '/api/human/owner-mailbox/submit', methods: ['POST'] },
       { path: '/api/human/owner-mailbox/result', methods: ['GET'] },
+      { path: '/api/human/owner-mailbox/review-status', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/challenge', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/register', methods: ['POST'] },
       { path: '/api/human/revocation/targets', methods: ['GET'] },
@@ -409,6 +410,7 @@ describe('registerHumanHandlers feature routes', () => {
     expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
       '/api/human/agent-bootstrap/authorize', '/api/human/owner-mailbox/review-bindings',
       '/api/human/owner-mailbox/submit', '/api/human/owner-mailbox/result',
+      '/api/human/owner-mailbox/review-status',
       '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
       '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
       ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action => `/api/human/room-send/${action}`),

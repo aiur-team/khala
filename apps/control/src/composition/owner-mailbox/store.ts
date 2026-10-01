@@ -50,6 +50,8 @@ export function createOwnerMailbox(input: Readonly<{
   // is only a poll index, so a long-lived binding cannot exhaust it with results.
   const archiveKey = (operationId: string) => `owner-mailbox-result.v1.${createHash('sha256')
     .update(`${binding.bindingId}\0${binding.generation}\0${operationId}`).digest('hex')}`;
+  const previewKey = `owner-review-preview.v1.${createHash('sha256')
+    .update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
   const initial: Document = { v: 1, bindingId: binding.bindingId, generation: binding.generation,
     ownerId: binding.ownerId, roomId, entries: [] };
   function validPreviewId(command: OwnerMailboxCommand): boolean {
@@ -130,7 +132,75 @@ export function createOwnerMailbox(input: Readonly<{
       if (saved === 'applied' || saved === 'unavailable') return;
     }
   }
+  async function savePreview(entry: OwnerMailboxEntry, replay = false): Promise<'ok' | 'unavailable'> {
+    if (entry.kind !== 'review_preview' || !plain(entry.outcome) || entry.outcome.ok !== true) return 'ok';
+    if (!plain(entry.outcome.preview) || !Array.isArray(entry.outcome.preview.pending)
+      || !entry.outcome.preview.pending.every(item => {
+        const decoded = decodeEventRef(item);
+        return decoded.ok && decoded.value.roomId === roomId;
+      })) return 'unavailable';
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const found = await store.read<JsonValue>(previewKey);
+      if (found.kind === 'unavailable') return 'unavailable';
+      const previous = found.kind === 'record' ? found.record.value : null;
+      if (previous !== null && (!plain(previous) || !plain(previous.preview)
+        || typeof previous.operationId !== 'string'
+        || !validOutcome('review_preview', { ok: true, preview: previous.preview }, binding, entry.body))) return 'unavailable';
+      if (previous !== null && plain(previous) && typeof previous.authenticatedAt === 'string'
+        && (previous.authenticatedAt > entry.authority.authenticatedAt
+          || previous.operationId === entry.operationId
+          || replay && previous.authenticatedAt === entry.authority.authenticatedAt)) return 'ok';
+      const next = { operationId: entry.operationId, authenticatedAt: entry.authority.authenticatedAt,
+        preview: entry.outcome.preview } as JsonValue;
+      const saved = await store.compareAndSet<JsonValue>({ key: previewKey,
+        expectedRevision: found.kind === 'record' ? found.record.revision : null,
+        operationId: `review-preview.${createHash('sha256').update(JSON.stringify([next, found.kind === 'record' ? found.record.revision : null])).digest('base64url')}`,
+        next: { value: next, expiresAt: new Date(Date.parse(entry.authority.authenticatedAt) + OWNER_MAILBOX_TTL_MS).toISOString() } });
+      if (saved.kind === 'applied') return 'ok';
+      if (saved.kind === 'unavailable') return 'unavailable';
+    }
+    return 'unavailable';
+  }
+  async function settlePreview(entry: OwnerMailboxEntry): Promise<'ok' | 'unavailable'> {
+    if (entry.kind !== 'review_approve' || !plain(entry.outcome) || entry.outcome.ok !== true) return 'ok';
+    const approval = decodeApprovalCommand(entry.body, DELIVERY_LIMITS);
+    if (!approval.ok) return 'unavailable';
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const found = await store.read<JsonValue>(previewKey);
+      if (found.kind === 'unavailable') return 'unavailable';
+      if (found.kind === 'absent') return 'ok';
+      const value = found.record.value;
+      if (!plain(value) || !plain(value.preview)
+        || !validOutcome('review_preview', { ok: true, preview: value.preview }, binding, { bindingId: binding.bindingId })
+        || !Array.isArray(value.preview.pending)) return 'unavailable';
+      const pending = value.preview.pending.filter(ref => !approval.value.selection.some(selected =>
+        sameValue(ref as JsonValue, selected as unknown as JsonValue)));
+      if (pending.length === value.preview.pending.length) return 'ok';
+      const next = { ...value, preview: { ...value.preview, pending } } as JsonValue;
+      const saved = await store.compareAndSet<JsonValue>({ key: previewKey,
+        expectedRevision: found.record.revision,
+        operationId: `review-settle.${createHash('sha256').update(JSON.stringify([entry.operationId, found.record.revision])).digest('base64url')}`,
+        next: { value: next, expiresAt: found.record.expiresAt } });
+      if (saved.kind === 'applied') return 'ok';
+      if (saved.kind === 'unavailable') return 'unavailable';
+    }
+    return 'unavailable';
+  }
   return {
+    /** Last connector-verified metadata, scoped to this exact binding generation. */
+    async lastReviewPreview(): Promise<MailboxResult<JsonValue | null>> {
+      const found = await store.read<JsonValue>(previewKey);
+      if (found.kind === 'unavailable') return { kind: 'unavailable' };
+      if (found.kind === 'absent') return { kind: 'ok', value: null };
+      const value = found.record.value;
+      return plain(value) && plain(value.preview)
+        && validOutcome('review_preview', { ok: true, preview: value.preview }, binding, { bindingId: binding.bindingId })
+        && Array.isArray(value.preview.pending) && value.preview.pending.every(item => {
+          const decoded = decodeEventRef(item);
+          return decoded.ok && decoded.value.roomId === roomId;
+        })
+        ? { kind: 'ok', value: value.preview as JsonValue } : { kind: 'unavailable' };
+    },
     /** Browser route calls only after OIDC cookie+CSRF and active binding/room checks. */
     async submit(command: OwnerMailboxCommand, principal: AuthPrincipal): Promise<MailboxResult<OwnerMailboxEntry>> {
       if (!ID.test(command.operationId) || !validBody(command.kind, command.body, binding, roomId)
@@ -206,7 +276,12 @@ export function createOwnerMailbox(input: Readonly<{
         if (entry.outcome !== null) continue;
         const prior = await archived(entry.operationId);
         if (prior.kind !== 'ok') return prior;
-        if (!prior.value) pending.push(entry);
+        if (prior.value) {
+          if ((await savePreview(prior.value, true)) !== 'ok' || (await settlePreview(prior.value)) !== 'ok') {
+            return { kind: 'unavailable' };
+          }
+          await retire(entry.operationId);
+        } else pending.push(entry);
       }
       return { kind: 'ok', value: pending };
     },
@@ -218,7 +293,9 @@ export function createOwnerMailbox(input: Readonly<{
         const prior = await archived(operationId);
         if (prior.kind !== 'ok') return prior;
         if (prior.value) return sameValue(prior.value.outcome!, outcome)
-          ? { kind: 'ok', value: prior.value } : { kind: 'conflict' };
+          ? (await savePreview(prior.value, true)) === 'ok' && (await settlePreview(prior.value)) === 'ok'
+            ? { kind: 'ok', value: prior.value } : { kind: 'unavailable' }
+          : { kind: 'conflict' };
         const current = await read();
         if (current.kind !== 'ok') return current;
         const { document, expiresAt } = current.value;
@@ -229,6 +306,12 @@ export function createOwnerMailbox(input: Readonly<{
         if (!expiresAt) return { kind: 'unavailable' };
         const saved = await archive(entry, expiresAt);
         if (saved === 'applied') {
+          // The archive is the decision point. Only its winning outcome may
+          // change the owner preview; failed reconciliation stays in the index
+          // for a later poll to finish without re-executing the command.
+          if ((await savePreview(entry)) !== 'ok' || (await settlePreview(entry)) !== 'ok') {
+            return { kind: 'unavailable' };
+          }
           if (entry.kind !== 'channel_stop') await retire(operationId);
           return { kind: 'ok', value: entry };
         }
