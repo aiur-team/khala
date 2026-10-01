@@ -189,8 +189,10 @@ function BindingReview({ controller, identity, onReviewStatus, recipientLabel }:
   recipientLabel: string;
 }) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const count = data.view.access === 'ready' ? data.view.pending.length : 0;
-  const unresolved = data.submission.phase === 'submitting' || data.submission.phase === 'unknown';
+  const count = data.view.access === 'ready' || data.view.access === 'waiting_for_agent' && data.view.pendingKnown !== false
+    ? data.view.pending.length : 0;
+  const unresolved = data.submission.phase === 'submitting' || data.submission.phase === 'unknown'
+    || data.submission.phase === 'waiting_for_agent';
   useEffect(() => {
     onReviewStatus?.(identity, { pending: count, unresolved });
     return () => onReviewStatus?.(identity, null);
