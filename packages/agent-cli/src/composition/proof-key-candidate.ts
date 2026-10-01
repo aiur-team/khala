@@ -18,7 +18,6 @@ export function createProofKeyCandidateClient(options: Readonly<{
   signer: ProofSigner;
   sessions: SessionInspectionPort;
   origin: string;
-  openBrowser?(url: string): Promise<void>;
   fetch?: typeof fetch;
   diagnostic?(event: CandidateDiagnostic): void;
 }>) {
@@ -75,9 +74,6 @@ export function createProofKeyCandidateClient(options: Readonly<{
     try { approveUrl = new URL(result.approveUrl); } catch { return failed('candidate', 'unavailable', response.status); }
     if (approveUrl.origin !== options.origin || approveUrl.pathname !== '/api/human/channel-discovery/authority/approve'
       || approveUrl.searchParams.get('candidate') !== result.candidateId) return failed('candidate', 'unavailable', response.status);
-    if (result.kind === 'pending_owner' && options.openBrowser) {
-      await options.openBrowser(approveUrl.href).catch(() => undefined);
-    }
     return { kind: response.status === 200 ? 'approved' : 'pending_owner',
       candidateId: result.candidateId, approveUrl: approveUrl.href };
   };

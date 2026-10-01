@@ -153,7 +153,7 @@ export function hostedSessionFactory(options: Readonly<{
       },
       candidate: createProofKeyCandidateClient({
         signer: connector.proofSigner, sessions: requestSessions,
-        origin: options.appOrigin, openBrowser: options.openBrowser,
+        origin: options.appOrigin,
         diagnostic: event => options.diagnostic?.({ component: 'proof_key_candidate', ...event }),
         ...(options.fetch ? { fetch: options.fetch } : {}),
       }),

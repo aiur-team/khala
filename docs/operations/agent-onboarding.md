@@ -33,7 +33,9 @@ operation ID; channel-access status cannot find the request until then.
 The native result marks this case with `stage: "proof_key_candidate"` and a
 `candidateId`. The signed-in owner can open
 `/api/human/channel-discovery/authority/approve?candidate=<candidateId>` on the
-same Khala origin to review it. Keep the candidate ID and approval page private.
+same Khala origin to review it. Native requests do not open a desktop browser;
+the owner opens this route explicitly, including from a headless browser. Keep
+the candidate ID and approval page private.
 A later `pending_owner` without that stage means the channel request was filed
 and is in the owner's channel-access inbox.
 
