@@ -14,6 +14,7 @@ import { runCli } from '../../../packages/agent-cli/src/cli/app';
 import { openInbox, type BatchInbox } from '../../../packages/agent-cli/src/cli/inbox';
 import type { AgentClientPort } from '../../../packages/agent-cli/src/cli/types';
 import { createCodexSetupAdapter, codexPaths } from '../../../packages/agent-cli/src/setup/adapters/codex';
+import { CODEX_NATIVE_SYNC_VERSIONS } from '../../../packages/harnesses/src/codex/interactive';
 import { setupEnvironment } from '../../../packages/agent-cli/src/setup/environment';
 import { sha256 } from '../../../packages/agent-cli/src/setup/filesystem';
 import { executeSetupPlan, type ExecutablePlan } from '../../../packages/agent-cli/src/setup/transaction';
@@ -39,6 +40,8 @@ const originDiagnosticsPath = path.join(state, 'origin-diagnostics.jsonl');
 const inboxDiagnosticsPath = path.join(state, 'inbox-diagnostics.jsonl');
 const command = process.argv[2];
 const args = process.argv.slice(3);
+const candidateVersion = process.env.KHALA_42_NATIVE_CANDIDATE_VERSION ?? '0.157.1';
+if (!CODEX_NATIVE_SYNC_VERSIONS.includes(candidateVersion)) throw new Error('native_version_unproven');
 const utf8 = new TextEncoder();
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const decodedValue = <T>(decoded: Decoded<T>): T => {
@@ -213,7 +216,7 @@ async function setup(): Promise<void> {
   const adapter = createCodexSetupAdapter({ skill });
   const plan = async (): Promise<ExecutablePlan> => {
     const detection = await adapter.detect(env);
-    if (detection.version !== '0.157.1' || !detection.supported) throw new Error('native_version_unproven');
+    if (detection.version !== candidateVersion || !detection.supported) throw new Error('native_version_unproven');
     const observation = await adapter.inspect(env, detection);
     const planned = adapter.executablePlan({ desired: 'present', observation });
     const operations = planned.operations;
@@ -233,7 +236,7 @@ async function setup(): Promise<void> {
     searchPath: process.env.PATH ?? '', confirmedDigest: approved.planDigest, replan: plan,
   });
   if (result.kind !== 'committed') throw new Error(`setup_${result.kind}`);
-  process.stdout.write(JSON.stringify({ setup: result.kind, version: '0.157.1',
+  process.stdout.write(JSON.stringify({ setup: result.kind, version: candidateVersion,
     components: ['skill', 'hooks', 'mcp_entry'], trust: 'awaiting_native_review' }) + '\n');
 }
 
@@ -268,7 +271,7 @@ async function bind(): Promise<void> {
       const p = record.payload;
       if (record.type === 'session_meta' && typeof p?.id === 'string'
         && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(p.id) && p.cwd === workdir
-        && p.cli_version === '0.157.1') sessionId = p.id;
+        && p.cli_version === candidateVersion) sessionId = p.id;
       if (record.type === 'turn_context' && p?.model === 'gpt-6-sol' && p.cwd === workdir) solTurn = true;
     }
     if (sessionId && solTurn) candidates.push({ sessionId, sessionFile });
@@ -297,7 +300,7 @@ async function bind(): Promise<void> {
   if (!tui) throw new Error('native_tui_snapshot_missing');
   const daemonPrefix = path.join(codexHome, 'packages', 'app-server-daemon') + path.sep;
   const daemons = snapshots.filter(item => item.cgroup === tui.cgroup
-    && item.executable.startsWith(daemonPrefix)).map(({ pid, startTime, executable, cgroup }) =>
+    && (item.executable.startsWith(daemonPrefix) || item.pid === tui.pid)).map(({ pid, startTime, executable, cgroup }) =>
     ({ pid, startTime, executable, cgroup }));
   if (daemons.length === 0) throw new Error('native_app_server_unproven');
   const binding = {
@@ -319,7 +322,7 @@ async function bind(): Promise<void> {
     sessionId, workdir, codexHome, preflightRoot: root, nativePid: processIds[0],
     nativeStartTime: tui.startTime, preflightBindingId: binding.bindingId,
     preflightGeneration: binding.generation }) + '\n', { mode: 0o600, flag: 'wx' });
-  process.stdout.write(JSON.stringify({ bound: true, nativePid: processIds[0], version: '0.157.1',
+  process.stdout.write(JSON.stringify({ bound: true, nativePid: processIds[0], version: candidateVersion,
     model: 'gpt-6-sol', workdirMatched: true, pinnedDaemons: daemons.length,
     crashDescriptor: crashDescriptorPath }) + '\n');
 }

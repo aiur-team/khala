@@ -2,6 +2,7 @@
 // the crash proof. This neither creates a session nor claims model consumption.
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { CODEX_NATIVE_SYNC_VERSIONS } from '../../../packages/harnesses/src/codex/interactive';
 
 export type NativeSolHandoff = Readonly<{
   sessionId: string;
@@ -25,7 +26,10 @@ const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** A past Sol turn cannot attest a session whose latest turn switched models. */
-export function nativeSolRolloutMatches(rollout: string, sessionId: string, workdir: string): boolean {
+export function nativeSolRolloutMatches(
+  rollout: string, sessionId: string, workdir: string, expectedVersion: string,
+): boolean {
+  if (!CODEX_NATIVE_SYNC_VERSIONS.includes(expectedVersion)) return false;
   let sessionMeta = false;
   let latestTurn: Record<string, unknown> | null = null;
   for (const line of rollout.split('\n')) {
@@ -35,7 +39,7 @@ export function nativeSolRolloutMatches(rollout: string, sessionId: string, work
     if (!record(item) || !record(item.payload)) continue;
     if (item.type === 'session_meta') {
       if (item.payload.id !== sessionId || item.payload.cwd !== workdir
-        || item.payload.cli_version !== '0.157.1') return false;
+        || item.payload.cli_version !== expectedVersion) return false;
       sessionMeta = true;
     }
     if (item.type === 'turn_context') latestTurn = item.payload;
@@ -44,7 +48,9 @@ export function nativeSolRolloutMatches(rollout: string, sessionId: string, work
 }
 
 /** A private preflight binding is not the crash runner's separately minted binding. */
-export async function inspectNativeSolHandoff(input: NativeSolHandoff): Promise<NativeSolHandoffResult> {
+export async function inspectNativeSolHandoff(
+  input: NativeSolHandoff, expectedVersion: string,
+): Promise<NativeSolHandoffResult> {
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(input.sessionId)
     || !absolute(input.workdir) || !absolute(input.codexHome) || !absolute(input.preflightRoot)
     || input.codexHome !== path.join(input.preflightRoot, 'codex-home')
@@ -84,7 +90,7 @@ export async function inspectNativeSolHandoff(input: NativeSolHandoff): Promise<
     if (!sessionFile.startsWith(path.join(input.codexHome, 'sessions') + path.sep)
       || !sessionFile.endsWith('.jsonl')) return blocked();
     const rollout = await readFile(sessionFile, 'utf8');
-    if (!nativeSolRolloutMatches(rollout, input.sessionId, input.workdir)) return blocked();
+    if (!nativeSolRolloutMatches(rollout, input.sessionId, input.workdir, expectedVersion)) return blocked();
 
     const pid = input.nativePid;
     const [executable, cwd, statText, cgroupText, environment, argvBytes] = await Promise.all([

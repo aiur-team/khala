@@ -134,14 +134,21 @@ describe('interactive Codex capabilities', () => {
     expect(capabilities.modes.steer.reason).toContain('0.155.0 has no interactive hook proof');
   });
 
-  it('keeps 0.159.3 unsupported after model-visible hooks without a later exact receipt', () => {
-    const preflight = interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
-      { proven: true, route: 'hook', version: '0.156.1' });
-    expect(preflight).toMatchObject({ support: 'unsupported', acknowledgement: 'unknown',
-      evidenceRef: 'docs/evidence/codex-0159-3-boundaries.md' });
-    expect(Object.values(preflight.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
-    expect(preflight.modes.steer.reason).toContain('attempted call');
-    expect(preflight.modes.sync.reason).toContain('exact binding and generation');
+  it('limits 0.159.3 to the normally trusted Linux x64 Sync witness', () => {
+    const proven = interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.159.3' }, 'available',
+      { platform: 'linux', arch: 'x64' });
+    expect(proven).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call',
+      immediateNotification: 'native_cli_queue', evidenceRef: 'docs/evidence/codex-0159-3-native-sync.md' });
+    expect(Object.values(proven.modes).map(mode => mode.status)).toEqual(['unknown', 'proven', 'unknown']);
+    const untrusted = interactiveCodexCapabilities('0.159.3', limits,
+      { state: 'awaiting_hook_review', reason: 'not trusted' }, undefined, 'available');
+    expect(untrusted.support).toBe('unsupported');
+    expect(interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.156.1' }).acknowledgement).toBe('unknown');
+    expect(interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
+      undefined, 'available', { platform: 'linux', arch: 'arm64' }).support).toBe('unsupported');
+    expect(interactiveCodexCapabilities('0.159.2', limits, { state: 'trusted' }).support).toBe('unsupported');
   });
 
   it('claims the native queue notification only while the idle wake works', () => {

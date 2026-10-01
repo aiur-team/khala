@@ -49,10 +49,12 @@ describe('local harness capabilities', () => {
     expect(await localHarness(() => environment({ version: '0.157.1', config: TRUST })).observation(binding('codex')))
       .toEqual({ version: '0.157.1', hookReview: 'trusted', platform: process.platform, arch: process.arch });
     expect(await inspectHostedCodexHooks(environment({ version: '0.157.0', config: TRUST }))).toBeNull();
-    expect(await inspectHostedCodexHooks(environment({ version: '0.159.3', config: TRUST }))).toBeNull();
+    expect(await inspectHostedCodexHooks(environment({ version: '0.159.3', config: TRUST })))
+      .toMatchObject({ version: '0.159.3', support: 'tested', modes: { sync: { status: 'proven' } } });
     expect(await localHarnessCapabilities(() => environment({ version: '0.159.3', config: TRUST }))(binding('codex')))
-      .toMatchObject({ support: 'unsupported', acknowledgement: 'unknown',
-        evidenceRef: 'docs/evidence/codex-0159-3-boundaries.md' });
+      .toMatchObject({ support: 'tested', acknowledgement: 'unknown',
+        evidenceRef: 'docs/evidence/codex-0159-3-native-sync.md' });
+    expect(await inspectHostedCodexHooks(environment({ version: '0.159.2', config: TRUST }))).toBeNull();
     expect(await inspectHostedCodexHooks(environment({ version: '0.156.1', config: TRUST }))).toBeNull();
     expect(await inspectHostedCodexHooks(environment({ version: null, config: TRUST }))).toBeNull();
   });

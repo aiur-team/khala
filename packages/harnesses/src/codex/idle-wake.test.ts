@@ -49,6 +49,14 @@ describe('codex idle wake', () => {
     expect(wake.state(binding)).toBe('available');
   });
 
+  it('queues only Sync for the witnessed 0.159.3 session', async () => {
+    const { wake, runs } = harness();
+    expect(await wake.wake(binding, 'steer', '0.159.3')).toBe('not_idle_mode');
+    expect(await wake.wake(binding, 'sync', '0.159.3')).toBe('queued');
+    expect(runs).toHaveLength(1);
+    expect(await wake.wake(binding, 'sync', '0.159.2')).toBe('unsupported_version');
+  });
+
   it('coalesces concurrent wakes into one queue command', async () => {
     const releases: (() => void)[] = [];
     const { wake, runs } = harness(() => new Promise(resolve => { releases.push(() => resolve({ status: 'queued' })); }));
