@@ -40,11 +40,13 @@ test('Claude evidence correlates read result by tool_use_id before send', () => 
   const call = (id, name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
   const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
   const read = call('read-1', 'khala_read');
-  const send = call('send-1', 'khala_send', { message: 'reply', ackBatchToken: 'token-2' });
+  const send = call('send-1', 'khala_send', { message: 'reply' });
   assert.deepEqual(modelEvidence([read, result('unrelated', 'challenge'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: false, sendCall: false });
-  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge\nbatchToken: token-2'), send], 'claude', 'challenge', 'reply'),
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([send, read, result('read-1', 'challenge')], 'claude', 'challenge', 'reply'),
+    { readCall: true, visible: true, sendCall: false });
 });
 
 test('quoted challenge is visible only in the matching native read result', () => {

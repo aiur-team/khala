@@ -67,10 +67,11 @@ export function modelEvidence(rows, harness, received, sent) {
     return results.filter(result => result.id === call.id && result.index > call.index && !result.error
       && contains(result.content, received)).map(result => ({ ...result, token: batchToken(result.content) }));
   });
-  const sendCall = successful.some(read => read.token && calls.some(call => {
+  const sendCall = successful.some(read => calls.some(call => {
     const input = asObject(call.input);
     return call.index > read.index && isTool(call.name, 'khala_send') && !call.error
-      && contains(input?.message, sent) && input?.ackBatchToken === read.token;
+      && contains(input?.message, sent)
+      && (harness === 'claude' || Boolean(read.token) && input?.ackBatchToken === read.token);
   }));
   return { readCall: reads.length > 0, visible: successful.length > 0, sendCall };
 }
