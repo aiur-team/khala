@@ -202,6 +202,7 @@ async function main() {
   const inheritedToolEnv = Object.fromEntries(['PATH', 'LANG', 'LC_ALL', 'CI', 'PLAYWRIGHT_BROWSERS_PATH']
     .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   env = { ...inheritedToolEnv, HOME: privateHome, TMPDIR: privateTmp,
+    PLAYWRIGHT_BROWSERS_PATH: inheritedToolEnv.PLAYWRIGHT_BROWSERS_PATH ?? path.join(os.homedir(), '.cache/ms-playwright'),
     XDG_DATA_HOME: path.join(scratch, 'xdg-data'), XDG_STATE_HOME: path.join(scratch, 'state'),
     CODEX_HOME: path.join(scratch, 'codex'),
     KHALA_ENVIRONMENT: 'preview', KHALA_STATE_NAMESPACE: project,
@@ -298,6 +299,7 @@ async function main() {
       KHALA_E2E_USER_B: env.KHALA_PREVIEW_OIDC_USER_B_EMAIL, KHALA_E2E_USER_B_PASSWORD: passwordB,
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
       KHALA_APP_ORIGIN: origin, XDG_STATE_HOME: path.join(scratch, 'state') };
+    await writeFile(smokeEnv.KHALA_E2E_STAGE_DIAGNOSTIC, JSON.stringify({ stage: 'browser-launch' }), { mode: 0o600 });
     try {
       for (const name of ['two OAuth humans create', 'an account without admission']) {
         await command('pnpm', ['test:integration', 'tests/integration/human/create-share-chat.spec.ts',
@@ -307,7 +309,7 @@ async function main() {
     } catch (error) {
       try {
         const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_STAGE_DIAGNOSTIC, 'utf8'));
-        const allowed = new Set(['alice-create', 'alice-send', 'alice-share', 'bob-join', 'bob-send',
+        const allowed = new Set(['browser-launch', 'alice-create', 'alice-send', 'alice-share', 'bob-join', 'bob-send',
           'matrix-ciphertext', 'alice-history', 'bob-history', 'outsider-create', 'outsider-signin',
           'outsider-room', 'outsider-send', 'outsider-denial']);
         if (allowed.has(report.stage)) {
