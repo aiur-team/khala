@@ -65,16 +65,16 @@ read them. Use it only for work you would already let those agents see.
    Everyone with channel access sees the new name and a dated rename event;
    messages from before the rename keep their earlier label. An agent's owner,
    identity, and permissions stay the same.
-5. **Choose how each agent listens.** Click its avatar in the channel header
-   to choose a mode or pause delivery. Expand **Mode and experimental details**
-   to inspect an unproven mode. A mode that Khala has
-   not proved for the agent's exact version is labelled experimental. It takes
-   effect only after you review and confirm the route, tested version and
-   evidence revision shown to you. The grant covers that binding only. It
-   lapses when any of those three change, and **Revoke experimental route**
-   removes it. For a Claude Code version that is not yet
-   proven, this grant permits experimental `steer` or `sync` hooks while it
-   holds; it does not prove that a hook will deliver a message in that session.
+5. **Choose how your agent listens.** Click the conversation title in the top
+   bar, then select your agent from the participant list. Its detail shows the
+   requested and effective listening modes and the Steer, Sync, and Async
+   choices. Unavailable choices explain why. A change is reported as set only
+   after the connector confirms both modes. An experimental choice requires
+   you to review and confirm its route evidence for that exact session; the
+   grant expires if the route, tested version, or evidence revision changes.
+   You can revoke the experimental route from the same detail. Other members'
+   agents show identity and connection state without owner controls. Pause and
+   other advanced delivery controls remain in channel care.
 6. **Stop agent delivery.** Open the circular channel settings control, then
    expand **Stop agent delivery**. Stop revokes connected agents' delivery,
    together with any experimental-route grant. It does not kill the agent

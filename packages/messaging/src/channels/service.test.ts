@@ -24,6 +24,48 @@ describe('channel service', () => {
     expect(substrate.subscribers(room.roomId)).toBe(0);
   });
 
+  it('replays the current room snapshot to a listener mounted after another observer', async () => {
+    const { service, substrate } = harness();
+    const room = substrate.addRoom();
+    const first: string[] = [];
+    service.observe(room.roomId, snapshot => first.push(snapshot.room.revision));
+    substrate.emit(room.roomId, { generation: 1, room, events: [] });
+    await settle();
+    expect(first).toEqual([room.revision]);
+
+    const late: string[] = [];
+    service.observe(room.roomId, snapshot => late.push(snapshot.room.revision));
+    await settle();
+    expect(late).toEqual([room.revision]);
+    expect(substrate.subscribers(room.roomId)).toBe(1);
+  });
+
+  it('does not replay a room snapshot after the late listener unsubscribes', async () => {
+    const { service, substrate } = harness();
+    const room = substrate.addRoom();
+    service.observe(room.roomId, () => {});
+    substrate.emit(room.roomId, { generation: 1, room, events: [] });
+    await settle();
+
+    const seen: string[] = [];
+    const stop = service.observe(room.roomId, snapshot => seen.push(snapshot.room.revision));
+    stop();
+    await settle();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not duplicate an update already queued when the late listener mounts', async () => {
+    const { service, substrate } = harness();
+    const room = substrate.addRoom();
+    service.observe(room.roomId, () => {});
+    substrate.emit(room.roomId, { generation: 1, room, events: [] });
+
+    const seen: string[] = [];
+    service.observe(room.roomId, snapshot => seen.push(snapshot.room.revision));
+    await settle();
+    expect(seen).toEqual([room.revision]);
+  });
+
   it('stops every observation and refuses later commands', async () => {
     const { service, substrate } = harness();
     const room = substrate.addRoom();

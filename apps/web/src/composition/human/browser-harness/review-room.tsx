@@ -34,7 +34,7 @@ const closureDenied = new URLSearchParams(location.search).has('closure-denied')
 const closureUnknown = new URLSearchParams(location.search).has('closure-unknown');
 const closureCalls: string[] = [];
 const navigations: string[] = [];
-const oldBinding = { bindingId, generation: 0, agentParticipantId: race ? 'Old agent' : 'My agent',
+const oldBinding = { bindingId, generation: 0, agentParticipantId: identityTiming ? 'agent_1' : race ? 'Old agent' : 'My agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_OLD', fingerprint: 'A'.repeat(43) } };
 const newBinding = { bindingId, generation: 1, agentParticipantId: 'New agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_NEW', fingerprint: 'B'.repeat(43) } };

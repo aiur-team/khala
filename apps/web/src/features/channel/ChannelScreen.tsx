@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ThemeChoice } from '../../shell/types';
-import type { ChannelController } from './controller';
+import type { ChannelAgentView, ChannelController } from './controller';
 import { ChatThread, ConversationLayout } from '../../ui/conversation';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { participantRosterName } from './participant-name';
@@ -25,6 +25,7 @@ export interface ChannelScreenProps {
   renderShare?: () => ReactNode;
   renderHeaderActions?: () => ReactNode;
   renderDetailsActions?: (open: boolean) => ReactNode;
+  renderOwnerControls?: (agent: ChannelAgentView) => ReactNode;
   showPresence?: boolean;
   onBack?: () => void;
   embedded?: boolean;
@@ -46,9 +47,11 @@ function ChannelParticipants({ controller, currentNames, description, viewerName
     {phase === 'unavailable' ? <span role="status">Participants unavailable</span> : null}
     {agents.slice(0, 4).map(agent => {
       const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
-      return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · ${agent.connection}`}>
+      const state = agent.connection === 'unknown' ? 'Unavailable' : agent.connection === 'connected' ? 'Connected'
+        : agent.connection === 'stale' ? 'Stale' : 'Offline';
+      return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · ${state}`}>
         <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{name}</span>
-        <span className="channel-participants__state">{agent.connection === 'unknown' ? 'Unknown' : agent.connection === 'connected' ? 'Connected' : agent.connection === 'stale' ? 'Stale' : 'Offline'}</span>
+        <span className="channel-participants__state">{state}</span>
       </span>;
     })}
     {agents.length > 4 ? <span className="channel-participants__more">+{agents.length - 4}</span> : null}
@@ -56,7 +59,7 @@ function ChannelParticipants({ controller, currentNames, description, viewerName
 }
 
 export function ChannelScreen({ title, description, theme = 'dark', controller, viewerOwnerId, viewerName, humanParticipants, currentNames, namesPending, renameAgent, renameScope,
-  renderTimeline, renderShare, renderHeaderActions, renderDetailsActions, onBack, embedded = false }: ChannelScreenProps) {
+  renderTimeline, renderShare, renderHeaderActions, renderDetailsActions, renderOwnerControls, onBack, embedded = false }: ChannelScreenProps) {
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   const [rosterOpen, setRosterOpen] = useState(false);
   const roster = useRef<HTMLDetailsElement>(null);
@@ -86,7 +89,7 @@ export function ChannelScreen({ title, description, theme = 'dark', controller, 
       <div className="channel-roster__panel" aria-label="Channel participants and agents">
         {viewerName ? <div className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(viewerName, 'You').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(viewerName, 'You')}<small>Human</small></span><span className="channel-roster__role">You</span></div> : null}
         {humanParticipants?.map(participant => <div key={participant.participantId} className="channel-roster__viewer"><span className="channel-participants__avatar channel-participants__avatar--human" aria-hidden="true">{participantRosterName(participant.displayName, 'Channel member').trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-roster__viewer-name">{participantRosterName(participant.displayName, 'Channel member')}<small>Human</small></span></div>)}
-        {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} /> : null}
+        {rosterOpen ? <AgentPresencePanel controller={controller} {...(viewerOwnerId ? { viewerOwnerId } : {})} {...(currentNames ? { currentNames } : {})} {...(namesPending !== undefined ? { namesPending } : {})} {...(renameScope ? { renameScope } : {})} {...(renameAgent ? { renameAgent } : {})} {...(renderOwnerControls ? { renderOwnerControls } : {})} /> : null}
         {renderDetailsActions?.(rosterOpen)}
       </div>
     </details>
