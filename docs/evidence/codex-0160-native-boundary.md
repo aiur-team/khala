@@ -1,5 +1,25 @@
 # Codex 0.160.0 native hosted boundary
 
+## 2026-10-01 isolated later-call recheck (#810)
+
+An exact native `codex-cli 0.160.0` executable with SHA-256
+`12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad`
+ran in a new private home and workdir. A read-only link supplied provider auth;
+the saved owner session and its configuration were untouched. With Codex's own
+sandbox bypass enabled inside the externally restricted agent workspace, a
+model-origin shell call completed with exit code zero and returned the requested
+synthetic marker. The same pinned binary then started this checkout's bundled
+Khala MCP server through invocation-only configuration. The model called
+`khala_read`; the server returned `refused/not_connected`, as expected without a
+channel binding. Raw rollouts and auth material are excluded from this record.
+
+This narrows the earlier bubblewrap failure to that probe's sandbox execution
+path: 0.160.0 can execute a later model-origin call and can invoke the Khala MCP
+tool in an isolated `codex exec` session. It does **not** establish an installed
+trusted TUI hook, queue wake, bound channel read, exact-token ACK, cursor
+advancement, reply, or a production route. The unsupported gate below remains
+in force pending those same-session receipts.
+
 The 2026-10-01 recheck of the installed package and native binary returned the
 same version and digest recorded below. The public launcher is a shell script
 with a different digest and is not the executable pin.
