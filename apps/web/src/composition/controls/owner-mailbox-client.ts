@@ -24,6 +24,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   const waitMs = input.waitMs ?? 8_000;
   const possiblySubmitted = new Set<string>();
   const originalCommands = new Map<string, PolicySetCommand>();
+  const pendingStatuses = new Map<BindingId, string>();
 
   async function read(response: Response): Promise<Reply> {
     if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return { status: response.status, body: null };
@@ -77,9 +78,17 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
 
   return {
     async status(bindingId, signal) {
-      const operationId = `status_${crypto.randomUUID().replaceAll('-', '')}`;
-      const answer = await awaitOutcome(bindingId, operationId,
-        await submit(bindingId, operationId, 'controls_status', { bindingId }, signal), signal);
+      let operationId = pendingStatuses.get(bindingId);
+      const created = operationId === undefined;
+      if (!operationId) {
+        operationId = `status_${crypto.randomUUID().replaceAll('-', '')}`;
+        pendingStatuses.set(bindingId, operationId);
+      }
+      const existing = created ? null : await result(bindingId, operationId, signal);
+      const first = existing?.status === 404 || existing === null
+        ? await submit(bindingId, operationId, 'controls_status', { bindingId }, signal) : existing;
+      const answer = await awaitOutcome(bindingId, operationId, first, signal);
+      if (completed(answer, operationId)) pendingStatuses.delete(bindingId);
       if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       const outcome = completed(answer, operationId);
       if (outcome?.ok === true && 'status' in outcome) return { kind: 'ok', body: outcome.status };
