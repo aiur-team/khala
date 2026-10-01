@@ -23,7 +23,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
     await alice.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(alice).toHaveURL(/\/channels\//u);
-    await alice.getByLabel('Message').fill(intro);
+    await alice.getByLabel('Message', { exact: true }).fill(intro);
     await alice.getByRole('button', { name: 'Send' }).click();
     await expect(alice.getByText(intro)).toBeVisible();
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
@@ -51,7 +51,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     // The current product default is link admission with no earlier history.
     await expect(bob.getByText(intro)).toHaveCount(0);
     const reply = syntheticCanary('reply');
-    await bob.getByLabel('Message').fill(reply);
+    await bob.getByLabel('Message', { exact: true }).fill(reply);
     await bob.getByRole('button', { name: 'Send' }).click();
     await expect(bob.getByText(reply)).toBeVisible();
 
@@ -82,7 +82,7 @@ test('an account without admission cannot read a protected room', async ({ brows
     const canary = syntheticCanary('protected');
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(owner).toHaveURL(/\/channels\//u);
-    await owner.getByLabel('Message').fill(canary);
+    await owner.getByLabel('Message', { exact: true }).fill(canary);
     await owner.getByRole('button', { name: 'Send' }).click();
     await expect(owner.getByText(canary)).toBeVisible();
     await ownerContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
