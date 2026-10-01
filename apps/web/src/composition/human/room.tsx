@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
@@ -154,11 +154,14 @@ export function HumanControls({ context, roomId, review, capability, refreshMs }
     context={context} roomId={roomId} capability={capability} binding={binding} />)}</>;
 }
 
-function ReviewForBinding({ context, roomId, capability, binding }: {
+type ReviewAttention = Readonly<{ pending: number; unresolved: boolean }>;
+
+function ReviewForBinding({ context, roomId, capability, binding, onReviewStatus }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   capability: ReviewCapability;
   binding: OwnerReviewBinding;
+  onReviewStatus?: (identity: string, status: ReviewAttention | null) => void;
 }) {
   const [controller, setController] = useState<ReviewController | null>(null);
   const identity = reviewIdentity(context, roomId, binding);
@@ -175,8 +178,72 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     }, 0);
     return () => { clearTimeout(timer); active?.dispose(); };
   }, [identity, capability, context, roomId]);
-  return controller ? <ReviewScreen controller={controller} recipientLabel={binding.agentParticipantId}
-    renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
+  return controller ? <BindingReview controller={controller} identity={identity} {...(onReviewStatus ? { onReviewStatus } : {})}
+    recipientLabel={binding.agentParticipantId} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
+}
+
+function BindingReview({ controller, identity, onReviewStatus, recipientLabel }: {
+  controller: ReviewController;
+  identity: string;
+  onReviewStatus?: (identity: string, status: ReviewAttention | null) => void;
+  recipientLabel: string;
+}) {
+  const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const count = data.view.access === 'ready' ? data.view.pending.length : 0;
+  const unresolved = data.submission.phase === 'submitting' || data.submission.phase === 'unknown';
+  useEffect(() => {
+    onReviewStatus?.(identity, { pending: count, unresolved });
+    return () => onReviewStatus?.(identity, null);
+  }, [identity, count, unresolved, onReviewStatus]);
+  return <ReviewScreen controller={controller} recipientLabel={recipientLabel}
+    renderContent={content => <span dir="auto">{content.body}</span>} />;
+}
+
+function PendingRecipientReview({ context, roomId, capability, bindings }: {
+  context: Parameters<HumanRoomRenderer>[0];
+  roomId: ReviewRoomId;
+  capability: ReviewCapability;
+  bindings: readonly OwnerReviewBinding[];
+}) {
+  const [statuses, setStatuses] = useState<ReadonlyMap<string, ReviewAttention>>(new Map());
+  const [open, setOpen] = useState(false);
+  const [focusedAfterClose, setFocusedAfterClose] = useState(false);
+  const summary = useRef<HTMLElement>(null);
+  const onReviewStatus = useCallback((identity: string, status: ReviewAttention | null) => {
+    setStatuses(current => {
+      const previous = current.get(identity);
+      if (previous?.pending === status?.pending && previous?.unresolved === status?.unresolved) return current;
+      const next = new Map(current);
+      if (status) next.set(identity, status);
+      else next.delete(identity);
+      return next;
+    });
+  }, []);
+  const attention = bindings.map(binding => statuses.get(reviewIdentity(context, roomId, binding)));
+  const pending = attention.reduce((total, status) => total + (status?.pending ?? 0), 0);
+  const unresolved = attention.some(status => status?.unresolved);
+  if (bindings.length === 0) return null;
+  return <details className="recipient-review-disclosure" hidden={pending === 0 && !unresolved && !open && !focusedAfterClose}
+    onToggle={event => {
+      setOpen(event.currentTarget.open);
+      if (open && !event.currentTarget.open && pending === 0 && !unresolved) {
+        setFocusedAfterClose(event.currentTarget.contains(document.activeElement));
+      }
+    }} onBlur={event => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setFocusedAfterClose(false);
+    }} onKeyDown={event => {
+      if (event.key !== 'Escape' || !event.currentTarget.open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.open = false;
+      summary.current?.focus();
+    }}>
+    <summary ref={summary}>{pending > 0 ? `Review ${pending} pending` : unresolved ? 'Check release status' : 'Recipient review'}</summary>
+    <div className="recipient-review-disclosure__panel" aria-label="Pending recipient review">
+      {bindings.map(binding => <ReviewForBinding key={reviewIdentity(context, roomId, binding)}
+        context={context} roomId={roomId} capability={capability} binding={binding} onReviewStatus={onReviewStatus} />)}
+    </div>
+  </details>;
 }
 
 function useOwnerBindingTrust(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
@@ -388,9 +455,13 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
-      renderHeaderActions={() => <ConversationSettingsDisclosure scope={participantScope}
-        recovery={{ ports: recovery, controller: recoveryController, config: { roomId, roomRevision: 0 },
-          onClosureParticipationEnded: () => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/') }} />}
+      renderHeaderActions={() => <>
+        {capability && trustedBindings ? <PendingRecipientReview context={context} roomId={roomId}
+          capability={capability} bindings={trustedBindings.bindings} /> : null}
+        <ConversationSettingsDisclosure scope={participantScope}
+          recovery={{ ports: recovery, controller: recoveryController, config: { roomId, roomRevision: 0 },
+            onClosureParticipationEnded: () => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/') }} />
+      </>}
       renderDetailsActions={open => <ClosureAction ports={recovery} controller={recoveryController}
         config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
         onClosureParticipationEnded={() => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/')} />}
