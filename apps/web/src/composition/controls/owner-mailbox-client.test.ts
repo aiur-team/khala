@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
 import { createOwnerMailboxControlsClient } from './owner-mailbox-client';
 
@@ -11,6 +11,82 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
   { status, headers: { 'content-type': 'application/json' } });
 
 describe('owner mailbox controls client', () => {
+  beforeEach(() => { if (typeof globalThis.sessionStorage !== 'undefined') globalThis.sessionStorage.clear(); });
+  it('keeps the same status ID and backoff across a tab reload', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); } };
+    const submitted: string[] = [];
+    let reads = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+        submitted.push(operationId);
+        return json(200, { v: 1, operationId, outcome: null });
+      }
+      reads += 1;
+      return json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'),
+        outcome: { ok: true, status: {} } });
+    };
+    const create = () => createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 0, storage });
+    const signal = new AbortController().signal;
+    expect(await create().status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await create().status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(submitted).toHaveLength(1);
+    expect(reads).toBe(0);
+    now += 15_000;
+    expect(await create().status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
+    expect(submitted).toHaveLength(1);
+    expect(reads).toBe(1);
+    clock.mockRestore();
+  });
+  it('bounds result requests during and after the first offline wait', async () => {
+    let submissions = 0;
+    let results = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        submissions += 1;
+        return json(200, { v: 1, operationId: (JSON.parse(String(init?.body)) as { operationId: string }).operationId,
+          outcome: null });
+      }
+      results += 1;
+      return json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'), outcome: null });
+    };
+    const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 120 });
+    const signal = new AbortController().signal;
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    for (let i = 0; i < 10; i++) {
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    }
+    expect(submissions).toBe(1);
+    expect(results).toBe(1);
+  });
+  it('uses in-memory retry state when browser storage is blocked', async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true,
+      get() { throw new Error('storage blocked'); } });
+    try {
+      let submissions = 0;
+      const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value', waitMs: 0,
+        fetch: async (_url, init) => {
+          submissions += 1;
+          return json(200, { v: 1, operationId: (JSON.parse(String(init?.body)) as { operationId: string }).operationId,
+            outcome: null });
+        } });
+      const signal = new AbortController().signal;
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+      expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+      expect(submissions).toBe(1);
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'sessionStorage', original);
+      else Reflect.deleteProperty(globalThis, 'sessionStorage');
+    }
+  });
   it('reuses an unresolved status operation until completion', async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);

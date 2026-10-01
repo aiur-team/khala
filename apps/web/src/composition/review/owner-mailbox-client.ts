@@ -2,7 +2,7 @@ import { decodeApprovalCommand, decodeDeliveryLimits, type ApprovalCommand, type
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { ReviewControlClient, ReviewPreviewRequest } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
-import { createMailboxReadRetry } from '../human/mailbox-retry';
+import { browserSessionStorage, createMailboxReadRetry } from '../human/mailbox-retry';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -31,13 +31,15 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const waitMs = input.waitMs ?? 8_000;
   const submittedCommands = new Set<string>();
   const pendingPreviews = new Map<BindingId, { digest: string; operationId: string; body: ReviewPreviewRequest }>();
-  const retry = createMailboxReadRetry();
   const limits = (() => {
     const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
     if (!decoded.ok) throw new Error('review_limits_invalid');
     return decoded.value;
   })();
-  const storage = input.storage ?? (typeof globalThis.sessionStorage === 'undefined' ? null : globalThis.sessionStorage);
+  const storage = input.storage ?? browserSessionStorage();
+  const readPrefix = `khala.review.read.v1:${origin.origin}`;
+  const retry = createMailboxReadRetry(storage, readPrefix);
+  const previewKey = (bindingId: BindingId) => `${readPrefix}:pending:${bindingId}`;
   const key = (bindingId: BindingId, roomId: RoomId, generation: number) =>
     `khala.review.unknown.v1:${bindingId}:${roomId}:${generation}`;
   function pending(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null {
@@ -92,7 +94,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
     if (first.body.outcome !== null) return first;
     const deadline = Date.now() + waitMs;
     while (!signal.aborted && Date.now() < deadline) {
-      await new Promise<void>(resolve => setTimeout(resolve, 200));
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(2_000, deadline - Date.now())));
       const next = await result(bindingId, operationId, signal);
       if (next?.status !== 200 || !object(next.body) || next.body.operationId !== operationId) return next;
       if (next.body.outcome !== null) return next;
@@ -107,11 +109,26 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body))));
       const digest = Array.from(hash.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
       let pending = pendingPreviews.get(body.bindingId);
+      if (!pending) {
+        try {
+          const raw = storage?.getItem(previewKey(body.bindingId));
+          const saved: unknown = raw ? JSON.parse(raw) : null;
+          if (object(saved) && typeof saved.digest === 'string' && /^[a-f0-9]{32}$/u.test(saved.digest)
+            && typeof saved.operationId === 'string'
+            && new RegExp(`^preview_${saved.digest}_[a-f0-9]{8}$`, 'u').test(saved.operationId)
+            && object(saved.body) && saved.body.bindingId === body.bindingId
+            && Array.isArray(saved.body.candidates) && Array.isArray(saved.body.releaseIds)) {
+            pending = saved as { digest: string; operationId: string; body: ReviewPreviewRequest };
+          }
+        } catch { /* Continue with a new read identity. */ }
+      }
       const created = pending === undefined;
       if (!pending) {
         pending = { digest, operationId: `preview_${digest}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`, body };
-        pendingPreviews.set(body.bindingId, pending);
+        try { storage?.setItem(previewKey(body.bindingId), JSON.stringify(pending)); }
+        catch { /* In-memory identity remains. */ }
       }
+      pendingPreviews.set(body.bindingId, pending);
       const { operationId } = pending;
       // A timed-out submit may already have committed. Reconcile the exact ID
       // first, and retry only that same command if the server has no record.
@@ -120,7 +137,10 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
         ? await submit(body.bindingId, operationId, 'review_preview', pending.body, signal) : existing;
       const answer = created || first !== existing ? await awaitOutcome(body.bindingId, operationId, first, signal) : first;
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
-        && answer.body.outcome !== null) pendingPreviews.delete(body.bindingId);
+        && answer.body.outcome !== null) {
+        pendingPreviews.delete(body.bindingId);
+        try { storage?.removeItem(previewKey(body.bindingId)); } catch { /* Terminal result remains authoritative. */ }
+      }
       const terminal = answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
         && object(answer.body.outcome) ? answer.body.outcome : null;
       if (terminal?.ok === false && terminal.code === 'unavailable') retry.delay(body.bindingId);

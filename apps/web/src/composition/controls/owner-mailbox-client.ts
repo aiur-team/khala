@@ -1,7 +1,7 @@
 import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ControlsClient } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
-import { createMailboxReadRetry } from '../human/mailbox-retry';
+import { browserSessionStorage, createMailboxReadRetry } from '../human/mailbox-retry';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -18,6 +18,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   csrf: () => Promise<string | null>;
   fetch?: Fetch;
   waitMs?: number;
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }>): ControlsClient {
   const origin = new URL(input.origin);
   if (parsePublicOrigin(input.origin, input.allowInsecureLoopback) !== input.origin) throw new Error('controls_origin_invalid');
@@ -26,7 +27,10 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   const possiblySubmitted = new Set<string>();
   const originalCommands = new Map<string, PolicySetCommand>();
   const pendingStatuses = new Map<BindingId, string>();
-  const retry = createMailboxReadRetry();
+  const storage = input.storage ?? browserSessionStorage();
+  const prefix = `khala.controls.read.v1:${origin.origin}`;
+  const retry = createMailboxReadRetry(storage, prefix);
+  const pendingKey = (bindingId: BindingId) => `${prefix}:pending:${bindingId}`;
 
   async function read(response: Response): Promise<Reply> {
     if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return { status: response.status, body: null };
@@ -64,7 +68,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
     if (first.body.outcome !== null) return first;
     const deadline = Date.now() + waitMs;
     while (!signal.aborted && Date.now() < deadline) {
-      await new Promise<void>(resolve => setTimeout(resolve, 200));
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(2_000, deadline - Date.now())));
       if (signal.aborted) return null;
       const next = await result(bindingId, operationId, signal);
       if (next?.status !== 200 || !object(next.body) || next.body.operationId !== operationId) return next;
@@ -82,17 +86,27 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
     async status(bindingId, signal) {
       if (!retry.ready(bindingId)) return { kind: 'refused', code: 'unavailable' };
       let operationId = pendingStatuses.get(bindingId);
+      if (!operationId) {
+        try {
+          const saved = storage?.getItem(pendingKey(bindingId));
+          if (saved && /^status_[a-f0-9]{32}$/u.test(saved)) operationId = saved;
+        } catch { /* Continue with a new read identity. */ }
+      }
       const created = operationId === undefined;
       if (!operationId) {
         operationId = `status_${crypto.randomUUID().replaceAll('-', '')}`;
-        pendingStatuses.set(bindingId, operationId);
+        try { storage?.setItem(pendingKey(bindingId), operationId); } catch { /* In-memory identity remains. */ }
       }
+      pendingStatuses.set(bindingId, operationId);
       const existing = created ? null : await result(bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(bindingId, operationId, 'controls_status', { bindingId }, signal) : existing;
       const answer = created || first !== existing ? await awaitOutcome(bindingId, operationId, first, signal) : first;
       const outcome = completed(answer, operationId);
-      if (outcome) pendingStatuses.delete(bindingId);
+      if (outcome) {
+        pendingStatuses.delete(bindingId);
+        try { storage?.removeItem(pendingKey(bindingId)); } catch { /* Terminal result remains authoritative. */ }
+      }
       if (outcome?.code === 'unavailable') retry.delay(bindingId);
       else if (outcome || answer?.status === 401 || answer?.status === 403) retry.clear(bindingId);
       else if (!signal.aborted) retry.delay(bindingId);

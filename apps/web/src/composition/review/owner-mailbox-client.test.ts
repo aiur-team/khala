@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 import type { ReviewPreviewRequest } from './browser-port';
 import { createOwnerMailboxReviewClient } from './owner-mailbox-client';
@@ -13,6 +13,40 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
   { status, headers: { 'content-type': 'application/json' } });
 
 describe('authenticated owner mailbox review client', () => {
+  beforeEach(() => { if (typeof globalThis.sessionStorage !== 'undefined') globalThis.sessionStorage.clear(); });
+  it('keeps the same preview ID and backoff across a tab reload', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); } };
+    const submitted: string[] = [];
+    let reads = 0;
+    const body: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+        submitted.push(operationId);
+        return json(200, { v: 1, operationId, outcome: null });
+      }
+      reads += 1;
+      return json(200, { v: 1, operationId: new URL(String(url)).searchParams.get('operation_id'),
+        outcome: { ok: true, preview: {} } });
+    };
+    const create = () => createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 0, storage });
+    const signal = new AbortController().signal;
+    expect(await create().review.preview(body, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await create().review.preview(body, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(submitted).toHaveLength(1);
+    expect(reads).toBe(0);
+    now += 15_000;
+    expect((await create().review.preview(body, signal)).kind).toBe('ok');
+    expect(submitted).toHaveLength(1);
+    expect(reads).toBe(1);
+    clock.mockRestore();
+  });
   it('reuses an unresolved preview operation until completion, then requests a fresh snapshot', async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);

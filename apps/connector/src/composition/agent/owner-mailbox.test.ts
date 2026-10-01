@@ -43,22 +43,12 @@ describe('protected hosted owner mailbox endpoint', () => {
     const roomId = '!room:example' as never;
     const principal = { ownerId: binding.ownerId, providerIssuer: 'https://issuer.test',
       providerSubject: 'subject-1' } as never;
+    const bindings = createAgentBindingStore({ store: state.store });
+    expect((await bindings.putParticipant({ ownerId: binding.ownerId, roomId,
+      agentParticipantId: binding.agentParticipantId, expectedBindingId: null,
+      record: { binding, revokedGeneration: null, capability: null } })).kind).toBe('applied');
     const source = createOwnerMailbox({ store: state.store, binding, roomId, clock: () => T0,
       authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
-    for (let i = 0; i < 64; i++) {
-      expect((await source.submit({ operationId: `offline_status_${i.toString().padStart(8, '0')}`,
-        kind: 'controls_status', body: { bindingId: binding.bindingId } }, principal)).kind).toBe('ok');
-    }
-    expect((await source.submit({ operationId: 'offline_status_new', kind: 'controls_status',
-      body: { bindingId: binding.bindingId } }, principal)).kind).toBe('ok');
-    const operationId = 'offline_approval_one';
-    expect((await source.submit({ operationId, kind: 'review_approve', body: {
-      v: 1, commandId: operationId, bindingId: binding.bindingId, roomId,
-      expectedPolicyVersion: 3, expectedBindingGeneration: 0, issuedAt: new Date(T0).toISOString(),
-      selection: [{ v: 1, roomId, eventId: 'event_1', authorParticipantId: 'peer_agent',
-        authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }],
-    } }, principal)).kind).toBe('ok');
-    expect((await source.pending()).kind).toBe('ok');
     const auth = { authenticateRequest: async () => ({ kind: 'authenticated', context: { principal } }),
       requireHumanMutation: async () => ({ kind: 'authorized', context: { principal } }) } as unknown as AuthService;
     const gateway = { inspectMembership: async () => ({ kind: 'joined', historyReady: false }) } as unknown as AdmissionGateway;
@@ -67,6 +57,23 @@ describe('protected hosted owner mailbox endpoint', () => {
     const routes = createOwnerMailboxRoutes({ auth, gateway, capabilities, store: state.store,
       clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes',
       inspectOwnerMembership: async () => ({ kind: 'joined' }), lookupAgentDevice: async () => null });
+    const submit = (operationId: string, kind: string, body: unknown) => routes.human.find(route => route.path.endsWith('/submit'))!
+      .handle(new Request('https://khala.aiur.team/api/human/owner-mailbox/submit', { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bindingId: binding.bindingId,
+          operationId, kind, body }) }));
+    for (let i = 0; i < 64; i++) {
+      expect((await submit(`offline_status_${i.toString().padStart(8, '0')}`, 'controls_status',
+        { bindingId: binding.bindingId })).status).toBe(200);
+    }
+    expect((await submit('offline_status_new', 'controls_status', { bindingId: binding.bindingId })).status).toBe(200);
+    const operationId = 'offline_approval_one';
+    expect((await submit(operationId, 'review_approve', {
+      v: 1, commandId: operationId, bindingId: binding.bindingId, roomId,
+      expectedPolicyVersion: 3, expectedBindingGeneration: 0, issuedAt: new Date(T0).toISOString(),
+      selection: [{ v: 1, roomId, eventId: 'event_1', authorParticipantId: 'peer_agent',
+        authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }],
+    })).status).toBe(200);
+    expect((await source.pending()).kind).toBe('ok');
     const signer = { jkt: 'A'.repeat(43), publicKey: 'B'.repeat(43), proof: () => 'proof' } as unknown as ProofSigner;
     const status = vi.fn(async () => ({ ok: false as const, code: 'unavailable' as const }));
     const approve = vi.fn(async () => ({ ok: false as const, code: 'unavailable' as const }));
