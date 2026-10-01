@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BindingId, ListeningMode, ModeSupport, ModeSupportMap, OwnerId, ParticipantId, RoomId } from '@khala/contracts/delivery/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
-import { AgentPresencePanel } from '../../../features/channel/AgentPresencePanel';
+import { ChannelScreen } from '../../../features/channel/ChannelScreen';
 import type { ChannelController, ChannelView } from '../../../features/channel/controller';
 import { AgentListeningControls } from '../../../features/agent-controls/AgentControlsPanel';
 import type { AgentControlsConfig } from '../../../features/agent-controls/controller';
@@ -87,12 +87,12 @@ const presence: ChannelController = { getSnapshot: () => presenceView, subscribe
 
 function Harness() {
   const [viewer, setViewer] = useState<OwnerId>(OWNER);
-  return <main style={{ maxWidth: 560, margin: '1rem auto', padding: '0 1rem' }}>
-    <h1>Conversation participants</h1>
+  return <main>
     <button type="button" onClick={() => setViewer(viewer === OWNER ? 'owner_theo' as OwnerId : OWNER)}>Switch human</button>
     <button type="button" onClick={() => { state.requested = 'steer'; state.version += 1; state.actor = 'agent'; }}>Simulate agent mode change</button>
     <output id="mode-submits">0</output>
-    <AgentPresencePanel controller={presence} viewerOwnerId={viewer} renameScope="room_harness"
+    <ChannelScreen embedded title="Release conversation" controller={presence} viewerOwnerId={viewer} viewerName="Mira"
+      renderTimeline={() => <div>Conversation timeline</div>} renameScope="room_harness"
       renameAgent={async () => 'accepted'}
       renderOwnerControls={agent => agent.participantId === AGENT ? <AgentListeningControls ports={ports} config={config} /> : null} />
   </main>;

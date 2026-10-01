@@ -227,8 +227,7 @@ test('AgentControlsPanel listening mode: keyboard selection, conflict recovery, 
   }
 });
 
-// Isolated participant detail proof while #681 owns the shared title disclosure.
-test('participant detail gives only its owner compact listening controls on desktop and phone', { timeout: 90_000 }, async () => {
+test('title disclosure gives only its owner compact listening controls on desktop and phone', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-presence-dist-'));
   const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-presence-profile-'));
   const presenceHarnessRoot = join(here, '../../composition/human/presence-browser-harness');
@@ -243,6 +242,10 @@ test('participant detail gives only its owner compact listening controls on desk
     });
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]!);
+    const title = page.locator('#khala-channel-toolbar .channel-roster > summary');
+    await title.click();
+    assert.equal(await page.locator('#khala-channel-toolbar .channel-roster').getAttribute('open'), '');
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'no duplicate conversation header');
     const scout = page.locator('summary[aria-label^="Details for Scout"]');
     const builder = page.locator('summary[aria-label^="Details for Builder"]');
     await builder.click();
@@ -264,7 +267,7 @@ test('participant detail gives only its owner compact listening controls on desk
     }
     const asyncMode = detail.locator('input[value="async"]');
     await asyncMode.check();
-    await page.getByRole('button', { name: 'Simulate agent mode change' }).click();
+    await page.getByRole('button', { name: 'Simulate agent mode change' }).evaluate(node => (node as HTMLButtonElement).click());
     await detail.getByRole('button', { name: 'Apply listening mode' }).click();
     await status.getByText(/Another actor changed the listening mode first/).waitFor();
     assert.equal(await asyncMode.evaluate(node => node === document.activeElement), true);
@@ -276,6 +279,10 @@ test('participant detail gives only its owner compact listening controls on desk
     await asyncMode.press('Escape');
     assert.equal(await detail.getAttribute('open'), null, 'Escape closes the agent detail');
     assert.equal(await scout.evaluate(node => node === document.activeElement), true);
+    await scout.press('Escape');
+    assert.equal(await page.locator('#khala-channel-toolbar .channel-roster').getAttribute('open'), null,
+      'a second Escape closes the title disclosure');
+    assert.equal(await title.evaluate(node => node === document.activeElement), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

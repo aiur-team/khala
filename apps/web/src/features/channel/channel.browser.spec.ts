@@ -65,7 +65,8 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     await disclosure.click();
     assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '');
     await page.getByRole('button', { name: 'Copy channel invite link' }).click();
-    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), '', 'share leaves the roster open');
+    assert.equal(await toolbar.locator('.channel-roster').getAttribute('open'), null, 'an outside share action closes the roster');
+    await disclosure.click();
     await page.getByText('Builder', { exact: true }).last().waitFor();
     const compactPanel = await page.locator('.channel-roster__panel').boundingBox();
     assert.ok(compactPanel && compactPanel.height < 180, 'the roster stays compact at phone width');

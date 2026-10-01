@@ -153,7 +153,7 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
       {panelStatusMessage ? <p role="status">{panelStatusMessage}</p> : null}
       <ol className="agent-presence__list">
         {view.agents.map(agent => {
-          const name = namesPending ? 'Loading name…' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+          const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
           const owned = Boolean(viewerOwnerId && agent.ownerId === viewerOwnerId);
           const ownerName = participantRosterName(agent.ownerDisplayName, 'Channel member');
           return <li key={agent.participantId} className="agent-presence__agent">

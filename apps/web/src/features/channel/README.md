@@ -6,7 +6,7 @@ The hosted channel page renders the timeline and its share action without a deta
 
 `AgentPresencePanel` shows each agent's readable name, owner, and connection state. An unverified connection reads "Connection unavailable" and never appears connected. Selecting an agent expands a compact detail inside the participant list; Escape closes that detail and returns focus to its summary. Route, receipt, and batch-token diagnostics remain in their source data and developer evidence surfaces, not the ordinary conversation panel. The panel calls `renderOwnerControls` only when the signed-in owner's ID matches the agent's owner ID.
 
-Rename and onboarding actions appear only in the owning human's agent detail. Commands remain selectable as text and have a copy control with an announced success or failure state. `AgentListeningControls` supplies the compact Steer / Sync / Async control through the existing agent-controls controller; the host must provide a binding and port for that exact owned agent. The top-navigation host integration follows #681.
+Rename and onboarding actions appear only in the owning human's agent detail. Commands remain selectable as text and have a copy control with an announced success or failure state. `AgentListeningControls` supplies the compact Steer / Sync / Async control through the existing agent-controls controller. The hosted composition matches the selected agent to the signed-in owner's verified binding before mounting its controls.
 
 The browser harness uses only in-memory fixtures. KHA-153 supplies the live `ChannelUiPort`; KHA-132 owns the browser entry point and router; KHA-134 owns live review wiring.
 

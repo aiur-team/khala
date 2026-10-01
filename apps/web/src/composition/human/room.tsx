@@ -6,9 +6,10 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
-import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
+import { ClosureAction, RecoveryPanel } from '../../features/recovery/RecoveryPanel';
 import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
 import type { ReviewCapability } from '../review/register';
@@ -17,7 +18,7 @@ import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
-import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
+import { AgentControlsPanel, AgentListeningControls } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 import { useConversationIndex } from './ConversationIndexRoute';
@@ -38,10 +39,13 @@ function reviewScope(context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRo
   return JSON.stringify([context.principal.ownerId, context.generation, roomId]);
 }
 
-function hostedPresence(context: Parameters<HumanRoomRenderer>[0]): ChannelUiPort {
+function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
+  let readEpoch = 0;
   const agents: ChannelUiPort['agents'] = async (roomId, signal) => {
+    const epoch = ++readEpoch;
     const participants = await context.roomParticipants?.(roomId, signal);
     if (!participants) throw new Error('agent roster unavailable');
+    if (!signal.aborted && epoch === readEpoch) onParticipants(participants);
     return { generation: context.generation, agents: participants.filter(item => item.kind === 'agent').map(item => ({
       participantId: item.participantId, ownerId: item.ownerId, displayName: item.displayName,
       ownerDisplayName: participants.find(owner => owner.kind === 'human' && owner.ownerId === item.ownerId)?.displayName ?? 'Channel member',
@@ -51,8 +55,17 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0]): ChannelUiPor
   return {
     agents,
     subscribeAgents(roomId, listener) {
-      const timer = setInterval(() => { const abort = new AbortController(); void agents(roomId, abort.signal).then(listener).catch(() => {}); }, 5_000);
-      return () => clearInterval(timer);
+      let epoch = 0;
+      let request: AbortController | null = null;
+      const timer = setInterval(() => {
+        request?.abort();
+        request = new AbortController();
+        const current = ++epoch;
+        void agents(roomId, request.signal).then(snapshot => {
+          if (current === epoch && !request?.signal.aborted) listener(snapshot);
+        }).catch(() => {});
+      }, 5_000);
+      return () => { ++epoch; request?.abort(); clearInterval(timer); };
     },
     async installCommand() { throw new Error('agent onboarding unavailable'); },
   };
@@ -74,11 +87,13 @@ export function createHumanRoomRenderer(review: ReviewClient, capability: Review
   return Object.assign(render(false), { tools: render(true) });
 }
 
-function ControlsForBinding({ context, roomId, capability, binding }: {
+function ControlsForBinding({ context, roomId, capability, binding, compact = false, agentLabel }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: ReviewRoomId;
   capability: ControlsCapability;
   binding: OwnerReviewBinding;
+  compact?: boolean;
+  agentLabel?: string;
 }) {
   const [ports, setPorts] = useState<AgentControlsPorts | null>(null);
   const identity = JSON.stringify([context.principal.ownerId, context.generation, roomId,
@@ -91,11 +106,13 @@ function ControlsForBinding({ context, roomId, capability, binding }: {
     }, 0);
     return () => { clearTimeout(timer); };
   }, [identity, capability, context, roomId]);
-  if (!ports) return <Panel heading="Agent controls"><p role="status">Loading controls…</p></Panel>;
-  return <AgentControlsPanel ports={ports} config={{
+  if (!ports) return compact ? <p role="status">Checking this agent’s listening modes…</p>
+    : <Panel heading="Agent controls"><p role="status">Loading controls…</p></Panel>;
+  const config = {
     bindingId: binding.bindingId, roomId, peerParticipantId: binding.agentParticipantId as never,
-    viewerOwnerId: context.principal.ownerId, agentLabel: binding.agentParticipantId, roomLabel: roomId,
-  }} />;
+    viewerOwnerId: context.principal.ownerId, agentLabel: agentLabel ?? binding.agentParticipantId, roomLabel: roomId,
+  };
+  return compact ? <AgentListeningControls ports={ports} config={config} /> : <AgentControlsPanel ports={ports} config={config} />;
 }
 
 export function HumanControls({ context, roomId, review, capability, refreshMs }: {
@@ -215,14 +232,6 @@ function useOwnerBindingTrust(context: Parameters<HumanRoomRenderer>[0], roomId:
   return discovery?.scope === scope ? discovery : null;
 }
 
-function HumanTrust({ context, roomId, review, trustBinding, refreshMs }: {
-  context: Parameters<HumanRoomRenderer>[0]; roomId: ReviewRoomId;
-  review: ReviewClient | undefined; trustBinding: TrustBinding | undefined; refreshMs: number;
-}) {
-  useOwnerBindingTrust(context, roomId, review, trustBinding, refreshMs);
-  return null;
-}
-
 export function HumanReview({ context, roomId, review, capability, trustBinding, refreshMs }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
@@ -263,9 +272,14 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   const pendingStore = useMemo(() => deviceId === null ? undefined
     : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
   [context.principal.ownerId, deviceId, roomId]);
+  const participantScope = reviewScope(context, roomId);
+  const [participantRoster, setParticipantRoster] = useState<Readonly<{
+    scope: string; participants: readonly ParticipantView[];
+  }> | null>(null);
   const room = useMemo(
-    () => createChannelController(hostedPresence(context), { roomId, generation: context.generation }),
-    [context, roomId],
+    () => createChannelController(hostedPresence(context, participants => setParticipantRoster({ scope: participantScope, participants })),
+      { roomId, generation: context.generation }),
+    [context, roomId, participantScope],
   );
   const recovery = useMemo(() => createBrowserRecoveryPort({
     principal: context.principal, identity: context.identity, device: context.device,
@@ -287,6 +301,9 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     initialName: agent.displayName,
   }] : []);
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  const roomAccessible = viewer !== null && (!context.conversations || conversations?.some(item => item.id === roomId));
+  const trustedBindings = useOwnerBindingTrust(context, roomId, roomAccessible && !toolsOnly ? review : undefined,
+    roomAccessible && !toolsOnly ? trustBinding : undefined, refreshMs);
   const toolsRoot = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!toolsOnly) return;
@@ -324,16 +341,29 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   }
 
   return (
-    <><HumanTrust context={context} roomId={roomId} review={review} trustBinding={trustBinding} refreshMs={refreshMs} />
     <ChannelScreen
       embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
       viewerOwnerId={viewer.ownerId}
       viewerName={viewer.displayName}
+      {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
+        .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}
       renameScope={roomId}
       namesPending={timelineData.namesReady === false}
       {...(currentNames ? { currentNames } : {})}
+      renderOwnerControls={agent => {
+        if (viewer.kind !== 'human' || agent.ownerId !== viewer.ownerId) return null;
+        if (!controls || controls.state !== 'ready' || !review || !trustBinding) {
+          return <p role="status">Listening controls are unavailable right now.</p>;
+        }
+        if (trustedBindings === null) return <p role="status">Checking this agent’s session…</p>;
+        const bindings = trustedBindings.bindings.filter(binding => binding.agentParticipantId === agent.participantId);
+        if (bindings.length === 0) return <p role="status">No verified agent session is available to control.</p>;
+        return bindings.map(binding => <ControlsForBinding
+          key={reviewIdentity(context, roomId, binding)} context={context} roomId={roomId}
+          capability={controls} binding={binding} compact agentLabel={agent.displayName} />);
+      }}
       renameAgent={async (participantId, name, clientTxnId) => {
         const checked = validateAgentName(name);
         const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
@@ -347,6 +377,8 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
+      renderDetailsActions={open => <ClosureAction ports={recovery} config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
+        onClosureParticipationEnded={() => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/')} />}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
@@ -354,6 +386,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
-    /></>
+    />
   );
 }

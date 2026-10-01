@@ -216,6 +216,19 @@ describe('HumanApplicationScreen', () => {
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
+  it('puts a standalone channel toolbar in the existing top navigation', async () => {
+    const channelAccess = await channelAccessController();
+    const context = readyContext('/channels/room_1');
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
+      identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess}
+      capabilities={[]} mode="standalone" />);
+    expect(html).not.toContain('id="khala-channel-toolbar-mobile"');
+    expect(html).toContain('id="khala-channel-toolbar"');
+    expect(html).not.toContain('class="khala-mobile-bar"');
+    expect(html.indexOf('id="khala-channel-toolbar"')).toBeLessThan(html.indexOf('class="aiur-shell__content"'));
+  });
+
   it('opens channel care as a separate route without adding a chat settings control', async () => {
     const channelAccess = await channelAccessController(0);
     const context = readyContext('/channels/room_1');
