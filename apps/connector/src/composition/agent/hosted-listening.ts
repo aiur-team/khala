@@ -7,6 +7,11 @@ import type { AgentListeningModeApplication } from '@khala/connector/agent/liste
 import type { TrustStateStore } from '../controls/control-handler';
 import type { TrustState } from '@khala/policy/trust/index';
 
+// Control instances for the same hosted binding can overlap during composition
+// replacement. An older capability read cannot outlive a newer operation and
+// then project its stale evidence over the newer ledger snapshot.
+const projectionEpochs = new Map<string, { latest: number; active: number }>();
+
 /** A mode is effective only after the same connector ledger used by dispatch accepts it. */
 export function createHostedListeningControl(input: Readonly<{
   binding: SessionBinding;
@@ -56,6 +61,19 @@ export function createHostedListeningControl(input: Readonly<{
     projectionQueue = result.then(() => undefined, () => undefined);
     return result;
   }
+  const epochKey = JSON.stringify([binding.bindingId, binding.generation, binding.ownerId,
+    binding.agentParticipantId, binding.deviceId, binding.harness, binding.sessionId]);
+  async function withProjectionEpoch<T>(work: (current: () => boolean) => Promise<T>): Promise<T> {
+    const epoch = projectionEpochs.get(epochKey) ?? { latest: 0, active: 0 };
+    projectionEpochs.set(epochKey, epoch);
+    const number = ++epoch.latest;
+    epoch.active += 1;
+    try { return await work(() => epoch.latest === number); }
+    finally {
+      epoch.active -= 1;
+      if (epoch.active === 0) projectionEpochs.delete(epochKey);
+    }
+  }
   const base = createAgentListeningModeAuthority(binding, {
     async resolve(bindingId) {
       if (bindingId !== binding.bindingId || !await input.current()) return { kind: 'unavailable' };
@@ -64,13 +82,14 @@ export function createHostedListeningControl(input: Readonly<{
   }, service);
 
   async function project(view: ListeningModeView, evidenceRevision: string | null,
-    reread: () => Promise<ListeningModeReadResult>): Promise<boolean> {
+    reread: () => Promise<ListeningModeReadResult>, currentEpoch: () => boolean): Promise<boolean> {
     const { effective, requested, version } = view;
     const confirmed = async (target: { requested: 'steer' | 'sync' | 'async' | null;
       effective: 'steer' | 'sync' | 'async' | null; evidenceRevision: string | null },
     minimumVersion: number) => {
-      if (!await input.current()) return false;
+      if (!currentEpoch() || !await input.current()) return false;
       return input.dispatch.ledger.transact(tx => {
+        if (!currentEpoch()) return false;
         const state = tx.binding(binding.bindingId);
         const policy = tx.policy(binding.bindingId);
         return state !== null && !state.revoked && sameSessionBinding(state.binding, binding)
@@ -82,14 +101,14 @@ export function createHostedListeningControl(input: Readonly<{
       });
     };
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      if (!await input.current()) return false;
+      if (!currentEpoch() || !await input.current()) return false;
       const policy = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
       if (!policy) return false;
       // Recheck the exact trust-store control and capability evidence after
       // ledger inspection. A delayed read of v2 must never synthesize v4 over
       // an already committed v3 merely because the ledger version moved.
       const source = await reread();
-      if (!source.ok || !sameView(source.view, view)) return false;
+      if (!currentEpoch() || !source.ok || !sameView(source.view, view)) return false;
       if (policy.listening.sourceVersion !== undefined && policy.listening.sourceVersion > version) return false;
       const next = { requested: requested ?? policy.listening.requested,
         effective, evidenceRevision: effective === null ? null : evidenceRevision };
@@ -100,6 +119,7 @@ export function createHostedListeningControl(input: Readonly<{
       // The durable control command and the current capability evidence are distinct
       // revisions. A late hook proof or its loss must not rewrite an older ledger version.
       const writeVersion = Math.max(version, policy.listening.version + 1);
+      if (!currentEpoch()) return false;
       const result = await input.dispatch.applyEffectivePolicy({ binding, policy: { ...policy,
         listening: { version: writeVersion, sourceVersion: view.version, ...next },
       } });
@@ -110,46 +130,50 @@ export function createHostedListeningControl(input: Readonly<{
   }
 
   async function projectedRead(result: Awaited<ReturnType<typeof service.read>>,
-    reread: () => Promise<ListeningModeReadResult>) {
+    reread: () => Promise<ListeningModeReadResult>, currentEpoch: () => boolean) {
     if (!result.ok) return result;
     const { view } = result;
     const before = await reread();
-    if (!before.ok || !sameView(before.view, view)) return { ok: true as const,
+    if (!currentEpoch() || !before.ok || !sameView(before.view, view)) return { ok: true as const,
       view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
     const support = view.effective ? view.support[view.effective] : null;
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
-    const applied = await project(view, evidenceRevision, reread);
+    const applied = await project(view, evidenceRevision, reread, currentEpoch);
     const latest = applied && await input.current() ? await reread() : null;
-    return latest?.ok && sameView(latest.view, view)
+    return currentEpoch() && latest?.ok && sameView(latest.view, view)
       ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
-  async function rawRead() { return projectedRead(await base.read(), () => base.read()); }
-  async function read() { return serialized(rawRead); }
-  async function rawOwnerRead(authority: OwnerAuthority) {
+  async function rawRead(currentEpoch: () => boolean) {
+    return projectedRead(await base.read(), () => base.read(), currentEpoch);
+  }
+  async function read() { return serialized(() => withProjectionEpoch(rawRead)); }
+  async function rawOwnerRead(authority: OwnerAuthority, currentEpoch: () => boolean) {
     if (!await input.current()) return { ok: false as const, code: 'unavailable' as const };
     const reread = () => input.capabilities().then(capabilities => service.read(authority,
       { binding, status: 'active' }, capabilities));
-    return projectedRead(await reread(), reread);
+    return projectedRead(await reread(), reread, currentEpoch);
   }
-  async function ownerRead(authority: OwnerAuthority) { return serialized(() => rawOwnerRead(authority)); }
+  async function ownerRead(authority: OwnerAuthority) {
+    return serialized(() => withProjectionEpoch(currentEpoch => rawOwnerRead(authority, currentEpoch)));
+  }
   const application: AgentListeningModeApplication = {
     read,
-    set(command) { return serialized(async () => {
+    set(command) { return serialized(() => withProjectionEpoch(async currentEpoch => {
       const result = await base.set(command);
       if (result.outcome !== 'applied') return result;
-      const current = await rawRead();
+      const current = await rawRead(currentEpoch);
       const latest = await base.read();
       return current.ok && latest.ok && sameView(latest.view, current.view)
         && current.view.version === result.version && current.view.requested === result.requested
         ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
         : { ...result, effective: null, reason: 'projection_unavailable' };
-    }); },
+    })); },
   };
   return {
     application,
     owner: {
       read: ownerRead,
-      set(authority, command) { return serialized(async () => {
+      set(authority, command) { return serialized(() => withProjectionEpoch(async currentEpoch => {
         if (!await input.current()) return { v: 1 as const, commandId: command.commandId,
           bindingId: command.bindingId, generation: command.expectedBindingGeneration,
           outcome: 'refused' as const, version: command.expectedVersion,
@@ -164,14 +188,14 @@ export function createHostedListeningControl(input: Readonly<{
         }
         const result = await service.set(authority, { binding, status: 'active' }, capabilities, command);
         if (result.outcome !== 'applied') return result;
-        const current = await rawOwnerRead(authority);
+        const current = await rawOwnerRead(authority, currentEpoch);
         const latest = await service.read(authority, { binding, status: 'active' }, await input.capabilities());
         return current.ok && latest.ok && sameView(latest.view, current.view)
           && current.view.version === result.version && current.view.requested === command.requested
           ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
           : { ...result, effective: null, reason: 'projection_unavailable' };
-      }); },
-      grant(authority, command) { return serialized(async () => {
+      })); },
+      grant(authority, command) { return serialized(() => withProjectionEpoch(async currentEpoch => {
         if (!await input.current()) return { commandId: command.commandId,
           outcome: 'refused' as const, reason: 'unavailable' };
         const capabilities = await input.capabilities();
@@ -185,12 +209,12 @@ export function createHostedListeningControl(input: Readonly<{
               : await service.revokeHardCancel(authority, context, capabilities, command);
         if (result.outcome === 'refused') return { commandId: command.commandId, ...result };
         const projected = await projectedRead({ ok: true, view: result.view },
-          () => input.capabilities().then(latest => service.read(authority, context, latest)));
+          () => input.capabilities().then(latest => service.read(authority, context, latest)), currentEpoch);
         return projected.ok && projected.view.version === result.view.version
           && projected.view.requested === result.view.requested
           ? { commandId: command.commandId, ...result, view: projected.view }
           : { commandId: command.commandId, outcome: 'refused' as const, reason: 'projection_unavailable' };
-      }); },
+      })); },
     },
     async status() {
       const result = await read();

@@ -135,6 +135,37 @@ describe('hosted listening ledger readback', () => {
     expect(policy().listening).toEqual(confirmedLedger);
     expect(policy().listening).toMatchObject({ requested: 'sync', effective: 'sync' });
   });
+  it('keeps newer capability evidence when two controls share a mode version', async () => {
+    const { hosted: seed, trust, dispatch, policy } = fixture();
+    expect(await seed.owner.read(owner)).toMatchObject({ ok: true,
+      view: { requested: 'sync', effective: 'sync', version: 1 } });
+    let releaseOld!: () => void;
+    const heldOld = new Promise<void>(resolve => { releaseOld = resolve; });
+    let oldCaptured!: () => void;
+    const captured = new Promise<void>(resolve => { oldCaptured = resolve; });
+    let oldInspections = 0;
+    const oldControl = createHostedListeningControl({ binding, trust, dispatch,
+      current: async () => true, capabilities: async () => {
+        oldInspections += 1;
+        if (oldInspections === 2) { oldCaptured(); await heldOld; }
+        return capabilities;
+      } });
+    const newerCapabilities = { ...capabilities, modes: { ...capabilities.modes,
+      sync: { ...support, evidenceRevision: 'hook-revision-new' } } };
+    const newControl = createHostedListeningControl({ binding, trust, dispatch,
+      current: async () => true, capabilities: async () => newerCapabilities });
+    const staleRead = oldControl.owner.read(owner);
+    await captured;
+    expect(await newControl.owner.read(owner)).toMatchObject({ ok: true,
+      view: { requested: 'sync', effective: 'sync', version: 1 } });
+    const confirmedLedger = policy().listening;
+    expect(confirmedLedger).toMatchObject({ sourceVersion: 1,
+      evidenceRevision: 'hook-revision-new' });
+    releaseOld();
+    expect(await staleRead).toMatchObject({ ok: true,
+      view: { effective: null, effectiveReason: 'projection_unavailable' } });
+    expect(policy().listening).toEqual(confirmedLedger);
+  });
   it('projects an owner grant and exact experimental mode from the shared store', async () => {
     const { hosted, policy } = fixture({ experimental: true });
     expect(await hosted.owner.grant(owner, { v: 1, kind: 'grant_experimental_route',
