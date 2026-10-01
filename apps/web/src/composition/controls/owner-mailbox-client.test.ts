@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
 import { createOwnerMailboxControlsClient } from './owner-mailbox-client';
 
@@ -12,7 +12,10 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 describe('owner mailbox controls client', () => {
   it('reuses an unresolved status operation until completion', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const submitted: string[] = [];
+    let reads = 0;
     let complete = false;
     const fetcher: typeof fetch = async (url, init) => {
       if (String(url).endsWith('/submit')) {
@@ -21,19 +24,23 @@ describe('owner mailbox controls client', () => {
         return json(200, { v: 1, operationId, outcome: complete ? { ok: true, status: {} } : null });
       }
       const operationId = new URL(String(url)).searchParams.get('operation_id');
+      reads += 1;
       return json(200, { v: 1, operationId, outcome: complete ? { ok: true, status: {} } : null });
     };
     const client = createOwnerMailboxControlsClient({ origin, csrf: async () => 'csrf-value',
       fetch: fetcher, waitMs: 0 });
     const signal = new AbortController().signal;
-    expect(await client.status(bindingId, signal)).toEqual({ kind: 'lost' });
-    expect(await client.status(bindingId, signal)).toEqual({ kind: 'lost' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.status(bindingId, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
     expect(submitted).toHaveLength(1);
+    expect(reads).toBe(0);
     complete = true;
+    now += 15_000;
     expect(await client.status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
     expect(await client.status(bindingId, signal)).toEqual({ kind: 'ok', body: {} });
     expect(submitted).toHaveLength(2);
     expect(submitted[1]).not.toBe(submitted[0]);
+    clock.mockRestore();
   });
 
   it('uses the protected owner route and unwraps exact status and policy outcomes', async () => {

@@ -1,6 +1,7 @@
 import type { BindingId, PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ControlsClient } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
+import { createMailboxReadRetry } from '../human/mailbox-retry';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -25,6 +26,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
   const possiblySubmitted = new Set<string>();
   const originalCommands = new Map<string, PolicySetCommand>();
   const pendingStatuses = new Map<BindingId, string>();
+  const retry = createMailboxReadRetry();
 
   async function read(response: Response): Promise<Reply> {
     if (!(response.headers.get('content-type') ?? '').startsWith('application/json')) return { status: response.status, body: null };
@@ -78,6 +80,7 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
 
   return {
     async status(bindingId, signal) {
+      if (!retry.ready(bindingId)) return { kind: 'refused', code: 'unavailable' };
       let operationId = pendingStatuses.get(bindingId);
       const created = operationId === undefined;
       if (!operationId) {
@@ -87,15 +90,18 @@ export function createOwnerMailboxControlsClient(input: Readonly<{
       const existing = created ? null : await result(bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(bindingId, operationId, 'controls_status', { bindingId }, signal) : existing;
-      const answer = await awaitOutcome(bindingId, operationId, first, signal);
-      if (completed(answer, operationId)) pendingStatuses.delete(bindingId);
-      if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
+      const answer = created || first !== existing ? await awaitOutcome(bindingId, operationId, first, signal) : first;
       const outcome = completed(answer, operationId);
+      if (outcome) pendingStatuses.delete(bindingId);
+      if (outcome?.code === 'unavailable') retry.delay(bindingId);
+      else if (outcome || answer?.status === 401 || answer?.status === 403) retry.clear(bindingId);
+      else if (!signal.aborted) retry.delay(bindingId);
+      if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       if (outcome?.ok === true && 'status' in outcome) return { kind: 'ok', body: outcome.status };
       if (outcome?.ok === false && (outcome.code === 'forbidden' || outcome.code === 'unavailable')) {
         return { kind: 'refused', code: outcome.code };
       }
-      return { kind: 'lost' };
+      return { kind: 'refused', code: 'unavailable' };
     },
     async setPolicy(command: PolicySetCommand) {
       // The controller recreates issuedAt on retry. Pin the first complete wire body:

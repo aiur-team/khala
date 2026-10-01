@@ -2,6 +2,7 @@ import { decodeApprovalCommand, decodeDeliveryLimits, type ApprovalCommand, type
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { ReviewControlClient, ReviewPreviewRequest } from './browser-port';
 import { parsePublicOrigin } from '../human/hosted-config';
+import { createMailboxReadRetry } from '../human/mailbox-retry';
 
 const SUBMIT = '/api/human/owner-mailbox/submit';
 const RESULT = '/api/human/owner-mailbox/result';
@@ -30,6 +31,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
   const waitMs = input.waitMs ?? 8_000;
   const submittedCommands = new Set<string>();
   const pendingPreviews = new Map<BindingId, { digest: string; operationId: string; body: ReviewPreviewRequest }>();
+  const retry = createMailboxReadRetry();
   const limits = (() => {
     const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
     if (!decoded.ok) throw new Error('review_limits_invalid');
@@ -101,6 +103,7 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
     recoverUnknown: pending,
     async preview(body: ReviewPreviewRequest, signal: AbortSignal) {
       if (signal.aborted) return { kind: 'lost' };
+      if (!retry.ready(body.bindingId)) return { kind: 'refused', code: 'unavailable' };
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body))));
       const digest = Array.from(hash.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
       let pending = pendingPreviews.get(body.bindingId);
@@ -115,13 +118,18 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
       const existing = created ? null : await result(body.bindingId, operationId, signal);
       const first = existing?.status === 404 || existing === null
         ? await submit(body.bindingId, operationId, 'review_preview', pending.body, signal) : existing;
-      const answer = await awaitOutcome(body.bindingId, operationId, first, signal);
+      const answer = created || first !== existing ? await awaitOutcome(body.bindingId, operationId, first, signal) : first;
       if (answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
         && answer.body.outcome !== null) pendingPreviews.delete(body.bindingId);
+      const terminal = answer?.status === 200 && object(answer.body) && answer.body.operationId === operationId
+        && object(answer.body.outcome) ? answer.body.outcome : null;
+      if (terminal?.ok === false && terminal.code === 'unavailable') retry.delay(body.bindingId);
+      else if (terminal || answer?.status === 401 || answer?.status === 403) retry.clear(body.bindingId);
+      else if (!signal.aborted) retry.delay(body.bindingId);
       if (pending.digest !== digest) return { kind: 'lost' };
       if (answer?.status === 401 || answer?.status === 403) return { kind: 'refused', code: 'forbidden' };
       if (answer?.status !== 200 || !object(answer.body) || answer.body.operationId !== operationId
-        || !object(answer.body.outcome)) return { kind: 'lost' };
+        || !object(answer.body.outcome)) return { kind: 'refused', code: 'unavailable' };
       const outcome = answer.body.outcome;
       if (outcome.ok === true && 'preview' in outcome) return { kind: 'ok', body: outcome.preview };
       if (outcome.ok === false && ['forbidden', 'revoked', 'unavailable'].includes(String(outcome.code))) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 import type { ReviewPreviewRequest } from './browser-port';
 import { createOwnerMailboxReviewClient } from './owner-mailbox-client';
@@ -14,7 +14,10 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
 
 describe('authenticated owner mailbox review client', () => {
   it('reuses an unresolved preview operation until completion, then requests a fresh snapshot', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const submitted: string[] = [];
+    let reads = 0;
     let complete = false;
     const body: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
     const fetcher: typeof fetch = async (url, init) => {
@@ -24,22 +27,28 @@ describe('authenticated owner mailbox review client', () => {
         return json(200, { v: 1, operationId, outcome: complete ? { ok: true, preview: {} } : null });
       }
       const operationId = new URL(String(url)).searchParams.get('operation_id');
+      reads += 1;
       return json(200, { v: 1, operationId, outcome: complete ? { ok: true, preview: {} } : null });
     };
     const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value',
       fetch: fetcher, waitMs: 0 });
     const signal = new AbortController().signal;
-    expect(await client.review.preview(body, signal)).toEqual({ kind: 'lost' });
-    expect(await client.review.preview({ ...body }, signal)).toEqual({ kind: 'lost' });
+    expect(await client.review.preview(body, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.review.preview({ ...body }, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
     expect(submitted).toHaveLength(1);
+    expect(reads).toBe(0);
     complete = true;
+    now += 15_000;
     expect((await client.review.preview({ ...body }, signal)).kind).toBe('ok');
     expect((await client.review.preview({ ...body }, signal)).kind).toBe('ok');
     expect(submitted).toHaveLength(2);
     expect(submitted[1]).not.toBe(submitted[0]);
+    clock.mockRestore();
   });
 
   it('retries a missing preview with the same identity and never returns an old-body preview', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const submitted: Array<{ operationId: string; body: unknown }> = [];
     let completed = false;
     const fetcher: typeof fetch = async (url, init) => {
@@ -57,15 +66,20 @@ describe('authenticated owner mailbox review client', () => {
     const original: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
     const changed: ReviewPreviewRequest = { ...original, releaseIds: ['release_new' as never] };
     const signal = new AbortController().signal;
-    expect(await client.review.preview(original, signal)).toEqual({ kind: 'lost' });
+    expect(await client.review.preview(original, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(await client.review.preview(changed, signal)).toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(submitted).toHaveLength(1);
+    now += 15_000;
     expect(await client.review.preview(changed, signal)).toEqual({ kind: 'lost' });
     expect(submitted).toHaveLength(2);
     expect(submitted[1]).toEqual(submitted[0]);
     completed = true;
+    now += 30_000;
     expect(await client.review.preview(changed, signal)).toEqual({ kind: 'lost' });
-    expect((await client.review.preview(changed, signal)).kind).toBe('lost');
+    expect((await client.review.preview(changed, signal)).kind).toBe('refused');
     expect(submitted).toHaveLength(3);
     expect(submitted[2]!.operationId).not.toBe(submitted[0]!.operationId);
+    clock.mockRestore();
   });
 
   it('discovers the exact room binding and submits references with the original command ID', async () => {
