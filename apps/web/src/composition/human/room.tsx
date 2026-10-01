@@ -9,7 +9,9 @@ import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
-import { ClosureAction, RecoveryPanel } from '../../features/recovery/RecoveryPanel';
+import { ClosureAction } from '../../features/recovery/RecoveryPanel';
+import { createRecoveryController } from '../../features/recovery/controller';
+import { ConversationSettingsDisclosure } from './ConversationSettingsDisclosure';
 import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
 import type { ReviewCapability } from '../review/register';
@@ -18,7 +20,7 @@ import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 import type { ControlsCapability } from '../controls/register';
-import { AgentControlsPanel, AgentListeningControls } from '../../features/agent-controls/AgentControlsPanel';
+import { AgentControlsPanel, AgentListeningControls, UnavailableListeningModes } from '../../features/agent-controls/AgentControlsPanel';
 import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
 import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 import { useConversationIndex } from './ConversationIndexRoute';
@@ -288,6 +290,16 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
     ...(context.closure ? { closure: context.closure(roomId) } : {}),
     ...(context.revocation ? { revocation: context.revocation(roomId) } : {}),
   }), [context, roomId]);
+  const [recoveryOwner, setRecoveryOwner] = useState<{
+    ports: typeof recovery; roomId: ReviewRoomId; controller: ReturnType<typeof createRecoveryController>;
+  } | null>(null);
+  useEffect(() => {
+    const controller = createRecoveryController(recovery, { roomId, roomRevision: 0 });
+    setRecoveryOwner({ ports: recovery, roomId, controller });
+    return () => controller.dispose();
+  }, [recovery, roomId]);
+  const recoveryController = recoveryOwner?.ports === recovery && recoveryOwner.roomId === roomId
+    ? recoveryOwner.controller : null;
   useEffect(() => () => {
     timeline.dispose();
     room.dispose();
@@ -328,7 +340,7 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
   }
 
   if (toolsOnly) {
-    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Channel care', labelledBy: 'khala-channel-care-title' }}>
+    return <div ref={toolsRoot} className="channel-tools-page"><KhalaPageFrame model={{ title: 'Recipient review', labelledBy: 'khala-recipient-review-title' }}>
       {routes ? <a href={routes.roomPath(roomId)} onClick={navigate ? event => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault(); navigate(routes.roomPath(roomId));
@@ -336,7 +348,6 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       <HumanReview context={context} roomId={roomId} review={review} capability={capability}
         trustBinding={trustBinding} refreshMs={refreshMs} />
       <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
-      <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
     </KhalaPageFrame></div>;
   }
 
@@ -355,11 +366,11 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderOwnerControls={agent => {
         if (viewer.kind !== 'human' || agent.ownerId !== viewer.ownerId) return null;
         if (!controls || controls.state !== 'ready' || !review || !trustBinding) {
-          return <p role="status">Listening controls are unavailable right now.</p>;
+          return <div className="agent-controls__compact"><UnavailableListeningModes reason="Mode controls are not ready. Try again later." /></div>;
         }
-        if (trustedBindings === null) return <p role="status">Checking this agent’s session…</p>;
+        if (trustedBindings === null) return <div className="agent-controls__compact"><UnavailableListeningModes reason="Checking this agent’s session…" /></div>;
         const bindings = trustedBindings.bindings.filter(binding => binding.agentParticipantId === agent.participantId);
-        if (bindings.length === 0) return <p role="status">No verified agent session is available to control.</p>;
+        if (bindings.length === 0) return <div className="agent-controls__compact"><UnavailableListeningModes reason="Verify this agent’s session to choose a listening mode." /></div>;
         return bindings.map(binding => <ControlsForBinding
           key={reviewIdentity(context, roomId, binding)} context={context} roomId={roomId}
           capability={controls} binding={binding} compact agentLabel={agent.displayName} />);
@@ -377,7 +388,11 @@ function HumanRoom({ context, roomId, navigate, routes, review, capability, trus
       renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
         admission={context.admission} roomId={roomId}
         {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
-      renderDetailsActions={open => <ClosureAction ports={recovery} config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
+      renderHeaderActions={() => <ConversationSettingsDisclosure scope={participantScope}
+        recovery={{ ports: recovery, controller: recoveryController, config: { roomId, roomRevision: 0 },
+          onClosureParticipationEnded: () => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/') }} />}
+      renderDetailsActions={open => <ClosureAction ports={recovery} controller={recoveryController}
+        config={{ roomId, roomRevision: 0 }} disclosureOpen={open}
         onClosureParticipationEnded={() => navigate && routes ? navigate(routes.conversationsPath()) : globalThis.location?.assign('/')} />}
       renderTimeline={() => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}

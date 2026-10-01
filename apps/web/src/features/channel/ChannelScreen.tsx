@@ -47,11 +47,8 @@ function ChannelParticipants({ controller, currentNames, description, viewerName
     {phase === 'unavailable' ? <span role="status">Participants unavailable</span> : null}
     {agents.slice(0, 4).map(agent => {
       const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
-      const state = agent.connection === 'unknown' ? 'Unavailable' : agent.connection === 'connected' ? 'Connected'
-        : agent.connection === 'stale' ? 'Stale' : 'Offline';
-      return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · ${state}`}>
+      return <span key={agent.participantId} className="channel-participants__chip" title={`${name} · agent`}>
         <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span><span className="channel-participants__name">{name}</span>
-        <span className="channel-participants__state">{state}</span>
       </span>;
     })}
     {agents.length > 4 ? <span className="channel-participants__more">+{agents.length - 4}</span> : null}

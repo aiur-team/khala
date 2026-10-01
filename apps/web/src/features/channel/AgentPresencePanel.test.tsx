@@ -24,9 +24,10 @@ function render(viewerOwnerId?: OwnerId, item: ChannelAgentView = agent, renderO
 }
 
 describe('AgentPresencePanel', () => {
-  it('shows a readable identity and truthful connection without technical diagnostics', () => {
+  it('shows a readable identity without technical connection diagnostics', () => {
     const html = render(otherId);
-    expect(html).toContain('Details for Scout, Not connected');
+    expect(html).toContain('Details for Scout');
+    expect(html).not.toContain('Not connected');
     expect(html).toContain('Maya’s agent');
     for (const diagnostic of ['Route', 'Batch-token return', 'Last receipt', 'Queued for delivery', 'Khala skill']) {
       expect(html).not.toContain(diagnostic);
@@ -53,7 +54,8 @@ describe('AgentPresencePanel', () => {
 
   it('never turns an unverified connection into Connected', () => {
     const html = render(ownerId, { ...agent, connection: 'unknown' });
-    expect(html).toContain('Connection unavailable');
+    expect(html).toContain('Details for Scout');
+    expect(html).not.toContain('Connection unavailable');
     expect(html).not.toContain('Connection unknown');
     expect(html).not.toMatch(/>Connected</);
   });
@@ -64,6 +66,13 @@ describe('AgentPresencePanel', () => {
     expect(html).toContain('Another member’s agent');
     expect(html).not.toContain('@khala:matrix.example.test');
     expect(html).not.toContain('@maya:matrix.example.test');
+  });
+
+  it('hides proof-key labels in agent details', () => {
+    const html = render(otherId, { ...agent, displayName: 'proof-key:abc123', connection: 'unknown' });
+    expect(html).toContain('Details for Agent');
+    expect(html).not.toContain('proof-key');
+    expect(html).not.toContain('Connection unavailable');
   });
 
   it('announces loading and failed presence reads distinctly', () => {

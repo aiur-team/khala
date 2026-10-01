@@ -121,14 +121,13 @@ test('created channel page has one share action that copies a working link', { t
   });
 });
 
-test('channel care route mounts recipient review and recovery outside the chat', { timeout: 90_000 }, async () => {
+test('legacy direct route keeps recipient review and pause controls without conversation settings actions', { timeout: 90_000 }, async () => {
   await withRoomPage('review-room.html?tools', async page => {
-    const care = page.getByRole('main', { name: 'Channel care route' });
-    await care.getByRole('heading', { name: 'Channel care' }).waitFor();
-    assert.equal(await care.getByRole('heading', { name: 'Channel care' }).evaluate(node => node === document.activeElement), true);
-    await care.getByRole('heading', { name: 'Recipient review' }).waitFor();
-    await care.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
-    assert.equal(await page.locator('.channel-toolbar__actions').getByRole('button', { name: 'Channel settings' }).count(), 0);
+    const care = page.getByRole('main', { name: 'Recipient review route' });
+    await care.getByRole('heading', { name: 'Recipient review' }).first().waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Recipient review' }).first().evaluate(node => node === document.activeElement), true);
+    await care.getByRole('heading', { name: 'Recipient review' }).first().waitFor();
+    assert.equal(await care.getByRole('heading', { name: 'Recovery and channel access' }).count(), 0);
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       await mkdir(screenshotDir, { recursive: true });
@@ -136,6 +135,48 @@ test('channel care route mounts recipient review and recovery outside the chat',
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: join(screenshotDir, 'human-channel-care-mobile.png'), fullPage: true });
     }
+  });
+});
+
+test('hosted selected conversation places one settings control beside Share', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?settings', async page => {
+    const toolbar = page.locator('#khala-channel-toolbar');
+    const settings = toolbar.locator('details.conversation-settings > summary');
+    await settings.waitFor();
+    assert.equal(await toolbar.locator('details.conversation-settings').count(), 1);
+    assert.equal(await toolbar.locator('.channel-share').count(), 1);
+    assert.equal(await page.locator('.khala-sidebar__channel-tools').count(), 0);
+    assert.equal(await page.locator('.conversation-thread__head').count(), 0);
+    await toolbar.locator('.channel-participants__chip[title="Agent · agent"]').waitFor();
+    assert.equal(await toolbar.getByText('proof-key:abc123').count(), 0);
+    assert.equal(await toolbar.getByText('Unavailable', { exact: true }).count(), 0);
+    await settings.focus();
+    await settings.press('Enter');
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Close channel' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Delete conversation' }).count(), 0);
+    await settings.press('Escape');
+    assert.equal(await toolbar.locator('details.conversation-settings').getAttribute('open'), null);
+    assert.equal(await settings.evaluate(node => document.activeElement === node), true);
+    await settings.click();
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    await page.locator('.conversation-thread').click({ position: { x: 20, y: 20 } });
+    assert.equal(await toolbar.locator('details.conversation-settings').getAttribute('open'), null);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await settings.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await toolbar.locator('.channel-roster > summary').click();
+    const agentDetail = toolbar.locator('.agent-presence__details').first();
+    await agentDetail.locator('summary').click();
+    assert.equal(await agentDetail.getByText('Connection unavailable').count(), 0);
+    assert.equal(await agentDetail.getByText('proof-key:abc123').count(), 0);
+    await toolbar.locator('.channel-roster > summary').click();
+    await page.locator('[data-theme]').first().evaluate(node => node.setAttribute('data-theme', 'light'));
+    await settings.click();
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
+    await page.setViewportSize({ width: 320, height: 700 });
+    assert.equal(await settings.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   });
 });
 
@@ -203,7 +244,7 @@ test('conversation identity timing fixture', { timeout: 90_000 }, async () => {
     const title = page.locator('.channel-roster summary').getByText('Test channel');
     await title.waitFor();
     const titleMs = await page.evaluate(() => performance.now());
-    await page.locator('.channel-participants__chip[title*="Unavailable"]').waitFor();
+    await page.locator('.channel-participants__chip[title*="agent"]').waitFor();
     const connectionMs = await page.evaluate(() => performance.now());
     await page.locator('.channel-participants__chip').getByText('Verified agent').waitFor();
     await page.locator('.channel-participants__chip').getByText('Peer owner').waitFor();
@@ -227,12 +268,13 @@ test('conversation agent controls wait for the selected owner binding and verifi
     await page.locator('.channel-roster > summary').click();
     const agent = page.locator('.agent-presence__details').first();
     await agent.locator('summary').click();
-    await agent.getByText('No verified agent session is available to control.').waitFor();
-    assert.equal(await agent.locator('.agent-controls__compact').count(), 0);
+    await agent.getByText('Verify this agent’s session to choose a listening mode.').waitFor();
+    for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
     await page.evaluate(() => window.__allowReviewTrust());
     await agent.locator('.agent-controls__compact').waitFor();
     await agent.getByRole('heading', { name: 'Listening mode' }).waitFor();
-    await agent.getByText('Listening mode choices are unavailable for this agent session.').waitFor();
+    await agent.getByText('This agent has not confirmed mode support. Check its connection and try again.').waitFor();
+    for (const mode of ['steer', 'sync', 'async']) assert.equal(await agent.locator(`input[type="radio"][value="${mode}"]`).isDisabled(), true);
     assert.equal(await agent.getByRole('button', { name: 'Apply listening mode' }).count(), 0);
     assert.equal(await agent.getByRole('button', { name: 'Edit name for Renamed agent' }).count(), 1);
   }, async page => {
