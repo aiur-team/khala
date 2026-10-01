@@ -257,7 +257,7 @@ describe('hosted native Claude MCP', () => {
     const current = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
       readVersion: async () => '2.1.286' }).inspect(claim);
     expect(current).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
-      capabilities: { support: 'unsupported', acknowledgement: 'unknown' } });
+      capabilities: { version: '2.1.286', support: 'experimental' } });
   });
 
   it('keeps the public refusal generic while reporting a fixed local readiness code', async () => {
