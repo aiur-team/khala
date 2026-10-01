@@ -1,0 +1,116 @@
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { createConnection } from 'node:net';
+import { tmpdir } from 'node:os';
+import { describe, expect, it } from 'vitest';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { runHook } from '../../../claude-plugin/hooks/lib/runtime.mjs';
+import { claudeHostedHookPaths, startClaudeHostedHookBridge, type ClaudeHostedBoundary } from './claude-hosted-hook-bridge';
+
+const root = process.env.TMPDIR ?? tmpdir();
+const frame = '<khala-channel-batch-v1>\n{"body":"owner selected release"}\n</khala-channel-batch-v1>';
+const binding = (generation: number): SessionBinding => ({
+  v: 1, bindingId: 'binding-717', generation, ownerId: 'owner-1', agentParticipantId: 'agent-1',
+  deviceId: 'device-1', harness: 'proof-key', sessionId: 'agent-session',
+} as SessionBinding);
+
+function fixture() {
+  const sessionId = randomUUID();
+  let held = binding(1);
+  let mode: 'steer' | 'sync' | null = 'steer';
+  let paused = false;
+  const acknowledgements: string[] = [];
+  const pulls: ClaudeHostedBoundary[] = [];
+  const port = {
+    async pull(boundary: ClaudeHostedBoundary) {
+      pulls.push(boundary);
+      return { boundary, binding: held, token: 'private-token', releaseIds: ['release-717'], frame };
+    },
+    async current(delivery: { binding: SessionBinding; boundary: ClaudeHostedBoundary }) {
+      return !paused && delivery.binding.bindingId === held.bindingId
+        && delivery.binding.generation === held.generation
+        && mode === (delivery.boundary === 'post_tool_use' ? 'steer' : 'sync');
+    },
+    async acknowledge(delivery: { token: string }) { acknowledgements.push(delivery.token); },
+  };
+  const deps = {
+    hostedRoot: root, stateRoot: root, terminalKeyPath: `${root}/no-key`,
+    bound: async () => false, khala: async () => { throw new Error('internal route must be silent'); },
+    sleep: async () => {}, now: () => Date.now(), nonce: () => 'unused', parentAlive: () => true,
+  };
+  const hook = (role: 'post-tool-use' | 'stop') => runHook(role,
+    JSON.stringify({ hook_event_name: role === 'stop' ? 'Stop' : 'PostToolUse', session_id: sessionId }), deps);
+  return { sessionId, port, hook, pulls, acknowledgements,
+    mode: (value: 'steer' | 'sync' | null) => { mode = value; },
+    pause: () => { paused = true; }, resume: () => { paused = false; },
+    generation: (value: number) => { held = binding(value); } };
+}
+
+describe('Claude hosted hook receipt bridge', () => {
+  it('delivers Steer at the tool boundary and commits only after the exact later call', async () => {
+    const f = fixture();
+    const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
+    try {
+      const result = await f.hook('post-tool-use');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('owner selected release');
+      const nonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(result.stdout)?.[1];
+      expect(nonce).toBeDefined();
+      expect(f.acknowledgements).toEqual([]);
+      expect(await bridge.acknowledge('A'.repeat(32))).toBe('stale');
+      expect(await bridge.acknowledge(nonce!)).toEqual({ kind: 'acknowledged', boundary: 'post_tool_use',
+        sessionFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{24}$/u),
+        bindingId: 'binding-717', generation: 1, releaseIds: ['release-717'] });
+      expect(f.acknowledgements).toEqual(['private-token']);
+      expect(await bridge.acknowledge(nonce!)).toBe('stale');
+      expect(f.pulls).toEqual(['post_tool_use']);
+    } finally { await bridge.close(); }
+  });
+
+  it('delivers Sync at Stop and invalidates receipts on pause or generation change', async () => {
+    const f = fixture(); f.mode('sync');
+    const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
+    try {
+      expect((await f.hook('post-tool-use')).stdout).toBe('');
+      const stopped = await f.hook('stop');
+      expect(JSON.parse(stopped.stdout)).toMatchObject({ decision: 'block' });
+      const nonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(stopped.stdout)?.[1];
+      expect(nonce).toBeDefined();
+      f.pause();
+      expect(await bridge.acknowledge(nonce!)).toBe('stale');
+      f.resume();
+      const again = await f.hook('stop');
+      const next = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(again.stdout)?.[1];
+      expect(next).toBeDefined();
+      f.generation(2);
+      expect(await bridge.acknowledge(next!)).toBe('stale');
+      expect(f.acknowledgements).toEqual([]);
+    } finally { await bridge.close(); }
+  });
+
+  it('refuses wrong socket credentials and loses stale hook evidence after restart', async () => {
+    const f = fixture();
+    const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
+    await expect(startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port }))
+      .rejects.toThrow('active_hook_bridge_exists');
+    const descriptor = JSON.parse(await readFile(claudeHostedHookPaths(root, f.sessionId).descriptor, 'utf8')) as { socketPath: string };
+    const wrong = await new Promise<string>(resolve => {
+      const socket = createConnection(descriptor.socketPath);
+      let output = '';
+      socket.on('connect', () => socket.write(JSON.stringify({ v: 1, sessionId: f.sessionId,
+        boundary: 'post_tool_use', secret: 'A'.repeat(43) }) + '\n'));
+      socket.on('data', chunk => { output += chunk.toString(); if (output.includes('\n')) { resolve(output); socket.destroy(); } });
+    });
+    expect(wrong).toContain('unsupported');
+    const first = await f.hook('post-tool-use');
+    const nonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(first.stdout)?.[1];
+    await bridge.close();
+    expect((await f.hook('post-tool-use')).stdout).toBe('');
+    const resumed = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
+    try {
+      expect(await resumed.acknowledge(nonce!)).toBe('stale');
+      expect((await f.hook('post-tool-use')).stdout).toContain('owner selected release');
+      expect(f.acknowledgements).toEqual([]);
+    } finally { await resumed.close(); }
+  });
+});

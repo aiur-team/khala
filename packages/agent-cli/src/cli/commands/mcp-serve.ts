@@ -1,4 +1,6 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { BatchInbox } from '../inbox.js';
 import { isClaudeMcpEntry, runClaudeMcpServer, sessionOperationId } from '../../composition/claude-mcp.js';
@@ -23,6 +25,7 @@ import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
 import { AGENT_READINESS_ERRORS, type AgentClientPort, type CliCommand, type CliDependencies } from '../types.js';
 import { validIdentifier } from '../validation.js';
+import { startClaudeHostedHookBridge, type ClaudeHostedBoundary, type ClaudeHostedHookDelivery } from '../../composition/claude-hosted-hook-bridge.js';
 
 export const mcpServeCommand: CliCommand = {
   name: 'mcp-serve',
@@ -72,6 +75,9 @@ export const mcpServeCommand: CliCommand = {
       };
       let retainedToken: string | undefined;
       let sessionBinding: SessionBinding | null = null;
+      let hookBridge: Awaited<ReturnType<typeof startClaudeHostedHookBridge>> | null = null;
+      let hookBridgeOpening: Promise<Awaited<ReturnType<typeof startClaudeHostedHookBridge>> | null> | null = null;
+      let hookBridgeUnavailable = false;
       let localAccessRequested = false;
       let startupDeadline: number | null = null;
       const heldDiagnostic = (stage: 'connector_unready' | 'binding_absent' | 'harness_mismatch'
@@ -109,6 +115,48 @@ export const mcpServeCommand: CliCommand = {
           heldDiagnostic('binding_changed'); return null;
         }
         sessionBinding = binding;
+        if (hookBridge === null && hookBridgeOpening === null && !hookBridgeUnavailable) {
+          const stateHome = deps.env?.XDG_STATE_HOME;
+          const root = path.join(stateHome && path.isAbsolute(stateHome) ? stateHome : path.join(homedir(), '.local/state'), 'khala');
+          hookBridgeOpening ??= startClaudeHostedHookBridge({ root, sessionId, port: {
+            async current(delivery: ClaudeHostedHookDelivery) {
+              const selected = await held();
+              if (selected?.kind !== 'held' || !sameHeldBinding(delivery.binding, selected.binding)) return false;
+              const mode = await selected.opened.client.listeningMode?.(deps.signal).catch(() => null);
+              return mode?.bindingId === selected.binding.bindingId && mode.generation === selected.binding.generation
+                && mode.effective === (delivery.boundary === 'post_tool_use' ? 'steer' : 'sync');
+            },
+            async pull(boundary: ClaudeHostedBoundary) {
+              const selected = await held();
+              if (selected?.kind !== 'held') return null;
+              const mode = await selected.opened.client.listeningMode?.(deps.signal).catch(() => null);
+              if (mode?.bindingId !== selected.binding.bindingId || mode.generation !== selected.binding.generation
+                || mode.effective !== (boundary === 'post_tool_use' ? 'steer' : 'sync')) return null;
+              const inbox = await selected.opened.inbox(selected.binding.bindingId, selected.binding.generation);
+              const read = new ReadOperation({ heldBinding: selected.binding,
+                consumer: callScopedConsumer(inbox, { signal: deps.signal }),
+                currentBinding: async () => (await held())?.binding ?? null });
+              const result = await read.read({ bindingId: selected.binding.bindingId, maxBytes: 65_536,
+                offerScope: `claude-hosted-${boundary}-${sessionId}` });
+              if (result.kind !== 'batch') return null;
+              return { boundary, binding: selected.binding, token: result.batch.token,
+                releaseIds: result.batch.items.map(item => item.record.releaseId),
+                frame: renderInboxBatchWithoutToken(result.batch) };
+            },
+            async acknowledge(delivery: ClaudeHostedHookDelivery) {
+              const selected = await held();
+              if (selected?.kind !== 'held' || !sameHeldBinding(delivery.binding, selected.binding)) throw new Error('stale_hook_receipt');
+              const inbox = await selected.opened.inbox(selected.binding.bindingId, selected.binding.generation);
+              const read = new ReadOperation({ heldBinding: selected.binding,
+                consumer: callScopedConsumer(inbox, { signal: deps.signal }),
+                currentBinding: async () => (await held())?.binding ?? null });
+              const after = await read.read({ bindingId: selected.binding.bindingId, maxBytes: 0,
+                acknowledgeToken: delivery.token, offerScope: `claude-hosted-ack-${sessionId}` });
+              if (after.kind === 'batch' && after.batch.token === delivery.token) throw new Error('stale_hook_receipt');
+            },
+          } }).catch(() => { hookBridgeUnavailable = true; return null; });
+          hookBridge = await hookBridgeOpening;
+        }
         return { kind: 'held' as const, opened, binding };
       };
       const current = async (binding: SessionBinding) => {
@@ -135,6 +183,11 @@ export const mcpServeCommand: CliCommand = {
           return selected?.kind === 'starting' ? starting
             : selected === null ? { kind: 'refused', code: 'not_connected' }
             : { kind: 'status', connected: true };
+        },
+        async acknowledgeHookReceipt(receipt: string) {
+          if (!hookBridge) return { kind: 'refused', code: 'unavailable' };
+          const result = await hookBridge.acknowledge(receipt);
+          return result === 'stale' ? { kind: 'refused', code: 'stale_receipt' } : result;
         },
         async send(message: string) {
           const selected = await held();
@@ -178,11 +231,19 @@ export const mcpServeCommand: CliCommand = {
         },
       };
       try {
+        // Sync can arrive at Stop before the model has called an MCP tool. Start
+        // binding discovery as the MCP process starts so that boundary has a
+        // live hook endpoint; a failed/unbound discovery still fails closed.
+        if (deps.hostedSession && deps.hostedBindingPresent && validIdentifier(sessionId)
+          && await deps.hostedBindingPresent({ harness: 'claude', sessionId }).catch(() => false)) {
+          await held().catch(() => undefined);
+        }
         await runClaudeMcpServer({ claude: deps.claude,
           channels: composeChannelTools(channelsClient, id => sessionOperationId(sessionId ?? null, id)),
           hosted: deps.hostedSession ? hostedTools : undefined,
           env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
-      } finally { await (hosted as Hosted | null)?.close(); }
+      } finally { await (hookBridge as Awaited<ReturnType<typeof startClaudeHostedHookBridge>> | null)?.close();
+        await (hosted as Hosted | null)?.close(); }
       return 0;
     }
     if (deps.sessionGrants !== undefined) {

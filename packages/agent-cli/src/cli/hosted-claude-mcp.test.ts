@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,8 @@ import { createUnavailableClient } from '../composition/unavailable.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import { hasProductionBinding } from '@khala/connector-app/composition/production';
 import { claudeProofKeyLabelInspection } from '../composition/hosted-session-inspection.js';
+import { runHook } from '../../../claude-plugin/hooks/lib/runtime.mjs';
+import { claudeHostedHookPaths } from '../composition/claude-hosted-hook-bridge.js';
 
 const SESSION = 'native-claude-571';
 const PROOF_SESSION = `agent_${'A'.repeat(43)}`;
@@ -52,6 +54,106 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
+  it('correlates a model-visible hosted hook to a later agent call and durable exact-generation ACK', async () => {
+    const sessionId = randomUUID();
+    const stateHome = process.env.TMPDIR ?? os.tmpdir();
+    const inboxRoot = fs.mkdtempSync(path.join(stateHome, 'khala-717-inbox-'));
+    const bytes = new TextEncoder().encode('{"body":"owner selected hosted release"}');
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const recorded: string[][] = [];
+    const open = () => openInbox({ stateDirectory: inboxRoot, bindingId: binding.bindingId,
+      generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+      recordAcknowledgement: async value => { recorded.push([...value.releaseIds]); } });
+    const inbox = await open();
+    await inbox.enqueue({ v: 1, releaseId: 'release-717', bindingId: binding.bindingId,
+      generation: binding.generation, events: [{ v: 1, roomId: 'room-717' as EventRef['roomId'],
+        eventId: 'event-717' as EventRef['eventId'], authorParticipantId: 'sender-717' as EventRef['authorParticipantId'],
+        authorDeviceId: 'device-717' as EventRef['authorDeviceId'], contentDigest: digest }],
+      payloadDigest: digest, payload: bytes, receivedAt: '2026-10-01T00:00:00Z' });
+    const second = new TextEncoder().encode('{"body":"second ordered release"}');
+    const secondDigest = `sha256:${createHash('sha256').update(second).digest('hex')}`;
+    await inbox.enqueue({ v: 1, releaseId: 'release-718', bindingId: binding.bindingId,
+      generation: binding.generation, events: [{ v: 1, roomId: 'room-717' as EventRef['roomId'],
+        eventId: 'event-718' as EventRef['eventId'], authorParticipantId: 'sender-717' as EventRef['authorParticipantId'],
+        authorDeviceId: 'device-717' as EventRef['authorDeviceId'], contentDigest: secondDigest }],
+      payloadDigest: secondDigest, payload: second, receivedAt: '2026-10-01T00:00:01Z' });
+    let effective: 'steer' | 'sync' | null = 'steer';
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null }; },
+        async listeningMode() { return { v: 1, bindingId: binding.bindingId, generation: binding.generation, effective }; } },
+      inbox: async () => open(), async close() {},
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough(); const stderr = new PassThrough();
+    let output = '';
+    stdout.on('data', chunk => { output += String(chunk); });
+    const serving = runCli(['mcp-serve'], {
+      client: createUnavailableClient(), inbox: async () => { throw new Error('not local'); },
+      stdin, stdout, stderr, env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId,
+        XDG_STATE_HOME: stateHome }, hostedSession: factory, hostedBindingPresent: async () => true,
+    });
+    const responses = async (count: number) => {
+      const complete = () => output.split('\n').slice(0, -1).filter(Boolean);
+      for (let i = 0; i < 200 && complete().length < count; i++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      return complete().map(line => JSON.parse(line) as { result: { structuredContent: Record<string, unknown> } });
+    };
+    const hookDeps = { hostedRoot: path.join(stateHome, 'khala'), stateRoot: inboxRoot,
+      terminalKeyPath: path.join(inboxRoot, 'no-key'), bound: async () => false,
+      khala: async () => { throw new Error('internal route'); }, sleep: async () => {},
+      now: () => Date.now(), nonce: () => 'unused', parentAlive: () => true };
+    try {
+      const descriptor = claudeHostedHookPaths(path.join(stateHome, 'khala'), sessionId).descriptor;
+      for (let i = 0; i < 100 && !fs.existsSync(descriptor); i++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(fs.existsSync(descriptor)).toBe(true);
+      const hook = await runHook('post-tool-use', JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId }), hookDeps);
+      expect(hook.stdout).toContain('owner selected hosted release');
+      expect(hook.stdout.indexOf('owner selected hosted release')).toBeLessThan(hook.stdout.indexOf('second ordered release'));
+      const receipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(hook.stdout)?.[1];
+      expect(receipt).toBeDefined();
+      expect(recorded).toEqual([]);
+      stdin.write(request(2, 'khala_hook_receipt', { receipt: 'A'.repeat(32) }));
+      expect((await responses(1))[0]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
+      expect(recorded).toEqual([]);
+      stdin.write(request(3, 'khala_hook_receipt', { receipt }));
+      expect((await responses(2))[1]?.result.structuredContent).toMatchObject({ kind: 'acknowledged',
+        bindingId: binding.bindingId, generation: binding.generation, releaseIds: ['release-717', 'release-718'], boundary: 'post_tool_use' });
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      stdin.write(request(4, 'khala_hook_receipt', { receipt }));
+      expect((await responses(3))[2]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
+      stdin.write(request(5, 'khala_status'));
+      expect((await responses(4))[3]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
+      const syncBytes = new TextEncoder().encode('{"body":"owner selected sync release"}');
+      const syncDigest = `sha256:${createHash('sha256').update(syncBytes).digest('hex')}`;
+      await inbox.enqueue({ v: 1, releaseId: 'release-719', bindingId: binding.bindingId,
+        generation: binding.generation, events: [{ v: 1, roomId: 'room-717' as EventRef['roomId'],
+          eventId: 'event-719' as EventRef['eventId'], authorParticipantId: 'sender-717' as EventRef['authorParticipantId'],
+          authorDeviceId: 'device-717' as EventRef['authorDeviceId'], contentDigest: syncDigest }],
+        payloadDigest: syncDigest, payload: syncBytes, receivedAt: '2026-10-01T00:00:02Z' });
+      effective = 'sync';
+      const stopped = await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps);
+      const stopReason = JSON.parse(stopped.stdout) as { decision: string; reason: string };
+      expect(stopReason.decision).toBe('block');
+      expect(stopReason.reason).toContain('owner selected sync release');
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      const syncReceipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(stopReason.reason)?.[1];
+      expect(syncReceipt).toBeDefined();
+      stdin.write(request(6, 'khala_hook_receipt', { receipt: syncReceipt }));
+      expect((await responses(5))[4]?.result.structuredContent).toMatchObject({ kind: 'acknowledged',
+        bindingId: binding.bindingId, generation: binding.generation, releaseIds: ['release-719'], boundary: 'stop' });
+      expect(recorded).toEqual([['release-717', 'release-718'], ['release-719']]);
+      effective = null;
+      expect((await runHook('post-tool-use', JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId }), hookDeps)).stdout).toBe('');
+    } finally {
+      stdin.end();
+      await serving;
+      fs.rmSync(inboxRoot, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('keeps an uninspectable installed version unsupported without dropping the session label', async () => {
     const claim = { harness: 'claude', sessionId: SESSION, workdir: process.cwd() };
     const inspected = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
