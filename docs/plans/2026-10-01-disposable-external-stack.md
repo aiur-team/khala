@@ -3,7 +3,7 @@
 ## Goal and boundary
 
 Run the built hosted web, generated control function, local Netlify Blobs,
-disposable Dex and Synapse/Postgres, and the installed connector through one
+disposable Dex and Synapse/Postgres, and an installed CLI packaging check through one
 trusted HTTPS loopback origin. This is a local topology proof; deployed provider
 behavior and the three-party canary remain separate acceptance gates.
 
@@ -20,13 +20,15 @@ behavior and the three-party canary remain separate acceptance gates.
 2. **Production artifacts and capability.** Build generated functions and web
    with the exact root Netlify configuration, package the installed CLI, and
    preflight `/api/health`, `/api/human/auth/login` redirect, direct function
-   route, and Blobs write/read across a function restart. Fix a discovered
+   route, and a persisted auth-session record in local Blobs emulation across a function restart. Fix a discovered
    packaging/runtime seam in the narrowest module and add its focused test.
    Tests: `infra/preview/external-local.test.ts` plus the existing control
    store SDK tests.
-3. **Browser and connector smoke.** Reuse the hosted human Playwright flow with
+3. **Browser and CLI handoff smoke.** Reuse the hosted human Playwright flow with
    disposable Dex identities, observer account, Matrix ciphertext inspection,
-   and an installed connector process and private profile. Report named stages,
+   and installed CLI `status`/`channels open` commands with a private profile.
+   Expose the installed CLI and live topology descriptor to #811 for native
+   connector read/write and model-visible receipt acceptance. Report named stages,
    source/artifact hashes, versions and scope names without raw process logs.
    Tests: `tests/integration/human/create-share-chat.spec.ts` and a new local
    runner integration test that rejects HTTP, fixture tokens and local auth.

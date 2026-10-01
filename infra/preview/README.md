@@ -63,8 +63,10 @@ through Netlify Dev behind a trusted loopback HTTPS origin. It runs the hosted
 bootstrap route before browser work begins. It runs the hosted
 human browser suite with real Dex authorization-code/PKCE sign-in, session
 cookies, channel sharing, encrypted Matrix events, and a read-only outsider.
-It then checks the session in a fresh browser after a function restart and
-starts the locally installed hosted CLI with the same origin. It reports only
+It then checks a persisted auth-session record in local Blobs emulation from a
+fresh browser after a function restart. It runs the locally installed hosted
+CLI's `status` and `channels open` commands with the same origin as a packaging
+and handoff check; native connector read/write belongs to #811. It reports only
 a stage, correlation ID, artifact digests, versions and scope names. Raw child
 and browser output stays private and the runner removes only its own project,
 volumes and private files. `KHALA_LOCAL_AUTH=enabled`, fixture credentials and
