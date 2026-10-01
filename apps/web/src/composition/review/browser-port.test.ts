@@ -80,6 +80,7 @@ function scriptedClient(answer: (request: ReviewPreviewRequest) => Answer | Prom
       commands.push(command);
       return approval();
     },
+    reconcile() { return approval(); },
   };
   return { client, requests, commands, setApproval: (next: typeof approval) => { approval = next; } };
 }
@@ -98,6 +99,19 @@ function port(client: ReviewControlClient, room: RoomPort) {
 }
 
 describe('browser review port', () => {
+  it('routes a status check through reconcile without calling approve', async () => {
+    const { client, commands, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
+    let checked: ApprovalCommand | null = null;
+    client.reconcile = async value => { checked = value; return { kind: 'answered', body: { ok: true, releaseIds: ['release_1'] } }; };
+    const { room } = fakeRoom();
+    const review = port(client, room);
+    const exact = command('command_checked');
+    expect(await review.reconcile(exact, new AbortController().signal)).toEqual({ kind: 'accepted', releaseIds: ['release_1'] });
+    expect(checked).toBe(exact);
+    expect(commands).toHaveLength(0);
+    expect(requests).toHaveLength(0);
+    review.dispose();
+  });
   it('keeps exact known pending rows selectable while the connector is offline', async () => {
     const { client } = scriptedClient(() => ({ kind: 'waiting_for_agent', generation: 0, body: previewBody([refOf(itemA)]) }));
     const { room, emit } = fakeRoom();

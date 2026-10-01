@@ -39,7 +39,7 @@ export interface ReviewController {
   clearSelection(): void;
   /** Submits the current selection as one new command. No-op while a command is `submitting`/`unknown`, or the selection is not `selected`, or access is not `ready`. */
   submit(): Promise<void>;
-  /** Reconciles the last `outcome_unknown` command using its exact identity and bytes, never a freshly reconstructed one. No-op unless submission is `unknown`. */
+  /** Reads the last submitted command's status using its exact identity and bytes. */
   reconcileUnknown(): Promise<void>;
   /** Idempotent; unsubscribes the port observer exactly once. */
   dispose(): void;
@@ -118,6 +118,13 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   const abortController = new AbortController();
 
   let cachedView: ReviewView = sanitizeView(port.snapshot());
+  if (cachedView.access === 'revoked' || lastCommand && (cachedView.access === 'ready'
+    || cachedView.access === 'waiting_for_agent' && cachedView.pendingKnown !== false)
+    && (cachedView.bindingId !== lastCommand.bindingId
+      || cachedView.bindingGeneration !== lastCommand.expectedBindingGeneration)) {
+    lastCommand = null;
+    submission = EMPTY_SUBMISSION;
+  }
   let cachedData: ReviewData | null = null;
   let dataDirty = true;
 
@@ -150,6 +157,13 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     // Revocation clears protected preview and command authority immediately,
     // even ahead of a late in-flight response (Failure boundaries).
     if (cachedView.access === 'revoked') {
+      selection = emptySelection();
+      submission = EMPTY_SUBMISSION;
+      lastCommand = null;
+    } else if (lastCommand && (cachedView.access === 'ready'
+      || cachedView.access === 'waiting_for_agent' && cachedView.pendingKnown !== false)
+      && (cachedView.bindingId !== lastCommand.bindingId
+        || cachedView.bindingGeneration !== lastCommand.expectedBindingGeneration)) {
       selection = emptySelection();
       submission = EMPTY_SUBMISSION;
       lastCommand = null;
@@ -192,7 +206,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     // cleared submission/command authority (`onPortChange`), and a late
     // response — however it resolved — must never resurrect either one
     // (Failure boundaries: revocation wins over a late in-flight response).
-    if (disposed || cachedView.access === 'revoked') return;
+    if (disposed || cachedView.access === 'revoked' || lastCommand !== command) return;
     submission = mapResult(command.commandId, result);
     if (submission.phase === 'released') {
       selection = emptySelection();
@@ -216,8 +230,26 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
 
   async function reconcileUnknown(): Promise<void> {
     if (disposed || !['unknown', 'waiting_for_agent'].includes(submission.phase) || !lastCommand) return;
-    await runApprove(lastCommand);
+    const command = lastCommand;
+    submission = { phase: 'submitting', commandId: command.commandId, releaseIds: null, error: null };
+    notify();
+    let result: ApprovalUiResult;
+    try { result = await port.reconcile(command, abortController.signal); }
+    catch { result = { kind: 'outcome_unknown', commandId: command.commandId }; }
+    if (disposed || cachedView.access === 'revoked' || lastCommand !== command) return;
+    submission = mapResult(command.commandId, result);
+    if (submission.phase === 'released') {
+      selection = emptySelection();
+      lastCommand = null;
+    } else if (submission.phase === 'rejected' && submission.error && STALE_REJECTION_CODES.has(submission.error)) {
+      selection = { ...selection, phase: 'stale' };
+    }
+    notify();
   }
+
+  // A restored command has already crossed the write boundary. Settle it once
+  // after construction so a reloaded selected-room row reflects the ledger.
+  if (lastCommand) queueMicrotask(() => { void reconcileUnknown(); });
 
   function dispose(): void {
     if (disposed) return;
