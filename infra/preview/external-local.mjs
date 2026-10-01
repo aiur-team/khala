@@ -9,7 +9,6 @@ import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promise
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { request as httpsRequest } from 'node:https';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -322,8 +321,21 @@ async function main() {
     if (!open.stdout.includes(`${origin}/new`)) throw new Error('installed_origin_mismatch');
     if (extraCommand) {
       stage = 'external-consumer';
-      await command(extraCommand[0], extraCommand.slice(1), { env: { ...smokeEnv, KHALA_EXTERNAL_CLI: installedCli,
-        KHALA_EXTERNAL_ORIGIN: origin }, timeout: 300_000 });
+      const consumerEnv = Object.fromEntries(
+        ['PATH', 'HOME', 'TMPDIR', 'LANG', 'CI', 'PLAYWRIGHT_BROWSERS_PATH']
+          .filter(key => process.env[key] !== undefined)
+          .map(key => [key, process.env[key]]),
+      );
+      Object.assign(consumerEnv, {
+        NODE_EXTRA_CA_CERTS: tls.cert, KHALA_E2E_CERT_SPKI: tls.spki,
+        KHALA_E2E_LIVE: '1', KHALA_E2E_DISPOSABLE_ENV: descriptorPath,
+        KHALA_E2E_USER_A: smokeEnv.KHALA_E2E_USER_A, KHALA_E2E_USER_A_PASSWORD: passwordA,
+        KHALA_E2E_USER_B: smokeEnv.KHALA_E2E_USER_B, KHALA_E2E_USER_B_PASSWORD: passwordB,
+        KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token,
+        KHALA_EXTERNAL_CLI: installedCli, KHALA_EXTERNAL_ORIGIN: origin,
+        KHALA_APP_ORIGIN: origin, XDG_STATE_HOME: smokeEnv.XDG_STATE_HOME,
+      });
+      await command(extraCommand[0], extraCommand.slice(1), { env: consumerEnv, timeout: 300_000 });
     }
     stage = 'report';
     const source = await command('git', ['rev-parse', 'HEAD']);
