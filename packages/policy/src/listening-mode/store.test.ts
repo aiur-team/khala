@@ -245,6 +245,9 @@ describe('listening-mode service', () => {
       ok: true,
       view: { lastChangedBy: { kind: 'owner', participantId: 'owner-1' } },
     });
+    await expect(service.set(agent(), context, capabilities(), modeCommand({
+      commandId: 'stale-agent-after-owner' as CommandId, expectedVersion: 2, requested: 'async',
+    }))).resolves.toMatchObject({ outcome: 'conflict', version: 3, requested: 'sync' });
   });
 
   it('rejects stale, cross-binding and revoked agent authority before store access', async () => {
@@ -261,6 +264,12 @@ describe('listening-mode service', () => {
       .resolves.toEqual({ ok: false, code: 'binding_mismatch' });
     await expect(service.read(agent(), { binding: binding(), status: 'revoked' }, capabilities()))
       .resolves.toEqual({ ok: false, code: 'binding_revoked' });
+    await expect(service.set({ ...agent(), bindingId: 'binding-2' as BindingId } as AgentBindingAuthority,
+      { binding: binding(), status: 'active' }, capabilities(), modeCommand({ requested: 'async' })))
+      .resolves.toMatchObject({ outcome: 'refused', reason: 'binding_mismatch', effective: null });
+    await expect(service.set(agent(), { binding: binding(), status: 'revoked' }, capabilities(),
+      modeCommand({ requested: 'async' })))
+      .resolves.toMatchObject({ outcome: 'refused', reason: 'binding_revoked', effective: null });
     await expect(service.read(
       { ...owner(), ownerId: 'owner-other' as OwnerId },
       { binding: binding(), status: 'active' },
