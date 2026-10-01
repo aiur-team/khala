@@ -175,6 +175,10 @@ async function main() {
   const extraCommand = execAt === -1 ? null : process.argv.slice(execAt + 1);
   if (execAt !== -1 && (extraCommand.length === 0 || process.argv.slice(2, execAt).length !== 0)) throw new Error('invalid_exec_arguments');
   const scratch = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-external-'));
+  let stackStarted = false;
+  let gateway;
+  let env;
+  try {
   await chmod(scratch, 0o700);
   const log = path.join(scratch, 'children.log');
   const matrixDir = path.join(scratch, 'matrix');
@@ -189,7 +193,7 @@ async function main() {
     const result = await command('mkpasswd', ['-m', 'bcrypt', '-R', '10', '-s'], { input: value });
     return result.stdout.trim();
   };
-  const env = { ...process.env,
+  env = { ...process.env,
     KHALA_ENVIRONMENT: 'preview', KHALA_STATE_NAMESPACE: project,
     KHALA_MATRIX_SERVER_NAME: `${runId}.matrix.invalid`, KHALA_MATRIX_PUBLIC_ORIGIN: origin,
     KHALA_MATRIX_REGISTRATION_SHARED_SECRET: secret(), KHALA_DB_HOST: 'postgres', KHALA_DB_PORT: '5432',
@@ -201,6 +205,7 @@ async function main() {
     KHALA_PREVIEW_OIDC_USER_A_ID: randomUUID(), KHALA_PREVIEW_OIDC_USER_B_EMAIL: `b-${runId}@example.invalid`,
     KHALA_PREVIEW_OIDC_USER_B_BCRYPT_HASH: await bcrypt(passwordB), KHALA_PREVIEW_OIDC_USER_B_ID: randomUUID(),
     PUBLIC_APP_ORIGIN: origin, PUBLIC_HOMESERVER_ORIGIN: origin, OIDC_ISSUER: `${origin}/dex`,
+    KHALA_ADMISSION_MODE: 'explicit_browser_consent',
     OIDC_CLIENT_ID: `khala-${runId}`, CONTROL_STATE_NAMESPACE: `external-${runId}`,
     MATRIX_SERVER_NAME: `${runId}.matrix.invalid`, MATRIX_PASSWORD_DERIVATION_SECRET: secret(), INVITATION_HMAC_SECRET: secret(),
     XDG_CONFIG_HOME: path.join(scratch, 'xdg'), NETLIFY_HOME: path.join(scratch, 'netlify-home'),
@@ -208,9 +213,6 @@ async function main() {
   env.OIDC_CLIENT_SECRET = env.KHALA_PREVIEW_OIDC_CLIENT_SECRET;
   env.MATRIX_REGISTRATION_SHARED_SECRET = env.KHALA_MATRIX_REGISTRATION_SHARED_SECRET;
   delete env.KHALA_LOCAL_AUTH;
-  let stackStarted = false;
-  let gateway;
-  try {
     stage = 'native-clis';
     for (const bin of fixed) await command('sh', ['-c', `command -v ${bin} >/dev/null`]);
     stage = 'render-config';
@@ -228,6 +230,12 @@ async function main() {
     const observer = await registerObserver(checkEnv.KHALA_MATRIX_CHECK_ORIGIN, env.KHALA_MATRIX_REGISTRATION_SHARED_SECRET);
     stage = 'build-artifacts';
     await command('pnpm', ['--filter', '@khala/control', 'build:functions'], { env });
+    stage = 'hosted-route-registration';
+    const manifest = JSON.parse(await readFile(path.join(root, 'infra/netlify/functions-generated/route-manifest.json'), 'utf8'));
+    const hostedRoute = manifest.routes?.find(route => route.path === '/api/agent/bootstrap/redeem');
+    if (!hostedRoute?.methods?.includes('POST') || hostedRoute.domain !== 'agent') {
+      throw new Error('hosted_agent_route_missing');
+    }
     await command('pnpm', ['--filter', '@khala/web', 'build'], { env });
     await command('pnpm', ['--filter', '@aiur/khala', 'build'], { env });
     const tls = await createCertificate(scratch);
@@ -340,6 +348,6 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(error => { process.stderr.write(JSON.stringify({ correlation, result: 'failed', stage,
-    code: /^(?:child_exited_[\w-]+|readiness_timeout|[a-z_]+_failed_\d+)$/u.test(error?.message) ? error.message
+    code: /^(?:child_exited_[\w-]+|readiness_timeout|hosted_agent_route_missing|[a-z_]+_failed_\d+)$/u.test(error?.message) ? error.message
       : ['ESRCH', 'ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'stage_failed' }) + '\n'); process.exitCode = 1; });
 }
