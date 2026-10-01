@@ -119,7 +119,21 @@ function grantSuffix(grant: GrantState): string {
   return '';
 }
 
-function ListeningSection({ listening, controller }: { listening: ListeningDisplay; controller: AgentControlsController }) {
+const MODE_HELP = {
+  steer: 'Reach the agent at the next safe point while it works.',
+  sync: 'Hold messages until the agent reaches a safe pause.',
+  async: 'Let the agent collect messages when it chooses to read.',
+} as const;
+
+function compactUnavailableReason(option: ListeningModeOption): string {
+  if (option.status === 'proven') return 'This session cannot confirm delivery for this mode.';
+  if (option.status === 'experimental') return 'Needs your approval for this session.';
+  if (option.status === 'unknown') return 'Support has not been verified for this session.';
+  if (option.status === 'blocked_without_wrapper') return 'This session cannot use this mode yet.';
+  return 'This session does not support this mode.';
+}
+
+function ListeningSection({ listening, controller, compact = false }: { listening: ListeningDisplay; controller: AgentControlsController; compact?: boolean }) {
   const baseId = useId();
   const fieldsetRef = useRef<HTMLFieldSetElement>(null);
   const confirmationRef = useRef<HTMLDivElement>(null);
@@ -151,12 +165,12 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
   const hardCancelGrant = listening.hardCancel.grant;
 
   return (
-    <section className="agent-controls__listening" aria-labelledby={`${baseId}-heading`}>
+    <section className={`agent-controls__listening${compact ? ' agent-controls__listening--compact' : ''}`} aria-labelledby={`${baseId}-heading`}>
       <h3 id={`${baseId}-heading`}>Listening mode</h3>
-      <p className="agent-controls__session-label">{listening.sessionLabel}</p>
-      <p className="agent-controls__listening-meta">{listening.lastChangeLabel}</p>
-      {listening.initialReason ? <p className="agent-controls__listening-meta">{listening.initialReason}</p> : null}
-      {listening.idleClaim ? <p className="agent-controls__listening-meta">{listening.idleClaim}</p> : null}
+      {!compact ? <><p className="agent-controls__session-label">{listening.sessionLabel}</p>
+        <p className="agent-controls__listening-meta">{listening.lastChangeLabel}</p>
+        {listening.initialReason ? <p className="agent-controls__listening-meta">{listening.initialReason}</p> : null}
+        {listening.idleClaim ? <p className="agent-controls__listening-meta">{listening.idleClaim}</p> : null}</> : null}
 
       <fieldset
         ref={fieldsetRef}
@@ -182,14 +196,15 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
                 onChange={() => controller.selectListeningMode(option.mode)}
               />
               <label htmlFor={inputId}>
-                {option.mode}
+                {compact ? `${option.mode[0].toUpperCase()}${option.mode.slice(1)}` : option.mode}
                 {option.mode === listening.requested ? ' (requested)' : ''}
               </label>{' '}
-              <StatusBadge
+              {!compact ? <StatusBadge
                 tone={supportTone(option, listening.sessionActive)}
                 label={`${SUPPORT_LABEL[option.status]}${grantSuffix(grant)}`}
-              />
-              <p id={descriptionId} className="agent-controls__mode-description">{option.description}</p>
+              /> : null}
+              <p id={descriptionId} className="agent-controls__mode-description">{compact ? MODE_HELP[option.mode] : option.description}
+                {compact && !option.selectable ? ` ${compactUnavailableReason(option)}` : null}</p>
               {option.canGrantExperimental ? (
                 <button type="button" onClick={() => controller.requestGrant('experimental_route', option.mode)}>
                   {grant.kind === 'expired' ? 'Review updated evidence' : 'Enable experimental route'}
@@ -200,10 +215,10 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
                   Revoke experimental route
                 </button>
               ) : null}
-              <details className="agent-controls__evidence">
+              {!compact ? <details className="agent-controls__evidence">
                 <summary>Evidence for {option.mode} on {listening.sessionLabel}</summary>
                 <EvidenceLines evidence={option.evidence} />
-              </details>
+              </details> : null}
             </div>
           );
         })}
@@ -233,7 +248,7 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
         <p className="agent-controls__listening-issue">{listening.deliveryIssue}</p>
       ) : null}
 
-      <div className="agent-controls__hard-cancel">
+      {!compact ? <div className="agent-controls__hard-cancel">
         <h4>Hard cancel</h4>
         <p className="agent-controls__mode-description">
           {listening.hardCancel.description}
@@ -253,7 +268,7 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
           <summary>Hard-cancel evidence for {listening.sessionLabel}</summary>
           <EvidenceLines evidence={listening.hardCancel.evidence} />
         </details>
-      </div>
+      </div> : null}
 
       {confirmation ? (
         <div
@@ -281,7 +296,7 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
         </div>
       ) : null}
 
-      {listening.secondaryEvidence ? (
+      {!compact && listening.secondaryEvidence ? (
         <details className="agent-controls__evidence">
           <summary>Secondary evidence for {listening.sessionLabel}</summary>
           <p>{listening.secondaryEvidence}</p>
@@ -291,7 +306,7 @@ function ListeningSection({ listening, controller }: { listening: ListeningDispl
   );
 }
 
-export function AgentControlsPanel({ ports, config, controller: injectedController }: AgentControlsPanelProps) {
+function useControlsController({ ports, config, controller: injectedController }: AgentControlsPanelProps) {
   const ownController = useMemo(
     () => (injectedController ? null : createAgentControlsController(ports, config)),
     [
@@ -301,7 +316,6 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
   );
   const controller = injectedController ?? ownController!;
   const [view, setView] = useState<AgentControlsView>(() => controller.getView());
-  const unavailableReasonId = useId();
 
   useEffect(() => {
     setView(controller.getView());
@@ -312,6 +326,25 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
     // is owned by its caller (e.g. a test), never leaked into or torn down here.
     if (ownController) ownController.dispose();
   }, [ownController]);
+
+  return { controller, view };
+}
+
+/** Owner-only conversation detail backed by the same authoritative controller as the full controls panel. */
+export function AgentListeningControls(props: AgentControlsPanelProps) {
+  const { controller, view } = useControlsController(props);
+  return <div className="agent-controls__compact">
+    {view.listening ? <ListeningSection listening={view.listening} controller={controller} compact />
+      : <section className="agent-controls__listening"><h3>Listening mode</h3>
+        <p role="status">Checking this agent’s listening modes…</p></section>}
+    {view.notice ? <p className="agent-controls__notice" role="alert">{view.notice.message}</p> : null}
+    {view.notice ? <button type="button" onClick={() => controller.refresh()}>Refresh listening modes</button> : null}
+  </div>;
+}
+
+export function AgentControlsPanel(props: AgentControlsPanelProps) {
+  const { controller, view } = useControlsController(props);
+  const unavailableReasonId = useId();
 
   const requestedLabel = requestedPolicyLabel(view);
   const nextPaused = !(view.policy.paused ?? false);

@@ -1,7 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
-import { ACKNOWLEDGEMENT_SUPPORT_LABELS, RECEIPT_EVIDENCE_LABELS } from '../receipt-evidence/vocabulary';
 import type { ChannelAgentView, ChannelController } from './controller';
 import type { AgentConnectionState } from './ports';
 import { participantRosterName } from './participant-name';
@@ -14,6 +13,7 @@ export interface AgentPresencePanelProps {
   namesPending?: boolean;
   renameAgent?: (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
   renameScope?: string;
+  renderOwnerControls?: (agent: ChannelAgentView) => ReactNode;
 }
 
 type PendingRename = { name: string; clientTxnId: string };
@@ -94,7 +94,7 @@ const CONNECTION_LABEL: Record<AgentConnectionState, string> = {
   connected: 'Connected',
   stale: 'Connection stale',
   offline: 'Not connected',
-  unknown: 'Connection unknown',
+  unknown: 'Connection unavailable',
 };
 
 function defaultCopyText(value: string): Promise<void> {
@@ -127,7 +127,7 @@ function Onboarding({ agent, copy, copyState }: {
   );
 }
 
-export function AgentPresencePanel({ controller, copyText = defaultCopyText, viewerOwnerId, currentNames, namesPending = false, renameAgent, renameScope }: AgentPresencePanelProps) {
+export function AgentPresencePanel({ controller, copyText = defaultCopyText, viewerOwnerId, currentNames, namesPending = false, renameAgent, renameScope, renderOwnerControls }: AgentPresencePanelProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [copyStatus, setCopyStatus] = useState<Readonly<{ participantId: ParticipantId | null; state: 'idle' | 'copied' | 'failed' }>>({
     participantId: null,
@@ -154,8 +154,16 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
       <ol className="agent-presence__list">
         {view.agents.map(agent => {
           const name = namesPending ? 'Loading name…' : participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+          const owned = Boolean(viewerOwnerId && agent.ownerId === viewerOwnerId);
+          const ownerName = participantRosterName(agent.ownerDisplayName, 'Channel member');
           return <li key={agent.participantId} className="agent-presence__agent">
-            <details className="agent-presence__details">
+            <details className="agent-presence__details" onKeyDown={event => {
+              if (event.key !== 'Escape' || !event.currentTarget.open) return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.open = false;
+              event.currentTarget.querySelector('summary')?.focus();
+            }}>
               <summary aria-label={`Details for ${name}, ${CONNECTION_LABEL[agent.connection]}`}>
                 <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
                 <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span>
@@ -163,30 +171,14 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
                 <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
               </summary>
               <div className="agent-presence__detail-body">
-                <p>Owned by {participantRosterName(agent.ownerDisplayName, 'Channel member')}</p>
-                {!namesPending && renameAgent && viewerOwnerId && renameScope && agent.ownerId === viewerOwnerId ? <RenameAgent
+                <p>{owned ? 'Your agent' : ownerName === 'Channel member' ? 'Another member’s agent' : `${ownerName}’s agent`}</p>
+                {owned ? renderOwnerControls?.(agent) : null}
+                {!namesPending && renameAgent && viewerOwnerId && renameScope && owned ? <RenameAgent
                   agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
                   storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, agent.participantId])}`} /> : null}
-                <dl className="agent-presence__facts">
-                  <div>
-                    <dt>Route</dt>
-                    <dd>{agent.routeLabel}</dd>
-                  </div>
-                  <div>
-                    <dt>Batch-token return</dt>
-                    <dd>{ACKNOWLEDGEMENT_SUPPORT_LABELS[agent.acknowledgement]}</dd>
-                  </div>
-                  <div>
-                    <dt>Last receipt</dt>
-                    <dd>
-                      {agent.lastReceipt ? (
-                        <>{RECEIPT_EVIDENCE_LABELS[agent.lastReceipt.kind]} <time dateTime={agent.lastReceipt.observedAt}>{agent.lastReceipt.observedAt}</time></>
-                      ) : 'No delivery receipt yet'}
-                    </dd>
-                  </div>
-                </dl>
-                <Onboarding agent={{ ...agent, displayName: name }} copy={copy}
+                {owned ? <Onboarding agent={{ ...agent, displayName: name }} copy={copy}
                   copyState={copyStatus.participantId === agent.participantId ? copyStatus.state : 'idle'} />
+                  : null}
               </div>
             </details>
           </li>;
