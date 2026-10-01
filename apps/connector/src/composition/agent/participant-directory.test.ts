@@ -13,6 +13,7 @@ describe('agent participant lookup', () => {
       expect(new Headers(init?.headers).get('origin')).toBe('https://khala.example');
       expect(new Headers(init?.headers).get('authorization')).toBe('DPoP capability');
       expect(new Headers(init?.headers).get('dpop')).toBe('signed-proof');
+      expect(new Headers(init?.headers).get('origin')).toBe('https://khala.example');
       return new Response(JSON.stringify({ participants: [{ matrixUserId: '@agent:matrix.test',
         participantId: 'agent_mira', ownerId: 'owner_mira', displayName: 'Codex #mira', kind: 'agent',
         deviceId: 'device_mira', fingerprint: 'A'.repeat(43) },
