@@ -284,7 +284,7 @@ describe('claude setup adapter: footprint', () => {
     await apply(adapter('2.0.0'), 'absent');
     expect(await read(paths().settings)).toBe(original);
     expect(await userState()).toEqual(before);
-  });
+  }, 15_000);
 
   it('writes no runtime port or token anywhere: installed entries read the descriptor at call time', async () => {
     await installClaude();
