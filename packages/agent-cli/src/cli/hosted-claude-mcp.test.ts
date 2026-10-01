@@ -29,18 +29,20 @@ function request(id: number, name: string, args: Record<string, unknown> = {}) {
   return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })}\n`;
 }
 
-async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: string[], sessionId = SESSION,
-  prejoinRoot?: string, onStderr?: (chunk: string) => void) {
+async function serve(factory: NonNullable<CliDependencies['hostedSession']>, calls: Iterable<string> | AsyncIterable<string>, sessionId = SESSION,
+  prejoinRoot?: string, onStderr?: (chunk: string) => void, stateHome?: string,
+  onOutput?: (output: string) => void) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   let output = '';
-  stdout.on('data', chunk => { output += String(chunk); });
+  stdout.on('data', chunk => { output += String(chunk); onOutput?.(output); });
   stderr.on('data', chunk => { onStderr?.(String(chunk)); });
   const code = await runCli(['mcp-serve'], {
     client: createUnavailableClient(),
     inbox: async () => { throw new Error('unbound inbox'); },
     stdin: Readable.from(calls), stdout, stderr,
-    env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId },
+    env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId,
+      XDG_STATE_HOME: stateHome ?? path.join(os.tmpdir(), 'khala-test-empty-state') },
     hostedSession: factory,
     ...(prejoinRoot ? {
       hostedBindingPresent: session => hasProductionBinding(prejoinRoot, { ...session, workdir: process.cwd() }),
@@ -394,10 +396,12 @@ describe('hosted native Claude MCP', () => {
   it('reads and sends only after approval through the held proof-key binding, including after restart', async () => {
     const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-hosted-'));
     try {
+      const receipts: string[][] = [];
       const bytes = new TextEncoder().encode('{"body":"encrypted release 571"}');
       const digest = (value: Uint8Array) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
       const inbox = await openInbox({ stateDirectory: root, bindingId: binding.bindingId,
-        generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 });
+        generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 1,
+        recordAcknowledgement: async value => { receipts.push([...value.releaseIds]); } });
       await inbox.enqueue({ v: 1, releaseId: 'release-571', bindingId: binding.bindingId,
         generation: binding.generation, events: [{ v: 1, roomId: 'room-571' as EventRef['roomId'],
           eventId: 'event-571' as EventRef['eventId'], authorParticipantId: 'sender-571' as EventRef['authorParticipantId'],
@@ -419,7 +423,8 @@ describe('hosted native Claude MCP', () => {
                 recovery: 'unknown' as const } } } : {}) }; }, send,
           requestChannelAccess: requestChannelAccess as never },
         inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
-          generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 }),
+          generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 1,
+          recordAcknowledgement: async value => { receipts.push([...value.releaseIds]); } }),
         async close() {},
       }));
       const pending = await serve(factory, [request(1, 'khala_status'), request(2, 'khala_read'),
@@ -427,23 +432,92 @@ describe('hosted native Claude MCP', () => {
       expect(pending.map(reply => reply.result.structuredContent)).toEqual(Array(3).fill({ kind: 'refused', code: 'not_connected' }));
       expect(send).not.toHaveBeenCalled();
       approved = true;
-      const admitted = await serve(factory, [request(1, 'khala_status'), request(2, 'khala_read'),
-        request(3, 'khala_send', { message: 'one encrypted send' })]);
+      let readDelivered!: () => void;
+      const readWritten = new Promise<void>(resolve => { readDelivered = resolve; });
+      const admitted = await serve(factory, (async function* () {
+        yield request(1, 'khala_status');
+        yield request(2, 'khala_read');
+        await readWritten;
+        const nextBytes = new TextEncoder().encode('{"body":"next hook release"}');
+        await inbox.enqueue({ v: 1, releaseId: 'release-572', bindingId: binding.bindingId,
+          generation: binding.generation, events: [{ v: 1, roomId: 'room-571' as EventRef['roomId'],
+            eventId: 'event-572' as EventRef['eventId'], authorParticipantId: 'sender-571' as EventRef['authorParticipantId'],
+            authorDeviceId: 'device-571' as EventRef['authorDeviceId'], contentDigest: digest(nextBytes) }],
+          payloadDigest: digest(nextBytes), payload: nextBytes, receivedAt: '2026-09-29T12:00:01Z' });
+        yield request(3, 'khala_send', { message: 'one encrypted send' });
+      })(), SESSION, undefined, undefined, root, output => {
+        if (output.includes('encrypted release 571')) readDelivered();
+      });
       expect(admitted[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
       expect(admitted[1]?.result.structuredContent).toMatchObject({ kind: 'batch', batch: expect.stringContaining('encrypted release 571') });
       expect(JSON.stringify(admitted)).not.toContain('batchToken');
       expect(admitted[2]?.result.structuredContent).toMatchObject({ kind: 'accepted', eventId: 'event-sent-571' });
       expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bindingId: binding.bindingId,
         body: 'one encrypted send' }), undefined);
+      expect(receipts).toEqual([['release-571']]);
+      const hookConsumer = await inbox.acquireCallConsumer!();
+      try {
+        expect((await hookConsumer.readBatch({ maxBytes: 65_536, offerScope: 'hook-after-send' }))?.items
+          .map(item => item.record.releaseId)).toEqual(['release-572']);
+      } finally { await hookConsumer.release(); }
       // A resumed model turn starts a new MCP process. Its first status and
       // explicit read must select the approved generation without joining again.
-      const restarted = await serve(factory, [request(4, 'khala_status'), request(5, 'khala_read')]);
+      const restarted = await serve(factory, [request(4, 'khala_status'), request(5, 'khala_read')],
+        SESSION, undefined, undefined, root);
       expect(restarted[0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
       expect(restarted[1]?.result.structuredContent).toMatchObject({ kind: 'batch',
-        batch: expect.stringContaining('encrypted release 571') });
+        batch: expect.stringContaining('next hook release') });
+      expect(receipts).toEqual([['release-571']]);
       expect(send).toHaveBeenCalledTimes(1);
       expect(factory).toHaveBeenCalledWith({ harness: 'claude', sessionId: SESSION });
       expect(requestChannelAccess).not.toHaveBeenCalled();
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('replays an unacknowledged read after process exit and fences a changed generation', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-replay-'));
+    const session = randomUUID();
+    const receipts: string[][] = [];
+    let currentBinding = binding;
+    try {
+      const bytes = new TextEncoder().encode('{"body":"restart canary"}');
+      const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      const inbox = () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
+        generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+        recordAcknowledgement: async value => { receipts.push([...value.releaseIds]); } });
+      await (await inbox()).enqueue({ v: 1, releaseId: 'restart-release', bindingId: binding.bindingId,
+        generation: binding.generation, events: [{ v: 1, roomId: 'room-571' as EventRef['roomId'],
+          eventId: 'restart-event' as EventRef['eventId'], authorParticipantId: 'sender-571' as EventRef['authorParticipantId'],
+          authorDeviceId: 'device-571' as EventRef['authorDeviceId'], contentDigest: digest }],
+        payloadDigest: digest, payload: bytes, receivedAt: '2026-10-01T00:00:00Z' });
+      const send = vi.fn(async () => ({ kind: 'accepted' as const, clientTxnId: 'txn', eventId: 'sent' }));
+      const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+        client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+          async status() { return { v: 1, connected: true, binding: currentBinding,
+            route: 'manual_mcp', sourceCursor: null }; }, send },
+        inbox: async () => inbox(), async close() {},
+      });
+      const call = (calls: string[]) => serve(factory, calls, session, undefined, undefined, root);
+      expect((await call([request(1, 'khala_read')]))[0]?.result.structuredContent)
+        .toMatchObject({ kind: 'batch', batch: expect.stringContaining('restart canary') });
+      expect(receipts).toEqual([]);
+      expect((await serve(factory, [request(5, 'khala_status')], randomUUID(), undefined, undefined, root))
+        [0]?.result.structuredContent).toEqual({ kind: 'status', connected: true });
+      expect(receipts).toEqual([]);
+      currentBinding = { ...binding, generation: binding.generation + 1 };
+      expect((await call([request(2, 'khala_status')]))[0]?.result.structuredContent)
+        .toEqual({ kind: 'status', connected: true });
+      expect(send).not.toHaveBeenCalled();
+      expect(receipts).toEqual([]);
+      currentBinding = binding;
+      expect((await call([request(6, 'khala_status')]))[0]?.result.structuredContent)
+        .toEqual({ kind: 'status', connected: true });
+      expect(receipts).toEqual([]);
+      const replay = await call([request(3, 'khala_read'), request(4, 'khala_read')]);
+      expect(replay[0]?.result.structuredContent).toMatchObject({ kind: 'batch',
+        batch: expect.stringContaining('restart canary') });
+      expect(replay[1]?.result.structuredContent).toEqual({ kind: 'empty' });
+      expect(receipts).toEqual([['restart-release']]);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
