@@ -59,6 +59,10 @@ export function interactiveClaudeCapabilities(
   if (route !== CLAUDE_INTERACTIVE_ROUTE) {
     return closed(version, limits, `Claude Code ${version} on route ${route} is not a Khala delivery route. ${IDLE}`);
   }
+  if (version === '2.1.286' || version === '2.1.287') {
+    return closed(version, limits,
+      `Claude Code ${version} has no retained model-visible, session-bound delivery receipt on ${route}. Native hook visibility and a local session ID do not prove delivery. ${IDLE}`);
+  }
   const tested = proven.some(pair => pair.version === version && pair.route === route);
   const reason = tested
     // A separate mode proof is required even when the receipt route is tested.
@@ -106,13 +110,53 @@ export function interactiveClaudeCapabilities(
 /** The shape `claude --version` reports once parsed, such as `2.1.283`. */
 const INSPECTED_VERSION = /^\d+\.\d+\.\d+$/u;
 
+/** Evidence obtained from the live provider process for the session being inspected. */
+export type ClaudeProcessVersionEvidence = Readonly<{
+  source: 'provider_process';
+  version: string;
+  sessionId: string;
+  bindingId: string;
+  generation: number;
+  processId: number;
+}>;
+
+export type ClaudeSessionScope = Readonly<{ sessionId: string; bindingId: string; generation: number }>;
+
 /**
- * The route claim for the locally installed Claude Code, read as setup reads it. A
- * version that could not be inspected, or that the contract cannot carry, stays unproven.
+ * A PATH executable version describes an installation, not the already-running
+ * session. Only a provider-process observation can label that session. The
+ * process observation does not itself prove delivery or a receipt: those remain
+ * limited to the separately retained exact route/version proof above.
  */
-export function installedClaudeCapabilities(version: string | null, limits: DeliveryLimits): HarnessCapabilities {
-  if (version === null || !INSPECTED_VERSION.test(version)) return claudeCapabilities(null, limits);
-  const claimed = decodeHarnessCapabilities(interactiveClaudeCapabilities(version, CLAUDE_INTERACTIVE_ROUTE, limits));
+export function installedClaudeCapabilities(
+  version: string | null,
+  limits: DeliveryLimits,
+  processEvidence?: ClaudeProcessVersionEvidence,
+  scope?: ClaudeSessionScope,
+): HarnessCapabilities {
+  if (!processEvidence || !scope || processEvidence.source !== 'provider_process'
+    || !INSPECTED_VERSION.test(processEvidence.version)
+    || scope.sessionId.trim() === '' || scope.bindingId.trim() === ''
+    || !Number.isSafeInteger(scope.generation) || scope.generation < 0
+    || processEvidence.sessionId !== scope.sessionId
+    || processEvidence.bindingId !== scope.bindingId
+    || processEvidence.generation !== scope.generation
+    || !Number.isSafeInteger(processEvidence.processId) || processEvidence.processId <= 0) {
+    // A PATH probe may still describe an experimental installation, but it
+    // cannot promote the version of a live session to tested support.
+    if (version !== null && INSPECTED_VERSION.test(version)
+      && version !== '2.1.286' && version !== '2.1.287') {
+      const unbound = decodeHarnessCapabilities(interactiveClaudeCapabilities(
+        version, CLAUDE_INTERACTIVE_ROUTE, limits, [], []));
+      if (unbound.ok) return unbound.value;
+    }
+    return claudeCapabilities(null, limits);
+  }
+  // `version` is the PATH probe and may differ from the live executable.
+  // Never use it to override process evidence or infer a receipt.
+  void version;
+  const claimed = decodeHarnessCapabilities(interactiveClaudeCapabilities(
+    processEvidence.version, CLAUDE_INTERACTIVE_ROUTE, limits));
   return claimed.ok ? claimed.value : claudeCapabilities(null, limits);
 }
 
