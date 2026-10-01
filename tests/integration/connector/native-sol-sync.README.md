@@ -1,4 +1,4 @@
-# Codex 0.157.1 Sol native sync preflight
+# Codex Sol native sync preflight (0.157.1 or 0.159.3)
 
 This disposable preflight is the missing native evidence gate for #42. It uses the
 production Codex setup adapter and transaction executor to install the Khala
@@ -14,7 +14,14 @@ bypass or another model. `bind` reads the private rollout metadata and the live
 process to require one matching session ID, version, model, workdir, Codex home,
 and native PID. It reports only those facts, not session contents.
 
-From the repository root, with the candidate 0.157.1 adapter change in place,
+The fixture defaults to the proven 0.157.1 version. For an exact 0.159.3 run,
+set `KHALA_42_NATIVE_CANDIDATE_VERSION=0.159.3` in both the fixture and TUI
+environments and use the matching 0.159.3 binary. Other versions fail closed.
+The 0.159.3 witness is recorded in `docs/evidence/codex-0159-3-native-sync.md`.
+Its crash runner uses a distinct binding; the preflight ACK does not establish
+model consumption of the crash release.
+
+From the repository root, with the exact supported adapter version in place,
 set owner-private paths for a fresh run. Keep these values in the shell that
 runs every fixture command and the Codex TUI:
 
