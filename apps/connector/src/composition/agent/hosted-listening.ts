@@ -82,6 +82,8 @@ export function createHostedListeningControl(input: Readonly<{
     const applied = await project(view.effective, view.requested, view.version, evidenceRevision);
     const latest = applied ? await base.read() : null;
     return latest?.ok && latest.view.version === view.version && latest.view.requested === view.requested
+      && latest.view.effective === view.effective && latest.view.effectiveReason === view.effectiveReason
+      && JSON.stringify(latest.view.support) === JSON.stringify(view.support)
       ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
   const application: AgentListeningModeApplication = {

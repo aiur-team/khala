@@ -75,6 +75,21 @@ describe('hosted listening mode projection', () => {
           modes: { ...capabilities.modes, async: { ...sync, route: 'codex-async' } } }) });
       expect(await restarted.application.read()).toMatchObject({ ok: true,
         view: { requested: 'async', effective: 'async', version: 2 } });
+      let inspections = 0;
+      const drifting = createHostedListeningControl({ binding, trust, dispatch,
+        current: async () => current, capabilities: async () => ++inspections === 1
+          ? { ...capabilities, acknowledgement: 'batch_token_next_call',
+            modes: { ...capabilities.modes, async: { ...sync, route: 'codex-async' } } } : null });
+      expect(await drifting.application.read()).toMatchObject({ ok: true,
+        view: { requested: 'async', effective: null, effectiveReason: 'projection_unavailable' } });
+      let evidenceReads = 0;
+      const evidenceDrift = createHostedListeningControl({ binding, trust, dispatch,
+        current: async () => current, capabilities: async () => ({ ...capabilities,
+          acknowledgement: 'batch_token_next_call', modes: { ...capabilities.modes,
+            async: { ...sync, route: 'codex-async', evidenceRevision: ++evidenceReads === 1
+              ? 'hook-revision' : 'hook-revision-new' } } }) });
+      expect(await evidenceDrift.application.read()).toMatchObject({ ok: true,
+        view: { requested: 'async', effective: null, effectiveReason: 'projection_unavailable' } });
       trustedHooks = false;
       expect(await hosted.status()).toMatchObject({ effective: null });
       expect((await dispatch.ledger.transact(tx => tx.policy(binding.bindingId)))?.listening)
