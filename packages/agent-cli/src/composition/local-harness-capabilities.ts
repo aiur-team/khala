@@ -11,9 +11,9 @@ import type { LocalHarnessCapabilities, LocalHarnessObservation } from './intern
 // The released capability claim of the harness a local binding runs in, read the
 // same way setup reads it. Codex is claimed only for an exactly proven version whose
 // Khala hooks the user has trusted; with no receipt proof supplied, `async` stays
-// unproven. Claude receipt support is tested only for an exactly proven pair;
-// each mode has a separate proof gate, so 2.1.283 sync remains experimental.
-// Other inspected versions are experimental, and an uninspected version is unproven. Any
+// unproven. A PATH-only Claude version does not identify the running session, so
+// even historically proven versions remain experimental without session-bound proof.
+// Current unproven versions and inspection failures claim no support. Any
 // other harness, or any inspection failure, claims nothing.
 
 const decoded = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
