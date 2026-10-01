@@ -1,4 +1,5 @@
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -137,7 +138,9 @@ export const mcpServeCommand: CliCommand = {
                 consumer: callScopedConsumer(inbox, { signal: deps.signal }),
                 currentBinding: async () => (await held())?.binding ?? null });
               const result = await read.read({ bindingId: selected.binding.bindingId, maxBytes: 65_536,
-                offerScope: `claude-hosted-${boundary}-${sessionId}` });
+                // A scope survives in the durable inbox. Each fresh hook pull
+                // needs a new one so a lost bridge nonce cannot strand a batch.
+                offerScope: `claude-hosted-${randomUUID()}` });
               if (result.kind !== 'batch') return null;
               return { boundary, binding: selected.binding, token: result.batch.token,
                 releaseIds: result.batch.items.map(item => item.record.releaseId),

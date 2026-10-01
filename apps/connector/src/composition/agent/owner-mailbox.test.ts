@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { JsonValue } from '@khala/contracts/messaging/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import type { AuthService } from '../../../../control/src/auth/index';
 import type { AdmissionGateway } from '../../../../control/src/invitations/index';
 import type { AdapterCapabilities } from '../../../../control/src/agent-bootstrap/handler';
 import { fakeStore, T0 } from '../../../../control/src/auth/support.test';
 import { createAgentBindingStore } from '../../../../control/src/agent-bootstrap/store';
-import { createOwnerMailbox } from '../../../../control/src/composition/owner-mailbox/store';
+import { createOwnerMailbox, type OwnerMailboxEntry } from '../../../../control/src/composition/owner-mailbox/store';
 import { createOwnerMailboxRoutes } from '../../../../control/src/composition/owner-mailbox/routes';
 import { createProductionOwnerMailbox } from './owner-mailbox';
 
@@ -38,6 +39,72 @@ function fixture(fetcher: typeof fetch) {
 }
 
 describe('protected hosted owner mailbox endpoint', () => {
+  it('keeps policy status readable and returns a typed refusal while listening is offline', async () => {
+    const mode = { v: 1, commandId: 'mode_command_12345678', bindingId: binding.bindingId,
+      expectedBindingGeneration: binding.generation, expectedVersion: 1,
+      requested: 'sync', issuedAt: '2026-09-26T00:00:00Z' };
+    const grant = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-26T00:00:00Z' };
+    const entries = [entry, { ...entry, operationId: mode.commandId,
+      kind: 'listening_set', body: mode }, { ...entry, operationId: grant.commandId,
+      kind: 'listening_grant', body: grant }];
+    const outcomes: Array<{ operationId: string; outcome: Record<string, unknown> }> = [];
+    const signer = { proof: () => 'signed-proof' } as unknown as ProofSigner;
+    const mailbox = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding, signer,
+      capability: async () => ({ token: 'C'.repeat(43), scope: ['receive_released', 'ack_delivery'],
+        bindingId: binding.bindingId, generation: binding.generation, expiresAt: Date.now() + 60_000 }),
+      controls: { status: async () => ({ ok: true, status: { policy: { effectiveVersion: 3 } } as never }),
+        setPolicy: vi.fn(), reconcile: vi.fn() },
+      listening: () => null,
+      stop: async () => ({ kind: 'unavailable' }), onRevoked: async () => undefined,
+      fetch: async (_url, init) => {
+        if (init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as { operationId: string; outcome: Record<string, unknown> };
+          outcomes.push(body);
+          return response(200, { v: 1, operationId: body.operationId });
+        }
+        return response(200, { v: 1, bindingId: binding.bindingId, generation: binding.generation,
+          closing: false, entries });
+      },
+    });
+    expect(await mailbox.pollOnce()).toBe('ok');
+    expect(outcomes).toHaveLength(3);
+    expect(outcomes[0]?.outcome).toMatchObject({ ok: true, status: { policy: { effectiveVersion: 3 },
+      listening: null, listeningUnavailable: 'connector_starting' } });
+    expect(outcomes[1]?.outcome).toMatchObject({ v: 1, commandId: mode.commandId,
+      outcome: 'refused', reason: 'unavailable', effective: null });
+    expect(outcomes[2]?.outcome).toEqual({ commandId: grant.commandId,
+      outcome: 'refused', reason: 'unavailable' });
+  });
+  it('returns a typed unavailable refusal when an installed listening adapter returns null', async () => {
+    const mode = { v: 1, commandId: 'mode_command_null_12345678', bindingId: binding.bindingId,
+      expectedBindingGeneration: binding.generation, expectedVersion: 1,
+      requested: 'sync', issuedAt: '2026-09-26T00:00:00Z' };
+    let completed: Record<string, unknown> | null = null;
+    const mailbox = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding,
+      signer: { proof: () => 'signed-proof' } as unknown as ProofSigner,
+      capability: async () => ({ token: 'C'.repeat(43), scope: ['receive_released', 'ack_delivery'],
+        bindingId: binding.bindingId, generation: binding.generation, expiresAt: Date.now() + 60_000 }),
+      controls: { status: vi.fn(), setPolicy: vi.fn(), reconcile: vi.fn() },
+      listening: () => ({ read: vi.fn(), set: async () => null }) as never,
+      stop: async () => ({ kind: 'unavailable' }), onRevoked: async () => undefined,
+      fetch: async (_url, init) => {
+        if (init?.method === 'POST') {
+          completed = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return response(200, { v: 1, operationId: mode.commandId });
+        }
+        return response(200, { v: 1, bindingId: binding.bindingId, generation: binding.generation,
+          closing: false, entries: [{ ...entry, operationId: mode.commandId,
+            kind: 'listening_set', body: mode }] });
+      },
+    });
+    expect(await mailbox.pollOnce()).toBe('ok');
+    expect(completed).toMatchObject({ operationId: mode.commandId, outcome: {
+      v: 1, commandId: mode.commandId, outcome: 'refused', reason: 'unavailable', effective: null,
+    } });
+  });
   it('keeps a pending preview while offline, then completes one exact release on the same session', async () => {
     const state = fakeStore(() => T0);
     const roomId = '!room:example' as never;
@@ -131,7 +198,15 @@ describe('protected hosted owner mailbox endpoint', () => {
       selection: [{ v: 1, roomId, eventId: 'event_1', authorParticipantId: 'peer_agent',
         authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }],
     })).status).toBe(200);
-    expect((await source.pending()).kind).toBe('ok');
+    const queued = await source.pending();
+    expect(queued.kind).toBe('ok');
+    if (queued.kind !== 'ok') throw new Error('mailbox unavailable');
+    expect(queued.value.map(item => item.operationId)).toEqual([
+      ...Array.from({ length: 7 }, (_, index) => `offline_status_${(index + 57).toString().padStart(8, '0')}`),
+      'offline_status_new', operationId,
+    ]);
+    expect(await source.result('offline_status_00000056')).toMatchObject({ kind: 'ok', value: {
+      outcome: { ok: false, code: 'unavailable' } } });
     const signer = { jkt: 'A'.repeat(43), publicKey: 'B'.repeat(43), proof: () => 'proof' } as unknown as ProofSigner;
     const status = vi.fn(async () => ({ ok: false as const, code: 'unavailable' as const }));
     const approve = vi.fn(async () => ({ ok: false as const, code: 'unavailable' as const }));
@@ -145,14 +220,38 @@ describe('protected hosted owner mailbox endpoint', () => {
         .handle(new Request(String(url), init)),
     });
     expect(await client.pollOnce()).toBe('ok');
-    expect(status).toHaveBeenCalledTimes(63);
+    expect(status).toHaveBeenCalledTimes(8);
     expect(approve).toHaveBeenCalledOnce();
     expect(await source.pending()).toEqual({ kind: 'ok', value: [] });
     expect(await source.result(operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'unavailable' } } });
     expect((await source.result('offline_status_00000000'))).toMatchObject({ kind: 'ok', value: {
       outcome: { ok: false, code: 'unavailable' } } });
+    expect((await source.result('offline_status_new'))).toMatchObject({ kind: 'ok', value: {
+      outcome: { ok: false, code: 'unavailable' } } });
   });
-  it('processes the server produced 64 pending previews plus reserved Stop without accepting extra commands', async () => {
+  it('keeps eight fresh previews and reserved Stop after archiving the replaced preview', async () => {
+    const state = fakeStore(() => T0);
+    const roomId = '!room:example' as never;
+    const principal = { ownerId: binding.ownerId, providerIssuer: 'https://issuer.test',
+      providerSubject: 'subject-1' } as never;
+    const source = createOwnerMailbox({ store: state.store, binding, roomId, clock: () => T0,
+      authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
+    const body = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
+    const ids = Array.from({ length: 9 }, (_, index) => `preview_${digest}_${index.toString(16).padStart(8, '0')}`);
+    for (const operationId of ids) {
+      expect((await source.submit({ kind: 'review_preview', body, operationId }, principal)).kind).toBe('ok');
+    }
+    const stop = { operationId: 'stop_operation_0001', ownerId: binding.ownerId, roomId, expectedRoomRevision: 0 };
+    expect((await source.submit({ kind: 'channel_stop', operationId: stop.operationId, body: stop }, principal)).kind).toBe('ok');
+    expect(await source.result(ids[0]!)).toMatchObject({ kind: 'ok', value: {
+      outcome: { ok: false, code: 'unavailable' } } });
+    const queued = await source.pending();
+    expect(queued.kind).toBe('ok');
+    if (queued.kind !== 'ok') throw new Error('mailbox unavailable');
+    expect(queued.value.map(item => item.operationId)).toEqual([...ids.slice(1), stop.operationId]);
+  });
+  it('processes a legacy 64-preview document plus reserved Stop without accepting extra commands', async () => {
     const state = fakeStore(() => T0);
     const roomId = '!room:example' as never;
     const bindings = createAgentBindingStore({ store: state.store });
@@ -165,10 +264,31 @@ describe('protected hosted owner mailbox endpoint', () => {
       authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
     const body = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
     const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
+    const indexKey = `owner-mailbox.v1.${createHash('sha256')
+      .update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
+    const legacyEntries: OwnerMailboxEntry[] = [];
     for (let index = 0; index < 64; index++) {
-      expect((await source.submit({ kind: 'review_preview', body,
-        operationId: `preview_${digest}_${index.toString(16).padStart(8, '0')}` }, principal)).kind).toBe('ok');
+      const admitted = await source.submit({ kind: 'review_preview', body,
+        operationId: `preview_${digest}_${index.toString(16).padStart(8, '0')}` }, principal);
+      expect(admitted.kind).toBe('ok');
+      if (admitted.kind !== 'ok') throw new Error('cannot seed legacy preview');
+      legacyEntries.push(admitted.value);
+      const current = await state.store.read<JsonValue>(indexKey);
+      if (current.kind !== 'record') throw new Error('missing mailbox index');
+      const document = current.record.value as Record<string, JsonValue>;
+      expect((await state.store.compareAndSet({ key: indexKey, expectedRevision: current.record.revision,
+        operationId: `legacy-clear-${index}`, next: {
+          value: { ...document, entries: [] } as JsonValue, expiresAt: current.record.expiresAt,
+        } })).kind).toBe('applied');
     }
+    const empty = await state.store.read<JsonValue>(indexKey);
+    if (empty.kind !== 'record') throw new Error('missing empty mailbox index');
+    const document = empty.record.value as Record<string, JsonValue>;
+    expect((await state.store.compareAndSet({ key: indexKey, expectedRevision: empty.record.revision,
+      operationId: 'legacy-seed-previews', next: {
+        value: { ...document, entries: legacyEntries } as JsonValue, expiresAt: empty.record.expiresAt,
+      } })).kind).toBe('applied');
+    expect(await source.pending()).toMatchObject({ kind: 'ok', value: legacyEntries });
     const stop = { operationId: 'stop_operation_0001', ownerId: binding.ownerId, roomId, expectedRoomRevision: 0 };
     expect((await source.submit({ kind: 'channel_stop', operationId: stop.operationId, body: stop }, principal)).kind).toBe('ok');
     const auth = { authenticateRequest: async () => ({ kind: 'authenticated', context: { principal } }),

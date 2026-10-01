@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { unknownModeSupportMap, type SessionBinding } from '@khala/contracts/delivery/index';
 import type { CompareAndSetInput, ControlStore, JsonValue } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
-import { createOwnerMailbox } from './store';
+import { createControlStore } from '../../runtime/control-store';
+import { createLocalBlobStores } from '../../runtime/local-blob-store';
+import { createOwnerMailbox, type MailboxSubmitDiagnostic, type OwnerMailboxEntry } from './store';
 
 const binding = {
   v: 1, bindingId: 'binding-mailbox', ownerId: 'owner-mailbox', agentParticipantId: 'agent-mailbox',
@@ -15,6 +19,153 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('keeps grant command identity and exact binding in typed outcomes', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret });
+    const body = { v: 1, kind: 'grant_experimental_route', commandId: 'grant_command_12345678',
+      bindingId: binding.bindingId, expectedBindingGeneration: binding.generation,
+      expectedVersion: 1, mode: 'steer', route: 'codex-steer', harnessVersion: '0.154.0',
+      evidenceRevision: 'proof-1', issuedAt: '2026-09-27T00:00:00Z' };
+    const command = { operationId: body.commandId, kind: 'listening_grant' as const, body };
+    expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+    expect(await mailbox.complete(command.operationId, { commandId: body.commandId,
+      outcome: 'applied', reason: null, view: { bindingId: binding.bindingId,
+        generation: binding.generation, requested: 'sync', version: 2,
+        experimentalGrants: [{ v: 1, kind: 'experimental_route', bindingId: binding.bindingId,
+          generation: binding.generation, mode: body.mode, route: body.route,
+          harnessVersion: body.harnessVersion, evidenceRevision: body.evidenceRevision,
+          grantRevision: 2 }], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' },
+        effective: null, effectiveReason: 'capabilities_unavailable',
+        support: unknownModeSupportMap('capabilities-unavailable', 'Capabilities unavailable.') } }))
+      .toMatchObject({ kind: 'ok', value: { outcome: { outcome: 'applied' } } });
+    expect((await mailbox.submit({ ...command, body: { ...body, bindingId: 'other-binding' } }, principal)).kind)
+      .toBe('conflict');
+  });
+  it('accepts a policy status with an explicit unavailable listening section', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example',
+      clock: () => T0, authoritySecret });
+    expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+    const status = { v: 1, binding, bindingStatus: 'active', capabilities: null,
+      policy: { bindingId: binding.bindingId, generation: binding.generation,
+        effectiveVersion: 1, effectiveMode: 'review', paused: false },
+      requested: null, busy: false, latestReceipt: null,
+      listening: null, listeningUnavailable: 'connector_starting' };
+    expect((await mailbox.complete(command.operationId, { ok: true, status })).kind).toBe('ok');
+    expect((await mailbox.result(command.operationId))).toMatchObject({ kind: 'ok',
+      value: { outcome: { ok: true, status: { policy: { effectiveVersion: 1 },
+        listening: null, listeningUnavailable: 'connector_starting' } } } });
+  });
+  it('distinguishes archive rejection from index CAS contention without discarding a read', async () => {
+    const state = fakeStore(() => T0);
+    const causes: MailboxSubmitDiagnostic[] = [];
+    let failure: 'archive' | 'cas' | null = null;
+    const store: ControlStore = { ...state.store, async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+      if (failure === 'archive' && input.key.startsWith('owner-mailbox-result.')) return { kind: 'unavailable' };
+      if (failure === 'cas' && input.key.startsWith('owner-mailbox.v1.')) return { kind: 'conflict', current: null };
+      return state.store.compareAndSet(input);
+    } };
+    const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0,
+      authoritySecret, submitDiagnostic: cause => causes.push(cause) });
+    for (let index = 0; index < 8; index++) {
+      expect((await mailbox.submit({ ...command, operationId: `bounded_${index.toString().padStart(8, '0')}` }, principal)).kind).toBe('ok');
+    }
+    failure = 'archive';
+    expect(await mailbox.submit({ ...command, operationId: 'bounded_next_read' }, principal)).toEqual({ kind: 'unavailable' });
+    expect(causes.at(-1)).toBe('archive_write_unavailable');
+    expect((await mailbox.pending()).kind).toBe('ok');
+    failure = 'cas';
+    expect(await mailbox.submit({ ...command, operationId: 'bounded_cas_read' }, principal)).toEqual({ kind: 'unavailable' });
+    expect(causes.at(-1)).toBe('index_cas_exhausted');
+    failure = null;
+    expect((await mailbox.submit({ ...command, operationId: 'bounded_recovered' }, principal)).kind).toBe('ok');
+  });
+  // Seeding and migrating two 64-entry mailboxes exercises hundreds of filesystem-backed store operations.
+  it('admits a preview after two mixed offline mailboxes fill the local blob store', async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'owner-mailbox-729-'));
+    try {
+      const blobs = createLocalBlobStores(directory);
+      const store = createControlStore({ records: blobs('records'), operations: blobs('operations'), clock: () => T0 });
+      for (const owner of ['first', 'second']) {
+        const scoped = { ...binding, bindingId: `binding-${owner}` } as SessionBinding;
+        const mailbox = createOwnerMailbox({ store, binding: scoped, roomId: '!room:example', clock: () => T0, authoritySecret });
+        const body = { bindingId: scoped.bindingId, candidates: [], releaseIds: [] };
+        const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 32);
+        const indexKey = `owner-mailbox.v1.${createHash('sha256').update(`${scoped.bindingId}\0${scoped.generation}`).digest('hex')}`;
+        const legacyEntries: OwnerMailboxEntry[] = [];
+        for (let index = 0; index < 32; index++) {
+          for (const request of [
+            { operationId: `status_${owner}_${index.toString().padStart(8, '0')}`,
+              kind: 'controls_status' as const, body: { bindingId: scoped.bindingId } },
+            { operationId: `preview_${digest}_${index.toString(16).padStart(8, '0')}`,
+              kind: 'review_preview' as const, body },
+          ]) {
+            const admitted = await mailbox.submit(request, principal);
+            expect(admitted.kind).toBe('ok');
+            if (admitted.kind !== 'ok') throw new Error('cannot seed legacy entry');
+            legacyEntries.push(admitted.value);
+            const current = await store.read<JsonValue>(indexKey);
+            if (current.kind !== 'record') throw new Error('missing mailbox index');
+            const document = current.record.value as Record<string, JsonValue>;
+            expect((await store.compareAndSet({ key: indexKey, expectedRevision: current.record.revision,
+              operationId: `legacy-clear-${owner}-${legacyEntries.length}`, next: {
+                value: { ...document, entries: [] } as JsonValue, expiresAt: current.record.expiresAt,
+              } })).kind).toBe('applied');
+          }
+        }
+        const empty = await store.read<JsonValue>(indexKey);
+        if (empty.kind !== 'record') throw new Error('missing empty mailbox index');
+        const document = empty.record.value as Record<string, JsonValue>;
+        expect((await store.compareAndSet({ key: indexKey, expectedRevision: empty.record.revision,
+          operationId: `legacy-seed-${owner}`, next: {
+            value: { ...document, entries: legacyEntries } as JsonValue, expiresAt: empty.record.expiresAt,
+          } })).kind).toBe('applied');
+        const legacy = await mailbox.pending();
+        expect(legacy.kind).toBe('ok');
+        if (legacy.kind !== 'ok') throw new Error('legacy mailbox unavailable');
+        expect(legacy.value).toHaveLength(64);
+        expect(legacy.value.filter(entry => entry.kind === 'controls_status')).toHaveLength(32);
+        expect(legacy.value.filter(entry => entry.kind === 'review_preview')).toHaveLength(32);
+        const firstReload = { operationId: `preview_${digest}_00000020`, kind: 'review_preview' as const, body };
+        expect((await mailbox.submit(firstReload, principal)).kind).toBe('ok');
+        expect(await mailbox.result(legacyEntries[1]!.operationId)).toMatchObject({ kind: 'ok',
+          value: { outcome: { ok: false, code: 'unavailable' } } });
+        const migrated = await mailbox.pending();
+        expect(migrated.kind).toBe('ok');
+        if (migrated.kind !== 'ok') throw new Error('migrated mailbox unavailable');
+        expect(migrated.value).toHaveLength(63);
+        expect(migrated.value.some(entry => entry.operationId === firstReload.operationId)).toBe(true);
+        const reloads = await Promise.all(Array.from({ length: 16 }, (_, index) => mailbox.submit({
+          operationId: `preview_${digest}_${(index + 33).toString(16).padStart(8, '0')}`,
+          kind: 'review_preview', body,
+        }, principal)));
+        expect(reloads.map(result => result.kind)).toEqual(Array(16).fill('ok'));
+        const pending = await mailbox.pending();
+        expect(pending.kind).toBe('ok');
+        if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
+        const newestId = [...pending.value].reverse().find(entry => entry.kind === 'review_preview')?.operationId;
+        if (!newestId) throw new Error('missing resumed preview');
+        const ref = { v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+          authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` };
+        const preview = { v: 1, bindingId: scoped.bindingId, bindingGeneration: 2, policyVersion: 3,
+          pending: [ref], receipts: [] };
+        expect((await mailbox.complete(newestId, { ok: true, preview })).kind).toBe('ok');
+        const approvalId = `approval_${owner}_0001`;
+        const approval = { operationId: approvalId, kind: 'review_approve' as const,
+          body: { v: 1, commandId: approvalId, bindingId: scoped.bindingId, roomId: '!room:example',
+            expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(), selection: [ref] } };
+        const resumed = createOwnerMailbox({ store, binding: scoped, roomId: '!room:example', clock: () => T0, authoritySecret });
+        expect((await resumed.submit(approval, principal)).kind).toBe('ok');
+        expect((await resumed.complete(approvalId, { ok: true, releaseIds: ['release_12345678'] })).kind).toBe('ok');
+        expect(await resumed.submit(approval, principal)).toMatchObject({ kind: 'ok', value: { outcome: { ok: true,
+          releaseIds: ['release_12345678'] } } });
+        expect(await resumed.complete(approvalId, { ok: true, releaseIds: ['release_other'] })).toEqual({ kind: 'conflict' });
+        expect((await resumed.complete(newestId, { ok: true, preview })).kind).toBe('ok');
+        expect(await resumed.lastReviewPreview()).toMatchObject({ kind: 'ok', value: { pending: [] } });
+      }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }, 20_000);
   it('keeps a verified review snapshot and one exact queued release across connector downtime', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
@@ -202,7 +353,7 @@ describe('metadata-only owner mailbox', () => {
     expect(await mailbox.submit({ ...preview(1), body: { ...previewBody, releaseIds: ['release_other'] } }, principal))
       .toEqual({ kind: 'conflict' });
   });
-  it('reserves one Stop slot while 64 ordinary commands remain pending', async () => {
+  it('reserves one Stop slot while ordinary commands remain pending', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
     for (let i = 0; i < 64; i++) {
@@ -215,8 +366,8 @@ describe('metadata-only owner mailbox', () => {
     const pending = await mailbox.pending();
     expect(pending.kind).toBe('ok');
     if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
-    expect(pending.value).toHaveLength(65);
-    expect(pending.value.map(entry => entry.operationId)).toContain('pending_00000000');
+    expect(pending.value).toHaveLength(9);
+    expect(pending.value.map(entry => entry.operationId)).not.toContain('pending_00000000');
     expect(pending.value.map(entry => entry.operationId)).toContain('pending_00000063');
     expect(pending.value.map(entry => entry.operationId)).toContain(stop.operationId);
     expect(await mailbox.submit({ ...stop, operationId: 'another_stop_0001',
@@ -247,7 +398,7 @@ describe('metadata-only owner mailbox', () => {
     const pending = await restarted.pending();
     expect(pending.kind).toBe('ok');
     if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
-    expect(pending.value).toHaveLength(64);
+    expect(pending.value).toHaveLength(9);
     expect(pending.value.at(-1)?.operationId).toBe(approvalId);
     expect(pending.value.filter(item => item.kind === 'review_approve')).toHaveLength(1);
   });
@@ -268,7 +419,7 @@ describe('metadata-only owner mailbox', () => {
       return state.store.compareAndSet(input);
     } };
     const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
-    for (let i = 0; i < 64; i++) {
+    for (let i = 0; i < 8; i++) {
       expect((await mailbox.submit({ ...command, operationId: `race_${i.toString().padStart(8, '0')}` }, principal)).kind).toBe('ok');
     }
     const admission = mailbox.submit({ ...command, operationId: 'race_new_read_01' }, principal);

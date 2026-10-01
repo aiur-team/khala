@@ -10,8 +10,8 @@ import { claudeHostedHookPaths, startClaudeHostedHookBridge, type ClaudeHostedBo
 
 const root = process.env.TMPDIR ?? tmpdir();
 const frame = '<khala-channel-batch-v1>\n{"body":"owner selected release"}\n</khala-channel-batch-v1>';
-const binding = (generation: number): SessionBinding => ({
-  v: 1, bindingId: 'binding-717', generation, ownerId: 'owner-1', agentParticipantId: 'agent-1',
+const binding = (generation: number, bindingId = 'binding-717'): SessionBinding => ({
+  v: 1, bindingId, generation, ownerId: 'owner-1', agentParticipantId: 'agent-1',
   deviceId: 'device-1', harness: 'proof-key', sessionId: 'agent-session',
 } as SessionBinding);
 
@@ -45,7 +45,7 @@ function fixture() {
     mode: (value: 'steer' | 'sync' | null) => { mode = value; },
     pause: () => { paused = true; }, resume: () => { paused = false; },
     generation: (value: number) => { held = binding(value); },
-    bindingId: (value: string) => { held = { ...held, bindingId: value as SessionBinding['bindingId'] }; } };
+    bindingId: (value: string) => { held = binding(held.generation, value); } };
 }
 
 describe('Claude hosted hook receipt bridge', () => {
@@ -107,7 +107,7 @@ describe('Claude hosted hook receipt bridge', () => {
     } finally { await bridge.close(); }
   });
 
-  it('delivers Sync at Stop and invalidates receipts on pause, generation or binding change', async () => {
+  it('delivers Sync at Stop and invalidates receipts on pause, revoke, binding or generation change', async () => {
     const f = fixture(); f.mode('sync');
     const bridge = await startClaudeHostedHookBridge({ root, sessionId: f.sessionId, port: f.port });
     try {
@@ -124,11 +124,16 @@ describe('Claude hosted hook receipt bridge', () => {
       expect(next).toBeDefined();
       f.generation(2);
       expect(await bridge.acknowledge(next!)).toBe('stale');
-      const afterGeneration = await f.hook('stop');
-      const last = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(afterGeneration.stdout)?.[1];
-      expect(last).toBeDefined();
+      f.generation(1);
+      const changed = await f.hook('stop');
+      const changedNonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(changed.stdout)?.[1];
       f.bindingId('other-binding');
-      expect(await bridge.acknowledge(last!)).toBe('stale');
+      expect(await bridge.acknowledge(changedNonce!)).toBe('stale');
+      f.bindingId('binding-717');
+      const revoked = await f.hook('stop');
+      const revokedNonce = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(revoked.stdout)?.[1];
+      f.mode(null);
+      expect(await bridge.acknowledge(revokedNonce!)).toBe('stale');
       expect(f.acknowledgements).toEqual([]);
     } finally { await bridge.close(); }
   });

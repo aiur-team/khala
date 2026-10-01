@@ -68,6 +68,34 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('classifies an exact owner key without mistaking query failure for deletion', async () => {
+    const deviceId = 'OWNER_BROWSER' as DeviceId;
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    let key: string | null = 'A'.repeat(43);
+    let failed = false;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        const request = JSON.parse(String(init?.body)) as { device_id: string };
+        return json(200, { user_id: userId, device_id: request.device_id, access_token: 'control-token' });
+      }
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
+      expect(JSON.parse(String(init?.body))).toEqual({ device_keys: { [userId]: [deviceId] } });
+      return json(200, { device_keys: { [userId]: key === null ? {} : {
+        [deviceId]: { user_id: userId, device_id: deviceId, keys: { [`ed25519:${deviceId}`]: key } },
+      } }, failures: failed ? { 'remote.example': {} } : {} });
+    });
+    const matrix = services(fetch);
+    const inspect = () => matrix.inspectOwnerDeviceKey(principal.ownerId, deviceId, 'A'.repeat(43));
+    expect(await inspect()).toBe('matched');
+    key = null;
+    expect(await inspect()).toBe('missing');
+    key = 'B'.repeat(43);
+    expect(await inspect()).toBe('mismatch');
+    failed = true;
+    expect(await inspect()).toBe('unavailable');
+  });
+
   it('creates an owner-scoped encrypted room and reconciles its operation marker', async () => {
     const roomId = '!created:matrix.example.test' as RoomId;
     let creates = 0;

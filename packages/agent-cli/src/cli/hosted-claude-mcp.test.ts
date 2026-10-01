@@ -54,7 +54,7 @@ async function serve(factory: NonNullable<CliDependencies['hostedSession']>, cal
 }
 
 describe('hosted native Claude MCP', () => {
-  it('correlates a model-visible hosted hook to a later agent call and durable exact-generation ACK', async () => {
+  it('reoffers a persisted hook batch after MCP restart and ACKs only from a later exact-generation call', async () => {
     const sessionId = randomUUID();
     const stateHome = process.env.TMPDIR ?? os.tmpdir();
     const inboxRoot = fs.mkdtempSync(path.join(stateHome, 'khala-717-inbox-'));
@@ -78,16 +78,19 @@ describe('hosted native Claude MCP', () => {
         authorDeviceId: 'device-717' as EventRef['authorDeviceId'], contentDigest: secondDigest }],
       payloadDigest: secondDigest, payload: second, receivedAt: '2026-10-01T00:00:01Z' });
     let effective: 'steer' | 'sync' | null = 'steer';
+    let connected = true;
     const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
       client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
-        async status() { return { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null }; },
+        async status() { return connected
+          ? { v: 1, connected: true, binding, route: 'manual_mcp', sourceCursor: null }
+          : { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
         async listeningMode() { return { v: 1, bindingId: binding.bindingId, generation: binding.generation, effective }; } },
       inbox: async () => open(), async close() {},
     });
-    const stdin = new PassThrough(); const stdout = new PassThrough(); const stderr = new PassThrough();
+    let stdin = new PassThrough(); let stdout = new PassThrough(); let stderr = new PassThrough();
     let output = '';
     stdout.on('data', chunk => { output += String(chunk); });
-    const serving = runCli(['mcp-serve'], {
+    let serving = runCli(['mcp-serve'], {
       client: createUnavailableClient(), inbox: async () => { throw new Error('not local'); },
       stdin, stdout, stderr, env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId,
         XDG_STATE_HOME: stateHome }, hostedSession: factory, hostedBindingPresent: async () => true,
@@ -141,9 +144,62 @@ describe('hosted native Claude MCP', () => {
       expect(recorded).toEqual([['release-717', 'release-718']]);
       const syncReceipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(stopReason.reason)?.[1];
       expect(syncReceipt).toBeDefined();
+      const repeatedStop = await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps);
+      expect((JSON.parse(repeatedStop.stdout) as { reason: string }).reason).toBe(stopReason.reason);
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      // The real inbox persists its offered scope while the MCP process loses
+      // the pending nonce. A fresh process must reoffer that same batch.
+      stdin.end();
+      await serving;
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough();
+      output = '';
+      stdout.on('data', chunk => { output += String(chunk); });
+      serving = runCli(['mcp-serve'], {
+        client: createUnavailableClient(), inbox: async () => { throw new Error('not local'); },
+        stdin, stdout, stderr, env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId,
+          XDG_STATE_HOME: stateHome }, hostedSession: factory, hostedBindingPresent: async () => true,
+      });
+      for (let i = 0; i < 100 && !fs.existsSync(descriptor); i++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(fs.existsSync(descriptor)).toBe(true);
       stdin.write(request(6, 'khala_hook_receipt', { receipt: syncReceipt }));
-      expect((await responses(5))[4]?.result.structuredContent).toMatchObject({ kind: 'acknowledged',
+      expect((await responses(1))[0]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      const resumedStop = await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps);
+      const resumedReason = (JSON.parse(resumedStop.stdout) as { reason: string }).reason;
+      expect(resumedReason).toContain('owner selected sync release');
+      const resumedReceipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(resumedReason)?.[1];
+      expect(resumedReceipt).toBeDefined();
+      expect(resumedReceipt).not.toBe(syncReceipt);
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      effective = null; // Owner pauses Sync before the model can return this nonce.
+      stdin.write(request(7, 'khala_hook_receipt', { receipt: resumedReceipt }));
+      expect((await responses(2))[1]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
+      expect((await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps)).stdout).toBe('');
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      effective = 'sync';
+      const afterPause = await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps);
+      const pauseReceipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(afterPause.stdout)?.[1];
+      expect(pauseReceipt).toBeDefined();
+      connected = false; // Revoked binding cannot commit even with its old nonce.
+      stdin.write(request(8, 'khala_hook_receipt', { receipt: pauseReceipt }));
+      expect((await responses(3))[2]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
+      expect((await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps)).stdout).toBe('');
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      connected = true;
+      const finalStop = await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: sessionId }), hookDeps);
+      const finalReceipt = /Khala hosted hook receipt: ([A-Za-z0-9_-]{32})/u.exec(finalStop.stdout)?.[1];
+      expect(finalReceipt).toBeDefined();
+      expect(finalReceipt).not.toBe(pauseReceipt);
+      expect(recorded).toEqual([['release-717', 'release-718']]);
+      stdin.write(request(9, 'khala_hook_receipt', { receipt: finalReceipt }));
+      expect((await responses(4))[3]?.result.structuredContent).toMatchObject({ kind: 'acknowledged',
         bindingId: binding.bindingId, generation: binding.generation, releaseIds: ['release-719'], boundary: 'stop' });
+      expect(recorded).toEqual([['release-717', 'release-718'], ['release-719']]);
+      stdin.write(request(10, 'khala_hook_receipt', { receipt: finalReceipt }));
+      expect((await responses(5))[4]?.result.structuredContent).toMatchObject({ kind: 'refused', code: 'stale_receipt' });
       expect(recorded).toEqual([['release-717', 'release-718'], ['release-719']]);
       effective = null;
       expect((await runHook('post-tool-use', JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId }), hookDeps)).stdout).toBe('');

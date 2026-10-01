@@ -7,13 +7,15 @@ import type {
 } from '@khala/contracts/delivery/index';
 
 /**
- * The binding's applied listening-mode projection. `version` is the listening-mode control version,
- * independent of the policy version. `effective` is the listening-mode store's derivation from the
+ * The binding's applied listening-mode projection. `version` is the ledger projection version,
+ * independent of the policy version. `sourceVersion` records the listening-mode control version
+ * from which it was derived, so a stale read cannot synthesize a newer ledger revision. `effective` is the listening-mode store's derivation from the
  * exact route's capabilities and grants, and `evidenceRevision` names the capability evidence it was
  * derived from. `evidenceRevision` is null exactly when `effective` is null.
  */
 export type DispatchListening = Readonly<{
   version: number;
+  sourceVersion?: number;
   requested: ListeningMode;
   effective: ListeningMode | null;
   evidenceRevision: string | null;

@@ -91,6 +91,22 @@ it('persists fixed owner-device attestation stages without attached details', ()
     stage: 'owner_device_attestation_register_response', result: 'unavailable' });
 });
 
+it('persists only allowlisted owner trust failure stages across the hosted wire', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'subscription', stage: 'owner_device_trust_peer_device_key_missing',
+    result: 'unavailable', localErrorName: 'secret-owner-device', message: 'secret-token',
+  } as never);
+  recordHostedDiagnostic(root, { component: 'subscription', stage: 'owner_device_trust_peer_secret-owner-device',
+    result: 'unavailable', message: 'secret-token',
+  } as never);
+  const written = fs.readFileSync(path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`), 'utf8');
+  expect(written).not.toContain('secret');
+  expect(written.trim().split('\n').map(line => JSON.parse(line))).toEqual([
+    { component: 'subscription', stage: 'owner_device_trust_peer_device_key_missing', result: 'unavailable' },
+    { component: 'subscription', stage: 'guard_exception', result: 'unavailable' },
+  ]);
+});
+
 it('persists a fixed Matrix read stage without event or key details', () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
   recordHostedDiagnostic(root, { component: 'subscription', stage: 'matrix_read_members',

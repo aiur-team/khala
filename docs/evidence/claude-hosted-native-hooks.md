@@ -19,7 +19,9 @@ release IDs and `PostToolUse` or `Stop` boundary. The model receives the opaque
 receipt in hook context and must later call `khala_hook_receipt`; that call
 rechecks current authority and commits the durable inbox ACK before returning
 the correlated receipt. A wrong nonce, pause, revocation, generation change or
-MCP restart fails closed. The local Claude session ID is still a caller-supplied
+MCP restart invalidates the old nonce without ACK. A new hook pull uses a fresh
+inbox offer scope, so the durable unacknowledged batch can be shown again and
+receives a new nonce. The local Claude session ID is still a caller-supplied
 label. [Claude Code exposes that ID to Bash subprocesses](https://code.claude.com/docs/en/env-vars),
 while its [published hook input](https://code.claude.com/docs/en/hooks) has no
 signed invocation field. A same-user subprocess
@@ -32,8 +34,13 @@ credential unavailable to Bash tools; neither is in the installed command-hook
 contract.
 
 The bridge has passed exact-session component tests, including a real local
-MCP process, actual hook socket round trip for both Steer and Sync, ordered
-fixture releases, a later tool call and durable ACK. **No owner-selected live release has yet shown the
+MCP process, real file inbox restart and reoffer, actual hook socket round trip
+for both Steer and Sync, ordered fixture releases, a later tool call and durable
+ACK. Repeating a hook before ACK returns the same pending nonce and does not
+commit; restart changes the nonce while retaining the offered inbox batch.
+The storage-backed test also refuses that nonce after pause or revocation and
+records exactly one ACK after authority returns and a later receipt call.
+**No owner-selected live release has yet shown the
 receipt in a disposable saved Claude model session.** #701 must therefore
 keep hosted Steer and Sync typed unsupported; the code is not evidence for an
 effective mode. Neither hook installation, version string, ciphertext

@@ -1,7 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import {
   decodeApprovalCommand, decodeApprovalResult, decodeDeliveryLimits, decodeDeliveryReceiptTransport,
-  decodeEventRef, decodeHarnessCapabilities, decodePolicyAck, decodePolicySetCommand, decodeSessionBinding,
+  decodeEventRef, decodeHarnessCapabilities, decodeListeningModeCommand, decodeListeningModeResult, decodeOwnerRouteGrantCommand,
+  decodeListeningModeView, decodePolicyAck, decodePolicySetCommand, decodeSessionBinding,
   type OwnerAuthority, type SessionBinding,
 } from '@khala/contracts/delivery/index';
 import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } from '@khala/contracts/messaging/index';
@@ -9,8 +10,10 @@ import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 // Stop must remain queueable after the ordinary command budget is exhausted.
 const OWNER_MAILBOX_STOP_RESERVE = 1;
+const MAX_UNRESOLVED_READS_PER_KIND = 8;
+const SUBMIT_ATTEMPTS = 64;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
-export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
+export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'listening_set' | 'listening_grant' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
   operationId: string;
   kind: OwnerCommandKind;
@@ -30,6 +33,8 @@ type Document = Readonly<{
   entries: readonly OwnerMailboxEntry[];
 }>;
 export type MailboxResult<T> = Readonly<{ kind: 'ok'; value: T }> | Readonly<{ kind: 'conflict' | 'unavailable' | 'capacity' }>;
+export type MailboxSubmitDiagnostic = 'index_read_unavailable' | 'archive_read_unavailable'
+  | 'archive_write_unavailable' | 'index_cas_unavailable' | 'index_cas_exhausted' | 'capacity';
 const ID = /^[A-Za-z0-9_-]{8,64}$/u;
 const decodedLimits = decodeDeliveryLimits({ maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32 });
 if (!decodedLimits.ok) throw new Error('owner_mailbox_limits_invalid');
@@ -42,8 +47,9 @@ export function createOwnerMailbox(input: Readonly<{
   roomId: string;
   clock: () => number;
   authoritySecret: string;
+  submitDiagnostic?: (cause: MailboxSubmitDiagnostic) => void;
 }>) {
-  const { store, binding, roomId, clock, authoritySecret } = input;
+  const { store, binding, roomId, clock, authoritySecret, submitDiagnostic } = input;
   if (authoritySecret.length < 32) throw new Error('owner mailbox authority secret too short');
   const key = `owner-mailbox.v1.${createHash('sha256').update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
   // Completed commands live at stable per-operation keys. The bounded document
@@ -73,7 +79,7 @@ export function createOwnerMailbox(input: Readonly<{
       const entry = item as Record<string, JsonValue>;
       if (Object.keys(entry).sort().join(',') !== 'authority,authorityMac,body,kind,operationId,outcome'
         || typeof entry.operationId !== 'string' || !ID.test(entry.operationId)
-        || !['controls_status', 'controls_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
+        || !['controls_status', 'controls_set', 'listening_set', 'listening_grant', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
         || ids.has(entry.operationId) || !validBody(entry.kind as OwnerCommandKind, entry.body!, binding, roomId)
         || !validPreviewId(entry as unknown as OwnerMailboxCommand)
         || entry.outcome === undefined || !validAuthority(entry, binding, roomId, authoritySecret)
@@ -206,14 +212,14 @@ export function createOwnerMailbox(input: Readonly<{
       if (!ID.test(command.operationId) || !validBody(command.kind, command.body, binding, roomId)
         || !validPreviewId(command)) return { kind: 'conflict' };
       if (principal.ownerId !== binding.ownerId || !principal.providerIssuer || !principal.providerSubject) return { kind: 'conflict' };
-      for (let attempt = 0; attempt < 8; attempt++) {
+      for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
         const prior = await archived(command.operationId);
-        if (prior.kind !== 'ok') return prior;
+        if (prior.kind !== 'ok') { submitDiagnostic?.('archive_read_unavailable'); return prior; }
         if (prior.value) return prior.value.kind === command.kind && sameValue(prior.value.body, command.body)
           && prior.value.authority.issuer === principal.providerIssuer && prior.value.authority.subject === principal.providerSubject
           ? { kind: 'ok', value: prior.value } : { kind: 'conflict' };
         const current = await read();
-        if (current.kind !== 'ok') return current;
+        if (current.kind !== 'ok') { submitDiagnostic?.('index_read_unavailable'); return current; }
         const { document, revision, expiresAt } = current.value;
         const existing = document.entries.find(entry => entry.operationId === command.operationId);
         if (existing) return existing.kind === command.kind && sameValue(existing.body, command.body)
@@ -222,36 +228,48 @@ export function createOwnerMailbox(input: Readonly<{
         // An archive write always precedes removal from this poll index. Legacy
         // completed previews may be compacted because their IDs bind the body.
         let entries = [...document.entries];
+        const readOnly = command.kind === 'review_preview' || command.kind === 'controls_status';
         if (command.kind !== 'channel_stop'
-          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES
+          && (!readOnly || !entries.some(entry => entry.kind === 'review_preview' || entry.kind === 'controls_status'))) {
           for (const entry of entries) {
             if (entry.kind === 'channel_stop') continue;
             const completed = await archived(entry.operationId);
-            if (completed.kind !== 'ok') return completed;
+            if (completed.kind !== 'ok') { submitDiagnostic?.('archive_read_unavailable'); return completed; }
             if (completed.value) entries = entries.filter(item => item.operationId !== entry.operationId);
           }
         }
         const replaceable = entries.filter(entry => entry.kind !== 'channel_stop'
           && (entry.kind === 'review_preview' || entry.kind === 'controls_status'));
-        while (command.kind !== 'channel_stop'
-          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
-          const oldest = replaceable.shift();
+        // A legacy full mailbox may have 32 reads of each kind. Migrate it a
+        // little at a time so one owner request does not need dozens of blob writes.
+        let evictions = 0;
+        while (command.kind !== 'channel_stop' && evictions < 2 && (
+          entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES
+          || readOnly && entries.filter(entry => entry.kind === command.kind && entry.outcome === null).length >= MAX_UNRESOLVED_READS_PER_KIND
+        )) {
+          const preferred = readOnly && entries.filter(entry => entry.kind === command.kind && entry.outcome === null).length >= MAX_UNRESOLVED_READS_PER_KIND
+            ? replaceable.findIndex(entry => entry.kind === command.kind && entry.outcome === null) : -1;
+          const oldest = preferred < 0 ? replaceable.shift() : replaceable.splice(preferred, 1)[0];
           if (!oldest) break;
           // The result key is the durable decision point. A concurrent agent
           // completion may win this CAS; then its original result takes precedence.
           const saved = await archive({ ...oldest, outcome: oldest.outcome ?? { ok: false, code: 'unavailable' } },
             expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
-          if (saved === 'unavailable') return { kind: 'unavailable' };
+          if (saved === 'unavailable') { submitDiagnostic?.('archive_write_unavailable'); return { kind: 'unavailable' }; }
           if (saved === 'conflict') {
             const winner = await archived(oldest.operationId);
-            if (winner.kind !== 'ok') return winner;
-            if (!winner.value) return { kind: 'unavailable' };
+            if (winner.kind !== 'ok' || !winner.value) {
+              submitDiagnostic?.('archive_read_unavailable'); return { kind: 'unavailable' };
+            }
           }
           entries = entries.filter(entry => entry.operationId !== oldest.operationId);
+          evictions++;
         }
         if (command.kind === 'channel_stop'
           ? entries.some(entry => entry.kind === 'channel_stop')
           : entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          submitDiagnostic?.('capacity');
           return { kind: 'capacity' };
         }
         const authority: OwnerAuthority = {
@@ -263,8 +281,11 @@ export function createOwnerMailbox(input: Readonly<{
         const saved = await write({ ...document, entries: [...entries, entry] }, revision,
           expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
         if (saved === 'applied') return { kind: 'ok', value: entry };
-        if (saved === 'unavailable') return { kind: 'unavailable' };
+        if (saved === 'unavailable') { submitDiagnostic?.('index_cas_unavailable'); return { kind: 'unavailable' }; }
+        // Give a competing writer a chance to advance the index before retrying.
+        await new Promise(resolve => setTimeout(resolve, attempt % 4));
       }
+      submitDiagnostic?.('index_cas_exhausted');
       return { kind: 'unavailable' };
     },
     /** Agent route calls only after current DPoP binding/generation authorization. */
@@ -345,6 +366,16 @@ function validBody(kind: OwnerCommandKind, body: JsonValue, binding: SessionBind
     return decoded.ok && decoded.value.bindingId === binding.bindingId && decoded.value.roomId === roomId
       && decoded.value.expectedBindingGeneration === binding.generation && decoded.value.mode === 'review';
   }
+  if (kind === 'listening_set') {
+    const decoded = decodeListeningModeCommand(body);
+    return decoded.ok && decoded.value.bindingId === binding.bindingId
+      && decoded.value.expectedBindingGeneration === binding.generation;
+  }
+  if (kind === 'listening_grant') {
+    const decoded = decodeOwnerRouteGrantCommand(body);
+    return decoded.ok && decoded.value.bindingId === binding.bindingId
+      && decoded.value.expectedBindingGeneration === binding.generation;
+  }
   if (kind === 'review_approve') {
     const decoded = decodeApprovalCommand(body, DELIVERY_LIMITS);
     return decoded.ok && decoded.value.bindingId === binding.bindingId && decoded.value.roomId === roomId
@@ -377,6 +408,38 @@ function validOutcome(kind: OwnerCommandKind, outcome: JsonValue, binding: Sessi
       && receipt.cleanupRequested === true;
   }
   if (kind === 'review_approve') return decodeApprovalResult(outcome, DELIVERY_LIMITS).ok;
+  if (kind === 'listening_set') {
+    const result = decodeListeningModeResult(outcome);
+    const command = decodeListeningModeCommand(body);
+    return result.ok && command.ok && result.value.commandId === command.value.commandId
+      && result.value.bindingId === binding.bindingId && result.value.generation === binding.generation;
+  }
+  if (kind === 'listening_grant') {
+    const command = decodeOwnerRouteGrantCommand(body);
+    if (!command.ok || outcome.commandId !== command.value.commandId) return false;
+    if (outcome.outcome === 'refused') return keys(outcome, ['commandId', 'outcome', 'reason'])
+      && typeof outcome.reason === 'string';
+    if ((outcome.outcome !== 'applied' && outcome.outcome !== 'conflict')
+      || !keys(outcome, ['commandId', 'outcome', 'reason', 'view'])) return false;
+    const view = decodeListeningModeView(outcome.view);
+    if (!view.ok || view.value.bindingId !== binding.bindingId
+      || view.value.generation !== binding.generation
+      || outcome.reason === undefined
+      || (outcome.reason !== null && typeof outcome.reason !== 'string')) return false;
+    if (outcome.outcome === 'applied') {
+      if (view.value.version !== command.value.expectedVersion + 1) return false;
+      const grants = command.value.kind.endsWith('experimental_route')
+        ? view.value.experimentalGrants : view.value.hardCancelGrants;
+      const exact = grants.some(grant => grant.mode === command.value.mode
+        && grant.route === command.value.route
+        && grant.harnessVersion === command.value.harnessVersion
+        && grant.evidenceRevision === command.value.evidenceRevision);
+      if (exact !== command.value.kind.startsWith('grant_')) return false;
+    }
+    return view.value.bindingId === binding.bindingId
+      && view.value.generation === binding.generation
+      && (outcome.reason === null || typeof outcome.reason === 'string');
+  }
   if (kind === 'controls_set') {
     if (!keys(outcome, ['ok', 'ack']) || outcome.ok !== true) return keys(outcome, ['ok', 'code'])
       && outcome.ok === false && outcome.code === 'forbidden';
@@ -397,13 +460,22 @@ function validOutcome(kind: OwnerCommandKind, outcome: JsonValue, binding: Sessi
   }
   if (!keys(outcome, ['ok', 'status']) || outcome.ok !== true || !plain(outcome.status)) return false;
   const status = outcome.status;
-  if (!keys(status, ['v', 'binding', 'bindingStatus', 'capabilities', 'policy', 'requested', 'busy', 'latestReceipt'])
+  if (!keys(status, ['v', 'binding', 'bindingStatus', 'capabilities', 'policy', 'requested', 'busy', 'latestReceipt',
+    'listening', 'listeningUnavailable'])
     || status.v !== 1 || status.bindingStatus !== 'active' || typeof status.busy !== 'boolean') return false;
   const decodedBinding = decodeSessionBinding(status.binding);
   if (!decodedBinding.ok || decodedBinding.value.bindingId !== binding.bindingId
     || decodedBinding.value.generation !== binding.generation) return false;
   if (status.capabilities !== null && !decodeHarnessCapabilities(status.capabilities).ok) return false;
   if (status.latestReceipt !== null && !decodeDeliveryReceiptTransport(status.latestReceipt).ok) return false;
+  if (status.listening === null) {
+    if (status.listeningUnavailable !== 'connector_starting'
+      && status.listeningUnavailable !== 'connector_unavailable') return false;
+  } else {
+    const listening = decodeListeningModeView(status.listening);
+    if (!listening.ok || listening.value.bindingId !== binding.bindingId
+      || listening.value.generation !== binding.generation || status.listeningUnavailable !== null) return false;
+  }
   if (!plain(status.policy) || !keys(status.policy, ['bindingId', 'generation', 'effectiveVersion', 'effectiveMode', 'paused'])
     || status.policy.bindingId !== binding.bindingId || status.policy.generation !== binding.generation
     || (status.policy.effectiveVersion !== null && !count(status.policy.effectiveVersion))
