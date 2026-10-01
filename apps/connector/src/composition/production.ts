@@ -523,6 +523,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     } else if (harness) {
       const activeHarness = harness;
       listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+        onProjected: () => dispatcher?.wake(),
         current: async () => {
           if (closed || remoteDenied || deliveryStopped) return false;
           const held = await readBinding().catch(() => null);
@@ -562,6 +563,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       });
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
+      // Existing releases are duplicates on resume; enqueue does not wake their queued records.
+      activeDispatcher.wake();
       reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
     }
     schedulePoll();

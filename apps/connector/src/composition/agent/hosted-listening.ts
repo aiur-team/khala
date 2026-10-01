@@ -22,6 +22,7 @@ export function createHostedListeningControl(input: Readonly<{
   dispatch: ConnectorDispatchStorage;
   current(): Promise<boolean>;
   capabilities(): Promise<HarnessCapabilities | null>;
+  onProjected?(): void;
 }>): Readonly<{
   application: AgentListeningModeApplication;
   owner: Readonly<{
@@ -140,8 +141,11 @@ export function createHostedListeningControl(input: Readonly<{
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
     const applied = await project(view, evidenceRevision, reread, currentEpoch);
     const latest = applied && await input.current() ? await reread() : null;
-    return currentEpoch() && latest?.ok && sameView(latest.view, view)
-      ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
+    if (currentEpoch() && latest?.ok && sameView(latest.view, view)) {
+      input.onProjected?.();
+      return result;
+    }
+    return { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
   async function rawRead(currentEpoch: () => boolean) {
     return projectedRead(await base.read(), () => base.read(), currentEpoch);

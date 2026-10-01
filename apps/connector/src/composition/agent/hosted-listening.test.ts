@@ -144,13 +144,17 @@ describe('hosted listening mode projection', () => {
       }), result: undefined }));
       let current = true;
       let trustedHooks = false;
+      let projected = 0;
       const hosted = createHostedListeningControl({ binding, trust, dispatch,
-        current: async () => current, capabilities: async () => trustedHooks ? capabilities : null });
+        current: async () => current, capabilities: async () => trustedHooks ? capabilities : null,
+        onProjected: () => { projected += 1; } });
       expect(await hosted.status()).toMatchObject({ effective: null });
+      expect(projected).toBe(1);
       trustedHooks = true;
       expect(await hosted.status()).toMatchObject({ bindingId: binding.bindingId, effective: 'sync' });
-      const projected = await dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
-      expect(projected?.listening).toMatchObject({ version: 2, effective: 'sync', evidenceRevision: 'hook-revision' });
+      expect(projected).toBe(2);
+      const policy = await dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
+      expect(policy?.listening).toMatchObject({ version: 2, effective: 'sync', evidenceRevision: 'hook-revision' });
       trustedHooks = false;
       expect(await hosted.status()).toMatchObject({ effective: null });
       expect((await dispatch.ledger.transact(tx => tx.policy(binding.bindingId)))?.listening)
@@ -158,6 +162,7 @@ describe('hosted listening mode projection', () => {
       current = false;
       expect(await hosted.application.read()).toEqual({ ok: false, code: 'unavailable' });
       expect(await hosted.status()).toMatchObject({ effective: null });
+      expect(projected).toBe(3);
     } finally { trust.close(); await storage.close(); await rm(parent, { recursive: true, force: true }); }
   });
 });
