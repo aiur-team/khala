@@ -130,6 +130,19 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
     : view.phase === 'ready' && view.agents.length === 0
       ? 'No agents have joined this channel yet.'
       : null;
+  const nameCounts = new Map<string, number>();
+  for (const agent of view.agents) {
+    const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+  }
+  const nameOrdinals = new Map<ParticipantId, number>();
+  const nextOrdinal = new Map<string, number>();
+  for (const agent of [...view.agents].sort((left, right) => left.participantId.localeCompare(right.participantId))) {
+    const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+    const ordinal = (nextOrdinal.get(name) ?? 0) + 1;
+    nextOrdinal.set(name, ordinal);
+    nameOrdinals.set(agent.participantId, ordinal);
+  }
 
   function copy(agent: ChannelAgentView): void {
     if (!agent.installCommand) return;
@@ -145,7 +158,9 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
       {panelStatusMessage ? <p role="status">{panelStatusMessage}</p> : null}
       <ol className="agent-presence__list">
         {view.agents.map(agent => {
-          const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+          const baseName = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
+          const name = (nameCounts.get(baseName) ?? 0) > 1
+            ? `${baseName} (agent ${nameOrdinals.get(agent.participantId)})` : baseName;
           const owned = Boolean(viewerOwnerId && agent.ownerId === viewerOwnerId);
           const ownerName = participantRosterName(agent.ownerDisplayName, 'Channel member');
           return <li key={agent.participantId} className="agent-presence__agent">

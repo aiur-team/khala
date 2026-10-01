@@ -7,7 +7,7 @@ import {
 } from '@khala/contracts/internal/discovery-descriptor';
 import { encodeInternalDescriptor, parseInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import {
-  type DeviceId, type GrantExchangeRequest, type RoomId, deriveOkpKeyThumbprint,
+  type DeviceId, type GrantExchangeRequest, type ParticipantId, type RoomId, deriveOkpKeyThumbprint,
 } from '@khala/contracts/messaging/index';
 import { PassThrough } from 'node:stream';
 import { runCli } from '@aiur/khala/cli/app';
@@ -592,6 +592,17 @@ describe('internal channel discovery', () => {
     expect(await bodies(w.human)).toEqual([
       'said before any admission', 'said to the first binding', 'said while no agent was bound', 'said after the rejoin',
     ]);
+  });
+
+  it('shows the persisted participant name on a later access request', async () => {
+    const w = await world();
+    const resumed = await issue(w, 'session-name', 'Different request label');
+    const participantId = `participant_${resumed.principal}` as ParticipantId;
+    const channels = createChannelStore(w.handle);
+    expect(channels.registerParticipant({ participantId, ownerId: alice.ownerId, kind: 'agent', displayName: 'Original name' }).kind).toBe('done');
+    expect(channels.setMembership({ channelId: channelId as RoomId, participantId, membership: 'joined' }).kind).toBe('done');
+    expect((await requestAccess(w, resumed, 'op-name-second', { channelUrl: `${w.server.origin}/channels/${channelId}` })).status).toBe(200);
+    expect((await inbox(w)).find(request => request.outcome === 'pending_owner')?.requester.displayLabel).toBe('Original name');
   });
 
   it('finishes an activation whose grant was consumed before the binding was recorded', async () => {

@@ -13,6 +13,7 @@ import { ChannelSharePanel } from '../ChannelSharePanel';
 const roomId = 'room_harness' as RoomId;
 const scoutId = 'agent_scout' as ParticipantId;
 const builderId = 'agent_builder' as ParticipantId;
+const secondScoutId = 'agent_scout_second' as ParticipantId;
 const miraId = 'owner_mira' as OwnerId;
 const theoId = 'owner_theo' as OwnerId;
 let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
@@ -102,6 +103,16 @@ function Harness() {
             for (const listener of listeners) listener(snapshot);
           }}>Show two agents</button>
           <button type="button" onClick={() => setViewer(viewer === miraId ? theoId : miraId)}>Switch human</button>
+          <button type="button" onClick={() => {
+            setNames(new Map());
+            snapshot = { generation: 1, agents: [
+              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+              { participantId: secondScoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
+                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
+            ] };
+            for (const listener of listeners) listener(snapshot);
+          }}>Show same-named agents</button>
         </section>
       )}
       renderShare={() => <ChannelSharePanel roomId={roomId} admission={{ share: async () => ({

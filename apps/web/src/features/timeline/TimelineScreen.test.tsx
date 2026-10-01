@@ -274,6 +274,18 @@ it('keeps retry and composing available without a redundant missing-key notice',
   expect(html).not.toContain('textarea disabled');
 });
 
+it('keeps the persisted agent name visible during a resume history scan', () => {
+  const bot = participant('bot', 'agent', 'Codex');
+  const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({
+    phase: 'ready', items: [item('before-resume', bot, 'Earlier message')], nextCursor: null,
+    newMessageCount: 0, namesReady: false, nameScan: 'checking',
+  })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html).toContain('Earlier message');
+  expect(html).toContain('Codex');
+  expect(html).not.toContain('Agent name unavailable');
+  expect(html).toContain('Checking agent names');
+});
+
 
 it('disambiguates unavailable agent names across owners using the displayed fallback', () => {
   const first = { ...participant('first', 'agent', 'First initial name'), ownerId: 'owner_1234' as OwnerId };

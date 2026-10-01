@@ -73,7 +73,7 @@ export type InternalChannelDiscoveryDeps = Readonly<{
   control: ControlStore;
   store: DiscoveryStore;
   /** Revokes an activation that lost its request to the owner's Stop while it was being activated. */
-  bindings: Pick<ChannelStore, 'revokeBinding'>;
+  bindings: Pick<ChannelStore, 'revokeBinding' | 'roster' | 'nameProjection'>;
   human: HumanAuthority;
   clock: TrustedClock;
   newChannelId: () => string;
@@ -551,7 +551,22 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     async inbox(principal) {
       if (!isOwner(principal)) return [];
       const result = await decisions.inbox(owner);
-      return result.kind === 'ok' ? result.value : 'unavailable';
+      if (result.kind !== 'ok') return 'unavailable';
+      const projected = [];
+      for (const request of result.value) {
+        if (request.detail.kind !== 'access') { projected.push(request); continue; }
+        const located = await journal.readContext({ requestHandle: request.requestHandle });
+        if (located.kind !== 'found' || located.context.detail.kind !== 'access') return 'unavailable';
+        const channelId = channelOf(located.context.detail.authorizedChannelRef).channelId as RoomId;
+        const participantId = agentParticipant(located.context.requester);
+        const roster = deps.bindings.roster(channelId);
+        if (roster.kind === 'unavailable') return 'unavailable';
+        const persisted = roster.kind === 'done' ? roster.participants.find(entry => entry.participantId === participantId) : null;
+        const projectedName = persisted ? deps.bindings.nameProjection(channelId)?.currentNames.get(participantId as HumanAuthority['participantId'])
+          ?? persisted.displayName : null;
+        projected.push(projectedName ? { ...request, requester: { ...request.requester, displayLabel: projectedName } } : request);
+      }
+      return projected;
     },
 
     async decide(principal, command, kind) {
