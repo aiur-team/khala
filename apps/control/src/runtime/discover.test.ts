@@ -193,6 +193,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/owner-mailbox/review-status', methods: ['GET'], domain: 'human' },
       { path: '/api/human/owner-device-proof/challenge', methods: ['GET'], domain: 'human' },
       { path: '/api/human/owner-device-proof/register', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/owner-device-proof/retire', methods: ['POST'], domain: 'human' },
       { path: '/api/human/revocation/targets', methods: ['GET'], domain: 'human' },
       { path: '/api/human/revocation/revoke', methods: ['POST'], domain: 'human' },
       { path: '/api/human/revocation/status', methods: ['GET'], domain: 'human' },
