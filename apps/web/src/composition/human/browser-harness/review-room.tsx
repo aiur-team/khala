@@ -5,12 +5,17 @@ import '../../../brand/tokens.css';
 import '../../../shell/shell.css';
 import '../../../ui/conversation/conversation.css';
 import '../../../features/channel/channel.css';
+import '../../../features/timeline/timeline.css';
 import '../../../features/recovery/recovery.css';
 import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
   type PolicySetCommand } from '@khala/contracts/delivery/index';
-import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
+import { CLOSURE_CONSEQUENCES, type ChannelSnapshot, type RoomPort, type TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
 import { createHumanRoomRenderer } from '../room';
+import { HumanApplicationScreen } from '../mount';
+import { createHumanRouteCodec } from '../routes';
+import { createChannelAccessInboxController } from '../../../features/channel-access/controller';
+import { createFakeJournal } from '../../../features/channel-access/fakes';
 import { registerReview } from '../../review/register';
 import { registerControls } from '../../controls/register';
 import { createOwnerDeviceClient } from '../../review/owner-device-client';
@@ -24,6 +29,11 @@ const lookupRace = new URLSearchParams(location.search).has('lookup');
 const controlsEnabled = new URLSearchParams(location.search).has('controls');
 const proofMode = new URLSearchParams(location.search).has('proof');
 const statusRace = new URLSearchParams(location.search).has('status-race');
+const identityTiming = new URLSearchParams(location.search).has('identity-timing');
+const closureDenied = new URLSearchParams(location.search).has('closure-denied');
+const closureUnknown = new URLSearchParams(location.search).has('closure-unknown');
+const closureCalls: string[] = [];
+const navigations: string[] = [];
 const oldBinding = { bindingId, generation: 0, agentParticipantId: race ? 'Old agent' : 'My agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_OLD', fingerprint: 'A'.repeat(43) } };
 const newBinding = { bindingId, generation: 1, agentParticipantId: 'New agent',
@@ -44,6 +54,13 @@ const item = (id: string, body: string, character: string, clientTxnId: string |
   clientTxnId, receivedAt: '2026-09-27T00:00:00Z',
 });
 const items = [item('event_a', 'Withheld A', 'a'), item('event_b', 'Approved B', 'b')];
+const nameChangeBase = item('name_change', '', 'd');
+const nameChange = { ...nameChangeBase,
+  ref: { ...nameChangeBase.ref, authorParticipantId: 'human_1' as never },
+  content: { v: 1 as const, kind: 'agent_rename' as const, agentParticipantId: 'agent_1' as never, body: 'Renamed agent' },
+  participant: { participantId: 'human_1' as never, ownerId: 'owner_1' as never, kind: 'human' as const,
+    displayName: 'Owner', deviceIds: [] },
+};
 const confirmed = sessionStorage.getItem('khala.test.send.confirmed');
 if (confirmed) {
   const { clientTxnId, body } = JSON.parse(confirmed) as { clientTxnId: string; body: string };
@@ -65,7 +82,10 @@ const room = {
     queueMicrotask(() => listener(snapshot));
     return () => roomListeners.delete(listener);
   },
-  async timeline() { return { kind: 'ok', value: { items, nextCursor: null, generation: 1 } }; },
+  async timeline() {
+    if (identityTiming) await fetch('/api/fixture/history');
+    return { kind: 'ok', value: { items: identityTiming ? [nameChange, ...items] : items, nextCursor: null, generation: 1 } };
+  },
   async send({ clientTxnId, content }: { clientTxnId: string; content: { body: string } }) {
     const original = sessionStorage.getItem('khala.test.send.pending-txn');
     if (content.body.startsWith('__reload_pending') && original === null) {
@@ -83,6 +103,28 @@ const room = {
 } as unknown as RoomPort;
 const shareRequests: Array<{ roomId: string; policy: { kind: string; email?: string } }> = [];
 const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
+  ...(identityTiming ? {
+    conversations: { snapshot: () => [{ id: roomId, title: 'Test channel', preview: null, timestamp: null, unreadCount: 0 }], subscribe: () => () => {} },
+    roomParticipants: async () => {
+      await fetch('/api/fixture/participants');
+      return [
+        { participantId: 'human_peer', ownerId: 'owner_peer', kind: 'human', displayName: 'Peer owner', deviceIds: [] },
+        { participantId: 'agent_1', ownerId: 'owner_1', kind: 'agent', displayName: 'Verified agent', deviceIds: [] },
+      ];
+    },
+    closure: () => ({
+      currentCapability: async () => ({ ownerId: 'owner_1', roomId, expectedRoomRevision: 0,
+        available: !closureDenied, unavailableReason: closureDenied ? 'forbidden' : null,
+        consequences: CLOSURE_CONSEQUENCES }),
+      closeRoom: async (request: { operationId: string }) => {
+        closureCalls.push(request.operationId);
+        if (closureUnknown) return { kind: 'outcome_unknown' as const, operationId: request.operationId };
+        return { kind: 'ok' as const, value: { operationId: request.operationId, state: 'complete' as const, reason: null } };
+      },
+      inspectClosure: async (operationId: string) => ({ kind: 'ok' as const,
+        value: { operationId, state: 'complete' as const, reason: null } }),
+    }),
+  } : {}),
   admission: { async share(input: { roomId: string; policy: { kind: string; email?: string } }) {
     shareRequests.push({ roomId: input.roomId, policy: input.policy });
     return { kind: 'ok' as const, value: { inviteRef: `invite_${shareRequests.length}`,
@@ -139,6 +181,8 @@ declare global { interface Window {
   __controlCommands: () => readonly PolicySetCommand[];
   __releaseOldStatus: () => void;
   __oldStatusReturned: () => boolean;
+  __closureCalls: () => readonly string[];
+  __navigations: () => readonly string[];
 } }
 window.__shareRequests = () => shareRequests;
 window.__roomReviewCommand = () => command;
@@ -155,6 +199,8 @@ window.__releaseAccountTrust = () => allowAccount?.();
 window.__controlCommands = () => controlCommands;
 window.__releaseOldStatus = () => allowOldStatus?.();
 window.__oldStatusReturned = () => oldStatusReturned;
+window.__closureCalls = () => closureCalls;
+window.__navigations = () => navigations;
 const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!limits.ok) throw new Error('invalid review limits');
 const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null });
@@ -214,10 +260,22 @@ const trustBinding: Parameters<typeof createHumanRoomRenderer>[2] = async (_cont
 const refreshMs = race || controlsEnabled || proofMode ? 75 : 5_000;
 const renderer = createHumanRoomRenderer(review, capability, trustBinding, refreshMs, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
+const routes = createHumanRouteCodec({ origin: location.origin, basePath: '/', allowInsecureLoopback: true });
+const fixtureRoutes = { ...routes, parse: () => route, roomPath: () => route.path };
 const root = createRoot(document.getElementById('app')!);
 const toolsRoute = new URLSearchParams(location.search).has('tools');
+const hostedSurface = (currentContext: HumanRouteContext) => {
+  const snapshot = { phase: 'ready' as const, path: route.path, context: currentContext };
+  const application = { getSnapshot: () => snapshot, subscribe: () => () => {},
+    navigate: (path: string) => { navigations.push(path); }, signOut: async () => ({ kind: 'ok' as const, value: null }),
+    retryDevice: () => {}, dispose: () => {} };
+  return <HumanApplicationScreen application={application} identity={currentContext.identity} routes={fixtureRoutes}
+    renderRoom={renderer} createChannelAccess={() => createChannelAccessInboxController({ requests: createFakeJournal().port })}
+    capabilities={[]} navigateRoute={path => { navigations.push(path); }} />;
+};
 const testSurface = (currentContext: HumanRouteContext) => toolsRoute
   ? <div className="khala-content-root khala-owner-shell" data-theme="dark"><main className="khala-content-main" aria-label="Channel care route">{renderer.tools(currentContext, route)}</main></div>
+  : identityTiming ? hostedSurface(currentContext)
   : proofMode ? <StrictMode>{renderer(currentContext, route)}</StrictMode>
     : <>{renderer(currentContext, route)}<aside aria-label="Channel care route">{renderer.tools(currentContext, route)}</aside></>;
 root.render(testSurface(context));
@@ -230,7 +288,9 @@ window.__switchReviewAccount = () => {
   attachment.dispose();
   controlsAttachment.dispose();
   const nextContext = { ...context, generation: 2, principal: { ownerId: 'owner_2' },
-    participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
+    participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }),
+    ...(identityTiming ? { roomParticipants: async () => [{ participantId: 'agent_2', ownerId: 'owner_2', kind: 'agent', displayName: 'Other verified agent', deviceIds: [] }] } : {}),
+  } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
   controlsAttachment = controls.attach(nextContext);
   root.render(testSurface(nextContext));

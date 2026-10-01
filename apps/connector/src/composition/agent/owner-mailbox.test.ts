@@ -162,4 +162,25 @@ describe('protected hosted owner mailbox endpoint', () => {
     expect(status).not.toHaveBeenCalled();
     expect(await mailbox.pollOnce()).toBe('unavailable');
   });
+
+  it('reports only fixed poll stages, status, and pending count', async () => {
+    const diagnostic = vi.fn();
+    const signer = { proof: () => 'signed-proof' } as unknown as ProofSigner;
+    const mailbox = createProductionOwnerMailbox({ appOrigin: 'https://khala.aiur.team', binding,
+      signer, capability: async () => ({ token: 'C'.repeat(43), scope: ['receive_released', 'ack_delivery'],
+        bindingId: binding.bindingId, generation: 0, expiresAt: Date.now() + 60_000 }),
+      controls: { status: async () => ({ ok: false as const, code: 'unavailable' as const }),
+        setPolicy: vi.fn(), reconcile: vi.fn() },
+      stop: async () => ({ kind: 'unavailable' as const }), onRevoked: async () => undefined,
+      diagnostic, fetch: async url => String(url).endsWith('/poll')
+        ? response(200, { v: 1, bindingId: binding.bindingId, generation: 0, closing: false, entries: [entry] })
+        : response(503, { code: 'unavailable' }),
+    });
+    expect(await mailbox.pollOnce()).toBe('unavailable');
+    expect(diagnostic.mock.calls.map(call => call[0])).toEqual([
+      { stage: 'mailbox_poll_entries', result: 'ok', httpStatus: 200, pendingCount: 1 },
+      { stage: 'mailbox_poll_execute', result: 'ok' },
+      { stage: 'mailbox_poll_complete', result: 'unavailable', httpStatus: 503 },
+    ]);
+  });
 });

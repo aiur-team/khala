@@ -29,8 +29,11 @@ const SUBSCRIPTION_STAGES = [
   'owner_device_trust_peer',
   'matrix_read_closed', 'matrix_read_bridge', 'matrix_read_members', 'matrix_read_participants',
   'matrix_read_processing', 'matrix_read_missing_keys', 'matrix_read_names', 'matrix_read_callback',
+  'intake_subscription_started', 'intake_listening_initialized', 'intake_review_initialized',
+  'mailbox_poll_scheduled', 'mailbox_rotation', 'mailbox_poll_fetch', 'mailbox_poll_entries',
+  'mailbox_poll_execute', 'mailbox_poll_complete',
 ] as const;
-const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap'] as const;
+const SUBSCRIPTION_RESULTS = ['unavailable', 'revoked', 'closing', 'expired', 'rejected', 'gap', 'ok'] as const;
 
 /** The MCP child's stderr may be hidden by its host; retain only fixed diagnostic fields. */
 export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic): void {
@@ -43,6 +46,8 @@ export function recordHostedDiagnostic(stateDirectory: string, event: Diagnostic
       ? 'unavailable' : event.result,
     ...('httpStatus' in event && Number.isInteger(event.httpStatus)
       && event.httpStatus >= 100 && event.httpStatus <= 599 ? { httpStatus: event.httpStatus } : {}),
+    ...('pendingCount' in event && Number.isInteger(event.pendingCount)
+      && event.pendingCount >= 0 && event.pendingCount <= 65 ? { pendingCount: event.pendingCount } : {}),
     ...(event.component === 'hosted_open' && event.errorCode && STORAGE_ERROR_CODES.includes(event.errorCode)
       ? { errorCode: event.errorCode } : {}),
     ...(native ? { phase: ['ready', 'degraded', 'stopped', 'absent'].includes(event.phase) ? event.phase : 'absent',

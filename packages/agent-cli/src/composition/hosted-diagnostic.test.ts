@@ -70,6 +70,17 @@ it('persists only fixed subscription fields and bounded HTTP status', () => {
     result: 'unavailable', httpStatus: 503 });
 });
 
+it('persists only a bounded mailbox pending count', () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
+  recordHostedDiagnostic(root, { component: 'subscription', stage: 'mailbox_poll_entries',
+    result: 'ok', httpStatus: 200, pendingCount: 2, privateBody: 'must-not-appear',
+  } as never);
+  const written = fs.readFileSync(path.join(root, 'hosted', `diagnostics-${process.pid}.jsonl`), 'utf8');
+  expect(written).not.toContain('must-not-appear');
+  expect(JSON.parse(written)).toEqual({ component: 'subscription', stage: 'mailbox_poll_entries',
+    result: 'ok', httpStatus: 200, pendingCount: 2 });
+});
+
 it('persists fixed owner-device attestation stages without attached details', () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-diagnostic-'));
   recordHostedDiagnostic(root, { component: 'subscription', stage: 'owner_device_attestation_register_response',
