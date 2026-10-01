@@ -102,12 +102,12 @@ describe('claude plugin scaffold', () => {
     expect(source).toBe(`import { main } from './lib/runtime.mjs';\n\nawait main('${role}');`);
   });
 
-  it('reaches Khala only through the khala adapter command: no network, inbox, or acknowledgement path', () => {
+  it('reaches Khala through the adapter command or private hosted Unix socket, without an inbox or ACK token', () => {
     const source = fs.readFileSync(path.join(root, 'hooks/lib/runtime.mjs'), 'utf8');
     const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map(match => match[1]).sort();
-    expect(imports).toEqual(['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:os', 'node:path']);
+    expect(imports).toEqual(['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path']);
     const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/^\s*\*.*$/gm, '');
-    expect(code).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|require)\b|node:(?:https?|net|tls|dgram)/);
+    expect(code).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|require)\b|node:(?:https?|tls|dgram)/);
     expect(code).not.toMatch(/inbox|ackBatchToken|--ack|exec\(|shell:\s*true/);
     // Only the non-acknowledging adapter ops; `read`, `send`, `status` and `mode` are agent calls.
     const ops = [...code.matchAll(/(?:deps\.khala\(|hookState\(deps, input\.sessionId, )'([a-z-]+)'/g)].map(match => match[1]);

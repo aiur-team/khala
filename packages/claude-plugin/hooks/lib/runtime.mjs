@@ -11,6 +11,7 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createConnection } from 'node:net';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -140,6 +141,7 @@ export function defaultDependencies(env = process.env, command = 'khala') {
     bound: sessionId => sessionEngaged(internalRoot, sessionId),
     khala: (op, sessionId, flags, input) => runKhala(command, op, sessionId, flags, input),
     terminalKeyPath: path.join(internalRoot, 'claude-terminal.key'),
+    hostedRoot: path.join(stateHome, 'khala'),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -147,6 +149,52 @@ export function defaultDependencies(env = process.env, command = 'khala') {
     // Claude ends the watcher with the session; if it does not, the watcher notices its parent is gone.
     parentAlive: () => process.ppid === parent && processAlive(parent),
   };
+}
+
+/** A descriptor is only a route to the live MCP process; it is never receipt evidence itself. */
+export function hostedHookDescriptorPath(root, sessionId) {
+  if (!validSessionId(sessionId) || typeof root !== 'string' || !path.isAbsolute(root)) return null;
+  const key = createHash('sha256').update(['khala.hosted.claude.hook.v1', sessionId].join('\0')).digest('hex').slice(0, 24);
+  return path.join(root, 'hosted-claude-hooks', `${key}.json`);
+}
+
+async function hostedHook(deps, sessionId, boundary) {
+  const file = hostedHookDescriptorPath(deps.hostedRoot, sessionId);
+  if (file === null) return null;
+  let descriptor;
+  try {
+    const info = await fs.lstat(file);
+    if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o777) !== 0o600
+      || (typeof process.getuid === 'function' && info.uid !== process.getuid())) return null;
+    descriptor = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch { return null; }
+  if (descriptor?.v !== 1 || descriptor.sessionId !== sessionId
+    || typeof descriptor.socketPath !== 'string' || !path.isAbsolute(descriptor.socketPath)
+    || path.dirname(descriptor.socketPath) !== deps.hostedRoot
+    || !path.basename(descriptor.socketPath).startsWith(`h-${path.basename(file).slice(0, 8)}-`)
+    || typeof descriptor.secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(descriptor.secret)) {
+    return { kind: 'unsupported' };
+  }
+  return new Promise(resolve => {
+    const socket = createConnection(descriptor.socketPath);
+    let text = '';
+    const done = value => { socket.destroy(); resolve(value); };
+    socket.setTimeout(KHALA_CALL_TIMEOUT_MS, () => done({ kind: 'unsupported' }));
+    socket.once('error', () => done({ kind: 'unsupported' }));
+    socket.once('connect', () => socket.write(JSON.stringify({ v: 1, sessionId, boundary, secret: descriptor.secret }) + '\n'));
+    socket.on('data', chunk => {
+      text += chunk.toString('utf8');
+      if (Buffer.byteLength(text) > MAX_FRAME_BYTES * 2) return done({ kind: 'unsupported' });
+      if (!text.includes('\n')) return;
+      try {
+        const value = JSON.parse(text.slice(0, text.indexOf('\n')));
+        done(value?.kind === 'batch' && validFrame(value.frame)
+          && /^[A-Za-z0-9_-]{32}$/u.test(value.receiptNonce)
+          ? { kind: 'batch', frame: value.frame, receiptNonce: value.receiptNonce }
+          : { kind: value?.kind === 'empty' ? 'empty' : 'unsupported' });
+      } catch { done({ kind: 'unsupported' }); }
+    });
+  });
 }
 
 /**
@@ -434,6 +482,18 @@ export async function runHook(role, raw, deps) {
       await state.consumeWake();
     }
     return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', watchPaths: [state.signalPath] } }), stderr: '', exitCode: 0 };
+  }
+  if ((role === 'post-tool-use' || role === 'stop') && !(role === 'stop' && input.stopHookActive)
+    && typeof deps.hostedRoot === 'string') {
+    const boundary = role === 'post-tool-use' ? 'post_tool_use' : 'stop';
+    const hosted = await hostedHook(deps, input.sessionId, boundary);
+    if (hosted !== null) {
+      if (hosted.kind !== 'batch') return { stdout: '', stderr: '', exitCode: 0 };
+      const notice = `${renderDelivery(hosted.frame)}\nKhala hosted hook receipt: ${hosted.receiptNonce}. `
+        + 'After reading this batch, call khala_hook_receipt with this receipt to acknowledge it.';
+      return { stdout: role === 'stop' ? JSON.stringify({ decision: 'block', reason: notice })
+        : context(input.event, notice), stderr: '', exitCode: 0 };
+    }
   }
   if (role !== 'session-end' && !await deps.bound(input.sessionId).catch(() => false)) {
     return { stdout: '', stderr: '', exitCode: 0 };
