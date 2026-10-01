@@ -368,6 +368,7 @@ describe('hosted native Claude MCP', () => {
       const send = vi.fn(async (input: { bindingId: string | null; clientTxnId: string }) => ({
         kind: 'accepted' as const, clientTxnId: input.clientTxnId, eventId: 'event-sent-571',
       }));
+      const requestChannelAccess = vi.fn();
       const factory = vi.fn(async () => ({
         client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
           async status() { return { v: 1 as const, connected: approved, binding: approved ? binding : null,
@@ -376,7 +377,8 @@ describe('hosted native Claude MCP', () => {
               prerequisites: { storage: 'ready' as const, device: 'ready' as const,
                 bootstrap: 'ready' as const, subscription: 'ready' as const, controls: 'ready' as const,
                 harness: 'unknown' as const, dispatch: 'blocked' as const, review: 'blocked' as const,
-                recovery: 'unknown' as const } } } : {}) }; }, send },
+                recovery: 'unknown' as const } } } : {}) }; }, send,
+          requestChannelAccess: requestChannelAccess as never },
         inbox: async () => openInbox({ stateDirectory: root, bindingId: binding.bindingId,
           generation: binding.generation, maxPayloadBytes: 4096, maxSelectionEvents: 8 }),
         async close() {},
@@ -402,6 +404,7 @@ describe('hosted native Claude MCP', () => {
         batch: expect.stringContaining('encrypted release 571') });
       expect(send).toHaveBeenCalledTimes(1);
       expect(factory).toHaveBeenCalledWith({ harness: 'claude', sessionId: SESSION });
+      expect(requestChannelAccess).not.toHaveBeenCalled();
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
