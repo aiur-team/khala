@@ -56,10 +56,9 @@ be reported as acceptance.
 
 ## Known limitation
 
-The KHA-115 ledger has no "is this event released" read, and `readApprovalSnapshot`
-still returns a released event. A released item therefore stays in the preview until
-retention (KHA-130) removes it. Approving it again is refused (`stale_content`), so
-nothing is delivered twice. This only affects presentation.
+`readApprovalSnapshot` retains released pending rows for audit. Owner preview
+checks the exact binding-generation release claim and omits those rows; approving
+an already-released item again remains refused (`stale_content`).
 
 Definite refusals are not journalled, only committed releases. A command ID that
 was refused (for example `stale_policy`) can succeed if it is retried after the
