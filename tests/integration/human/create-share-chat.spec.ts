@@ -24,8 +24,28 @@ function enableHistoryDiagnostics() {
 async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: string, stage: 'alice-history' | 'bob-history'): Promise<void> {
   recordStage(stage);
   const participantStatuses: number[] = [];
+  const participantRouteStages: string[] = [];
+  const participantContentTypes: string[] = [];
+  const participantMatrixStages: string[] = [];
+  const participantMatrixStatuses: number[] = [];
   const onResponse = (response: PlaywrightResponse) => {
-    if (new URL(response.url()).pathname === '/api/human/messaging/participants') participantStatuses.push(response.status());
+    if (new URL(response.url()).pathname !== '/api/human/messaging/participants') return;
+    participantStatuses.push(response.status());
+    const contentType = response.headers()['content-type']?.split(';', 1)[0];
+    if (contentType === 'application/json' || contentType === 'text/html' || contentType === 'text/plain') {
+      participantContentTypes.push(contentType);
+    }
+    const routeStage = response.headers()['x-khala-local-participant-stage'];
+    if (routeStage && ['service_loader', 'feature_unavailable', 'authorization', 'participant_unavailable'].includes(routeStage)) {
+      participantRouteStages.push(routeStage);
+    }
+    const matrixStage = response.headers()['x-khala-local-matrix-stage'];
+    const matrixStatus = Number(response.headers()['x-khala-local-matrix-status']);
+    if (matrixStage && ['membership', 'control_login', 'joined_members'].includes(matrixStage)
+      && Number.isInteger(matrixStatus) && matrixStatus >= 0 && matrixStatus <= 599) {
+      participantMatrixStages.push(matrixStage);
+      participantMatrixStatuses.push(matrixStatus);
+    }
   };
   page.on('response', onResponse);
   try {
@@ -50,7 +70,9 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
             stage === 'history_participants' || stage === 'history_device_info').slice(-8) };
       });
       const deviceReadySurface = await page.getByLabel('Message', { exact: true }).isEnabled().catch(() => false);
-      recordStage(stage, { ...view, deviceReadySurface, participantStatuses: participantStatuses.slice(-12) });
+      recordStage(stage, { ...view, deviceReadySurface, participantStatuses: participantStatuses.slice(-12),
+        participantRouteStages: participantRouteStages.slice(-12), participantContentTypes: participantContentTypes.slice(-12),
+        participantMatrixStages: participantMatrixStages.slice(-12), participantMatrixStatuses: participantMatrixStatuses.slice(-12) });
       throw new Error('automatic_history_failed');
     }
   } finally {

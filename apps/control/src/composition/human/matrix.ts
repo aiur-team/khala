@@ -59,7 +59,7 @@ export interface MatrixSessionIssuer {
   >;
   resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions, targetParticipantIds?: readonly ParticipantId[]): Promise<
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
-    | Readonly<{ kind: 'forbidden' | 'unavailable' }>
+    | Readonly<{ kind: 'forbidden' | 'unavailable'; localDiagnostic?: Readonly<{ stage: 'membership' | 'control_login' | 'joined_members'; status: number }> }>
   >;
 }
 
@@ -139,6 +139,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   const controlLogins = new Map<OwnerId, Promise<MatrixLogin | null>>();
   const controlRetryAfter = new Map<OwnerId, number>();
   const loginRetryAfter = new Map<string, number>();
+  type LocalParticipantDiagnostic = { stage: 'membership' | 'control_login' | 'joined_members'; status: number };
 
   type RoomAuthorityRecord = Readonly<{ v: 1; roomId: string; ownerId: string }>;
   const authorityKey = (roomId: RoomId) => `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
@@ -258,9 +259,12 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
-  async function login(ownerId: OwnerId, deviceId: DeviceId, call?: CallOptions): Promise<MatrixLogin | null> {
+  async function login(ownerId: OwnerId, deviceId: DeviceId, call?: CallOptions, diagnostic?: LocalParticipantDiagnostic): Promise<MatrixLogin | null> {
     const loginKey = `${ownerId}\0${deviceId}`;
-    if (Date.now() < (loginRetryAfter.get(loginKey) ?? 0)) return null;
+    if (Date.now() < (loginRetryAfter.get(loginKey) ?? 0)) {
+      if (diagnostic) { diagnostic.stage = 'control_login'; diagnostic.status = 429; }
+      return null;
+    }
     try {
       const userId = accountId(ownerId);
       const response = await request('/_matrix/client/v3/login', {
@@ -274,6 +278,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           initial_device_display_name: 'Khala Web',
         }),
       }, call);
+      if (diagnostic) { diagnostic.stage = 'control_login'; diagnostic.status = response.status; }
       if (response.status === 429) {
         const retry = await body(response);
         const retryMs = typeof retry?.retry_after_ms === 'number' && Number.isFinite(retry.retry_after_ms)
@@ -378,16 +383,19 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
     async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = []) {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
-      const membership = await membershipForOwner(ownerId, roomId, call);
+      const localDiagnostic: LocalParticipantDiagnostic = { stage: 'membership', status: 0 };
+      const membership = await membershipForOwner(ownerId, roomId, call, localDiagnostic);
       if (membership.kind === 'absent') return { kind: 'forbidden' };
-      if (membership.kind !== 'joined') return { kind: 'unavailable' };
-      const session = await controlLogin(ownerId, call);
-      if (!session) return { kind: 'unavailable' };
+      if (membership.kind !== 'joined') return { kind: 'unavailable', localDiagnostic };
+      const session = await controlLogin(ownerId, call, localDiagnostic);
+      if (!session) return { kind: 'unavailable', localDiagnostic };
       const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`,
         { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+      localDiagnostic.stage = 'joined_members';
+      localDiagnostic.status = response.status;
       const joined = response.status === 200 ? safeObject((await body(response))?.joined) : null;
       if (!joined || Object.keys(joined).length > 100)
-        return { kind: 'unavailable' };
+        return { kind: 'unavailable', localDiagnostic };
       let historicalState: readonly Record<string, unknown>[] | null | undefined;
       const canReadIdentity = async (matrixUserId: string): Promise<boolean | null> => {
         if (Object.hasOwn(joined, matrixUserId)) return true;
@@ -464,15 +472,18 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   };
 
   const controlDevice = (ownerId: OwnerId) => `KHALA_CONTROL_${createHash('sha256').update(ownerId).digest('hex').slice(0, 24)}` as DeviceId;
-  async function controlLogin(ownerId: OwnerId, call?: CallOptions): Promise<MatrixLogin | null> {
+  async function controlLogin(ownerId: OwnerId, call?: CallOptions, diagnostic?: LocalParticipantDiagnostic): Promise<MatrixLogin | null> {
     if (call?.signal?.aborted) return null;
     const cached = controlSessions.get(ownerId);
     if (cached && cached.expiresAt > Date.now()) return cached.session;
     controlSessions.delete(ownerId);
-    if (Date.now() < (controlRetryAfter.get(ownerId) ?? 0)) return null;
+    if (Date.now() < (controlRetryAfter.get(ownerId) ?? 0)) {
+      if (diagnostic) { diagnostic.stage = 'control_login'; diagnostic.status = 0; }
+      return null;
+    }
     let pending = controlLogins.get(ownerId);
     if (!pending) {
-      pending = login(ownerId, controlDevice(ownerId));
+      pending = login(ownerId, controlDevice(ownerId), undefined, diagnostic);
       controlLogins.set(ownerId, pending);
       void pending.then(session => {
         if (session) {
@@ -508,8 +519,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
-  async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<GatewayInspection> {
-    const session = await controlLogin(ownerId, call);
+  async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions, diagnostic?: LocalParticipantDiagnostic): Promise<GatewayInspection> {
+    const session = await controlLogin(ownerId, call, diagnostic);
     if (session === null) return { kind: 'unavailable' };
     try {
       const response = await request(
@@ -517,6 +528,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         { headers: { authorization: `Bearer ${session.accessToken}` } },
         call,
       );
+      if (diagnostic) { diagnostic.stage = 'membership'; diagnostic.status = response.status; }
       if (response.status === 404 || response.status === 403) return { kind: 'absent' };
       const value = await body(response);
       return response.status === 200 && value?.membership === 'join'

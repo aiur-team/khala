@@ -212,6 +212,7 @@ async function main() {
     KHALA_PREVIEW_OIDC_USER_B_BCRYPT_HASH: await bcrypt(passwordB), KHALA_PREVIEW_OIDC_USER_B_ID: randomUUID(),
     PUBLIC_APP_ORIGIN: origin, PUBLIC_HOMESERVER_ORIGIN: origin, OIDC_ISSUER: `${origin}/dex`,
     KHALA_ADMISSION_MODE: 'explicit_browser_consent',
+    KHALA_LOCAL_EXTERNAL_DIAGNOSTICS: '1',
     OIDC_CLIENT_ID: `khala-${runId}`, CONTROL_STATE_NAMESPACE: `external-${runId}`,
     MATRIX_SERVER_NAME: `${runId}.matrix.invalid`, MATRIX_PASSWORD_DERIVATION_SECRET: secret(), INVITATION_HMAC_SECRET: secret(),
     XDG_CONFIG_HOME: path.join(scratch, 'xdg'), NETLIFY_HOME: path.join(scratch, 'netlify-home'),
@@ -314,7 +315,15 @@ async function main() {
             ...(Array.isArray(report.stages) ? { stages: report.stages.filter(value =>
               value === 'history_participants' || value === 'history_device_info').slice(-8) } : {}),
             ...(Array.isArray(report.participantStatuses) ? { participantStatuses: report.participantStatuses.filter(value =>
-              Number.isInteger(value) && value >= 100 && value <= 599).slice(-12) } : {}) };
+              Number.isInteger(value) && value >= 100 && value <= 599).slice(-12) } : {}),
+            ...(Array.isArray(report.participantRouteStages) ? { participantRouteStages: report.participantRouteStages.filter(value =>
+              ['service_loader', 'feature_unavailable', 'authorization', 'participant_unavailable'].includes(value)).slice(-12) } : {}),
+            ...(Array.isArray(report.participantContentTypes) ? { participantContentTypes: report.participantContentTypes.filter(value =>
+              ['application/json', 'text/html', 'text/plain'].includes(value)).slice(-12) } : {}),
+            ...(Array.isArray(report.participantMatrixStages) ? { participantMatrixStages: report.participantMatrixStages.filter(value =>
+              ['membership', 'control_login', 'joined_members'].includes(value)).slice(-12) } : {}),
+            ...(Array.isArray(report.participantMatrixStatuses) ? { participantMatrixStatuses: report.participantMatrixStatuses.filter(value =>
+              Number.isInteger(value) && value >= 0 && value <= 599).slice(-12) } : {}) };
         }
       } catch { /* diagnostics are optional; never expose raw child output */ }
       throw error;
