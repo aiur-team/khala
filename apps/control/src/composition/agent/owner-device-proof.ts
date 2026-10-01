@@ -25,6 +25,10 @@ export type OwnerDeviceProof = Readonly<{
   deviceId: DeviceId; fingerprint: string;
 }>;
 
+type ProofDiagnosticCode = 'attempt' | 'accepted' | 'authorized' | 'indexed' | 'index_absent' | 'index_empty' | 'index_present'
+  | 'index_unavailable' | 'index_invalid' | 'index_write_failed' | 'proof_unavailable' | 'proof_retired'
+  | 'key_missing' | 'key_mismatch' | 'key_unavailable';
+
 export type OwnerDeviceProofDependencies = Readonly<{
   auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
   gateway: Pick<AdmissionGateway, 'inspectMembership'>;
@@ -36,6 +40,8 @@ export type OwnerDeviceProofDependencies = Readonly<{
   inspectOwnerDeviceKey(ownerId: OwnerId, deviceId: DeviceId, fingerprint: string): Promise<'matched' | 'missing' | 'mismatch' | 'unavailable'>;
   clock: () => number;
   random?: (bytes: number) => Uint8Array;
+  /** Opaque scope correlation only; never include tokens, fingerprints, or raw IDs. */
+  diagnostic?: (event: Readonly<{ stage: 'challenge' | 'register' | 'lookup'; code: ProofDiagnosticCode; scope: string }>) => void;
 }>;
 
 /** Matrix HTTP check for the token held by the browser's opened crypto device. */
@@ -172,6 +178,11 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
 }> {
   const ownerRooms = createOwnerRoomIndex(deps.store);
   const bindings = createAgentBindingStore({ store: deps.store });
+  function report(stage: 'challenge' | 'register' | 'lookup', code: ProofDiagnosticCode,
+    ownerId: OwnerId, roomId: RoomId, bindingId: string, generation: number): void {
+    const scope = createHash('sha256').update(JSON.stringify([ownerId, roomId, bindingId, generation])).digest('hex').slice(0, 24);
+    try { deps.diagnostic?.({ stage, code, scope }); } catch { /* Diagnostics cannot change trust. */ }
+  }
 
   async function humanBinding(ownerId: OwnerId, roomId: RoomId, bindingId: string,
     generation: number): Promise<Response | null> {
@@ -277,6 +288,7 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
       operationId: `owner-device.challenge.${nonce}`,
       next: { value: { v: 1, ownerId: signed.context.principal.ownerId, roomId: room.value,
         bindingId: binding.value, generation, deviceId: device.value, used: false }, expiresAt } });
+    if (saved.kind === 'applied') report('challenge', 'accepted', signed.context.principal.ownerId, room.value, binding.value, generation);
     return saved.kind === 'applied' ? json(200, { v: 1, nonce, expiresAt }) : unavailable();
   }
 
@@ -298,6 +310,7 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     try { body = registerBody(await request.json()); } catch { /* malformed */ }
     if (!body) return json(400, { code: 'invalid_request' });
     const { principal } = signed.context;
+    report('register', 'attempt', principal.ownerId, body.roomId, body.bindingId, body.generation);
     const open = await roomOpen(principal.ownerId, body.roomId);
     if (open) return open;
     const heldBinding = await humanBinding(principal.ownerId, body.roomId, body.bindingId, body.generation);
@@ -342,7 +355,12 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if (saved.kind === 'applied' || (saved.kind === 'conflict'
       && valid(saved.current?.value, proof.ownerId, proof.roomId, proof.bindingId, proof.generation, proof.deviceId)
       && saved.current.value.fingerprint === proof.fingerprint)) {
-      return await indexPinnedDevice(proof) ? json(200, { v: 1, kind: 'pinned' }) : unavailable();
+      if (!await indexPinnedDevice(proof)) {
+        report('register', 'index_write_failed', proof.ownerId, proof.roomId, proof.bindingId, proof.generation);
+        return unavailable();
+      }
+      report('register', 'indexed', proof.ownerId, proof.roomId, proof.bindingId, proof.generation);
+      return json(200, { v: 1, kind: 'pinned' });
     }
     if (saved.kind === 'conflict') return json(409, { code: 'key_replacement_refused' });
     return unavailable();
@@ -432,6 +450,7 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     const auth = await deps.capabilities.authorize(request, 'receive_released');
     if (auth.kind === 'unavailable') return unavailable();
     if (auth.kind !== 'authorized') return json(auth.status, { code: auth.code });
+    report('lookup', 'authorized', auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
     const current = await deps.capabilities.lookupBinding(auth.binding.bindingId);
     if (current.kind === 'unavailable') return unavailable();
     if (current.kind !== 'found' || current.status !== 'active' || current.ownerId !== auth.ownerId
@@ -454,23 +473,44 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if ([...search.keys()].length === 0) {
       const indexed = await deps.store.read<JsonValue>(indexKey(auth.ownerId, auth.roomId,
         auth.binding.bindingId, auth.binding.generation));
-      if (indexed.kind === 'unavailable') return unavailable();
-      if (indexed.kind === 'absent') return json(200, { v: 1, roomId: auth.roomId, devices: [] });
+      if (indexed.kind === 'unavailable') {
+        report('lookup', 'index_unavailable', auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
+        return unavailable();
+      }
+      if (indexed.kind === 'absent') {
+        report('lookup', 'index_absent', auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
+        return json(200, { v: 1, roomId: auth.roomId, devices: [] });
+      }
       if (!validIndex(indexed.record.value, auth.ownerId, auth.roomId,
-        auth.binding.bindingId, auth.binding.generation)) return unavailable();
+        auth.binding.bindingId, auth.binding.generation)) {
+        report('lookup', 'index_invalid', auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
+        return unavailable();
+      }
       const devices: Array<{ deviceId: DeviceId; fingerprint: string }> = [];
       for (const deviceId of indexed.record.value.deviceIds) {
         const found = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId,
           auth.binding.bindingId, auth.binding.generation, deviceId));
         if (found.kind !== 'record' || !valid(found.record.value, auth.ownerId, auth.roomId,
-          auth.binding.bindingId, auth.binding.generation, deviceId)) return unavailable();
+          auth.binding.bindingId, auth.binding.generation, deviceId)) {
+          report('lookup', 'proof_unavailable', auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
+          return unavailable();
+        }
         const isRetired = await retired(found.record.value);
-        if (isRetired === null || isRetired) return unavailable();
+        if (isRetired === null || isRetired) {
+          report('lookup', isRetired ? 'proof_retired' : 'proof_unavailable', auth.ownerId, auth.roomId,
+            auth.binding.bindingId, auth.binding.generation);
+          return unavailable();
+        }
         const published = await deps.inspectOwnerDeviceKey(auth.ownerId, deviceId, found.record.value.fingerprint);
-        if (published === 'mismatch') return json(403, { code: 'fingerprint_mismatch' });
-        if (published !== 'matched') return unavailable();
+        if (published !== 'matched') {
+          report('lookup', published === 'mismatch' ? 'key_mismatch' : published === 'missing' ? 'key_missing' : 'key_unavailable',
+            auth.ownerId, auth.roomId, auth.binding.bindingId, auth.binding.generation);
+          return published === 'mismatch' ? json(403, { code: 'fingerprint_mismatch' }) : unavailable();
+        }
         devices.push({ deviceId, fingerprint: found.record.value.fingerprint });
       }
+      report('lookup', devices.length === 0 ? 'index_empty' : 'index_present', auth.ownerId, auth.roomId,
+        auth.binding.bindingId, auth.binding.generation);
       return json(200, { v: 1, roomId: auth.roomId, devices });
     }
     if ([...search.keys()].join(',') !== 'device_id') return json(400, { code: 'invalid_request' });

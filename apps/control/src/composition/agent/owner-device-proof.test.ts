@@ -43,6 +43,7 @@ async function setup() {
   let challengeCount = 0;
   let owner = principal;
   let agentBinding = binding;
+  const diagnostics: Array<{ stage: string; code: string; scope: string }> = [];
   const auth = {
     async authenticateRequest() { return signedIn ? { kind: 'authenticated', context: { principal: owner } } : { kind: 'signed_out' }; },
     async requireHumanMutation() { return signedIn && csrf ? { kind: 'authorized', context: { principal: owner } }
@@ -58,6 +59,7 @@ async function setup() {
   } as unknown as AdapterCapabilities;
   const verifiedTokens: string[] = [];
   const dependencies: OwnerDeviceProofDependencies = { auth, gateway, capabilities, store: state.store,
+    diagnostic: entry => diagnostics.push(entry),
     inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }), clock: () => now,
     inspectOwnerDeviceKey: async () => publishedKey,
     random: () => new Uint8Array(32).fill(++challengeCount),
@@ -73,17 +75,17 @@ async function setup() {
     return route.handle(new Request(`${origin}${path}${query}`, { method,
       ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }));
   }
-  async function challenge() {
+  async function challenge(forBinding: SessionBinding = binding) {
     const result = await call(OWNER_DEVICE_CHALLENGE, 'GET', undefined,
       `?room_id=${encodeURIComponent(roomId)}&device_id=${browserDeviceId}`
-      + `&binding_id=${binding.bindingId}&binding_generation=${binding.generation}`);
+      + `&binding_id=${forBinding.bindingId}&binding_generation=${forBinding.generation}`);
     expect(result.status).toBe(200);
     return (await result.json() as { nonce: string }).nonce;
   }
   const registration = (nonce: string, overrides: Record<string, unknown> = {}) => ({ v: 1, roomId,
     bindingId: binding.bindingId, generation: binding.generation,
     deviceId: browserDeviceId, fingerprint, nonce, matrixAccessToken, ...overrides });
-  return { state, bindings, index, call, challenge, registration, verifiedTokens,
+  return { state, bindings, index, call, challenge, registration, verifiedTokens, diagnostics,
     setSignedIn: (value: boolean) => { signedIn = value; },
     setCsrf: (value: boolean) => { csrf = value; },
     setMember: (value: boolean) => { member = value; },
@@ -187,6 +189,53 @@ describe('owner browser Matrix device proof', () => {
     expect(await newBindingPins.json()).toEqual({ v: 1, roomId, devices: [] });
   });
 
+  it('indexes a fresh owner proof for the newly approved binding after an older proof', async () => {
+    const env = await setup();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    const fresh = { ...binding, bindingId: 'binding-owner-proof-fresh',
+      agentParticipantId: 'agent-owner-proof-fresh', deviceId: 'agent-device-fresh',
+      sessionId: 'session-owner-proof-fresh', generation: 0 } as SessionBinding;
+    expect((await env.bindings.putParticipant({ ownerId: binding.ownerId, roomId,
+      agentParticipantId: fresh.agentParticipantId, expectedBindingId: null,
+      record: { binding: fresh, revokedGeneration: null, capability: null } })).kind).toBe('applied');
+    expect((await env.index.activate(fresh, roomId)).kind).toBe('ok');
+    env.setAgentBinding(fresh);
+    expect(await (await env.call(OWNER_DEVICE_LOOKUP)).json()).toEqual({ v: 1, roomId, devices: [] });
+    const freshNonce = await env.challenge(fresh);
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(freshNonce,
+      { bindingId: fresh.bindingId, generation: fresh.generation }))).status).toBe(200);
+    expect(await (await env.call(OWNER_DEVICE_LOOKUP)).json()).toEqual({ v: 1, roomId,
+      devices: [{ deviceId: browserDeviceId, fingerprint }] });
+    const absent = env.diagnostics.find(entry => entry.code === 'index_absent');
+    const indexed = [...env.diagnostics].reverse().find(entry => entry.code === 'indexed');
+    const present = env.diagnostics.find(entry => entry.code === 'index_present');
+    expect(absent?.scope).toBe(indexed?.scope);
+    expect(present?.scope).toBe(indexed?.scope);
+    expect(indexed?.scope).not.toBe(env.diagnostics.find(entry => entry.code === 'indexed')?.scope);
+    expect(JSON.stringify(env.diagnostics)).not.toContain(binding.bindingId);
+  });
+
+  it('repairs a proof record whose first index write was unavailable', async () => {
+    const env = await setup();
+    const original = env.state.store.compareAndSet.bind(env.state.store);
+    let failIndex = true;
+    Object.defineProperty(env.state.store, 'compareAndSet', { configurable: true, value: async (input: { key: string }) => {
+      if (input.key.startsWith('owner-device-index.v2.') && failIndex) {
+        failIndex = false;
+        return { kind: 'unavailable' };
+      }
+      return original(input as never);
+    } });
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(503);
+    expect(env.diagnostics.at(-1)?.code).toBe('index_write_failed');
+    expect(await (await env.call(OWNER_DEVICE_LOOKUP)).json()).toEqual({ v: 1, roomId, devices: [] });
+    expect(env.diagnostics.at(-1)?.code).toBe('index_absent');
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
+    expect(await (await env.call(OWNER_DEVICE_LOOKUP)).json()).toEqual({ v: 1, roomId,
+      devices: [{ deviceId: browserDeviceId, fingerprint }] });
+    expect(env.diagnostics.at(-1)?.code).toBe('index_present');
+  });
+
   it('refuses key replacement and stale or revoked bindings on lookup', async () => {
     const env = await setup();
     const nonce = await env.challenge();
@@ -208,6 +257,7 @@ describe('owner browser Matrix device proof', () => {
     expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(await env.challenge()))).status).toBe(200);
     env.setPublishedKey('missing');
     expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(503);
+    expect(env.diagnostics.at(-1)?.code).toBe('key_missing');
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(503);
     env.advance(15_001);
     env.restart();
@@ -215,8 +265,10 @@ describe('owner browser Matrix device proof', () => {
     expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(200);
     env.setPublishedKey('mismatch');
     expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(403);
+    expect(env.diagnostics.at(-1)?.code).toBe('key_mismatch');
     env.setPublishedKey('unavailable');
     expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(503);
+    expect(env.diagnostics.at(-1)?.code).toBe('key_unavailable');
   });
 
   it('retires a missing key only after revocation and two separated observations', async () => {

@@ -47,9 +47,10 @@ export { inviteFromShareLink };
  */
 export function createProductionBootstrapRoutes(dependencies: ProductionBootstrapDependencies) {
   const runtime = createProductionHumanRuntimeLoader(dependencies);
-  const routeDiagnostic = (route: 'room_send' | 'owner_mailbox', stage: string, code: string) => {
+  const routeDiagnostic = (route: 'room_send' | 'owner_mailbox' | 'owner_device_proof', stage: string, code: string,
+    scope?: string) => {
     // Callers supply only finite, internal stage/code literals; never log request or adapter data.
-    console.warn(JSON.stringify({ component: 'control', route, stage, code }));
+    console.warn(JSON.stringify({ component: 'control', route, stage, code, ...(scope ? { scope } : {}) }));
   };
   const ingressToken = (dependencies.env ?? process.env).MATRIX_REGISTRATION_INGRESS_TOKEN;
   const localAuth = localOidcEnabled(dependencies.env ?? process.env);
@@ -142,6 +143,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
       inspectOwnerDeviceKey: active.matrix.inspectOwnerDeviceKey,
+      diagnostic: entry => routeDiagnostic('owner_device_proof', entry.stage, entry.code, entry.scope),
     });
     const participantDirectory = createAgentParticipantDirectoryRoute({
       store: active.store, capabilities: bootstrap.capabilities, sessions: active.matrix.sessions,

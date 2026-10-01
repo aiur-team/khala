@@ -20,6 +20,13 @@ DPoP-bound current binding; lookup also requires the exact key to remain publish
 by Matrix. A missing or unavailable key fails closed, while a changed fingerprint
 is refused. It must never trust an unpinned Matrix device-list key.
 
+Control logs record `owner_device_proof` challenge, register, and lookup stages
+with a 24-character opaque `scope` digest of owner, room, binding ID, and
+generation. Compare the digest on `register/indexed` with `lookup/index_present`
+or `lookup/index_absent` for the same native session. `register/attempt` without
+`register/indexed` does not prove a pin was published. The log never includes
+the browser token, raw IDs, or public fingerprint.
+
 To retire a demonstrably missing pin, first revoke its binding through the normal
 owner-approved revocation flow. Then the signed-in owner can POST
 `/api/human/owner-device-proof/retire` with CSRF protection and the exact JSON
