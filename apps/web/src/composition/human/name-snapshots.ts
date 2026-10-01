@@ -17,13 +17,18 @@ export async function publishAgentNameSnapshots(input: Readonly<{
     if (participant.kind !== 'agent' || participant.ownerId !== input.ownerId) continue;
     const name = names.currentNames.get(participant.participantId);
     if (!name) continue;
-    const bytes = new TextEncoder().encode(JSON.stringify([input.roomId, input.membershipEventId, participant.participantId]));
+    const sourceEventId = (names.latestRename.get(participant.participantId) ?? null) as EventId | null;
+    // A transaction ID may be replayed after a completed permit. Bind it to
+    // the exact snapshot bytes so a later rename gets a new Matrix transaction.
+    const bytes = new TextEncoder().encode(JSON.stringify([
+      input.roomId, input.membershipEventId, participant.participantId, name, sourceEventId,
+    ]));
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
     if (!input.isCurrent()) return;
     const clientTxnId = `name_snapshot_${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}`;
     const sent = await input.send({ roomId: input.roomId, clientTxnId,
       content: { v: 1, kind: 'agent_name_snapshot', agentParticipantId: participant.participantId,
-        body: name, sourceEventId: (names.latestRename.get(participant.participantId) ?? null) as EventId | null } });
+        body: name, sourceEventId } });
     if (sent.kind !== 'done') throw new Error('name_snapshot_not_durable');
   }
 }

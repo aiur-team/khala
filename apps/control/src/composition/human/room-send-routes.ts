@@ -164,8 +164,9 @@ export function createRoomSendRoutes(input: Readonly<{
           let result: Awaited<ReturnType<typeof fence.acquire>>;
           try { result = await fence.acquire(roomId, sender, body.clientTxnId as string, !human); }
           catch { return unavailable('fence_acquire', 'fence_unavailable'); }
-          return result.kind === 'unavailable' ? unavailable('fence_acquire', 'fence_unavailable')
-            : json(result.kind === 'granted' ? 200 : 423, result);
+          return result.kind === 'unavailable' || !human && result.kind === 'complete'
+            ? unavailable('fence_acquire', 'fence_unavailable')
+            : json(result.kind === 'held' ? 423 : 200, result);
         }
         case 'finish': {
           const outcome = body.outcome === 'complete' ? { kind: 'complete' as const, eventId: body.eventId as string }

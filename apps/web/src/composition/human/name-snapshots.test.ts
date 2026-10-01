@@ -14,7 +14,7 @@ const events: NameTimelineEvent[] = [{ kind: 'agent_rename', eventId: '$rename',
 const input = { roomId: 'room_one' as RoomId, membershipEventId: '$member', ownerId, participants, events, isCurrent: () => true };
 
 it('publishes only owned agent names with source identity and deduplicates retry and concurrent tabs', async () => {
-  const send = vi.fn(async () => ({ kind: 'done' }));
+  const send = vi.fn<Parameters<typeof publishAgentNameSnapshots>[0]['send']>(async () => ({ kind: 'done' }));
   await publishAgentNameSnapshots({ ...input, send });
   expect(send).toHaveBeenCalledExactlyOnceWith({ roomId: input.roomId, clientTxnId: expect.stringMatching(/^name_snapshot_[0-9a-f]{64}$/u),
     content: { v: 1, kind: 'agent_name_snapshot', agentParticipantId: participants[1]!.participantId, body: 'Dolan', sourceEventId: '$rename' } });
@@ -23,6 +23,10 @@ it('publishes only owned agent names with source identity and deduplicates retry
   expect(send.mock.calls[1]).toEqual(original);
   await publishAgentNameSnapshots({ ...input, membershipEventId: '$next-member', send });
   expect(send.mock.calls[2]).not.toEqual(original);
+  const rename = events[0];
+  if (rename?.kind !== 'agent_rename') throw new Error('missing rename fixture');
+  await publishAgentNameSnapshots({ ...input, events: [{ ...rename, name: 'New name' }], send });
+  expect(send.mock.calls[3]![0].clientTxnId).not.toBe(original![0].clientTxnId);
 });
 
 it('refuses to mark unavailable writes durable and preserves the transaction on retry', async () => {
