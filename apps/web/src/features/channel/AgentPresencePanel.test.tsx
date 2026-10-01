@@ -27,8 +27,8 @@ describe('AgentPresencePanel', () => {
   it('gives same-named agents distinct keyboard-selectable identities', () => {
     const agents = [agent, { ...agent, participantId: 'agent_other' as ParticipantId }];
     const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents })} />);
-    expect(html).toContain('Details for Scout (agent 1), Unavailable');
-    expect(html).toContain('Details for Scout (agent 2), Unavailable');
+    expect(html).toContain('Details for Scout (agent 1), Unavailable, Maya’s agent');
+    expect(html).toContain('Details for Scout (agent 2), Unavailable, Maya’s agent');
     expect(html.match(/<summary /g)).toHaveLength(2);
   });
 
@@ -87,6 +87,11 @@ describe('AgentPresencePanel', () => {
     const html = render(otherId, { ...agent, ownerDisplayName: '  ' });
     expect(html).not.toContain('’s agent');
     expect(html).not.toContain('Channel member');
+  });
+
+  it('identifies the current owner even without a public owner name', () => {
+    const html = render(ownerId, { ...agent, ownerDisplayName: '  ' });
+    expect(html.slice(html.indexOf('<summary'), html.indexOf('</summary>'))).toContain('Your agent');
   });
 
   it('hides proof-key labels in agent details', () => {

@@ -27,13 +27,14 @@
 .channel-participants__name{overflow:hidden;text-overflow:ellipsis}
 .channel-participants__state{font-size:.65rem;color:var(--khala-ink-muted)}
 .channel-participants__more{flex:none}
+.channel-participants__compact{display:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .channel-toolbar{display:flex;align-items:center;gap:.7rem;width:100%;min-width:0}
 .channel-roster{flex:1;min-width:0}
 .channel-roster>summary{display:flex;align-items:center;gap:.4rem;min-width:0;padding:.3rem .45rem;margin-left:-.45rem;border-radius:8px;cursor:pointer;list-style:none}
 .channel-roster>summary::-webkit-details-marker{display:none}
 .channel-roster>summary:hover{background:var(--khala-fill-control)}
 .channel-roster>summary:focus-visible{outline:2px solid var(--khala-accent);outline-offset:2px}
-.channel-roster__summary{display:grid;gap:.15rem;min-width:0}
+.channel-roster__summary{display:grid;gap:.15rem;min-width:0;flex:1}
 .channel-roster__summary>:is(h1,h2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;font:inherit;font-size:.94rem;font-weight:700}
 .channel-roster__chevron{flex:none;color:var(--khala-ink-muted);transition:transform .18s ease}
 .channel-roster[open] .channel-roster__chevron{transform:rotate(180deg)}
@@ -54,8 +55,9 @@
 .conversation-thread__body .timeline{min-height:0}
 .conversation-thread__body .timeline__list{padding:.9rem 1.15rem;gap:.45rem}
 .conversation-thread__body .timeline__row.conversation-message{max-width:min(86%,42rem)}
-@media(max-width:760px){.channel-page .conversation-layout{height:100%;min-height:0}.conversation-thread__body .timeline__row.conversation-message{max-width:88%}.conversation-thread__body .timeline__list{padding:.7rem}.channel-participants{overflow:hidden}.conversation-composer textarea{font-size:16px}.conversation-composer button{width:40px;height:40px}}
+@media(max-width:760px){.channel-page .conversation-layout{height:100%;min-height:0}.conversation-thread__body .timeline__row.conversation-message{max-width:88%}.conversation-thread__body .timeline__list{padding:.7rem}.channel-participants{overflow:hidden}.channel-participants>:not(.channel-participants__compact){display:none}.channel-participants__compact{display:block}.conversation-composer textarea{font-size:16px}.conversation-composer button{width:40px;height:40px}}
 @media(max-width:760px){.recipient-review-disclosure__panel{position:fixed;left:.75rem;right:.75rem;top:3.4rem;width:auto}}
+@media(max-width:760px){.channel-roster{min-width:10rem}.channel-toolbar__actions{flex:0 1 auto;min-width:0;overflow-x:auto}}
 
 .conversation-thread__body .timeline{height:100%;gap:0}
 .conversation-thread__body .timeline__list{flex:1;max-height:none;min-height:0;padding:1.1rem;gap:.25rem;background:var(--khala-fill)}
@@ -161,6 +163,7 @@
 .agent-presence__details>summary:focus-visible{outline:2px solid var(--khala-accent);outline-offset:-2px}
 .agent-presence__identity{flex:1}
 .agent-presence__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.84rem;font-weight:600}
+.agent-presence__owner{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--khala-ink-muted);font-size:.72rem}
 .agent-presence__status--connected{color:var(--khala-status-positive)}
 .agent-presence__chevron{color:var(--khala-ink-muted);margin-left:auto}
 .agent-presence__details[open] .agent-presence__chevron{transform:rotate(180deg)}

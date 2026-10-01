@@ -164,6 +164,7 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
           const owned = Boolean(viewerOwnerId && agent.ownerId === viewerOwnerId);
           const ownerName = participantRosterName(agent.ownerDisplayName, 'Channel member');
           const hasOwnerName = ownerName !== 'Channel member' && ownerName.trim().length > 0;
+          const ownerLabel = owned ? 'Your agent' : hasOwnerName ? `${ownerName}’s agent` : null;
           const connectionLabel = agent.connection === 'connected' ? 'Connected'
             : agent.connection === 'unknown' ? 'Checking connection…' : 'Unavailable';
           return <li key={agent.participantId} className="agent-presence__agent">
@@ -174,14 +175,15 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText, vie
               event.currentTarget.open = false;
               event.currentTarget.querySelector('summary')?.focus();
             }}>
-              <summary aria-label={`Details for ${name}, ${connectionLabel}`}>
+              <summary aria-label={`Details for ${name}, ${connectionLabel}${ownerLabel ? `, ${ownerLabel}` : ''}`}>
                 <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
                 <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span>
+                  {ownerLabel ? <span className="agent-presence__owner">{ownerLabel}</span> : null}
                   <span className="agent-presence__connection">{connectionLabel}</span></span>
                 <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
               </summary>
               <div className="agent-presence__detail-body">
-                {hasOwnerName ? <p>{owned ? 'Your agent' : `${ownerName}’s agent`}</p> : null}
+                {ownerLabel ? <p>{ownerLabel}</p> : null}
                 {owned ? renderOwnerControls?.(agent) : null}
                 {!namesPending && renameAgent && viewerOwnerId && renameScope && owned ? <RenameAgent
                   agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
