@@ -81,6 +81,8 @@ export type HumanBrowserApiOptions = Readonly<{
   timeoutMs?: number;
   deviceIds?: Readonly<{ get(ownerId: string): string | null; put(ownerId: string, deviceId: string): void }>;
   existingDevice?: (ownerId: OwnerId, deviceId: string | null) => Promise<Readonly<{ markerDeviceId: string | null; hasDivergentCryptoStore: boolean }>>;
+  /** Supply only from an authenticated, owner/device-bound replacement admission. */
+  authorizeReplacement?: (principal: Parameters<CredentialSource['resolve']>[0], deviceId: DeviceId) => Promise<boolean>;
 }>;
 
 export type HumanBrowserApi = Readonly<{
@@ -298,11 +300,15 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       try {
         const stored = deviceIds.get(principal.ownerId);
         const existing = await existingDevice(principal.ownerId, stored);
-        if ((existing.markerDeviceId !== null && existing.markerDeviceId !== stored)
-          || existing.hasDivergentCryptoStore) {
-          return { kind: 'unavailable', reason: 'recovery_required' };
-        }
         requestedDeviceId = stored ?? `KH_WEB_${crypto.randomUUID().replaceAll('-', '')}`;
+        const decodedCandidate = decodeDeviceId(requestedDeviceId);
+        if (!decodedCandidate.ok) return { kind: 'unavailable' };
+        if ((existing.markerDeviceId !== null && existing.markerDeviceId !== stored)
+          || (existing.markerDeviceId === null && existing.hasDivergentCryptoStore)) {
+          if (!options.authorizeReplacement || !await options.authorizeReplacement(principal, decodedCandidate.value)) {
+            return { kind: 'unavailable', reason: 'recovery_required' };
+          }
+        }
         if (stored === null) deviceIds.put(principal.ownerId, requestedDeviceId);
       } catch {
         return { kind: 'unavailable' };

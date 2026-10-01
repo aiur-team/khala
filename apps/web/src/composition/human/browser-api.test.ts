@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLOSURE_CONSEQUENCES, decodeContentLimits, type ChannelAccessRequestHandle, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { createHumanBrowserApi } from './browser-api';
+import { createBrowserDeviceService } from '@khala/messaging/browser-device/index';
 
 const origin = 'https://khala.aiur.team';
 const homeserverOrigin = 'https://matrix.example.test';
@@ -235,6 +236,77 @@ describe('createHumanBrowserApi', () => {
     expect(result.kind).toBe('ok');
     expect(deviceIds.put).toHaveBeenCalledOnce();
     expect(deviceIds.put.mock.calls[0]?.[1]).toMatch(/^KH_WEB_/);
+  });
+
+  it('permits a new device with explicit replacement admission while preserving old storage', async () => {
+    const deviceIds = { get: vi.fn(() => null), put: vi.fn() };
+    const authorizeReplacement = vi.fn(async () => true);
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockImplementationOnce(async (_url, init) => json(200, { session: {
+        homeserverOrigin, userId: '@alice:matrix.example.test', accessToken: 'replacement-token',
+        deviceId: JSON.parse(String(init?.body)).deviceId, publishedFingerprint: null,
+      } }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds,
+      existingDevice: async () => ({ markerDeviceId: 'KH_WEB_OLD', hasDivergentCryptoStore: true }),
+      authorizeReplacement });
+    const result = await api.credentials.resolve(principal, new AbortController().signal);
+    expect(result).toMatchObject({ kind: 'ok', session: { publishedFingerprint: null } });
+    const newDeviceId = deviceIds.put.mock.calls[0]?.[1];
+    expect(newDeviceId).toMatch(/^KH_WEB_/);
+    expect(newDeviceId).not.toBe('KH_WEB_OLD');
+    expect(authorizeReplacement).toHaveBeenCalledWith(principal, newDeviceId);
+  });
+
+  it('continues from accepted loss to an admitted new device without opening the old store', async () => {
+    let localDeviceId: string | null = 'KH_WEB_OLD';
+    let admitted = false;
+    const markers = new Map<string, { deviceId: DeviceId; fingerprint: string }>([
+      [principal.ownerId, { deviceId: 'KH_WEB_OLD' as DeviceId, fingerprint: 'old-fingerprint' }],
+    ]);
+    const opened: string[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      if (String(input).endsWith('/api/human/me')) return json(200, { principal, csrfToken: 'csrf-proof' });
+      const deviceId = JSON.parse(String(init?.body)).deviceId as string;
+      return json(200, { session: { homeserverOrigin, userId: '@alice:matrix.example.test',
+        accessToken: 'token', deviceId,
+        publishedFingerprint: deviceId === 'KH_WEB_OLD' ? 'old-fingerprint' : null } });
+    });
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch,
+      deviceIds: { get: () => localDeviceId, put: (_owner, value) => { localDeviceId = value; } },
+      existingDevice: async () => ({ markerDeviceId: markers.get(principal.ownerId)?.deviceId ?? null,
+        hasDivergentCryptoStore: localDeviceId !== 'KH_WEB_OLD' }),
+      authorizeReplacement: async () => admitted });
+    const service = createBrowserDeviceService({
+      identity: api.identity, credentials: api.credentials,
+      markers: { get: async ownerId => markers.get(ownerId) ?? null,
+        put: async (ownerId, marker) => { markers.set(ownerId, marker); },
+        clear: async ownerId => { markers.delete(ownerId); } },
+      stores: { open: async (_owner, deviceId) => {
+        opened.push(deviceId);
+        return { name: deviceId, close: async () => undefined };
+      } },
+      engines: { open: async ({ session }) => ({
+        identity: async () => ({ fingerprint: session.deviceId === 'KH_WEB_OLD' ? 'wrong-keys' : 'new-fingerprint',
+          created: opened.filter(deviceId => deviceId === session.deviceId).length === 1 }),
+        start: async () => undefined, close: async () => undefined,
+      }) },
+      locks: { acquire: async () => ({ kind: 'acquired', lease: { release: () => undefined } }) },
+    });
+
+    expect(await service.ensureReady(principal.ownerId)).toMatchObject({ kind: 'ok', value: { state: 'lost' } });
+    expect(await service.acceptLoss(principal.ownerId)).toMatchObject({ kind: 'ok', value: { state: 'new' } });
+    localDeviceId = null;
+    expect(await service.ensureReady(principal.ownerId)).toMatchObject({ kind: 'unavailable' });
+    expect(opened).toEqual(['KH_WEB_OLD']);
+    admitted = true; // The injected authority represents #486's verified admission boundary.
+    expect(await service.ensureReady(principal.ownerId)).toMatchObject({ kind: 'ok', value: { state: 'ready' } });
+    expect(opened).toHaveLength(2);
+    expect(opened[1]).not.toBe('KH_WEB_OLD');
+    expect(markers.get(principal.ownerId)?.deviceId).toBe(opened[1]);
+    admitted = false;
+    await service.stop();
+    expect(await service.ensureReady(principal.ownerId)).toMatchObject({ kind: 'ok', value: { state: 'ready' } });
   });
 
   it('fails closed when owner storage cannot be inspected', async () => {
