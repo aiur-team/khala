@@ -26,10 +26,12 @@ function setup() {
   let human = a;
   let agent = a;
   let authenticated = true;
+  let requesterState: 'current' | 'revoked' | 'unavailable' = 'current';
+  let now = Date.parse('2026-09-18T12:00:00Z');
   const submitted: unknown[] = [];
   h.memberships.set(a.ownerId, { roomId: ROOM_ID, title: 'Room', membership: 'joined', revision: 'm1' });
   const routes = createChannelLinkHandlers({
-    origin: ORIGIN, store: h.store.store, secret: SECRET, clock: () => Date.parse('2026-09-18T12:00:00Z'),
+    origin: ORIGIN, store: h.store.store, secret: SECRET, clock: () => now,
     auth: {
       authenticateRequest: async () => authenticated
         ? { kind: 'authenticated', context: { principal: human, csrfToken: 'csrf' } } as never
@@ -43,6 +45,7 @@ function setup() {
       authenticate: async () => authenticated
         ? { kind: 'authenticated', credentialRef: 'credential_b', sponsorOwnerId: agent.ownerId, requester, context }
         : { kind: 'rejected', code: 'auth_required' },
+      inspectRequester: async () => requesterState,
       inspectMembership: async (ownerId, room) => h.memberships.get(ownerId)?.roomId === room
         ? { kind: 'joined', historyReady: true } : { kind: 'absent' },
       async submitAccess(input) {
@@ -53,7 +56,9 @@ function setup() {
   });
   const route = (path: string) => [...routes.human, ...routes.agent].find(item => item.path === path)!;
   return { h, route, submitted, setHuman(value: typeof a) { human = value; h.setPrincipal(value); },
-    setAgent(value: typeof a) { agent = value; }, signOut() { authenticated = false; } };
+    setAgent(value: typeof a) { agent = value; }, signOut() { authenticated = false; },
+    setRequesterState(value: typeof requesterState) { requesterState = value; },
+    setNow(value: number) { now = value; } };
 }
 
 describe('channel-link routes', () => {
@@ -110,6 +115,37 @@ describe('channel-link routes', () => {
     const agent = t.route(AGENT_CHANNEL_LINK_REQUEST_PATH);
     expect((await human.handle(post(human.path, { v: 1, channelUrl: `${ORIGIN}/join/unknown` }))).status).toBe(401);
     expect((await agent.handle(post(agent.path, { v: 1, kind: 'channel_url', operationId: 'op', credentialRef: 'cred', channelUrl: `${ORIGIN}/join/unknown` }))).status).toBe(401);
+    expect(t.submitted).toHaveLength(0);
+  });
+
+  it('refuses a missing or untrusted exact session before reading a valid link', async () => {
+    const t = setup();
+    const shared = await t.h.service.personalLink(ROOM_ID);
+    expect(shared.kind).toBe('ok');
+    if (shared.kind !== 'ok') return;
+    const route = t.route(AGENT_CHANNEL_LINK_REQUEST_PATH);
+    const request = () => route.handle(post(route.path, { v: 1, kind: 'channel_url',
+      operationId: 'untrusted_session', credentialRef: 'credential_b', channelUrl: shared.value.shareUrl }));
+    t.setRequesterState('revoked');
+    expect(await (await request()).json()).toEqual({ v: 1, kind: 'forbidden' });
+    t.setRequesterState('unavailable');
+    expect(await (await request()).json()).toEqual({ v: 1, kind: 'unavailable' });
+    expect(t.submitted).toHaveLength(0);
+  });
+
+  it('refuses expired and revoked links without submitting an owner request', async () => {
+    const t = setup();
+    const shared = await t.h.service.personalLink(ROOM_ID);
+    expect(shared.kind).toBe('ok');
+    if (shared.kind !== 'ok') return;
+    const route = t.route(AGENT_CHANNEL_LINK_REQUEST_PATH);
+    const body = { v: 1, kind: 'channel_url', operationId: 'expired_link',
+      credentialRef: 'credential_b', channelUrl: shared.value.shareUrl };
+    t.setNow(Date.parse('2026-09-18T13:00:00Z'));
+    expect(await (await route.handle(post(route.path, body))).json()).toEqual({ v: 1, kind: 'expired' });
+    t.setNow(Date.parse('2026-09-18T12:00:00Z'));
+    expect((await t.h.service.revoke({ operationId: 'revoke_link', inviteRef: shared.value.inviteRef })).kind).toBe('ok');
+    expect(await (await route.handle(post(route.path, body))).json()).toEqual({ v: 1, kind: 'revoked' });
     expect(t.submitted).toHaveLength(0);
   });
 });

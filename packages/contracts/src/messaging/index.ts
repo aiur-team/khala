@@ -39,7 +39,9 @@ export {
   decodeAdmission, decodeInviteState, decodeShareGrant,
 } from './admission';
 export {
+  type AgentChannelLinkRequest, type HumanChannelLinkResolveRequest, type PersonalChannelLinkRequest,
   type AgentChannelLinkResult, type HumanChannelLinkResult, type PersonalChannelLinkResult,
+  decodeAgentChannelLinkRequest, decodeHumanChannelLinkResolveRequest, decodePersonalChannelLinkRequest,
   decodeAgentChannelLinkResult, decodeHumanChannelLinkResult, decodePersonalChannelLinkResult,
 } from './channel-link';
 export {
