@@ -109,6 +109,28 @@ describe('durable room send fence', () => {
     expect(await fence.finish(roomId, sender.senderId, first.permitId, { kind: 'unknown' })).toBe('unavailable');
   });
 
+  it('reacquires a durably cancelled unsent permit for the same transaction until a hold begins', async () => {
+    const store = fakeStore(() => T0).store;
+    const fence = createRoomSendFence(store);
+    await fence.readySender(roomId, sender);
+    await fence.seedRoster(roomId, [sender]);
+    const first = await fence.acquire(roomId, sender, 'txn_retry');
+    if (first.kind !== 'granted') throw new Error('permit not granted');
+    expect(await fence.finish(roomId, sender.senderId, first.permitId, { kind: 'cancelled' })).toBe('applied');
+    const restarted = createRoomSendFence(store);
+    const retried = await restarted.acquire(roomId, sender, 'txn_retry', true);
+    expect(retried).toMatchObject({ kind: 'granted', permitId: first.permitId, attempt: 1 });
+    if (retried.kind !== 'granted') throw new Error('retry permit not granted');
+    expect(await restarted.finish(roomId, sender.senderId, first.permitId,
+      { kind: 'cancelled' }, first.attempt)).toBe('unavailable');
+    expect(await restarted.beginHold(roomId, 'operation_retry', excludedKey)).toBe('held');
+    expect(await restarted.drained(roomId, 'operation_retry')).toBe('pending');
+    expect(await restarted.finish(roomId, sender.senderId, first.permitId,
+      { kind: 'cancelled' }, retried.attempt)).toBe('applied');
+    expect(await restarted.drained(roomId, 'operation_retry')).toBe('drained');
+    expect(await restarted.acquire(roomId, sender, 'txn_retry', true)).toMatchObject({ kind: 'held' });
+  });
+
   it('uses the current verified Matrix sender snapshot while retaining no hidden legacy sender', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
     const departed = { senderId: 'departed_device', deviceId: 'departed', deviceKey: 'D'.repeat(43) };

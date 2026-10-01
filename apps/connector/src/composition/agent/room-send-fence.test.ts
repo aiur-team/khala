@@ -16,7 +16,7 @@ describe('connector room send barrier client', () => {
       bodies.push(init?.body ? JSON.parse(String(init.body)) as unknown : null);
       expect(init?.headers).toMatchObject({ authorization: `DPoP ${'C'.repeat(43)}`, dpop: 'proof' });
       if (action === 'ready' || action === 'finish') return response(200, { kind: 'applied' });
-      if (action === 'acquire') return response(200, { kind: 'granted', permitId: 'permit_a' });
+      if (action === 'acquire') return response(200, { kind: 'granted', permitId: 'permit_a', attempt: 0 });
       return response(503, { kind: 'unavailable' });
     }) as unknown as typeof globalThis.fetch;
     const fence = createAgentRoomSendFence({ appOrigin: origin, bindingId: 'binding_a', generation: 3,
@@ -24,10 +24,10 @@ describe('connector room send barrier client', () => {
       capability: async () => ({ token: 'C'.repeat(43), bindingId: 'binding_a', generation: 3,
         scope: ['publish_own'], expiresAt: Date.now() + 60_000 }),
       discardOutboundSession: async () => { effects.push('sdk_discard'); return true; }, fetch });
-    expect(await fence.acquire('txn_a')).toEqual({ kind: 'granted', permitId: 'permit_a' });
-    expect(await fence.finish('permit_a', { kind: 'complete', eventId: '$sent:example' })).toBe(true);
+    expect(await fence.acquire('txn_a')).toEqual({ kind: 'granted', permitId: 'permit_a', attempt: 0 });
+    expect(await fence.finish('permit_a', 0, { kind: 'complete', eventId: '$sent:example' })).toBe(true);
     expect(effects).toEqual(['sdk_discard', 'ready', 'acquire', 'finish']);
-    expect(bodies[2]).toEqual({ permitId: 'permit_a',
+    expect(bodies[2]).toEqual({ permitId: 'permit_a', attempt: 0,
       outcome: 'complete', eventId: '$sent:example' });
   });
 

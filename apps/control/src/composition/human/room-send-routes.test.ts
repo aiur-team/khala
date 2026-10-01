@@ -76,7 +76,7 @@ describe('authenticated room send fence routes', () => {
     expect((await h.call('agent', 'ready')).status).toBe(200);
     const before = await h.call('agent', 'acquire', { clientTxnId: 'txn_before_stop' });
     expect(before.status).toBe(200);
-    const permit = await before.json() as { permitId: string };
+    const permit = await before.json() as { permitId: string; attempt: number };
     expect((await h.markClosing()).kind).toBe('ok');
     const gateway = createGateway({ registrations: createLazyRoomSendRoutes(() => h.routes),
       absentPrefixes: [], appOrigin: origin });
@@ -86,7 +86,8 @@ describe('authenticated room send fence routes', () => {
     }));
     expect(after.status).toBe(403);
     expect(await after.json()).toEqual({ code: 'channel_closing' });
-    expect((await h.call('agent', 'finish', { permitId: permit.permitId, outcome: 'cancelled', eventId: null })).status).toBe(200);
+    expect((await h.call('agent', 'finish', { permitId: permit.permitId, attempt: permit.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
   });
 
   it('denies agent permits after the owner departs', async () => {
@@ -96,6 +97,28 @@ describe('authenticated room send fence routes', () => {
     const response = await h.call('agent', 'acquire', { clientTxnId: 'txn_departed' });
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ code: 'owner_membership_required' });
+  });
+
+  it('fences a delayed finish from a cancelled agent attempt after the same transaction reacquires', async () => {
+    const h = setup();
+    expect((await h.call('agent', 'ready')).status).toBe(200);
+    const first = await (await h.call('agent', 'acquire', { clientTxnId: 'txn_reopened' })).json() as {
+      permitId: string; attempt: number;
+    };
+    expect((await h.call('agent', 'finish', { permitId: first.permitId, attempt: first.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
+    const second = await (await h.call('agent', 'acquire', { clientTxnId: 'txn_reopened' })).json() as {
+      permitId: string; attempt: number;
+    };
+    expect(second).toMatchObject({ permitId: first.permitId, attempt: first.attempt + 1 });
+    expect((await h.call('agent', 'finish', { permitId: first.permitId, attempt: first.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(503);
+    expect(await h.fence.seedRoster(roomId, [agent])).toBe('applied');
+    expect(await h.fence.beginHold(roomId, 'operation_overlap', 'C'.repeat(43))).toBe('held');
+    expect(await h.fence.drained(roomId, 'operation_overlap')).toBe('pending');
+    expect((await h.call('agent', 'finish', { permitId: second.permitId, attempt: second.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
+    expect(await h.fence.drained(roomId, 'operation_overlap')).toBe('drained');
   });
   it.each([
     [{ authUnavailable: true }, 'auth', 'session_store_unavailable'],
@@ -181,7 +204,7 @@ describe('authenticated room send fence routes', () => {
     expect(await h.fence.beginHold(roomId, 'operation_a', 'C'.repeat(43))).toBe('held');
     expect((await h.call('agent', 'acquire', { clientTxnId: 'txn_b' })).status).toBe(423);
     expect(await h.fence.drained(roomId, 'operation_a')).toBe('pending');
-    expect((await h.call('agent', 'finish', { permitId: granted.permitId, outcome: 'complete',
+    expect((await h.call('agent', 'finish', { permitId: granted.permitId, attempt: 0, outcome: 'complete',
       eventId: '$wrong:example' })).status).toBe(503);
     expect((await h.call('human', 'finish', { permitId: granted.permitId, outcome: 'complete',
       eventId: '$right:example' })).status).toBe(200);

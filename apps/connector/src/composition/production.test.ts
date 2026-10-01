@@ -108,8 +108,8 @@ describe('installed hosted connector composition', () => {
   });
 
   it.each([
-    ['claude', false], ['codex', false], ['claude', true],
-  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (transient outage: %s)', async (harness, transientOutage) => {
+    ['claude', false, false], ['codex', false, false], ['claude', true, false], ['claude', false, true],
+  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (early outage: %s, final outage: %s)', async (harness, transientOutage, finalRecheckOutage) => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
     const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
@@ -148,6 +148,8 @@ describe('installed hosted connector composition', () => {
     let ownerAuthorized = true;
     let closeOnAcquire = false;
     let denyOnAcquire = false;
+    let blockAcquire = false;
+    let releaseAcquire: (() => void) | null = null;
     let outageOnAcquire = false;
     let authorizationOutagePending = false;
     let ownerTrusted = true;
@@ -157,6 +159,8 @@ describe('installed hosted connector composition', () => {
     let approvalExecuting = false;
     let approvalAuthorizationChecks = 0;
     let releaseAuthorizationFailed = false;
+    let finalRecheckFailures = 0;
+    const sendAttempts = new Map<string, number>();
     const attestationPaths: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const pathname = new URL(String(url)).pathname;
@@ -177,6 +181,11 @@ describe('installed hosted connector composition', () => {
           approvalExecuting = false;
           return new Response(null, { status: 503 });
         }
+        if (approvalExecuting && finalRecheckOutage && finalRecheckFailures < 2
+          && approvalAuthorizationChecks >= 3) {
+          finalRecheckFailures += 1;
+          return new Response(null, { status: 503 });
+        }
         const entries = commands.splice(0);
         if (entries.length > 0) approvalExecuting = true;
         return reply({ v: 1, bindingId: 'binding-claude', generation: 0,
@@ -190,11 +199,15 @@ describe('installed hosted connector composition', () => {
         devices: ownerTrusted ? [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] : [] });
       if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
       if (pathname.endsWith('/room-send/acquire')) {
+        if (blockAcquire) await new Promise<void>(resolve => { releaseAcquire = resolve; });
         if (denyOnAcquire) return new Response(JSON.stringify({ code: 'channel_closing' }), { status: 403,
           headers: { 'content-type': 'application/json' } });
         if (outageOnAcquire) authorizationOutagePending = true;
         if (closeOnAcquire) ownerAuthorized = false;
-        return reply({ kind: 'granted', permitId: 'permit-1' });
+        const txnId = (JSON.parse(String(init?.body)) as { clientTxnId: string }).clientTxnId;
+        const attempt = sendAttempts.get(txnId) ?? 0;
+        sendAttempts.set(txnId, attempt + 1);
+        return reply({ kind: 'granted', permitId: 'permit-1', attempt });
       }
       if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
       throw new Error(`unexpected ${pathname}`);
@@ -247,6 +260,7 @@ describe('installed hosted connector composition', () => {
         outageOnAcquire = false;
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'retry-after-authority-outage', body: 'eventual reply' })).kind).toBe('accepted');
+        expect(sendAttempts.get('retry-after-authority-outage')).toBe(2);
         expect(send).toHaveBeenCalledTimes(2);
         denyOnAcquire = true;
         expect(await connector.send({ bindingId: binding.bindingId,
@@ -254,11 +268,21 @@ describe('installed hosted connector composition', () => {
           .toEqual({ kind: 'refused', code: 'not_connected', clientTxnId: 'server-stopped-send' });
         expect(send).toHaveBeenCalledTimes(2);
         denyOnAcquire = false;
+        blockAcquire = true;
+        const overlapping = connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'overlapping-send', body: 'one send' });
+        await vi.waitFor(() => expect(releaseAcquire).not.toBeNull());
+        expect(await connector.send({ bindingId: binding.bindingId,
+          clientTxnId: 'overlapping-send', body: 'one send' }))
+          .toEqual({ kind: 'refused', code: 'listener_busy', clientTxnId: 'overlapping-send' });
+        blockAcquire = false;
+        releaseAcquire!();
+        expect((await overlapping).kind).toBe('accepted');
         closeOnAcquire = true;
         expect(await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'stop-between-permit-and-send', body: 'blocked' }))
           .toEqual({ kind: 'refused', code: 'not_connected', clientTxnId: 'stop-between-permit-and-send' });
-        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(3);
         closeOnAcquire = false;
         ownerAuthorized = true;
         expect(await connector.inbox(binding.bindingId, 0)).toBeDefined();
@@ -278,9 +302,11 @@ describe('installed hosted connector composition', () => {
         await vi.waitFor(() => expect(completions).toHaveLength(1), { timeout: 5_000 });
         expect(completions[0]).toMatchObject({ outcome: { ok: true } });
         if (transientOutage) expect(releaseAuthorizationFailed).toBe(true);
+        if (finalRecheckOutage) expect(finalRecheckFailures).toBe(1);
         const approved = await connector.inbox(binding.bindingId, 0);
-        if (transientOutage) expect(await approved.readNext()).toBeNull();
+        if (transientOutage || finalRecheckOutage) expect(await approved.readNext()).toBeNull();
         await vi.waitFor(async () => expect(await approved.readNext()).not.toBeNull(), { timeout: 5_000 });
+        if (finalRecheckOutage) expect(finalRecheckFailures).toBe(2);
         const reader = await approved.acquireCallConsumer!();
         const batch = await reader.readBatch({ maxBytes: 64 * 1024, explicitRead: true });
         expect(batch?.items).toHaveLength(1);
@@ -318,7 +344,7 @@ describe('installed hosted connector composition', () => {
       vi.unstubAllGlobals();
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it('reopens an active hosted proof-key binding on the same native session and Matrix device', async () => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-active-restart-'));
@@ -392,7 +418,7 @@ describe('installed hosted connector composition', () => {
         if (pathname.endsWith('/owner-device-proof/lookup')) return reply({ v: 1, roomId,
           devices: [{ deviceId: 'OWNER_DEVICE', fingerprint: 'B'.repeat(43) }] });
         if (pathname.endsWith('/room-send/ready') || pathname.endsWith('/room-send/finish')) return reply({ kind: 'applied' });
-        if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1' });
+        if (pathname.endsWith('/room-send/acquire')) return reply({ kind: 'granted', permitId: 'permit-1', attempt: 0 });
         if (pathname.endsWith('/room-send/inspect')) return reply({ kind: 'ok', hold: null });
         throw new Error(`unexpected ${pathname}`);
       }));

@@ -22,7 +22,8 @@ function json(status: number, value: unknown): Response { return new Response(JS
 function validBody(value: unknown, human: boolean, action: Action): value is Record<string, unknown> {
   if (!object(value)) return false;
   const common = human ? ['roomId', 'deviceId', 'matrixAccessToken'] : [];
-  const extras = action === 'acquire' ? ['clientTxnId'] : action === 'finish' ? ['permitId', 'outcome', 'eventId']
+  const extras = action === 'acquire' ? ['clientTxnId'] : action === 'finish'
+    ? ['permitId', 'outcome', 'eventId', ...(!human && 'attempt' in value ? ['attempt'] : [])]
     : action === 'rotation' ? ['operationId', 'epoch'] : [];
   const keys = [...common, ...extras].sort();
   if (Object.keys(value).sort().join(',') !== keys.join(',')) return false;
@@ -31,6 +32,7 @@ function validBody(value: unknown, human: boolean, action: Action): value is Rec
     || value.matrixAccessToken.length > 4096)) return false;
   if (action === 'acquire' && (typeof value.clientTxnId !== 'string' || !ID.test(value.clientTxnId))) return false;
   if (action === 'finish' && (typeof value.permitId !== 'string' || !ID.test(value.permitId)
+    || value.attempt !== undefined && (!Number.isSafeInteger(value.attempt) || (value.attempt as number) < 0)
     || !['complete', 'unknown', 'cancelled'].includes(String(value.outcome))
     || (value.outcome === 'complete' ? typeof value.eventId !== 'string' || !value.eventId.startsWith('$') : value.eventId !== null))) return false;
   if (action === 'rotation' && (typeof value.operationId !== 'string' || !ID.test(value.operationId)
@@ -160,7 +162,7 @@ export function createRoomSendRoutes(input: Readonly<{
         }
         case 'acquire': {
           let result: Awaited<ReturnType<typeof fence.acquire>>;
-          try { result = await fence.acquire(roomId, sender, body.clientTxnId as string); }
+          try { result = await fence.acquire(roomId, sender, body.clientTxnId as string, !human); }
           catch { return unavailable('fence_acquire', 'fence_unavailable'); }
           return result.kind === 'unavailable' ? unavailable('fence_acquire', 'fence_unavailable')
             : json(result.kind === 'granted' ? 200 : 423, result);
@@ -168,7 +170,8 @@ export function createRoomSendRoutes(input: Readonly<{
         case 'finish': {
           const outcome = body.outcome === 'complete' ? { kind: 'complete' as const, eventId: body.eventId as string }
             : { kind: body.outcome as 'unknown' | 'cancelled' };
-          const result = await fence.finish(roomId, sender.senderId, body.permitId as string, outcome);
+          const result = await fence.finish(roomId, sender.senderId, body.permitId as string, outcome,
+            human ? 0 : body.attempt === undefined ? 0 : body.attempt as number);
           return json(result === 'applied' ? 200 : 503, { kind: result });
         }
         case 'rotation': {
