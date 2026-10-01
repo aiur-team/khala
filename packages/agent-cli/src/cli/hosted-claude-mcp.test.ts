@@ -92,6 +92,28 @@ describe('hosted native Claude MCP', () => {
     expect(set).not.toHaveBeenCalled();
   });
 
+  it.each(['khala_mode_get', 'khala_mode_set'])('does not report %s across a generation change', async name => {
+    let checks = 0;
+    const read = vi.fn(async () => ({ ok: true as const, view: { requested: 'sync', effective: null,
+      effectiveReason: 'support_unknown', version: 1, support: Object.fromEntries(['steer', 'sync', 'async'].map(mode =>
+        [mode, { status: 'unknown', route: 'native', testedVersion: null,
+          evidenceRef: null, evidenceRevision: null, reason: null }])) } }));
+    const set = vi.fn(async (input: { commandId: string }) => ({ commandId: input.commandId,
+      outcome: 'applied', requested: 'steer', effective: null, reason: 'support_unknown', version: 2 }));
+    const factory: NonNullable<CliDependencies['hostedSession']> = async () => ({
+      client: { ...createUnavailableClient(), storedSessionId: () => PROOF_SESSION,
+        async status() { return { v: 1, connected: true,
+          binding: checks++ === 0 ? binding : { ...binding, generation: binding.generation + 1 },
+          route: 'manual_mcp', sourceCursor: null }; },
+        listeningModeControl: { read, set } as never },
+      inbox: async () => { throw new Error('mode must not read inbox'); }, async close() {},
+    });
+    const result = await serve(factory, [request(1, name,
+      name === 'khala_mode_set' ? { requested: 'steer', expectedVersion: 1 } : {})]);
+    expect(result[0]?.result.structuredContent).toEqual(name === 'khala_mode_set'
+      ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'binding_not_held' });
+  });
+
   it('reoffers a persisted hook batch after MCP restart and ACKs only from a later exact-generation call', async () => {
     const sessionId = randomUUID();
     const stateHome = process.env.TMPDIR ?? os.tmpdir();
