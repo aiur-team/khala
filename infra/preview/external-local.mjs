@@ -23,6 +23,7 @@ const runId = randomBytes(6).toString('hex');
 const project = `khala-${runId}-preview`;
 const correlation = `external-${runId}`;
 let stage = 'preflight';
+let browserDiagnostic;
 const owned = [];
 const abort = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => abort.abort());
@@ -287,12 +288,37 @@ async function main() {
     await writeFile(descriptorPath, JSON.stringify(descriptor), { mode: 0o600 });
     stage = 'browser-smoke';
     const smokeEnv = { ...env, KHALA_E2E_LIVE: '1', KHALA_E2E_DISPOSABLE_ENV: descriptorPath,
+      KHALA_E2E_STAGE_DIAGNOSTIC: path.join(scratch, 'browser-stage.json'),
       KHALA_E2E_USER_A: env.KHALA_PREVIEW_OIDC_USER_A_EMAIL, KHALA_E2E_USER_A_PASSWORD: passwordA,
       KHALA_E2E_USER_B: env.KHALA_PREVIEW_OIDC_USER_B_EMAIL, KHALA_E2E_USER_B_PASSWORD: passwordB,
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
       KHALA_APP_ORIGIN: origin, XDG_STATE_HOME: path.join(scratch, 'state') };
-    await command('pnpm', ['test:integration', 'tests/integration/human/create-share-chat.spec.ts',
-      '--output', path.join(scratch, 'playwright-results')], { env: smokeEnv, timeout: 360_000 });
+    try {
+      for (const name of ['two OAuth humans create', 'an account without admission']) {
+        await command('pnpm', ['test:integration', 'tests/integration/human/create-share-chat.spec.ts',
+          '--grep', name, '--output', path.join(scratch, 'playwright-results')],
+        { env: smokeEnv, timeout: 240_000 });
+      }
+    } catch (error) {
+      try {
+        const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_STAGE_DIAGNOSTIC, 'utf8'));
+        const allowed = new Set(['alice-create', 'alice-send', 'alice-share', 'bob-join', 'bob-send',
+          'matrix-ciphertext', 'alice-history', 'bob-history', 'outsider-create', 'outsider-denial']);
+        if (allowed.has(report.stage)) {
+          browserDiagnostic = { stage: report.stage,
+            ...(report.phase === 'loading' || report.phase === 'unavailable' || report.phase === 'ready_empty'
+              || report.phase === 'ready_or_partial' || report.phase === 'absent' ? { phase: report.phase } : {}),
+            ...(typeof report.unavailableRows === 'number' && Number.isSafeInteger(report.unavailableRows)
+              ? { unavailableRows: report.unavailableRows } : {}),
+            ...(typeof report.deviceReadySurface === 'boolean' ? { deviceReadySurface: report.deviceReadySurface } : {}),
+            ...(Array.isArray(report.stages) ? { stages: report.stages.filter(value =>
+              value === 'history_participants' || value === 'history_device_info').slice(-8) } : {}),
+            ...(Array.isArray(report.participantStatuses) ? { participantStatuses: report.participantStatuses.filter(value =>
+              Number.isInteger(value) && value >= 100 && value <= 599).slice(-12) } : {}) };
+        }
+      } catch { /* diagnostics are optional; never expose raw child output */ }
+      throw error;
+    }
     stage = 'blobs-restart-write';
     const browserState = path.join(scratch, 'browser-state.json');
     await command('node', ['--import', 'tsx', 'infra/preview/session-restart-smoke.ts', 'before', browserState], { env: smokeEnv, timeout: 60_000 });
@@ -372,5 +398,6 @@ async function main() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(error => { process.stderr.write(JSON.stringify({ correlation, result: 'failed', stage,
     code: /^(?:child_exited_[\w-]+|readiness_timeout|hosted_agent_route_missing|[a-z_]+_failed_\d+)$/u.test(error?.message) ? error.message
-      : ['ESRCH', 'ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'stage_failed' }) + '\n'); process.exitCode = 1; });
+      : ['ESRCH', 'ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'stage_failed',
+    ...(browserDiagnostic ? { browserDiagnostic } : {}) }) + '\n'); process.exitCode = 1; });
 }

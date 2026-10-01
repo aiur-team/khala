@@ -1,7 +1,15 @@
 import { expect, test, type Page, type Response as PlaywrightResponse } from '@playwright/test';
+import { writeFileSync } from 'node:fs';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary, verifyMatrixObserver } from './fixtures';
 
 const environment = readLiveHumanEnvironment();
+type BrowserStage = 'alice-create' | 'alice-send' | 'alice-share' | 'bob-join' | 'bob-send'
+  | 'matrix-ciphertext' | 'alice-history' | 'bob-history' | 'outsider-create' | 'outsider-denial';
+
+function recordStage(stage: BrowserStage, details: Record<string, unknown> = {}): void {
+  const file = process.env.KHALA_E2E_STAGE_DIAGNOSTIC;
+  if (file) writeFileSync(file, JSON.stringify({ stage, ...details }), { mode: 0o600 });
+}
 
 function enableHistoryDiagnostics() {
   const target = window as Window & { __khalaLocalHistoryDiagnostics?: boolean; __khalaHistoryStages?: string[] };
@@ -13,7 +21,8 @@ function enableHistoryDiagnostics() {
   });
 }
 
-async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: string): Promise<void> {
+async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: string, stage: 'alice-history' | 'bob-history'): Promise<void> {
+  recordStage(stage);
   const participantStatuses: number[] = [];
   const onResponse = (response: PlaywrightResponse) => {
     if (new URL(response.url()).pathname === '/api/human/messaging/participants') participantStatuses.push(response.status());
@@ -41,8 +50,8 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
             stage === 'history_participants' || stage === 'history_device_info').slice(-8) };
       });
       const deviceReadySurface = await page.getByLabel('Message', { exact: true }).isEnabled().catch(() => false);
-      throw new Error(`automatic_history_failed:${JSON.stringify({ ...view, deviceReadySurface,
-        participantStatuses: participantStatuses.slice(-12) })}`);
+      recordStage(stage, { ...view, deviceReadySurface, participantStatuses: participantStatuses.slice(-12) });
+      throw new Error('automatic_history_failed');
     }
   } finally {
     page.off('response', onResponse);
@@ -55,6 +64,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
   const bobContext = await browser.newContext();
   await Promise.all([aliceContext.addInitScript(enableHistoryDiagnostics), bobContext.addInitScript(enableHistoryDiagnostics)]);
   try {
+    recordStage('alice-create');
     const alice = await freshPage(aliceContext, environment);
     // The control runtime issues the creator's Matrix session to this browser.
     // Capture it only in test memory; a room outsider cannot read joined history.
@@ -71,15 +81,18 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
     await alice.getByRole('button', { name: 'Create channel' }).last().click();
     await expect(alice).toHaveURL(/\/channels\//u);
+    recordStage('alice-send');
     await alice.getByLabel('Message', { exact: true }).fill(intro);
     await alice.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(alice.locator('.timeline__row:not(.timeline__row--pending)', { hasText: intro })).toBeVisible({ timeout: 30_000 });
+    recordStage('alice-share');
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
     await alice.getByRole('button', { name: 'Copy my channel link' }).click();
     await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
     const shareUrl = await alice.evaluate(() => navigator.clipboard.readText());
     expect(shareUrl).toMatch(/\/join\/[^/?#]+$/u);
 
+    recordStage('bob-join');
     const bob = await bobContext.newPage();
     await bob.goto(shareUrl, { waitUntil: 'networkidle' });
     await signIn(bob, environment, environment.users[1]);
@@ -99,23 +112,25 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     // The current product default is link admission with no earlier history.
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText('No messages yet.')).toBeVisible();
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
+    recordStage('bob-send');
     const reply = syntheticCanary('reply');
     await bob.getByLabel('Message', { exact: true }).fill(reply);
     await bob.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(bob.locator('.timeline__row:not(.timeline__row--pending)', { hasText: reply })).toBeVisible({ timeout: 30_000 });
     await expect(bob.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('You');
 
+    recordStage('matrix-ciphertext');
     const rawEvents = await rawRoomMessages(environment, roomId, creatorAccessToken as string);
     expect(rawEvents.filter(event => event.type === 'm.room.encrypted').length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(rawEvents)).not.toContain(intro);
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    await requireAutomaticHistoryAfterReload(alice, reply);
+    await requireAutomaticHistoryAfterReload(alice, reply, 'alice-history');
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
     await expect(alice.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('Human');
 
-    await requireAutomaticHistoryAfterReload(bob, reply);
+    await requireAutomaticHistoryAfterReload(bob, reply, 'bob-history');
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);
@@ -126,6 +141,7 @@ test('an account without admission cannot read a protected room', async ({ brows
   const ownerContext = await browser.newContext();
   const outsiderContext = await browser.newContext();
   try {
+    recordStage('outsider-create');
     const owner = await freshPage(ownerContext, environment);
     await signIn(owner, environment, environment.users[0]);
     await owner.getByRole('button', { name: 'Create channel' }).last().click();
@@ -139,6 +155,7 @@ test('an account without admission cannot read a protected room', async ({ brows
     await expect(owner.locator('.timeline__row:not(.timeline__row--pending)', { hasText: canary })).toBeVisible({ timeout: 30_000 });
 
     const outsider = await freshPage(outsiderContext, environment);
+    recordStage('outsider-denial');
     const outsiderSessionResponse = outsider.waitForResponse(response =>
       new URL(response.url()).pathname === '/api/human/messaging/session' && response.status() === 200,
     );
