@@ -28,7 +28,13 @@ Neither route proves hosted Steer or Sync; both remain unsupported. An inbox
 enqueue, queue exit, installed CLI version, or encrypted send alone promotes
 no mode.
 
-The production observations did not exercise owner browser mode changes. A
-separate disposable HTTPS browser fixture must confirm owner set and
-authoritative readback for each provider before the hosted product claim is
-complete.
+The production observations did not exercise owner browser mode changes. In a
+separate disposable HTTPS fixture, one exact saved Codex native session read an
+owner-approved benign release, returned its batch token on a later independent
+read, and committed the matching agent acknowledgement. In that same MCP
+process, mode GET reported Async proven; owner set Async was applied, and a
+subsequent authoritative GET reported requested and effective Async at version
+2. This is evidence for explicit-pull Async on that disposable binding only.
+The separate disposable Claude binding still needs a fresh manual read and
+next-call acknowledgement before any supported-mode claim. Neither fixture
+proves hosted Steer or Sync hook delivery.
