@@ -10,6 +10,7 @@ import { type CodexReceiptProof, NO_CODEX_RECEIPT_PROOF } from './receipt-confor
 export const CODEX_INTERACTIVE_ADAPTER_VERSION = 'native-hooks-1';
 export const CODEX_INTERACTIVE_EVIDENCE_REF = 'docs/product/internal-mode/interactive-codex.md#mode-matrix';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REF = 'docs/evidence/codex-0157-native-cli.md#sync-hook';
+export const CODEX_BOUNDARY_ONLY_EVIDENCE_REF = 'docs/evidence/codex-0159-3-boundaries.md';
 /** Changes whenever the proof is re-run, so consent derived from an older proof lapses. */
 export const CODEX_INTERACTIVE_EVIDENCE_REVISION = 'interactive-codex-2026-09-25';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REVISION = 'interactive-codex-0157-2026-09-27';
@@ -18,6 +19,7 @@ export const CODEX_INTERACTIVE_0157_EVIDENCE_REVISION = 'interactive-codex-0157-
 export const CODEX_INTERACTIVE_VERSIONS: readonly string[] = ['0.154.0', '0.156.1'];
 /** The newer Sol-capable CLI is promoted only for a separately observed sync hook. */
 export const CODEX_NATIVE_SYNC_VERSION = '0.157.1';
+export const CODEX_BOUNDARY_ONLY_VERSION = '0.159.3';
 
 /** A new native version must receive a new consent revision, without invalidating old sessions. */
 export function codexInteractiveEvidenceRevision(version: string): string {
@@ -55,6 +57,12 @@ export function interactiveCodexCapabilities(
     return closed(version, limits, 'Codex 0.157.1 native sync proof covers Linux x64 only.');
   }
   if (!fullModeProof && !syncOnlyProof) {
+    if (version === CODEX_BOUNDARY_ONLY_VERSION) {
+      return closed(version, limits, 'Codex 0.159.3 exposed model-visible PreToolUse and Stop output in a '
+        + 'disposable saved session, but no executed later Khala call returned a batch token for the '
+        + 'exact binding and generation. Boundary output and an attempted call are not a receipt; '
+        + 'Steer, Sync, Async and acknowledgement remain unsupported.');
+    }
     return closed(version, limits, `Codex ${version} has no interactive hook proof; proven versions are `
       + `${[...CODEX_INTERACTIVE_VERSIONS, CODEX_NATIVE_SYNC_VERSION].join(', ')}. ${IDLE}`);
   }
@@ -130,7 +138,7 @@ function closed(version: string, limits: DeliveryLimits, reason: string): Harnes
     reconcileByReleaseId: 'unknown',
     limits,
     evidenceRef: version === CODEX_NATIVE_SYNC_VERSION ? CODEX_INTERACTIVE_0157_EVIDENCE_REF
-      : CODEX_INTERACTIVE_EVIDENCE_REF,
+      : version === CODEX_BOUNDARY_ONLY_VERSION ? CODEX_BOUNDARY_ONLY_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
     modes: unknownModeSupportMap('codex-interactive-hooks', reason, version),
     acknowledgement: 'unknown',
   };

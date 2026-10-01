@@ -134,6 +134,16 @@ describe('interactive Codex capabilities', () => {
     expect(capabilities.modes.steer.reason).toContain('0.155.0 has no interactive hook proof');
   });
 
+  it('keeps 0.159.3 unsupported after model-visible hooks without a later exact receipt', () => {
+    const preflight = interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.156.1' });
+    expect(preflight).toMatchObject({ support: 'unsupported', acknowledgement: 'unknown',
+      evidenceRef: 'docs/evidence/codex-0159-3-boundaries.md' });
+    expect(Object.values(preflight.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
+    expect(preflight.modes.steer.reason).toContain('attempted call');
+    expect(preflight.modes.sync.reason).toContain('exact binding and generation');
+  });
+
   it('claims the native queue notification only while the idle wake works', () => {
     const woken = interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, undefined, 'available');
     expect(decodeHarnessCapabilities(woken)).toEqual({ ok: true, value: woken });
