@@ -59,6 +59,8 @@ export type MatrixConnectorInput = Readonly<{
 export type MatrixConnectorSubstrate = Readonly<{
   devices: ConnectorDevicePort;
   source: SubscriptionSource;
+  /** Participant proved by this device's verified Matrix event in the current room. */
+  participantForDevice(roomId: RoomId, senderUserId: string, deviceId: DeviceId): ParticipantId | null;
   fingerprint: string;
   writerLock: MatrixWriterLockDiagnostic;
   /** Encrypts one agent-authored message with the same durable Matrix device. */
@@ -215,6 +217,8 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     let namesState: NameState = previousNames === null
       ? { names: [], seenRenames: [] } : JSON.parse(previousNames);
     if (!Array.isArray(namesState.names) || !Array.isArray(namesState.seenRenames)) throw new Error('matrix_names_corrupt');
+    const verifiedDevices = new Map<string, ParticipantId | null>();
+    const trustedAgentDevices = new Map<string, string>();
     let closed = false;
     const current = () => { if (closed || !page) throw new Error('matrix_device_closed'); return page; };
     const devices: ConnectorDevicePort = {
@@ -261,6 +265,30 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
         if (limit < 1 || limit > 100 || !Number.isSafeInteger(limit)) return { kind: 'rejected', code: 'unsupported' };
         let stage: HostedSubscriptionDiagnostic['stage'] = 'matrix_read_bridge';
         try {
+          // Pin admitted agent peers before decrypting their room timeline.
+          stage = 'matrix_read_members';
+          const currentMembers = input.resolveParticipants
+            ? await abortable(call<readonly string[]>(current(), 'members'), options?.signal) : [];
+          if (input.resolveParticipants) {
+            stage = 'matrix_read_participants';
+            const currentParticipants = await input.resolveParticipants(currentMembers, []);
+            if (!currentParticipants) return unavailable(stage);
+            for (const userId of currentMembers) {
+              if (userId === input.userId) continue;
+              const peer = currentParticipants.get(userId);
+              if (peer?.kind !== 'agent') continue;
+              if (!peer.deviceId || !peer.fingerprint) continue;
+              const key = JSON.stringify([userId, peer.deviceId]);
+              const prior = trustedAgentDevices.get(key);
+              if (prior && prior !== peer.fingerprint) return unavailable(stage);
+              if (!prior) {
+                stage = 'matrix_read_bridge';
+                await call<void>(current(), 'trustPeer', userId, peer.deviceId, peer.fingerprint);
+                trustedAgentDevices.set(key, peer.fingerprint);
+              }
+            }
+          }
+          stage = 'matrix_read_bridge';
           const wire = await abortable(call<BrowserPage>(current(), 'read', cursor, limit), options?.signal);
           // A limited timeline means Synapse dropped older events. Never advance beyond a gap.
           if (wire.limited) return { kind: 'gap' };
@@ -283,6 +311,14 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
             const claimedDevice = (event.senderDeviceId ?? 'unknown') as DeviceId;
             const base = { v: 1 as const, roomId: event.roomId as RoomId, eventId: event.eventId as EventId,
               authorParticipantId: participant, authorDeviceId: claimedDevice };
+            const peer = participants?.get(event.senderUserId);
+            if (input.participantIdFor(event.senderUserId) === null && peer?.kind === 'agent'
+              && (!peer.deviceId || !peer.fingerprint || peer.deviceId !== claimedDevice
+                || trustedAgentDevices.get(JSON.stringify([event.senderUserId, claimedDevice])) !== peer.fingerprint)) {
+              // An older room member may predate attestation. Its bytes never
+              // enter review, and its event cannot block later verified peers.
+              continue;
+            }
             if (event.failure !== null || event.body === null || event.senderDeviceId === null) {
               if (input.participantIdFor(event.senderUserId) === null) {
                 if (event.failure === 'missing_keys') return unavailable('matrix_read_missing_keys');
@@ -328,15 +364,18 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
                 name: rename.body, canonicalPayload })) return unavailable(stage);
               continue;
             }
-            // Review only the owner human's text. The agent's metadata path is separate.
-            if (input.participantIdFor(event.senderUserId) === null) continue;
+            // An admitted peer agent is also owner-reviewable. Other senders stay excluded.
+            if (input.participantIdFor(event.senderUserId) === null && peer?.kind !== 'agent') continue;
             stage = 'matrix_read_callback';
             if (input.onText && !await input.onText({ roomId: base.roomId, eventId: base.eventId,
               authorName: namesState.names.find(item => item.participantId === participant)?.name
                 ?? participants?.get(event.senderUserId)?.initialName ?? participant })) return unavailable(stage);
+            const deviceKey = JSON.stringify([event.roomId, event.senderUserId, claimedDevice]);
+            const known = verifiedDevices.get(deviceKey);
+            verifiedDevices.set(deviceKey, known === undefined || known === participant ? participant : null);
             events.push({ kind: 'decrypted', ref: {
               ...base, contentDigest: `sha256:${createHash('sha256').update(canonicalPayload).digest('hex')}`,
-            }, verifiedDeviceId: claimedDevice, canonicalPayload });
+            }, verifiedSenderUserId: event.senderUserId, verifiedDeviceId: claimedDevice, canonicalPayload });
           }
           return { kind: 'page', events, nextCursor: wire.nextCursor, caughtUp: wire.events.length < limit };
         } catch (error) {
@@ -347,6 +386,8 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     };
     return {
       devices, source, fingerprint: identity.fingerprint, writerLock: lock.diagnostic,
+      participantForDevice: (roomId, senderUserId, deviceId) =>
+        verifiedDevices.get(JSON.stringify([roomId, senderUserId, deviceId])) ?? null,
       send: (clientTxnId, body) => serializeSend(async () => {
         if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
           || Buffer.byteLength(body) > 64 * 1024) throw new Error('matrix_invalid_send');

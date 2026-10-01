@@ -37,7 +37,7 @@ export interface EventIngestionPort {
  */
 export interface ProvenancePort {
   participantForDevice(
-    input: Readonly<{ roomId: RoomId; deviceId: DeviceId }>,
+    input: Readonly<{ roomId: RoomId; senderUserId: string; deviceId: DeviceId }>,
     options?: CallOptions,
   ): Promise<ParticipantId | null | 'unavailable'>;
 }
@@ -125,7 +125,8 @@ async function verifyEvent(
   const { ref } = event;
   let sender: ParticipantId | null | 'unavailable';
   try {
-    sender = await ctx.provenance.participantForDevice({ roomId: ref.roomId, deviceId: event.verifiedDeviceId }, { signal: ctx.signal });
+    sender = await ctx.provenance.participantForDevice({ roomId: ref.roomId,
+      senderUserId: event.verifiedSenderUserId, deviceId: event.verifiedDeviceId }, { signal: ctx.signal });
   } catch {
     // A failed lookup proves nothing about the sender: retry, never drop it as a non-participant.
     sender = 'unavailable';

@@ -122,12 +122,11 @@ export async function startProductionSubscription(input: Readonly<{
       },
     },
     provenance: {
-      async participantForDevice({ roomId, deviceId }) {
-        // The Matrix adapter emits decrypted events only from a crypto-verified
-        // device belonging to the configured owner user. It filters the agent's
-        // own sends before they enter this pipeline. Check the exact room here.
-        if (roomId !== input.roomId || deviceId === input.binding.deviceId) return null;
-        return input.ownerParticipantId;
+      async participantForDevice({ roomId, senderUserId, deviceId }) {
+        // The Matrix adapter binds each accepted device to its crypto-verified
+        // sender and authenticated room participant before returning the page.
+        if (roomId !== input.roomId) return null;
+        return input.matrix.participantForDevice(roomId, senderUserId, deviceId);
       },
     },
     lock: {

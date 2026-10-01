@@ -144,6 +144,10 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     });
     const participantDirectory = createAgentParticipantDirectoryRoute({
       store: active.store, capabilities: bootstrap.capabilities, sessions: active.matrix.sessions,
+      lookupAgentDevice: async binding => {
+        const registered = await attestation.lookup(binding);
+        return registered ? { deviceId: registered.deviceId, fingerprint: registered.fingerprint } : null;
+      },
     });
     const revocation = createOwnerRevocationRoutes({
       auth: active.auth, store: active.store, capabilities: bootstrap.capabilities,

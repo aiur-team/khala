@@ -27,7 +27,8 @@ import type {
  *   placeholder carries them only as a claim.
  */
 export type SourceEvent =
-  | Readonly<{ kind: 'decrypted'; ref: EventRef; verifiedDeviceId: DeviceId; canonicalPayload: Uint8Array }>
+  | Readonly<{ kind: 'decrypted'; ref: EventRef; verifiedSenderUserId: string;
+      verifiedDeviceId: DeviceId; canonicalPayload: Uint8Array }>
   | Readonly<{ kind: 'undecryptable'; ref: UnavailableEventRef; reason: UnavailableReason }>;
 
 /**

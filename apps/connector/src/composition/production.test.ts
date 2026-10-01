@@ -70,6 +70,7 @@ describe('installed hosted connector composition', () => {
       if (++attempts === 1) throw new MatrixWriterLockError('active_writer');
       return {
         fingerprint: 'signed-ed25519-fingerprint', writerLock: { kind: 'stale_recovered' },
+        participantForDevice: () => null,
         devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined,
@@ -123,7 +124,8 @@ describe('installed hosted connector composition', () => {
     const event = (id: string, payload: Uint8Array) => ({ kind: 'decrypted' as const,
       ref: { v: 1 as const, roomId: roomId as never, eventId: id as never,
         authorParticipantId: 'owner_participant' as never, authorDeviceId: 'OWNER_DEVICE' as never,
-        contentDigest: sha256Digest(payload) }, verifiedDeviceId: 'OWNER_DEVICE' as never,
+        contentDigest: sha256Digest(payload) }, verifiedSenderUserId: '@owner:example',
+      verifiedDeviceId: 'OWNER_DEVICE' as never,
       canonicalPayload: payload });
     const events = [event('event_A', payloadA), event('event_B', payloadB)];
     let onText: MatrixConnectorInput['onText'];
@@ -136,6 +138,7 @@ describe('installed hosted connector composition', () => {
       onText = options.onText;
       return ({
       fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
+      participantForDevice: () => 'owner_participant' as never,
       devices: { reserve: async () => ({ kind: 'reserved', deviceId: options.deviceId }),
         activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
       source: { authorize: async () => 'ok', listen: () => () => undefined, read },
@@ -367,6 +370,7 @@ describe('installed hosted connector composition', () => {
     const openMatrix = async (options: MatrixConnectorInput): Promise<MatrixConnectorSubstrate> => {
       opens.push(options);
       return { fingerprint: agentFingerprint, writerLock: { kind: 'acquired' },
+        participantForDevice: () => null,
         devices: { reserve: async () => ({ kind: 'reserved', deviceId }),
           activate: async () => ({ kind: 'ready' }), status: async () => 'ready' },
         source: { authorize: async () => 'ok', listen: () => () => undefined, read },

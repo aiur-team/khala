@@ -4,6 +4,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createAgentIdentityDirectory } from './identity-directory';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from '../human/matrix';
+import type { SessionBinding } from '@khala/contracts/messaging/index';
 
 export const AGENT_PARTICIPANTS_PATH = '/api/agent/messaging/participants';
 
@@ -18,6 +19,7 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
   store: ControlStore;
   capabilities: Pick<AdapterCapabilities, 'authorize' | 'lookupBinding'>;
   sessions: Pick<MatrixSessionIssuer, 'resolveRoomParticipants'>;
+  lookupAgentDevice(binding: SessionBinding): Promise<{ deviceId: string; fingerprint: string } | null>;
 }>): RouteRegistration {
   const bindings = createAgentBindingStore({ store: input.store });
   return { path: AGENT_PARTICIPANTS_PATH, methods: ['POST'], async handle(request) {
@@ -59,6 +61,29 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
         ownerId: agent.ownerId, displayName: `${agent.harness[0]?.toUpperCase()}${agent.harness.slice(1)} #${agent.participantId.slice(-4)}`,
         kind: 'agent' });
     }
-    return json(200, { participants });
+    const pinned = [];
+    for (const participant of participants) {
+      if (participant.kind !== 'agent' || !(value.userIds as string[]).includes(participant.matrixUserId)) {
+        pinned.push(participant);
+        continue;
+      }
+      if (participant.ownerId !== authority.ownerId) return json(403, { code: 'forbidden' });
+      const found = await bindings.findParticipant({ ownerId: participant.ownerId, roomId: roomId.value,
+        agentParticipantId: participant.participantId });
+      if (found.kind === 'unavailable') return json(503, { code: 'unavailable' });
+      if (found.kind !== 'found' || found.record.revokedGeneration !== null
+        || found.record.binding.agentParticipantId !== participant.participantId) {
+        pinned.push(participant);
+        continue;
+      }
+      const device = await input.lookupAgentDevice(found.record.binding);
+      if (!device) {
+        pinned.push(participant);
+        continue;
+      }
+      if (device.deviceId !== found.record.binding.deviceId) return json(503, { code: 'unavailable' });
+      pinned.push({ ...participant, deviceId: device.deviceId, fingerprint: device.fingerprint });
+    }
+    return json(200, { participants: pinned });
   } };
 }
