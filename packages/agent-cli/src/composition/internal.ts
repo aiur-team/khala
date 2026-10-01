@@ -263,7 +263,7 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       }
       if (reply.status === 401 || reply.status === 403) return refused('binding_not_held');
       if (reply.status === 400) return refused('invalid_input');
-      if (reply.status === 503 && errorCode(reply.body) === 'unavailable') return refused('transport_unavailable');
+      if (reply.status === 503) return refused('transport_unavailable');
       return { kind: 'outcome_unknown', clientTxnId: input.clientTxnId };
     },
 
@@ -389,10 +389,6 @@ async function joinWithDiscovery(
     return { kind: 'status', outcome };
   }
   return closed === null ? { kind: 'unavailable' } : { kind: 'status', outcome: closed };
-}
-
-function errorCode(body: unknown): unknown {
-  return plainObject(body) && plainObject(body.error) ? body.error.code : undefined;
 }
 
 /** The channel ID of an exact `<origin>/channels/<id>` URL on the descriptor's origin, else null. */
