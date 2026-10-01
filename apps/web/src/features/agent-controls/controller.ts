@@ -128,6 +128,8 @@ export function createAgentControlsController(
   let listeningDraft: ListeningMode | null = null;
   let listeningSubmission: ListeningSubmission = { kind: 'idle' };
   let listeningCommandId: string | null = null;
+  let listeningAppliedAck: { attempted: ListeningMode; generation: number; previousVersion: number } | null = null;
+  let listeningSubmittedVersion: number | null = null;
   let grantConfirmation: GrantConfirmation | null = null;
   let grantCommandId: string | null = null;
   let grantNotice: string | null = null;
@@ -149,6 +151,8 @@ export function createAgentControlsController(
     listeningDraft = null;
     listeningSubmission = { kind: 'idle' };
     listeningCommandId = null;
+    listeningAppliedAck = null;
+    listeningSubmittedVersion = null;
     grantConfirmation = null;
     grantCommandId = null;
     grantNotice = null;
@@ -180,6 +184,20 @@ export function createAgentControlsController(
     }
     if (next !== null && listeningBase !== null && next.version < listeningBase.version) return;
     listeningBase = next;
+    if (next !== null && listeningAppliedAck !== null
+      && next.generation === listeningAppliedAck.generation
+      && next.version > listeningAppliedAck.previousVersion) {
+      const attempted = listeningAppliedAck.attempted;
+      listeningAppliedAck = null;
+      if (next.requested === attempted && next.effective === attempted) {
+        listeningDraft = null;
+        listeningSubmission = { kind: 'applied', attempted };
+      } else {
+        listeningDraft = attempted;
+        listeningSubmission = { kind: 'conflict', attempted };
+        focusToken += 1;
+      }
+    }
     if (next === null || grantConfirmation === null) return;
     const fresh = grantConfirmationFor(next, grantConfirmation.grantKind, grantConfirmation.mode);
     if (fresh === null || !sameEvidence(fresh.evidence, grantConfirmation.evidence)) {
@@ -274,6 +292,7 @@ export function createAgentControlsController(
 
     view = {
       ...view,
+      snapshotReceived: true,
       listening: listeningDisplay(),
       ownerLabel: ownerLabelFor(snapshot.binding.ownerId, config.viewerOwnerId),
       isViewerOwned,
@@ -517,15 +536,33 @@ export function createAgentControlsController(
     if (disposed || listeningCommandId !== commandId || result.commandId !== commandId) return;
     listeningCommandId = null;
     if (result.outcome === 'applied') {
-      listeningDraft = null;
-      listeningSubmission = { kind: 'applied', attempted };
+      // The ack accepts the command, but only a newer connector snapshot can
+      // confirm both the requested and effective modes for this generation.
+      listeningAppliedAck = listeningBase === null ? null : {
+        attempted, generation: listeningBase.generation, previousVersion: listeningSubmittedVersion ?? listeningBase.version,
+      };
+      listeningSubmission = { kind: 'pending', attempted };
+      if (listeningAppliedAck !== null && listeningBase !== null
+        && listeningBase.version > listeningAppliedAck.previousVersion) {
+        listeningAppliedAck = null;
+        if (listeningBase.requested === attempted && listeningBase.effective === attempted) {
+          listeningDraft = null;
+          listeningSubmission = { kind: 'applied', attempted };
+        } else {
+          listeningDraft = attempted;
+          listeningSubmission = { kind: 'conflict', attempted };
+          focusToken += 1;
+        }
+      }
     } else if (result.outcome === 'conflict') {
+      listeningAppliedAck = null;
       // Never retried: the attempted choice stays as the unsubmitted draft and
       // focus returns to the refreshed selector for an explicit decision.
       listeningDraft = attempted;
       listeningSubmission = { kind: 'conflict', attempted };
       focusToken += 1;
     } else {
+      listeningAppliedAck = null;
       listeningDraft = attempted;
       listeningSubmission = { kind: 'refused', attempted, reason: result.reason ?? 'refused' };
     }
@@ -549,6 +586,7 @@ export function createAgentControlsController(
       issuedAt: new Date().toISOString(),
     };
     listeningCommandId = command.commandId;
+    listeningSubmittedVersion = listeningBase.version;
     listeningSubmission = { kind: 'pending', attempted };
     publishListening();
     port.submitListeningMode(command)

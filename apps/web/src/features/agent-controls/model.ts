@@ -68,6 +68,8 @@ export type AgentControlsView = Readonly<{
   /** True only after a genuinely unknown-outcome (network) failure; drives a distinct "Retry" affordance from the general "Refresh" recovery action. */
   retryAvailable: boolean;
   notice: AgentControlsNotice | null;
+  /** Distinguishes a completed capability read from the initial loading state. */
+  snapshotReceived: boolean;
   receiptDetail: string | null;
   /** Listening-mode section; `null` until the store has answered for this binding generation. */
   listening: ListeningDisplay | null;
@@ -118,6 +120,7 @@ export function initialAgentControlsView(input: Readonly<{
     unavailableReason: 'Waiting for an authoritative snapshot.',
     capabilityDetail: null,
     retryAvailable: false,
+    snapshotReceived: false,
     notice: null,
     receiptDetail: null,
     listening: null,

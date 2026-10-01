@@ -78,6 +78,21 @@
   overflow-wrap: anywhere;
 }
 
+.agent-controls__listening--compact {
+  border-top: 0;
+  margin-top: 0.35rem;
+  padding-top: 0;
+}
+
+.agent-controls__listening--compact .agent-controls__mode-selector {
+  border: 0;
+  padding: 0;
+}
+
+.agent-controls__listening--compact .agent-controls__mode-option {
+  margin-bottom: 0.35rem;
+}
+
 .agent-controls__listening h3,
 .agent-controls__listening h4 {
   margin: 0 0 0.25rem;

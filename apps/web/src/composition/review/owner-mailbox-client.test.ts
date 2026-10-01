@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ApprovalCommand } from '@khala/contracts/delivery/index';
+import type { ReviewPreviewRequest } from './browser-port';
 import { createOwnerMailboxReviewClient } from './owner-mailbox-client';
 
 const ORIGIN = 'https://khala.example';
@@ -12,6 +13,61 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
   { status, headers: { 'content-type': 'application/json' } });
 
 describe('authenticated owner mailbox review client', () => {
+  it('reuses an unresolved preview operation until completion, then requests a fresh snapshot', async () => {
+    const submitted: string[] = [];
+    let complete = false;
+    const body: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        const operationId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+        submitted.push(operationId);
+        return json(200, { v: 1, operationId, outcome: complete ? { ok: true, preview: {} } : null });
+      }
+      const operationId = new URL(String(url)).searchParams.get('operation_id');
+      return json(200, { v: 1, operationId, outcome: complete ? { ok: true, preview: {} } : null });
+    };
+    const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 0 });
+    const signal = new AbortController().signal;
+    expect(await client.review.preview(body, signal)).toEqual({ kind: 'lost' });
+    expect(await client.review.preview({ ...body }, signal)).toEqual({ kind: 'lost' });
+    expect(submitted).toHaveLength(1);
+    complete = true;
+    expect((await client.review.preview({ ...body }, signal)).kind).toBe('ok');
+    expect((await client.review.preview({ ...body }, signal)).kind).toBe('ok');
+    expect(submitted).toHaveLength(2);
+    expect(submitted[1]).not.toBe(submitted[0]);
+  });
+
+  it('retries a missing preview with the same identity and never returns an old-body preview', async () => {
+    const submitted: Array<{ operationId: string; body: unknown }> = [];
+    let completed = false;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/submit')) {
+        const value = JSON.parse(String(init?.body)) as { operationId: string; body: unknown };
+        submitted.push(value);
+        return json(200, { v: 1, operationId: value.operationId, outcome: null });
+      }
+      const operationId = new URL(String(url)).searchParams.get('operation_id');
+      return completed ? json(200, { v: 1, operationId, outcome: { ok: true, preview: {} } })
+        : json(404, { code: 'not_found' });
+    };
+    const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value',
+      fetch: fetcher, waitMs: 0 });
+    const original: ReviewPreviewRequest = { bindingId: command.bindingId, candidates: [], releaseIds: [] };
+    const changed: ReviewPreviewRequest = { ...original, releaseIds: ['release_new' as never] };
+    const signal = new AbortController().signal;
+    expect(await client.review.preview(original, signal)).toEqual({ kind: 'lost' });
+    expect(await client.review.preview(changed, signal)).toEqual({ kind: 'lost' });
+    expect(submitted).toHaveLength(2);
+    expect(submitted[1]).toEqual(submitted[0]);
+    completed = true;
+    expect(await client.review.preview(changed, signal)).toEqual({ kind: 'lost' });
+    expect((await client.review.preview(changed, signal)).kind).toBe('lost');
+    expect(submitted).toHaveLength(3);
+    expect(submitted[2]!.operationId).not.toBe(submitted[0]!.operationId);
+  });
+
   it('discovers the exact room binding and submits references with the original command ID', async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetcher: typeof fetch = async (url, init) => {

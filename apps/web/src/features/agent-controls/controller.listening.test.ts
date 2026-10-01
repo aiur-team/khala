@@ -428,6 +428,43 @@ describe('listening mode — owner mutation and conflicts', () => {
     controller.dispose();
   });
 
+  it('waits for a newer connector readback of requested and effective state before reporting success', async () => {
+    const state = fixture();
+    const { controller, ports, listening } = await start(state);
+    let resolveReadback: ((snapshot: AgentControlsSnapshot) => void) | undefined;
+    (ports.agentControls as { readSnapshot: AgentControlsPorts['agentControls']['readSnapshot'] }).readSnapshot =
+      () => new Promise(resolve => { resolveReadback = resolve; });
+    controller.selectListeningMode('steer');
+    controller.applyListeningMode();
+    await flush();
+    expect(listening().submission.kind).toBe('pending');
+    expect(listeningStatusText(listening())).not.toContain('Listening mode set to steer.');
+    resolveReadback?.(snapshotOf(state));
+    await flush();
+    expect(listening().requested).toBe('steer');
+    expect(listening().effective).toBe('steer');
+    expect(listeningStatusText(listening())).toContain('Listening mode set to steer.');
+    controller.dispose();
+  });
+
+  it('does not report success when connector readback has a different effective mode', async () => {
+    const state = fixture();
+    const { controller, ports, listening } = await start(state);
+    (ports.agentControls as { readSnapshot: AgentControlsPorts['agentControls']['readSnapshot'] }).readSnapshot =
+      async () => {
+        const snapshot = snapshotOf(state);
+        return { ...snapshot, listening: snapshot.listening && {
+          ...snapshot.listening, view: { ...snapshot.listening.view, effective: 'sync' as const },
+        } };
+      };
+    controller.selectListeningMode('steer');
+    controller.applyListeningMode();
+    await flush();
+    expect(listening().submission.kind).toBe('conflict');
+    expect(listeningStatusText(listening())).not.toContain('Listening mode set to steer.');
+    controller.dispose();
+  });
+
   it('refuses to select a mode that is not selectable', async () => {
     const { controller, listening } = await start(fixture({ modes: { ...UNKNOWN_MODES, sync: proven('sync') } }));
     controller.selectListeningMode('steer');
