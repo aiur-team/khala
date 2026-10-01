@@ -101,6 +101,26 @@ describe('installed hosted MCP routing', () => {
     } finally { now.mockRestore(); }
   });
 
+  it('refuses when the saved binding disappears as subscription startup completes', async () => {
+    const decoded = decodeSessionBinding({ v: 1, bindingId: 'retained-binding', ownerId: 'owner-1',
+      agentParticipantId: 'agent-1', deviceId: 'KHALADEV1', harness: 'codex', sessionId: THREAD, generation: 3 });
+    if (!decoded.ok) throw new Error('invalid binding fixture');
+    let checks = 0;
+    const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(),
+      async status() { return ++checks === 1
+        ? { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const,
+          sourceCursor: null, readiness: startingReadiness }
+        : { v: 1 as const, connected: true, binding: decoded.value,
+          route: 'native_cli_queue' as const, sourceCursor: null }; } },
+    inbox: async () => { throw new Error('revoked binding must not open inbox'); }, async close() {} }));
+    let presenceChecks = 0;
+    const present = vi.fn(async () => ++presenceChecks < 3);
+    const replies = await serve([call(1, 'khala_read', { threadId: THREAD })], hostedSession, present);
+    expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
+    expect(checks).toBe(2);
+    expect(present).toHaveBeenCalledTimes(3);
+  });
+
   it.each(['absent', 'revoked', 'wrong-session', 'wrong-harness', 'wrong-device', 'changed-generation', 'offline'])(
     'does not grant a resumed read for %s', async scenario => {
       const decoded = decodeSessionBinding({ v: 1, bindingId: 'retained-binding', ownerId: 'owner-1',
@@ -112,7 +132,10 @@ describe('installed hosted MCP routing', () => {
           : scenario === 'wrong-device' ? { ...binding, deviceId: 'OTHERDEVICE' as typeof binding.deviceId }
             : { ...binding, generation: 4 };
       let checks = 0;
-      const inbox = vi.fn(async () => { throw new Error('must not open inbox'); });
+      const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-codex-fence-'));
+      const inbox = vi.fn(async (bindingId: string, generation: number) => openInbox({
+        stateDirectory: root, bindingId, generation, maxPayloadBytes: 4096, maxSelectionEvents: 8,
+      }));
       const hostedSession = vi.fn(async () => ({ client: { ...createUnavailableClient(),
         async status() {
           checks += 1;
@@ -121,10 +144,14 @@ describe('installed hosted MCP routing', () => {
               errorCode: 'subscription_offline' as const } };
           if (scenario === 'revoked' || scenario === 'absent') return { v: 1 as const, connected: false,
             binding: null, route: 'unavailable' as const, sourceCursor: null, readiness: startingReadiness };
-          return { v: 1 as const, connected: true, binding: checks === 1 ? binding : other,
+          return { v: 1 as const, connected: true,
+            binding: checks === 1 && (scenario === 'wrong-device' || scenario === 'changed-generation')
+              ? binding : other,
             route: 'native_cli_queue' as const, sourceCursor: null };
         } }, inbox, async close() {} }));
-      const present = vi.fn(async () => scenario !== 'absent' && scenario !== 'revoked');
+      let presenceChecks = 0;
+      const present = vi.fn(async () => scenario !== 'absent'
+        && (scenario !== 'revoked' || ++presenceChecks < 3));
       const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(8_000);
       try {
         const requests = scenario === 'wrong-device' || scenario === 'changed-generation'
@@ -132,8 +159,9 @@ describe('installed hosted MCP routing', () => {
           : [call(1, 'khala_read', { threadId: THREAD })];
         const replies = await serve(requests, hostedSession, present);
         expect(replies.at(-1)?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
-        expect(inbox).not.toHaveBeenCalled();
-      } finally { now.mockRestore(); }
+        expect(inbox).toHaveBeenCalledTimes(scenario === 'wrong-device' || scenario === 'changed-generation' ? 1 : 0);
+        if (scenario === 'offline') expect(checks).toBe(1);
+      } finally { now.mockRestore(); fs.rmSync(root, { recursive: true, force: true }); }
     });
   it('routes a create target only through the named hosted session', async () => {
     const target = `https://khala.aiur.team/new?agent_create=owner_1.${'A'.repeat(43)}`;

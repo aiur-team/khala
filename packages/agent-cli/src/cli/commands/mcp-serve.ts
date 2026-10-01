@@ -287,11 +287,13 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
           return PREJOIN_TOOLS.has(toolName)
             ? pairingCollaborators(entry.opened.client) : null;
         }
+        if (!PREJOIN_TOOLS.has(toolName) && deps.hostedBindingPresent
+          && !await deps.hostedBindingPresent(session)) return null;
         const storedSessionId = entry.opened.client.storedSessionId?.(session.harness, session.sessionId) ?? session.sessionId;
         if (!([session.harness, 'proof-key'].includes(hostedStatus.binding.harness))
           || hostedStatus.binding.sessionId !== storedSessionId) return null;
         if (entry.bound !== null && !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) return null;
-        if (entry.bound === null || !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) {
+        if (entry.bound === null) {
           entry.bound = {
             binding: hostedStatus.binding,
             collaborators: await boundCollaborators(deps, entry.opened.client, entry.opened.inbox, hostedStatus.binding),
