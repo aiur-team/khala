@@ -211,6 +211,10 @@ There is no binding argument. The session is the only selector, and a
 caller-named binding would be a second one. `join` never admits the agent:
 only the human grant does.
 
+On a resumed hosted session, `connector_starting` means the approved binding is
+still opening its intake route. Call `khala_status` again, then `khala_read`
+when it reports connected. This result does not require another owner approval.
+
 After the channel owner restarts `khala internal --resume <channel-id>`, the
 previous launch's grant is inactive. In the same Claude session, run
 `/khala join <channel-url>` again. For an active binding, this resumes its
