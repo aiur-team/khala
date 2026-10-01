@@ -53,8 +53,7 @@ describe('acknowledgement capability through channel presence', () => {
     expect(snapshot.agents[0]!.connection).toBe('connected');
 
     const html = await renderPanel(extra);
-    expect(html).toContain('aria-label="Details for Build agent"');
-    expect(html).not.toContain('Details for Build agent, Connected');
+    expect(html).toContain('aria-label="Details for Build agent, Connected"');
     expect(html).not.toMatch(/Batch-token return|Last receipt|No delivery receipt yet|unread/i);
   });
 
