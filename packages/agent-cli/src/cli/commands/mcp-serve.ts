@@ -304,7 +304,7 @@ async function boundCollaborators(
     deps.stderr.write(JSON.stringify({ ok: false, warning: 'batch_suppressed', ...suppression }) + '\n');
   };
   return {
-    send: new SendService(client),
+    send: new SendService(client, heldBinding.bindingId),
     read: new ReadOperation({ heldBinding, consumer, currentBinding }),
     // A routed session's mode control is its own descriptor's binding, as under `--internal-descriptor`.
     listeningMode: new ListeningModeOperation({ application: client.listeningModeControl ?? deps.listeningMode ?? null }),

@@ -82,6 +82,35 @@ describe('runCli', () => {
       'grant:native-thread-one', 'bound:native-thread-one:binding-1', 'durable', 'queue',
     ]);
   });
+  it('defaults native Codex MCP sends to the held binding while preserving explicit foreign bindings', async () => {
+    const calls = [undefined, BINDING.bindingId, 'foreign-binding'].map((bindingId, index) => ({
+      jsonrpc: '2.0', id: index + 1, method: 'tools/call', params: {
+        name: 'khala_send', arguments: { message: 'native reply', ...(bindingId === undefined ? {} : { bindingId }) },
+        _meta: { threadId: BINDING.sessionId },
+      },
+    }));
+    const io = streams(calls.map(call => JSON.stringify(call) + '\n').join(''));
+    // Match the native connector's binding fence: null and foreign IDs cannot send.
+    const send = vi.fn<AgentClientPort['send']>(async input => input.bindingId === BINDING.bindingId
+      ? { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }
+      : { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId });
+    expect(await runCli(['mcp-serve'], {
+      client: client(),
+      inbox: async () => fakeBatchInbox(async () => ({ async readBatch() { return null; }, async release() {} })),
+      sessionGrants: () => '/private/grant.json', internalClient: async () => client({ send }),
+      internalDelivery: async () => ({ pull: async () => 'caught_up',
+        acknowledge: async () => {}, issueBatch: async () => 'server-issued-token' }),
+      ...io,
+    })).toBe(0);
+    expect(mcpResponses(io.output()).map(response => response.result.structuredContent)).toMatchObject([
+      { kind: 'accepted', eventId: 'event-1' },
+      { kind: 'accepted', eventId: 'event-1' },
+      { kind: 'refused', code: 'not_connected' },
+    ]);
+    expect(send.mock.calls.map(([input]) => input.bindingId)).toEqual([
+      BINDING.bindingId, BINDING.bindingId, 'foreign-binding',
+    ]);
+  });
   it('keeps installed MCP tools usable when native wake setup fails', async () => {
     const call = mcpCall(1);
     (call.params as Record<string, unknown>)._meta = { threadId: 'native-thread-one' };
