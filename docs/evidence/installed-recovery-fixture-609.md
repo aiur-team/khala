@@ -103,9 +103,9 @@ Synapse checks. Synapse and Postgres retain the fixture's CPU, memory and PID li
 
 `tests/integration/recovery/installed-hosted-recovery.test.mjs` packages the stock CLI,
 installs its tarball offline, and runs four separate `mcp-serve` processes over
-one private state directory. A fixture browser command handles the owner form
-and loopback discovery callback; its pinned Claude version output is only a
-controlled local label and does not prove a provider session. The private-CA
+one private state directory in each native case. A fixture browser command handles
+the owner form and loopback discovery callback; fixture-only Claude and Codex
+version probes control local capability checks and do not prove provider sessions. The private-CA
 HTTPS bridge also forwards Matrix requests to disposable Synapse/Postgres.
 The production hosted route composition and file-backed control store perform
 proof-key approval, discovery consent, access request, owner approval, exchange,
@@ -120,7 +120,7 @@ no second grant or requested-device login. The receipt contains only typed
 counts. The generated proof key, owner session, grant, Matrix credentials,
 invite link and message data never enter the receipt.
 
-The continued fixture now creates an encrypted room, starts a real owner Matrix SDK
+Each native case creates an encrypted room, starts a real owner Matrix SDK
 device in a separate persistent browser profile and waits for its device key to
 appear in Synapse. The owner registers that exact device through the protected
 proof route. The first installed client is killed immediately after the proxy
@@ -139,14 +139,31 @@ to closing rather than a prior disconnect. The HTTPS Matrix proxy counts one
 encrypted agent send before closing and no additional send afterward; the
 installed tool returns `refused/not_connected` for that closed-room attempt.
 
+The Codex case sends `_meta.threadId` on each installed MCP call. Its live
+restarted process moves from the same `owner_device_empty` guard to native
+read/send after exact owner proof; the owner SDK decrypts its reply. A wrong
+binding read refuses `binding_not_held`, a wrong binding send refuses
+`not_connected`, and a foreign or missing thread label refuses read/send. None
+adds a Matrix send. A final fixture-only mutation marks the durable binding
+revoked through the production binding store; the previously connected
+installed process then refuses a send with no extra Matrix call. This proves
+the revoked binding fence, not the full owner revocation protocol.
+
+A separate Codex installed case moves one pending journal deadline into the
+past. The installed status call transitions the operation to `expired`; late
+owner approval returns `409 expired`. It records zero grants, bindings,
+requested-device Matrix logins and dropped redeem responses. The deadline
+mutation is fixture time travel; no host clock or production state changes.
+
 The fixture first failed with `repair_required` when Chromium lacked its private
 CA trust pin. After that, it failed with `owner_device_empty` because the owner
 SDK device and protected proof were absent. The final test observes that guard
 and a `not_connected` read on the live restarted process before owner proof
 registration; the same process later reports a connected session route and
-passes read/send. The installed fixture selects a Claude session from
-`KHALA_MCP_HARNESS=claude` and `CLAUDE_CODE_SESSION_ID`. It does not exercise
-Codex's `_meta.threadId` selector. A one-shot post-restart call had hidden
+passes read/send. The Claude case selects a session from
+`KHALA_MCP_HARNESS=claude` and `CLAUDE_CODE_SESSION_ID`; the Codex case selects
+the local label from `_meta.threadId`. Neither label authenticates a provider
+session. A one-shot post-restart call had hidden
 native readiness because it closed the MCP process before subscription settled.
 Each failure was observed before the corresponding fixture change and the bounded
 installed test passed afterward. A deliberate mutation making the connector's
@@ -159,8 +176,7 @@ session matched the first committed response. This mutation checks that the
 installed test depends on the real resume path; it does not simulate a second
 redeem after the response drop.
 
-Exact revoked and expired operation checks and the Codex route comparison remain
-for #609. An earlier clock-advanced native send refused with `not_connected`;
-that probe was removed because it did not prove an expired operation. The fixture uses no
+An earlier clock-advanced native send refused with `not_connected`; that probe
+was removed because it did not prove an expired operation. The fixture uses no
 production secrets and makes no production acceptance claim; real exact-session
 acceptance remains with #579 and #592.
