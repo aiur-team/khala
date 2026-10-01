@@ -45,8 +45,9 @@ describe('installed Codex MCP session inspection', () => {
 describe('installed Claude proof-key label inspection', () => {
   it.each(['2.1.284', '2.1.285'])('accepts the current exact session on %s as experimental', async version => {
     const inspect = claudeProofKeyLabelInspection({ session: { harness: 'claude', sessionId: 'claude-session' },
-      workdir: CLAIM.workdir, readVersion: async () => version });
+      workdir: CLAIM.workdir, readVersion: async () => version, generation: async () => 4 });
     expect(await inspect.inspect({ harness: 'claude', sessionId: 'claude-session', workdir: CLAIM.workdir }))
-      .toMatchObject({ kind: 'verified', capabilities: { version, support: 'experimental' } });
+      .toMatchObject({ kind: 'verified', session: { generation: 4 },
+        capabilities: { version, support: 'experimental' } });
   });
 });

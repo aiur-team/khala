@@ -40,7 +40,7 @@ import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowle
 import type { HarnessPort } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '@khala/policy/trust/index';
 import { createHostedListeningControl } from './agent/hosted-listening';
-import { manualListeningCapabilities } from './agent/manual-listening';
+import { manualListeningCapabilities, manualReadProof } from './agent/manual-listening';
 import { createAgentParticipantLookup } from './agent/participant-directory';
 import { renameDelivery } from './agent/rename-delivery';
 import { readOrderedPendingReferences } from '@khala/connector/storage/ordered-pending';
@@ -509,7 +509,16 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           return held !== null && sameSessionBinding(held, next)
             && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
         },
-        capabilities: async () => manualListeningCapabilities(input.session.harness as 'claude' | 'codex'),
+        capabilities: async () => {
+          const inspected = await sessionInspector.inspect(input.session).catch(() => null);
+          const currentSession = inspected?.kind === 'verified'
+            && inspected.session.harness === input.session.harness
+            && inspected.session.sessionId === input.session.sessionId
+            && inspected.session.generation === next.generation;
+          const version = currentSession ? inspected.capabilities.version : 'unknown';
+          const proof = currentSession ? await manualReadProof(acknowledgementRecorder, next) : null;
+          return manualListeningCapabilities(next, input.session.harness as 'claude' | 'codex', version, proof);
+        },
       });
       listening = { ...manualListening, application: {
         read: manualListening.application.read,

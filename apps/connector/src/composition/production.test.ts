@@ -246,7 +246,9 @@ describe('installed hosted connector composition', () => {
     }));
     const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team', chromiumExecutablePath,
       browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session, openMatrix,
-      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'verified' as const,
+        session: { harness, sessionId: session.sessionId, generation: 0 },
+        capabilities: { harness, version: '1.2.3', support: 'unsupported' } as never }) }),
       inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
       openBrowser: async () => undefined,
       openInbox: vi.fn(async (bindingId: string, generation: number, options?: Pick<OpenInboxOptions, 'recordAcknowledgement'>) => {
@@ -365,7 +367,18 @@ describe('installed hosted connector composition', () => {
         await vi.waitFor(() => expect(completions).toHaveLength(2), { timeout: 5_000 });
         expect(completions[1]).toMatchObject({ outcome: { outcome: 'refused', effective: null,
           reason: expect.stringContaining('native Sync delivery hook') } });
-        expect(await connector.listeningMode()).toMatchObject({ effective: null });
+        expect(await connector.listeningModeControl.read()).toMatchObject({ ok: true,
+          view: { effective: null, support: { async: { status: 'proven' },
+            sync: { status: 'unsupported' }, steer: { status: 'unsupported' } } } });
+        commands.push({ operationId: 'manual_async_0001', kind: 'listening_set', outcome: null,
+          authority: { ownerId: binding.ownerId, issuer: 'https://issuer.example', subject: 'owner',
+            authenticatedAt: '2026-09-30T00:00:00Z', authorizationId: 'authz_owner' },
+          body: { v: 1, commandId: 'manual_async_0001', bindingId: binding.bindingId,
+            expectedBindingGeneration: 0, expectedVersion: 1, requested: 'async',
+            issuedAt: '2026-09-30T00:00:00Z' } });
+        await vi.waitFor(() => expect(completions).toHaveLength(3), { timeout: 5_000 });
+        expect(completions[2]).toMatchObject({ outcome: { outcome: 'applied', effective: 'async' } });
+        expect(await connector.listeningMode()).toMatchObject({ effective: 'async' });
 
         ownerAuthorized = false;
         expect(await connector.status()).toMatchObject({ connected: false,

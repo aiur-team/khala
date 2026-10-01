@@ -11,6 +11,30 @@ import { ReadOperation } from './read.js';
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
 describe('installed hosted connector factory', () => {
+  it('passes exact Claude label and inspected version to the hosted connector', async () => {
+    const session = { harness: 'claude', sessionId: 'disposable-claude' };
+    const generationFor = vi.fn(async () => 9);
+    const factory = hostedSessionFactory({
+      openConnector: async input => {
+        const inspector = input.sessionInspection(generationFor);
+        expect(await inspector.inspect({ ...session, workdir: '/tmp/project' })).toMatchObject({
+          kind: 'verified', session: { ...session, generation: 9 },
+          capabilities: { harness: 'claude', version: '2.1.283' },
+        });
+        expect(await inspector.inspect({ ...session, sessionId: 'foreign', workdir: '/tmp/project' }))
+          .toEqual({ kind: 'missing' });
+        expect(generationFor).toHaveBeenCalledOnce();
+        throw new Error('inspected');
+      },
+      stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
+      browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
+      readVersion: async () => null, readClaudeVersion: async () => '2.1.283',
+      inspectHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined, openInbox: async () => { throw new Error('unused inbox'); },
+    });
+    await expect(factory(session)).rejects.toThrow('inspected');
+  });
+
   it('forwards redacted connector stages to the hosted diagnostic sink', async () => {
     const diagnostics: unknown[] = [];
     const factory = hostedSessionFactory({

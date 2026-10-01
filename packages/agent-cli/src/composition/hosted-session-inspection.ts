@@ -59,13 +59,17 @@ export function claudeProofKeyLabelInspection(input: Readonly<{
   session: HarnessSession;
   workdir: string;
   readVersion(): Promise<string | null>;
+  generation: NativeSessionGeneration;
 }>): SessionInspectionPort {
   return { async inspect(claim) {
     if (input.session.harness !== 'claude' || claim.harness !== 'claude'
       || claim.sessionId !== input.session.sessionId || claim.workdir !== input.workdir
       || !path.isAbsolute(claim.workdir) || path.normalize(claim.workdir) !== claim.workdir) return { kind: 'missing' };
-    const version = await input.readVersion().catch(() => null);
-    return { kind: 'verified', session: { harness: 'claude', sessionId: input.session.sessionId, generation: 0 },
+    const [version, generation] = await Promise.all([
+      input.readVersion().catch(() => null), input.generation(input.session).catch(() => null),
+    ]);
+    if (generation === null || !Number.isSafeInteger(generation) || generation < 0) return { kind: 'unavailable' };
+    return { kind: 'verified', session: { harness: 'claude', sessionId: input.session.sessionId, generation },
       capabilities: installedClaudeCapabilities(version, LOCAL_DELIVERY_LIMITS) };
   } };
 }
