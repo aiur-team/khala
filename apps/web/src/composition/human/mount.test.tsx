@@ -116,7 +116,7 @@ describe('HumanApplicationScreen', () => {
 
   it('shows retained-key guidance for signed-in loss without offering room access or replacement', async () => {
     const channelAccess = await channelAccessController();
-    for (const reason of ['storage_cleared', 'key_material_missing']) {
+    for (const reason of ['storage_cleared', 'key_material_missing', 'recovery_required']) {
       renderRoom.mockClear();
       const html = renderToStaticMarkup(
         <HumanApplicationScreen

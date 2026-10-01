@@ -119,7 +119,8 @@ export function HumanScreen<Route>({
     && snapshot.reason === 'lease_unavailable') {
     content = <InactiveDevice application={application} timedOut={snapshot.phase === 'unavailable'} />;
   } else if (snapshot.phase === 'unavailable' && snapshot.source === 'device'
-    && (snapshot.reason === 'storage_cleared' || snapshot.reason === 'key_material_missing')
+    && (snapshot.reason === 'storage_cleared' || snapshot.reason === 'key_material_missing'
+      || snapshot.reason === 'recovery_required')
     && renderDeviceLoss !== undefined) {
     content = renderDeviceLoss(snapshot.path);
   } else if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'

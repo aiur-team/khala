@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { device, owner } from './fakes';
-import { type IndexedDbLike, createIndexedDbMarkerStore, createIndexedDbStoreFactory, cryptoStoreName } from './storage';
+import { type IndexedDbLike, createIndexedDbMarkerStore, createIndexedDbStoreFactory, cryptoStoreName, hasOwnerCryptoStore } from './storage';
 
 const alice = owner('owner_alice');
 const bob = owner('owner_bob');
@@ -72,6 +72,7 @@ function scriptedIndexedDb(script: Script = {}) {
   }
 
   const factory: IndexedDbLike = {
+    databases: async () => [...databases.keys()].map(name => ({ name })),
     open(name) {
       log.push(`open:${name}`);
       const req = {
@@ -101,6 +102,14 @@ function scriptedIndexedDb(script: Script = {}) {
 }
 
 describe('createIndexedDbStoreFactory', () => {
+  it('detects another owner device store by name without opening it', async () => {
+    const idb = scriptedIndexedDb();
+    idb.databases.set(cryptoStoreName(alice, device('DEVICE_OLD')), new Map());
+    expect(await hasOwnerCryptoStore(alice, device('DEVICE_NEW'), idb.factory)).toBe(true);
+    expect(await hasOwnerCryptoStore(alice, device('DEVICE_OLD'), idb.factory)).toBe(false);
+    expect(await hasOwnerCryptoStore(bob, null, idb.factory)).toBe(false);
+    expect(idb.log).toEqual([]);
+  });
   it('refuses without IndexedDB instead of falling back to memory', async () => {
     await expect(createIndexedDbStoreFactory(null, null).open(alice, device('DEVICE_A'), signal)).rejects.toThrow('indexeddb unavailable');
     // Node has no global IndexedDB, so the default adapter refuses too.

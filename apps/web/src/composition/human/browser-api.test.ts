@@ -186,7 +186,8 @@ describe('createHumanBrowserApi', () => {
           publishedFingerprint: 'ed25519-key',
         },
       }));
-    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds });
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds,
+      existingDevice: async () => ({ markerDeviceId: 'KH_WEB_1', hasDivergentCryptoStore: false }) });
 
     expect(await api.credentials.resolve(principal, new AbortController().signal)).toEqual({
       kind: 'ok',
@@ -205,6 +206,47 @@ describe('createHumanBrowserApi', () => {
     expect(JSON.stringify(fetch.mock.calls)).not.toContain('password');
   });
 
+  it.each([
+    { stored: null, markerDeviceId: 'KH_WEB_OLD', hasDivergentCryptoStore: true },
+    { stored: 'KH_WEB_NEW', markerDeviceId: 'KH_WEB_OLD', hasDivergentCryptoStore: true },
+    { stored: null, markerDeviceId: null, hasDivergentCryptoStore: true },
+  ])('refuses to mint or request a session when device authority diverges: %j', async existing => {
+    const deviceIds = { get: vi.fn(() => existing.stored), put: vi.fn() };
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(200, { principal, csrfToken: 'csrf-proof' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds,
+      existingDevice: async () => existing });
+    expect(await api.credentials.resolve(principal, new AbortController().signal))
+      .toEqual({ kind: 'unavailable', reason: 'recovery_required' });
+    expect(deviceIds.put).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('mints a new device only when the profile has no owner marker or crypto store', async () => {
+    const deviceIds = { get: vi.fn(() => null), put: vi.fn() };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockImplementationOnce(async (_url, init) => json(200, { session: {
+        homeserverOrigin, userId: '@alice:matrix.example.test', accessToken: 'fresh-token',
+        deviceId: JSON.parse(String(init?.body)).deviceId, publishedFingerprint: null,
+      } }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds,
+      existingDevice: async () => ({ markerDeviceId: null, hasDivergentCryptoStore: false }) });
+    const result = await api.credentials.resolve(principal, new AbortController().signal);
+    expect(result.kind).toBe('ok');
+    expect(deviceIds.put).toHaveBeenCalledOnce();
+    expect(deviceIds.put.mock.calls[0]?.[1]).toMatch(/^KH_WEB_/);
+  });
+
+  it('fails closed when owner storage cannot be inspected', async () => {
+    const deviceIds = { get: vi.fn(() => null), put: vi.fn() };
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(200, { principal, csrfToken: 'csrf-proof' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, deviceIds,
+      existingDevice: async () => { throw new Error('database listing unavailable'); } });
+    expect(await api.credentials.resolve(principal, new AbortController().signal)).toEqual({ kind: 'unavailable' });
+    expect(deviceIds.put).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts a returned loopback Matrix session only in explicit local mode', async () => {
     const localOrigin = 'http://localhost:8888';
     const localMatrix = 'http://127.0.0.1:8008';
@@ -214,7 +256,8 @@ describe('createHumanBrowserApi', () => {
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
       .mockResolvedValueOnce(json(200, { session }));
     const api = createHumanBrowserApi({ origin: localOrigin, homeserverOrigin: localMatrix,
-      allowInsecureLoopback: true, limits, fetch, deviceIds: { get: () => 'KH_WEB_1', put: () => {} } });
+      allowInsecureLoopback: true, limits, fetch, deviceIds: { get: () => 'KH_WEB_1', put: () => {} },
+      existingDevice: async () => ({ markerDeviceId: null, hasDivergentCryptoStore: false }) });
     expect(await api.credentials.resolve(principal, new AbortController().signal)).toMatchObject({
       kind: 'ok', session: { credentials: { homeserverOrigin: localMatrix } },
     });

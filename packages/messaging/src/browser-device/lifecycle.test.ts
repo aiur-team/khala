@@ -18,6 +18,15 @@ function expectContractViews(views: DeviceView[]) {
 }
 
 describe('createBrowserDeviceService', () => {
+  it('surfaces an identity conflict as recovery required before opening a crypto store', async () => {
+    const { deps, log } = rig(createDisk());
+    const service = createBrowserDeviceService({ ...deps, credentials: {
+      resolve: async () => ({ kind: 'unavailable', reason: 'recovery_required' }),
+    } });
+    expect(await service.ensureReady(alice)).toMatchObject({ kind: 'unavailable' });
+    expect(service.current()).toMatchObject({ state: 'failed', reason: 'recovery_required' });
+    expect(log).not.toContain('open:owner_alice');
+  });
   it('initialises automatically on the signed-in path and publishes contract views', async () => {
     const disk = createDisk();
     const { deps } = rig(disk);

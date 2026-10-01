@@ -11,4 +11,4 @@ export {
 export {
   type LockAcquisition, type LockManagerLike, type OwnerLease, type OwnerLockProvider, createWebLockProvider, lockName,
 } from './ownership';
-export { createIndexedDbMarkerStore, createIndexedDbStoreFactory, cryptoStoreName } from './storage';
+export { createIndexedDbMarkerStore, createIndexedDbStoreFactory, cryptoStoreName, hasOwnerCryptoStore } from './storage';
