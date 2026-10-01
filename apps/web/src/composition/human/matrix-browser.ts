@@ -499,6 +499,9 @@ class MatrixSubstrate implements RoomSubstrate {
         if (await this.sendFence.ready(proof)) this.readyRooms.add(readyKey);
       }
       const acquired = await this.sendFence.acquire(proof, input.clientTxnId);
+      if (acquired?.kind === 'complete') {
+        return { kind: 'done', value: { eventId: acquired.eventId as EventId, authorDeviceId: deviceId as DeviceId } };
+      }
       if (acquired?.kind === 'held') {
         if (acquired.operationId !== 'rotation_required') {
           await crypto.forceDiscardSession(input.roomId);

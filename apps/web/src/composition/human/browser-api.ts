@@ -62,7 +62,8 @@ const ROOM_SEND_PATH = '/api/human/room-send';
 export type BrowserSendProof = Readonly<{ roomId: RoomId; deviceId: string; matrixAccessToken: string }>;
 export type BrowserSendFence = Readonly<{
   ready(proof: BrowserSendProof): Promise<boolean>;
-  acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }> | Readonly<{ kind: 'held'; operationId: string; epoch: number }> | null>;
+  acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }>
+    | Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'held'; operationId: string; epoch: number }> | null>;
   finish(proof: BrowserSendProof, permitId: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>): Promise<boolean>;
   rotation(proof: BrowserSendProof, operationId: string, epoch: number): Promise<boolean>;
   inspect(proof: BrowserSendProof): Promise<Readonly<{ operationId: string; epoch: number }> | null>;
@@ -566,6 +567,8 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       if (response.status === 200 && body?.kind === 'granted' && typeof body.permitId === 'string') {
         return { kind: 'granted', permitId: body.permitId };
       }
+      if (response.status === 200 && body?.kind === 'complete' && typeof body.eventId === 'string'
+        && body.eventId.startsWith('$')) return { kind: 'complete', eventId: body.eventId };
       if (response.status === 423 && body?.kind === 'held' && typeof body.operationId === 'string'
         && Number.isSafeInteger(body.epoch)) return { kind: 'held', operationId: body.operationId, epoch: body.epoch as number };
       return null;
