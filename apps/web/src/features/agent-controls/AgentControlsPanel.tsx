@@ -124,6 +124,7 @@ const MODE_HELP = {
   sync: 'Hold messages until the agent reaches a safe pause.',
   async: 'Let the agent collect messages when it chooses to read.',
 } as const;
+const MODE_LABEL = { steer: 'Steer', sync: 'Sync', async: 'Async' } as const;
 
 function compactUnavailableReason(option: ListeningModeOption): string {
   if (option.status === 'proven') return 'This session cannot confirm delivery for this mode.';
@@ -196,7 +197,7 @@ function ListeningSection({ listening, controller, compact = false }: { listenin
                 onChange={() => controller.selectListeningMode(option.mode)}
               />
               <label htmlFor={inputId}>
-                {compact ? `${option.mode[0].toUpperCase()}${option.mode.slice(1)}` : option.mode}
+                {compact ? MODE_LABEL[option.mode] : option.mode}
                 {option.mode === listening.requested ? ' (requested)' : ''}
               </label>{' '}
               {!compact ? <StatusBadge
