@@ -73,6 +73,18 @@ describe('Codex native CLI route selection', () => {
     expect(selected.inbox.deliveries).toHaveLength(1);
   });
 
+  it('admits the separately witnessed 0.159.3 native queue and refuses 0.159.2', async () => {
+    const selected = nativeHarness();
+    selected.cli.inspection = { ...selected.cli.inspection, version: '0.159.3' };
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({
+      support: 'tested', version: '0.159.3', existingSession: 'native_cli_queue',
+      evidenceRef: 'docs/evidence/codex-0159-3-native-sync.md',
+    });
+    const adjacent = nativeHarness();
+    adjacent.cli.inspection = { ...adjacent.cli.inspection, version: '0.159.2' };
+    await expect(adjacent.harness.inspect(binding())).resolves.toMatchObject({ support: 'unsupported' });
+  });
+
   it('does not turn 0.157.1 native evidence into hosted app-server support', async () => {
     const selected = nativeHarness();
     selected.hosts.host = new FakeHosts({ cliVersion: '0.157.1' }).host;

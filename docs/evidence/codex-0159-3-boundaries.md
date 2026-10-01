@@ -27,6 +27,69 @@ version's conformance proof, and a command that was only attempted cannot be
 promoted to `batch_token_next_call`. Hosted Codex 0.159.3 therefore remains
 typed unsupported for Steer, Sync, Async, and acknowledgement.
 
+## 2026-10-01 gate audit
+
+The installed 0.159.2 and 0.159.3 CLIs both expose `queue --thread --message`,
+the `hooks` feature, and an MCP configuration that `codex mcp list --json`
+parses. These API surfaces do not establish that a queued notice wakes the
+same normally trusted TUI, or that its later Khala read executes and advances
+the exact binding and generation. A 0.159.2 native read/ACK witness was
+retained on 2026-10-01, but its native queued wake has not been verified.
+The 0.159.3 probe above ended before an executed receipt. The 0.157.1 fixture pin
+is therefore an evidence boundary, not a demonstrated removal of the APIs in
+newer versions. The native crash gate continues to return
+`native_version_unproven` for both installed versions, before Docker effects.
+
+A later private, operator-supplied 0.159.2 snapshot was inspected on 2026-10-01.
+Its SQLite ledger passed `quick_check`; the copied current binding matched the
+ledger binding, releases, release items, and an `agent_acknowledged` receipt at
+the same generation. An additional private 0600 rollout confirms an actual
+0.159.2 Codex TUI session completed three native `khala_read` calls. The first
+two offered the same batch token; the third supplied that exact token as
+`ackBatchToken` and returned a new batch with a different token. Every
+attributed release in those responses names the copied binding and generation.
+The source read path checks the full held binding before and after reading,
+and its inbox advances an outstanding batch only after recording the
+acknowledgement. This establishes a same-native-session read and next-read
+ACK boundary for 0.159.2.
+
+The copied binding's harness session ID is distinct from the Codex TUI session
+ID, and the copied ledger receipt has not been independently joined to the
+rollout by release ID. The rollout has no executed queue-hook event; the
+snapshot provenance explicitly marks it `not_observed`. Thus the queued
+same-session Sync contract required by the crash gate remains unproven.
+The gate stays at `native_version_unproven`; no Docker or crash effects ran.
+No private identifiers, tokens, message bodies, or rollout content are retained here.
+
+## Fresh 0.159.3 queued Sync preflight
+
+A separate private, mode-0700 Codex home and workdir ran one actual 0.159.3
+`gpt-6-sol` TUI with normal folder and hook review. A two-core affinity and
+6 GiB address-space limit bounded the PTY. The managed app server could not
+create its control socket in this agent sandbox, so the TUI used Codex's
+`--no-daemon` option. A content-free `codex queue` command returned `queued`
+and the saved native rollout recorded a new turn in that same session. With a
+test-only binding and generation, the trusted production Sync hook put the
+synthetic released batch in model-visible context. The unsubmitted marker
+remained absent. This is positive evidence for queue wake and hook delivery
+in this disposable route.
+
+The model attempted exact-token `read --ack` calls, but the bounded Codex
+sandbox host failed before the launcher recorded a successful read. The inbox
+cursor did not advance. The initial TypeScript launcher also failed under the
+6 GiB address-space limit while loading its Wasm parser; a private bundled
+launcher allowed the hook delivery above, but did not repair the model call.
+The repository's process-pinning handoff could not inspect the PTY from a
+separate sandbox process view, so its native process check was not satisfied.
+After resuming the same saved session with the binding present, a requested
+native MCP read produced no completed MCP call in the rollout. Thus neither
+an executed ACK nor a validated process handoff exists for 0.159.3.
+
+The typed result remains `native_version_unproven`, with queued Sync observed
+only up to model-visible delivery and acknowledgement unproven. The private
+auth copies were removed on exit. No Docker project, gateway, crash runner,
+production session, or #701 fixture was touched by this preflight.
+
 ## Reproduce the native observation
 
 With an existing private `$TMPDIR`, the following recreates the isolated hook.

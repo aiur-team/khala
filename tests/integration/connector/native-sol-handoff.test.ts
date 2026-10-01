@@ -42,9 +42,9 @@ test('native handoff refuses a different session, binding or generation', async 
   const held = await fixture();
   try {
     assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, sessionId:
-      '11a0b66b-ce0c-7ee3-823e-14ecdb9f2856' }), refused);
-    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, preflightBindingId: 'foreign' }), refused);
-    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, preflightGeneration: 1 }), refused);
+      '11a0b66b-ce0c-7ee3-823e-14ecdb9f2856' }, '0.157.1'), refused);
+    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, preflightBindingId: 'foreign' }, '0.157.1'), refused);
+    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, preflightGeneration: 1 }, '0.157.1'), refused);
   } finally { await rm(held.root, { recursive: true, force: true }); }
 });
 
@@ -57,18 +57,23 @@ test('native transcript accepts a long Sol session but refuses a later model swi
   const unrelated = JSON.stringify({ type: 'event_msg', payload: { padding: 'x'.repeat(70 * 1024) } });
   const longRollout = `${meta}\n${unrelated}\n${sol}\n`;
   assert.ok(Buffer.byteLength(longRollout) > 64 * 1024);
-  assert.equal(nativeSolRolloutMatches(longRollout, sessionId, workdir), true);
+  assert.equal(nativeSolRolloutMatches(longRollout, sessionId, workdir, '0.157.1'), true);
+  assert.equal(nativeSolRolloutMatches(longRollout.replace('0.157.1', '0.159.3'), sessionId, workdir,
+    '0.159.3'), true);
+  assert.equal(nativeSolRolloutMatches(longRollout, sessionId, workdir, '0.159.3'), false);
+  assert.equal(nativeSolRolloutMatches(longRollout.replace('0.157.1', '0.159.2'), sessionId, workdir,
+    '0.159.2'), false);
   const switched = JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-astra', cwd: workdir } });
-  assert.equal(nativeSolRolloutMatches(`${longRollout}${switched}\n`, sessionId, workdir), false);
+  assert.equal(nativeSolRolloutMatches(`${longRollout}${switched}\n`, sessionId, workdir, '0.157.1'), false);
 });
 
 test('native handoff refuses changed process start time and non-Sol rollout', async () => {
   const held = await fixture();
   try {
-    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, nativeStartTime: '1' }), refused);
+    assert.deepEqual(await inspectNativeSolHandoff({ ...held.input, nativeStartTime: '1' }, '0.157.1'), refused);
     await writeFile(held.sessionFile, JSON.stringify({ type: 'turn_context',
       payload: { model: 'gpt-6-astra', cwd: held.input.workdir } }) + '\n', { mode: 0o600 });
-    assert.deepEqual(await inspectNativeSolHandoff(held.input), refused);
+    assert.deepEqual(await inspectNativeSolHandoff(held.input, '0.157.1'), refused);
   } finally { await rm(held.root, { recursive: true, force: true }); }
 });
 
@@ -76,6 +81,6 @@ test('native handoff refuses a live unrelated process despite matching metadata'
   const held = await fixture();
   try {
     assert.equal((await readlink(`/proc/${process.pid}/exe`)).endsWith('/codex'), false);
-    assert.deepEqual(await inspectNativeSolHandoff(held.input), refused);
+    assert.deepEqual(await inspectNativeSolHandoff(held.input, '0.157.1'), refused);
   } finally { await rm(held.root, { recursive: true, force: true }); }
 });

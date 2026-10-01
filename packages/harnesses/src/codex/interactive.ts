@@ -10,20 +10,25 @@ import { type CodexReceiptProof, NO_CODEX_RECEIPT_PROOF } from './receipt-confor
 export const CODEX_INTERACTIVE_ADAPTER_VERSION = 'native-hooks-1';
 export const CODEX_INTERACTIVE_EVIDENCE_REF = 'docs/product/internal-mode/interactive-codex.md#mode-matrix';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REF = 'docs/evidence/codex-0157-native-cli.md#sync-hook';
-export const CODEX_BOUNDARY_ONLY_EVIDENCE_REF = 'docs/evidence/codex-0159-3-boundaries.md';
+export const CODEX_INTERACTIVE_0159_EVIDENCE_REF = 'docs/evidence/codex-0159-3-native-sync.md';
 /** Changes whenever the proof is re-run, so consent derived from an older proof lapses. */
 export const CODEX_INTERACTIVE_EVIDENCE_REVISION = 'interactive-codex-2026-09-25';
 export const CODEX_INTERACTIVE_0157_EVIDENCE_REVISION = 'interactive-codex-0157-2026-09-27';
+export const CODEX_INTERACTIVE_0159_EVIDENCE_REVISION = 'interactive-codex-0159-2026-10-01';
 
 /** Exact versions whose TUI passed every mode cell under normal trust settings. */
 export const CODEX_INTERACTIVE_VERSIONS: readonly string[] = ['0.154.0', '0.156.1'];
 /** The newer Sol-capable CLI is promoted only for a separately observed sync hook. */
 export const CODEX_NATIVE_SYNC_VERSION = '0.157.1';
-export const CODEX_BOUNDARY_ONLY_VERSION = '0.159.3';
+export const CODEX_NATIVE_SYNC_VERSIONS: readonly string[] = [CODEX_NATIVE_SYNC_VERSION, '0.159.3'];
+
+const syncEvidenceRef = (version: string) => version === '0.159.3'
+  ? CODEX_INTERACTIVE_0159_EVIDENCE_REF : CODEX_INTERACTIVE_0157_EVIDENCE_REF;
 
 /** A new native version must receive a new consent revision, without invalidating old sessions. */
 export function codexInteractiveEvidenceRevision(version: string): string {
-  return version === '0.157.1' ? CODEX_INTERACTIVE_0157_EVIDENCE_REVISION : CODEX_INTERACTIVE_EVIDENCE_REVISION;
+  return version === '0.159.3' ? CODEX_INTERACTIVE_0159_EVIDENCE_REVISION
+    : version === '0.157.1' ? CODEX_INTERACTIVE_0157_EVIDENCE_REVISION : CODEX_INTERACTIVE_EVIDENCE_REVISION;
 }
 
 const IDLE = 'Idle agents receive messages only at their next turn.';
@@ -51,20 +56,14 @@ export function interactiveCodexCapabilities(
   runtime: Readonly<{ platform: string; arch: string }> = process,
 ): HarnessCapabilities {
   const fullModeProof = CODEX_INTERACTIVE_VERSIONS.includes(version);
-  const syncOnlyProof = version === CODEX_NATIVE_SYNC_VERSION;
+  const syncOnlyProof = CODEX_NATIVE_SYNC_VERSIONS.includes(version);
   const idle = (fullModeProof || syncOnlyProof) && idleWake === 'available' ? IDLE_WOKEN : IDLE;
   if (syncOnlyProof && (runtime.platform !== 'linux' || runtime.arch !== 'x64')) {
-    return closed(version, limits, 'Codex 0.157.1 native sync proof covers Linux x64 only.');
+    return closed(version, limits, `Codex ${version} native sync proof covers Linux x64 only.`);
   }
   if (!fullModeProof && !syncOnlyProof) {
-    if (version === CODEX_BOUNDARY_ONLY_VERSION) {
-      return closed(version, limits, 'Codex 0.159.3 exposed model-visible PreToolUse and Stop output in a '
-        + 'disposable saved session, but no executed later Khala call returned a batch token for the '
-        + 'exact binding and generation. Boundary output and an attempted call are not a receipt; '
-        + 'Steer, Sync, Async and acknowledgement remain unsupported.');
-    }
     return closed(version, limits, `Codex ${version} has no interactive hook proof; proven versions are `
-      + `${[...CODEX_INTERACTIVE_VERSIONS, CODEX_NATIVE_SYNC_VERSION].join(', ')}. ${IDLE}`);
+      + `${[...CODEX_INTERACTIVE_VERSIONS, ...CODEX_NATIVE_SYNC_VERSIONS].join(', ')}. ${IDLE}`);
   }
   if (review.state !== 'trusted') {
     const prefix = review.state === 'awaiting_hook_review' ? 'Awaiting hook review' : 'Hook trust unknown';
@@ -74,7 +73,7 @@ export function interactiveCodexCapabilities(
     status: 'proven',
     route,
     testedVersion: version,
-    evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRef: syncOnlyProof ? syncEvidenceRef(version) : CODEX_INTERACTIVE_EVIDENCE_REF,
     evidenceRevision: codexInteractiveEvidenceRevision(version),
     reason,
   });
@@ -94,13 +93,13 @@ export function interactiveCodexCapabilities(
     receiptEvidence: [],
     reconcileByReleaseId: 'unsupported',
     limits,
-    evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRef: syncOnlyProof ? syncEvidenceRef(version) : CODEX_INTERACTIVE_EVIDENCE_REF,
     modes: {
       steer: syncOnlyProof ? {
         status: 'unknown', route: 'codex-hooks-next-tool-boundary', testedVersion: version,
-        evidenceRef: CODEX_INTERACTIVE_0157_EVIDENCE_REF,
-        evidenceRevision: CODEX_INTERACTIVE_0157_EVIDENCE_REVISION,
-        reason: 'Codex 0.157.1 steer tool-boundary behavior has no native proof.',
+        evidenceRef: syncEvidenceRef(version),
+        evidenceRevision: codexInteractiveEvidenceRevision(version),
+        reason: `Codex ${version} steer tool-boundary behavior has no native proof.`,
       } : proven('codex-hooks-next-tool-boundary', 'steer means the next tool boundary: PreToolUse blocks the '
         + 'next tool, PostToolUse adds a batch that arrived during a tool, and Stop continues once. '
         + `Hard abort is disabled. ${idle}`),
@@ -112,9 +111,9 @@ export function interactiveCodexCapabilities(
           status: 'unknown',
           route: 'codex-khala-read',
           testedVersion: version,
-          evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+          evidenceRef: syncOnlyProof ? syncEvidenceRef(version) : CODEX_INTERACTIVE_EVIDENCE_REF,
           evidenceRevision: codexInteractiveEvidenceRevision(version),
-          reason: syncOnlyProof ? `Codex 0.157.1 async has no native proof. ${idle}`
+          reason: syncOnlyProof ? `Codex ${version} async has no native proof. ${idle}`
             : `Awaiting a receipt proof: async is not offered until the batch token is proven to come back. ${idle}`,
         },
     },
@@ -137,8 +136,8 @@ function closed(version: string, limits: DeliveryLimits, reason: string): Harnes
     receiptEvidence: [],
     reconcileByReleaseId: 'unknown',
     limits,
-    evidenceRef: version === CODEX_NATIVE_SYNC_VERSION ? CODEX_INTERACTIVE_0157_EVIDENCE_REF
-      : version === CODEX_BOUNDARY_ONLY_VERSION ? CODEX_BOUNDARY_ONLY_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRef: CODEX_NATIVE_SYNC_VERSIONS.includes(version) ? syncEvidenceRef(version)
+      : CODEX_INTERACTIVE_EVIDENCE_REF,
     modes: unknownModeSupportMap('codex-interactive-hooks', reason, version),
     acknowledgement: 'unknown',
   };
