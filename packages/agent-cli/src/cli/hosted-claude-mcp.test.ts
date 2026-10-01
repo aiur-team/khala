@@ -287,7 +287,7 @@ describe('hosted native Claude MCP', () => {
     }
   }, 15_000);
 
-  it('keeps an uninspectable installed version unsupported without dropping the session label', async () => {
+  it('keeps PATH-only Claude versions unsupported without dropping the session label', async () => {
     const claim = { harness: 'claude', sessionId: SESSION, workdir: process.cwd() };
     const inspected = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
       readVersion: async () => null }).inspect(claim);
@@ -296,7 +296,7 @@ describe('hosted native Claude MCP', () => {
     const current = await claudeProofKeyLabelInspection({ session: claim, workdir: claim.workdir,
       readVersion: async () => '2.1.286' }).inspect(claim);
     expect(current).toMatchObject({ kind: 'verified', session: { sessionId: SESSION },
-      capabilities: { version: '2.1.286', support: 'experimental' } });
+      capabilities: { version: 'unknown', support: 'unsupported', acknowledgement: 'unknown' } });
   });
 
   it('keeps the public refusal generic while reporting a fixed local readiness code', async () => {
