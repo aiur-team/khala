@@ -501,6 +501,24 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       openStage = 'review_resume';
       await review.resumeReleases(next.bindingId);
       reportSubscription({ stage: 'intake_review_initialized', result: 'ok' });
+      if (input.session.harness === 'claude') {
+        listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+          current: async () => {
+            if (closed || remoteDenied || deliveryStopped) return false;
+            const held = await readBinding().catch(() => null);
+            return held !== null && sameSessionBinding(held, next)
+              && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
+          },
+          capabilities: async () => {
+            const inspected = await sessionInspector.inspect(input.session).catch(() => null);
+            return inspected?.kind === 'verified' && inspected.session.harness === 'claude'
+              && inspected.session.sessionId === input.session.sessionId
+              && inspected.session.generation === next.generation ? inspected.capabilities : null;
+          },
+        });
+        await listening.application.read();
+        reportSubscription({ stage: 'intake_listening_initialized', result: 'ok' });
+      }
     } else if (harness) {
       const activeHarness = harness;
       listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,

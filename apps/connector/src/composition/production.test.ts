@@ -131,10 +131,10 @@ describe('installed hosted connector composition', () => {
   });
 
   it.each([
-    ['claude', false, false, false], ['codex', false, false, false],
-    ['claude', true, false, false], ['claude', false, true, false],
-    ['claude', false, false, true],
-  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (early outage: %s, final outage: %s, peer: %s)', async (harness, transientOutage, finalRecheckOutage, peer) => {
+    ['claude', false, false, false, false], ['codex', false, false, false, false],
+    ['claude', true, false, false, false], ['claude', false, true, false, false],
+    ['claude', false, false, true, false], ['claude', false, false, false, true],
+  ] as const)('releases owner-approved messages to the exact %s manual MCP inbox (early outage: %s, final outage: %s, peer: %s, owner pin delayed: %s)', async (harness, transientOutage, finalRecheckOutage, peer, ownerPinDelayed) => {
     const directory = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-admission-'));
     const session = { harness, sessionId: `${harness}-session-1`, workdir: '/project' };
     const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
@@ -184,7 +184,7 @@ describe('installed hosted connector composition', () => {
     let releaseAcquire: (() => void) | null = null;
     let outageOnAcquire = false;
     let authorizationOutagePending = false;
-    let ownerTrusted = true;
+    let ownerTrusted = !ownerPinDelayed;
     let approvalRevoked = false;
     const commands: unknown[] = [];
     const completions: unknown[] = [];
@@ -276,9 +276,24 @@ describe('installed hosted connector composition', () => {
           capability: { token: 'C'.repeat(43), bindingId: binding.bindingId, generation: 0,
             scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000 },
         })).toEqual({ kind: 'ready' });
+        if (ownerPinDelayed) {
+          await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: false,
+            readiness: { phase: 'degraded', errorCode: 'subscription_offline', prerequisites: {
+              subscription: 'offline', controls: 'blocked',
+            } } }));
+          ownerTrusted = true;
+        }
         await vi.waitFor(async () => expect(await connector.status()).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { phase: 'ready', prerequisites: {
-            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'ready' } } }));
+            subscription: 'ready', controls: 'ready', dispatch: 'blocked', review: 'ready' } } }),
+        { timeout: ownerPinDelayed ? 5_000 : 1_000 });
+        if (harness === 'claude') {
+          const mode = await connector.listeningModeControl.read();
+          expect(mode).toMatchObject({ ok: true, view: { effective: null } });
+          if (mode.ok) expect(await connector.listeningModeControl.set({ commandId: 'mode-without-harness-proof',
+            expectedVersion: mode.view.version, requested: 'sync', issuedAt: '2026-09-30T00:00:00Z' }))
+            .toMatchObject({ outcome: 'applied', effective: null });
+        }
         expect(attestationPaths).toEqual(['/api/agent/device-attestation/challenge', '/api/agent/device-attestation/register']);
         expect(publicStatus(await connector.status())).toMatchObject({ connected: true,
           route: 'manual_mcp', binding, readiness: { prerequisites: { review: 'ready', dispatch: 'blocked' } } });
@@ -357,11 +372,17 @@ describe('installed hosted connector composition', () => {
         ownerTrusted = false;
         expect(await connector.status()).toMatchObject({ connected: false,
           readiness: { errorCode: 'binding_revoked' } });
+        if (harness === 'claude') {
+          expect(await connector.listeningModeControl.read()).toMatchObject({ ok: false, code: 'unavailable' });
+        }
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'untrusted-send', body: 'blocked' })).kind).toBe('refused');
         await rm(path.join(sessionDirectory, 'current-binding.json'));
         expect(await connector.status()).toMatchObject({ connected: false,
           readiness: { errorCode: 'binding_revoked' } });
+        if (harness === 'claude') {
+          expect(await connector.listeningModeControl.read()).toMatchObject({ ok: false, code: 'unavailable' });
+        }
         expect((await connector.send({ bindingId: binding.bindingId,
           clientTxnId: 'lost-binding-send', body: 'blocked' })).kind).toBe('refused');
         await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
