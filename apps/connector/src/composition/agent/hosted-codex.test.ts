@@ -60,10 +60,10 @@ describe('hosted Codex harness authority', () => {
       expect(events).toContain('route_tested');
     } finally { await harness.close(); }
   });
-  it('withholds an unsupported native version and a changed generation', async () => {
+  it.each(['0.159.2', '0.160.0'])('withholds unsupported native version %s and a changed generation', async version => {
     const approved = { ...binding, harness: 'proof-key', sessionId: 'agent_approved_key' };
     const events: string[] = [];
-    const unsupported = nativeCliCapabilities('0.159.2', limits.value);
+    const unsupported = nativeCliCapabilities(version, limits.value);
     const harness = createHostedCodexHarness({ binding: approved,
       claim: { harness: 'codex', sessionId: binding.sessionId, workdir: '/project' },
       sessionInspection: { inspect: async () => ({ kind: 'verified' as const,

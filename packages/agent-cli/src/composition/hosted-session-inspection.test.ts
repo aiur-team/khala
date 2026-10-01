@@ -24,6 +24,9 @@ describe('installed Codex MCP session inspection', () => {
       .toMatchObject({ kind: 'verified', capabilities: { version: '0.157.1', existingSession: 'native_cli_queue' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.157.0' }).inspect(CLAIM))
       .toMatchObject({ kind: 'verified', capabilities: { support: 'unsupported' } });
+    expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.160.0' }).inspect(CLAIM))
+      .toMatchObject({ kind: 'verified', capabilities: { version: '0.160.0', support: 'unsupported',
+        existingSession: 'unknown', acknowledgement: 'unknown' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => '0.155.0' }).inspect(CLAIM))
       .toMatchObject({ kind: 'verified', capabilities: { support: 'unsupported' } });
     expect(await codexMcpSessionInspection({ ...input, readVersion: async () => null }).inspect(CLAIM))

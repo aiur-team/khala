@@ -149,6 +149,10 @@ describe('interactive Codex capabilities', () => {
     expect(interactiveCodexCapabilities('0.159.3', limits, { state: 'trusted' },
       undefined, 'available', { platform: 'linux', arch: 'arm64' }).support).toBe('unsupported');
     expect(interactiveCodexCapabilities('0.159.2', limits, { state: 'trusted' }).support).toBe('unsupported');
+    expect(interactiveCodexCapabilities('0.160.0', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.160.0' }, 'available')).toMatchObject({
+      support: 'unsupported', acknowledgement: 'unknown', existingSession: 'unknown',
+    });
   });
 
   it('claims the native queue notification only while the idle wake works', () => {
