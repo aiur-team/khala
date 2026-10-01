@@ -24,6 +24,14 @@ function render(viewerOwnerId?: OwnerId, item: ChannelAgentView = agent, renderO
 }
 
 describe('AgentPresencePanel', () => {
+  it('gives same-named agents distinct keyboard-selectable identities', () => {
+    const agents = [agent, { ...agent, participantId: 'agent_other' as ParticipantId }];
+    const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents })} />);
+    expect(html).toContain('Details for Scout (agent 1)');
+    expect(html).toContain('Details for Scout (agent 2)');
+    expect(html.match(/<summary /g)).toHaveLength(2);
+  });
+
   it('shows a readable identity without technical connection diagnostics', () => {
     const html = render(otherId);
     expect(html).toContain('Details for Scout');

@@ -262,10 +262,13 @@ export function TimelineScreen({
   }
 
   const names = projectTimelineNames(data.nameHistory ?? data.items, viewer, extraParticipants);
+  // While encrypted history is still being scanned, the persisted participant
+  // name is a better provisional label than implying that the key is missing.
+  const namesUnavailable = data.namesReady === false && data.nameScan !== 'checking';
   const attributed = new Map(names.events.map(event => [event.eventId, event]));
   const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => ({
     ...item.participant,
-    displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+    displayName: namesUnavailable && item.participant.kind === 'agent' ? 'Agent name unavailable'
       : attributed.get(item.ref.eventId)?.kind === 'message'
       ? (attributed.get(item.ref.eventId) as Extract<typeof names.events[number], { kind: 'message' }>).authorName
       : item.participant.displayName,
@@ -350,7 +353,7 @@ export function TimelineScreen({
                 </li>
               ))}
               <ChatMessage id={item.ref.eventId} author={resolveDisplayName({ ...item.participant,
-                displayName: data.namesReady === false && item.participant.kind === 'agent' ? 'Agent name unavailable'
+                displayName: namesUnavailable && item.participant.kind === 'agent' ? 'Agent name unavailable'
                   : nameEvent?.kind === 'message' ? nameEvent.authorName : item.participant.displayName })} time={item.receivedAt}
                 mine={attribution.isViewerOwned} grouped={previous?.kind === 'message' && previous.item.participant.participantId === item.participant.participantId}
                 kindLabel={ownershipLabel(attribution)} className="timeline__row">
@@ -418,14 +421,14 @@ export function TimelineScreen({
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
         participants={<>
           {[viewer, ...extraParticipants].slice(0, 5).map(participant => {
-            const name = data.namesReady === false && participant.kind === 'agent' ? 'Agent name unavailable'
+            const name = namesUnavailable && participant.kind === 'agent' ? 'Agent name unavailable'
               : names.currentNames.get(participant.participantId) ?? ('displayName' in participant ? participant.displayName : participant.initialName);
             return <span className="conversation-participant" key={participant.participantId} title={`${name} · ${participant.kind}`}>
               <span className="conversation-participant__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
               <span className="conversation-participant__name">{name}</span>
             </span>;
           })}
-          {extraParticipants.length > 4 ? <details className="conversation-participant-overflow"><summary>+{extraParticipants.length - 4} more</summary><ul>{extraParticipants.slice(4).map(participant => <li key={participant.participantId}>{data.namesReady === false && participant.kind === 'agent' ? 'Agent name unavailable' : names.currentNames.get(participant.participantId) ?? participant.initialName}</li>)}</ul></details> : null}
+          {extraParticipants.length > 4 ? <details className="conversation-participant-overflow"><summary>+{extraParticipants.length - 4} more</summary><ul>{extraParticipants.slice(4).map(participant => <li key={participant.participantId}>{namesUnavailable && participant.kind === 'agent' ? 'Agent name unavailable' : names.currentNames.get(participant.participantId) ?? participant.initialName}</li>)}</ul></details> : null}
         </>}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />

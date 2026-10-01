@@ -294,7 +294,7 @@ describe('internal protocol acceptance', () => {
     const w = await world();
     const launcher = await launch(w);
     const human = await humanSession(launcher.report);
-    const channelUrl = await grantBoth(w, human);
+    await grantBoth(w, human);
 
     // A reads and acknowledges H1; H2 is still pending when the launcher closes.
     const h1 = await humanSays(human, 'H1 read and acknowledged', 'txn-human-0201');
@@ -304,10 +304,10 @@ describe('internal protocol acceptance', () => {
 
     const resumed = await launch(w, launcher.report.channelId);
     w.a.relaunched(w.launcherProfile);
-    expect(await w.a.join(channelUrl)).toBe('connected');
 
-    // The first read after the resume holds only H2; H1 is never offered again.
+    // The first read restores the binding and holds only H2; H1 is never offered again.
     expect(await receive(w.a, [h2])).toHaveLength(1);
+    expect((await w.a.status()).connected).toBe(true);
     expect(await w.a.read()).toEqual({ kind: 'empty' });
     expect(w.a.deliveries().get(acknowledged[0]!.releaseId)).toBe(1);
 
@@ -320,7 +320,7 @@ describe('internal protocol acceptance', () => {
     const w = await world();
     const launcher = await launch(w);
     const human = await humanSession(launcher.report);
-    const channelUrl = await grantBoth(w, human);
+    await grantBoth(w, human);
     const bindings = [(await w.a.status()).binding, (await w.b.status()).binding];
     const capabilities = [grantedCapability(w.a), grantedCapability(w.b)];
 
@@ -336,20 +336,16 @@ describe('internal protocol acceptance', () => {
     const again = await humanSession(resumed.report);
     for (const agent of [w.a, w.b]) {
       agent.relaunched(w.launcherProfile);
-      // Launch-scoped authority ended with the launcher: nothing is held until the agent joins again.
-      expect((await agent.status()).connected).toBe(false);
-      expect((await agent.read()).kind).toBe('refused');
     }
-    for (const capability of capabilities) expect((await releasesFor(again, capability)).status).toBe(401);
-
-    // Joining again resumes the same binding with fresh authority; no owner prompt is filed.
+    // Ordinary resumed status restores the same binding with fresh authority.
     for (const [index, agent] of [w.a, w.b].entries()) {
-      expect(await agent.join(channelUrl)).toBe('connected');
       const status = await agent.status();
       expect(status.connected).toBe(true);
       expect(status.binding).toEqual(bindings[index]);
       expect(grantedCapability(agent)).not.toBe(capabilities[index]);
     }
+    // The previous launch's capability cannot read, even after the binding is restored.
+    for (const capability of capabilities) expect((await releasesFor(again, capability)).status).toBe(401);
     const inbox = await again.call('/api/human/channel-requests');
     expect((inbox.json as { requests: { outcome: string }[] }).requests.filter(request => request.outcome === 'pending_owner')).toEqual([]);
 
