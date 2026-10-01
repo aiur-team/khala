@@ -49,6 +49,14 @@ describe('interactive Claude capabilities', () => {
     expect(capabilities.modes.sync.reason).toContain('only at their next turn');
   });
 
+  it.each(['2.1.286', '2.1.287'])('fails closed for current version %s without native receipt proof', version => {
+    const capabilities = interactiveClaudeCapabilities(version, CLAUDE_INTERACTIVE_ROUTE, limits);
+    expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
+    expect(capabilities).toMatchObject({ support: 'unsupported', acknowledgement: 'unknown', existingSession: 'unknown' });
+    expect(statuses(capabilities)).toEqual(['unknown', 'unknown', 'unknown']);
+    expect(capabilities.modes.steer.reason).toContain('session-bound delivery receipt');
+  });
+
   it('claims nothing for another route', () => {
     const capabilities = interactiveClaudeCapabilities('2.1.283', 'claude-hosted-stream', limits, proven);
     expect(decodeHarnessCapabilities(capabilities).ok).toBe(true);
@@ -81,12 +89,42 @@ describe('interactive Claude capabilities', () => {
     expect(statuses(noReceipt)).toEqual(['experimental', 'experimental', 'experimental']);
   });
 
-  it('keeps an uninspected or uncarriable installed version unproven', () => {
-    expect(installedClaudeCapabilities('2.1.283', limits)).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call' });
+  it('requires live provider-process version evidence instead of a PATH version or local session label', () => {
+    const scope = { sessionId: 'live-session', bindingId: 'live-binding', generation: 2 };
+    const processEvidence = (version: string) => ({
+      source: 'provider_process' as const, version, ...scope, processId: 8133,
+    });
     for (const version of [null, 'not a version']) {
       const capabilities = installedClaudeCapabilities(version, limits);
       expect(capabilities).toMatchObject({ support: 'unsupported', acknowledgement: 'unknown', version: 'unknown' });
       expect(statuses(capabilities)).toEqual(['unknown', 'unknown', 'unknown']);
     }
+    expect(installedClaudeCapabilities('2.1.283', limits)).toMatchObject({ support: 'experimental' });
+    for (const version of ['2.1.286', '2.1.287']) {
+      expect(installedClaudeCapabilities(version, limits)).toMatchObject({ support: 'unsupported', version: 'unknown' });
+    }
+    expect(installedClaudeCapabilities('2.1.287', limits, processEvidence('2.1.286'), scope))
+      .toMatchObject({ version: '2.1.286', support: 'unsupported' });
+    expect(installedClaudeCapabilities('2.1.286', limits, processEvidence('2.1.287'), scope))
+      .toMatchObject({ version: '2.1.287', support: 'unsupported' });
+    expect(installedClaudeCapabilities('2.1.287', limits, processEvidence('2.1.283'), scope))
+      .toMatchObject({ version: '2.1.283', support: 'tested' });
+    const firstScope = { ...scope, generation: 0 };
+    expect(installedClaudeCapabilities('2.1.287', limits, {
+      ...processEvidence('2.1.283'), generation: 0,
+    }, firstScope)).toMatchObject({ version: '2.1.283', support: 'tested' });
+    expect(installedClaudeCapabilities('2.1.287', limits, {
+      ...processEvidence('2.1.283'), generation: 1,
+    }, firstScope)).toMatchObject({ version: 'unknown', support: 'unsupported' });
+    for (const wrongScope of [
+      { ...scope, sessionId: 'other-session' },
+      { ...scope, bindingId: 'other-binding' },
+      { ...scope, generation: 3 },
+    ]) {
+      expect(installedClaudeCapabilities('2.1.287', limits, processEvidence('2.1.283'), wrongScope))
+        .toMatchObject({ version: 'unknown', support: 'unsupported' });
+    }
+    expect(installedClaudeCapabilities('2.1.287', limits, processEvidence('2.1.283')))
+      .toMatchObject({ version: 'unknown', support: 'unsupported' });
   });
 });
