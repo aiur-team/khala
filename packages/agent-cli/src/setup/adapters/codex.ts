@@ -21,8 +21,8 @@ import type {
   SetupEnvironment, SetupOperation, SetupPlanRequest, Sha256Digest,
 } from '../types.js';
 
-/** Certified versions used when a fresh home prevents the native probe; never a hosted-request admission gate. */
-export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1', '0.159.2']);
+/** Certified absent-home fallback for native MCP listing and enabled hooks; never a hosted-request admission gate. */
+export const CODEX_SUPPORTED_VERSIONS: readonly string[] = Object.freeze(['0.154.0', '0.157.1', '0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3']);
 export const CODEX_MCP_ENTRY = 'mcp_servers.khala';
 export const CODEX_HOOKS_ENTRY = 'hooks.khala';
 

@@ -155,8 +155,8 @@ describe('Codex detection', () => {
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.1', supported: true });
     version = 'codex-cli 0.158.0\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.158.0', supported: true });
-    version = 'codex-cli 0.159.2\n';
-    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.159.2', supported: true });
+    version = 'codex-cli 0.159.3\n';
+    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.159.3', supported: true });
     version = 'codex-cli 0.157.0\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.0', supported: true });
     version = 'codex-cli 0.156.1\n';
@@ -193,12 +193,12 @@ describe('Codex detection', () => {
   });
 
   it('plans all native components for a known version before Codex creates its home', async () => {
-    version = 'codex-cli 0.159.2\n';
+    version = 'codex-cli 0.159.3\n';
     mcpProbeFails = true;
     hooksProbeFails = true;
     const { adapter, observation } = await observe();
     expect(await exists(paths().codexHome)).toBe(false);
-    expect(observation.detection).toEqual({ executable: CODEX, version: '0.159.2', supported: true });
+    expect(observation.detection).toEqual({ executable: CODEX, version: '0.159.3', supported: true });
     expect(states(observation)).toEqual({ skill: 'absent', hooks: 'absent', mcp_entry: 'absent' });
     expect(adapter.plan({ desired: 'present', observation }).map(item => item.component))
       .toEqual(['skill', 'hooks', 'mcp_entry']);
@@ -209,6 +209,10 @@ describe('Codex detection', () => {
     await fsp.rmdir(paths().codexHome);
     version = 'codex-cli 0.999.0\n';
     expect((await observe()).observation.detection.supported).toBe(false);
+    version = 'codex-cli 0.159.4\n';
+    expect((await observe()).observation.detection.supported).toBe(false);
+    version = 'codex-cli 0.159.2\n';
+    expect((await observe()).observation.detection.supported).toBe(true);
     mcpProbeFails = false;
     mcpListing = '{"not":"an array"}';
     version = 'codex-cli 0.159.2\n';
@@ -357,7 +361,7 @@ describe('Codex setup on 0.154.0', () => {
   });
 });
 
-describe.each(['0.158.0', '0.159.0', '0.159.1', '0.159.2'])('Codex setup on %s', testedVersion => {
+describe.each(['0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3'])('Codex setup on %s', testedVersion => {
   it('installs only the native skill, hooks and MCP entry, then restores the private home', async () => {
     version = `codex-cli ${testedVersion}\n`;
     const before = await everythingButExecutorState();
@@ -479,7 +483,7 @@ describe.skipIf(nativeCodex === undefined)('installed Codex setup contract', () 
       env: vendorEnvironment, cwd: roots.home, timeout: 15_000, maxBuffer: 1024 * 1024,
     });
     version = (await invoke(['--version'])).stdout;
-    expect(['0.159.0', '0.159.1', '0.159.2']).toContain(parseCodexVersion(version));
+    expect(['0.159.0', '0.159.1', '0.159.2', '0.159.3']).toContain(parseCodexVersion(version));
     await fsp.mkdir(paths().codexHome, { recursive: true });
     expect(JSON.parse((await invoke(['mcp', 'list', '--json'])).stdout)).toEqual([]);
     expect((await invoke(['features', 'list'])).stdout).toMatch(/^hooks\s+\S+\s+true\s*$/m);
