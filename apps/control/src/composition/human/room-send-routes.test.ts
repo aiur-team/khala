@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AuthPrincipal, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../../auth/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
+import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createGateway } from '../../runtime/handler';
 import { createRoomSendFence, senderIdFor } from './room-send-fence';
@@ -27,8 +28,11 @@ function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boo
     return { kind: 'unavailable' as const };
   } } : underlying;
   const fence = createRoomSendFence(store);
+  const admission = options.storeUnavailable || options.storeThrows
+    ? Promise.resolve() : createOwnerRoomIndex(store).activate(binding, roomId);
   const diagnostics: Array<{ stage: string; code: string }> = [];
   let owner = principal.ownerId;
+  let ownerJoined = true;
   let agentGeneration = binding.generation;
   let agentKey = agent.deviceKey;
   const routes = createRoomSendRoutes({ store,
@@ -42,7 +46,7 @@ function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boo
     } } as AdapterCapabilities,
     inspectOwnerMembership: async ownerId => { if (options.membershipThrows) throw new Error('secret room error');
       return { kind: options.membershipUnavailable ? 'unavailable'
-        : ownerId === principal.ownerId ? 'joined' : 'absent' }; },
+        : ownerJoined && ownerId === principal.ownerId ? 'joined' : 'absent' }; },
     verifyBrowserSender: async (identity, deviceId, token) => { if (options.senderThrows) throw new Error('secret token error');
       return identity.ownerId === principal.ownerId
       && deviceId === human.deviceId && token === 'valid-browser-token-123456789'
@@ -51,18 +55,71 @@ function setup(options: { authUnavailable?: boolean; membershipUnavailable?: boo
     diagnostic: entry => diagnostics.push(entry),
   });
   async function call(kind: 'human' | 'agent', action: string, extra: Record<string, unknown> = {}) {
+    if (kind === 'agent') await admission;
     const route = routes.find(item => item.path === `/api/${kind}/room-send/${action}`)!;
     const base = kind === 'human' ? { roomId, deviceId: human.deviceId,
       matrixAccessToken: 'valid-browser-token-123456789' } : {};
     return route.handle(new Request(`${origin}${route.path}`, { method: 'POST',
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...base, ...extra }) }));
   }
-  return { fence, call, routes, diagnostics, setOwner: (value: string) => { owner = value as typeof owner; },
+  return { fence, call, routes, diagnostics, admission,
+    markClosing: () => createOwnerRoomIndex(store).markClosing(binding.ownerId, roomId, 'stop_operation', 0),
+    setOwnerJoined: (value: boolean) => { ownerJoined = value; },
+    setOwner: (value: string) => { owner = value as typeof owner; },
     setAgentGeneration: (value: number) => { agentGeneration = value; },
     setAgentKey: (value: string) => { agentKey = value; } };
 }
 
 describe('authenticated room send fence routes', () => {
+  it('denies new agent permits after owner Stop while allowing completion of an existing permit', async () => {
+    const h = setup();
+    expect((await h.call('agent', 'ready')).status).toBe(200);
+    const before = await h.call('agent', 'acquire', { clientTxnId: 'txn_before_stop' });
+    expect(before.status).toBe(200);
+    const permit = await before.json() as { permitId: string; attempt: number };
+    expect((await h.markClosing()).kind).toBe('ok');
+    const gateway = createGateway({ registrations: createLazyRoomSendRoutes(() => h.routes),
+      absentPrefixes: [], appOrigin: origin });
+    const after = await gateway(new Request(`${origin}/.netlify/functions/khala-control/agent/room-send/acquire`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ clientTxnId: 'txn_after_stop' }),
+    }));
+    expect(after.status).toBe(403);
+    expect(await after.json()).toEqual({ code: 'channel_closing' });
+    expect((await h.call('agent', 'finish', { permitId: permit.permitId, attempt: permit.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
+  });
+
+  it('denies agent permits after the owner departs', async () => {
+    const h = setup();
+    expect((await h.call('agent', 'ready')).status).toBe(200);
+    h.setOwnerJoined(false);
+    const response = await h.call('agent', 'acquire', { clientTxnId: 'txn_departed' });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ code: 'owner_membership_required' });
+  });
+
+  it('fences a delayed finish from a cancelled agent attempt after the same transaction reacquires', async () => {
+    const h = setup();
+    expect((await h.call('agent', 'ready')).status).toBe(200);
+    const first = await (await h.call('agent', 'acquire', { clientTxnId: 'txn_reopened' })).json() as {
+      permitId: string; attempt: number;
+    };
+    expect((await h.call('agent', 'finish', { permitId: first.permitId, attempt: first.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
+    const second = await (await h.call('agent', 'acquire', { clientTxnId: 'txn_reopened' })).json() as {
+      permitId: string; attempt: number;
+    };
+    expect(second).toMatchObject({ permitId: first.permitId, attempt: first.attempt + 1 });
+    expect((await h.call('agent', 'finish', { permitId: first.permitId, attempt: first.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(503);
+    expect(await h.fence.seedRoster(roomId, [agent])).toBe('applied');
+    expect(await h.fence.beginHold(roomId, 'operation_overlap', 'C'.repeat(43))).toBe('held');
+    expect(await h.fence.drained(roomId, 'operation_overlap')).toBe('pending');
+    expect((await h.call('agent', 'finish', { permitId: second.permitId, attempt: second.attempt,
+      outcome: 'cancelled', eventId: null })).status).toBe(200);
+    expect(await h.fence.drained(roomId, 'operation_overlap')).toBe('drained');
+  });
   it.each([
     [{ authUnavailable: true }, 'auth', 'session_store_unavailable'],
     [{ membershipUnavailable: true }, 'membership', 'matrix_unavailable'],
@@ -147,7 +204,7 @@ describe('authenticated room send fence routes', () => {
     expect(await h.fence.beginHold(roomId, 'operation_a', 'C'.repeat(43))).toBe('held');
     expect((await h.call('agent', 'acquire', { clientTxnId: 'txn_b' })).status).toBe(423);
     expect(await h.fence.drained(roomId, 'operation_a')).toBe('pending');
-    expect((await h.call('agent', 'finish', { permitId: granted.permitId, outcome: 'complete',
+    expect((await h.call('agent', 'finish', { permitId: granted.permitId, attempt: 0, outcome: 'complete',
       eventId: '$wrong:example' })).status).toBe(503);
     expect((await h.call('human', 'finish', { permitId: granted.permitId, outcome: 'complete',
       eventId: '$right:example' })).status).toBe(200);

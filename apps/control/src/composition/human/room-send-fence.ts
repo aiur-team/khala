@@ -12,7 +12,8 @@ type RoomFence = Readonly<{ v: 1; roomId: RoomId; revision: number; epoch: numbe
   hold: Hold | null; settled: Readonly<{ operationId: string; kind: 'rotated' | 'refused' }> | null;
   senders: readonly Sender[]; activePermits: readonly string[] }>;
 type Permit = Readonly<{ v: 1; roomId: RoomId; senderId: string; clientTxnId: string;
-  permitId: string; state: 'active' | 'unknown' | 'complete' | 'cancelled'; eventId: string | null }>;
+  permitId: string; state: 'active' | 'unknown' | 'complete' | 'cancelled'; eventId: string | null;
+  attempt?: number }>;
 
 function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function senderIdFor(matrixUserId: string, deviceId: string): string {
@@ -54,8 +55,10 @@ function validRoom(value: JsonValue, roomId: RoomId): value is RoomFence & JsonV
 function validPermit(value: JsonValue, id: string): value is Permit & JsonValue {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const row = value as Record<string, JsonValue>;
-  return Object.keys(row).sort().join(',') === 'clientTxnId,eventId,permitId,roomId,senderId,state,v'
+  return ['attempt,clientTxnId,eventId,permitId,roomId,senderId,state,v',
+    'clientTxnId,eventId,permitId,roomId,senderId,state,v'].includes(Object.keys(row).sort().join(','))
     && row.v === 1 && row.permitId === id && typeof row.roomId === 'string'
+    && (row.attempt === undefined || Number.isSafeInteger(row.attempt) && (row.attempt as number) >= 0)
     && typeof row.senderId === 'string' && typeof row.clientTxnId === 'string'
     && ['active', 'unknown', 'complete', 'cancelled'].includes(String(row.state))
     && (row.eventId === null || typeof row.eventId === 'string');
@@ -80,6 +83,7 @@ export function createRoomSendFence(store: ControlStore) {
   }
   async function readPermit(id: string) {
     const found = await guarded.read<JsonValue>(permitKey(id));
+    if (found.kind === 'absent') return { kind: 'absent' as const };
     return found.kind === 'record' && validPermit(found.record.value, id)
       ? { kind: 'found' as const, revision: found.record.revision, value: found.record.value as Permit }
       : { kind: 'unavailable' as const };
@@ -131,8 +135,8 @@ export function createRoomSendFence(store: ControlStore) {
       }
       return 'unavailable';
     },
-    async acquire(roomId: RoomId, sender: SenderIdentity, clientTxnId: string): Promise<
-      | Readonly<{ kind: 'granted'; permitId: string; epoch: number }>
+    async acquire(roomId: RoomId, sender: SenderIdentity, clientTxnId: string, reopenCancelled = false): Promise<
+      | Readonly<{ kind: 'granted'; permitId: string; epoch: number; attempt: number }>
       | Readonly<{ kind: 'held'; epoch: number; operationId: string }>
       | Readonly<{ kind: 'unavailable' }>
     > {
@@ -144,44 +148,56 @@ export function createRoomSendFence(store: ControlStore) {
         if (current.kind !== 'found') return { kind: 'unavailable' };
         const prior = current.value.senders.find(item => item.senderId === sender.senderId);
         if (prior && (prior.deviceId !== sender.deviceId || prior.deviceKey !== sender.deviceKey)) return { kind: 'unavailable' };
-        if (current.value.activePermits.includes(id)) {
-          const permit = await readPermit(id);
-          return permit.kind === 'found' && permit.value.state !== 'complete' && permit.value.state !== 'cancelled'
-            && permit.value.senderId === sender.senderId
-            ? { kind: 'granted', permitId: id, epoch: current.value.epoch } : { kind: 'unavailable' };
+        const listed = current.value.activePermits.includes(id);
+        const permit = await readPermit(id);
+        if (permit.kind === 'unavailable' || listed && permit.kind === 'absent' || permit.kind === 'found'
+          && (permit.value.roomId !== roomId || permit.value.senderId !== sender.senderId
+            || permit.value.clientTxnId !== clientTxnId || permit.value.state === 'complete')) return { kind: 'unavailable' };
+        if (listed && permit.kind === 'found' && permit.value.state !== 'cancelled') {
+          return { kind: 'granted', permitId: id, epoch: current.value.epoch, attempt: permit.value.attempt ?? 0 };
         }
+        if (permit.kind === 'found' && permit.value.state === 'cancelled' && !reopenCancelled) return { kind: 'unavailable' };
         if (current.value.hold) return { kind: 'held', epoch: current.value.epoch,
           operationId: current.value.hold.operationId };
         if (!prior || prior.rotatedEpoch < current.value.epoch) return { kind: 'held', epoch: current.value.epoch,
           operationId: 'rotation_required' };
-        if (current.value.activePermits.length >= MAX_ACTIVE || (!prior && current.value.senders.length >= MAX_SENDERS)) {
+        if (!listed && current.value.activePermits.length >= MAX_ACTIVE
+          || !prior && current.value.senders.length >= MAX_SENDERS) {
           return { kind: 'unavailable' };
         }
         const initial: Permit = { v: 1, roomId, senderId: sender.senderId, clientTxnId,
-          permitId: id, state: 'active', eventId: null };
-        const prepared = await settleWrite(guarded, { key: permitKey(id), expectedRevision: null,
-          operationId: writeId(initial), next: { value: initial as unknown as JsonValue, expiresAt: null } });
-        if (prepared.kind !== 'applied' && (prepared.kind !== 'conflict' || !prepared.current
-          || !validPermit(prepared.current.value, id) || ['complete', 'cancelled'].includes(prepared.current.value.state))) return { kind: 'unavailable' };
+          permitId: id, state: 'active', eventId: null,
+          attempt: permit.kind === 'found'
+            ? (permit.value.attempt ?? 0) + (permit.value.state === 'cancelled' ? 1 : 0) : 0 };
+        if (permit.kind === 'absent' || permit.value.state === 'cancelled') {
+          const prepared = await settleWrite(guarded, { key: permitKey(id),
+            expectedRevision: permit.kind === 'absent' ? null : permit.revision,
+            operationId: writeId([permit.kind === 'absent' ? null : permit.revision, initial]),
+            next: { value: initial as unknown as JsonValue, expiresAt: null } });
+          if (prepared.kind === 'conflict') continue;
+          if (prepared.kind !== 'applied') return { kind: 'unavailable' };
+        }
         const next: RoomFence = { ...current.value, revision: current.value.revision + 1,
           senders: current.value.senders,
-          activePermits: [...current.value.activePermits, id] };
+          activePermits: listed ? current.value.activePermits : [...current.value.activePermits, id] };
         const saved = await saveRoom(current, next);
-        if (saved.kind === 'applied') return { kind: 'granted', permitId: id, epoch: next.epoch };
+        if (saved.kind === 'applied') return { kind: 'granted', permitId: id, epoch: next.epoch, attempt: initial.attempt! };
         if (saved.kind !== 'conflict') return { kind: 'unavailable' };
       }
       return { kind: 'unavailable' };
     },
-    async finish(roomId: RoomId, senderId: string, id: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>): Promise<'applied' | 'unavailable'> {
+    async finish(roomId: RoomId, senderId: string, id: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>, attempt = 0): Promise<'applied' | 'unavailable'> {
       const found = await readPermit(id);
-      if (found.kind !== 'found' || found.value.roomId !== roomId || found.value.senderId !== senderId) return 'unavailable';
+      if (found.kind !== 'found' || found.value.roomId !== roomId || found.value.senderId !== senderId
+        || (found.value.attempt ?? 0) !== attempt) return 'unavailable';
       const next: Permit = { ...found.value, state: outcome.kind,
         eventId: outcome.kind === 'complete' ? outcome.eventId : null };
       if (found.value.state === 'complete') return found.value.eventId === next.eventId ? 'applied' : 'unavailable';
       if (found.value.state === 'cancelled') return outcome.kind === 'cancelled' ? 'applied' : 'unavailable';
       const saved = await settleWrite(guarded, { key: permitKey(id), expectedRevision: found.revision,
-        operationId: writeId(next), next: { value: next as unknown as JsonValue, expiresAt: null } });
+        operationId: writeId([found.revision, next]), next: { value: next as unknown as JsonValue, expiresAt: null } });
       return saved.kind === 'applied' || saved.kind === 'conflict' && validPermit(saved.current!.value, id)
+        && (saved.current!.value.attempt ?? 0) === attempt
         && saved.current!.value.state === next.state && saved.current!.value.eventId === next.eventId ? 'applied' : 'unavailable';
     },
     /** A null exclusion means admission: every current sender must rotate. */
