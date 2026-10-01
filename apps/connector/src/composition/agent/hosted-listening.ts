@@ -47,6 +47,15 @@ export function createHostedListeningControl(input: Readonly<{
   const service = createListeningModeService(createHostedListeningModeStore(host));
   const sameView = (left: ListeningModeView, right: ListeningModeView) =>
     JSON.stringify(left) === JSON.stringify(right);
+  // Serialize the store read, ledger projection, and owner/agent mutation for
+  // this exact binding. A read that started before a newer command must not
+  // project its older view after that command has changed the store.
+  let projectionQueue: Promise<void> = Promise.resolve();
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const result = projectionQueue.then(work);
+    projectionQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
   const base = createAgentListeningModeAuthority(binding, {
     async resolve(bindingId) {
       if (bindingId !== binding.bindingId || !await input.current()) return { kind: 'unavailable' };
@@ -54,9 +63,9 @@ export function createHostedListeningControl(input: Readonly<{
     },
   }, service);
 
-  async function project(effective: 'steer' | 'sync' | 'async' | null,
-    requested: 'steer' | 'sync' | 'async' | null, version: number,
-    evidenceRevision: string | null): Promise<boolean> {
+  async function project(view: ListeningModeView, evidenceRevision: string | null,
+    reread: () => Promise<ListeningModeReadResult>): Promise<boolean> {
+    const { effective, requested, version } = view;
     const confirmed = async (target: { requested: 'steer' | 'sync' | 'async' | null;
       effective: 'steer' | 'sync' | 'async' | null; evidenceRevision: string | null },
     minimumVersion: number) => {
@@ -66,6 +75,7 @@ export function createHostedListeningControl(input: Readonly<{
         const policy = tx.policy(binding.bindingId);
         return state !== null && !state.revoked && sameSessionBinding(state.binding, binding)
           && policy !== null && policy.listening.version >= minimumVersion
+          && policy.listening.sourceVersion === view.version
           && policy.listening.requested === target.requested
           && policy.listening.effective === target.effective
           && policy.listening.evidenceRevision === target.evidenceRevision;
@@ -75,16 +85,23 @@ export function createHostedListeningControl(input: Readonly<{
       if (!await input.current()) return false;
       const policy = await input.dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
       if (!policy) return false;
+      // Recheck the exact trust-store control and capability evidence after
+      // ledger inspection. A delayed read of v2 must never synthesize v4 over
+      // an already committed v3 merely because the ledger version moved.
+      const source = await reread();
+      if (!source.ok || !sameView(source.view, view)) return false;
+      if (policy.listening.sourceVersion !== undefined && policy.listening.sourceVersion > version) return false;
       const next = { requested: requested ?? policy.listening.requested,
         effective, evidenceRevision: effective === null ? null : evidenceRevision };
       if (policy.listening.version >= version && policy.listening.requested === next.requested
         && policy.listening.effective === next.effective
-        && policy.listening.evidenceRevision === next.evidenceRevision) return confirmed(next, version);
+        && policy.listening.evidenceRevision === next.evidenceRevision
+        && policy.listening.sourceVersion === version) return confirmed(next, version);
       // The durable control command and the current capability evidence are distinct
       // revisions. A late hook proof or its loss must not rewrite an older ledger version.
       const writeVersion = Math.max(version, policy.listening.version + 1);
       const result = await input.dispatch.applyEffectivePolicy({ binding, policy: { ...policy,
-        listening: { version: writeVersion, ...next },
+        listening: { version: writeVersion, sourceVersion: view.version, ...next },
       } });
       if (result.kind !== 'conflict') return confirmed(next, writeVersion);
       if (result.code !== 'stale_version' && result.code !== 'version_conflict') return false;
@@ -96,38 +113,43 @@ export function createHostedListeningControl(input: Readonly<{
     reread: () => Promise<ListeningModeReadResult>) {
     if (!result.ok) return result;
     const { view } = result;
+    const before = await reread();
+    if (!before.ok || !sameView(before.view, view)) return { ok: true as const,
+      view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
     const support = view.effective ? view.support[view.effective] : null;
     const evidenceRevision = support && 'evidenceRevision' in support ? support.evidenceRevision : null;
-    const applied = await project(view.effective, view.requested, view.version, evidenceRevision);
+    const applied = await project(view, evidenceRevision, reread);
     const latest = applied && await input.current() ? await reread() : null;
     return latest?.ok && sameView(latest.view, view)
       ? result : { ok: true as const, view: { ...view, effective: null, effectiveReason: 'projection_unavailable' } };
   }
-  async function read() { return projectedRead(await base.read(), () => base.read()); }
-  async function ownerRead(authority: OwnerAuthority) {
+  async function rawRead() { return projectedRead(await base.read(), () => base.read()); }
+  async function read() { return serialized(rawRead); }
+  async function rawOwnerRead(authority: OwnerAuthority) {
     if (!await input.current()) return { ok: false as const, code: 'unavailable' as const };
     const reread = () => input.capabilities().then(capabilities => service.read(authority,
       { binding, status: 'active' }, capabilities));
     return projectedRead(await reread(), reread);
   }
+  async function ownerRead(authority: OwnerAuthority) { return serialized(() => rawOwnerRead(authority)); }
   const application: AgentListeningModeApplication = {
     read,
-    async set(command) {
+    set(command) { return serialized(async () => {
       const result = await base.set(command);
       if (result.outcome !== 'applied') return result;
-      const current = await read();
+      const current = await rawRead();
       const latest = await base.read();
       return current.ok && latest.ok && sameView(latest.view, current.view)
         && current.view.version === result.version && current.view.requested === result.requested
         ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
         : { ...result, effective: null, reason: 'projection_unavailable' };
-    },
+    }); },
   };
   return {
     application,
     owner: {
       read: ownerRead,
-      async set(authority, command) {
+      set(authority, command) { return serialized(async () => {
         if (!await input.current()) return { v: 1 as const, commandId: command.commandId,
           bindingId: command.bindingId, generation: command.expectedBindingGeneration,
           outcome: 'refused' as const, version: command.expectedVersion,
@@ -142,14 +164,14 @@ export function createHostedListeningControl(input: Readonly<{
         }
         const result = await service.set(authority, { binding, status: 'active' }, capabilities, command);
         if (result.outcome !== 'applied') return result;
-        const current = await ownerRead(authority);
+        const current = await rawOwnerRead(authority);
         const latest = await service.read(authority, { binding, status: 'active' }, await input.capabilities());
         return current.ok && latest.ok && sameView(latest.view, current.view)
           && current.view.version === result.version && current.view.requested === command.requested
           ? { ...result, effective: current.view.effective, reason: current.view.effectiveReason }
           : { ...result, effective: null, reason: 'projection_unavailable' };
-      },
-      async grant(authority, command) {
+      }); },
+      grant(authority, command) { return serialized(async () => {
         if (!await input.current()) return { commandId: command.commandId,
           outcome: 'refused' as const, reason: 'unavailable' };
         const capabilities = await input.capabilities();
@@ -168,7 +190,7 @@ export function createHostedListeningControl(input: Readonly<{
           && projected.view.requested === result.view.requested
           ? { commandId: command.commandId, ...result, view: projected.view }
           : { commandId: command.commandId, outcome: 'refused' as const, reason: 'projection_unavailable' };
-      },
+      }); },
     },
     async status() {
       const result = await read();
