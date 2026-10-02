@@ -38,6 +38,14 @@ export function assertExternalInputs(env) {
   if (env.KHALA_E2E_MATRIX_OBSERVER_TOKEN || env.KHALA_E2E_DISPOSABLE_ENV) throw new Error('fixture_credentials_forbidden');
 }
 
+export function parseExternalCommand(args) {
+  const argv = args[0] === '--' ? args.slice(1) : args;
+  const execAt = argv.indexOf('--exec');
+  if (args.length === 0) return null;
+  if (execAt !== 0 || argv.length < 2) throw new Error('invalid_exec_arguments');
+  return argv.slice(1);
+}
+
 async function command(bin, args, options = {}) {
   const { input, ...execOptions } = options;
   if (input === undefined) {
@@ -173,9 +181,7 @@ import { request as createHttpRequest } from 'node:http';
 
 async function main() {
   assertExternalInputs(process.env);
-  const execAt = process.argv.indexOf('--exec');
-  const extraCommand = execAt === -1 ? null : process.argv.slice(execAt + 1);
-  if (execAt !== -1 && (extraCommand.length === 0 || process.argv.slice(2, execAt).length !== 0)) throw new Error('invalid_exec_arguments');
+  const extraCommand = parseExternalCommand(process.argv.slice(2));
   const scratch = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-external-'));
   let stackStarted = false;
   let gateway;
