@@ -58,14 +58,21 @@ const ready = run => {
       if (run.versions?.codex !== 'codex-cli 0.160.0') stage('codex_native_version_unsupported');
       const listing = JSON.parse(checked(run.codex, ['mcp', 'list', '--json'], environment(run)));
       const entry = Array.isArray(listing) ? listing.find(item => item.name === 'khala') : null;
+      const privateEnv = environment(run);
       const expected = { HOME: run.home, XDG_STATE_HOME: path.join(directory, 'state'),
-        XDG_DATA_HOME: path.join(directory, 'data') };
-      if (entry?.command !== process.execPath || JSON.stringify(entry.args) !== JSON.stringify([run.khala, 'mcp-serve'])
-        || Object.entries(expected).some(([key, value]) => entry.env?.[key] !== value)) stage('codex_mcp_private_roots');
+        XDG_DATA_HOME: path.join(directory, 'data'), NODE_OPTIONS: privateEnv.NODE_OPTIONS,
+        KHALA_INTERNAL_CANARY_DENIAL_FILE: privateEnv.KHALA_INTERNAL_CANARY_DENIAL_FILE };
+      const transport = entry?.transport;
+      if (transport?.type !== 'stdio' || transport.command !== process.execPath
+        || JSON.stringify(transport.args) !== JSON.stringify([run.khala, 'mcp-serve'])
+        || Object.entries(expected).some(([key, value]) => transport.env?.[key] !== value)) stage('codex_mcp_private_roots');
       continue;
     }
     if (!h?.version?.supported || !h.version.detected) stage(`${name}_version`);
-    if (h.route !== 'native_cli_queue') stage(`${name}_route`);
+    // Claude's setup status cannot infer an existing-session route before the
+    // installed plugin has observed this live PTY. The exact-session binding,
+    // model read/ACK, and reply checks below are the delivery proof.
+    if (h.route !== 'native_cli_queue' && !(name === 'claude' && h.route === 'unknown')) stage(`${name}_route`);
     if (h.components?.some(item => item.state !== 'ready')) stage(`${name}_setup_or_trust`);
   }
   return result;
@@ -136,18 +143,49 @@ const externalProcess = (run, name) => {
   return processStart(pid) === match[2] ? 'live' : 'exited';
 };
 const shellWord = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+const agentScope = (run, name) => {
+  if (!/^[a-f0-9]{24}$/.test(run.id) || !['codex', 'claude'].includes(name)) stage('agent_scope_identity');
+  return `khala-native-${run.id}-${name}.scope`;
+};
+const scopeState = (run, name) => {
+  const result = spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'ActiveState', '-p', 'ControlGroup', agentScope(run, name)],
+    { encoding: 'utf8', timeout: 10_000 });
+  if (result.error || result.status !== 0) stage('agent_scope_unobservable');
+  const properties = Object.fromEntries(result.stdout.trim().split('\n').map(line => line.split(/=(.*)/s).slice(0, 2)));
+  const group = properties.ControlGroup;
+  if (group && (!group.startsWith('/user.slice/') || group.includes('..'))) stage('agent_scope_unobservable');
+  let populated = false;
+  if (group) {
+    try { populated = /^populated 1$/m.test(fs.readFileSync(`/sys/fs/cgroup${group}/cgroup.events`, 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') stage('agent_scope_unobservable'); }
+  }
+  return { active: properties.ActiveState !== 'inactive' || populated, group };
+};
+const stopAgentScope = (run, name) => {
+  if (!scopeState(run, name).active) return;
+  const unit = agentScope(run, name);
+  const killed = spawnSync('/usr/bin/systemctl', ['--user', 'kill', '--signal=SIGKILL', '--kill-whom=all', unit],
+    { encoding: 'utf8', timeout: 10_000 });
+  if ((killed.error || killed.status !== 0) && scopeState(run, name).active) stage('agent_scope_kill');
+  if (!scopeState(run, name).active) return;
+  const stopped = spawnSync('/usr/bin/systemctl', ['--user', 'stop', unit], { encoding: 'utf8', timeout: 10_000 });
+  if ((stopped.error || stopped.status !== 0) && scopeState(run, name).active) stage('agent_scope_stop');
+};
 const agentLauncher = (run, name) => {
   const file = path.join(directory, `${name}-pty.sh`);
   const env = environment(run);
   const argv = [run[name], '--model', run.models[name], ...(name === 'codex'
-    ? ['-c', 'check_for_update_on_startup=false', '--no-daemon'] : [])];
+    // Internal discovery connects to the owner process on 127.0.0.1. Codex's
+    // workspace sandbox gives tool shells a separate network namespace, so the
+    // private canary needs host loopback for deliberate CLI calls.
+    ? ['--sandbox', 'danger-full-access', '-c', 'check_for_update_on_startup=false', '--no-daemon'] : [])];
   const pidFile = path.join(directory, `${name}-pty.pid`);
   const lines = ['#!/bin/sh', 'set -eu', 'umask 077', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
     `[ ! -e ${shellWord(path.join(directory, 'external-closed'))} ] || exit 68`,
     `cd ${shellWord(directory)}`, 'pid=$$', 'start=$(awk \'{print $22}\' "/proc/$pid/stat")',
     'namespace=$(readlink /proc/self/ns/pid)',
     `printf '%s %s %s\\n' "$pid" "$start" "$namespace" > ${shellWord(pidFile)}`,
-    `exec ${argv.map(shellWord).join(' ')}`];
+    `exec /usr/bin/systemd-run --user --scope --collect --quiet --unit=${shellWord(agentScope(run, name))} /bin/sh -c ${shellWord(`[ ! -e ${shellWord(path.join(directory, 'external-closed'))} ] || exit 68; exec ${argv.map(shellWord).join(' ')}`)}`];
   fs.writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o700 });
   return file;
 };
@@ -201,6 +239,7 @@ async function main() {
     fs.chmodSync(root, 0o700);
     for (const name of ['home', 'state', 'data', 'config', 'browser', 'prefix', 'npm-cache', 'bin']) fs.mkdirSync(path.join(root, name), { mode: 0o700 });
     fs.symlinkSync(codexBinary, path.join(root, 'bin', 'codex'));
+    fs.symlinkSync(process.execPath, path.join(root, 'bin', 'node'));
     const privateTarball = path.join(root, 'package.tgz');
     fs.copyFileSync(tarball, privateTarball);
     fs.chmodSync(privateTarball, 0o600);
@@ -228,7 +267,7 @@ async function main() {
   if (action === 'setup') {
     // The canary installs only its two pinned harnesses. Other host CLIs can be
     // unsupported and make the all-harness setup transaction refuse to apply.
-    const env = { ...environment(run), PATH: `${run.bin}:${path.dirname(process.execPath)}:${path.dirname(run.khala)}` };
+    const env = { ...environment(run), PATH: `${run.bin}:${path.dirname(run.khala)}` };
     const planned = spawnSync(process.execPath, [run.khala, 'setup', '--dry-run'], { env, encoding: 'utf8', timeout: 30_000 });
     let dry;
     try { dry = JSON.parse(planned.stdout); } catch { stage('setup_plan_report'); }
@@ -260,7 +299,7 @@ async function main() {
     const listed = JSON.parse(checked(run.codex, ['mcp', 'list', '--json'], env));
     if (!Array.isArray(listed) || listed.filter(item => item.name === 'khala').length !== 1) stage('codex_mcp_config');
     process.stdout.write(JSON.stringify({ kind: 'manual_codex_mcp_ready', id: run.id,
-      route: run.codexRoute, next: 'Run setup for Claude, then start the fresh PTYs.' }) + '\n');
+      route: run.codexRoute, next: 'Start the fresh PTYs; setup must already be complete.' }) + '\n');
     return;
   }
   if (action === 'auth-handoff') {
@@ -323,6 +362,7 @@ async function main() {
     run.versions = { codex: codexVersion, claude: claudeVersion };
     run.models = { codex: codexModel, claude: claudeModel };
     run.ptyMode = externalPtys ? 'external' : 'tmux';
+    run.agentScopes = true;
     const launch = Object.fromEntries(['codex', 'claude'].map(name => [name, agentLauncher(run, name)]));
     save(run);
     if (!externalPtys) for (const [name] of [['codex', run.codex], ['claude', run.claude]]) {
@@ -522,7 +562,7 @@ async function main() {
     return;
   }
   if (action === 'stop' || action === 'destroy') {
-    if (run.ptyMode === 'external') {
+    if (run.ptyMode === 'external' && !run.agentScopes) {
       const sealed = exists(path.join(directory, 'external-closed')) && run.externalTerminationVerifiedAt;
       if (!sealed) {
         const states = ['codex', 'claude'].map(name => externalProcess(run, name));
@@ -536,6 +576,13 @@ async function main() {
         save(run);
       }
     }
+    if (run.agentScopes) {
+      // Seal both checks in the launcher before stopping its scope. The check
+      // inside the scope also closes the race with systemd unit registration.
+      if (!exists(path.join(directory, 'external-closed')))
+        fs.writeFileSync(path.join(directory, 'external-closed'), '', { flag: 'wx', mode: 0o600 });
+      for (const name of ['codex', 'claude']) stopAgentScope(run, name);
+    } else if (run.agentsStartedAt) stage('agent_scopes_missing');
     if (run.browserPid && childAlive(run.browserPid)) process.kill(-run.browserPid, 'SIGTERM');
     if (run.serverPid && childAlive(run.serverPid)) process.kill(-run.serverPid, 'SIGTERM');
     if (run.ptyMode !== 'external') {
@@ -547,6 +594,7 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (run.serverPid && childAlive(run.serverPid) || run.browserPid && childAlive(run.browserPid)) stage('cleanup_orphaned_process');
+    if (run.agentScopes && ['codex', 'claude'].some(name => scopeState(run, name).active)) stage('agent_scope_running');
     delete run.serverPid;
     delete run.browserPid;
     delete run.browserPort;

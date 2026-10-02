@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -107,6 +108,43 @@ test('external cleanup refuses a process in another PID namespace', () => {
     assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_process_unobservable', directory });
     assert.equal(fs.existsSync(directory), true);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('stop empties a private agent scope including a detached command before destroy', async t => {
+  if (spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'Version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('systemd user manager unavailable'); return;
+  }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-scope-'));
+  fs.chmodSync(directory, 0o700);
+  const id = randomBytes(12).toString('hex');
+  const unit = `khala-native-${id}-codex.scope`;
+  const childFile = path.join(directory, 'detached.pid');
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id, ptyMode: 'external', agentScopes: true,
+    agentsStartedAt: Date.now(), home: path.join(directory, 'home'), bin: '/usr/bin', khala: script,
+    claude: '/usr/bin/false', socket: path.join(directory, 'tmux.sock') }), { mode: 0o600 });
+  const worker = spawn('/usr/bin/systemd-run', ['--user', '--scope', '--collect', '--quiet', `--unit=${unit}`,
+    '/bin/sh', '-c', `setsid /bin/sleep 120 & echo $! > '${childFile}'; wait`], { stdio: 'ignore' });
+  try {
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(childFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(fs.existsSync(childFile), true, 'detached child started');
+    const before = spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'ActiveState', unit], { encoding: 'utf8' });
+    assert.match(before.stdout, /ActiveState=active/);
+    const stop = spawnSync(process.execPath, ['--import', 'tsx', script, 'stop', directory], { encoding: 'utf8' });
+    assert.equal(stop.status, 0, stop.stderr);
+    assert.equal(fs.existsSync(path.join(directory, 'external-closed')), true);
+    const after = spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'ActiveState', '-p', 'ControlGroup', unit], { encoding: 'utf8' });
+    assert.equal(after.status, 0);
+    assert.match(after.stdout, /ActiveState=inactive/);
+    assert.match(after.stdout, /ControlGroup=\n/);
+    const destroy = spawnSync(process.execPath, ['--import', 'tsx', script, 'destroy', directory], { encoding: 'utf8' });
+    assert.equal(destroy.status, 0, destroy.stderr);
+    assert.equal(fs.existsSync(directory), false);
+  } finally {
+    spawnSync('/usr/bin/systemctl', ['--user', 'stop', unit], { encoding: 'utf8' });
+    worker.kill('SIGKILL');
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('ack proof rejects a receipt for another event, binding, generation or source', () => {
