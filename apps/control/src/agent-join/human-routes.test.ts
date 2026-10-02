@@ -1,0 +1,154 @@
+import { randomBytes } from 'node:crypto';
+import { expect, it, vi } from 'vitest';
+import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
+import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
+import type { Authentication, MutationAuthorization } from '../auth/index';
+import type { GatewayInspection } from '../invitations/index';
+import { createControlStore, type BlobsStoreLike } from '../runtime/control-store';
+import { createJoinStore, hashPollSecret, openCredentials, type JoinRecord } from './store';
+import { createAgentJoinHumanHandlers } from './human-routes';
+const secret = 'invitation-secret-with-more-than-32-bytes';
+const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
+function durableStores() {
+  const namespaces = new Map<string, Map<string, { data: unknown; etag: string }>>();
+  let revision = 0;
+  const storeFor = (name: string): BlobsStoreLike => {
+    let records = namespaces.get(name);
+    if (!records) { records = new Map(); namespaces.set(name, records); }
+    const backing = records;
+    return {
+      async getWithMetadata(key) { return backing.get(key) ?? null; },
+      async setJSON(key, data, options) {
+        const current = backing.get(key);
+        if (options?.onlyIfNew && current) return { modified: false, etag: current.etag };
+        if (options?.onlyIfMatch && current?.etag !== options.onlyIfMatch) return { modified: false, ...(current ? { etag: current.etag } : {}) };
+        const etag = String(++revision);
+        backing.set(key, { data: structuredClone(data), etag });
+        return { modified: true, etag };
+      },
+    };
+  };
+  return { storeFor };
+}
+async function fixture() {
+  let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
+  const blobs = durableStores();
+  const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
+  const joins = createJoinStore({ store, clock, random: randomBytes });
+  const joinId = randomBytes(16).toString('base64url');
+  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() };
+  expect(await joins.create(record)).toBe('created');
+  let ownerId = 'owner' as OwnerId;
+  const principal = () => ({ ownerId, verifiedEmail: 'maya99@x' } as AuthPrincipal);
+  const auth = {
+    authenticateRequest: vi.fn(async (): Promise<Authentication> => ({ kind: 'authenticated', context: { principal: principal(), csrfToken: 'csrf' } })),
+    requireHumanMutation: vi.fn(async (): Promise<MutationAuthorization> => ({ kind: 'authorized', context: { principal: principal(), csrfToken: 'csrf' } })),
+  };
+  const deps = { auth, joins, store, clock, random: randomBytes, sealSecret: secret,
+    inspectMembership: vi.fn(async (): Promise<GatewayInspection> => ({ kind: 'joined', historyReady: true })),
+    provisioner: { provision: vi.fn(async () => ({ kind: 'ok' as const, credentials })) },
+  };
+  const request = (method = 'GET', query = `joinId=${joinId}`) => new Request(`https://khala.test/api/human/agent-join?${query}`, { method });
+  return { deps, joins, store, record, joinId, request, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
+}
+it('confirms, seals credentials and creates a permanent owner map through the real store', async () => {
+  const f = await fixture();
+  expect((await f.handlers.view(f.request())).status).toBe(200);
+  const response = await f.handlers.confirm(f.request('POST'));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ joinId: f.joinId, label: 'Claude', harness: 'claude', channelName: 'Channel', roomId: credentials.roomId, state: 'confirmed', agentUserId: credentials.userId });
+  const read = await f.joins.read(f.joinId); if (read.kind !== 'found') throw Error();
+  expect(read.record.ownerId).toBe('owner');
+  expect(openCredentials(secret, f.joinId, read.record.sealedCredentials!)).toEqual(credentials);
+  const map = await f.store.read(agentOwnerRecordKey(credentials.userId)); if (map.kind !== 'record') throw Error();
+  expect(map.record.value).toEqual({ matrixUserId: credentials.userId, ownerId: 'owner', ownerLabel: 'Maya', harness: 'claude', label: 'Claude', createdAt: f.record.createdAt });
+  expect(map.record.expiresAt).toBeNull(); expect(map.record.operationId).toMatch(/^agents\.[a-f0-9]{64}\.create\.[a-f0-9]{16}$/);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+  f.owner('other'); expect((await f.handlers.confirm(f.request('POST'))).status).toBe(409);
+  expect(response.headers.get('cache-control')).toBe('no-store');
+});
+it('retains the owner lock on failure and lets only that owner retry', async () => {
+  const f = await fixture(); f.deps.provisioner.provision.mockRejectedValueOnce(Error('offline'));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  const read = await f.joins.read(f.joinId); expect(read.kind === 'found' && read.record.ownerId).toBe('owner');
+  f.owner('other'); expect((await f.handlers.confirm(f.request('POST'))).status).toBe(409);
+  f.owner('owner'); expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+});
+it('handles concurrent same-owner confirmations and owner-map conflicts', async () => {
+  const f = await fixture();
+  const responses = await Promise.all([f.handlers.confirm(f.request('POST')), f.handlers.confirm(f.request('POST'))]);
+  expect(responses.map(r => r.status)).toEqual([200, 200]);
+  const g = await fixture();
+  await g.store.compareAndSet({ key: agentOwnerRecordKey(credentials.userId), expectedRevision: null, operationId: 'other', next: { value: { ownerId: 'other' }, expiresAt: null } });
+  expect((await g.handlers.confirm(g.request('POST'))).status).toBe(503);
+});
+it('checks authorization before looking up joins and maps auth rejections', async () => {
+  for (const code of ['signed_out', 'csrf_mismatch', 'forbidden_origin'] as const) {
+    const f = await fixture(); f.deps.auth.requireHumanMutation.mockResolvedValue({ kind: 'rejected', code });
+    const response = await f.handlers.confirm(f.request('POST', 'joinId=bad'));
+    expect(response.status).toBe(code === 'signed_out' ? 401 : 403); expect(await response.json()).toEqual({ error: code });
+    expect(f.deps.inspectMembership).not.toHaveBeenCalled();
+  }
+  const f = await fixture(); f.deps.auth.authenticateRequest.mockResolvedValue({ kind: 'signed_out' });
+  expect((await f.handlers.status(f.request())).status).toBe(401);
+  f.deps.auth.authenticateRequest.mockResolvedValue({ kind: 'unavailable' }); expect((await f.handlers.view(f.request())).status).toBe(503);
+});
+it('enforces methods, exact query parameters, membership and expiry', async () => {
+  const f = await fixture();
+  expect((await f.handlers.view(f.request('POST'))).status).toBe(405);
+  expect((await f.handlers.confirm(f.request())).status).toBe(405);
+  for (const query of ['', 'joinId=bad', `joinId=${f.joinId}&extra=x`, `joinId=${f.joinId}&joinId=${f.joinId}`, 'joinId=aaaaaaaaaaaaaaaaaaaaaa']) expect((await f.handlers.view(f.request('GET', query))).status).toBe(404);
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'absent' }); expect((await f.handlers.confirm(f.request('POST'))).status).toBe(403);
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'unavailable' }); expect((await f.handlers.status(f.request())).status).toBe(503);
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'joined', historyReady: true }); f.advance();
+  expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ state: 'expired' });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+});
+it('maps claimed to confirmed and keeps ready visible after expiry', async () => {
+  for (const state of ['claimed', 'ready'] as const) {
+    const f = await fixture(); const read = await f.joins.read(f.joinId); if (read.kind !== 'found') throw Error();
+    await f.joins.replace(f.joinId, read.revision, { ...read.record, state, ownerId: 'owner', agentUserId: credentials.userId }, 'test'); f.advance();
+    expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: state === 'claimed' ? 'confirmed' : 'ready', agentUserId: credentials.userId });
+    expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+    expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+  }
+});
+it('fails closed on store and thrown membership failures', async () => {
+  const f = await fixture(); vi.spyOn(f.deps.joins, 'read').mockResolvedValue({ kind: 'unavailable' });
+  expect((await f.handlers.view(f.request())).status).toBe(503);
+  const g = await fixture(); g.deps.inspectMembership.mockRejectedValue(Error('offline'));
+  expect((await g.handlers.confirm(g.request('POST'))).status).toBe(503);
+});
+
+it('bounds owner-lock conflicts without provisioning', async () => {
+  const f = await fixture(); vi.spyOn(f.joins, 'replace').mockResolvedValue({ kind: 'conflict' });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  expect(f.joins.replace).toHaveBeenCalledTimes(2); expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+});
+it('rechecks the winning owner after an owner-lock conflict', async () => {
+  const f = await fixture(); const replace = f.joins.replace;
+  vi.spyOn(f.joins, 'replace').mockImplementationOnce(async (id, revision, record) => {
+    await replace(id, revision, { ...record, ownerId: 'other' }, 'winner'); return { kind: 'conflict' };
+  });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(409);
+  expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+});
+it('keeps an owner-map write retryable if the final join write fails', async () => {
+  const f = await fixture(); const replace = f.joins.replace;
+  vi.spyOn(f.joins, 'replace').mockImplementation(async (...args) => args[3] === 'confirm' ? { kind: 'unavailable' } : replace(...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  vi.mocked(f.joins.replace).mockImplementation(replace);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+});
+it('fails closed on an unresolved final confirmation conflict', async () => {
+  const f = await fixture(); const replace = f.joins.replace;
+  vi.spyOn(f.joins, 'replace').mockImplementation(async (...args) => args[3] === 'confirm' ? { kind: 'conflict' } : replace(...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+});
+
+it('shows expired confirmed records with identity and refuses confirmation', async () => {
+  const f = await fixture(); await f.handlers.confirm(f.request('POST')); f.advance();
+  expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: 'expired', agentUserId: credentials.userId });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+});
