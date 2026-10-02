@@ -51,9 +51,19 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await page.locator('#chips-closed').textContent(), '1', 'opening the roster closes the chips grid');
     assert.match(await page.locator('.kh-main').evaluate(element => element.style.getPropertyValue('--kh-head-h')), /^\d+px$/);
     const scout = page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..');
-    assert.equal(await scout.locator('[role="radio"][disabled][title="Coming soon"]').count(), 3);
+    assert.equal(await scout.locator('[role="radio"]:not([disabled]):not([title])').count(), 3);
     assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'sync');
-    assert.equal(await page.locator('.kh-rai[data-kh-agent="agent_builder"]').locator('..').locator('.kh-mode-ro').count(), 1);
+    const builderMode = page.locator('.kh-rai[data-kh-agent="agent_builder"]').locator('..').locator('.kh-mode-ro');
+    assert.equal(await builderMode.getAttribute('data-tip'), 'Async · on demand', 'another person’s agent shows its actual mode');
+
+    // Listening modes are live: the request shows at once, then the agent confirms.
+    await scout.locator('[role="radio"][data-v="steer"]').click();
+    assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'steer');
+    const modeStatus = roster.locator('.kh-mode-status');
+    await roster.getByRole('status').filter({ hasText: 'Waiting for Scout to switch…' }).waitFor();
+    await modeStatus.waitFor({ state: 'hidden' });
+    assert.equal(await modeStatus.textContent(), '');
+    assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'steer');
 
     // Escape closes the roster and returns focus to the header button.
     await page.locator('.kh-rh[data-kh-human="p_theo"]').focus();
@@ -147,6 +157,46 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await page.locator('.kh-seg.ic').first().isVisible(), false);
     assert.equal(await page.locator('.kh-mode-btn').first().isVisible(), true);
     assert.equal(await noOverflow(page), true, 'phone roster has no horizontal overflow');
+    // The narrow mode menu (source:4427).
+    const modeButton = page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..').locator('.kh-mode-btn');
+    assert.equal(await modeButton.getAttribute('data-tip'), 'Steer · interrupts');
+    await modeButton.click();
+    const menu = page.locator('.kh-pop.menu');
+    await menu.waitFor();
+    assert.equal(await menu.locator('.kh-mi').count(), 3);
+    assert.deepEqual(await menu.locator('.kh-mi').allTextContents(), ['Steerinterrupts', 'Syncnext turn', 'Asyncon demand']);
+    assert.equal(await menu.locator('.kh-mi.on').getAttribute('data-v'), 'steer');
+    await menu.locator('.kh-mi[data-v="async"]').click();
+    assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.getAttribute('data-tip'), 'Async · on demand');
+    await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
+    assert.equal(await modeButton.getAttribute('aria-label'), 'Listening mode for Dolan: Async · on demand');
+    // Keyboard: Enter opens the menu on the active item, arrows move, Escape returns to the trigger.
+    assert.equal(await modeButton.getAttribute('aria-haspopup'), 'menu');
+    await modeButton.focus();
+    await page.keyboard.press('Enter');
+    await menu.locator('[role="menu"]').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'async');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitemradio');
+    assert.equal(await menu.locator('[role="menuitemradio"][aria-checked="true"]').getAttribute('data-v'), 'async');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer', 'ArrowDown wraps to the first item');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'sync');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer');
+    await page.keyboard.press('Enter');
+    assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.getAttribute('data-tip'), 'Steer · interrupts');
+    await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
+    await modeButton.focus();
+    await page.keyboard.press('Enter');
+    await menu.locator('[role="menu"]').waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.evaluate(button => button === document.activeElement), true, 'Escape returns focus to the trigger');
     await page.locator('.kh-back').click();
     assert.equal(await page.title(), 'back');
 
@@ -161,6 +211,12 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
           await shot.locator('#kh-head-btn').click();
           await shot.waitForTimeout(300);
           await shot.screenshot({ path: join(shots, `roster-${width}-${theme}.png`) });
+          if (width === 390) {
+            await shot.locator('.kh-mode-btn').first().click();
+            await shot.locator('.kh-pop.menu').waitFor();
+            await shot.screenshot({ path: join(shots, `mode-menu-${width}-${theme}.png`) });
+            await shot.locator('.kh-mode-btn').first().click();
+          }
           await shot.locator('#kh-head-btn').click();
           await shot.getByRole('button', { name: '@Scout' }).click();
           await shot.waitForTimeout(300);
@@ -207,6 +263,38 @@ test('a failed copy leaves the link selected for copying by hand', { timeout: 90
       return input.selectionStart === 0 && input.selectionEnd === input.value.length;
     }), true);
     assert.equal(await page.locator('.kh-toast.on').count(), 0);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
+test('an unconfirmed listening mode reverts after 15 seconds', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
+  const chromiumProfileRoot = await mkdtemp('/tmp/khala-channel-profile-');
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true,
+      args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.clock.install();
+    await page.goto(`${server.resolvedUrls!.local[0]!}?offline`);
+    await page.clock.pauseAt(Date.now() + 60_000);
+    await page.locator('#kh-head-btn').click();
+    const scout = page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..');
+    await scout.locator('[role="radio"][data-v="async"]').click();
+    const status = page.locator('.kh-mode-status');
+    await status.filter({ hasText: 'Waiting for Scout to switch…' }).waitFor();
+    await page.clock.runFor(14_000);
+    assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'async');
+    await page.clock.runFor(1_000);
+    await status.filter({ hasText: 'Scout didn\'t confirm. It may be offline.' }).waitFor({ timeout: 2_000 });
+    assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'sync');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

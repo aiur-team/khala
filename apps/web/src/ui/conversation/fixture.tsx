@@ -14,7 +14,7 @@ import { KhalaApp } from '../khala/KhalaApp';
 import { NewChannelPopover, type NewChannelPorts } from '../khala/NewChannelPopover';
 import { ConversationList } from './ConversationList';
 import {
-  AGENTS, CHANNELS, conversationSummary, describeParticipant, EMPTY_CHANNEL, failedSends, FIXTURE_NOW, FIXTURE_TIME, HUE_OVERRIDES,
+  AGENT_MODES, AGENTS, CHANNELS, conversationSummary, describeParticipant, EMPTY_CHANNEL, failedSends, FIXTURE_NOW, FIXTURE_TIME, HUE_OVERRIDES,
   HUMANS, humanParticipants, agentPresence, channelMembers, timelineData, VIEWER, type FixtureChannel,
 } from './fixture-data';
 
@@ -84,6 +84,7 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
   const [selected, setSelected] = useState(channels[0]!.id);
   const [inThread, setInThread] = useState(params.view === 'thread');
   const [query, setQuery] = useState('');
+  const [modes, setModes] = useState(AGENT_MODES);
   const [creating, setCreating] = useState(params.pop === 'new');
   const createButton = useRef<HTMLButtonElement>(null);
   const composer = useRef<TimelineComposerHandle>(null);
@@ -142,6 +143,11 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
       main={<ChannelScreen key={channel.id} title={channel.title} controller={controller} timeOptions={FIXTURE_TIME}
         viewerOwnerId={VIEWER.ownerId} viewerName={VIEWER.displayName} viewerParticipantId={VIEWER.participantId}
         humanParticipants={humanParticipants(channel)} describeParticipant={describeParticipant}
+        modeFor={participantId => modes[participantId] ?? 'sync'}
+        onSetMode={async (participantId, mode) => {
+          setTimeout(() => setModes(current => ({ ...current, [participantId]: mode })), 300);
+          return 'sent';
+        }}
         recentActivity={(participantId, render) => timelineData(channel).items
           .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
             ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content, render) }] : [])

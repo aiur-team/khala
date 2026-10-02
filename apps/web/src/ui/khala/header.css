@@ -65,3 +65,5 @@
 @container khm (max-width: 520px) { .kh-stack { display: none; } .kh-seg.ic { display: none; } .kh-mode-btn { display: grid; } }
 @media (max-width: 760px) { .kh-ra { margin-left: 1.1rem; } }
 .kh-roster-status { padding: .3rem .5rem; font-size: .8rem; color: var(--muted); }
+/* Under an agent row, aligned with its name. */
+.kh-mode-status { margin: 0; padding: 0 .5rem .3rem calc(1.1rem + 28px); font-size: .76rem; }

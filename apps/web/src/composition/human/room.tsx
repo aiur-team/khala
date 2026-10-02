@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
@@ -16,6 +17,7 @@ import { ChannelAddAgent, ChannelInvite } from '../../features/channel/ChannelSh
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
+import { guardedListeningModeSetter } from './listening-modes';
 
 function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
   let readEpoch = 0;
@@ -90,6 +92,16 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const,
     initialName: agent.displayName,
   }] : []);
+  const matrixUserId = (participantId: string) => context.describeParticipant?.(participantId)?.matrixUserId;
+  const modeFor = (participantId: string): ListeningMode => {
+    const userId = matrixUserId(participantId);
+    return userId && context.listeningMode ? context.listeningMode(roomId, userId) : 'sync';
+  };
+  const subscribeModes = useCallback((listener: () => void) => context.subscribeListeningModes?.(roomId, listener) ?? (() => undefined),
+    [context, roomId]);
+  // Re-renders the roster when any agent's reported mode changes.
+  const modesSnapshot = () => presence.agents.map(agent => modeFor(agent.participantId)).join();
+  useSyncExternalStore(subscribeModes, modesSnapshot, modesSnapshot);
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
   const composer = useRef<TimelineComposerHandle>(null);
   if (context.conversations && conversations === undefined) {
@@ -135,6 +147,10 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         if (result.kind === 'rejected') return 'rejected';
         return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
       }}
+      modeFor={modeFor}
+      {...(context.setListeningMode ? { onSetMode: guardedListeningModeSetter({ roomId, viewer, matrixUserId,
+        ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
+        joined: () => timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
       recentActivity={(participantId, render) => timelineData.items
         .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
           ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content, render) }] : [])

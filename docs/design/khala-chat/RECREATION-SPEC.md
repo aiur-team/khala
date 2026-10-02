@@ -1538,8 +1538,8 @@ h1.kh-fin-n { margin: 0; }
 | Admin crown | Live if the channel creator is known, else omit | Room creator / power level |
 | Agent status dot `.kh-st` | Live when connection is known; omit when `unknown` | Presence |
 | Progress bar and % (`.kh-rai-p`, `.kh-d-agent > i`, Working on) | Omit | Aiur fleet data |
-| Listening-mode segment `.kh-seg.ic` (own agents) | Disabled, Sync selected, tooltips kept | Steer/Async are M2 |
-| `.kh-mode-ro`, `.kh-mode-btn` and the mode menu | Show the `.kh-mode-ro` sync icon; omit the menu | |
+| Listening-mode segment `.kh-seg.ic` (own agents) | Live: shows the reported mode; a change shows as pending until the agent confirms, reverting after 15 s | Agent `m.room.member` `com.khala.listening_mode`; owner command `com.khala.listening_mode.v1` |
+| `.kh-mode-ro`, `.kh-mode-btn` and the mode menu | Live: `.kh-mode-ro` shows the agent's actual mode; at ≤520px `.kh-mode-btn` opens the `.kh-mi` mode menu | Same |
 | Remove human/agent kebabs, `.kh-confirm` | Omit | M2 |
 | Add agent (`+agent` on the viewer row) → "Copy link · paste into your agent" | Live | C2/C7 `khala_join(link)` |
 | `.kh-ask` "Your agent?" adoption | Omit | M1 uses the confirm page (KM-134) |

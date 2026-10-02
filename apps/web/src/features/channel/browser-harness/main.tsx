@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import '../../../brand/fonts.css';
@@ -66,6 +67,8 @@ function Harness() {
   const [names, setNames] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
   const [draft, setDraft] = useState('');
   const [chipsClosed, setChipsClosed] = useState(0);
+  // Agents confirm a mode change 300 ms later; `?offline` agents never do.
+  const [modes, setModes] = useState<Readonly<Record<string, ListeningMode>>>({ agent_builder: 'async' });
   const [humans, setHumans] = useState(params.has('crowd')
     ? [{ participantId: 'p_theo' as ParticipantId, ownerId: theo, displayName: 'Theo Park' },
       { participantId: 'p_kai' as ParticipantId, ownerId: 'owner_kai' as OwnerId, displayName: 'Kai' }]
@@ -76,6 +79,11 @@ function Harness() {
       viewerOwnerId={mira} viewerName="Mira" viewerEmail="mira@example.com" viewerParticipantId={'p_mira' as ParticipantId}
       humanParticipants={humans} currentNames={names} describeParticipant={describeParticipant}
       renameScope={roomId}
+      modeFor={participantId => modes[participantId] ?? 'sync'}
+      onSetMode={async (participantId, mode) => {
+        if (!params.has('offline')) setTimeout(() => setModes(current => ({ ...current, [participantId]: mode })), 300);
+        return 'sent';
+      }}
       renameAgent={async (participantId, name) => {
         if (participantId !== 'agent_scout') return 'rejected';
         setNames(new Map([[participantId, name]]));

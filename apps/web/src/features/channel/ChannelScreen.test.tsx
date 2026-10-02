@@ -118,20 +118,35 @@ describe('ChannelScreen roster', () => {
     expect(roster).toContain('<b>Codex</b><em>Codex</em>');
   });
 
-  it('locks the viewer’s agent modes on Sync', () => {
-    const own = row('agent_own');
-    expect(own).toContain('class="kh-seg ic lock" role="radiogroup"');
+  const modes: Record<string, 'steer' | 'sync' | 'async'> = { agent_own: 'steer', agent_theo: 'async' };
+  const liveHtml = render({ phase: 'ready', agents: [agent('agent_own', mira, 'Claude'), agent('agent_theo', theo, 'Codex')] },
+    { describeParticipant: describe_, modeFor: id => modes[id] ?? 'sync', onSetMode: async () => 'sent' });
+  const liveRoster = liveHtml.slice(liveHtml.indexOf('id="kh-roster"'), liveHtml.indexOf('class="kh-channel-thread"'));
+  const liveRow = (id: string) => liveRoster.slice(liveRoster.indexOf(`data-kh-agent="${id}"`),
+    liveRoster.indexOf('</div>', liveRoster.indexOf(`data-kh-agent="${id}"`)));
+
+  it('makes the viewer’s agent modes live, on the reported mode', () => {
+    const own = liveRow('agent_own');
+    expect(own).toContain('class="kh-seg ic" role="radiogroup" aria-label="Listening mode for Claude"');
     expect(own.match(/role="radio"/g)).toHaveLength(3);
-    expect(own.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(own.match(/title="Coming soon"/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(own).toMatch(/aria-checked="true" class="on" data-v="sync"/);
-    expect(own).toContain('data-tip="Steer · interrupts"');
-    expect(own).toContain('kh-mode-btn');
+    expect(own).not.toContain('disabled');
+    expect(own).not.toContain('title="Coming soon"');
+    expect(own).toMatch(/aria-checked="true" class="on" data-v="steer"/);
+    expect(own).toContain('class="kh-ib sm kh-mode-btn" data-tip="Steer · interrupts" aria-haspopup="menu" aria-expanded="false"');
   });
 
-  it('shows another person’s agent mode read-only', () => {
+  it('locks the modes, without Coming soon, when no mode port is wired', () => {
+    const own = row('agent_own');
+    expect(own).toContain('class="kh-seg ic lock" role="radiogroup"');
+    expect(own.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(own).not.toContain('Coming soon');
+    expect(own).toMatch(/aria-checked="true" class="on" data-v="sync"/);
+  });
+
+  it('shows another person’s agent’s actual mode read-only', () => {
+    expect(liveRow('agent_theo')).toContain('class="kh-mode-ro" role="img" data-tip="Async · on demand" aria-label="Async · on demand"');
+    expect(liveRow('agent_theo')).not.toContain('kh-seg');
     expect(row('agent_theo')).toContain('class="kh-mode-ro" role="img" data-tip="Sync · next turn"');
-    expect(row('agent_theo')).not.toContain('kh-seg');
   });
 
   it('puts Add agent on the viewer’s row only', () => {
