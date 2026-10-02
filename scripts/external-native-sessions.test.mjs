@@ -70,6 +70,7 @@ test('native prompts wait until the previous model turn is idle', () => {
   assert.equal(nativeIdle('› Ask Codex to do anything\nGPT-6.1-Sol default', 'codex'), true);
   assert.equal(nativeIdle('• Working (9s • esc to interrupt)\n› Ask Codex to do anything', 'codex'), false);
   assert.equal(nativeIdle('Allow the khala MCP server to run tool "khala_read"?\n› Ask Codex to do anything', 'codex'), false);
+  assert.equal(nativeIdle('Hooks need review\nt trust all · enter review · esc close\n› Ask Codex to do anything', 'codex'), false);
   assert.equal(nativeIdle('❯\n⏵⏵ auto mode on', 'claude'), true);
   assert.equal(nativeIdle('✻ Working (2s • esc to interrupt)\n❯\n⏵⏵ auto mode on', 'claude'), false);
 });

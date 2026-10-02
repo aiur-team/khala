@@ -76,10 +76,18 @@ function trustStartup(state, actor) {
       tmux(state, ['send-keys', '-t', actor, 'Down']);
       pause(300);
       tmux(state, ['send-keys', '-t', actor, 'Enter']);
+      let trustedReview = false;
       for (let settled = 0; settled < 60; settled++) {
         pause(500);
         const current = tmux(state, ['capture-pane', '-p', '-t', actor]);
-        if (!current.includes(expected[0]) && ready.every(text => current.includes(text))) return;
+        if (actor === 'codex' && !trustedReview && current.includes('t trust all')
+          && current.includes('enter review')) {
+          tmux(state, ['send-keys', '-t', actor, 't']);
+          trustedReview = true;
+          continue;
+        }
+        if (!current.includes(expected[0]) && ready.every(text => current.includes(text))
+          && nativeIdle(current, actor)) return;
       }
       fail(`${actor}_startup_trust_unconfirmed`);
     }
@@ -89,7 +97,7 @@ function trustStartup(state, actor) {
 }
 
 export function nativeIdle(pane, actor) {
-  if (/Allow the khala MCP server to run tool|esc to interrupt|\bWorking\s*\(/iu.test(pane)) return false;
+  if (/Allow the khala MCP server to run tool|Hooks need review|t trust all|esc to interrupt|\bWorking\s*\(/iu.test(pane)) return false;
   return actor === 'codex' ? pane.includes('› Ask Codex to do anything')
     : actor === 'claude' && pane.includes('❯') && pane.includes('auto mode on');
 }
