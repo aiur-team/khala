@@ -23,34 +23,34 @@ Contract-layer ticket KI-110 is the spine: every helper route, the agent seam an
 
 `dep` = hard `depends_on` (each passes the CI-green or contract-authority test, or is the operator-ordered D7 gate). `ser` = `serializes_with` (symmetric). Model: `codex` or `opus` (= claude-opus).
 
-| ID | Title | Lane | Model | C | dep | ser | Scope in one line |
-|---|---|---|---|---|---|---|---|
-| KI-101 | Delete apps/internal | platform | codex | 1 | — | — | D7: delete `apps/internal/`, its workspace exclusion, ESLint ignore and the frozen-app branch of the boundary checker; keep `experiments/` |
-| KI-102 | Amend spec §3.1, §14, §15 for local channels | platform | codex | 1 | 101 | — | D2/D3 wording in `docs/product/khala-spec.md`; record D1–D8 |
-| KI-110 | Local contract layer | agent | codex | 2 | 101 | — | `packages/contracts/src/m1/local.ts` (L3–L7), optional `autoConfirmed`/`transport` in `agent-join.ts` (L4), `packages/agent/src/local/types.ts` (L8) |
-| KI-120 | ChannelSession seam and auto-confirmed join | agent | codex | 2 | 110 | 122 | `src/transport.ts` (L9), lazy session selection, `join.ts` keeps `transport`/`autoConfirmed`, `client-impl` waits ≤15 s for an auto-confirmed join, `tools.ts` render |
-| KI-121 | LocalSession over the helper API | agent | codex | 3 | 110, 120, 136 | — | `src/local/session.ts` `createLocalSession`: L5 calls, long-poll loop, backoff, helper respawn |
-| KI-122 | Local owner name and hosted-username cache | agent | codex | 1 | 110 | 120 | `src/local/identity.ts` (L10) and one call in `client-impl` after a hosted connect |
-| KI-130 | Channel store (append-only log) | helper | codex | 3 | 110 | — | `src/local/store.ts` `openLocalStore` implementing `LocalStore` (L2, L3, L8): replay, single-writer append, dedup, links, tokens, owner profile |
-| KI-131 | Helper HTTP core | helper | codex | 2 | 110 | — | `src/local/http.ts` `createHelperServer`: loopback bind, Host/Origin/cookie/bearer guards, router, static SPA with CSP, idle exit (L11) |
-| KI-132 | Agent-join routes | helper | codex | 2 | 110 | — | `src/local/routes/agent-join.ts`: C2 request/poll/ready with link consumption, naming and auto-confirm (L4) |
-| KI-133 | Participant room routes | helper | codex | 3 | 110 | — | `src/local/routes/rooms.ts`: me, join (+ "joined" event), events long-poll, messages, send, members, mode echo (L5) |
-| KI-134 | Owner channel routes | helper | codex | 3 | 110 | — | `src/local/routes/owner.ts`: channels list/long-poll/get/create/delete, links, open, mode command, agent rename, remove, shutdown (L6) |
-| KI-135 | Owner profile routes | helper | codex | 1 | 110 | — | `src/local/routes/profile.ts`: profile get, username (+ default-name cascade), colour, initials (L6, L7) |
-| KI-136 | Helper lifecycle | helper | codex | 2 | 110 | — | `src/local/lifecycle.ts` `ensureHelper`, `readHelperFile`, helper paths; detached spawn and health wait (L11) |
-| KI-137 | `khala local` CLI and helper composition | helper | codex | 2 | 122, 130, 131, 132, 133, 134, 135, 136 | — | `src/local/{cli,serve}.ts` + `bin/khala.mjs` `local` dispatch: serve composes store + server + routes, writes `helper.json`; create/link/open/list/delete/status/stop (L12) |
-| KI-140 | Web: local helper client, session and profile ports | web | codex | 2 | 110 | — | `apps/web/src/composition/local/{http,types,session,profile,agent-names}.ts` (L13) |
-| KI-141 | Web: LocalSubstrate and shared message projection | web | codex | 3 | 110, 140 | — | `composition/local/{substrate,channel-service}.ts`; extract `composition/human/message-wire.ts` from `matrix-browser.ts` (L13) |
-| KI-142 | Web: channel list, members, modes and links ports | web | codex | 2 | 110, 140 | — | `composition/local/{conversations,members,links}.ts` (L13) |
-| KI-143 | Web: local entry and build | web | codex | 2 | 140, 141, 142, 144 | — | `local-main.tsx`, `local.html`, `vite.local.config.mjs`, `build:local`, `composition/local/ports.ts`, bundle guard (L13) |
-| KI-144 | Web: local owner account mode | web | opus | 2 | 101 | — | `mount.tsx` `account: 'local_owner'` hides Log out and sign-in redirect, helper-down panel; neutral "Encrypted" copy via the mode (L13) |
-| KI-145 | Web: local full-app browser spec and visual check | web | opus | 2 | 143 | — | Playwright harness on the built local app with a faked `/api/local/**`; flows and screenshots at 1280/390, dark/light |
-| KI-150 | Agent skill and install docs for local channels | platform | codex | 1 | 137, 143 | — | `claude-plugin/khala/skills/khala/SKILL.md`, `packages/agent/README.md`, `docs/install-*.md` (build:local step) |
-| KI-151 | No-egress guard and test (D3) | acceptance | codex | 2 | 121, 137 | — | `packages/agent/test/no-egress/*`: `--import` preload that fails on non-loopback sockets; a test running the helper and two local sessions under it; `matrix-js-sdk` not loaded |
-| KI-160 | Scripted local acceptance AE1–AE12 | acceptance | codex | 3 | 120, 121, 137, 143, 151 | — | One command: helper + two `khala mcp` processes with fake hook drivers + headless Chromium on `dist-local`, under the egress guard |
-| KI-161 | Live acceptance on one machine (Executor-owned, `human:todo`) | acceptance | — | 3 | 145, 150, 160 | — | Real Claude Code + Codex panes + the operator's Firefox via `AGENT-MESSAGES.md`; evidence `docs/evidence/internal-mode-acceptance.md` |
-| KI-170 | Docs: local channels available | platform | codex | 1 | 161 | — | `docs/settings.md` Channel types, `docs/user-guide.md` Local channels, `README.md`, `llms.txt`/`AGENTS.md`; aiur.team Quick start drops "Coming soon" (cross-repo PR) |
-| KI-171 | Landing card 04: D3 copy, no "Coming soon" | platform | opus | 1 | 161 | — | `apps/web/src/landing/index.html:97-98` + landing tests + affected visual snapshots |
+| ID | Title | Lane | Model | C | dep | ser | Scope in one line | ticket |
+|---|---|---|---|---|---|---|---|---|
+| KI-101 | Delete apps/internal | platform | codex | 1 | — | — | D7: delete `apps/internal/`, its workspace exclusion, ESLint ignore and the frozen-app branch of the boundary checker; keep `experiments/` | #992 |
+| KI-102 | Amend spec §3.1, §14, §15 for local channels | platform | codex | 1 | 101 | — | D2/D3 wording in `docs/product/khala-spec.md`; record D1–D8 | #993 |
+| KI-110 | Local contract layer | agent | codex | 2 | 101 | — | `packages/contracts/src/m1/local.ts` (L3–L7), optional `autoConfirmed`/`transport` in `agent-join.ts` (L4), `packages/agent/src/local/types.ts` (L8) | #994 |
+| KI-120 | ChannelSession seam and auto-confirmed join | agent | codex | 2 | 110 | 122 | `src/transport.ts` (L9), lazy session selection, `join.ts` keeps `transport`/`autoConfirmed`, `client-impl` waits ≤15 s for an auto-confirmed join, `tools.ts` render | #996 |
+| KI-121 | LocalSession over the helper API | agent | codex | 3 | 110, 120, 136 | — | `src/local/session.ts` `createLocalSession`: L5 calls, long-poll loop, backoff, helper respawn | #1006 |
+| KI-122 | Local owner name and hosted-username cache | agent | codex | 1 | 110 | 120 | `src/local/identity.ts` (L10) and one call in `client-impl` after a hosted connect | #997 |
+| KI-130 | Channel store (append-only log) | helper | codex | 3 | 110 | — | `src/local/store.ts` `openLocalStore` implementing `LocalStore` (L2, L3, L8): replay, single-writer append, dedup, links, tokens, owner profile | #998 |
+| KI-131 | Helper HTTP core | helper | codex | 2 | 110 | — | `src/local/http.ts` `createHelperServer`: loopback bind, Host/Origin/cookie/bearer guards, router, static SPA with CSP, idle exit (L11) | #999 |
+| KI-132 | Agent-join routes | helper | codex | 2 | 110 | — | `src/local/routes/agent-join.ts`: C2 request/poll/ready with link consumption, naming and auto-confirm (L4) | #1000 |
+| KI-133 | Participant room routes | helper | codex | 3 | 110 | — | `src/local/routes/rooms.ts`: me, join (+ "joined" event), events long-poll, messages, send, members, mode echo (L5) | #1001 |
+| KI-134 | Owner channel routes | helper | codex | 3 | 110 | — | `src/local/routes/owner.ts`: channels list/long-poll/get/create/delete, links, open, mode command, agent rename, remove, shutdown (L6) | #1002 |
+| KI-135 | Owner profile routes | helper | codex | 1 | 110 | — | `src/local/routes/profile.ts`: profile get, username (+ default-name cascade), colour, initials (L6, L7) | #1003 |
+| KI-136 | Helper lifecycle | helper | codex | 2 | 110 | — | `src/local/lifecycle.ts` `ensureHelper`, `readHelperFile`, helper paths; detached spawn and health wait (L11) | #1004 |
+| KI-137 | `khala local` CLI and helper composition | helper | codex | 2 | 122, 130, 131, 132, 133, 134, 135, 136 | — | `src/local/{cli,serve}.ts` + `bin/khala.mjs` `local` dispatch: serve composes store + server + routes, writes `helper.json`; create/link/open/list/delete/status/stop (L12) | #1007 |
+| KI-140 | Web: local helper client, session and profile ports | web | codex | 2 | 110 | — | `apps/web/src/composition/local/{http,types,session,profile,agent-names}.ts` (L13) | #1005 |
+| KI-141 | Web: LocalSubstrate and shared message projection | web | codex | 3 | 110, 140 | — | `composition/local/{substrate,channel-service}.ts`; extract `composition/human/message-wire.ts` from `matrix-browser.ts` (L13) | #1008 |
+| KI-142 | Web: channel list, members, modes and links ports | web | codex | 2 | 110, 140 | — | `composition/local/{conversations,members,links}.ts` (L13) | #1009 |
+| KI-143 | Web: local entry and build | web | codex | 2 | 140, 141, 142, 144 | — | `local-main.tsx`, `local.html`, `vite.local.config.mjs`, `build:local`, `composition/local/ports.ts`, bundle guard (L13) | #1010 |
+| KI-144 | Web: local owner account mode | web | opus | 2 | 101 | — | `mount.tsx` `account: 'local_owner'` hides Log out and sign-in redirect, helper-down panel; neutral "Encrypted" copy via the mode (L13) | #995 |
+| KI-145 | Web: local full-app browser spec and visual check | web | opus | 2 | 143 | — | Playwright harness on the built local app with a faked `/api/local/**`; flows and screenshots at 1280/390, dark/light | #1012 |
+| KI-150 | Agent skill and install docs for local channels | platform | codex | 1 | 137, 143 | — | `claude-plugin/khala/skills/khala/SKILL.md`, `packages/agent/README.md`, `docs/install-*.md` (build:local step) | #1013 |
+| KI-151 | No-egress guard and test (D3) | acceptance | codex | 2 | 121, 137 | — | `packages/agent/test/no-egress/*`: `--import` preload that fails on non-loopback sockets; a test running the helper and two local sessions under it; `matrix-js-sdk` not loaded | #1011 |
+| KI-160 | Scripted local acceptance AE1–AE12 | acceptance | codex | 3 | 120, 121, 137, 143, 151 | — | One command: helper + two `khala mcp` processes with fake hook drivers + headless Chromium on `dist-local`, under the egress guard | #1014 |
+| KI-161 | Live acceptance on one machine (Executor-owned, `human:todo`) | acceptance | — | 3 | 145, 150, 160 | — | Real Claude Code + Codex panes + the operator's Firefox via `AGENT-MESSAGES.md`; evidence `docs/evidence/internal-mode-acceptance.md` | #1015 |
+| KI-170 | Docs: local channels available | platform | codex | 1 | 161 | — | `docs/settings.md` Channel types, `docs/user-guide.md` Local channels, `README.md`, `llms.txt`/`AGENTS.md`; aiur.team Quick start drops "Coming soon" (cross-repo PR) | #1016 |
+| KI-171 | Landing card 04: D3 copy, no "Coming soon" | platform | opus | 1 | 161 | — | `apps/web/src/landing/index.html:97-98` + landing tests + affected visual snapshots | #1017 |
 
 ## Waves (computed; each is an antichain)
 
@@ -83,6 +83,7 @@ Contract-layer ticket KI-110 is the spine: every helper route, the agent seam an
 
 ## Promotion notes for the Executor
 
+- **Promoted 2026-10-02** as #992–#1017 (the `ticket` column), all sub-issues of Build Order root **#828**, with GitHub `blocked_by` edges for every `dep`. Every ticket is **held** with `human:todo` (plus `complexity:<C>`, `phase:9`, `build-lane:<lane>`, and `model:codex`/`model:claude-opus` except Executor-owned KI-161). The Executor releases a ticket by swapping `human:todo` for `agent:todo` once the tickets already in flight are finished; KI-161 stays `human:todo`. Issue bodies are the ticket docs verbatim, with the real issue numbers appended as `Depends on:` / `Serializes with:` lines (the in-doc `KI-` headers were left as written).
 - Create every member unlabelled, then add labels ~6 s later (memory: create-then-label until aiur#2818): `agent:todo` (or `human:todo` for KI-161), `complexity:<C>`, `build-lane:<lane>`, `model:codex` or `model:claude-opus`.
 - Replace `KI-` references in bodies with issue numbers in the `Depends on:` / `Serializes with:` header lines at promotion; after promotion edits go to the issue, never the doc.
 - Deletion PR: KI-101 deletes files → it needs an approving review on the head SHA before merge (`deletion-guard`).
