@@ -414,12 +414,17 @@ async function main() {
           ...(typeof report.ok === 'boolean' ? { ok: report.ok } : {}),
           ...(['refused', 'unavailable', 'pending', 'connected', 'other'].includes(report.kind)
             ? { kind: report.kind } : {}),
-          ...(['not_connected', 'invalid_link', 'untrusted_origin', 'ownership_required',
+          ...(['not_connected', 'invalid_arguments', 'invalid_input', 'binding_not_held',
+            'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
+            'connector_starting', 'internal_unavailable', 'invalid_request', 'invalid_link', 'untrusted_origin', 'link_unavailable',
+            'unsupported_descriptor', 'harness_session_missing', 'unsupported_harness', 'ownership_required',
+            'admission_denied', 'binding_conflict', 'binding_revoked', 'operation_conflict', 'device_unavailable',
             'discovery_required', 'proof_key_unavailable', 'other'].includes(report.code)
             ? { code: report.code } : {}),
           ...(['pending_owner', 'connecting', 'other'].includes(report.outcome)
             ? { outcome: report.outcome } : {}),
-          ...(['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required', 'other']
+          ...(['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required',
+            'harness_session_missing', 'link_unavailable', 'other']
             .includes(report.error) ? { error: report.error } : {}),
         };
       } catch { /* diagnostics are optional; never expose raw child output */ }

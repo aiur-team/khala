@@ -60,10 +60,15 @@ async function main() {
     isError: reply?.result?.isError === true,
     ok: result?.ok === true,
     kind: ['refused', 'unavailable', 'pending', 'connected'].includes(result?.kind) ? result.kind : 'other',
-    code: ['not_connected', 'invalid_link', 'untrusted_origin', 'ownership_required',
+    code: ['not_connected', 'invalid_arguments', 'invalid_input', 'binding_not_held',
+      'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
+      'connector_starting', 'internal_unavailable', 'invalid_request', 'invalid_link', 'untrusted_origin', 'link_unavailable',
+      'unsupported_descriptor', 'harness_session_missing', 'unsupported_harness', 'ownership_required',
+      'admission_denied', 'binding_conflict', 'binding_revoked', 'operation_conflict', 'device_unavailable',
       'discovery_required', 'proof_key_unavailable'].includes(result?.code) ? result.code : 'other',
     outcome: result?.outcome === 'pending_owner' || result?.outcome === 'connecting' ? result.outcome : 'other',
-    error: ['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required']
+    error: ['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required',
+      'harness_session_missing', 'link_unavailable']
       .includes(result?.error) ? result.error : 'other',
   });
   if (!pendingOwnerOutcome(result)) throw new Error('installed_connector_not_pending_owner');
