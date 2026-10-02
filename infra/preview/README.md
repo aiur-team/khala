@@ -46,3 +46,51 @@ docker compose -p "$KHALA_STATE_NAMESPACE" \
 Remove the private temporary config and credential directory once the proof is complete. The human Playwright suite still requires an actual HTTPS Netlify/Railway deployment. Its creator session now supplies raw ciphertext evidence; the separate observer account proves that an unadmitted user is denied. This does not inspect Synapse database or logs for the separate security acceptance.
 
 Local evidence, 2026-09-27: Node 24.18.0 and Docker Engine 29.6.2 ran a unique project `khala-134-5eabb4-preview`, with no pre-existing containers. The messaging checker returned `boundary-checks-pass`; Dex v2.43.1 discovery advertised S256, its JWKS held one RS256 key, and a real authorization-code/S256 exchange returned an ID token whose signature, issuer, nonce, verified email and email claim checked. A separate real Synapse private room returned 200 to its owner and 403 to an unadmitted observer at `/messages`. The initial trial exposed Dex's bcrypt minimum cost of 10; the renderer now rejects weaker hashes. This local run must not be cited as hosted proof.
+
+## Disposable external application topology
+
+From the repository root, with Docker, `unshare`, `socat`, `openssl`, `mkpasswd`,
+Node, pnpm, Netlify CLI 27.1.2 and Playwright Chromium installed, run:
+
+```sh
+pnpm test:external:local
+```
+
+This command creates a fresh private directory and Compose project, builds the
+production web, generated control function and CLI bundle, and serves them
+through Netlify Dev behind a trusted loopback HTTPS origin. It runs the hosted
+`explicit_browser_consent` registration and checks the generated hosted agent
+bootstrap route before browser work begins. It runs the hosted
+human browser suite with real Dex authorization-code/PKCE sign-in, session
+cookies, channel sharing, encrypted Matrix events, and a read-only outsider.
+It then checks a persisted auth-session record in local Blobs emulation from a
+fresh browser after a function restart. It runs the locally installed hosted
+CLI's `status` and `channels open` commands, then probes installed hosted
+connector startup through a prejoin MCP call using the same origin and private
+profile. The result is reported separately as `connectorStartup`; an unproven
+candidate does not prevent the verified topology or downstream `--exec` from
+running. Owner approval and native read/write belong to #811. It reports only
+a stage, correlation ID, artifact digests, versions and scope names. Raw child
+and browser output stays private and the runner removes only its own project,
+volumes and private files. `KHALA_LOCAL_AUTH=enabled`, fixture credentials and
+HTTP or production origins are rejected.
+
+The installed Netlify CLI's bundled local Blobs server omits GET ETags needed
+by the control store's compare-and-set confirmation. The runner patches that
+local adapter for its spawned CLI process only and refuses an unrecognized
+adapter version. Its temporary Netlify config adds HTTPS with a per-run
+certificate so the function sees the same HTTPS callback URL as the browser.
+This is local provider emulation, not deployed Netlify or Google proof.
+
+For a downstream test that needs the live topology, append `--exec` and a
+command to the runner: `node infra/preview/external-local.mjs --exec <command>
+<args...>`. The child receives `KHALA_E2E_DISPOSABLE_ENV` (an absolute,
+secret-free descriptor), `KHALA_E2E_LIVE=1`, the two disposable user credential
+variables named by that descriptor, `KHALA_E2E_MATRIX_OBSERVER_TOKEN`,
+`NODE_EXTRA_CA_CERTS`, `KHALA_E2E_CERT_SPKI`, `KHALA_EXTERNAL_CLI` (the installed
+bundle path), and `KHALA_EXTERNAL_ORIGIN`. The child runs after the topology
+smoke and before teardown. Its environment is limited to these consumer values,
+`KHALA_APP_ORIGIN`, private `HOME`/`TMPDIR`/XDG/CODEX roots, and basic process settings; it does not
+inherit the Dex, Matrix registration, database, or HMAC secrets. This interface
+provides the substrate for #811; it
+does not produce model-visible native receipts or claim three-party acceptance.

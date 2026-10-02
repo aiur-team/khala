@@ -132,6 +132,15 @@ set `/data` ownership to UID/GID 991 before invoking `/start.py run`; the entryp
 then drops the long-running process to that identity. A Railway volume surviving replacement is persistence evidence, not a
 backup or restore result. KHA-109 owns backup sets and restore rehearsal.
 
+A change to `homeserver.template.yaml`, including `rc_login`, takes effect only
+after the deployment renders the new secret-managed file and restarts Synapse.
+Verify the mounted `/config/homeserver.yaml` contains the intended rates after
+restart; a source commit alone does not change a running homeserver.
+The larger login burst absorbs short serverless cold-worker spikes. It does not
+remove repeated Control logins across workers; sustained traffic can still hit
+the unchanged account rate of 0.5/s until the participants hot path reuses a
+verified browser Matrix session.
+
 The disposable KHA-134 hosted preview's derived Synapse image, runtime secret
 injection, ingress boundary and teardown are described in
 [`../preview/hosted.md`](../preview/hosted.md). They have local replacement

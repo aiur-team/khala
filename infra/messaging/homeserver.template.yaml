@@ -37,10 +37,10 @@ registration_shared_secret: __KHALA_MATRIX_REGISTRATION_SHARED_SECRET__
 rc_login:
   address:
     per_second: 1
-    burst_count: 30
+    burst_count: 100
   account:
     per_second: 0.5
-    burst_count: 20
+    burst_count: 100
 allow_public_rooms_without_auth: false
 allow_public_rooms_over_federation: false
 federation_domain_whitelist: []

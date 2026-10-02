@@ -58,6 +58,18 @@ function unavailable(code: 'feature_unavailable' | 'unavailable' = 'unavailable'
   return json(503, { code });
 }
 
+function localParticipantStage(response: Response, stage: 'service_loader' | 'feature_unavailable' | 'authorization' | 'participant_unavailable',
+  diagnostic?: Readonly<{ stage: 'membership' | 'control_login' | 'joined_members'; status: number }>): Response {
+  if (response.status !== 503 || process.env.KHALA_LOCAL_EXTERNAL_DIAGNOSTICS !== '1') return response;
+  const headers = new Headers(response.headers);
+  if (!headers.has('x-khala-local-participant-stage')) headers.set('x-khala-local-participant-stage', stage);
+  if (diagnostic) {
+    headers.set('x-khala-local-matrix-stage', diagnostic.stage);
+    headers.set('x-khala-local-matrix-status', String(diagnostic.status));
+  }
+  return new Response(response.body, { status: response.status, headers });
+}
+
 function redirect(status: 302 | 303, location: string, cookies: readonly string[]): Response {
   const headers = new Headers({
     'cache-control': 'no-store',
@@ -338,10 +350,11 @@ export function createHumanHandlers(
     {
       path: MATRIX_PARTICIPANTS_PATH,
       methods: post,
-      handle: request => withServices(request, async ({ auth, messaging }) => {
-        if (!messaging) return unavailable('feature_unavailable');
+      handle: async request => {
+        const response = await withServices(request, async ({ auth, messaging }) => {
+        if (!messaging) return localParticipantStage(unavailable('feature_unavailable'), 'feature_unavailable');
         const authority = await authorized(auth, request);
-        if (isResponse(authority)) return authority;
+        if (isResponse(authority)) return localParticipantStage(authority, 'authorization');
         const value = await readJsonObject(request);
         if (value === null || !(hasExactKeys(value, ['userIds']) || hasExactKeys(value, ['userIds', 'roomId']) || hasExactKeys(value, ['userIds', 'roomId', 'targetParticipantIds'])) || !Array.isArray(value.userIds)
           || value.userIds.length > 100 || value.userIds.some(userId => typeof userId !== 'string' || userId.length > 255)) {
@@ -355,8 +368,12 @@ export function createHumanHandlers(
         const result = roomId === null ? await messaging.resolveParticipants(value.userIds as string[])
           : await messaging.resolveRoomParticipants(authority.ownerId, roomId.value, value.userIds as string[], undefined, targetIds);
         if (result.kind === 'forbidden') return json(403, { code: 'forbidden' });
-        return result.kind === 'ok' ? json(200, { participants: result.participants }) : unavailable();
-      }),
+        return result.kind === 'ok' ? json(200, { participants: result.participants })
+          : localParticipantStage(unavailable(), 'participant_unavailable',
+            'localDiagnostic' in result ? result.localDiagnostic : undefined);
+        });
+        return localParticipantStage(response, 'service_loader');
+      },
     },
   ]);
 }
