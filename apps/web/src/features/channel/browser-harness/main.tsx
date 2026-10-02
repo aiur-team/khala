@@ -1,144 +1,103 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { Participant } from '@khala/contracts/m1/participants';
 import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import '../../../brand/fonts.css';
 import '../../../brand/tokens.css';
 import '../../../shell/shell.css';
 import '../channel.css';
+import type { ThemeChoice } from '../../../shell/types';
+import { insertMention } from '../../../ui/conversation';
+import { KhalaApp } from '../../../ui/khala/KhalaApp';
 import { createChannelController } from '../controller';
-import type { AgentPresenceSnapshot, ChannelUiPort } from '../ports';
+import type { AgentPresence, AgentPresenceSnapshot, ChannelUiPort } from '../ports';
 import { ChannelScreen } from '../ChannelScreen';
-import { ChannelSharePanel } from '../ChannelSharePanel';
+import { ChannelAddAgent, ChannelInvite } from '../ChannelSharePanel';
 
+// Synthetic content only: no real channel, credential or person.
 const roomId = 'room_harness' as RoomId;
-const scoutId = 'agent_scout' as ParticipantId;
-const builderId = 'agent_builder' as ParticipantId;
-const secondScoutId = 'agent_scout_second' as ParticipantId;
-const miraId = 'owner_mira' as OwnerId;
-const theoId = 'owner_theo' as OwnerId;
-let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
-let snapshot: AgentPresenceSnapshot = {
-  generation: 1,
-  agents: [{
-    participantId: scoutId,
-    displayName: 'Scout',
-    ownerDisplayName: 'Mira',
-    connection: 'offline',
-    routeLabel: 'Khala skill',
-    lastReceipt: null,
-    acknowledgement: 'unknown',
-  }],
-};
+const mira = 'owner_mira' as OwnerId;
+const theo = 'owner_theo' as OwnerId;
+const params = new URLSearchParams(location.search);
+const agentOf = (participantId: string, ownerId: OwnerId | undefined, displayName: string): AgentPresence => ({
+  participantId: participantId as ParticipantId, ...(ownerId ? { ownerId } : {}), displayName, ownerDisplayName: '',
+  connection: 'unknown', routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown',
+});
+const base = [agentOf('agent_scout', mira, 'Scout'), agentOf('agent_builder', theo, 'Builder')];
+const crowd = [...base, agentOf('agent_scout_2', mira, 'Scout'), agentOf('agent_atlas', theo, 'Atlas'),
+  agentOf('agent_orbit', 'owner_zed' as OwnerId, 'Orbit')];
+const harnesses: Record<string, 'claude' | 'codex'> = { agent_scout: 'claude', agent_scout_2: 'claude', agent_builder: 'codex', agent_atlas: 'codex', agent_orbit: 'claude' };
+const ownerLabels: Record<string, string> = { [mira]: 'Mira', [theo]: 'Theo', owner_zed: 'Zed' };
 
+let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
+let snapshot: AgentPresenceSnapshot = { generation: 1, agents: params.has('crowd') ? crowd : base };
+function publish(agents: readonly AgentPresence[]): void {
+  snapshot = { generation: 1, agents };
+  for (const listener of listeners) listener(snapshot);
+}
 const port: ChannelUiPort = {
   agents: async () => snapshot,
   subscribeAgents: (_roomId, listener) => {
     listeners = [...listeners, listener];
     return () => { listeners = listeners.filter(candidate => candidate !== listener); };
   },
-  installCommand: async () => 'khala connect https://khala.example/channels/release-channel',
+  installCommand: async () => { throw new Error('unused'); },
+};
+const controller = createChannelController(port, { roomId, generation: 1 });
+const describeParticipant = (participantId: string): Participant | undefined => {
+  const agent = snapshot.agents.find(item => item.participantId === participantId);
+  if (!agent || !harnesses[participantId]) return undefined;
+  return { kind: 'agent', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: agent.ownerId ?? '',
+    displayName: agent.displayName, ownerLabel: ownerLabels[agent.ownerId ?? ''] ?? 'Owner', harness: harnesses[participantId]! };
+};
+const admission = { share: async () => ({ kind: 'ok' as const, value: { inviteRef: 'visual', shareUrl: 'https://khala.example/c/release', expiresAt: null } }) };
+declare global { interface Window { __copied: string[] } }
+window.__copied = [];
+const onCopy = async (url: string) => {
+  if (params.has('copyfail')) return { ok: false as const, reason: 'denied' as const };
+  window.__copied.push(url);
+  return { ok: true as const };
 };
 
-const controller = createChannelController(port, { roomId, generation: 1 });
-
 function Harness() {
-  const [viewer, setViewer] = useState<OwnerId>(miraId);
-  const [crowded, setCrowded] = useState(false);
+  const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
   const [names, setNames] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
-  const [renamed, setRenamed] = useState(false);
   const [draft, setDraft] = useState('');
-  const [messages, setMessages] = useState<readonly Readonly<{ body: string; pending: boolean }>[]>([
-    { body: 'Can you check the deployment?', pending: false },
-  ]);
-
-  function sendMessage(): void {
-    const body = draft.trim();
-    if (!body) return;
-    setMessages(current => [...current, { body, pending: true }]);
-    setDraft('');
-    setTimeout(() => setMessages(current => [
-      ...current.map(message => message.body === body ? { ...message, pending: false } : message),
-      { body: 'Deployment is healthy.', pending: false },
-    ]), 50);
-  }
-
-  return (
-    <div className="khala-content-root khala-owner-shell" data-theme="dark">
-      <main className="khala-content-main"><div className="khala-content-actions"><div id="khala-channel-toolbar" /></div>
-    <ChannelScreen embedded={!new URLSearchParams(location.search).has('standalone')}
-      title={crowded ? 'A very long release coordination conversation' : 'Release channel'}
-      description="Coordinate the launch with people and their agents."
-      controller={controller}
-      viewerOwnerId={viewer}
-      viewerName={viewer === miraId ? 'Mira' : 'Theo'}
-      humanParticipants={crowded ? [
-        { participantId: 'human_long' as ParticipantId, displayName: 'A very long participant name' },
-        { participantId: 'human_third' as ParticipantId, displayName: 'Pat' },
-      ] : []}
+  const [chipsClosed, setChipsClosed] = useState(0);
+  const [humans, setHumans] = useState(params.has('crowd')
+    ? [{ participantId: 'p_theo' as ParticipantId, ownerId: theo, displayName: 'Theo Park' },
+      { participantId: 'p_kai' as ParticipantId, ownerId: 'owner_kai' as OwnerId, displayName: 'Kai' }]
+    : [{ participantId: 'p_theo' as ParticipantId, ownerId: theo, displayName: 'Theo Park' }]);
+  return <KhalaApp theme={theme} onThemeChange={setTheme} inThread
+    list={<p className="kh-cv-empty">Release channel</p>}
+    main={<ChannelScreen title="Release channel" controller={controller}
+      viewerOwnerId={mira} viewerName="Mira" viewerParticipantId={'p_mira' as ParticipantId}
+      humanParticipants={humans} currentNames={names} describeParticipant={describeParticipant}
       renameScope={roomId}
-      currentNames={names}
       renameAgent={async (participantId, name) => {
-        if (viewer !== miraId || participantId !== scoutId) return 'rejected';
-        setNames(new Map([[scoutId, name]]));
-        setRenamed(true);
+        if (participantId !== 'agent_scout') return 'rejected';
+        setNames(new Map([[participantId, name]]));
         return 'accepted';
       }}
-      renderTimeline={() => (
-        <section aria-label="Live timeline">
-          <h2>Conversation</h2>
-          <p><strong>Mira</strong> Human</p>
-          {messages.map((message, index) => (
-            <p key={`${index}-${message.body}`}>{message.body} {message.pending ? <span>Sending…</span> : null}</p>
-          ))}
-          {renamed ? <p>Scout is now called {names.get(scoutId)} · changed by Mira</p> : null}
-          <label>Message <textarea value={draft} onChange={event => setDraft(event.currentTarget.value)} /></label>
-          <button type="button" onClick={sendMessage}>Send message</button>
-        </section>
-      )}
-      renderHeaderActions={() => (
-        <section aria-label="Agent controls">
-          <h2>Agent controls</h2>
-          <button type="button" onClick={() => {
-            snapshot = { generation: 1, agents: [
-              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-              { participantId: builderId, ownerId: theoId, displayName: 'Builder', ownerDisplayName: 'Theo',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-            ] };
-            for (const listener of listeners) listener(snapshot);
-          }}>Show two agents</button>
-          <button type="button" onClick={() => setViewer(viewer === miraId ? theoId : miraId)}>Switch human</button>
-          <button type="button" onClick={() => {
-            setNames(new Map());
-            snapshot = { generation: 1, agents: [
-              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-              { participantId: secondScoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-            ] };
-            for (const listener of listeners) listener(snapshot);
-          }}>Show same-named agents</button>
-          <button type="button" onClick={() => {
-            setCrowded(true);
-            snapshot = { generation: 1, agents: [
-              { participantId: scoutId, ownerId: miraId, displayName: 'Scout', ownerDisplayName: 'Mira',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-              { participantId: builderId, ownerId: theoId, displayName: 'Builder', ownerDisplayName: 'Theo',
-                connection: 'connected', routeLabel: 'Codex CLI', lastReceipt: null, acknowledgement: 'unknown' },
-              { participantId: secondScoutId, displayName: 'Another very long agent name', ownerDisplayName: '',
-                connection: 'unknown', routeLabel: 'Channel agent', lastReceipt: null, acknowledgement: 'unknown' },
-            ] };
-            for (const listener of listeners) listener(snapshot);
-          }}>Show crowded roster</button>
-        </section>
-      )}
-      renderShare={() => <ChannelSharePanel roomId={roomId} admission={{ share: async () => ({
-        kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null },
-      }) }} onCopy={async () => ({ ok: true })} />}
-    />
-      </main>
-    </div>
-  );
+      recentActivity={participantId => participantId === 'agent_scout'
+        ? [{ id: 'e2', at: '2026-10-01T16:52:00Z', body: 'The release build is green.' }, { id: 'e1', at: '2026-10-01T16:40:00Z', body: 'Starting the build.' }]
+        : []}
+      agentJoinedAt={participantId => participantId === 'agent_scout' ? '2026-10-01T16:30:00Z' : undefined}
+      onMention={label => setDraft(current => insertMention(current, label))}
+      onRosterOpen={() => setChipsClosed(count => count + 1)}
+      onBack={() => { document.title = 'back'; }}
+      renderShare={() => <ChannelInvite admission={admission} roomId={roomId} onCopy={onCopy} />}
+      renderAddAgent={() => <ChannelAddAgent admission={admission} roomId={roomId} onCopy={onCopy} />}
+      renderTimeline={openParticipant => <section className="harness-thread" aria-label="Thread"
+        style={{ display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', gap: '.5rem', padding: '1rem' }}>
+        <p><button type="button" onClick={() => openParticipant('agent_scout')}>@Scout</button> The release build is green.</p>
+        <p id="chips-closed">{chipsClosed}</p>
+        <label>Message <textarea value={draft} onChange={event => setDraft(event.currentTarget.value)} /></label>
+        <button type="button" onClick={() => publish(crowd)}>Show crowd</button>
+        <button type="button" onClick={() => publish(base.filter(agent => agent.participantId !== 'agent_builder'))}>Builder leaves</button>
+        <button type="button" onClick={() => setHumans(current => [...current,
+          { participantId: 'p_kai' as ParticipantId, ownerId: 'owner_kai' as OwnerId, displayName: 'Kai' }])}>Kai joins</button>
+      </section>} />} />;
 }
 
 createRoot(document.getElementById('root')!).render(<Harness />);

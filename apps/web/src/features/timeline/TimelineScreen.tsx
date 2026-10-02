@@ -7,7 +7,7 @@ import { ChannelEventPill } from './ChannelEventPill';
 // review-action slot) render outside the message-content renderer, so
 // message syntax can never create them (KTD4).
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react';
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
@@ -19,7 +19,7 @@ import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
-import { ChatComposer, ChatMessage } from '../../ui/conversation';
+import { ChatComposer, ChatMessage, insertMention } from '../../ui/conversation';
 import { ChatSystemEvent } from '../../ui/conversation';
 import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
@@ -45,7 +45,16 @@ export interface TimelineScreenProps {
   evidence?: ReceiptEvidenceController;
   /** The room index has encrypted activity that this device cannot preview. */
   unreadableActivity?: boolean;
+  /** Lets the room's detail pane and roster reach the composer. */
+  composerRef?: Ref<TimelineComposerHandle>;
 }
+
+export type TimelineComposerHandle = Readonly<{
+  /** Inserts `@{label} ` into the draft (§9 `khInsert`). */
+  insertMention(label: string): void;
+  /** Collapses the mention chips grid. */
+  closeChips(): void;
+}>
 
 /** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
 function evidenceLinkId(unit: EvidenceUnit, eventId: string): string {
@@ -134,7 +143,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false,
+  unreadableActivity = false, composerRef,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const rows = useMemo(() => dedupeByKey(data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })),
@@ -178,6 +187,11 @@ export function TimelineScreen({
     heading?.focus();
   }
   const [draft, setDraft] = useState('');
+  const [chipsOpen, setChipsOpen] = useState(false);
+  useImperativeHandle(composerRef, () => ({
+    insertMention: label => setDraft(current => insertMention(current, label)),
+    closeChips: () => setChipsOpen(false),
+  }), []);
   // Every send keeps its own row by `clientTxnId` until reconciled: a later
   // send never silently replaces an earlier failed/outcome_unknown one (R3).
   const [pendingList, setPendingList] = useState<readonly PendingSend[]>(() => pendingStore?.load().map(restored) ?? []);
@@ -426,7 +440,7 @@ export function TimelineScreen({
           {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
         </button>
       ) : null}
-      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
+      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}

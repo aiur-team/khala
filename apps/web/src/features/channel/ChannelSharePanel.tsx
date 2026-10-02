@@ -1,32 +1,34 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AdmissionPort, RoomId } from '@khala/contracts/messaging/index';
 import { copyShareLink, type CopyResult } from '../../ui/share-link';
+import { AddAgentPopover } from '../../ui/khala/AddAgentPopover';
+import { CopyFallback, InvitePopover, type CopyableLink } from '../../ui/khala/InvitePopover';
 import type { HumanChannelLinks } from '../../composition/human/channel-links';
 
 type ShareState = Readonly<{ operationId: string; url: string | null; status: 'idle' | 'busy' | 'ready' | 'error'; error: string | null }>;
 const fresh = (): ShareState => ({ operationId: crypto.randomUUID(), url: null, status: 'idle', error: null });
 
-/** Admission remains server-enforced; this control shares one link and reports copy feedback. */
-export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = copyShareLink }: Readonly<{
+export type ChannelLinkSource = Readonly<{
   admission: Pick<AdmissionPort, 'share'>;
   channelLinks?: Pick<HumanChannelLinks, 'personal'>;
   roomId: RoomId;
-  onCopy?: (url: string) => Promise<CopyResult>;
-}>) {
+}>;
+
+export type ChannelLink = CopyableLink;
+
+/**
+ * The channel's one share link. Admission remains server-enforced: the link
+ * grants nothing by itself. A personal channel link loads on mount; an
+ * admission share is minted on the first copy unless `eager` shows it first.
+ */
+export function useChannelLink(admission: ChannelLinkSource['admission'], channelLinks: ChannelLinkSource['channelLinks'], roomId: RoomId,
+  { onCopy = copyShareLink, eager = false }: Readonly<{ onCopy?: ((url: string) => Promise<CopyResult>) | undefined; eager?: boolean }> = {}): ChannelLink {
   const [link, setLink] = useState<ShareState>(fresh);
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [copying, setCopying] = useState(false);
-  const fallbackId = useId();
-  const fallbackInput = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (copied === 'failed') {
-      fallbackInput.current?.focus();
-      fallbackInput.current?.select();
-    }
-  }, [copied]);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
-  useEffect(() => { if (channelLinks) void share(); }, []);
+  useEffect(() => { if (channelLinks || eager) void share(); }, []);
 
   async function share(): Promise<string | null> {
     const current = link;
@@ -59,30 +61,50 @@ export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = co
     return null;
   }
 
-  async function copy() {
-    if (copying) return;
+  async function copy(): Promise<CopyResult | null> {
+    if (copying) return null;
     setCopying(true);
     const url = link.url ?? await share();
-    if (!url) { setCopying(false); return; }
+    if (!url) { setCopying(false); return null; }
     let result: CopyResult;
     try { result = await onCopy(url); } catch { result = { ok: false, reason: 'unavailable' }; }
     setCopied(result.ok ? 'copied' : 'failed');
     if (copiedTimer.current) clearTimeout(copiedTimer.current);
     if (result.ok) copiedTimer.current = setTimeout(() => setCopied('idle'), 2200);
     setCopying(false);
+    return result;
   }
 
+  return { url: link.url, status: link.status, error: link.error, copying, copied, copy };
+}
+
+/** The Invite popover body over this channel's live link. */
+export function ChannelInvite({ admission, channelLinks, roomId, onCopy }: ChannelLinkSource & Readonly<{ onCopy?: (url: string) => Promise<CopyResult> }>) {
+  return <InvitePopover link={useChannelLink(admission, channelLinks, roomId, { onCopy, eager: true })} />;
+}
+
+/** The Add agent popover body: the same link is the agent's `khala_join` input (C7). */
+export function ChannelAddAgent({ admission, channelLinks, roomId, onCopy }: ChannelLinkSource & Readonly<{ onCopy?: (url: string) => Promise<CopyResult> }>) {
+  return <AddAgentPopover link={useChannelLink(admission, channelLinks, roomId, { onCopy })} />;
+}
+
+/** Admission remains server-enforced; this control shares one link and reports copy feedback. */
+export function ChannelSharePanel({ admission, channelLinks, roomId, onCopy = copyShareLink }: Readonly<{
+  admission: Pick<AdmissionPort, 'share'>;
+  channelLinks?: Pick<HumanChannelLinks, 'personal'>;
+  roomId: RoomId;
+  onCopy?: (url: string) => Promise<CopyResult>;
+}>) {
+  const link = useChannelLink(admission, channelLinks, roomId, { onCopy });
   const actionLabel = channelLinks ? 'Copy my channel link' : 'Copy channel invite link';
   return <section className="channel-share" aria-label="Share channel">
-    <button type="button" className="aiur-shell__icon-button" aria-label={actionLabel} title={actionLabel} onClick={() => void copy()} disabled={link.status === 'busy' || copying}>
+    <button type="button" className="aiur-shell__icon-button" aria-label={actionLabel} title={actionLabel} onClick={() => void link.copy()} disabled={link.status === 'busy' || link.copying}>
       <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V2m-5 5 5-5 5 5"/><path d="M4 13v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/></svg>
     </button>
     {link.error ? <p className="channel-share__feedback" role="alert">Could not prepare a link. Try again.</p> : null}
-    {copied === 'copied' ? <p className="channel-share__feedback" role="status">Copied</p> : null}
-    {copied === 'failed' && link.url ? <div className="channel-share__feedback channel-share__fallback">
-      <p id={`${fallbackId}-hint`} role="alert">Copy failed. Select and copy the link below.</p>
-      <label htmlFor={fallbackId}>Channel link</label>
-      <input ref={fallbackInput} id={fallbackId} aria-describedby={`${fallbackId}-hint`} readOnly value={link.url} onFocus={event => event.currentTarget.select()} />
+    {link.copied === 'copied' ? <p className="channel-share__feedback" role="status">Copied</p> : null}
+    {link.copied === 'failed' && link.url ? <div className="channel-share__feedback channel-share__fallback">
+      <CopyFallback url={link.url} />
     </div> : null}
   </section>;
 }

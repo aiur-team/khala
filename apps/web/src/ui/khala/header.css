@@ -1,1 +1,64 @@
-/* Owned by a later design ticket (KM-181..184); imported once from khala-app.css. */
+/* §5 thread header and §6 roster disclosure, verbatim from source:460-489,
+   605-707 with `html[data-theme="light"]` re-rooted to `.khala-app`. M2-only
+   rules (requests, remove confirm, crown, kebab, progress) are not shipped.
+   `.kh-back` lives in khala-app.css. */
+
+/* The room screen fills `.kh-main` (khala-app.css) and lets the thread scroll itself. */
+.kh-channel-thread { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+
+/* §5 header (source:460-471, 605-609) */
+.kh-head { display: flex; align-items: center; gap: .8rem; padding: .85rem 1.1rem; border-bottom: 1px solid var(--line); background: var(--surface); }
+.kh-stack { display: flex; }
+.kh-stack .kh-av { width: 30px; height: 30px; margin-left: -8px; border: 2px solid var(--surface); }
+.kh-stack .kh-av:first-child { margin-left: 0; }
+.kh-head-t { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; flex: 1 1 auto; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; padding: .2rem .45rem; margin: -.2rem -.45rem; border-radius: 10px; cursor: pointer; }
+.kh-head-t:hover { background: var(--surface-2); }
+.kh-head-t > b { display: flex; align-items: center; gap: .3rem; max-width: 100%; font-size: .98rem; letter-spacing: -.01em; }
+.kh-head-t > b > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* [ADAPT] the chevron icon is wrapped, so the rules target the wrapper. */
+.kh-chev { display: inline-grid; width: 16px; height: 16px; flex: 0 0 auto; color: var(--muted); transition: transform .2s; }
+.kh-chev svg { width: 16px; height: 16px; }
+.roster-open .kh-chev { transform: rotate(180deg); }
+.kh-head-t > span { font-size: .78rem; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kh-head-t .on { color: var(--good-ink); }
+.kh-hacts { display: flex; gap: 2px; margin-left: auto; flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .kh-head { padding: .65rem .75rem; gap: .55rem; }
+  .kh-stack .kh-av:nth-child(n+3) { display: none; }
+}
+
+/* `.kh-id` (source:692-693): a same-named agent's ordinal. */
+.kh-id { font-family: "JetBrains Mono", monospace; font-size: .68rem; padding: 1px 6px; border-radius: 999px; background: hsl(var(--h) 60% 50% / .14); color: hsl(var(--h) 70% 72%); border: 1px solid hsl(var(--h) 60% 50% / .3); }
+.khala-app[data-theme="light"] .kh-id { color: hsl(var(--h) 60% 32%); }
+.kh-rai b .kh-id, .kh-d-hero b .kh-id, .kh-d-agent b .kh-id { margin-left: .3rem; font-weight: 400; }
+
+/* §6.2 roster (source:473-489, 679-701, 704-707) */
+.kh-roster { position: absolute; left: 0; right: 0; top: var(--kh-head-h, 60px); z-index: 4; display: grid; grid-template-rows: 0fr; transition: grid-template-rows .25s ease; background: var(--surface); border-bottom: 1px solid transparent; }
+.kh-roster.is-open { box-shadow: 0 18px 40px -18px rgba(0,0,0,.55); }
+.kh-roster.is-open { grid-template-rows: 1fr; border-bottom-color: var(--line); }
+.kh-roster-in { overflow: hidden; min-height: 0; }
+.kh-roster.is-open .kh-roster-in { overflow-y: scroll; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; max-height: var(--kh-roster-max, 320px); padding: .5rem .7rem .8rem; display: flex; flex-direction: column; gap: .35rem; }
+.kh-rg { display: flex; flex-direction: column; }
+.kh-rh, .kh-rai { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .45rem .5rem; border: 0; border-radius: 12px; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; min-height: 44px; }
+.kh-rh:hover, .kh-rai:hover { background: var(--surface-2); }
+.kh-rh > span:nth-child(2), .kh-rai > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.kh-rh b, .kh-rai b { font-size: .88rem; font-weight: 600; }
+.kh-rh em, .kh-rai em { font-style: normal; font-size: .76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kh-rh > i { font-style: normal; font-size: .72rem; color: var(--faint); flex: 0 0 auto; }
+.kh-ra { margin-left: 1.45rem; padding-left: .8rem; border-left: 2px solid var(--line); display: flex; flex-direction: column; }
+.kh-rai .kh-av { width: 28px; height: 28px; }
+.kh-rai .kh-av img { width: 14px; height: 14px; }
+.kh-rrow { display: flex; align-items: center; gap: .3rem; border-radius: 12px; }
+.kh-rrow:hover { background: var(--surface-2); }
+.kh-rrow > .kh-rh, .kh-rrow > .kh-rai { flex: 1; min-width: 0; background: none !important; }
+.kh-racts { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; padding-right: .3rem; }
+.kh-mode-ro { position: relative; width: 26px; height: 26px; display: grid; place-items: center; color: var(--muted); border-radius: 7px; flex: 0 0 auto; }
+.kh-mode-ro svg { width: 14px; height: 14px; }
+.kh-mode-btn { display: none; color: var(--accent-ink); }
+.kh-roster-in.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 36px), transparent); mask-image: linear-gradient(#000 calc(100% - 36px), transparent); }
+.kh-roster-in::-webkit-scrollbar { width: 6px; } .kh-roster-in::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+.kh-rlbl { display: flex; align-items: center; gap: .4rem; padding: .3rem .5rem .15rem; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--faint); }
+@container khm (max-width: 600px) { .kh-rh > i { display: none; } }
+@container khm (max-width: 520px) { .kh-stack { display: none; } .kh-seg.ic { display: none; } .kh-mode-btn { display: grid; } }
+@media (max-width: 760px) { .kh-ra { margin-left: 1.1rem; } }
+.kh-roster-status { padding: .3rem .5rem; font-size: .8rem; color: var(--muted); }

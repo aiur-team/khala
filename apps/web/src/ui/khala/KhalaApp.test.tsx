@@ -14,7 +14,7 @@ describe('KhalaApp', () => {
     expect(html).toMatch(/<div class="khala-app" data-theme="dark"><section class="section-card kh-card" id="kh-card">/u);
     expect(html).toContain('<aside class="kh-list" aria-label="Conversations"><div class="kh-brand">');
     expect(html).toContain('<p>list</p></aside><div class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></div>');
-    expect(html).toContain('<aside class="kh-detail" aria-label="Participant details"></aside><div class="kh-pop" hidden=""></div></section></div>');
+    expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div></section></div>');
   });
 
   it('puts the wordmark in the brand row and nowhere else', () => {

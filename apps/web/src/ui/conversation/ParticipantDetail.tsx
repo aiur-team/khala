@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import './conversation.css';
+import '../khala/detail.css';
 
-export function ParticipantDetail({ name, children, onClose }: Readonly<{ name: string; children?: ReactNode; onClose(): void }>) {
+/**
+ * The detail pane frame (RECREATION-SPEC §11): `.kh-d-in` with the kind label
+ * and close button. Above 1100px it is a non-modal `complementary` region; at
+ * 1100px and below it overlays the thread as a modal dialog that traps focus
+ * and returns it to the opener on close.
+ */
+export function ParticipantDetail({ name, kind, children, onClose }: Readonly<{
+  /** The pane's accessible name. */
+  name: string;
+  /** `.kh-d-lbl` above the hero, e.g. `Agent` or `Human`. */
+  kind?: string;
+  children?: ReactNode;
+  onClose(): void;
+}>) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const [overlay, setOverlay] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 1100px)').matches);
@@ -29,7 +42,10 @@ export function ParticipantDetail({ name, children, onClose }: Readonly<{ name: 
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }
-  return <aside ref={detailRef} className="conversation-detail" role={overlay ? 'dialog' : 'complementary'}
-    aria-modal={overlay ? 'true' : undefined} aria-label="Conversation details" onKeyDown={handleKeyDown}>
-    <button ref={closeRef} type="button" onClick={onClose} aria-label="Close details">×</button><h2>{name}</h2>{children}</aside>;
+  return <aside ref={detailRef} className="kh-d-in" role={overlay ? 'dialog' : 'complementary'}
+    aria-modal={overlay ? 'true' : undefined} aria-label={name} onKeyDown={handleKeyDown}>
+    <div className="kh-d-top"><span className="kh-d-lbl">{kind}</span>
+      <button ref={closeRef} type="button" className="kh-d-x" onClick={onClose} aria-label="Close details">×</button></div>
+    {children}
+  </aside>;
 }
