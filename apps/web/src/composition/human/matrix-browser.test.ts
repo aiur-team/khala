@@ -102,7 +102,9 @@ describe('Matrix browser safety boundaries', () => {
       hasEncryptionStateEvent: () => encrypted,
       getLastLiveEvent: () => event,
       getUnreadNotificationCount: () => 0,
-      getLiveTimeline: () => ({ getEvents: () => [event] }),
+      getLiveTimeline: () => ({ getEvents: () => [event, new MatrixEvent({ event_id: '$channel-event', sender: '@agent:test',
+        type: 'com.khala.event.v1', content: { v: 1, kind: 'deploy.finished', summary: 'deployed', body: 'deployed' },
+        origin_server_ts: Date.parse('2026-10-01T00:00:00Z') })] }),
     }) as unknown as Room;
     const client = { getRooms: () => [candidate('room_1', 'join', true), candidate('room_2', 'invite', true), candidate('room_3', 'join', false)] } as Pick<MatrixClient, 'getRooms'>;
     expect(projectJoinedEncryptedRooms(client, limits.value)).toEqual([{
