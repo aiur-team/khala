@@ -97,10 +97,12 @@ describe('Matrix browser safety boundaries', () => {
       getContent: () => ({ body: 'Verified plaintext', msgtype: 'm.text' }),
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$event',
+      getSender: () => '@me:example.test',
     };
     const candidate = (id: string, membership: string, encrypted: boolean) => ({
       roomId: id, name: `Title ${id}`,
       getMember: () => null,
+      getJoinedMembers: () => [],
       getMyMembership: () => membership,
       hasEncryptionStateEvent: () => encrypted,
       getLastLiveEvent: () => event,
@@ -112,7 +114,53 @@ describe('Matrix browser safety boundaries', () => {
     const client = { getUserId: () => '@me:example.test', getRooms: () => [candidate('room_1', 'join', true), candidate('room_2', 'invite', true), candidate('room_3', 'join', false)] } as Pick<MatrixClient, 'getRooms' | 'getUserId'>;
     expect(projectJoinedEncryptedRooms(client, limits.value)).toEqual([{
       id: 'room_1', title: 'Title room_1', preview: 'Verified plaintext', timestamp: '2026-09-28T12:00:00.000Z', unreadCount: null,
+      members: [], lastSender: { label: 'me', isViewer: true },
     }]);
+  });
+
+  it('lists non-viewer members in member order, classifies C4 agents and labels the last sender', () => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid test limits');
+    const agentId = '@agent-1a2b3c4d-x9y8z7:khala.local';
+    const joined = [
+      { userId: '@maya:khala.local', name: 'Maya Chen' },
+      { userId: '@me:khala.local', name: 'Kevin' },
+      { userId: agentId, name: 'Sonnet · Kai' },
+      // Not a C4 username: an uppercase hash, so a human.
+      { userId: '@agent-1A2B3C4D-x9y8z7:khala.local', name: '@agent-1A2B3C4D-x9y8z7:khala.local' },
+    ];
+    const message = (sender: string) => ({
+      getType: () => EventType.RoomMessage,
+      isDecryptionFailure: () => false,
+      getClearContent: () => ({ body: 'Pushing both fixes now.' }),
+      getContent: () => ({ body: 'Pushing both fixes now.', msgtype: 'm.text' }),
+      getTs: () => Date.parse('2026-10-02T17:11:00Z'),
+      getId: () => `$from-${sender}`,
+      getSender: () => sender,
+    });
+    const room = (sender: string) => ({
+      roomId: '!r1:khala.local', name: 'Release 0.9 go / no-go',
+      getMember: (userId: string) => joined.find(member => member.userId === userId) ?? null,
+      getJoinedMembers: () => joined,
+      getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getLastLiveEvent: () => null, getUnreadNotificationCount: () => 3,
+      getLiveTimeline: () => ({ getEvents: () => [message(sender)] }),
+    }) as unknown as Room;
+    const project = (sender: string) => projectJoinedEncryptedRooms({ getUserId: () => '@me:khala.local', getRooms: () => [room(sender)] }, limits.value)[0]!;
+
+    expect(project(agentId)).toMatchObject({
+      members: [
+        { id: '@maya:khala.local', kind: 'human', displayName: 'Maya Chen' },
+        { id: agentId, kind: 'agent', displayName: 'Sonnet · Kai' },
+        { id: '@agent-1A2B3C4D-x9y8z7:khala.local', kind: 'human', displayName: 'agent-1A2B3C4D-x9y8z7' },
+      ],
+      lastSender: { label: 'Sonnet', isViewer: false },
+      unreadCount: 3,
+    });
+    expect(project(agentId).members!.some(member => member.id === '@me:khala.local')).toBe(false);
+    expect(project('@maya:khala.local').lastSender).toEqual({ label: 'Maya', isViewer: false });
+    expect(project('@me:khala.local').lastSender).toEqual({ label: 'Kevin', isViewer: true });
+    expect(project('@gone:khala.local').lastSender).toEqual({ label: 'gone', isViewer: false });
   });
 
   it('refreshes a late decrypted preview without another sync and fences old generations', () => {
@@ -128,12 +176,13 @@ describe('Matrix browser safety boundaries', () => {
       getContent: () => decrypted ? { body: 'Recovered plaintext', msgtype: 'm.text' } : {},
       getTs: () => Date.parse('2026-09-28T12:00:00.000Z'),
       getId: () => '$late',
+      getSender: () => '@sender:example.test',
       on: vi.fn((kind: string, callback: () => void) => { if (kind === MatrixEventEvent.Decrypted) decryptListeners.add(callback); }),
       off: vi.fn((kind: string, callback: () => void) => { if (kind === MatrixEventEvent.Decrypted) decryptListeners.delete(callback); }),
     };
     const room = {
       roomId: 'room_1', name: 'Recovered channel',
-      getMember: () => null, getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getMember: () => null, getJoinedMembers: () => [], getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
       getLastLiveEvent: () => event, getUnreadNotificationCount: () => 1,
       getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
@@ -423,7 +472,7 @@ describe('browser cross-signing and shared history', () => {
     if (!limits.ok) throw new Error('invalid limits');
     const event = new MatrixEvent({ event_id: '$old', type: 'm.room.encrypted', content: {}, origin_server_ts: 900 });
     const room = { roomId: '!room:test', name: 'Room', getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
-      getMember: () => ({ membership: 'join', events: { member: { getTs: () => 1000 } } }),
+      getMember: () => ({ membership: 'join', events: { member: { getTs: () => 1000 } } }), getJoinedMembers: () => [],
       getLastLiveEvent: () => event, getUnreadNotificationCount: () => 0, getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
     expect(projectJoinedEncryptedRooms({ getRooms: () => [room], getUserId: () => '@me:test' }, limits.value)[0])

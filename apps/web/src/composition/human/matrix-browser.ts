@@ -180,6 +180,22 @@ function ownJoinTs(room: Room | null, userId: string | null): number | null {
   return member?.membership === 'join' ? member.events.member?.getTs() ?? null : null;
 }
 
+/** The C4 agent Matrix username: `agent-<ownerHash8>-<rand6>`. */
+const AGENT_USER_ID = /^@agent-[0-9a-f]{8}-[a-z0-9]{6}:/u;
+
+type ConversationMember = NonNullable<ConversationSummary['members']>[number];
+
+function conversationMember(userId: string, name: string | undefined): ConversationMember {
+  const localpart = userId.slice(1, userId.includes(':') ? userId.indexOf(':') : undefined);
+  return { id: userId, kind: AGENT_USER_ID.test(userId) ? 'agent' : 'human', displayName: name && name !== userId ? name : localpart };
+}
+
+/** A human's first name, or an agent's label (`Claude · Kevin` → `Claude`). */
+function senderLabel(member: ConversationMember): string {
+  const label = member.kind === 'agent' ? member.displayName.split(' · ')[0] : member.displayName.trim().split(/\s+/u)[0];
+  return label?.trim() || member.displayName;
+}
+
 /** Only local, joined encrypted rooms enter the owner conversation index. */
 export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms' | 'getUserId'>, limits: ContentLimits): readonly ConversationSummary[] {
   return sortConversations(client.getRooms()
@@ -196,12 +212,21 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
       const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
         ? latest.getClearContent()?.body : null;
       const unread = candidate.getUnreadNotificationCount();
+      const viewer = client.getUserId();
+      const sender = latest?.getSender();
       return {
         id: summary.roomId,
         title: summary.title ?? 'Encrypted conversation',
         preview: typeof body === 'string' ? body : null,
         timestamp: latest ? new Date(latest.getTs()).toISOString() : null,
         unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
+        members: candidate.getJoinedMembers()
+          .filter(member => member.userId !== viewer)
+          .map(member => conversationMember(member.userId, member.name)),
+        ...(sender ? { lastSender: {
+          label: senderLabel(conversationMember(sender, candidate.getMember(sender)?.name)),
+          isViewer: sender === viewer,
+        } } : {}),
       };
     }));
 }
