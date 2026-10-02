@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
@@ -401,10 +401,10 @@ test('Thread rows show chosen initials on avatars and owner badges', { timeout: 
     });
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
       for (const theme of ['dark', 'light']) {
-        const page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+        const page: Page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
         await page.goto(`${server.resolvedUrls!.local[0]!}?initials&theme=${theme}`);
         await page.locator('.kh-rcpt').waitFor();
-        const row = (eventId: string) => page.locator(`[data-event-id="${eventId}"]`);
+        const row = (eventId: string): Locator => page.locator(`[data-event-id="${eventId}"]`);
         // Maya's avatar and her agent's badge read her chosen `ZZ`; the viewer's agent reads the viewer's `KV`.
         assert.equal(await row('E3').locator('.kh-hav').textContent(), 'ZZ');
         assert.equal(await row('E5').locator('.kh-own').textContent(), 'ZZ');
