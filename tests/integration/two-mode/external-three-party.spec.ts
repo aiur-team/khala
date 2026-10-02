@@ -38,7 +38,7 @@ async function newEncryptedMessage(owner: Page, native: ExternalNativeDriver, ro
   return { eventId, text };
 }
 
-async function approveExactRequest(owner: Page, actor: Actor, roomId: string): Promise<void> {
+async function approveExactRequest(owner: Page, actor: Actor): Promise<string> {
   await owner.goto(`${environment.appOrigin}/channel-requests`);
   const pending = owner.getByRole('list', { name: 'Requests waiting for you' });
   let access: ReturnType<typeof exactOwnerAccessRequest> = null;
@@ -71,7 +71,17 @@ async function approveExactRequest(owner: Page, actor: Actor, roomId: string): P
     .toHaveCount(0, { timeout: 30_000 });
   const recent = owner.getByRole('list', { name: 'Recent requests' }).locator('.channel-requests__row', { hasText: fingerprint });
   await expect(recent).toContainText('Approved', { timeout: 30_000 });
-  await expect(recent).toContainText('Connected', { timeout: 60_000 });
+  return fingerprint;
+}
+
+async function requireConnectedRequest(owner: Page, fingerprint: string, roomId: string): Promise<void> {
+  const recent = owner.getByRole('list', { name: 'Recent requests' })
+    .locator('.channel-requests__row', { hasText: fingerprint });
+  await expect.poll(async () => {
+    await owner.reload({ waitUntil: 'domcontentloaded' });
+    await recent.waitFor({ state: 'visible' });
+    return (await recent.innerText()).includes('Connected');
+  }, { timeout: 90_000, intervals: [1_000, 2_000] }).toBe(true);
   await owner.goto(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
 }
 
@@ -239,7 +249,10 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       const discovery = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.discoveryConsentUrl), 120_000);
       await authorizeDiscovery(owner, actor, discovery.sessions.find(item => item.actor === actor)!);
       native.clearDiscovery(actor);
-      await approveExactRequest(owner, actor, roomId);
+      const requestFingerprint = await approveExactRequest(owner, actor);
+      native.prompt(actor, `The owner approved the pending request. In this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite} to pick up that decision and connect. Do not create a new operation ID.`);
+      await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.bindingId), 120_000);
+      await requireConnectedRequest(owner, requestFingerprint, roomId);
     }
 
     phase = 'bindings';
