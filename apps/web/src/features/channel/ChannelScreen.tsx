@@ -159,8 +159,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, viewerColor, humanParticipants,
   currentNames, namesPending = false, renameAgent, renameScope, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline,
-  renderShare,
-  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
+  renderShare, renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
   const humanColors = useMemo(() => {
