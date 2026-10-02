@@ -37,9 +37,21 @@ describe('KhalaApp', () => {
     expect(render({ detail: <p>detail</p> })).toContain('class="section-card kh-card has-detail"');
   });
 
-  it('shows the Live badge only while live', () => {
-    expect(render()).not.toContain('Live');
-    expect(render({ live: true })).toContain('class="status-badge status-badge-live brand-live" role="status"');
+  it('never renders a Live badge in the brand', () => {
+    for (const html of [render(), render({ list: undefined }), render({ brandMenu: <button type="button">menu</button> })]) {
+      expect(html).not.toContain('brand-live');
+      expect(html).not.toContain('Live');
+    }
+  });
+
+  it('ends the brand actions with brandMenu in place of the theme toggle', () => {
+    const html = render({ brandActions: <span>status</span>, brandMenu: <button type="button" aria-label="Settings">s</button> });
+    expect(html).not.toContain('aria-label="Toggle color theme"');
+    expect(html).toContain('<span class="kh-brand-actions"><span>status</span><button type="button" aria-label="Settings">s</button></span></div>');
+  });
+
+  it('keeps the theme toggle without brandMenu (the confirm page path)', () => {
+    expect(render({ brandActions: undefined })).toContain('aria-label="Toggle color theme"');
   });
 
   it('renders a single-pane frame with the brand in main when there is no list', () => {

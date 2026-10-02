@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { createHumanRouteCodec } from './routes';
-import { HumanApplicationScreen, redirectToSignIn } from './mount';
+import { HumanApplicationScreen, LogoutAction, redirectToSignIn } from './mount';
 import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from './application';
 
 const routes = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
@@ -101,7 +101,7 @@ describe('HumanApplicationScreen', () => {
       if (snapshot.phase === 'inactive') expect(html).toContain('Channels are paused in this tab.');
       expect(html).toContain('Try again in this tab');
       expect(html).not.toContain('Account and device status');
-      expect(html).toContain('aria-label="Log out"');
+      expect(html).toContain('aria-label="Settings"');
       expect(html).not.toContain('live room');
     }
     const storageFailure = renderToStaticMarkup(<HumanApplicationScreen application={application({
@@ -131,7 +131,7 @@ describe('HumanApplicationScreen', () => {
       expect(html).not.toContain('Check retained keys again');
       expect(html).not.toContain('Use new device');
       expect(html).not.toContain('live room');
-      expect(html).toContain('aria-label="Log out"');
+      expect(html).toContain('aria-label="Settings"');
       expect(renderRoom).not.toHaveBeenCalled();
     }
     const revoked = renderToStaticMarkup(
@@ -141,7 +141,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(revoked).not.toContain('original keys');
     expect(revoked).toContain('revoked_by_owner');
-    expect(revoked).toContain('aria-label="Log out"');
+    expect(revoked).toContain('aria-label="Settings"');
   });
 
   it('shows a gated channel index during device initialization and recoverable failure', async () => {
@@ -156,7 +156,7 @@ describe('HumanApplicationScreen', () => {
       expect(html).toContain('khala-owner-shell');
       expect(html).toContain('aria-label="Conversations"');
       expect(html).toContain('aria-label="New channel" disabled');
-      expect(html).toContain('aria-label="Log out"');
+      expect(html).toContain('aria-label="Settings"');
       expect(html).not.toContain('Account and device status');
       expect(html).not.toContain('kh-pop-h');
       expect(renderRoom).not.toHaveBeenCalled();
@@ -171,6 +171,9 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('Checking your sign-in…');
     expect(html).not.toContain('Account and device status');
     expect(html).not.toContain('aria-label="Log out"');
+    expect(html).not.toContain('Logging out…');
+    // The theme stays switchable from the cog; its menu has only Mode in this phase.
+    expect(html).toContain('aria-label="Settings"');
   });
 
   it.each(['hosted-content', 'standalone'] as const)('renders signed-out %s inside the Khala frame with no topbar', mode => {
@@ -196,10 +199,11 @@ describe('HumanApplicationScreen', () => {
     expect(room).toContain('live room');
     expect(room).not.toContain('channel-requests');
     expect(room).toContain('aria-label="New channel"');
-    expect(room).toContain('aria-label="Log out"');
-    const actions = room.slice(room.indexOf('<span class="kh-brand-actions">'));
-    expect(actions.indexOf('aria-label="Toggle color theme"')).toBeGreaterThan(-1);
-    expect(actions.indexOf('aria-label="Toggle color theme"')).toBeLessThan(actions.indexOf('aria-label="Log out"'));
+    const brand = room.slice(room.indexOf('<div class="kh-brand">'), room.indexOf('</span></div>', room.indexOf('<span class="kh-brand-actions">')));
+    expect(brand.match(/aria-label="Settings"/gu)).toHaveLength(1);
+    expect(brand).toMatch(/<span class="kh-brand-actions"><button type="button" class="tool-btn icon-only" aria-label="Settings"[^>]*>(<svg.*?<\/svg>)<\/button>$/u);
+    expect(room).not.toContain('aria-label="Log out"');
+    expect(room).not.toContain('aria-label="Toggle color theme"');
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
@@ -257,14 +261,21 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('aria-label="All conversations"');
   });
 
-  it.each([[true, 'shows'], [false, 'hides']])('with homeserver sync live=%s, %s the brand Live badge', (live) => {
-    const syncStatus = { live: vi.fn(() => live), subscribe: vi.fn(() => () => undefined) };
+  it('never shows a Live badge in the brand, even while the homeserver sync is live', () => {
+    const syncStatus = { live: vi.fn(() => true), subscribe: vi.fn(() => () => undefined) };
     const context = { ...readyContext('/conversations'), generation: 3, syncStatus };
     const html = renderToStaticMarkup(<HumanApplicationScreen
       application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
       identity={identity} routes={routes} renderRoom={renderRoom} />);
-    expect(syncStatus.live).toHaveBeenCalledWith('owner_alice', 3);
-    expect(html.includes('brand-live')).toBe(live);
+    expect(html).not.toContain('brand-live');
+    expect(html).not.toContain('Live');
+  });
+
+  it('keeps a plain Log out button for signed-in failure screens outside the owner shell', () => {
+    const html = renderToStaticMarkup(<LogoutAction application={application({ phase: 'checking_identity', path: '/', context: null })}
+      routes={routes} mode="standalone" />);
+    expect(html).toContain('<button type="button" class="tool-btn icon-only" aria-label="Log out" title="Log out">');
+    expect(html).not.toContain('aria-label="Settings"');
   });
 
   it.each(['/channels/room_1/tools', '/channel-requests', '/channel-requests/request_1'])('rejects the removed owner route %s', path => {

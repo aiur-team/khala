@@ -39,7 +39,8 @@ const identity: IdentityPort = {
   async beginSignIn() { signInCount += 1; return { kind: 'rejected', code: 'invalid_return_path' }; },
   async signOut() {
     signOutCount += 1;
-    if (logoutHarness) await new Promise(resolve => setTimeout(resolve, 150));
+    // Long enough for a spec to reopen the settings menu and see Log out disabled.
+    if (logoutHarness) await new Promise(resolve => setTimeout(resolve, 1_000));
     if (logoutHarness && signOutCount === 1) return { kind: 'unavailable', retryable: true };
     signedOut = true;
     return { kind: 'ok', value: null };
