@@ -1,0 +1,530 @@
+[
+ {
+  "name": "design-1440-dark-embedded",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": false,
+  "errors": []
+ },
+ {
+  "name": "design-1440-dark-embedded-roster",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": false,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-thread",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1100-dark-thread",
+  "width": 1100,
+  "height": 800,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-900-dark-thread",
+  "width": 900,
+  "height": 800,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-900-dark-list",
+  "width": 900,
+  "height": 800,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-760-dark-thread",
+  "width": 760,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-760-dark-list",
+  "width": 760,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-thread",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-list",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-roster",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-chips",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-detail-agent",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-detail-human",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-pop-new",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-pop-invite",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-pop-settings",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-pop-add-agent",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-pop-mode-menu",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-state-pending",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-state-deleted",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-state-used",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-agent-finish",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-failed-send",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-typing",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-empty-channel",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-dark-draft",
+  "width": 1440,
+  "height": 900,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-roster",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-chips",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-detail-agent",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-pop-invite",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-state-pending",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-dark-agent-finish",
+  "width": 390,
+  "height": 844,
+  "theme": "dark",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "design-1440-light-embedded",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": false,
+  "errors": []
+ },
+ {
+  "name": "design-1440-light-embedded-roster",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": false,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-thread",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1100-light-thread",
+  "width": 1100,
+  "height": 800,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-900-light-thread",
+  "width": 900,
+  "height": 800,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-900-light-list",
+  "width": 900,
+  "height": 800,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-760-light-thread",
+  "width": 760,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-760-light-list",
+  "width": 760,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-thread",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-list",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-roster",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-chips",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-detail-agent",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-detail-human",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-pop-new",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-pop-invite",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-pop-settings",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-pop-add-agent",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-pop-mode-menu",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-state-pending",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-state-deleted",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-state-used",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-agent-finish",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-failed-send",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-typing",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-empty-channel",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-1440-light-draft",
+  "width": 1440,
+  "height": 900,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-roster",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-chips",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-detail-agent",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-pop-invite",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-state-pending",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ },
+ {
+  "name": "fullbleed-390-light-agent-finish",
+  "width": 390,
+  "height": 844,
+  "theme": "light",
+  "fullbleed": true,
+  "errors": []
+ }
+]
