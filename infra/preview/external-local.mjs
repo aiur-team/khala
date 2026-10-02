@@ -460,6 +460,7 @@ async function main() {
       );
       Object.assign(consumerEnv, {
         HOME: privateHome, TMPDIR: privateTmp,
+        PLAYWRIGHT_BROWSERS_PATH: env.PLAYWRIGHT_BROWSERS_PATH,
         XDG_CONFIG_HOME: path.join(scratch, 'xdg'), XDG_DATA_HOME: path.join(scratch, 'xdg-data'),
         XDG_STATE_HOME: smokeEnv.XDG_STATE_HOME, CODEX_HOME: path.join(scratch, 'codex'),
         NODE_EXTRA_CA_CERTS: tls.cert, KHALA_E2E_CERT_SPKI: tls.spki,
