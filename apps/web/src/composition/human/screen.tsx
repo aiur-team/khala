@@ -22,8 +22,8 @@ export type HumanScreenProps<Route> = Readonly<{
   application: HumanApplicationHandle;
   routes: HumanScreenRoutes<Route>;
   mode?: ShellMode;
-  /** Renders one parsed route for a ready, identity-scoped context. */
-  renderRoute: (context: HumanRouteContext, route: Route) => ReactNode;
+  /** Renders one parsed route for a ready, identity-scoped context; a route that draws its own page uses `chrome`. */
+  renderRoute: (context: HumanRouteContext, route: Route, chrome: HumanShellChrome) => ReactNode;
   /** What a signed-out snapshot shows; a composition without sign-in renders its own terminal state. */
   renderSignedOut: (path: string) => ReactNode;
   /** Signed-in key loss stays outside every room route and owner-only capability. */
@@ -31,7 +31,7 @@ export type HumanScreenProps<Route> = Readonly<{
   /** Attaches optional capabilities to each ready route context. */
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
   /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
-  renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => ReactNode;
+  renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => ReactNode;
   /** Neutral shell while identity is checked or the signed-in device is unavailable. */
   renderPendingShell?: (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable', children: ReactNode) => ReactNode;
   /** Account action for signed-in device or route failures outside the ready shell. */
@@ -76,14 +76,15 @@ function RouteLoading() {
   </section>;
 }
 
-function ReadyRoute<Route>({ context, routes, renderRoute, attachCapabilities }: {
+function ReadyRoute<Route>({ context, chrome, routes, renderRoute, attachCapabilities }: {
   context: HumanRouteContext;
+  chrome: HumanShellChrome;
   routes: HumanScreenRoutes<Route>;
   renderRoute: HumanScreenProps<Route>['renderRoute'];
   attachCapabilities: HumanScreenProps<Route>['attachCapabilities'];
 }) {
   useEffect(() => attachCapabilities?.(context), [attachCapabilities, context]);
-  return <>{renderRoute(context, routes.parse(context.path))}</>;
+  return <>{renderRoute(context, routes.parse(context.path), chrome)}</>;
 }
 
 export function HumanScreen<Route>({
@@ -108,10 +109,15 @@ export function HumanScreen<Route>({
     if (typeof localStorage !== 'undefined') persistTheme(next, localStorage);
   };
 
+  const chrome: HumanShellChrome = {
+    path: snapshot.path,
+    mode,
+    theme: { theme, onThemeChange: setTheme },
+  };
   let content: ReactNode;
   if (snapshot.phase === 'ready') {
     content = (
-      <ReadyRoute context={snapshot.context} routes={routes} renderRoute={renderRoute} attachCapabilities={attachCapabilities} />
+      <ReadyRoute context={snapshot.context} chrome={chrome} routes={routes} renderRoute={renderRoute} attachCapabilities={attachCapabilities} />
     );
   } else if (snapshot.phase === 'navigating') {
     content = <RouteLoading />;
@@ -140,13 +146,8 @@ export function HumanScreen<Route>({
     );
   }
 
-  const chrome: HumanShellChrome = {
-    path: snapshot.path,
-    mode,
-    theme: { theme, onThemeChange: setTheme },
-  };
   if ((snapshot.phase === 'ready' || snapshot.phase === 'navigating') && renderReadyShell !== undefined) {
-    return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
+    return <>{renderReadyShell(snapshot.context, chrome, content, snapshot.phase)}</>;
   }
   if ((snapshot.phase === 'checking_identity' || snapshot.phase === 'initializing_device'
     || snapshot.phase === 'inactive'

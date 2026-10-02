@@ -233,7 +233,7 @@ The Executor answered the audit's three operator decisions on #872 (2026-10-02):
 ## Open items
 
 1. **Blocking, KM-183:** "Recent in Khala" in the detail pane shows mentions as plain text (`@Sonnet`), while the design renders `.kh-mention` links. This is a DOM change, so it isn't fixed here.
-2. **Blocking, KM-185 / KM-180:** in the product, `/agent/confirm` renders inside the owner shell. The confirm page's own `.khala-app` (with its brand row) sits in the shell's `main`, next to the conversation list. #933 now shows that pane on narrow screens, but on desktop the list and a second brand row stay. §20 asks for a full-viewport page with the brand row top-left and no list.
+2. **Resolved, #936:** `/agent/confirm` used to render inside the owner shell, next to the conversation list. It is now a standalone full-viewport page (§20), and its device-pending states use the same frame. `screens: agent confirm page` compares it with the `agent-finish` references at 1440 and 390 in both themes, gated at 0.02 (0.004 at 1440 and 0.015–0.017 at 390). The design's close button and the page's brand row are masked, and the rest of the difference is §20's copy.
 3. **Note, §22 roster modes:** the viewer's agents render the disabled listening-mode segment and a disabled `.kh-mode-btn`, the narrow-width trigger for the mode menu. §22 says to omit the menu; the trigger never opens it. Confirm whether the disabled button should stay.
 4. **Note, data rather than drift:**
    - The design lists the unsent message as Release's preview and time (`You: @Codex #620 ping here…`, 10:12). The product lists sent messages only (`Sonnet: Pushing both fixes now…`, 10:11).
