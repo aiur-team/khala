@@ -21,6 +21,7 @@ import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
 import { SettingsMenu } from '../../ui/khala/SettingsMenu';
 import { ProfileProvider, useProfile } from '../../features/profile/ProfileProvider';
 import { UsernameDialog } from '../../features/profile/UsernameDialog';
+import { ColorDialog } from '../../features/profile/ColorDialog';
 import { UsernameGate } from '../../features/profile/UsernameGate';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
@@ -265,9 +266,9 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const closeCreate = useCallback(() => setCreating(false), []);
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
-  const { username } = useProfile();
+  const { username, color } = useProfile();
   // The settings dialog open over the card; a new settings dialog adds a member.
-  const [dialog, setDialog] = useState<'username' | null>(null);
+  const [dialog, setDialog] = useState<'username' | 'color' | null>(null);
   const closeDialog = useCallback(() => setDialog(null), []);
   const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
   const inThread = route.kind === 'channel' || route.kind === 'join';
@@ -275,8 +276,10 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
     homeHref={routes.conversationsPath()} inThread={inThread}
     brandActions={<SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-      username={username} onEditUsername={() => setDialog('username')} onSignOut={signOut} signingOut={signingOut} />}
-    overlay={dialog === 'username' ? <UsernameDialog onClose={closeDialog} /> : undefined}
+      username={username} onEditUsername={() => setDialog('username')} color={color} onEditColor={() => setDialog('color')}
+      onSignOut={signOut} signingOut={signingOut} />}
+    overlay={dialog === 'username' ? <UsernameDialog onClose={closeDialog} />
+      : dialog === 'color' ? <ColorDialog ownerId={context.principal.ownerId} onClose={closeDialog} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}

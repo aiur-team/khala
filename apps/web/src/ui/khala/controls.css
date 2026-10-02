@@ -60,6 +60,7 @@
 @media (pointer: coarse) { .kh-mi { min-height: 44px; } }
 .kh-mi:hover { background: var(--surface-2); } .kh-mi svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .kh-mi em { margin-left: auto; padding-left: .8rem; font-style: normal; font-size: .72rem; color: var(--faint); }
+.kh-swatch-dot { display: inline-block; width: 8px; height: 8px; margin-right: .35rem; border-radius: 50%; vertical-align: 0; }
 .kh-mi.on { color: var(--accent-ink); }
 .kh-mi.danger { color: var(--block); } .kh-mi.danger:hover { background: var(--block-soft); }
 .kh-toast { position: absolute; left: 50%; bottom: 104px; z-index: 30; display: flex; align-items: center; gap: .35rem; padding: .45rem .85rem; border-radius: 999px; background: var(--fg); color: var(--surface); font-size: .8rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translate(-50%, 8px); pointer-events: none; transition: opacity .18s, transform .18s; }
