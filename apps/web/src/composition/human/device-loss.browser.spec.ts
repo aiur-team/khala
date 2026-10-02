@@ -10,7 +10,6 @@ declare global { interface Window {
     setDevice(next: 'lost' | 'ready' | 'revoked', reason?: import('@khala/contracts/messaging/index').DeviceView['reason']): void;
     switchAccount(): void;
     activationCount(): number;
-    inboxCount(): number;
     signOutCount(): number;
     stopCount(): number;
     holdNavigation(): void;
@@ -43,7 +42,6 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
       throw new Error(`Lost state did not mount; page errors: ${errors.join(' | ')}; body: ${await page.locator('body').innerText()}`, { cause: error });
     }
     assert.equal(await page.getByTestId('live-room').count(), 0);
-    assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
     assert.equal(await page.getByRole('button', { name: 'Check retained keys again' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 1);
 
@@ -60,7 +58,6 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     await page.evaluate(() => window.__lossHarness.switchAccount());
     await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor();
     assert.equal(await page.getByTestId('live-room').count(), 0);
-    assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 1);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
@@ -214,7 +211,6 @@ test('signed-in index remains visible while device initializes and fails', { tim
       assert.equal(await page.getByRole('dialog', { name: 'Create a channel' }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
       assert.equal(await page.getByTestId('live-room').count(), 0);
-      assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
       if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-pending-${width}.png`) });
       await page.evaluate(() => window.__lossHarness.releaseDevice());
@@ -223,7 +219,6 @@ test('signed-in index remains visible while device initializes and fails', { tim
       if (width <= 959) await page.getByRole('button', { name: 'Channels', exact: true }).click();
       assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
       assert.equal(await page.getByTestId('live-room').count(), 0);
-      assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
       if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-unavailable-${width}.png`) });
       const retry = page.getByRole('button', { name: 'Try again' });
@@ -258,7 +253,7 @@ test('signed-in index remains visible while device initializes and fails', { tim
   }
 });
 
-test('owner conversation shell fills desktop and phone with conditional request control', { timeout: 90_000 }, async () => {
+test('owner conversation shell fills desktop and phone with channel creation', { timeout: 90_000 }, async () => {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-owner-visual-'));
   const browserProfile = await mkdtemp(join('/tmp', 'khala-owner-visual-profile-'));
   let server: PreviewServer | null = null;
@@ -273,12 +268,8 @@ test('owner conversation shell fills desktop and phone with conditional request 
       headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual');
-    const requests = page.getByRole('link', { name: 'Channel requests, 2 pending' });
-    await requests.waitFor();
     const title = page.locator('.channel-roster__summary');
     await title.getByText('First channel').waitFor();
-    assert.equal((await requests.innerText()).trim(), '2');
-    assert.equal(await requests.evaluate(node => node.nextElementSibling?.getAttribute('aria-label')), 'Create channel');
     assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     assert.equal(await page.locator('.conversation-detail').count(), 0);
@@ -313,11 +304,6 @@ test('owner conversation shell fills desktop and phone with conditional request 
     await page.waitForTimeout(250);
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-care.png') });
-    await requests.focus();
-    assert.equal(await requests.evaluate(node => node === document.activeElement), true);
-    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-requests.png') });
-    await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: 'Channel requests', level: 1 }).waitFor();
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual&hosted');
     const hostedToolbar = page.locator('#khala-channel-toolbar');
@@ -352,58 +338,6 @@ test('owner conversation shell fills desktop and phone with conditional request 
     await page.setViewportSize({ width: 320, height: 740 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'top bar fits a 320px window');
     assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).isVisible(), true);
-  } finally {
-    await browser?.close();
-    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
-    await rm(scratch, { recursive: true, force: true });
-    await rm(browserProfile, { recursive: true, force: true });
-  }
-});
-
-test('long channel request inbox scrolls to approval on desktop and 320px phone', { timeout: 90_000 }, async () => {
-  const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-owner-requests-'));
-  const browserProfile = await mkdtemp(join('/tmp', 'khala-owner-requests-profile-'));
-  let server: PreviewServer | null = null;
-  let browser: Browser | null = null;
-  try {
-    await build({ root: join(import.meta.dirname, 'browser-harness'),
-      build: { outDir: join(scratch, 'dist'), emptyOutDir: true,
-        rollupOptions: { input: join(import.meta.dirname, 'browser-harness/device-loss.html') } }, logLevel: 'error' });
-    server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
-      build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
-    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
-    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
-    if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
-    for (const layout of [
-      { name: 'desktop', width: 1440, height: 900, hosted: false, scroll: '.aiur-shell__content' },
-      { name: 'mobile', width: 320, height: 700, hosted: true, scroll: '.khala-content-main' },
-    ]) {
-      const page = await browser.newPage({ viewport: { width: layout.width, height: layout.height } });
-      await page.goto(server.resolvedUrls!.local[0]! + `device-loss.html?state=ready&logout&long-requests${layout.hosted ? '&hosted' : ''}`);
-      if (layout.hosted) await page.getByRole('button', { name: 'Channels' }).click();
-      const requests = page.getByRole('link', { name: 'Channel requests, 50 pending' });
-      await requests.waitFor();
-      assert.equal((await requests.innerText()).trim(), '50');
-      assert.equal(await requests.evaluate(node => node.nextElementSibling?.getAttribute('aria-label')), 'Create channel');
-      await requests.click();
-      await page.getByRole('heading', { name: 'Waiting for you (50)' }).waitFor();
-      assert.equal(await page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row').count(), 50);
-      const scroller = page.locator(layout.scroll);
-      const scrollSize = await scroller.evaluate(node => ({ scroll: node.scrollHeight, client: node.clientHeight, overflow: getComputedStyle(node).overflowY }));
-      assert.equal(scrollSize.scroll > scrollSize.client, true, `${layout.name} request route has a bounded scroll container: ${JSON.stringify(scrollSize)}`);
-      const lastReview = page.getByRole('list', { name: 'Requests waiting for you' }).getByRole('button', { name: 'Review request' }).last();
-      await lastReview.scrollIntoViewIfNeeded();
-      assert.equal(await scroller.evaluate(node => node.scrollTop > 0), true, 'the last request scrolls into view');
-      assert.equal(await lastReview.isVisible(), true);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-      if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `human-requests-long-${layout.name}.png`) });
-      await lastReview.click();
-      const dialog = page.getByRole('dialog');
-      await dialog.getByRole('button', { name: 'Approve access' }).waitFor();
-      assert.equal(await dialog.getByRole('button', { name: 'Approve access' }).isVisible(), true);
-      await page.close();
-    }
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
