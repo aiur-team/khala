@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import type { AgentCredentials, AgentJoinCreated, Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { KhalaClientError, type KhalaAgentClient } from './client';
@@ -190,6 +192,22 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const { session, credentials, attempt } = requireSession();
       try {
         const sent = await session.send(credentials.roomId, text);
+        if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
+        return sent;
+      } catch {
+        if (current(attempt)) await setStatus('send_failed', 'send_failed');
+        throw new KhalaClientError('send_failed');
+      }
+    },
+    async sendChannelEvent(content) {
+      await initialize();
+      const { session, credentials, attempt } = requireSession();
+      const encoded = encodeChannelEvent(content);
+      if (!encoded.ok) throw new KhalaClientError('internal_error', 'invalid_event');
+      const txnId = encoded.value.key === undefined ? undefined
+        : 'khev-' + createHash('sha256').update(encoded.value.key).digest('hex').slice(0, 32);
+      try {
+        const sent = await session.sendChannelEvent(credentials.roomId, encoded.value, txnId);
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
       } catch {
