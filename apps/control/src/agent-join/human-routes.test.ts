@@ -31,7 +31,7 @@ async function fixture(options: { username?: string; harness?: 'claude' | 'codex
   };
   const deps = { auth, joins, store, clock, random: randomBytes, sealSecret: secret,
     inspectMembership: vi.fn(async (): Promise<GatewayInspection> => ({ kind: 'joined', historyReady: true })),
-    provisioner: { agentUserId: vi.fn(() => credentials.userId), provision: vi.fn(async () => ({ kind: 'ok' as const, credentials })) },
+    provisioner: { setDisplayName: vi.fn(async () => true), agentUserId: vi.fn(() => credentials.userId), provision: vi.fn(async () => ({ kind: 'ok' as const, credentials })) },
   };
   const request = (method = 'GET', query = `joinId=${joinId}`) => new Request(`https://khala.test/api/human/agent-join?${query}`, { method });
   return { deps, joins, store, record, joinId, request, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
@@ -185,4 +185,65 @@ it('does not fail confirmation when the owner index is unavailable', async () =>
   const f = await fixture(); const read = f.store.read;
   vi.spyOn(f.store, 'read').mockImplementation((key, ...args) => key.startsWith('owner-agents/') ? Promise.reject(Error('offline')) : read(key, ...args));
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+});
+
+it('expires a name reserved by a join that never confirms', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  f.deps.provisioner.provision.mockResolvedValue({ kind: 'unavailable' } as never);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  const claim = await f.store.read(nameKey('Kevin-Claude'));
+  expect(claim.kind === 'record' && claim.record.expiresAt).toBe(f.record.expiresAt);
+  f.advance();
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+});
+it('expires a pending name when the final confirmation write never succeeds', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  const replace = f.joins.replace;
+  vi.spyOn(f.joins, 'replace').mockImplementation(async (...args) => args[3] === 'confirm' ? { kind: 'unavailable' } : replace(...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  expect(await f.store.read(ownerAgentsKey('owner'))).toEqual({ kind: 'absent' });
+  f.advance();
+  await f.joins.read(f.joinId);
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+});
+it('makes a confirmed name permanent even after the join deadline', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  f.advance();
+  const claim = await f.store.read(nameKey('Kevin-Claude'));
+  expect(claim.kind === 'record' && claim.record.expiresAt).toBeNull();
+});
+
+it('does not publish confirmation or credentials when name promotion fails', async () => {
+  const f = await fixture({ username: 'Kevin' }); const write = f.store.compareAndSet;
+  vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, options) => input.key === nameKey('Kevin-Claude') && input.expectedRevision !== null && input.next.expiresAt === null
+    ? Promise.resolve({ kind: 'unavailable' }) : write(input, options));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  const read = await f.joins.read(f.joinId);
+  expect(read.kind === 'found' && read.record).toMatchObject({ state: 'pending', label: 'Kevin-Claude', agentUserId: credentials.userId });
+  expect(read.kind === 'found' && read.record.sealedCredentials).toBeUndefined();
+});
+it('releases a promoted name when an unconfirmed staged join expires', async () => {
+  const f = await fixture({ username: 'Kevin' }); const replace = f.joins.replace;
+  vi.spyOn(f.joins, 'replace').mockImplementation((...args) => args[3] === 'confirm' ? Promise.resolve({ kind: 'unavailable' }) : replace(...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  const claim = await f.store.read(nameKey('Kevin-Claude'));
+  expect(claim.kind === 'record' && claim.record.expiresAt).toBeNull();
+  f.advance();
+  expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: 'expired' });
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+  const expired = await f.joins.read(f.joinId);
+  expect(expired.kind === 'found' && expired.record.sealedCredentials).toBeUndefined();
+});
+it('refuses confirmation if provisioning crosses the join deadline', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  f.deps.provisioner.provision.mockImplementationOnce(async () => { f.advance(); return { kind: 'ok', credentials }; });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+});
+it('keeps confirmed reservations permanent when the unclaimed join expires', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  f.advance(); await f.joins.read(f.joinId);
+  expect((await f.store.read(nameKey('Kevin-Claude'))).kind).toBe('record');
 });

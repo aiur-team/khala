@@ -8,6 +8,7 @@ export type AgentProvisionerOptions = Readonly<{
 }>;
 export type AgentProvisioner = {
   agentUserId(joinId: string, ownerId: OwnerId): string;
+  setDisplayName(userId: string, name: string): Promise<boolean>;
   provision(input: Readonly<{ joinId: string; ownerId: OwnerId; label: string; roomId: string }>):
     Promise<{ kind: 'ok'; credentials: AgentCredentials } | { kind: 'unavailable' }>;
 };
@@ -26,6 +27,32 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
   });
   return {
     agentUserId: (joinId, ownerId) => agentIdentity(joinId, ownerId, options.serverName, options.joinSecret).userId,
+    async setDisplayName(userId, name) {
+      let token: string | null = null;
+      try {
+        const deviceId = `KH_AGENT_CTL_${createHmac('sha256', options.joinSecret).update(`khala-agent-ctl-device-v1\0${userId}`).digest('hex').slice(0, 8)}`;
+        const password = createHmac('sha256', options.passwordDerivationSecret).update(`khala-agent-password-v1\0${userId}`).digest('base64url');
+        const login = await request('/_matrix/client/v3/login', { method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'm.login.password', identifier: { type: 'm.id.user', user: userId }, password,
+            device_id: deviceId, initial_device_display_name: 'Khala agent control' }) });
+        if (login.status !== 200) return false;
+        const body = await login.json() as { user_id?: unknown; device_id?: unknown; access_token?: unknown } | null;
+        if (typeof body?.access_token !== 'string' || !body.access_token) return false;
+        token = body.access_token;
+        if (body.user_id !== userId || body.device_id !== deviceId) return false;
+        const response = await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
+          method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ displayname: name }) });
+        return response.status === 200;
+      } catch { return false; }
+      finally {
+        if (token) {
+          try { await request('/_matrix/client/v3/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } }); }
+          catch { /* Logout must not change the confirmed PUT result. */ }
+        }
+      }
+    },
     async provision(input) {
     try {
       const { username, userId, deviceId } = agentIdentity(input.joinId, input.ownerId, options.serverName, options.joinSecret);

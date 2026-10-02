@@ -128,3 +128,21 @@ it('resolves active links without sponsor identity and rejects unavailable links
   await f.store.compareAndSet({ key: digests.inviteKey(ref), operationId: 'bad-invite', expectedRevision: write.record.revision, next: { value: { ...value, inviteRefDigest: 'wrong' }, expiresAt: null } });
   expect(await resolveJoinLink(input)).toEqual({ kind: 'unavailable' });
 });
+
+it('cleans up a staged permanent claim after restart while preserving a different holder', async () => {
+  for (const sameAgent of [true, false]) {
+    const f = fixture();
+    const staged = { ...f.record, label: 'Kevin-Codex', ownerId: 'owner', agentUserId: credentials.userId };
+    expect(await f.joins.create(staged)).toBe('created');
+    const key = 'names/v1/kevin-codex';
+    expect((await f.store.compareAndSet({ key, expectedRevision: null, operationId: 'claim', next: {
+      value: { v: 1, kind: 'agent', ownerId: 'owner', matrixUserId: sameAgent ? credentials.userId : '@other:matrix.test' }, expiresAt: null,
+    } })).kind).toBe('applied');
+    f.advance(600000);
+    const restarted = createJoinStore(f);
+    const read = await restarted.read(joinId);
+    expect(read.kind === 'found' && read.record.state).toBe('expired');
+    expect((await f.store.read(key)).kind).toBe(sameAgent ? 'absent' : 'record');
+    expect((await restarted.read(joinId)).kind).toBe('found');
+  }
+});

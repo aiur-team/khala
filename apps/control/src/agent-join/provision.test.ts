@@ -46,3 +46,38 @@ it.each(['status', 'throw'])('keeps provisioning successful when the display nam
   expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toMatchObject({ kind: 'ok' });
   expect(fetch).toHaveBeenCalledTimes(4);
 });
+
+it('renames globally using a dedicated control device and logs out that token', async () => {
+  const userId = '@agent:matrix.test';
+  const deviceId = `KH_AGENT_CTL_${createHmac('sha256', 'join').update(`khala-agent-ctl-device-v1\0${userId}`).digest('hex').slice(0, 8)}`;
+  const fetch = vi.fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ user_id: userId, device_id: deviceId, access_token: 'control-token' }))
+    .mockResolvedValueOnce(Response.json({})).mockResolvedValueOnce(Response.json({}));
+  expect(await createAgentProvisioner({ ...options, fetch }).setDisplayName(userId, 'Reviewer')).toBe(true);
+  expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual({ type: 'm.login.password',
+    identifier: { type: 'm.id.user', user: userId },
+    password: createHmac('sha256', 'password').update(`khala-agent-password-v1\0${userId}`).digest('base64url'),
+    device_id: deviceId, initial_device_display_name: 'Khala agent control' });
+  expect(fetch.mock.calls[1]).toEqual([`https://matrix.test/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`,
+    expect.objectContaining({ method: 'PUT', body: JSON.stringify({ displayname: 'Reviewer' }), headers: {
+      authorization: 'Bearer control-token', 'content-type': 'application/json' } })]);
+  expect(fetch.mock.calls[2]).toEqual(['https://matrix.test/_matrix/client/v3/logout',
+    expect.objectContaining({ method: 'POST', headers: { authorization: 'Bearer control-token' } })]);
+});
+it.each(['put_status', 'put_throw', 'logout_throw', 'wrong_user', 'wrong_device', 'login_status', 'login_json', 'no_token'])('handles display-name failure and token cleanup: %s', async failure => {
+  const userId = '@agent:matrix.test';
+  const deviceId = `KH_AGENT_CTL_${createHmac('sha256', 'join').update(`khala-agent-ctl-device-v1\0${userId}`).digest('hex').slice(0, 8)}`;
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(failure === 'login_json' ? new Response('{') : Response.json({
+    user_id: failure === 'wrong_user' ? '@other:matrix.test' : userId,
+    device_id: failure === 'wrong_device' ? 'KH_AGENT_LIVE' : deviceId,
+    access_token: failure === 'no_token' ? '' : 'token',
+  }, { status: failure === 'login_status' ? 503 : 200 }));
+  if (failure === 'put_throw') fetch.mockRejectedValueOnce(Error('offline'));
+  else fetch.mockResolvedValueOnce(Response.json({}, { status: failure === 'put_status' ? 500 : 200 }));
+  if (failure === 'logout_throw') fetch.mockRejectedValueOnce(Error('offline'));
+  else fetch.mockResolvedValueOnce(Response.json({}));
+  expect(await createAgentProvisioner({ ...options, fetch }).setDisplayName(userId, 'Reviewer')).toBe(failure === 'logout_throw');
+  if (['put_status', 'put_throw', 'logout_throw', 'wrong_user', 'wrong_device'].includes(failure)) {
+    expect(fetch.mock.calls.at(-1)![0]).toBe('https://matrix.test/_matrix/client/v3/logout');
+  }
+});

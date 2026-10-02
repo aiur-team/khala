@@ -7,7 +7,7 @@ import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contra
 import type { AuthService } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
-import { allocateAgentName, indexOwnerAgent } from './names';
+import { allocateAgentName, indexOwnerAgent, retainAgentName } from './names';
 import type { AgentProvisioner } from './provision';
 import { createJoinStore, effectiveState, isJoinId, sealCredentials, type JoinRecord } from './store';
 
@@ -55,7 +55,9 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const denied = await membership(principal, record);
       if (denied) return denied;
       if (record.ownerId && record.ownerId !== principal.ownerId) return error(409, 'already_confirmed_by_other');
-      if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') return json(200, viewOf(record));
+      if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') {
+        return json(200, viewOf(record));
+      }
       if (!record.ownerId) {
         const locked = { ...record, ownerId: principal.ownerId };
         const result = await deps.joins.replace(joinId, revision, locked, 'owner');
@@ -66,7 +68,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const username = await usernameOf(principal);
       if (!username) return unavailable();
       const userId = deps.provisioner.agentUserId(joinId, principal.ownerId);
-      const name = await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness });
+      const name = record.agentUserId === userId ? record.label : await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness, expiresAt: record.expiresAt });
       if (!name) return unavailable();
       const provisioned = await deps.provisioner.provision({ joinId, ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
@@ -79,15 +81,38 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         next: { value: owner, expiresAt: null },
       });
       if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId)) return unavailable();
-      await indexOwnerAgent(deps.store, principal.ownerId, userId);
+      if (effectiveState(record, deps.clock()) === 'expired') return error(404, 'not_found');
+      // Persist the cleanup pointer before making the claim permanent. A failed final
+      // confirmation (including a process crash) remains a pending, expirable join.
+      const staged: JoinRecord = { ...record, label: name, agentUserId: userId };
+      let stagedResult = await deps.joins.replace(joinId, revision, staged, 'name');
+      if (stagedResult.kind === 'conflict') {
+        const latest = await deps.joins.read(joinId);
+        if (latest.kind !== 'found' || latest.record.ownerId !== principal.ownerId) return unavailable();
+        if (['confirmed', 'claimed', 'ready'].includes(latest.record.state)) return json(200, viewOf(latest.record));
+        if (latest.record.state !== 'pending' || effectiveState(latest.record, deps.clock()) === 'expired') return error(404, 'not_found');
+        if (latest.record.agentUserId === userId && latest.record.label === name) stagedResult = { kind: 'applied', revision: latest.revision };
+        else stagedResult = await deps.joins.replace(joinId, latest.revision, staged, 'name');
+      }
+      if (stagedResult.kind !== 'applied') return unavailable();
+      record = staged; revision = stagedResult.revision;
+      if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
+      if (!await retainAgentName(deps.store, name, principal.ownerId, userId)) return unavailable();
+      if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
       const next: JoinRecord = { ...record, label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
         sealedCredentials: sealCredentials(deps.sealSecret, joinId, credentials) };
       const result = await deps.joins.replace(joinId, revision, next, 'confirm');
-      if (result.kind === 'applied') return json(200, viewOf(next));
+      if (result.kind === 'applied') {
+        await indexOwnerAgent(deps.store, principal.ownerId, userId);
+        return json(200, viewOf(next));
+      }
       if (result.kind === 'conflict') {
         const latest = await deps.joins.read(joinId);
         if (latest.kind === 'found' && latest.record.ownerId === principal.ownerId
-          && ['confirmed', 'claimed', 'ready'].includes(latest.record.state)) return json(200, viewOf(latest.record));
+          && ['confirmed', 'claimed', 'ready'].includes(latest.record.state)) {
+          await indexOwnerAgent(deps.store, principal.ownerId, userId);
+          return json(200, viewOf(latest.record));
+        }
       }
       return unavailable();
     }
