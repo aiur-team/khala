@@ -225,6 +225,15 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('class="section-card kh-card in-thread" id="kh-card"');
   });
 
+  it('shows only a centred spinner while navigating to a channel', () => {
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'navigating', path: '/channels/room_2', context: readyContext('/channels/room_1') })}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('<div class="kh-loading" role="status" aria-label="Loading conversation">'
+      + '<span class="kh-spin" aria-hidden="true"></span><span class="sr-only">Loading conversation</span></div>');
+    expect(html).not.toContain('khala-route-loading');
+  });
+
   it.each([
     { phase: 'ready', path: '/agent/confirm?joinId=j1', context: readyContext('/agent/confirm?joinId=j1') },
     { phase: 'navigating', path: '/agent/confirm?joinId=j1', context: readyContext('/channels/room_1') },

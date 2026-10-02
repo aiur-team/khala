@@ -29,6 +29,9 @@
 .kh-state-c b { font-size: .98rem; }
 .kh-spin { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; border: 2.5px solid var(--line-strong); border-top-color: var(--accent); animation: khSpin .8s linear infinite; }
 @keyframes khSpin { to { transform: rotate(360deg); } }
+/* Channel-pane loading: a bare centred spinner, no card or label. */
+.kh-loading { flex: 1 1 auto; display: grid; place-items: center; min-height: 0; }
+.kh-loading--overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 /* A state section rendered inside the main pane's own state area. */
 .kh-state > .kh-state { padding: 0; }
 

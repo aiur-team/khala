@@ -25,6 +25,7 @@ import { ChatSystemEvent } from '../../ui/conversation';
 import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
 import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
+import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
 import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
@@ -590,13 +591,7 @@ export function TimelineScreen({
           <button type="button" className="kh-btn" onClick={() => void controller.loadOlder()}>Retry</button>
         </div>
       ) : null}
-      {data.phase === 'loading' ? (
-        <div className="kh-state-c timeline__state" role="status">
-          <span className="kh-spin" aria-hidden="true" /><b>Loading conversation…</b>
-        </div>
-      ) : null}
-      {data.nameScan === 'checking' || data.nameScan === undefined && data.namesReady === false
-        ? <p className="timeline__status" role="status">Checking agent names in encrypted history…</p> : null}
+      {data.phase === 'loading' ? <LoadingSpinner overlay /> : null}
       {data.nameScan === 'retryable' ? <p className="timeline__status" role="alert">
         Agent names could not be checked because history did not load. You can retry while continuing this conversation.
       </p> : null}
