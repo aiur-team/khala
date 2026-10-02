@@ -24,6 +24,7 @@ const project = `khala-${runId}-preview`;
 const correlation = `external-${runId}`;
 let stage = 'preflight';
 let browserDiagnostic;
+let connectorDiagnostic;
 const owned = [];
 const abort = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => abort.abort());
@@ -297,6 +298,7 @@ async function main() {
       KHALA_E2E_STAGE_DIAGNOSTIC: path.join(scratch, 'browser-stage.json'),
       KHALA_E2E_RESTART_DIAGNOSTIC: path.join(scratch, 'restart-stage.json'),
       KHALA_E2E_SHARE_LINK_FILE: path.join(scratch, 'connector-share-link'),
+      KHALA_E2E_CONNECTOR_DIAGNOSTIC: path.join(scratch, 'connector-stage.json'),
       KHALA_E2E_USER_A: env.KHALA_PREVIEW_OIDC_USER_A_EMAIL, KHALA_E2E_USER_A_PASSWORD: passwordA,
       KHALA_E2E_USER_B: env.KHALA_PREVIEW_OIDC_USER_B_EMAIL, KHALA_E2E_USER_B_PASSWORD: passwordB,
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
@@ -393,8 +395,25 @@ async function main() {
     const open = await command('node', [installedCli, 'channels', 'open'], { env: connectorEnv });
     if (!open.stdout.includes(`${origin}/new`)) throw new Error('installed_origin_mismatch');
     stage = 'installed-connector-start';
-    await command('node', ['infra/preview/installed-connector-start.mjs', installedCli],
-      { env: connectorEnv, timeout: 60_000 });
+    try {
+      await command('node', ['infra/preview/installed-connector-start.mjs', installedCli],
+        { env: connectorEnv, timeout: 60_000 });
+    } catch (error) {
+      try {
+        const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_CONNECTOR_DIAGNOSTIC, 'utf8'));
+        connectorDiagnostic = {
+          ...(['inputs', 'process', 'process_result', 'candidate_result'].includes(report.stage)
+            ? { stage: report.stage } : {}),
+          ...(Number.isInteger(report.exitCode) && report.exitCode >= -1 && report.exitCode <= 255
+            ? { exitCode: report.exitCode } : {}),
+          ...(['pending_owner', 'connecting', 'other'].includes(report.outcome)
+            ? { outcome: report.outcome } : {}),
+          ...(['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required', 'other']
+            .includes(report.error) ? { error: report.error } : {}),
+        };
+      } catch { /* diagnostics are optional; never expose raw child output */ }
+      throw error;
+    }
     if (extraCommand) {
       stage = 'external-consumer';
       const consumerEnv = Object.fromEntries(
@@ -441,5 +460,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   main().catch(error => { process.stderr.write(JSON.stringify({ correlation, result: 'failed', stage,
     code: /^(?:child_exited_[\w-]+|readiness_timeout|hosted_agent_route_missing|[a-z_]+_failed_\d+)$/u.test(error?.message) ? error.message
       : ['ESRCH', 'ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'stage_failed',
-    ...(browserDiagnostic ? { browserDiagnostic } : {}) }) + '\n'); process.exitCode = 1; });
+    ...(browserDiagnostic ? { browserDiagnostic } : {}),
+    ...(connectorDiagnostic ? { connectorDiagnostic } : {}) }) + '\n'); process.exitCode = 1; });
 }
