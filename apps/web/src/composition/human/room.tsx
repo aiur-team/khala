@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import '../../../brand/fonts.css';

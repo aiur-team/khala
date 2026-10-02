@@ -5,7 +5,7 @@
 // rewrite (`<code>` to backticks, `@395`-style references to mention labels).
 // Never imported by production.
 
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { Participant } from '@khala/contracts/m1/participants';
 import { encodeChannelEvent, type ChannelEventContent, type ChannelEventSubject } from '@khala/contracts/m1/channel-event';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';

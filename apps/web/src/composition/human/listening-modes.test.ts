@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OwnerId, ParticipantId, ParticipantView, RoomId } from '@khala/contracts/messaging/index';
 import type { MatrixClient } from 'matrix-js-sdk';
 import { guardedListeningModeSetter } from './listening-modes';
-import { memberListeningMode } from './listening-mode-wire';
 import { readListeningMode, sendListeningMode } from './matrix-browser';
 
 const roomId = '!room:khala.example' as RoomId;
@@ -54,7 +53,6 @@ describe('listening mode on Matrix', () => {
     expect(readListeningMode(client({ membership: 'join', 'com.khala.listening_mode': 'async' }), roomId, '@a:x')).toBe('async');
     expect(readListeningMode(client({ membership: 'join' }), roomId, '@a:x')).toBe('sync');
     expect(readListeningMode(client({ 'com.khala.listening_mode': 'async' }), roomId, '@other:x')).toBe('sync');
-    for (const content of [{}, null, { 'com.khala.listening_mode': 'loud' }]) expect(memberListeningMode(content)).toBe('sync');
   });
 
   it('sends exactly the command content, only in an encrypted room', async () => {

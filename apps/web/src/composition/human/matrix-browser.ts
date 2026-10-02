@@ -1,6 +1,5 @@
 import { ownerFirstName } from '@khala/contracts/m1/participants';
 import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 import {
   ClientEvent,
   Direction,
@@ -38,7 +37,9 @@ import {
   type RoomSummary,
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
-import { DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode } from './listening-mode-wire';
+import {
+  DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
+} from '@khala/contracts/m1/listening-mode';
 import {
   createBrowserDeviceService,
   createIndexedDbMarkerStore,
@@ -742,7 +743,8 @@ export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | '
   try {
     if (!client.getRoom(roomId)?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return 'failed';
     const send = client.sendEvent as unknown as (roomId: string, type: string, content: object, txnId: string) => Promise<unknown>;
-    await send.call(client, roomId, LISTENING_MODE_COMMAND_TYPE, { v: 1, agent: userId, mode }, txnId);
+    const content: ListeningModeCommandContent = { v: 1, agent: userId, mode };
+    await send.call(client, roomId, LISTENING_MODE_COMMAND_TYPE, content, txnId);
     return 'sent';
   } catch { return 'failed'; }
 }

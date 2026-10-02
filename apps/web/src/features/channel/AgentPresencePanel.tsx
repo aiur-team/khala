@@ -2,7 +2,7 @@
 // rename section the agent detail pane shows for the viewer's own agents.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Avatar } from '../../ui/khala/Avatar';

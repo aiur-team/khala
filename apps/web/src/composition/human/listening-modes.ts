@@ -1,6 +1,6 @@
 // The owner-only listening-mode command, guarded like an agent rename.
 
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantView, RoomId } from '@khala/contracts/messaging/index';
 import type { HumanApplicationPorts } from './application';
 

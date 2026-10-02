@@ -14,7 +14,7 @@ import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-ti
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type SetModeHandler } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';

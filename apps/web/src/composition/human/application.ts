@@ -1,5 +1,5 @@
 import type { Participant } from '@khala/contracts/m1/participants';
-import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 // Browser composition lifecycle for the ordinary human flow. It exposes only
 // verified contract ports to route composition and owns their route/device
 // teardown ordering; UI modules never locate global services themselves.
