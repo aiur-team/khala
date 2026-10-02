@@ -43,6 +43,7 @@ async function approveExactRequest(owner: Page, fingerprint: string, channelTitl
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
   await expect(row).toHaveCount(1, { timeout: 30_000 });
   await expect(row).toContainText('Channel access request');
+  await expect(row).toContainText(channelTitle);
   await expect(row).toContainText('Waiting for you');
   await row.getByRole('button', { name: 'Review request' }).click();
   const dialog = owner.getByRole('dialog');
@@ -133,7 +134,8 @@ async function waitForNative(driver: ExternalNativeDriver, predicate: (snapshot:
 }
 
 test('OAuth owner approves two exact native sessions and witnesses durable encrypted three-party chat', async ({ browser }) => {
-  test.setTimeout(300_000);
+  // The disposable topology's consumer command must allow at least 900s.
+  test.setTimeout(840_000);
   const ownerContext = await browser.newContext();
   const native = new ExternalNativeDriver(mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'khala-external-native-')), helper);
   let launched = false;
@@ -195,10 +197,13 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     native.prompt('codex', 'Send Claude a new, specific question in this Khala channel using your installed MCP route.');
     const peerMessage = await newEncryptedMessage(owner, roomId, accessToken, beforePeer);
     const claudeBinding = bindings.find(item => item.actor === 'claude')!;
-    await releaseExactMessage(owner, peerMessage.eventId, claudeBinding.agentParticipantId!);
+    const peerRelease = await releaseExactMessage(owner, peerMessage.eventId, claudeBinding.agentParticipantId!);
+    if (peerRelease.bindingId !== claudeBinding.bindingId || peerRelease.generation !== claudeBinding.generation)
+      throw new Error('external_browser_peer_release_binding_mismatch');
     const beforePeerReply = await ciphertextIds(roomId, accessToken);
     native.prompt('claude', 'Read and acknowledge the new Codex message, then answer it in this Khala channel.');
     const peerReply = await newEncryptedMessage(owner, roomId, accessToken, beforePeerReply);
+    await requireOwnerAck(owner, peerRelease);
 
     const snapshot = native.witness({ actors: proof, peer: { from: 'codex', to: 'claude',
       eventId: peerMessage.eventId, readEventId: peerMessage.eventId, replyEventId: peerReply.eventId,
