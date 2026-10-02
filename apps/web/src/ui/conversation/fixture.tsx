@@ -131,7 +131,7 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
   }, []);
 
   return <HueOverrideProvider hues={HUE_OVERRIDES}>
-    <KhalaApp theme={theme} onThemeChange={setTheme} inThread={inThread} live
+    <KhalaApp theme={theme} onThemeChange={setTheme} inThread={inThread}
       list={<ConversationList conversations={summaries} selectedId={selected} query={query} onQueryChange={setQuery} status="ready"
         timeOptions={FIXTURE_TIME} viewerOwnerId={VIEWER.ownerId}
         onSelect={id => { setSelected(id); setInThread(true); }}

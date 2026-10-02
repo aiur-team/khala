@@ -65,8 +65,6 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
     }
     // The scoped base rules keep the design's (0,0,1) weight, so component rules win.
     assert.match(await fontOf(page, '.kh-brand-actions .tool-btn'), /^"JetBrains Mono"/u, '.tool-btn is a mono element (§2.1)');
-    assert.deepEqual(await styleOf(page, '.kh-brand .brand-live', ['fontSize', 'paddingTop', 'paddingLeft', 'minHeight']),
-      { fontSize: '10.88px', paddingTop: '2.56px', paddingLeft: '8px', minHeight: '0px' }, 'the Live badge keeps its §1.4 size');
     assert.match(await fontOf(page, '.kh-brand .wm'), /^Bungee/u);
     assert.equal(await page.locator('.kh-brand .wm').innerText(), 'KHALA');
     const bungee = await page.evaluate(() => [...document.querySelectorAll('body *')]

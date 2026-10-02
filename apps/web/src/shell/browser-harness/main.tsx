@@ -22,7 +22,7 @@ function Harness() {
   const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
   const [inThread, setInThread] = useState(params.get('view') === 'thread');
   const [query, setQuery] = useState('');
-  return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread} live
+  return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread}
     // `?probe` adds an interactive avatar, so the browser spec can check that component fonts beat the base rules.
     detail={params.has('probe') ? <Avatar kind="human" label="Maya Chen" hue={330} initials="MC" /> : null}
     brandActions={<button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"><LogOutIcon /></button>}

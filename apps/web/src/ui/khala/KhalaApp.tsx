@@ -17,14 +17,14 @@ export type KhalaAppProps = Readonly<{
   homeHref?: string;
   /** Brand-row actions after the theme toggle, e.g. Log out. */
   brandActions?: ReactNode;
+  /** A settings menu that ends the brand row in place of the theme toggle. */
+  brandMenu?: ReactNode;
   /** The list column below the brand row; omit it for a single-pane state frame. */
   list?: ReactNode;
   main: ReactNode;
   detail?: ReactNode;
   /** On a phone-width card, show the thread rather than the list (§14). */
   inThread?: boolean;
-  /** Shows the "Live" badge while the homeserver sync is live. */
-  live?: boolean;
   /** A modal layer over the card (e.g. a dialog), visible in either phone pane. */
   overlay?: ReactNode;
   className?: string;
@@ -50,34 +50,37 @@ export function useDetailHost(open: boolean): HTMLElement | null {
   return context?.host ?? null;
 }
 
-/** The brand row (§1.4): logo, wordmark, Live badge and the theme toggle; the confirm page reuses it. */
-export function Brand({ theme, onThemeChange, homeHref, live = false, actions }: Readonly<{
+/**
+ * The brand row (§1.4): logo, wordmark, then the theme toggle and `actions`;
+ * the confirm page reuses it. A `menu` replaces the toggle and comes last.
+ */
+export function Brand({ theme, onThemeChange, homeHref, actions, menu }: Readonly<{
   theme: ThemeChoice;
   onThemeChange: ((theme: ThemeChoice) => void) | undefined;
   homeHref: string;
-  live?: boolean;
   actions?: ReactNode;
+  menu?: ReactNode;
 }>) {
   return <div className="kh-brand">
     <img className="brand-logo" src={aiurLogo} alt="" />
     <a className="wm" href={homeHref} aria-label="Khala home">khala</a>
-    {live ? <span className="status-badge status-badge-live brand-live" role="status"><span className="status-badge-dot" /> Live</span> : null}
     <span className="kh-brand-actions">
-      <button type="button" className="tool-btn icon-only" aria-label="Toggle color theme" title="Toggle color theme"
-        onClick={() => onThemeChange?.(theme === 'dark' ? 'light' : 'dark')}><ThemeToggleIcon /></button>
+      {menu ? null : <button type="button" className="tool-btn icon-only" aria-label="Toggle color theme" title="Toggle color theme"
+        onClick={() => onThemeChange?.(theme === 'dark' ? 'light' : 'dark')}><ThemeToggleIcon /></button>}
       {actions}
+      {menu}
     </span>
   </div>;
 }
 
-export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, list, main, detail, inThread = false, live = false, overlay, className = '' }: KhalaAppProps) {
+export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, brandMenu, list, main, detail, inThread = false, overlay, className = '' }: KhalaAppProps) {
   const card = useRef<HTMLElement>(null);
   const pop = useRef<HTMLDivElement>(null);
   const [detailHost, setDetailHost] = useState<HTMLElement | null>(null);
   const [hostedDetail, setHostedDetail] = useState(false);
   const detailContext = useMemo(() => ({ host: detailHost, setOpen: setHostedDetail }), [detailHost]);
   const solo = list === undefined;
-  const brand = <Brand theme={theme} onThemeChange={onThemeChange} homeHref={homeHref} live={live} actions={brandActions} />;
+  const brand = <Brand theme={theme} onThemeChange={onThemeChange} homeHref={homeHref} actions={brandActions} menu={brandMenu} />;
   const classes = ['section-card', 'kh-card', detail || hostedDetail ? 'has-detail' : '', inThread ? 'in-thread' : '', solo ? 'kh-solo' : '']
     .filter(Boolean).join(' ');
   return <div className={`khala-app${className ? ` ${className}` : ''}`} data-theme={theme}>
