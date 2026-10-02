@@ -161,12 +161,17 @@ export function validateDiscoveryOpen(state, raw) {
   return { actor, url: url.href };
 }
 
-function sourceAuth(sourceHome, privateHome) {
+export function sourceAuth(sourceHome, privateHome) {
   const codex = privateFile(path.join(sourceHome, '.codex', 'auth.json'));
   const claude = JSON.parse(fs.readFileSync(privateFile(path.join(sourceHome, '.claude', '.credentials.json')), 'utf8'));
   const onboarding = JSON.parse(fs.readFileSync(privateFile(path.join(sourceHome, '.claude.json')), 'utf8'));
   if (!claude.claudeAiOauth?.accessToken || !claude.claudeAiOauth?.refreshToken
     || onboarding.hasCompletedOnboarding !== true || onboarding.installMethod !== 'native') fail('provider_auth_schema');
+  // A nearly expired snapshot can race the source profile's token rotation, leaving
+  // the isolated Claude session unable to refresh mid-proof.
+  if (!Number.isSafeInteger(claude.claudeAiOauth.expiresAt)
+    || claude.claudeAiOauth.expiresAt < Date.now() + 30 * 60_000)
+    fail('provider_auth_expiring');
   for (const relative of ['.codex', '.claude']) fs.mkdirSync(path.join(privateHome, relative), { mode: 0o700 });
   fs.copyFileSync(codex, path.join(privateHome, '.codex', 'auth.json'), fs.constants.COPYFILE_EXCL);
   fs.chmodSync(path.join(privateHome, '.codex', 'auth.json'), 0o600);

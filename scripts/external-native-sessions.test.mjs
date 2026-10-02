@@ -6,7 +6,33 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { installDisposableBrowserTrust, installStagedBrowserTrust, nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+import { installDisposableBrowserTrust, installStagedBrowserTrust, nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, sourceAuth, validateDiscoveryOpen } from './external-native-sessions.mjs';
+
+test('private Claude auth snapshot refuses a near-expired source token before copying', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-auth-test-'));
+  fs.chmodSync(root, 0o700);
+  const source = path.join(root, 'source');
+  const privateHome = path.join(root, 'private');
+  try {
+    fs.mkdirSync(path.join(source, '.codex'), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(source, '.claude'), { mode: 0o700 });
+    fs.mkdirSync(privateHome, { mode: 0o700 });
+    fs.writeFileSync(path.join(source, '.codex', 'auth.json'), '{}', { mode: 0o600 });
+    fs.writeFileSync(path.join(source, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true,
+      installMethod: 'native', lastOnboardingVersion: 'test' }), { mode: 0o600 });
+    const credential = path.join(source, '.claude', '.credentials.json');
+    const value = expiresAt => ({ claudeAiOauth: { accessToken: 'private-test-access',
+      refreshToken: 'private-test-refresh', expiresAt } });
+    fs.writeFileSync(credential, JSON.stringify(value(Date.now() + 60_000)), { mode: 0o600 });
+    assert.throws(() => sourceAuth(source, privateHome), /provider_auth_expiring/);
+    assert.equal(fs.existsSync(path.join(privateHome, '.claude')), false);
+    fs.writeFileSync(credential, JSON.stringify(value(Date.now() + 2 * 60 * 60_000)), { mode: 0o600 });
+    sourceAuth(source, privateHome);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(privateHome, '.claude', '.credentials.json'), 'utf8'))
+      .claudeAiOauth.expiresAt > Date.now() + 60 * 60_000, true);
+    assert.equal(fs.statSync(path.join(privateHome, '.claude', '.credentials.json')).mode & 0o777, 0o600);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('disposable Chromium wrapper trusts only the pinned certificate key', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-browser-test-'));
