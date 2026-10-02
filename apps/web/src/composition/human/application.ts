@@ -18,6 +18,7 @@ import type {
   RoomId,
 } from '@khala/contracts/messaging/index';
 import type { ChannelService } from '@khala/messaging/channels/index';
+import type { AgentJoinPort, AgentInvitePort } from '../../features/agent-confirm/ports';
 import type { ConversationIndexPort } from './conversations';
 
 import { createHumanDeviceSession } from './device-session';
@@ -25,6 +26,8 @@ import type { TabHandoff } from './tab-handoff';
 import type { HumanChannelLinks } from './channel-links';
 
 export interface HumanApplicationPorts {
+  readonly agentJoin?: AgentJoinPort;
+  readonly inviteAgent?: AgentInvitePort;
   readonly identity: IdentityPort;
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
