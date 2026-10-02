@@ -1,0 +1,205 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { acknowledged, modelEvidence } from './internal-native-model-evidence.mjs';
+
+const script = path.resolve('scripts/internal-native-canary.mjs');
+
+test('native canary refuses an unproven session before opening a room', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-preflight-'));
+  fs.chmodSync(directory, 0o700);
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', home: path.join(directory, 'home'), socket: path.join(directory, 'tmux.sock') }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'open', directory], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'session_arguments', directory });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'run.json'), 'utf8')).channelId, undefined);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Codex evidence requires challenge in completed read result before send', () => {
+  const row = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
+  const read = row('khala_read', {}, '{"events":["challenge"],"batchToken":"token-1"}');
+  const send = row('khala_send', { message: 'reply challenge', ackBatchToken: 'token-1' }, '{"kind":"accepted","eventId":"event-1"}');
+  assert.deepEqual(modelEvidence([row('khala_read', {}, '{"events":[]}'), send], 'codex', 'challenge', 'reply'),
+    { readCall: true, visible: false, sendCall: false });
+  assert.deepEqual(modelEvidence([send, read], 'codex', 'challenge', 'reply'),
+    { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, send], 'codex', 'challenge', 'reply', 'event-1'),
+    { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'wrong' },
+    '{"kind":"accepted","eventId":"event-1"}')], 'codex', 'challenge', 'reply', 'event-1'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'token-1' },
+    '{"kind":"accepted","eventId":"other"}')], 'codex', 'challenge', 'reply', 'event-1'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'token-1' }, {
+    structuredContent: { kind: 'refused', code: 'not_connected' },
+    content: [{ type: 'text', text: '{"kind":"refused"}' },
+      { type: 'text', text: '{"kind":"accepted","eventId":"event-1"}' }],
+  })], 'codex', 'challenge', 'reply', 'event-1'), { readCall: true, visible: true, sendCall: false });
+});
+
+test('Claude evidence correlates read result by tool_use_id before send', () => {
+  const call = (id, name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id, content) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+  const read = call('read-1', 'khala_read');
+  const send = call('send-1', 'khala_send', { message: 'reply' });
+  assert.deepEqual(modelEvidence([read, result('unrelated', 'challenge'), send], 'claude', 'challenge', 'reply'),
+    { readCall: true, visible: false, sendCall: false });
+  const accepted = result('send-1', '{"kind":"accepted","eventId":"event-2"}');
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, accepted], 'claude', 'challenge', 'reply', 'event-2'),
+    { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('unrelated',
+    '{"kind":"accepted","eventId":"event-2"}')], 'claude', 'challenge', 'reply', 'event-2'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('send-1',
+    '{"kind":"refused","code":"not_connected"}')], 'claude', 'challenge', 'reply', 'event-2'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('send-1', [
+    { type: 'text', text: '{"kind":"outcome_unknown"}' },
+    { type: 'text', text: '{"kind":"accepted","eventId":"event-2"}' },
+  ])], 'claude', 'challenge', 'reply', 'event-2'), { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([send, read, result('read-1', 'challenge')], 'claude', 'challenge', 'reply'),
+    { readCall: true, visible: true, sendCall: false });
+});
+
+test('quoted challenge is visible only in the matching native read result', () => {
+  const challenge = 'Codex send exactly "18 nonce codex"; Claude send exactly "18 nonce claude".';
+  const codexRow = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
+  const read = codexRow('khala_read', {}, { content: [{ type: 'text', text: JSON.stringify({ events: [{ body: challenge }], batchToken: 'token-3' }) }] });
+  const send = codexRow('khala_send', { message: '18 nonce codex', ackBatchToken: 'token-3' }, { kind: 'accepted', eventId: 'event-3' });
+  assert.deepEqual(modelEvidence([read, send], 'codex', challenge, '18 nonce codex', 'event-3'),
+    { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([codexRow('khala_read', {}, { events: [] }),
+    codexRow('khala_send', { message: challenge }, { ok: true })], 'codex', challenge, challenge),
+  { readCall: true, visible: false, sendCall: false });
+});
+
+test('external cleanup refuses a live recorded PTY process', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-external-'));
+  fs.chmodSync(directory, 0o700);
+  const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8').split(') ').at(-1).trim().split(/\s+/);
+  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), `${process.pid} ${stat[19]} ${fs.readlinkSync('/proc/self/ns/pid')}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', ptyMode: 'external' }), { mode: 0o600 });
+  try {
+    for (const action of ['stop', 'destroy']) {
+      const result = spawnSync(process.execPath, ['--import', 'tsx', script, action, directory], { encoding: 'utf8' });
+      assert.equal(result.status, 1);
+      assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_agents_running', directory });
+      assert.equal(fs.existsSync(directory), true);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('external cleanup refuses a process in another PID namespace', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-external-'));
+  fs.chmodSync(directory, 0o700);
+  fs.writeFileSync(path.join(directory, 'codex-pty.pid'), '2 123 pid:[999999999]\n', { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', ptyMode: 'external' }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'destroy', directory], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'external_process_unobservable', directory });
+    assert.equal(fs.existsSync(directory), true);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('stop empties a private agent scope including a detached command before destroy', async t => {
+  if (spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'Version'], { encoding: 'utf8' }).status !== 0) {
+    t.skip('systemd user manager unavailable'); return;
+  }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-scope-'));
+  fs.chmodSync(directory, 0o700);
+  const id = randomBytes(12).toString('hex');
+  const unit = `khala-native-${id}-codex.scope`;
+  const childFile = path.join(directory, 'detached.pid');
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id, ptyMode: 'external', agentScopes: true,
+    agentsStartedAt: Date.now(), home: path.join(directory, 'home'), bin: '/usr/bin', khala: script,
+    claude: '/usr/bin/false', socket: path.join(directory, 'tmux.sock') }), { mode: 0o600 });
+  const worker = spawn('/usr/bin/systemd-run', ['--user', '--scope', '--collect', '--quiet', `--unit=${unit}`,
+    '/bin/sh', '-c', `setsid /bin/sleep 120 & echo $! > '${childFile}'; wait`], { stdio: 'ignore' });
+  try {
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(childFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(fs.existsSync(childFile), true, 'detached child started');
+    const before = spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'ActiveState', unit], { encoding: 'utf8' });
+    assert.match(before.stdout, /ActiveState=active/);
+    const stop = spawnSync(process.execPath, ['--import', 'tsx', script, 'stop', directory], { encoding: 'utf8' });
+    assert.equal(stop.status, 0, stop.stderr);
+    assert.equal(fs.existsSync(path.join(directory, 'external-closed')), true);
+    const after = spawnSync('/usr/bin/systemctl', ['--user', 'show', '-p', 'ActiveState', '-p', 'ControlGroup', unit], { encoding: 'utf8' });
+    assert.equal(after.status, 0);
+    assert.match(after.stdout, /ActiveState=inactive/);
+    assert.match(after.stdout, /ControlGroup=\n/);
+    const destroy = spawnSync(process.execPath, ['--import', 'tsx', script, 'destroy', directory], { encoding: 'utf8' });
+    assert.equal(destroy.status, 0, destroy.stderr);
+    assert.equal(fs.existsSync(directory), false);
+  } finally {
+    spawnSync('/usr/bin/systemctl', ['--user', 'stop', unit], { encoding: 'utf8' });
+    worker.kill('SIGKILL');
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('ack proof rejects a receipt for another event, binding, generation or source', () => {
+  const binding = { bindingId: 'bound', generation: 3 };
+  const fact = { receipt: { kind: 'agent_acknowledged', source: 'agent', receiptId: 'r1', bindingId: 'bound', generation: 3 },
+    events: [{ eventId: 'challenge' }] };
+  assert.deepEqual(acknowledged([fact], 'challenge', binding), [fact]);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, source: 'server' } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, bindingId: 'foreign' } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, generation: 2 } }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, events: [{ eventId: 'other' }] }], 'challenge', binding), []);
+  assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, receiptId: null } }], 'challenge', binding), []);
+});
+
+test('private Claude handoff keeps provider auth and only reviewed onboarding fields', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-handoff-'));
+  const source = path.join(directory, 'source');
+  const home = path.join(directory, 'home');
+  for (const folder of [directory, source, home, path.join(source, '.codex'), path.join(source, '.claude')]) {
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+    fs.chmodSync(folder, 0o700);
+  }
+  const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+  write(path.join(source, '.codex', 'auth.json'), { access: 'synthetic' });
+  write(path.join(source, '.claude', '.credentials.json'), {
+    claudeAiOauth: { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' },
+    mcpOAuth: { unrelated: 'synthetic' }, designOauth: { unrelated: 'synthetic' },
+  });
+  write(path.join(source, '.claude.json'), {
+    hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.179', installMethod: 'native',
+    projects: { unrelated: 'synthetic' }, oauthAccount: { unrelated: 'synthetic' },
+  });
+  write(path.join(directory, 'run.json'), { id: 'test', home });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'auth-handoff', directory], {
+      encoding: 'utf8', env: { ...process.env, KHALA_CANARY_AUTH_HOME: source },
+    });
+    assert.equal(result.status, 0);
+    const credentials = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8'));
+    assert.deepEqual(Object.keys(credentials), ['claudeAiOauth']);
+    const onboarding = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+    assert.deepEqual(Object.keys(onboarding).sort(), ['hasCompletedOnboarding', 'installMethod', 'lastOnboardingVersion']);
+    assert.equal(fs.statSync(path.join(home, '.claude.json')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.join(home, '.claude', '.credentials.json')).mode & 0o777, 0o600);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('provider preflight refuses token-only Claude state before launching a TUI', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-auth-'));
+  fs.chmodSync(directory, 0o700);
+  const home = path.join(directory, 'home');
+  fs.mkdirSync(home, { mode: 0o700 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', home }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'auth', directory], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'claude_tui_onboarding', directory });
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
