@@ -29,6 +29,8 @@ import type { HumanChannelLinks } from './channel-links';
 
 export interface HumanApplicationPorts {
   readonly describeParticipant?: (participantId: string) => Participant | undefined;
+  /** `describeParticipant` keyed by Matrix user id, for the conversation list's harness logos. */
+  readonly describeMatrixUser?: (matrixUserId: string) => Participant | undefined;
   readonly agentJoin?: AgentJoinPort;
   readonly inviteAgent?: AgentInvitePort;
   readonly identity: IdentityPort;

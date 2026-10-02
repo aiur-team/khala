@@ -13,7 +13,7 @@ describe('KhalaApp', () => {
     const html = render();
     expect(html).toMatch(/<div class="khala-app" data-theme="dark"><section class="section-card kh-card" id="kh-card">/u);
     expect(html).toContain('<aside class="kh-list" aria-label="Conversations"><div class="kh-brand">');
-    expect(html).toContain('<p>list</p></aside><div class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></div>');
+    expect(html).toContain('<p>list</p></aside><main class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></main>');
     expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div></section></div>');
   });
 
@@ -46,7 +46,7 @@ describe('KhalaApp', () => {
     const html = render({ list: undefined });
     expect(html).toContain('class="section-card kh-card kh-solo"');
     expect(html).not.toContain('class="kh-list"');
-    expect(html).toContain('<div class="kh-main"><div class="kh-brand">');
+    expect(html).toContain('<main class="kh-main"><div class="kh-brand">');
   });
 
   it('renders an overlay at card level, outside both panes', () => {

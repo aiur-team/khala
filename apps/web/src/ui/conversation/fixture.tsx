@@ -15,7 +15,7 @@ import { NewChannelPopover, type NewChannelPorts } from '../khala/NewChannelPopo
 import { ConversationList } from './ConversationList';
 import {
   AGENTS, CHANNELS, conversationSummary, describeParticipant, EMPTY_CHANNEL, failedSends, FIXTURE_NOW, FIXTURE_TIME, HUE_OVERRIDES,
-  HUMANS, humanParticipants, agentPresence, timelineData, VIEWER, type FixtureChannel,
+  HUMANS, humanParticipants, agentPresence, channelMembers, timelineData, VIEWER, type FixtureChannel,
 } from './fixture-data';
 
 /**
@@ -89,9 +89,11 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
   const composer = useRef<TimelineComposerHandle>(null);
   const actions = useRef<{ openParticipant(id: string): void; openInvite: (() => void) | undefined } | null>(null);
   const channel = channels.find(item => item.id === selected)!;
-  // The open channel is being read, so its unread count is cleared (the design's "3 unread").
-  const summaries = useMemo(() => channels.map(item => ({ ...conversationSummary(item), ...(item.id === selected ? { unreadCount: null } : {}) })),
-    [channels, selected]);
+  // The open channel is being read, so its unread count is cleared (the design's "3 unread"). The design
+  // creates the empty channel after opening Release, so Release stays read too.
+  const summaries = useMemo(() => channels.map(item => ({ ...conversationSummary(item),
+    ...(item.id === selected || (params.empty && item.id === CHANNELS[0]!.id) ? { unreadCount: null } : {}) })),
+  [channels, selected, params.empty]);
   const controller = useMemo(() => createChannelController(presencePort(channel), { roomId: channel.id as RoomId, generation: 1 }), [channel]);
   const timeline = useMemo(() => staticTimeline(channel), [channel]);
   const pendingStore = useMemo(() => params.failed ? { load: () => failedSends(channel), save: () => undefined } : undefined,
@@ -130,7 +132,7 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
   return <HueOverrideProvider hues={HUE_OVERRIDES}>
     <KhalaApp theme={theme} onThemeChange={setTheme} inThread={inThread} live
       list={<ConversationList conversations={summaries} selectedId={selected} query={query} onQueryChange={setQuery} status="ready"
-        now={FIXTURE_NOW} timeOptions={FIXTURE_TIME}
+        timeOptions={FIXTURE_TIME} viewerOwnerId={VIEWER.ownerId}
         onSelect={id => { setSelected(id); setInThread(true); }}
         action={<>
           <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded={creating}
@@ -152,7 +154,7 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
         renderTimeline={(openParticipant, openInvite) => {
           actions.current = { openParticipant, openInvite };
           return <TimelineScreen key={`${channel.id}:${params.failed}`} controller={timeline} roomPort={roomPort} roomId={channel.id as RoomId}
-            viewer={VIEWER} composerRef={composer} describeParticipant={describeParticipant} onOpenParticipant={openParticipant}
+            viewer={VIEWER} members={channelMembers(channel)} composerRef={composer} describeParticipant={describeParticipant} onOpenParticipant={openParticipant}
             {...(openInvite ? { onInvite: openInvite } : {})} {...(pendingStore ? { pendingStore } : {})}
             now={() => FIXTURE_NOW} timeOptions={FIXTURE_TIME} />;
         }} />} />

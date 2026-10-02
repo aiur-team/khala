@@ -7,7 +7,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import type { Disposer } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
-import { resolveInitialTheme } from '../../shell/theme';
+import { persistTheme, resolveInitialTheme } from '../../shell/theme';
 import type { ShellMode, ThemeChoice } from '../../shell/types';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from './application';
@@ -99,9 +99,14 @@ export function HumanScreen<Route>({
   renderSignedInAction,
 }: HumanScreenProps<Route>) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
-  const [theme, setTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
+  const [theme, setChosenTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
     typeof localStorage === 'undefined' ? {} : { storage: localStorage },
   ));
+  // A toggled theme is remembered for the next visit.
+  const setTheme = (next: ThemeChoice) => {
+    setChosenTheme(next);
+    if (typeof localStorage !== 'undefined') persistTheme(next, localStorage);
+  };
 
   let content: ReactNode;
   if (snapshot.phase === 'ready') {

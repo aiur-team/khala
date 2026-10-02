@@ -148,6 +148,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} composerRef={composer}
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant}
+          {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
           {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
           {...(pendingStore ? { pendingStore } : {})}

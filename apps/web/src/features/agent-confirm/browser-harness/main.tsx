@@ -3,6 +3,10 @@ import { createHumanBrowserApi } from '../../../composition/human/browser-api';
 import { createHumanRouteCodec } from '../../../composition/human/routes';
 import { HumanApplicationScreen } from '../../../composition/human/mount';
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
+// The product entry's stylesheets (`src/main.tsx`), so the page renders as the app does.
+import '../../../brand/tokens.css';
+import '../../../shell/shell.css';
+import '../../../main.css';
 import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from '../../../composition/human/application';
 
 const limits = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 128, maxRoomTitleBytes: 256 });
@@ -10,7 +14,8 @@ if (!limits.ok) throw new Error('invalid fixture limits');
 const routes = createHumanRouteCodec({ origin: location.origin, basePath: '/', allowInsecureLoopback: true });
 const api = createHumanBrowserApi({ origin: location.origin, homeserverOrigin: location.origin, limits: limits.value, allowInsecureLoopback: true });
 const root = createRoot(document.getElementById('app')!);
-const path = routes.agentConfirmPath('j1');
+// `?path=` starts a signed-out visit elsewhere, e.g. `/conversations` (the parity audit's §25.11 check).
+const path = new URLSearchParams(location.search).get('path') ?? routes.agentConfirmPath('j1');
 if (location.search.includes('signedOut')) {
   const snapshot: HumanApplicationSnapshot = { phase: 'signed_out', path, context: null };
   const application: HumanApplicationHandle = {

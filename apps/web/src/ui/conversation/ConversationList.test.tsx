@@ -1,10 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import claudeSymbol from '../khala/assets/claude-symbol.svg';
 import { ConversationList, type ConversationSummary } from './ConversationList';
 
-// The spec's worked example: 17:11Z is 10:11 in Los Angeles, "today" at 13:00 local.
+// The spec's worked example: 17:11Z is 10:11 in Los Angeles.
 const timeOptions = { timeZone: 'America/Los_Angeles' };
-const now = new Date('2026-10-02T20:00:00Z');
 
 const release: ConversationSummary = {
   id: '!r1:khala.local', title: 'Release 0.9 go / no-go', preview: 'Pushing both fixes now.', timestamp: '2026-10-02T17:11:00Z', unreadCount: 3,
@@ -19,7 +19,7 @@ const bare: ConversationSummary = { id: release.id, title: release.title, previe
 
 function render(conversations: readonly ConversationSummary[], props: Partial<Parameters<typeof ConversationList>[0]> = {}) {
   return renderToStaticMarkup(<ConversationList conversations={conversations} query="" onQueryChange={vi.fn()} onSelect={vi.fn()}
-    status="ready" now={now} timeOptions={timeOptions} {...props} />);
+    status="ready" timeOptions={timeOptions} {...props} />);
 }
 
 const avatars = (html: string) => html.match(/<span class="kh-cv-av" aria-hidden="true">(.*?)<\/span><span class="kh-cv-t">/u)?.[1] ?? '';
@@ -67,9 +67,22 @@ describe('ConversationList', () => {
     expect(html).toContain('<span class="kh-cv-pv" dir="auto">Message unavailable on this device</span>');
   });
 
-  it('shows h:mm today and a day label otherwise', () => {
+  it('badges the viewer’s own agents YO on the viewer hue', () => {
+    const html = avatars(render([release], { viewerOwnerId: 'kai' }));
+    expect(html).toContain('<span class="kh-own" style="--oh:214">YO</span>');
+  });
+
+  it('shows the last message as h:mm, on any day (§4.1)', () => {
     expect(render([release])).toContain('>10:11</time>');
-    expect(render([{ ...release, timestamp: '2026-10-01T17:11:00Z' }])).toContain('>Yesterday</time>');
+    expect(render([{ ...release, timestamp: '2026-09-28T15:31:00Z' }])).toContain('>8:31</time>');
+  });
+
+  it('shows an agent with a known harness by its logo, owner badge from the owner full name', () => {
+    const html = avatars(render([{ ...release, members: [
+      { id: '@kai:khala.local', kind: 'human', displayName: 'Kai Watanabe' },
+      { ...release.members![1]!, harness: 'claude' },
+    ] }]));
+    expect(html).toContain(`<img src="${claudeSymbol.replaceAll("'", '&#x27;')}" alt=""/><span class="kh-own" style="--oh:330">KW</span>`);
   });
 
   it('marks unread rows and sums the head count, always shown', () => {

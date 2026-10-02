@@ -3,11 +3,11 @@
 
 import { useState, useSyncExternalStore } from 'react';
 import type { AgentJoinView, Harness } from '@khala/contracts/m1/agent-join';
-import aiurLogo from '../../landing/public/assets/aiur-logo.png';
-import { resolveInitialTheme } from '../../shell/theme';
+import { persistTheme, resolveInitialTheme } from '../../shell/theme';
 import type { ThemeChoice } from '../../shell/types';
-import { CheckIcon, ThemeToggleIcon } from '../../ui/khala/icons';
+import { CheckIcon } from '../../ui/khala/icons';
 import { harnessLogo } from '../../ui/khala/identity';
+import { Brand } from '../../ui/khala/KhalaApp';
 import type { AgentConfirmController, AgentConfirmError } from './controller';
 import '../../ui/khala/khala-app.css';
 import './agent-confirm.css';
@@ -54,18 +54,13 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, theme: hostThem
   const view = snapshot.state === 'loading' ? undefined : snapshot.view;
   return (
     <div className="khala-app kh-agent-confirm" data-theme={theme}>
-      <div className="kh-brand">
-        <img className="brand-logo" src={aiurLogo} alt="" />
-        <a className="wm" href={homeHref} aria-label="Khala home">khala</a>
-        <span className="kh-brand-actions">
-          <button type="button" className="tool-btn icon-only" aria-label="Toggle color theme" title="Toggle color theme"
-            onClick={() => {
-              const next = theme === 'dark' ? 'light' : 'dark';
-              setOwnTheme(next);
-              onThemeChange?.(next);
-            }}><ThemeToggleIcon /></button>
-        </span>
-      </div>
+      <Brand theme={theme} homeHref={homeHref} onThemeChange={next => {
+        if (hostTheme === undefined) {
+          setOwnTheme(next);
+          if (typeof localStorage !== 'undefined') persistTheme(next, localStorage);
+        }
+        onThemeChange?.(next);
+      }} />
       <section className="kh-fin kh-fin--page" aria-label="Confirm agent">
         <div className="kh-fin-c">
           <span className="kh-fin-eb">Khala</span>

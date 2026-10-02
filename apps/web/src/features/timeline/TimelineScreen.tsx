@@ -25,7 +25,7 @@ import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
 import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
-import { buildIdBadgeResolver, harnessLogo, initials, useParticipantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
@@ -38,6 +38,8 @@ export interface TimelineScreenProps {
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
   viewer: ParticipantView;
   extraParticipants?: readonly NameParticipant[];
+  /** The channel's members in member order: the mention chips follow it, and owner badges name them (§3, §9). */
+  members?: readonly ParticipantView[];
   /** Rendered per row, outside the message-content renderer, keyed by exact `EventRef`. */
   renderReviewAction?: (ref: EventRef) => ReactNode;
   /**
@@ -195,7 +197,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false, composerRef, onOpenParticipant, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
@@ -381,9 +383,9 @@ export function TimelineScreen({
     return event?.kind === 'message' ? event.authorName : participant.displayName;
   }
 
-  // Everyone the thread can name or mention: speakers, roster agents and the viewer.
+  // Everyone the thread can name or mention: the viewer, channel members in member order, speakers and roster agents.
   const rosterParticipants = new Map<string, ParticipantView>();
-  for (const participant of [viewer, ...data.items.map(item => item.participant)]) {
+  for (const participant of [viewer, ...members, ...data.items.map(item => item.participant)]) {
     if (!rosterParticipants.has(participant.participantId)) rosterParticipants.set(participant.participantId, participant);
   }
   for (const participant of extraParticipants) {
@@ -394,6 +396,13 @@ export function TimelineScreen({
     ...data.items.map(item => ({ ...item.participant, displayName: fullNameFor(item.participant, item.ref.eventId) })),
     ...[...rosterParticipants.values()].map(participant => ({ ...participant, displayName: fullNameFor(participant, null) })),
   ]);
+
+  const ownerCandidates = [...rosterParticipants.values()].filter(participant => participant.kind === 'human')
+    .map(participant => ({ ownerId: participant.ownerId, displayName: fullNameFor(participant, null) }));
+  /** The `.kh-own` badge: `YO` for the viewer's agents, else the owner's full-name initials (§3). */
+  const ownerBadge = (identity: Identity) => identity.isViewerOwned ? 'YO'
+    : identity.kind === 'agent' ? ownerInitials({ ownerId: identity.ownerId, label: identity.ownerLabel ?? '?' }, ownerCandidates)
+    : initials(identity.label);
 
   function identityFor(participant: ParticipantView, fullName: string): Identity {
     const detail = describeParticipant?.(participant.participantId);
@@ -443,7 +452,7 @@ export function TimelineScreen({
         onClick={open(identity.participantId)} />;
     }
     return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue}
-      ownerInitials={identity.isViewerOwned ? 'YO' : initials(identity.ownerLabel ?? '?')} logo={identity.harness ? harnessLogo(identity.harness) : null}
+      ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}
       initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
   }
 
@@ -456,7 +465,7 @@ export function TimelineScreen({
     return [{
       id: identity.participantId, kind: identity.kind, label, display: identity.idBadge ? `${label} ${identity.idBadge}` : label,
       hue: identity.hue, ownerHue: identity.kind === 'agent' ? identity.ownerHue : identity.hue,
-      ownerInitials: identity.isViewerOwned ? 'YO' : initials(identity.kind === 'agent' ? identity.ownerLabel ?? '?' : identity.label),
+      ownerInitials: ownerBadge(identity),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
     }];
   });

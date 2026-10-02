@@ -14,7 +14,7 @@ import type { HumanRoute, HumanRouteCodec } from './routes';
 import { HumanScreen, type HumanShellChrome } from './screen';
 import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
-import { ConversationList } from '../../ui/conversation';
+import { ConversationList, type ConversationSummary } from '../../ui/conversation';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
@@ -201,6 +201,15 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
     main={children} />;
 }
 
+/** Adds each agent member's harness and owner, once a room has resolved them: the list shows the logo and owner badge (§4.1). */
+function withHarnesses(conversations: readonly ConversationSummary[], describe: HumanRouteContext['describeMatrixUser']): readonly ConversationSummary[] {
+  if (!describe) return conversations;
+  return conversations.map(item => item.members ? { ...item, members: item.members.map(member => {
+    const detail = member.kind === 'agent' ? describe(member.id) : undefined;
+    return detail?.kind === 'agent' ? { ...member, harness: detail.harness, ownerId: detail.ownerId } : member;
+  }) } : item);
+}
+
 function OwnerShell({ application, routes, chrome, context, navigateRoute, children }: {
   application: HumanApplicationHandle;
   routes: HumanRouteCodec;
@@ -222,8 +231,8 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread} live={live}
     brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
-    list={<ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
-      query={query} onQueryChange={setQuery}
+    list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
+      query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
       action={<>
         <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded="false"
