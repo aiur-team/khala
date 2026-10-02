@@ -1,1 +1,92 @@
-/* Owned by a later design ticket (KM-181..184); imported once from khala-app.css. */
+/*
+ * Thread rows, bubbles, receipts, day separators and event rows
+ * (RECREATION-SPEC §7.2-§7.5, §8, §13.1). Rules are verbatim from
+ * source/Aiur Dashboard.html with `html[data-theme="light"]` re-rooted to
+ * `.khala-app[data-theme="light"]`. The §13.2 state card lives in
+ * khala-app.css.
+ */
+
+/* §7.2 (source:502-533, 582-592, 714-715, 750, 754-755) */
+.kh-thread { flex: 1 1 auto; overflow-y: auto; padding: 1.1rem 1.1rem .6rem; display: flex; flex-direction: column; gap: 2px; background: var(--bg-2); }
+.kh-row { display: flex; align-items: flex-end; gap: .5rem; max-width: 78%; }
+.kh-row.me { align-self: flex-end; flex-direction: row-reverse; }
+.kh-row.first { margin-top: .7rem; }
+.kh-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kh-row.me .kh-col { align-items: flex-end; }
+.kh-name { display: flex; align-items: center; gap: .4rem; font-size: .74rem; color: var(--muted); padding: 0 .75rem .2rem; background: none; border: 0; cursor: pointer; font-family: inherit; }
+.kh-name b { color: hsl(var(--h) 75% 72%); font-weight: 600; }
+.khala-app[data-theme="light"] .kh-name b { color: hsl(var(--h) 60% 35%); }
+.kh-name:hover b { text-decoration: underline; }
+.kh-id { font-family: "JetBrains Mono", monospace; font-size: .68rem; padding: 1px 6px; border-radius: 999px; background: hsl(var(--h) 60% 50% / .14); color: hsl(var(--h) 70% 72%); border: 1px solid hsl(var(--h) 60% 50% / .3); }
+.khala-app[data-theme="light"] .kh-id { color: hsl(var(--h) 60% 32%); }
+.kh-b { padding: .5rem .8rem; border-radius: 18px; font-size: .92rem; line-height: 1.4; background: var(--surface-3); color: var(--fg); text-wrap: pretty; overflow-wrap: anywhere; position: relative; }
+.kh-row:not(.me) .kh-b { border-top-left-radius: 18px; }
+.kh-row:not(.me).mid .kh-b, .kh-row:not(.me).last-of .kh-b { border-top-left-radius: 6px; }
+.kh-row:not(.me).first:not(.last-of) .kh-b, .kh-row:not(.me).mid .kh-b { border-bottom-left-radius: 6px; }
+.kh-row.me .kh-b { background: var(--accent); color: #fff; }
+.kh-row.me.mid .kh-b, .kh-row.me.last-of .kh-b { border-top-right-radius: 6px; }
+.kh-row.me.first:not(.last-of) .kh-b, .kh-row.me.mid .kh-b { border-bottom-right-radius: 6px; }
+.kh-b code { font-family: "JetBrains Mono", monospace; font-size: .82em; padding: 1px 5px; border-radius: 5px; background: rgba(0,0,0,.22); }
+.kh-mention { font-weight: 600; color: hsl(var(--mh) 75% 74%); cursor: pointer; }
+.khala-app[data-theme="light"] .kh-mention { color: hsl(var(--mh) 60% 34%); }
+.kh-row.me .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
+.kh-mention:hover { text-decoration: underline; }
+.kh-row.human .kh-b { background: hsl(330 42% 30%); color: #fff; }
+.khala-app[data-theme="light"] .kh-row.human .kh-b { background: hsl(330 62% 86%); color: #3a1026; }
+.kh-row.human .kh-b code { background: rgba(0,0,0,.2); }
+.kh-row.human .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
+.khala-app[data-theme="light"] .kh-row.human .kh-mention { color: #3a1026; }
+.kh-htag, .kh-otag { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; }
+.kh-htag { background: hsl(330 65% 48%); color: #fff; }
+.kh-otag { color: hsl(var(--oh) 70% 72%); border: 1px solid hsl(var(--oh) 60% 55% / .4); }
+.khala-app[data-theme="light"] .kh-otag { color: hsl(var(--oh) 60% 36%); }
+.kh-mention.kh-hm { background: hsl(var(--mh) 60% 50% / .16); padding: 0 4px; border-radius: 5px; }
+.kh-row.me .kh-mention.kh-hm, .kh-row.human .kh-mention.kh-hm { background: rgba(255,255,255,.18); text-decoration: none; }
+.kh-retry { align-self: center; color: var(--block); }
+.kh-row.failed .kh-b { opacity: .55; }
+@media (max-width: 760px) { .kh-row { max-width: 88%; } .kh-thread { padding: .8rem .7rem .5rem; } .kh-b { font-size: .95rem; } }
+
+/* §7.3 code blocks [ADAPT] */
+.kh-pre { margin: .35rem 0 0; padding: .55rem .7rem; border-radius: 10px; background: rgba(0,0,0,.22); font: .82em/1.45 "JetBrains Mono", monospace; overflow-x: auto; white-space: pre; }
+.khala-app[data-theme="light"] .kh-pre { background: rgba(42,37,26,.08); }
+.kh-pre-lang { display: block; font-size: .68rem; color: var(--muted); margin-bottom: .25rem; }
+
+/* §7.4 receipt (source:4279, 4296-4297, 4515); a pending send's bubble sits at .7 */
+.kh-rcpt { align-self: flex-end; font-size: .7rem; color: var(--faint); padding: .15rem .3rem 0; }
+.kh-rcpt b { color: var(--muted); font-weight: 600; }
+.kh-rcpt.kh-fail { color: var(--block); font-weight: 600; }
+.kh-row.pending .kh-b { opacity: .7; }
+
+/* §7.5 pop (source:543-544) */
+.kh-row.pop { animation: khPop .22s ease-out; }
+@keyframes khPop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* §8 day separators and event rows (source:4281-4282) */
+.kh-day { align-self: center; font-size: .72rem; color: var(--faint); margin: .9rem 0 .6rem; font-weight: 600; }
+.kh-day b { color: var(--muted); font-weight: 600; }
+.kh-ev { align-self: center; display: flex; align-items: center; gap: .45rem; font-size: .76rem; color: var(--muted); margin: .7rem 0 .2rem; padding: .3rem .75rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-family: inherit; }
+.kh-ev i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.kh-ev:hover { border-color: var(--line-strong); color: var(--fg); }
+.kh-ev--static { cursor: default; }
+.kh-ev--static i { background: var(--muted); }
+.kh-ev--static:hover { border-color: var(--line); color: var(--muted); }
+
+/* KM-172's channel-event pill, restyled to §8 `.kh-ev` */
+.kh-thread .channel-event-pill { align-self: center; margin: .7rem 0 .2rem; }
+.kh-thread .channel-event-pill__link { display: flex; align-items: center; gap: .45rem; font-size: .76rem; color: var(--muted); padding: .3rem .75rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-family: inherit; }
+.kh-thread a.channel-event-pill__link:hover { border-color: var(--line-strong); color: var(--fg); }
+.kh-thread .channel-event-pill__dot--success { background: var(--good); }
+.kh-thread .channel-event-pill__dot--failure { background: var(--block); }
+.kh-thread .channel-event-pill__dot--attention { background: var(--attn); }
+.kh-thread .channel-event-pill__dot--pending { background: var(--accent); }
+.kh-thread .channel-event-pill__dot--info { background: var(--muted); }
+
+/* §13.1 empty thread (source:4278) */
+.kh-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: .7rem; color: var(--muted); font-size: .9rem; }
+
+/* Product placement: the thread list is today's timeline list inside the channel pane. */
+.timeline__list.kh-thread { flex: 1 1 auto; list-style: none; margin: 0; padding: 1.1rem 1.1rem .6rem; gap: 2px; max-height: none; min-height: 0; }
+@media (max-width: 760px) { .timeline__list.kh-thread { padding: .8rem .7rem .5rem; } }
+.conversation-thread__body .timeline { height: 100%; gap: 0; min-height: 0; }
+.timeline__state { align-self: center; margin: 1rem; }
+.timeline__state[role="alert"] > b { color: var(--fg); }

@@ -51,3 +51,34 @@ describe('renderMessageContent', () => {
     expect(unsupported).toContain('Unsupported message content');
   });
 });
+
+describe('renderMessageContent inline syntax', () => {
+  const roster = [
+    { label: 'Opus', participantId: 'p-opus', kind: 'agent' as const, hue: 150 },
+    { label: 'Maya', participantId: 'p-maya', kind: 'human' as const, hue: 330 },
+  ];
+
+  it('renders single-backtick spans as code', () => {
+    const html = renderToStaticMarkup(renderMessageContent(text('call `useSession()` first')));
+    expect(html).toContain('call <code>useSession()</code> first');
+  });
+
+  it('renders a fence as pre.kh-pre with its language label', () => {
+    const html = renderToStaticMarkup(renderMessageContent(text('```ts\nconst x = 1;\n```')));
+    expect(html).toContain('<pre class="kh-pre"><span class="kh-pre-lang">ts</span><code>const x = 1;\n</code></pre>');
+  });
+
+  it('renders known mentions as keyboard-reachable buttons and leaves code and unknown names alone', () => {
+    const html = renderToStaticMarkup(renderMessageContent(text('@Opus and @maya, not `@Opus` or @nobody'), { mentions: roster }));
+    expect(html).toContain('<span class="kh-mention" style="--mh:150" role="button" tabindex="0">@Opus</span>');
+    expect(html).toContain('<span class="kh-mention kh-hm" style="--mh:330" role="button" tabindex="0">@Maya</span>');
+    expect(html).toContain('<code>@Opus</code>');
+    expect(html).toContain('@nobody');
+  });
+
+  it('never creates links, images or frames from mention-shaped or markup-shaped text', () => {
+    const html = renderToStaticMarkup(renderMessageContent(
+      text('@Opus <a href="x">x</a> <iframe src="y"></iframe> `<img src=z>`'), { mentions: roster }));
+    expect(html).not.toMatch(/<a |<img|<iframe/);
+  });
+});
