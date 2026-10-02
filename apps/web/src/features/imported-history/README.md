@@ -11,5 +11,6 @@ The hosted channel page mounts `ImportedHistorySection` once the external channe
 
 ```sh
 pnpm --filter @khala/web exec vitest run --config ../../vitest.config.ts src/features/imported-history
-pnpm --filter @khala/web exec node --import tsx --test src/features/imported-history/imported-history.browser.spec.ts
 ```
+
+The internal-to-hosted browser test is retained as `imported-history.browser.spec.ts.disabled` outside the active TypeScript and browser test inputs during M1. KM-160 owns its deletion or repair; imported history is outside M1 scope.

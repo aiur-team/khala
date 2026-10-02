@@ -82,37 +82,6 @@ importers:
         specifier: 4.20.6
         version: 4.20.6
 
-  apps/internal:
-    dependencies:
-      '@aiur/khala':
-        specifier: workspace:*
-        version: link:../../packages/agent-cli
-      '@khala/connector':
-        specifier: workspace:*
-        version: link:../../packages/connector
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@khala/harnesses':
-        specifier: workspace:*
-        version: link:../../packages/harnesses
-      '@khala/messaging':
-        specifier: workspace:*
-        version: link:../../packages/messaging
-      '@khala/policy':
-        specifier: workspace:*
-        version: link:../../packages/policy
-    devDependencies:
-      '@playwright/test':
-        specifier: 1.63.0
-        version: 1.63.0
-      libsodium-wrappers:
-        specifier: 0.8.4
-        version: 0.8.4
-      tsx:
-        specifier: 4.20.6
-        version: 4.20.6
-
   apps/web:
     dependencies:
       '@aiur/components':
