@@ -33,7 +33,7 @@ describe('MCP command lifecycle', () => {
     const io = streams([call('khala_send', 'a', { text: 'hello' }), call('khala_status', 'a'), call('khala_join', 'a', { link: 'https://example.com' }), call('khala_read', 'a')]);
     expect(await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient: createPlaceholderClient })).toBe(0);
     expect(io.responses().map(response => response.result.structuredContent)).toEqual([
-      { error: 'not_connected' }, { state: 'idle', unread: 0 }, { error: 'link_unavailable' }, { error: 'not_connected' },
+      { error: 'not_connected' }, { state: 'idle', unread: 0, listeningMode: 'sync' }, { error: 'link_unavailable' }, { error: 'not_connected' },
     ]);
   });
   it('never creates clients for absent or unsafe sessions', async () => {
@@ -82,7 +82,7 @@ describe('MCP command lifecycle', () => {
       });
       const completed = (async () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
-        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill('SIGTERM');
         expect(await closed).toEqual({ code: 0, signal: null });
@@ -123,7 +123,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
       expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -162,7 +162,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });

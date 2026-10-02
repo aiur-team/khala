@@ -8,7 +8,7 @@ import type { AgentCredentials, Harness } from '@khala/contracts/m1/agent-join';
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 export type StatusFile = { state: AgentState; channelName?: string; detail?: string; updatedAt: string };
 export type JoinFile = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; link: string };
-export type SessionFiles = { dir: string; join: string; session: string; inbox: string; cursor: string; status: string };
+export type SessionFiles = { dir: string; join: string; session: string; inbox: string; cursor: string; status: string; mode: string };
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export class StateError extends Error {
   readonly code: 'invalid_session_id' | 'unsafe_state_dir' | 'storage_failed';
@@ -25,7 +25,7 @@ export function stateRoot(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(base, 'khala');
 }
 export function filesForDir(dir: string): SessionFiles {
-  return { dir, join: path.join(dir, 'join.json'), session: path.join(dir, 'session.json'), inbox: path.join(dir, 'inbox.jsonl'), cursor: path.join(dir, 'cursor.json'), status: path.join(dir, 'status.json') };
+  return { dir, mode: path.join(dir, 'mode.json'), join: path.join(dir, 'join.json'), session: path.join(dir, 'session.json'), inbox: path.join(dir, 'inbox.jsonl'), cursor: path.join(dir, 'cursor.json'), status: path.join(dir, 'status.json') };
 }
 export function sessionFiles(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): SessionFiles {
   if (!['claude', 'codex'].includes(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
@@ -93,8 +93,8 @@ export async function writeStatus(files: SessionFiles, state: AgentState, detail
   return status;
 }
 export function readStatus(files: SessionFiles): Promise<StatusFile | null> { return readJson(files.status); }
-export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json', value: unknown): Promise<void> {
-  if (!['join.json', 'session.json', 'cursor.json', 'status.json'].includes(name)) throw new StateError('storage_failed');
+export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json', value: unknown): Promise<void> {
+  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json'].includes(name)) throw new StateError('storage_failed');
   await writeJsonAtomic(path.join(dir, name), value);
 }
 export function readStateFile<T>(dir: string, name: string): Promise<T | null> {
