@@ -1,6 +1,7 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
+import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
@@ -197,6 +198,7 @@ describe('createMatrixHumanServices', () => {
           } else bobLogins += 1;
           return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'device-token' });
         }
+        if (path.endsWith('/displayname')) return json(200, { displayname: 'Alice' });
         if (path.endsWith('/keys/query')) return json(200, { device_keys: {} });
         throw new Error(`unexpected request ${path}`);
       });
@@ -287,7 +289,8 @@ describe('createMatrixHumanServices', () => {
     ] as const) {
       const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
         const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
-        if (path.startsWith('/_matrix/client/v3/profile/')) return json(404, { errcode: 'M_UNKNOWN', error });
+        if (path.endsWith('/displayname')) return json(200, { displayname: 'Alice' });
+      if (path.startsWith('/_matrix/client/v3/profile/')) return json(404, { errcode: 'M_UNKNOWN', error });
         if (path === '/_synapse/admin/v1/register' && init?.method !== 'POST') return json(200, { nonce: 'nonce_1' });
         if (path === '/_synapse/admin/v1/register') {
           const request = JSON.parse(String(init?.body)) as { username: string };
@@ -310,6 +313,7 @@ describe('createMatrixHumanServices', () => {
   it('registers an ordinary owner when Synapse canonicalizes shared-secret usernames to lowercase', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/displayname')) return json(200, { displayname: 'Alice' });
       if (path.startsWith('/_matrix/client/v3/profile/')) return json(404, { errcode: 'M_NOT_FOUND' });
       if (path === '/_synapse/admin/v1/register' && init?.method !== 'POST') return json(200, { nonce: 'nonce_1' });
       if (path === '/_synapse/admin/v1/register') {
@@ -398,6 +402,7 @@ describe('createMatrixHumanServices', () => {
         const identifier = request.identifier as Record<string, unknown>;
         return json(200, { user_id: identifier.user, access_token: 'device-token', device_id: deviceId });
       }
+      if (url.pathname.endsWith('/displayname')) return json(200, { displayname: 'Alice' });
       if (url.pathname.endsWith('/keys/query')) {
         const authorization = new Headers(init?.headers).get('authorization');
         expect(authorization).toBe('Bearer device-token');
@@ -474,6 +479,59 @@ describe('createMatrixHumanServices', () => {
     expect(membershipWrites).toEqual(['invite', 'join']);
   });
 
+  it.each(['absent', 'corrupt', 'mismatch', 'unavailable', 'throw'])('returns unknown for an %s owner map without reading legacy stores', async defect => {
+    const userId = '@agent:matrix.example.test';
+    const human = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const store = memoryStore();
+    store.read = vi.fn(async key => {
+      expect(key).toBe(agentOwnerRecordKey(userId));
+      if (defect === 'throw') throw new Error('store offline');
+      if (defect === 'absent') return { kind: 'absent' };
+      if (defect === 'unavailable') return { kind: 'unavailable' };
+      return { kind: 'record', record: { key, revision: 'r1', operationId: 'op', expiresAt: null,
+        value: defect === 'corrupt' ? {} : { matrixUserId: '@other:matrix.example.test', ownerId: principal.ownerId,
+          ownerLabel: 'Alice', harness: 'codex', label: 'Codex', createdAt: '2026-10-01T00:00:00Z' } } };
+    }) as ControlStore['read'];
+    const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
+      if (path.endsWith('/joined_members')) return json(200, { joined: { [human]: { display_name: 'Alice' }, [userId]: { display_name: 'Agent label' } } });
+      throw new Error('unexpected request');
+    });
+    expect(await services(fetch, store).sessions.resolveRoomParticipants(principal.ownerId, '!room:matrix.example.test' as RoomId,
+      [userId, human], undefined, [], { matrixUserId: human, accessToken: 'browser-token' }))
+      .toMatchObject({ kind: 'ok', participants: [{ matrixUserId: userId, displayName: 'Agent label', kind: 'unknown' },
+        { matrixUserId: human, displayName: 'Alice', kind: 'human' }] });
+  });
+
+  it.each([undefined, '', 'x'.repeat(257), 'bad\u0000label', 'bad\u0080label'])('falls back for invalid joined display names', async name => {
+    const human = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const fetch = vi.fn<typeof globalThis.fetch>(async input => String(input).endsWith('/joined_members')
+      ? json(200, { joined: { [human]: { display_name: name } } }) : json(200, { membership: 'join' }));
+    expect(await services(fetch).sessions.resolveRoomParticipants(principal.ownerId, '!room:matrix.example.test' as RoomId,
+      [human], undefined, [], { matrixUserId: human, accessToken: 'browser-token' }))
+      .toMatchObject({ kind: 'ok', participants: [{ displayName: human, kind: 'human' }] });
+  });
+
+  it.each(['Alice', 'Old label'])('sets the browser display name only when different from %s', async current => {
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const writes: unknown[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      if (path.endsWith('/displayname')) {
+        if (init?.headers) expect(new Headers(init.headers).get('authorization')).toBe('Bearer token');
+        if (init?.method === 'PUT') writes.push(JSON.parse(String(init.body)));
+        return json(200, { displayname: current });
+      }
+      return json(200, { device_keys: {} });
+    });
+    expect((await services(fetch).sessions.issue(principal, 'WEB' as DeviceId)).kind).toBe('ok');
+    expect(writes).toEqual(current === 'Alice' ? [] : [{ displayname: 'Alice' }]);
+    expect(await services(fetch).sessions.resolveParticipants([userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: current }] });
+  });
+
   it('resolves only canonical local participant accounts', async () => {
     const matrix = services(vi.fn());
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
@@ -506,6 +564,7 @@ describe('Matrix room sender inventory', () => {
     await createOwnerRoomIndex(store).activate(binding, room);
     await createAgentIdentityDirectory(store).remember({ v: 1, roomId: room, matrixUserId: identity.userId,
       participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
+    await store.compareAndSet({ key: agentOwnerRecordKey(identity.userId), expectedRevision: null, operationId: 'owner-map', next: { expiresAt: null, value: { matrixUserId: identity.userId, ownerId: principal.ownerId, ownerLabel: 'Alice', harness: 'codex', label: 'Codex', createdAt: '2026-10-01T00:00:00Z' } } });
     const joined: Record<string, unknown> = { [user]: {}, [other]: {}, [identity.userId]: {} };
     const keys: Record<string, Record<string, unknown>> = {
       [user]: { WEB_OFFLINE: device(user, 'WEB_OFFLINE') },
@@ -557,25 +616,25 @@ describe('Matrix room sender inventory', () => {
     expect(result).toMatchObject({ kind: 'ok', participants: [
       { matrixUserId: user, ownerId: principal.ownerId },
       { matrixUserId: f.identity.userId, kind: 'agent', ownerId: principal.ownerId,
-        participantId: f.identity.participantId },
+        participantId: `agent_${createHash('sha256').update(f.identity.userId).digest('hex').slice(0, 40)}` },
     ] });
     delete f.joined[f.identity.userId];
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
-      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', participantId: f.identity.participantId }] });
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', participantId: `agent_${createHash('sha256').update(f.identity.userId).digest('hex').slice(0, 40)}` }] });
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user], undefined, [f.identity.participantId]))
-      .toMatchObject({ kind: 'ok', participants: [expect.anything(), { kind: 'agent', participantId: f.identity.participantId }] });
+      .toMatchObject({ kind: 'ok', participants: [expect.objectContaining({ kind: 'human' })] });
     f.deny();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toEqual({ kind: 'forbidden' });
   });
-  it('does not disclose a departed identity by guessed target ID outside the reader history', async () => {
+  it('ignores target ids and preserves departed agent attribution', async () => {
     const f = await fixture();
     delete f.joined[f.identity.userId];
     f.hideHistory();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [], undefined, [f.identity.participantId]))
       .toEqual({ kind: 'ok', participants: [] });
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
-      .toEqual({ kind: 'unavailable' });
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent' }] });
   });
   it('includes offline browser devices from every owner and the exact indexed connector, without tokens', async () => {
     const f = await fixture();
@@ -688,7 +747,7 @@ describe('browser-backed room participant reads', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the browser bearer when checking departed agent history visibility', async () => {
+  it('uses the browser bearer and ignores participant-id targets', async () => {
     const roomId = '!history:matrix.example.test' as RoomId;
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
     const identity = agentMatrixIdentity(principal.ownerId, { harness: 'codex', sessionId: 'history-session', generation: 0 }, 'matrix.example.test');
@@ -709,7 +768,7 @@ describe('browser-backed room participant reads', () => {
     });
     const result = await services(fetch, store).sessions.resolveRoomParticipants(principal.ownerId, roomId, [], undefined,
       [identity.participantId], { matrixUserId: userId, accessToken: 'browser-token-123456789' });
-    expect(result).toMatchObject({ kind: 'ok', participants: [{ matrixUserId: identity.userId }] });
-    expect(seen).toHaveLength(4);
+    expect(result).toEqual({ kind: 'ok', participants: [] });
+    expect(seen).toHaveLength(2);
   });
 });

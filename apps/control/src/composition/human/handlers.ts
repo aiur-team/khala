@@ -14,7 +14,7 @@ import {
 import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from './matrix';
-import type { BrowserSenderVerifier } from './room-send-routes';
+import type { BrowserSenderVerifier } from './browser-sender';
 import { createProductionHumanServiceLoader } from './production';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';

@@ -1,9 +1,10 @@
-import { decodeParticipantId, decodeRoomId, type ControlStore } from '@khala/contracts/messaging/index';
+import { decodeParticipantId, decodeRoomId, type ControlStore, type OwnerId, type ParticipantId } from '@khala/contracts/messaging/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createAgentIdentityDirectory } from './identity-directory';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from '../human/matrix';
+import type { Participant } from '@khala/contracts/m1/participants';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
 
 export const AGENT_PARTICIPANTS_PATH = '/api/agent/messaging/participants';
@@ -54,9 +55,9 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
     const result = await input.sessions.resolveRoomParticipants(authority.ownerId, roomId.value, value.userIds as string[]);
     if (result.kind !== 'ok') return json(result.kind === 'forbidden' ? 403 : 503, { code: result.kind });
     const identities = createAgentIdentityDirectory(input.store);
-    const participants = [...result.participants];
+    const participants: (Participant | { matrixUserId: string; participantId: ParticipantId; ownerId: OwnerId; displayName: string; kind: 'agent' })[] = [...result.participants];
     for (const participantId of value.targetParticipantIds as string[]) {
-      if (participants.some(item => item.participantId === participantId)) continue;
+      if (participants.some(item => item.kind !== 'unknown' && item.participantId === participantId)) continue;
       const targetId = decodeParticipantId(participantId);
       if (!targetId.ok) return json(400, { code: 'invalid_request' });
       const agent = await identities.lookupParticipant(roomId.value, targetId.value);
@@ -72,8 +73,8 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
         continue;
       }
       if (participant.ownerId !== authority.ownerId) return json(403, { code: 'forbidden' });
-      const found = await bindings.findParticipant({ ownerId: participant.ownerId, roomId: roomId.value,
-        agentParticipantId: participant.participantId });
+      const found = await bindings.findParticipant({ ownerId: participant.ownerId as OwnerId, roomId: roomId.value,
+        agentParticipantId: participant.participantId as ParticipantId });
       if (found.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (found.kind !== 'found' || found.record.revokedGeneration !== null
         || found.record.capability === null

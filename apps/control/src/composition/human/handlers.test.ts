@@ -306,6 +306,7 @@ describe('admission route handlers', () => {
         participantId: 'human_1' as ParticipantId,
         ownerId: principal.ownerId,
         displayName: userId,
+        kind: 'human' as const,
       }],
     }));
     const state = services({ messaging: {
