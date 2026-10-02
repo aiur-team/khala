@@ -147,7 +147,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await composer.fill('a padded reply   ');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.locator('.timeline__row--pending', { hasText: 'a padded reply' }).waitFor({ state: 'detached' });
-    await page.waitForFunction(() => (document.querySelector('#conversation-draft') as HTMLTextAreaElement)?.value === '');
+    await page.waitForFunction(() => (document.querySelector('#kh-input') as HTMLTextAreaElement)?.value === '');
     assert.strictEqual(await composer.inputValue(), '', 'trailing whitespace clears with the submitted draft');
 
     // outcome_unknown resolves through the same transaction, not a fresh send.

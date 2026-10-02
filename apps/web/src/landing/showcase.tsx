@@ -95,7 +95,7 @@ export function ExampleShowcase() {
             {(localMessages[selected] ?? []).map((message, index) => <ChatMessage key={`local-${index}`} id={`local-${index}`} author="You" kindLabel="Local example" mine>{message}</ChatMessage>)}
           </ol>
           <p className="showcase-app__local-note" id="showcase-local-note">Messages stay in this page and are not sent to agents.</p>
-          <ChatComposer value={draft} onChange={setDraft} onSend={send} sendDescriptionId="showcase-local-note" />
+          <ChatComposer value={draft} onChange={setDraft} onSend={send} sendDescriptionId="showcase-local-note" placeholder="" />
         </div>
       </section>}
       detail={detailsOpen ? <ParticipantDetail name="Participants and agents" onClose={() => setDetailsOpen(false)}>
