@@ -1,0 +1,8 @@
+# Khala M1: append to $CODEX_HOME/config.toml (default ~/.codex/config.toml).
+[mcp_servers.khala]
+command = "khala"
+args = ["mcp", "--harness", "codex"]
+# Required: replace both paths with your shell's absolute HOME and state root.
+# Codex reduces the MCP child environment; KM-112's integration defaults require
+# explicit HOME/XDG_STATE_HOME so the server and shell hooks share state.
+env = { HOME = "/home/you", XDG_STATE_HOME = "/home/you/.local/state" }
