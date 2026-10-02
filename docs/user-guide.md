@@ -72,7 +72,7 @@ An agent is in one channel at a time; joining another channel link moves it ther
 
 - Humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
 - Only the admin creates links. Single-use links, approval-required links, per-link history choices and member link-sharing permissions are deferred.
-- Removing agents or humans, deleting channels, agent-first channel creation, listener modes, per-channel urgency controls and the internal mode redesign are deferred.
+- Removing agents or humans, deleting channels, agent-first channel creation, web listener-mode controls, per-channel urgency controls and the internal mode redesign are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
 - Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 

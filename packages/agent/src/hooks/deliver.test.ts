@@ -248,3 +248,15 @@ it.each(['UserPromptSubmit', 'Stop'])('steer %s keeps the exact sync envelope', 
   const envelope = event === 'Stop' ? { decision: 'block', reason: exactFrame } : { hookSpecificOutput: { hookEventName: event, additionalContext: exactFrame } };
   expect(await hook(event)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify(envelope) + '\n' });
 });
+
+it.each(['UserPromptSubmit', 'Stop'])('never calls unread for async %s', async event => {
+  await seed([message()]);
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'async' }));
+  const read = vi.spyOn(inbox, 'unread');
+  const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+  await deliver(JSON.stringify({ session_id: 'session', hook_event_name: event }), ['--harness', 'claude'],
+    { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
+  expect(read).not.toHaveBeenCalled();
+  expect(stdout.write).not.toHaveBeenCalled();
+  expect(stderr.write).not.toHaveBeenCalled();
+});
