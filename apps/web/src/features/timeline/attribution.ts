@@ -1,6 +1,8 @@
-// Attribution is derived only from the authenticated `ParticipantView` (kind,
+import type { Harness } from '@khala/contracts/m1/agent-join';
+import type { Participant } from '@khala/contracts/m1/participants';
+// Attribution uses the authenticated `ParticipantView` (kind,
 // ownerId, displayName), the viewer's own `ownerId` and local send/echo state
-// — never from message body text (KTD3). `ParticipantView.displayName` is
+// and server participant details, never message body text (KTD3). `ParticipantView.displayName` is
 // already decoder-guaranteed nonempty with no control, bidi or invisible
 // zero-width characters.
 
@@ -62,4 +64,12 @@ export function buildDisplayNameResolver(participants: readonly ParticipantView[
     if (!owners || owners.size <= 1) return participant.displayName;
     return `${participant.displayName} (#${participant.ownerId.slice(-4)})`;
   };
+}
+
+export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex' };
+
+export function rowLabels(attribution: Attribution, detail: Participant | undefined): Readonly<{ author: string | null; kindLabel: string }> {
+  if (detail?.kind === 'agent') return { author: detail.displayName, kindLabel: `${HARNESS_NAMES[detail.harness]} agent` };
+  if (detail?.kind === 'unknown') return { author: 'Unknown', kindLabel: 'Unknown' };
+  return { author: null, kindLabel: ownershipLabel(attribution) };
 }

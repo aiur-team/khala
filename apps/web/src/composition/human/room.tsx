@@ -122,6 +122,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
           extraParticipants={extraParticipants}
+          {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

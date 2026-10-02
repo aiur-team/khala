@@ -1,3 +1,4 @@
+import { ownerFirstName } from '@khala/contracts/m1/participants';
 import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import {
   ClientEvent,
@@ -395,7 +396,7 @@ class MatrixRuntime {
               setActive({
                 client,
                 principal,
-                actor: { ...mapping, displayName: principal.verifiedEmail, deviceIds: [input.session.deviceId] },
+                actor: { ...mapping, displayName: ownerFirstName(principal.verifiedEmail), deviceIds: [input.session.deviceId] },
                 generation,
               });
               if (!crossSigningStarted) {
@@ -600,7 +601,7 @@ class MatrixSubstrate implements RoomSubstrate {
       }
       const participant: ParticipantView = {
         ...mapping,
-        displayName: sender === active.client.getUserId() ? active.principal.verifiedEmail : mapping.displayName,
+        displayName: sender === active.client.getUserId() ? ownerFirstName(active.principal.verifiedEmail) : mapping.displayName,
         deviceIds: deviceId ? [deviceId] : [],
       };
       const projected = projectMatrixTimelineEvent(event, participant, deviceId ?? null, this.limits);
