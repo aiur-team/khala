@@ -87,7 +87,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
 
     // Send + reconcile: composing and sending a human message shows exactly
     // one row for it once accepted (no duplicate local-echo row survives).
-    const composer = page.getByRole('textbox', { name: 'Message' });
+    const composer = page.getByRole('combobox', { name: 'Message' });
     // Hold the adapter outcome until explicitly released: clearing must happen
     // with the optimistic row, and even an identical newly typed draft survives.
     for (const prefix of ['', '__fail_once ', '__outcome_unknown ']) {
