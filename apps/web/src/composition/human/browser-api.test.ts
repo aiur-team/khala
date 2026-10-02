@@ -298,6 +298,47 @@ describe('createHumanBrowserApi', () => {
     });
   });
 
+  it.each([false, true])('resolves C3 unknown members without losing known identities (unknown only: %s)', async unknownOnly => {
+    const entries = [
+      { matrixUserId: '@maya:hs', participantId: 'human_maya', ownerId: 'owner_maya', displayName: 'Maya', kind: 'human' },
+      { matrixUserId: '@bot:hs', participantId: 'agent_bot', ownerId: 'owner_kevin', displayName: 'Claude · Kevin', kind: 'agent', ownerLabel: 'Kevin', harness: 'claude' },
+      { matrixUserId: '@stranger:hs', displayName: '@stranger:hs', kind: 'unknown' },
+    ].slice(unknownOnly ? 2 : 0);
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: entries }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    await api.identity.current({ signal: new AbortController().signal });
+    fetch.mockClear();
+    const userIds = entries.map(entry => entry.matrixUserId);
+    const result = await api.participants.resolve(userIds, undefined, 'room_1' as RoomId, undefined,
+      { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0]).toBe(`${origin}/api/human/messaging/participants`);
+    expect(fetch.mock.calls[0]![1]?.method).toBe('POST');
+    expect(result?.size).toBe(entries.length);
+    expect(result?.get('@stranger:hs')).toEqual({ participantId: 'unknown:@stranger:hs', ownerId: 'unknown:@stranger:hs',
+      kind: 'human', displayName: 'Unknown', deviceIds: [] });
+    expect(api.participants.describe('unknown:@stranger:hs')).toEqual(entries.at(-1));
+    if (!unknownOnly) {
+      expect(result?.get('@maya:hs')).toMatchObject({ participantId: 'human_maya', ownerId: 'owner_maya', displayName: 'Maya' });
+      expect(result?.get('@bot:hs')).toMatchObject({ participantId: 'agent_bot', ownerId: 'owner_kevin', kind: 'agent', displayName: 'Claude · Kevin' });
+      expect(api.participants.describe('agent_bot')).toMatchObject({ harness: 'claude' });
+    }
+  });
+
+  it.each([
+    { matrixUserId: '@bot:hs', participantId: 'agent_bot', ownerId: 'owner_bob', displayName: 'Bot', kind: 'agent', harness: 'codex' },
+    { matrixUserId: '@bot:hs', participantId: 'human_bob', ownerId: 'owner_bob', displayName: 'Bob', kind: 'human', harness: 'codex' },
+  ])('rejects malformed C3 entries without publishing details', async entry => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { participants: [entry] }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.participants.resolve(['@bot:hs'])).toBeNull();
+    expect(api.participants.describe(entry.participantId)).toBeUndefined();
+  });
+
   it('decodes server-authoritative Matrix participant mappings', async () => {
     const userId = '@khala_b3duZXJfYm9i:matrix.example.test';
     const fetch = vi.fn<typeof globalThis.fetch>()
@@ -308,6 +349,7 @@ describe('createHumanBrowserApi', () => {
           participantId: 'human_1234',
           ownerId: 'owner_bob',
           displayName: userId,
+          kind: 'human',
         }],
       }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
@@ -327,7 +369,7 @@ describe('createHumanBrowserApi', () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
       .mockResolvedValueOnce(json(200, { participants: [{ matrixUserId: userId,
-        participantId: 'agent_420', ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' }] }));
+        participantId: 'agent_420', ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent', ownerLabel: 'Bob', harness: 'codex' }] }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     const session = { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' };
     const participants = await api.participants.resolve([userId], undefined, 'room_1' as RoomId, undefined, session);
@@ -344,7 +386,7 @@ describe('createHumanBrowserApi', () => {
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
       .mockResolvedValueOnce(json(200, { participants: [
         { matrixUserId: userId, participantId: 'human_owner', ownerId: 'owner_bob', displayName: 'Maya', kind: 'human' },
-        { matrixUserId: '@departed:matrix.example.test', participantId: targetId, ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' },
+        { matrixUserId: '@departed:matrix.example.test', participantId: targetId, ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent', ownerLabel: 'Bob', harness: 'codex' },
       ] }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     const session = { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' };

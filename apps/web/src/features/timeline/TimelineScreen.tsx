@@ -1,3 +1,4 @@
+import type { Participant } from '@khala/contracts/m1/participants';
 import { dedupeByKey } from '@khala/contracts/m1/channel-event';
 import { ChannelEventPill } from './ChannelEventPill';
 // The route panel: attributed rows, pagination that preserves the reader's
@@ -7,12 +8,12 @@ import { ChannelEventPill } from './ChannelEventPill';
 // message syntax can never create them (KTD4).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { RoomId } from '@khala/contracts/messaging/ids';
+import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
 import { type EvidenceUnit, isInlineUnit } from '../receipt-evidence/model';
 import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from '../receipt-evidence/ReceiptEvidence';
-import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
+import { attributionFor, buildDisplayNameResolver, ownershipLabel, rowLabels } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
@@ -24,6 +25,7 @@ import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 
 export interface TimelineScreenProps {
+  describeParticipant?: (participantId: ParticipantId) => Participant | undefined;
   controller: TimelineController;
   roomPort: Pick<ChannelPort, 'send'>;
   roomId: RoomId;
@@ -131,7 +133,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -347,6 +349,7 @@ export function TimelineScreen({
             : null;
 
           const attribution = attributionFor(item.participant, viewer.ownerId);
+          const labels = rowLabels(attribution, describeParticipant?.(item.participant.participantId));
           const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
           const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
           const memberOf = evidence ? evidenceLayout.memberOf.get(item.ref.eventId) ?? [] : [];
@@ -357,11 +360,11 @@ export function TimelineScreen({
                   <EvidenceGroup unit={unit} status={evidenceView.status} />
                 </li>
               ))}
-              <ChatMessage id={item.ref.eventId} author={resolveDisplayName({ ...item.participant,
+              <ChatMessage id={item.ref.eventId} author={labels.author ?? resolveDisplayName({ ...item.participant,
                 displayName: namesUnavailable && item.participant.kind === 'agent' ? 'Agent name unavailable'
                   : nameEvent?.kind === 'message' ? nameEvent.authorName : item.participant.displayName })} time={item.receivedAt}
                 mine={attribution.isViewerOwned} grouped={previous?.kind === 'message' && previous.item.participant.participantId === item.participant.participantId}
-                kindLabel={ownershipLabel(attribution)} className="timeline__row">
+                kindLabel={labels.kindLabel} className="timeline__row">
                 {isReadableItem(item) ? (
                   <>
                     <div className="timeline__body">{renderMessageContent(item.content)}</div>

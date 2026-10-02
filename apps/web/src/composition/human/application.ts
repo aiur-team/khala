@@ -1,3 +1,4 @@
+import type { Participant } from '@khala/contracts/m1/participants';
 // Browser composition lifecycle for the ordinary human flow. It exposes only
 // verified contract ports to route composition and owns their route/device
 // teardown ordering; UI modules never locate global services themselves.
@@ -26,6 +27,7 @@ import type { TabHandoff } from './tab-handoff';
 import type { HumanChannelLinks } from './channel-links';
 
 export interface HumanApplicationPorts {
+  readonly describeParticipant?: (participantId: string) => Participant | undefined;
   readonly agentJoin?: AgentJoinPort;
   readonly inviteAgent?: AgentInvitePort;
   readonly identity: IdentityPort;

@@ -45,6 +45,39 @@ const viewer = participant('viewer', 'human', 'Viewer');
 const noopSendPort: Pick<ChannelPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
 
 describe('TimelineScreen', () => {
+  it.each([true, false])('renders C3 agent attribution when namesReady is %s', namesReady => {
+    const bot = participant('bot', 'agent', 'Legacy bot');
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',
+      items: [item('E1', bot, 'hello')], nextCursor: null, newMessageCount: 0, namesReady })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      describeParticipant={() => ({ matrixUserId: '@bot:hs', participantId: 'bot', ownerId: bot.ownerId,
+        displayName: 'Claude · Kevin', kind: 'agent', ownerLabel: 'Kevin', harness: 'claude' })} />);
+    expect(html).toContain('Claude · Kevin');
+    expect(html).toContain('Claude Code agent');
+    expect(html).not.toContain('Your agent');
+    expect(html).not.toContain('Another person');
+    expect(html).not.toContain('Agent name unavailable');
+  });
+
+  it('renders an unknown member without throwing', () => {
+    const unknown = participant('unknown:@stranger:hs', 'human', 'Unknown');
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',
+      items: [item('E1', unknown, 'hello')], nextCursor: null, newMessageCount: 0 })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      describeParticipant={() => ({ matrixUserId: '@stranger:hs', displayName: '@stranger:hs', kind: 'unknown' })} />);
+    expect(html).toContain('Unknown');
+    expect(html).not.toContain('conversation-message__badge');
+  });
+
+  it('keeps human markup identical with C3 details', () => {
+    const maya = participant('maya', 'human', 'Maya');
+    const controller = fakeController({ phase: 'ready', items: [item('E1', maya, 'hi')], nextCursor: null, newMessageCount: 0 });
+    const plain = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    const detailed = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      describeParticipant={() => ({ matrixUserId: '@maya:hs', participantId: maya.participantId, ownerId: maya.ownerId, displayName: 'Maya', kind: 'human' })} />);
+    expect(detailed).toBe(plain);
+  });
+
   it('renders a verified rename once between historical and later agent bylines', () => {
     const bot = { ...participant('bot', 'agent', 'Codex #420'), ownerId: viewer.ownerId };
     const changed = { ...item('E2', viewer, ''), content: {
