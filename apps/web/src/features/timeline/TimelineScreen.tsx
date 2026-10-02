@@ -128,7 +128,10 @@ function restored(entry: PendingSend): PendingSend {
   return entry.phase === 'pending' ? { ...entry, phase: 'outcome_unknown' } : entry;
 }
 
-const NEAR_BOTTOM_PX = 24;
+/** Within this distance of the end, the reader is at latest and new rows keep them pinned there. */
+const NEAR_BOTTOM_PX = 80;
+
+const distanceFromEnd = (list: HTMLElement) => list.scrollHeight - list.scrollTop - list.clientHeight;
 
 /** Glides the list to its end; jumps when the reader prefers reduced motion. */
 function scrollToLatest(list: HTMLElement): void {
@@ -280,6 +283,14 @@ export function TimelineScreen({
   // The viewer's own send brings them to latest; follows it until it resolves
   // or the reader scrolls away themselves. Others' arrivals never yank.
   const followSendRef = useRef<string | null>(null);
+  // Stick-to-bottom: a reader at latest stays there as rows arrive or grow.
+  // `gliding` ignores the in-between scroll events of our own smooth scroll.
+  const glidingRef = useRef(false);
+  const contentHeightRef = useRef(0);
+  const glideToLatest = useCallback((list: HTMLElement) => {
+    glidingRef.current = distanceFromEnd(list) >= 2;
+    scrollToLatest(list);
+  }, []);
 
   const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
   const sendBlocked = sendBlockedReason !== null;
@@ -337,9 +348,22 @@ export function TimelineScreen({
     const list = listRef.current;
     if (!txn || !list) return;
     if (!pendingList.some(entry => entry.clientTxnId === txn && (entry.phase === 'pending' || entry.phase === 'accepted'))) followSendRef.current = null;
-    scrollToLatest(list);
+    glideToLatest(list);
     setAtLatest(true);
-  }, [pendingList, data.items]);
+  }, [pendingList, data.items, glideToLatest]);
+
+  // After every render: if the content grew while the reader was at latest
+  // (measured against the height before this render), follow it down.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const before = contentHeightRef.current;
+    contentHeightRef.current = list.scrollHeight;
+    if (before === 0 || list.scrollHeight <= before) return;
+    const wasAtLatest = glidingRef.current || before - list.scrollTop - list.clientHeight < NEAR_BOTTOM_PX;
+    // A page of older history restores its own anchor instead.
+    if (wasAtLatest && 'atLatest' in anchorRef.current) glideToLatest(list);
+  });
 
   useEffect(() => {
     const list = listRef.current;
@@ -385,6 +409,7 @@ export function TimelineScreen({
 
   function stopFollowing(): void {
     followSendRef.current = null;
+    glidingRef.current = false;
   }
 
   async function handleRetry(entry: PendingSend): Promise<void> {
@@ -635,41 +660,52 @@ export function TimelineScreen({
           Load earlier messages
         </button>
       ) : null}
-      <ol
-        className="timeline__list kh-thread"
-        ref={listRef}
-        aria-label="Messages"
-        onWheel={stopFollowing} onTouchStart={stopFollowing} onKeyDown={stopFollowing}
-        onScroll={event => {
-          const el = event.currentTarget;
-          setAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
-        }}
-      >
-        {rows.length === 0 && visiblePending.length === 0 && data.phase === 'ready' ? (unreadableActivity
-          ? <li className="kh-empty">Messages in this channel are unavailable on this device.</li>
-          : <li className="kh-empty"><b>No messages yet</b>
-            {onInvite ? <button type="button" className="kh-btn pri" onClick={onInvite}>Invite</button> : null}</li>) : null}
-        {entries.map((entry, index) => {
-          const receipt = index === receiptAt && entry.type === 'message' && entry.receipt ? receiptFor(entry.receipt) : null;
-          return <Fragment key={entry.key}>
-            {entry.type === 'message' ? entry.render(runs[index]!) : entry.node}
-            {receipt ? <li className={`kh-rcpt${receipt.failed ? ' kh-fail' : ''}`} role="status">{receipt.text}</li> : null}
-          </Fragment>;
-        })}
-      </ol>
-      {!atLatest && data.newMessageCount > 0 ? (
-        <button
-          type="button"
-          className="timeline__jump-latest aiur-action"
-          onClick={() => {
-            setAtLatest(true);
-            const list = listRef.current;
-            if (list) list.scrollTop = list.scrollHeight;
+      <div className="timeline__viewport">
+        <ol
+          className="timeline__list kh-thread"
+          ref={listRef}
+          aria-label="Messages"
+          onWheel={stopFollowing} onTouchStart={stopFollowing} onKeyDown={stopFollowing}
+          onScroll={event => {
+            const el = event.currentTarget;
+            const distance = distanceFromEnd(el);
+            if (distance < 2) glidingRef.current = false;
+            if (!glidingRef.current) setAtLatest(distance < NEAR_BOTTOM_PX);
+          }}
+          onScrollEnd={event => {
+            if (!glidingRef.current) return;
+            glidingRef.current = false;
+            setAtLatest(distanceFromEnd(event.currentTarget) < NEAR_BOTTOM_PX);
           }}
         >
-          {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
-        </button>
-      ) : null}
+          {rows.length === 0 && visiblePending.length === 0 && data.phase === 'ready' ? (unreadableActivity
+            ? <li className="kh-empty">Messages in this channel are unavailable on this device.</li>
+            : <li className="kh-empty"><b>No messages yet</b>
+              {onInvite ? <button type="button" className="kh-btn pri" onClick={onInvite}>Invite</button> : null}</li>) : null}
+          {entries.map((entry, index) => {
+            const receipt = index === receiptAt && entry.type === 'message' && entry.receipt ? receiptFor(entry.receipt) : null;
+            return <Fragment key={entry.key}>
+              {entry.type === 'message' ? entry.render(runs[index]!) : entry.node}
+              {receipt ? <li className={`kh-rcpt${receipt.failed ? ' kh-fail' : ''}`} role="status">{receipt.text}</li> : null}
+            </Fragment>;
+          })}
+        </ol>
+        <div className="timeline__jump" aria-live="polite">
+          {!atLatest && data.newMessageCount > 0 ? (
+            <button
+              type="button"
+              className="timeline__jump-latest"
+              onClick={() => {
+                setAtLatest(true);
+                const list = listRef.current;
+                if (list) glideToLatest(list);
+              }}
+            >
+              {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
+            </button>
+          ) : null}
+        </div>
+      </div>
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked} mentionTargets={mentionTargets}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
