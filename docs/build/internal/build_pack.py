@@ -32,7 +32,8 @@ for line in open(ROSTER):
         continue
     c = [x.strip() for x in line.strip().strip('|').split('|')]
     rows.append({'id': c[0], 'title': re.sub(r'`', '', c[1]), 'lane': c[2], 'model': c[3], 'complexity': int(c[4]),
-                 'depends_on': ids(c[5]), 'serializes_with': ids(c[6])})
+                 'depends_on': ids(c[5]), 'serializes_with': ids(c[6]),
+                 'ticket': int(c[8].lstrip('#')) if len(c) > 8 and c[8].lstrip('#').isdigit() else None})
 
 errors, warnings = [], []
 by = {r['id']: r for r in rows}
@@ -162,12 +163,12 @@ if len(sys.argv) > 1:
         'title': 'Khala internal mode (local channels)',
         'subtitle': f'{len(rows)} tickets; one machine, Claude + Codex + the full web app over a loopback helper',
         'repository': 'aiur-team/khala',
-        'root_number': None,
+        'root_number': 828,
         'plan_version': 1,
         'icon': 'computer-desktop',
         'workstreams': [{'id': l, 'title': l.capitalize()} for l in ['platform', 'agent', 'helper', 'web', 'acceptance']],
         'tickets': [{'id': r['id'], 'title': r['title'], 'lane': r['lane'], 'phase': r['phase'], 'complexity': r['complexity'],
-                     'depends_on': r['depends_on'], 'doc': f"tickets/{r['id']}.md", 'ticket': None} for r in rows],
+                     'depends_on': r['depends_on'], 'doc': f"tickets/{r['id']}.md", 'ticket': r['ticket']} for r in rows],
     }
     json.dump(pack, open(os.path.join(out, 'build-order.json'), 'w'), indent=2)
     for r in rows:
