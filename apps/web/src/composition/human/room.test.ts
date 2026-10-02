@@ -18,10 +18,11 @@ const describeParticipant = (participantId: string): Participant | undefined => 
 
 describe('renameChannelAgent', () => {
   it('renames through the agent names API by the agent’s Matrix user id', async () => {
-    const rename = vi.fn(async (_matrixUserId: string, name: string) => ({ kind: 'ok' as const, name }));
-    const result = await renameChannelAgent({ agentNames: { rename }, describeParticipant }, room(kevin), viewer, agentX, 'Reviewer');
+    const rename = vi.fn(async (_matrixUserId: string, name: string, _signal?: AbortSignal) => ({ kind: 'ok' as const, name }));
+    const { signal } = new AbortController();
+    const result = await renameChannelAgent({ agentNames: { rename }, describeParticipant }, room(kevin), viewer, agentX, 'Reviewer', signal);
     expect(result).toEqual({ kind: 'ok', name: 'Reviewer' });
-    expect(rename).toHaveBeenCalledWith('@agent-x:khala.example', 'Reviewer');
+    expect(rename).toHaveBeenCalledWith('@agent-x:khala.example', 'Reviewer', signal);
   });
 
   it('never sends an in-channel agent_rename event', async () => {
