@@ -36,30 +36,6 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@opentelemetry/api@1.9.1)(@types/node@22.20.3)(vite@7.3.6(@types/node@22.20.3)(tsx@4.20.6))
 
-  apps/connector:
-    dependencies:
-      '@khala/connector':
-        specifier: workspace:*
-        version: link:../../packages/connector
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@khala/harnesses':
-        specifier: workspace:*
-        version: link:../../packages/harnesses
-      '@khala/policy':
-        specifier: workspace:*
-        version: link:../../packages/policy
-      matrix-js-sdk:
-        specifier: 42.4.0
-        version: 42.4.0
-      playwright-core:
-        specifier: 1.63.0
-        version: 1.63.0
-      vite:
-        specifier: 7.3.6
-        version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)
-
   apps/control:
     dependencies:
       '@khala/contracts':
@@ -138,65 +114,11 @@ importers:
         specifier: 7.3.6
         version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)
 
-  packages/agent-cli:
-    devDependencies:
-      '@khala/connector':
-        specifier: workspace:*
-        version: link:../connector
-      '@khala/connector-app':
-        specifier: workspace:*
-        version: link:../../apps/connector
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@khala/harnesses':
-        specifier: workspace:*
-        version: link:../harnesses
-      '@khala/policy':
-        specifier: workspace:*
-        version: link:../policy
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
-      libsodium-wrappers:
-        specifier: 0.8.4
-        version: 0.8.4
-      zod:
-        specifier: 4.1.8
-        version: 4.1.8
-
-  packages/agent-skill:
-    dependencies:
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-    devDependencies:
-      '@aiur/khala':
-        specifier: workspace:*
-        version: link:../agent-cli
-
-  packages/claude-plugin: {}
-
-  packages/connector:
-    dependencies:
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      libsodium-wrappers:
-        specifier: 0.8.4
-        version: 0.8.4
-
   packages/contracts:
     devDependencies:
       libsodium-wrappers:
         specifier: 0.8.4
         version: 0.8.4
-
-  packages/harnesses:
-    dependencies:
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../contracts
 
   packages/messaging:
     dependencies:
@@ -216,12 +138,6 @@ importers:
       vite:
         specifier: 7.3.6
         version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)
-
-  packages/policy:
-    dependencies:
-      '@khala/contracts':
-        specifier: workspace:*
-        version: link:../contracts
 
 packages:
 
@@ -1582,9 +1498,6 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
-  zod@4.1.8:
-    resolution: {integrity: sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==}
-
 snapshots:
 
   '@aiur/components@https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf': {}
@@ -2742,5 +2655,3 @@ snapshots:
   word-wrap@1.2.5: {}
 
   yocto-queue@0.1.0: {}
-
-  zod@4.1.8: {}

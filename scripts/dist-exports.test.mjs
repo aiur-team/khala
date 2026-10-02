@@ -11,9 +11,7 @@ const runner = path.join(root, 'scripts/package-task.mjs');
 // Packages that carry a `fakes.ts` or `fixtures/` source next to a wildcard `exports`
 // entry that could otherwise resolve it once built.
 const GUARDED = [
-  { dir: 'packages/harnesses', specifier: '@khala/harnesses/codex/fakes' },
   { dir: 'packages/messaging', specifier: '@khala/messaging/rooms/fixtures/fakes' },
-  { dir: 'packages/policy', specifier: '@khala/policy/release/fixtures/sample' },
 ];
 
 for (const { dir, specifier } of GUARDED) {
