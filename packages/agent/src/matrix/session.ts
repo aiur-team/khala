@@ -1,3 +1,4 @@
+import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
@@ -178,7 +179,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest.eventId } : { messages };
     },
     async send(roomId, text) { const res = await client.sendTextMessage(roomId, text); return { eventId: res.event_id }; },
-    async sendChannelEvent() { throw new Error('not_implemented'); },
+    async sendChannelEvent(roomId, content, txnId) {
+      const res = await client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, content as never, txnId);
+      return { eventId: res.event_id };
+    },
     roomName(roomId) { return client.getRoom(roomId)?.name ?? undefined; },
     displayName(userId) {
       const value = joinedRoom && client.getRoom(joinedRoom)?.currentState.getStateEvents('m.room.member', userId)?.getContent().displayname;

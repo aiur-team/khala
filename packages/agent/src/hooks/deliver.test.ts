@@ -104,12 +104,35 @@ it('truncates oversized UTF-8 bodies within the frame byte limit', async () => {
   expect((await readCursor(files)).deliveredCount).toBe(1);
   expect((await unread(files)).entries).toHaveLength(1);
 });
-it('consumes interspersed events only through the last rendered message', async () => {
-  await seed([message(1), message(2, { kind: 'event', body: 'event' }), message(3), message(4, { kind: 'event' })]);
-  expect(JSON.parse((await hook()).stdout).hookSpecificOutput.additionalContext).toContain('count="2"');
+it('renders interspersed events in inbox order and counts every entry', async () => {
+  await seed([message(1), message(2, { kind: 'event', body: 'event' }), message(3)]);
+  const frame = JSON.parse((await hook()).stdout).hookSpecificOutput.additionalContext;
+  expect(frame).toContain('count="3"');
+  expect(frame).toContain('[2026-10-02T10:04:00Z] [khala event from Maya] event');
   expect((await readCursor(files)).deliveredCount).toBe(3);
+});
+it('renders the exact event example inside the unchanged frame', async () => {
+  await seed([message(), message(2, { kind: 'event', ts: '2026-10-02T10:06:00Z', senderLabel: 'Claude · Kevin', senderKind: 'agent', body: 'AIUR-395 CI failed: test · aiur/395-events-cursor' })]);
+  const frame = exactFrame.replace('count="1"', 'count="2"').replace('\n</khala', '\n[2026-10-02T10:06:00Z] [khala event from Claude · Kevin] AIUR-395 CI failed: test · aiur/395-events-cursor\n</khala');
+  expect(JSON.parse((await hook('Stop')).stdout)).toEqual({ decision: 'block', reason: frame });
+  expect((await readCursor(files)).deliveredCount).toBe(2);
+});
+it.each(['claude', 'codex'] as const)('leaves event-only Stop unread and idle until a prompt on %s', async harness => {
+  await seed([message(1, { kind: 'event', body: 'event' })], harness);
+  expect((await hook('Stop', harness)).stdout).toBe('');
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+  expect((await readActivity(files)).state).toBe('idle');
+  expect(JSON.parse((await hook('UserPromptSubmit', harness)).stdout).hookSpecificOutput.additionalContext).toContain('count="1"');
+  expect((await readCursor(files)).deliveredCount).toBe(1);
+});
+it('does not wake when the bounded Stop batch contains only events before a message', async () => {
+  await seed([...Array.from({ length: 50 }, (_, i) => message(i, { kind: 'event' })), message(51)]);
   expect((await hook('Stop')).stdout).toBe('');
-  expect((await readCursor(files)).deliveredCount).toBe(3);
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+  expect((await readActivity(files)).state).toBe('idle');
+  expect(JSON.parse((await hook()).stdout).hookSpecificOutput.additionalContext).toContain('count="50"');
+  expect((await readCursor(files)).deliveredCount).toBe(50);
+  expect(JSON.parse((await hook('Stop')).stdout).decision).toBe('block');
 });
 it.each(['UserPromptSubmit', 'Stop'])('uses byte-identical %s envelopes for both harnesses', async event => {
   await seed([message()]);

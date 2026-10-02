@@ -101,7 +101,16 @@ function checkTypeScript(filename, root, errors) {
       if (!moduleSpecifier && !jsxAttribute && !propertyName && !typeLiteral) report(node, node.text);
     }
     if (ts.isTemplateExpression(node)) {
-      report(node.head, node.head.text);
+      // Matrix SDK authedRequest paths are relative to /_matrix/client/v3.
+      const matrixContextPath = node.head.text === '/rooms/'
+        && node.templateSpans.length === 2
+        && node.templateSpans[0].literal.text === '/context/'
+        && node.templateSpans[1].literal.text === ''
+        && ts.isCallExpression(node.parent)
+        && ts.isPropertyAccessExpression(node.parent.expression)
+        && node.parent.expression.name.text === 'authedRequest'
+        && node.parent.arguments[1] === node;
+      if (!matrixContextPath) report(node.head, node.head.text);
       for (const span of node.templateSpans) report(span.literal, span.literal.text);
     }
     ts.forEachChild(node, visit);
@@ -136,7 +145,7 @@ function checkHtml(filename, root, errors) {
 export function checkTerminology(root) {
   root = path.resolve(root);
   const errors = new Set();
-  for (const filename of [path.join(root, 'apps/web/src'), path.join(root, 'packages/agent-cli/src')].flatMap(directory => filesBelow(directory, sourcePattern))) checkTypeScript(filename, root, errors);
+  for (const filename of [path.join(root, 'apps/web/src'), path.join(root, 'packages/agent/src')].flatMap(directory => filesBelow(directory, sourcePattern))) checkTypeScript(filename, root, errors);
   for (const filename of filesBelow(path.join(root, 'apps/web/src/landing'), /\.html$/)) checkHtml(filename, root, errors);
   return [...errors].sort();
 }
