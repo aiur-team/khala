@@ -1,0 +1,27 @@
+{
+  "id": 88123,
+  "topic": "ticket.395.pr.merged",
+  "action": "closed",
+  "timestamp": "2026-10-01T10:09:00Z",
+  "pr": {
+    "number": 412,
+    "draft": false,
+    "html_url": "https://github.com/aiur-team/aiur/pull/412",
+    "user": {
+      "login": "kweaver"
+    },
+    "head": {
+      "ref": "feat/events-cursor",
+      "sha": "3F9C2AB0D1"
+    },
+    "base": {
+      "repo": {
+        "full_name": "aiur-team/aiur"
+      }
+    },
+    "merged": true
+  },
+  "ticket_observation": {
+    "occurred_at": null
+  }
+}
