@@ -9,9 +9,10 @@ import { ProfileStoreProvider } from './ProfileProvider';
 import { createProfileStore } from './store';
 import type { ProfilePort } from './ports';
 
-async function readyStore(color: HumanColorId, overrides: Partial<ProfilePort> = {}, initials: string | null = null) {
+async function readyStore(color: HumanColorId | null, overrides: Partial<ProfilePort> = {}, initials: string | null = null) {
   const port: ProfilePort = {
-    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color, initials })),
+    // The store's snapshot allows a never-saved `null` colour, though the port's contract always carries one.
+    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color: color as HumanColorId, initials })),
     setUsername: vi.fn(async (name: string) => ({ kind: 'ok' as const, username: name })),
     setColor: vi.fn(async (next: HumanColorId) => ({ kind: 'ok' as const, color: next })),
     setInitials: vi.fn(async (next: string | null) => ({ kind: 'ok' as const, initials: next })),
@@ -75,8 +76,9 @@ describe('ProfileDialog', () => {
     expect(initialsSaveMessage({ kind: 'error', code: 'unavailable' })).toBe('Couldn\'t save your initials. Try again.');
   });
 
-  it('keeps Save off on open for a human who never saved a colour', () => {
-    const html = renderToStaticMarkup(<ProfileDialog onClose={vi.fn()} ownerId="owner_alice" />);
+  it('keeps Save off on open for a human who never saved a colour', async () => {
+    const { store } = await readyStore(null);
+    const html = renderToStaticMarkup(<ProfileStoreProvider store={store}><ProfileDialog onClose={vi.fn()} ownerId="owner_alice" /></ProfileStoreProvider>);
     expect(html).toMatch(/<button type="submit" class="kh-btn pri" disabled="">Save<\/button>/u);
   });
 
