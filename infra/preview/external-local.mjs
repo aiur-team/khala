@@ -391,6 +391,9 @@ async function main() {
     if (typeof JSON.parse(installedStatus.stdout) !== 'object') throw new Error('installed_status_invalid');
     const open = await command('node', [installedCli, 'channels', 'open'], { env: connectorEnv });
     if (!open.stdout.includes(`${origin}/new`)) throw new Error('installed_origin_mismatch');
+    stage = 'installed-connector-start';
+    await command('node', ['infra/preview/installed-connector-start.mjs', installedCli],
+      { env: connectorEnv, timeout: 60_000 });
     if (extraCommand) {
       stage = 'external-consumer';
       const consumerEnv = Object.fromEntries(
