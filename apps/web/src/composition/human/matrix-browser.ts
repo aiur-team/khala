@@ -1,3 +1,4 @@
+import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import {
   ClientEvent,
   Direction,
@@ -413,6 +414,10 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
     return { kind: 'undecryptable', eventId: eventId as EventId,
       authorParticipantId: participant.participantId, reason: 'decryption_failed', receivedAt };
   }
+  if (event.getType() === CHANNEL_EVENT_TYPE) {
+    const decoded = decodeChannelEvent(event.getContent());
+    return decoded.ok ? { kind: 'channel_event', eventId: eventId as EventId, participant, content: decoded.value, receivedAt } : null;
+  }
   if (event.getType() !== EventType.RoomMessage) return null;
   const rawContent = event.getContent();
   if (rawContent.msgtype !== MsgType.Text && rawContent.msgtype !== MsgType.Notice) return null;
@@ -621,9 +626,15 @@ class MatrixSubstrate implements RoomSubstrate {
     const publish = () => {
       if (disposed || this.runtime.active !== active) return;
       const epoch = ++publishEpoch;
-      void this.events(room.getLiveTimeline().getEvents(), roomId).then(events => {
+      const source = [...room.getLiveTimeline().getEvents()];
+      void this.events(source, roomId).then(events => {
+        const ignoredEventIds = source.flatMap(event => {
+          const id = event.getId();
+          return id && event.getType() === CHANNEL_EVENT_TYPE && !event.isDecryptionFailure() && !decodeChannelEvent(event.getContent()).ok
+            ? [id as EventId] : [];
+        });
         if (!disposed && this.runtime.active === active && epoch === publishEpoch) {
-          listener({ generation: active.generation, room: roomSummary(room, this.limits), events });
+          listener({ generation: active.generation, room: roomSummary(room, this.limits), events, ignoredEventIds });
         }
       }).catch(() => undefined);
     };

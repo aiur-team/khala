@@ -139,7 +139,7 @@ export function createChannelService(input: ChannelServiceInput): ChannelService
     enqueue(observation, update.generation, async projection => {
       const resolved = await entries;
       projection.applyRoom(update.room);
-      projection.applyRemote(resolved);
+      projection.applyRemote(resolved, update.ignoredEventIds);
     });
   };
 

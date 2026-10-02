@@ -105,7 +105,9 @@ describe('Matrix browser safety boundaries', () => {
       hasEncryptionStateEvent: () => encrypted,
       getLastLiveEvent: () => event,
       getUnreadNotificationCount: () => 0,
-      getLiveTimeline: () => ({ getEvents: () => [event] }),
+      getLiveTimeline: () => ({ getEvents: () => [event, new MatrixEvent({ event_id: '$channel-event', sender: '@agent:test',
+        type: 'com.khala.event.v1', content: { v: 1, kind: 'deploy.finished', summary: 'deployed', body: 'deployed' },
+        origin_server_ts: Date.parse('2026-10-01T00:00:00Z') })] }),
     }) as unknown as Room;
     const client = { getUserId: () => '@me:example.test', getRooms: () => [candidate('room_1', 'join', true), candidate('room_2', 'invite', true), candidate('room_3', 'join', false)] } as Pick<MatrixClient, 'getRooms' | 'getUserId'>;
     expect(projectJoinedEncryptedRooms(client, limits.value)).toEqual([{
@@ -318,6 +320,26 @@ describe('inviteWithHistory', () => {
   it('returns false when the invite fails', async () => {
     const sdk = client(); sdk.invite.mockRejectedValue(new Error('offline'));
     expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
+  });
+});
+
+describe('channel event decoding', () => {
+  const participant: ParticipantView = { participantId: 'agent_1' as never, ownerId: 'owner_1' as never,
+    kind: 'agent', displayName: 'Claude · Kevin', deviceIds: [] };
+  const limits = decodeContentLimits({ maxBodyBytes: 32768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+  if (!limits.ok) throw new Error('invalid limits');
+  const content = { v: 1, body: 'review requested', kind: 'pr.ready_for_review', summary: 'review requested' };
+  function event(raw: object) {
+    return new MatrixEvent({ event_id: '$event', sender: '@agent:test', room_id: '!room:test',
+      origin_server_ts: Date.parse('2026-10-01T10:09:30Z'), type: 'com.khala.event.v1', content: raw });
+  }
+  it('decodes without message device attribution', () => {
+    expect(projectMatrixTimelineEvent(event(content), participant, null, limits.value)).toEqual({
+      kind: 'channel_event', eventId: '$event', participant, content, receivedAt: '2026-10-01T10:09:30.000Z',
+    });
+  });
+  it.each([{ ...content, url: 'javascript:alert(1)' }, { ...content, summary: '' }, {}])('drops malformed content %j', raw => {
+    expect(projectMatrixTimelineEvent(event(raw), participant, null, limits.value)).toBeNull();
   });
 });
 

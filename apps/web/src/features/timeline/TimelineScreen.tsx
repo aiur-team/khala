@@ -1,3 +1,5 @@
+import { dedupeByKey } from '@khala/contracts/m1/channel-event';
+import { ChannelEventPill } from './ChannelEventPill';
 // The route panel: attributed rows, pagination that preserves the reader's
 // anchor, a jump-to-latest affordance, and a composer that reconciles each
 // local send against its durable event. App-owned controls (the optional
@@ -133,7 +135,8 @@ export function TimelineScreen({
   unreadableActivity = false,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const rows = useMemo(() => data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })), [data.rows, data.items]);
+  const rows = useMemo(() => dedupeByKey(data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })),
+    row => row.kind === 'channel_event' ? row.content.key : undefined), [data.rows, data.items]);
   const evidenceView = useSyncExternalStore(
     evidence?.subscribe ?? noEvidenceSubscribe,
     evidence?.getSnapshot ?? (() => NO_EVIDENCE),
@@ -329,6 +332,8 @@ export function TimelineScreen({
           {unreadableActivity ? 'Messages in this channel are unavailable on this device.' : 'No messages yet.'}
         </li> : null}
         {rows.map((row, index) => {
+          if (row.kind === 'channel_event') return <ChannelEventPill key={row.eventId} id={row.eventId}
+            content={row.content} senderName={row.participant.displayName} receivedAt={row.receivedAt} />;
           if (row.kind === 'unavailable') return <li key={row.eventId} data-event-id={row.eventId}
             className="timeline__row message-content__unavailable">Message unavailable on this device.</li>;
           const item = row.item;

@@ -1,3 +1,5 @@
+import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
+import type { ParticipantView } from '@khala/contracts/messaging/index';
 // Owns the merged, generation-fenced transcript projection consumed through
 // `useSyncExternalStore`. Draft text, scroll anchor and pagination-request UI
 // state stay local to the screen component (KTD2) — this module only merges
@@ -13,12 +15,14 @@ const DEFAULT_PAGE_SIZE = 50;
 
 /** Presentation-only projection; unavailable events have no authenticated participant or content. */
 export type TimelineRow = Readonly<{ kind: 'message'; item: TimelineItem }>
+  | Readonly<{ kind: 'channel_event'; eventId: EventId; participant: ParticipantView; content: ChannelEventContent; receivedAt: string }>
   | Readonly<{ kind: 'unavailable'; eventId: EventId; receivedAt: string }>;
 export type TimelineEntriesView = Readonly<{
   roomId: RoomId;
   room: ChannelSummary | null;
   generation: number;
   historicalEventIds?: readonly EventId[];
+  ignoredEventIds?: readonly EventId[];
   entries: readonly (TimelineRow | Readonly<{ kind: 'local' }>)[];
 }>;
 const rowId = (row: TimelineRow) => row.kind === 'message' ? row.item.ref.eventId : row.eventId;
@@ -67,6 +71,7 @@ export function createTimelineController(
   let phase: TimelinePhase = 'loading';
   let newMessageCount = 0;
   let readerAtLatest = true;
+  const countedUnavailable = new Set<EventId>();
   let readingHistory = false;
   let disposed = false;
   let membership: ChannelMembership | null = null;
@@ -164,6 +169,13 @@ export function createTimelineController(
 
   const disposeObserve = roomPort.observeEntries ? roomPort.observeEntries(roomId, view => {
     if (disposed || view.roomId !== roomId || !isCurrentGeneration(generation, view)) return;
+    for (const id of view.ignoredEventIds ?? []) {
+      unavailableNameEvents.delete(id);
+      if (countedUnavailable.delete(id)) newMessageCount -= 1;
+    }
+    for (const entry of view.entries) {
+      if (entry.kind === 'channel_event' && countedUnavailable.delete(entry.eventId)) newMessageCount -= 1;
+    }
     const previousRows = getSnapshot().rows ?? [];
     const previouslyKnown = new Set(previousRows.map(rowId));
     const historicalIds = new Set(view.historicalEventIds);
@@ -171,11 +183,11 @@ export function createTimelineController(
     for (const entry of view.entries) {
       if (entry.kind === 'local') continue;
       const existing = rows.get(rowId(entry));
-      if (!existing || entry.kind === 'message') rows.set(rowId(entry), entry);
+      if (!existing || entry.kind !== 'unavailable') rows.set(rowId(entry), entry);
     }
     for (const row of rows.values()) {
       if (row.kind === 'unavailable') unavailableNameEvents.add(row.eventId);
-      else unavailableNameEvents.delete(row.item.ref.eventId);
+      else unavailableNameEvents.delete(rowId(row));
     }
     namesReady = nameScanReachedBoundary && unavailableNameEvents.size === 0 && !nameScanFailure;
     recentRows = [...rows.values()];
@@ -186,8 +198,10 @@ export function createTimelineController(
     // History can publish after its request resolves; source IDs distinguish it
     // from live events even when server timestamps tie or move backwards.
     if (!readerAtLatest && !readingHistory) {
-      newMessageCount += recentRows.filter(row => !previouslyKnown.has(rowId(row))
-        && !historicalIds.has(rowId(row))).length;
+      const arrivals = recentRows.filter(row => row.kind !== 'channel_event' && !previouslyKnown.has(rowId(row))
+        && !historicalIds.has(rowId(row)));
+      for (const row of arrivals) if (row.kind === 'unavailable') countedUnavailable.add(row.eventId);
+      newMessageCount += arrivals.length;
     }
     notify();
   }) : roomPort.observe(roomId, applySnapshot);
@@ -299,6 +313,7 @@ export function createTimelineController(
 
   function setReaderAtLatest(atLatest: boolean): void {
     readerAtLatest = atLatest;
+    if (atLatest) countedUnavailable.clear();
     if (atLatest && newMessageCount !== 0) {
       newMessageCount = 0;
       notify();
