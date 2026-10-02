@@ -134,16 +134,17 @@
   color-scheme: light;
 }
 
-/* Base rules (§2.2, source:129-153), scoped to the app roots. */
-:is(.khala-app, .khala-content-root) *,
-:is(.khala-app, .khala-content-root) *::before,
-:is(.khala-app, .khala-content-root) *::after { box-sizing: border-box; }
-:is(.khala-app, .khala-content-root) a { color: var(--accent); text-decoration: none; transition: color 140ms ease; }
-:is(.khala-app, .khala-content-root) a:hover { color: var(--accent-ink); }
-:is(.khala-app, .khala-content-root) button { font: inherit; cursor: pointer; }
-:is(.khala-app, .khala-content-root) ::selection { background: var(--accent-soft); }
-:is(.khala-app, .khala-content-root) .mono { font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
-:is(.khala-app, .khala-content-root) .num { font-variant-numeric: tabular-nums slashed-zero; font-feature-settings: "tnum" 1, "zero" 1; }
+/* Base rules (§2.2, source:129-153), scoped to the app roots. `:where` keeps
+   the design's (0,0,1) specificity, so component rules still win. */
+:where(.khala-app, .khala-content-root) *,
+:where(.khala-app, .khala-content-root) *::before,
+:where(.khala-app, .khala-content-root) *::after { box-sizing: border-box; }
+:where(.khala-app, .khala-content-root) a { color: var(--accent); text-decoration: none; transition: color 140ms ease; }
+:where(.khala-app, .khala-content-root) a:hover { color: var(--accent-ink); }
+:where(.khala-app, .khala-content-root) button { font: inherit; cursor: pointer; }
+:where(.khala-app, .khala-content-root) ::selection { background: var(--accent-soft); }
+:where(.khala-app, .khala-content-root) .mono { font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+:where(.khala-app, .khala-content-root) .num { font-variant-numeric: tabular-nums slashed-zero; font-feature-settings: "tnum" 1, "zero" 1; }
 
 /* Focus (§16 [ADAPT]; the design has no focus-visible styles). */
 :is(.khala-app, .khala-content-root) :is(button, a, [role="button"], input[type="search"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

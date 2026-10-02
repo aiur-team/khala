@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { KhalaPageFrame } from '../KhalaPageFrame';
 import type { ThemeChoice } from '../types';
 import { ChatComposer, ChatMessage, ChatThread, ConversationLayout, ConversationList, type ConversationSummary } from '../../ui/conversation';
+import { Avatar } from '../../ui/khala/Avatar';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 
@@ -19,7 +20,9 @@ function Harness() {
   const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
   const [inThread, setInThread] = useState(params.get('view') === 'thread');
   const [query, setQuery] = useState('');
-  return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread}
+  return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread} live
+    // `?probe` adds an interactive avatar, so the browser spec can check that component fonts beat the base rules.
+    detail={params.has('probe') ? <Avatar kind="human" label="Maya Chen" hue={330} initials="MC" /> : null}
     brandActions={<button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"><LogOutIcon /></button>}
     list={<ConversationList conversations={conversations} selectedId={inThread ? 'launch' : null} query={query} onQueryChange={setQuery}
       status="ready" onSelect={() => setInThread(true)}

@@ -18,6 +18,7 @@ import { ConversationList } from '../../ui/conversation';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { ChevronLeftIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { CreateChannelDialog } from './CreateChannelDialog';
+import { useLiveSync } from './sync-status';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
 
@@ -193,9 +194,10 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const createButton = useRef<HTMLButtonElement>(null);
   const restoreCreateFocus = useCallback(() => { createButton.current?.focus(); }, []);
   useEffect(() => { setCreating(false); }, [chrome.path]);
+  const live = useLiveSync(context);
   const inThread = route.kind === 'channel';
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-    homeHref={routes.conversationsPath()} inThread={inThread}
+    homeHref={routes.conversationsPath()} inThread={inThread} live={live}
     brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
     list={<ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."

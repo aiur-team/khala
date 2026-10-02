@@ -12,6 +12,11 @@ const harnessRoot = join(here, 'browser-harness');
 
 const fontOf = (page: Page, selector: string) =>
   page.locator(selector).first().evaluate(node => getComputedStyle(node).fontFamily);
+const styleOf = <K extends keyof CSSStyleDeclaration>(page: Page, selector: string, keys: readonly K[]) =>
+  page.locator(selector).first().evaluate((node, names) => {
+    const style = getComputedStyle(node);
+    return Object.fromEntries(names.map(name => [name, String(style[name as keyof CSSStyleDeclaration])]));
+  }, keys as readonly string[]);
 const box = (page: Page, selector: string) =>
   page.locator(selector).first().evaluate(node => new Promise<{ width: number; height: number }>(resolve =>
     // Reduced motion still leaves a 0.01ms grid transition; measure after it lands.
@@ -55,9 +60,13 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
 
     // Fonts: the UI font everywhere, the logo font on the wordmark only.
     // The list head becomes .kh-list-head in KM-181; today's list header stands in for it.
-    for (const selector of ['body', '.khala-app', '.conversation-list__head strong', '.kh-brand-actions button', '.conversation-list__item']) {
+    for (const selector of ['body', '.khala-app', '.conversation-list__head strong', '.conversation-list__item']) {
       assert.match(await fontOf(page, selector), /^"Space Grotesk"/u, `${selector} uses the UI font`);
     }
+    // The scoped base rules keep the design's (0,0,1) weight, so component rules win.
+    assert.match(await fontOf(page, '.kh-brand-actions .tool-btn'), /^"JetBrains Mono"/u, '.tool-btn is a mono element (§2.1)');
+    assert.deepEqual(await styleOf(page, '.kh-brand .brand-live', ['fontSize', 'paddingTop', 'paddingLeft', 'minHeight']),
+      { fontSize: '10.88px', paddingTop: '2.56px', paddingLeft: '8px', minHeight: '0px' }, 'the Live badge keeps its §1.4 size');
     assert.match(await fontOf(page, '.kh-brand .wm'), /^Bungee/u);
     assert.equal(await page.locator('.kh-brand .wm').innerText(), 'KHALA');
     const bungee = await page.evaluate(() => [...document.querySelectorAll('body *')]
@@ -78,6 +87,13 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
     assert.equal(await page.locator('.toggle-icon .moon').isVisible(), true);
     await toggle.click();
     assert.equal(await page.locator('.kh-brand-actions').getByRole('button', { name: 'Log out' }).count(), 1);
+
+    // An interactive (button) human avatar keeps its own font over `button { font: inherit }`.
+    await page.goto(`${url}?probe`);
+    await page.locator('.kh-hav').waitFor();
+    assert.deepEqual(await styleOf(page, '.kh-hav', ['fontSize', 'fontWeight']), { fontSize: '11.52px', fontWeight: '700' });
+    await page.goto(url);
+    await page.locator('.kh-card').waitFor();
 
     // ≤1100px narrows the list to 260px.
     await page.setViewportSize({ width: 1100, height: 900 });

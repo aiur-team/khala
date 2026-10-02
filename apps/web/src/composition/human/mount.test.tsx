@@ -218,6 +218,16 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('aria-label="All conversations"');
   });
 
+  it.each([[true, 'shows'], [false, 'hides']])('with homeserver sync live=%s, %s the brand Live badge', (live) => {
+    const syncStatus = { live: vi.fn(() => live), subscribe: vi.fn(() => () => undefined) };
+    const context = { ...readyContext('/conversations'), generation: 3, syncStatus };
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(syncStatus.live).toHaveBeenCalledWith('owner_alice', 3);
+    expect(html.includes('brand-live')).toBe(live);
+  });
+
   it.each(['/channels/room_1/tools', '/channel-requests', '/channel-requests/request_1'])('rejects the removed owner route %s', path => {
     renderRoom.mockClear();
     const context = readyContext(path);
