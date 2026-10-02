@@ -56,55 +56,6 @@
   text-align: center;
 }
 
-.timeline__row {
-  background: var(--khala-fill-raised);
-  border: 1px solid var(--khala-line);
-  border-radius: var(--khala-panel-radius);
-  padding: 0.75rem 1rem;
-  min-width: 0;
-}
-
-.timeline__row--pending {
-  border-style: dashed;
-}
-
-.timeline__row-header {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  font-family: var(--khala-font-mono);
-  font-size: 0.8rem;
-  color: var(--khala-ink-muted);
-}
-
-.timeline__author {
-  font-weight: 600;
-  color: var(--khala-ink);
-  max-width: 20rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  unicode-bidi: isolate;
-}
-
-.timeline__kind {
-  border: 1px solid var(--khala-line);
-  border-radius: 999px;
-  padding: 0 0.4rem;
-}
-
-.timeline__send-state {
-  border: 1px solid var(--khala-line);
-  border-radius: 999px;
-  padding: 0 0.4rem;
-}
-
-.timeline__body {
-  margin-top: 0.4rem;
-  min-width: 0;
-}
-
 .message-content__text {
   margin: 0 0 0.5rem;
   white-space: pre-wrap;
@@ -113,23 +64,6 @@
 
 .message-content__text:last-child {
   margin-bottom: 0;
-}
-
-.message-content__code {
-  background: var(--khala-fill-control);
-  border-radius: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  overflow-x: auto;
-  font-family: var(--khala-font-mono);
-  font-size: 0.85rem;
-  white-space: pre;
-}
-
-.message-content__code-lang {
-  display: block;
-  color: var(--khala-ink-muted);
-  font-size: 0.7rem;
-  margin-bottom: 0.3rem;
 }
 
 .message-content__unavailable {
@@ -171,9 +105,5 @@
 @media (max-width: 959px) {
   .timeline__list {
     max-height: 50vh;
-  }
-
-  .timeline__author {
-    max-width: 60vw;
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -70,15 +70,18 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     assert.equal(await page.locator('pre code', { hasText: '<script>alert(1)</script>' }).count(), 1);
 
     // Attribution: the review action slot is present per exact EventRef, and
-    // each row is labeled by its own author's kind and ownership — Alice's
-    // row (a human, not owned by the harness viewer... the harness viewer
-    // *is* Alice, so her own rows read "You") and the release agent's row
-    // (owned by Alice, the viewer) read "Your agent", scoped to that row.
+    // each row is marked by its own author's kind and ownership. The harness
+    // viewer *is* Alice, so her rows are `.me` bubbles with no name line; the
+    // release agent's row (owned by Alice) is an ordinary agent row tagged
+    // "Your machine", scoped to that row.
     await page.getByTestId('review-recent_1').waitFor();
     const welcomeRow = page.locator('[data-event-id="recent_1"]');
-    await welcomeRow.getByText('You', { exact: true }).waitFor();
+    assert.equal(await welcomeRow.evaluate(row => row.classList.contains('me')), true);
+    assert.equal(await welcomeRow.locator('.kh-name, .kh-av').count(), 0);
     const agentRow = page.locator('[data-event-id="recent_2"]');
-    await agentRow.getByText('Your agent', { exact: true }).waitFor();
+    await agentRow.getByText('Your machine', { exact: true }).waitFor();
+    assert.equal(await agentRow.evaluate(row => row.classList.contains('me')), false);
+    assert.match(await agentRow.locator('.kh-name').getAttribute('aria-label') ?? '', /, your agent, /);
 
     // Send + reconcile: composing and sending a human message shows exactly
     // one row for it once accepted (no duplicate local-echo row survives).
@@ -102,7 +105,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
       assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true);
       await page.evaluate(() => window.__timelineHarness.releaseDelayedSend());
       if (prefix) {
-        await page.getByText(prefix === '__fail_once ' ? 'Not delivered' : 'Delivery unknown').waitFor();
+        await page.getByText(prefix === '__fail_once ' ? 'Not sent' : 'Delivery unknown').waitFor();
         assert.equal(await composer.inputValue(), body, 'late failure preserves newer draft');
         await composer.fill('different newer draft');
         await page.getByRole('button', { name: prefix === '__fail_once ' ? 'Retry' : 'Check delivery' }).click();
@@ -131,7 +134,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // separate local rows until each exact event arrives, without a txn ID.
     await composer.fill('__defer_sync repeated text');
     await page.getByRole('button', { name: 'Send' }).click();
-    await page.locator('.timeline__row--pending', { hasText: '__defer_sync repeated text' }).getByText('Sent').waitFor();
+    await page.locator('.timeline__row--pending + .kh-rcpt', { hasText: 'Delivered' }).waitFor();
     await composer.fill('__defer_sync repeated text');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.waitForFunction(() => document.querySelectorAll('.timeline__row--pending').length === 2);
@@ -169,19 +172,19 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.getByText('__outcome_unknown please confirm').waitFor();
     assert.equal(await page.getByText('__outcome_unknown please confirm').count(), 1, 'resolving outcome_unknown does not duplicate the message');
 
-    // A definite failure shows "Not delivered" with a Retry action that
+    // A definite failure shows "Not sent" with a Retry action that
     // resolves through the same transaction; the draft is not lost and a
     // second, independently pending send is not silently dropped by it.
     await composer.fill('__fail_once please retry');
     await page.getByRole('button', { name: 'Send' }).click();
-    await page.getByText('Not delivered').waitFor();
+    await page.getByText('Not sent').waitFor();
     // Send stays disabled for the same reason: only Retry (same clientTxnId)
     // may resolve a definite failure, never a fresh Send with new bytes.
     assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true, 'Send is disabled while a send has failed');
     await page.getByRole('button', { name: 'Retry' }).click();
     await page.locator('.timeline__row--pending', { hasText: '__fail_once please retry' }).waitFor({ state: 'detached' });
     assert.equal(await page.locator('.timeline__row', { hasText: '__fail_once please retry' }).count(), 1, 'retrying a failed send does not duplicate the message');
-    assert.equal(await page.getByText('Not delivered').count(), 0, 'the failed row clears once the retry is accepted');
+    assert.equal(await page.getByText('Not sent').count(), 0, 'the failed row clears once the retry is accepted');
     await composer.fill('a new message once everything is resolved');
     assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), false, 'Send re-enables once every send is resolved');
 
@@ -230,6 +233,49 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.evaluate(() => (window as unknown as { __timelineHarness: { revokeMembership: () => void } }).__timelineHarness.revokeMembership());
     await page.getByText('no longer have access').waitFor();
     assert.equal(await composer.isDisabled(), true, 'the composer is disabled once membership is revoked');
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
+// The §7 thread inside the Khala frame against the design capture: colour,
+// type size, padding and corner radii must match `computed-styles.json`.
+test('Thread rows match the 1440 dark design computed styles', { timeout: 90_000 }, async () => {
+  const reference = JSON.parse(await readFile(join(here, '../../../../../docs/design/khala-chat/reference/computed-styles.json'), 'utf8')) as
+    Record<string, Record<string, Record<string, string>>>;
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-thread-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-thread-profile-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    const root = join(here, 'thread-harness');
+    await build({ root, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: ['--no-sandbox'],
+      env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.locator('.kh-rcpt').waitFor();
+    for (const selector of ['.kh-row:not(.me):not(.human) .kh-b', '.kh-row.me .kh-b', '.kh-name b', '.kh-otag', '.kh-rcpt']) {
+      const want = reference['1440-dark']![selector]!;
+      const got = await page.locator(selector).first().evaluate(node => {
+        const style = getComputedStyle(node);
+        return { color: style.color, 'font-size': style.fontSize, padding: style.padding, 'border-radius': style.borderRadius };
+      });
+      assert.deepEqual(got, { color: want['color'], 'font-size': want['font-size'], padding: want['padding'], 'border-radius': want['border-radius'] }, selector);
+    }
+    assert.equal(await page.locator('.kh-rcpt').count(), 1, 'one receipt');
+    assert.equal(await page.locator('.kh-rcpt').textContent(), 'Not sent');
+    assert.equal(await page.getByRole('button', { name: 'Retry' }).count(), 1);
+    assert.equal(await page.locator('.kh-thread').evaluate(node => getComputedStyle(node).backgroundColor),
+      reference['1440-dark']!['.kh-thread']!['background-color']);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
