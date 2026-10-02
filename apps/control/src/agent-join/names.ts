@@ -36,7 +36,7 @@ export async function indexOwnerAgent(store: ControlStore, ownerId: OwnerId, use
   }
 }
 
-/** Promote only a confirmed join's own reservation; expired pending claims are never made permanent. */
+/** Promote a staged join's own reservation before publishing confirmation. */
 export async function retainAgentName(store: ControlStore, name: string, ownerId: string, matrixUserId: string): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const read = await safeRead(store, nameKey(name));

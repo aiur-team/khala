@@ -1,5 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { decodeAgentCredentials, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
+import { nameKey } from '@khala/contracts/m1/names';
+import { decodeNameReservation } from '@khala/contracts/m1/profile';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { type ControlStore, type JsonValue, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { safeEqual } from '../auth/csrf';
@@ -53,10 +55,33 @@ export type JoinStoreDeps = Readonly<{ store: ControlStore; clock: () => number;
 export function createJoinStore(deps: JoinStoreDeps) {
   const operationId = (joinId: string, transition: string) => `agent-join.${joinId}.${transition}.${Buffer.from(deps.random(8)).toString('hex')}`;
   async function read(joinId: string): Promise<{ kind: 'found'; record: JoinRecord; revision: string } | { kind: 'absent' | 'unavailable' }> {
-    const result = await safeRead(deps.store, joinKey(joinId));
-    if (result.kind !== 'record') return result;
-    const record = decodeJoinRecord(result.record.value);
-    return record && record.joinId === joinId ? { kind: 'found', record, revision: result.record.revision } : { kind: 'unavailable' };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await safeRead(deps.store, joinKey(joinId));
+      if (result.kind !== 'record') return result;
+      const record = decodeJoinRecord(result.record.value);
+      if (!record || record.joinId !== joinId) return { kind: 'unavailable' };
+      let revision = result.record.revision;
+      if (record.state === 'pending' && record.agentUserId && effectiveState(record, deps.clock()) === 'expired') {
+        // Win the pending-state CAS before cleanup; a concurrent confirmation keeps its permanent name.
+        const expired = await replace(joinId, revision, { ...record, state: 'expired' }, 'expire');
+        if (expired.kind === 'conflict') continue;
+        if (expired.kind !== 'applied') return { kind: 'unavailable' };
+        record.state = 'expired'; revision = expired.revision;
+      }
+      if (record.state === 'expired' && record.agentUserId && record.ownerId) {
+        const reservation = await safeRead(deps.store, nameKey(record.label));
+        if (reservation.kind === 'unavailable') return { kind: 'unavailable' };
+        const decoded = reservation.kind === 'record' ? decodeNameReservation(reservation.record.value) : null;
+        if (reservation.kind === 'record' && decoded?.ok && decoded.value.kind === 'agent'
+          && decoded.value.matrixUserId === record.agentUserId && decoded.value.ownerId === record.ownerId) {
+          const released = await writeAndResolve(deps.store, { key: reservation.record.key, expectedRevision: reservation.record.revision,
+            operationId: operationId(joinId, 'release-name'), next: { value: reservation.record.value, expiresAt: new Date(deps.clock()).toISOString() } });
+          if (released.kind !== 'applied' && released.kind !== 'conflict') return { kind: 'unavailable' };
+        }
+      }
+      return { kind: 'found', record, revision };
+    }
+    return { kind: 'unavailable' };
   }
   async function replace(joinId: string, revision: string | null, next: JoinRecord, transition: string): Promise<
     { kind: 'applied'; revision: string } | { kind: 'conflict' | 'unknown' | 'unavailable' }> {

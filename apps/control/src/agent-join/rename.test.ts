@@ -97,12 +97,13 @@ it('retries one owner CAS conflict and bounds repeated conflicts', async () => {
     expect(await f.label()).toBe(failures === 1 ? 'Reviewer' : 'Kevin-Claude');
   }
 });
-it('retains reservations on ambiguous owner writes and fails closed on store failure', async () => {
+it('releases reservations on definitely rejected owner writes and fails closed on store failure', async () => {
   const f = await fixture(); const write = f.store.compareAndSet;
   vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, options) => input.key === agentOwnerRecordKey(matrixUserId)
     ? Promise.resolve({ kind: 'unavailable' }) : write(input, options));
   expect(await renameAgent(f, ownerId, matrixUserId, 'Reviewer')).toBe('unavailable');
-  expect((await f.store.read(nameKey('Reviewer'))).kind).toBe('record');
+  expect(await f.store.read(nameKey('Reviewer'))).toEqual({ kind: 'absent' });
+  expect(f.provisioner.setDisplayName).toHaveBeenLastCalledWith(matrixUserId, 'Kevin-Claude');
   const g = await fixture(); vi.spyOn(g.store, 'read').mockRejectedValue(Error('offline'));
   expect(await renameAgent(g, ownerId, matrixUserId, 'Reviewer')).toBe('unavailable');
 });
@@ -145,4 +146,63 @@ it('does not overwrite a custom label selected after the cascade read', async ()
   const f = await fixture();
   expect(await renameAgent(f, ownerId, matrixUserId, 'Kev-Claude', 'different-label')).toBe('unavailable');
   expect(f.provisioner.setDisplayName).not.toHaveBeenCalled();
+});
+
+it('serializes global renames across separate callers using the durable store lease', async () => {
+  const f = await fixture();
+  let enter!: () => void, resume!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const blocked = new Promise<void>(resolve => { resume = resolve; });
+  f.provisioner.setDisplayName.mockImplementationOnce(async () => { enter(); await blocked; return true; });
+  const first = renameAgent(f, ownerId, matrixUserId, 'Reviewer');
+  await entered;
+  const other = { ...f, provisioner: { setDisplayName: vi.fn(async () => true) } };
+  expect(await renameAgent(other, ownerId, matrixUserId, 'Writer')).toBe('unavailable');
+  expect(other.provisioner.setDisplayName).not.toHaveBeenCalled();
+  resume();
+  expect(await first).toBe('ok');
+  expect(await renameAgent(other, ownerId, matrixUserId, 'Writer')).toBe('ok');
+  expect(await f.label()).toBe('Writer');
+  expect(await f.store.read(nameKey('Reviewer'))).toEqual({ kind: 'absent' });
+});
+it('refuses side effects when storage work consumes the rename lease budget', async () => {
+  const f = await fixture(); let now = f.clock();
+  const deps = { ...f, clock: () => now };
+  const write = f.store.compareAndSet;
+  vi.spyOn(f.store, 'compareAndSet').mockImplementation(async (input, options) => {
+    const result = await write(input, options);
+    if (input.key.startsWith('agent-rename-lease/')) now += 300_000;
+    return result;
+  });
+  expect(await renameAgent(deps, ownerId, matrixUserId, 'Reviewer')).toBe('unavailable');
+  expect(f.provisioner.setDisplayName).not.toHaveBeenCalled();
+  expect(await f.label()).toBe('Kevin-Claude');
+});
+
+it('replays failed old-name release on an identical-name retry', async () => {
+  const f = await fixture(); const write = f.store.compareAndSet;
+  const fault = vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, options) =>
+    input.key === nameKey('Kevin-Claude') && input.next.expiresAt !== null
+      ? Promise.resolve({ kind: 'unavailable' }) : write(input, options));
+  expect(await renameAgent(f, ownerId, matrixUserId, 'Reviewer')).toBe('unavailable');
+  expect(await f.label()).toBe('Reviewer');
+  expect((await f.store.read(nameKey('Kevin-Claude'))).kind).toBe('record');
+  fault.mockImplementation(write);
+  expect(await renameAgent(f, ownerId, matrixUserId, 'Reviewer')).toBe('ok');
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+  expect(f.provisioner.setDisplayName).toHaveBeenCalledTimes(1);
+});
+
+it('reconciles a newer username committed while the earlier cascade is in flight', async () => {
+  const f = await fixture();
+  await f.put('profiles/owner', { v: 1, ownerId, username: 'Kev', updatedAt: new Date(f.clock()).toISOString() });
+  f.provisioner.setDisplayName.mockImplementationOnce(async () => {
+    await f.put('profiles/owner', { v: 1, ownerId, username: 'Kev2', updatedAt: new Date(f.clock()).toISOString() });
+    return true;
+  });
+  await renameDefaultAgents(f, ownerId, 'Kevin', 'Kev');
+  expect(await f.label()).toBe('Kev2-Claude');
+  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
+  expect(await f.store.read(nameKey('Kev-Claude'))).toEqual({ kind: 'absent' });
+  expect(f.provisioner.setDisplayName).toHaveBeenLastCalledWith(matrixUserId, 'Kev2-Claude');
 });

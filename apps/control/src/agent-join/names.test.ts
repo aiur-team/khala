@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { defaultAgentName, nameKey, ownerAgentsKey } from '@khala/contracts/m1/names';
 import type { OwnerId } from '@khala/contracts/messaging/index';
 import { createControlStore } from '../runtime/control-store';
-import { allocateAgentName, indexOwnerAgent } from './names';
+import { allocateAgentName, indexOwnerAgent, retainAgentName } from './names';
 import { durableStores } from './testing/store';
 
 function fixture() {
@@ -79,4 +79,21 @@ it('keeps index failures best effort and never overwrites corrupt or foreign rec
   const store = fixture();
   vi.spyOn(store, 'compareAndSet').mockRejectedValue(Error('offline'));
   await expect(indexOwnerAgent(store, input.ownerId, input.matrixUserId)).resolves.toBeUndefined();
+});
+
+it('promotes only the staged agent claim and fails closed on promotion writes', async () => {
+  const store = fixture();
+  const expiresAt = '2026-10-01T12:10:00.000Z';
+  const name = await allocateAgentName(store, { ...input, expiresAt });
+  expect(name).toBe('Kevin-Claude');
+  expect(await retainAgentName(store, name!, 'other', input.matrixUserId)).toBe(false);
+  const write = store.compareAndSet;
+  vi.spyOn(store, 'compareAndSet').mockResolvedValueOnce({ kind: 'unavailable' });
+  expect(await retainAgentName(store, name!, input.ownerId, input.matrixUserId)).toBe(false);
+  const temporary = await store.read(nameKey(name!));
+  expect(temporary.kind === 'record' && temporary.record.expiresAt).toBe(expiresAt);
+  vi.mocked(store.compareAndSet).mockImplementation(write);
+  expect(await retainAgentName(store, name!, input.ownerId, input.matrixUserId)).toBe(true);
+  const permanent = await store.read(nameKey(name!));
+  expect(permanent.kind === 'record' && permanent.record.expiresAt).toBeNull();
 });
