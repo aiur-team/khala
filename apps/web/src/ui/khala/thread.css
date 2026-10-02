@@ -75,11 +75,8 @@
 .kh-thread .channel-event-pill { align-self: center; margin: .7rem 0 .2rem; }
 .kh-thread .channel-event-pill__link { display: flex; align-items: center; gap: .45rem; font-size: .76rem; color: var(--muted); padding: .3rem .75rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-family: inherit; }
 .kh-thread a.channel-event-pill__link:hover { border-color: var(--line-strong); color: var(--fg); }
-.kh-thread .channel-event-pill__dot--success { background: var(--good); }
-.kh-thread .channel-event-pill__dot--failure { background: var(--block); }
-.kh-thread .channel-event-pill__dot--attention { background: var(--attn); }
-.kh-thread .channel-event-pill__dot--pending { background: var(--accent); }
-.kh-thread .channel-event-pill__dot--info { background: var(--muted); }
+/* §8: the design's event dot is always --good, whatever the status (Executor ruling on #872). */
+.kh-thread .channel-event-pill__dot { background: var(--good); }
 
 /* §13.1 empty thread (source:4278) */
 .kh-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: .7rem; color: var(--muted); font-size: .9rem; }

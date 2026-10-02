@@ -92,16 +92,16 @@ const SCREEN_SLACK = 0.005;
  * SCREEN_SLACK and its cause is `screenCause`; an unlisted screen gates at THRESHOLD.
  */
 const SCREEN_MEASURED: Readonly<Record<string, number>> = {
-  '1440-dark-thread': 0.0778, '1440-dark-roster': 0.0239, '1440-dark-chips': 0.0669, '1440-dark-detail-agent': 0.1270,
-  '1440-dark-detail-human': 0.1398, '1440-dark-pop-new': 0.0701, '1440-dark-pop-invite': 0.0839, '1440-dark-pop-add-agent': 0.0315,
-  '1440-dark-failed-send': 0.0778, '1440-dark-draft': 0.0631, '1100-dark-thread': 0.1345, '900-dark-thread': 0.1749,
-  '760-dark-thread': 0.0967, '760-dark-list': 0.0201, '390-dark-thread': 0.1059, '390-dark-list': 0.0855, '390-dark-roster': 0.0721,
-  '390-dark-chips': 0.0692, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1287,
-  '1440-light-thread': 0.0811, '1440-light-roster': 0.0261, '1440-light-chips': 0.0688, '1440-light-detail-agent': 0.1336,
-  '1440-light-detail-human': 0.1432, '1440-light-pop-new': 0.0820, '1440-light-pop-invite': 0.0981, '1440-light-pop-add-agent': 0.0343,
-  '1440-light-failed-send': 0.0811, '1440-light-draft': 0.0654, '1100-light-thread': 0.1376, '900-light-thread': 0.1837,
-  '760-light-thread': 0.0998, '760-light-list': 0.0205, '390-light-thread': 0.1143, '390-light-list': 0.0862, '390-light-roster': 0.0731,
-  '390-light-chips': 0.0759, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1708,
+  '1440-dark-thread': 0.0775, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0665, '1440-dark-detail-agent': 0.1267,
+  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0698, '1440-dark-pop-invite': 0.0794, '1440-dark-pop-add-agent': 0.0314,
+  '1440-dark-failed-send': 0.0775, '1440-dark-draft': 0.0625, '1100-dark-thread': 0.1340, '900-dark-thread': 0.1747,
+  '760-dark-thread': 0.0965, '760-dark-list': 0.0201, '390-dark-thread': 0.1055, '390-dark-list': 0.0855, '390-dark-roster': 0.0718,
+  '390-dark-chips': 0.0689, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
+  '1440-light-thread': 0.0807, '1440-light-roster': 0.0260, '1440-light-chips': 0.0684, '1440-light-detail-agent': 0.1332,
+  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0816, '1440-light-pop-invite': 0.0842, '1440-light-pop-add-agent': 0.0342,
+  '1440-light-failed-send': 0.0807, '1440-light-draft': 0.0647, '1100-light-thread': 0.1371, '900-light-thread': 0.1835,
+  '760-light-thread': 0.0996, '760-light-list': 0.0205, '390-light-thread': 0.1139, '390-light-list': 0.0862,
+  '390-light-roster': 0.0727, '390-light-chips': 0.0756, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
 };
 const screenCeiling = (c: ScreenCase) => {
   const measured = SCREEN_MEASURED[screenName(c)];
@@ -112,16 +112,7 @@ const screenCeiling = (c: ScreenCase) => {
  * and property. The test expects the current value instead, so any other
  * change still fails.
  */
-const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
-  '.kh-ev i': {
-    reason: 'operator decision: KM-172 colours the event dot by status (pending is --accent); the design dot is always --good (§8)',
-    values: {
-      '1440-dark': { 'background-color': 'rgb(47, 134, 255)' },
-      '1440-light': { 'background-color': 'rgb(31, 87, 196)' },
-      '390-dark': { 'background-color': 'rgb(47, 134, 255)' },
-    },
-  },
-};
+const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {};
 
 // --- The design page, for mask boxes: the same page and steps as reference/capture.mjs. ---
 
@@ -400,7 +391,6 @@ const BOX_SKIP: Readonly<Record<string, string>> = Object.fromEntries([
     .map(selector => [selector, 'text length or thread scroll position']),
   // CSS fixes these sizes, but their position follows dataset text or thread scroll: compare width and height only.
   ...['.kh-av', '.kh-own', '.kh-ev i', '.kh-retry', '.kh-to-tog'].map(selector => [selector, SIZE_ONLY]),
-  ['.kh-hacts .kh-ib', 'the omitted settings gear leaves the Invite button in its slot (operator decision in the report)'],
 ]);
 /** Design selectors whose product element carries another class: KM-172's channel-event pill is the §8 `.kh-ev`. */
 const SELECTOR_ALIASES: Readonly<Record<string, string>> = {

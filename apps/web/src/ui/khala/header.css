@@ -22,6 +22,9 @@
 .kh-head-t > span { font-size: .78rem; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kh-head-t .on { color: var(--good-ink); }
 .kh-hacts { display: flex; gap: 2px; margin-left: auto; flex: 0 0 auto; }
+/* §22 omits the settings gear; its slot stays empty so Invite keeps its design position (Executor ruling on #872). */
+.kh-hacts::after { content: ""; flex: 0 0 34px; }
+@media (pointer: coarse) { .kh-hacts::after { flex-basis: 44px; } }
 @media (max-width: 760px) {
   .kh-head { padding: .65rem .75rem; gap: .55rem; }
   .kh-stack .kh-av:nth-child(n+3) { display: none; }
