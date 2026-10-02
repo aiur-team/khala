@@ -5,7 +5,36 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { proofCandidate, proofFingerprint } from './external-native-sessions.mjs';
+import { pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+
+test('browser handoff is exact-session discovery consent on loopback only', () => {
+  const origin = 'https://127.0.0.1:4443';
+  const sessionId = '12345678-1234-1234-1234-123456789abc';
+  const fingerprint = 'A'.repeat(43);
+  const state = { origin, actors: { codex: { sessionId, sessionFingerprint: fingerprint,
+    candidate: { candidateId: 'B'.repeat(43), operationId: 'op-1' } } } };
+  const url = new URL('/api/human/channel-discovery/bootstrap/authorize', origin);
+  url.search = new URLSearchParams({ redirect_uri: 'http://127.0.0.1:45999/khala/channel-discovery/callback/0123456789abcdef',
+    state: 'C'.repeat(22), code_challenge: 'D'.repeat(43), code_challenge_method: 'S256', origin,
+    harness: 'codex', session_id: sessionId, generation: '0', proof_jkt: fingerprint }).toString();
+  assert.deepEqual(validateDiscoveryOpen(state, url.href), { actor: 'codex', url: url.href });
+  url.searchParams.set('proof_jkt', 'E'.repeat(43));
+  assert.throws(() => validateDiscoveryOpen(state, url.href), /browser_handoff_session_mismatch/);
+  url.searchParams.set('proof_jkt', fingerprint);
+  url.searchParams.set('redirect_uri', 'http://example.com/khala/channel-discovery/callback/0123456789abcdef');
+  assert.throws(() => validateDiscoveryOpen(state, url.href), /browser_handoff_session_mismatch/);
+});
+
+test('native consent recognizes only an exact Khala tool and session-scoped choice', () => {
+  const pane = 'Allow the khala MCP server to run tool "khala_request_channel_access"?\n'
+    + '1. Allow\n2. Allow for this session\n4. Cancel\nenter to submit';
+  assert.equal(pendingMcpApproval(pane), 'khala_request_channel_access');
+  assert.equal(pendingMcpApproval(pane.replace('khala MCP server', 'other MCP server')), null);
+  assert.throws(() => pendingMcpApproval(pane.replace('khala_request_channel_access', 'khala_pair')),
+    /unexpected_mcp_tool/);
+  assert.throws(() => pendingMcpApproval(pane.replace('Allow for this session', 'Always allow')),
+    /mcp_approval_screen_unproven/);
+});
 
 test('candidate ID is taken only from a matching native tool result', () => {
   const candidateId = 'A'.repeat(43);

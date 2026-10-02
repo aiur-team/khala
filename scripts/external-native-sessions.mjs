@@ -61,6 +61,57 @@ function trustStartup(state, actor) {
   fail(`${actor}_startup_trust_missing`);
 }
 
+const approvedKhalaTools = new Set(['khala_request_channel_access', 'khala_channel_access_status',
+  'khala_read', 'khala_send']);
+export function pendingMcpApproval(pane) {
+  const match = /Allow the khala MCP server to run tool "([a-z_]+)"\?/u.exec(pane);
+  if (!match) return null;
+  if (!pane.includes('Allow for this session') || !pane.includes('Cancel') || !pane.includes('enter to submit'))
+    fail('mcp_approval_screen_unproven');
+  if (!approvedKhalaTools.has(match[1])) fail('unexpected_mcp_tool');
+  return match[1];
+}
+function serviceApprovals(state) {
+  const pane = tmux(state, ['capture-pane', '-p', '-t', 'codex']);
+  const tool = pendingMcpApproval(pane);
+  if (!tool) return;
+  tmux(state, ['send-keys', '-t', 'codex', 'Down', 'Enter']);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    pause(500);
+    if (pendingMcpApproval(tmux(state, ['capture-pane', '-p', '-t', 'codex'])) !== tool) return;
+  }
+  fail('mcp_approval_unconfirmed');
+}
+
+const discoveryOpenFile = (directory, actor) => path.join(directory, `browser-open-${actor}.json`);
+export function validateDiscoveryOpen(state, raw) {
+  let url;
+  try { url = new URL(raw); } catch { fail('browser_handoff_url'); }
+  const expected = ['code_challenge', 'code_challenge_method', 'generation', 'harness', 'origin',
+    'proof_jkt', 'redirect_uri', 'session_id', 'state'];
+  if (url.origin !== state.origin || url.pathname !== '/api/human/channel-discovery/bootstrap/authorize'
+    || url.username || url.password || url.hash || [...url.searchParams.keys()].sort().join(',') !== expected.sort().join(','))
+    fail('browser_handoff_target');
+  const actor = url.searchParams.get('harness');
+  const session = state.actors?.[actor];
+  let callback;
+  try { callback = new URL(url.searchParams.get('redirect_uri') ?? 'about:blank'); }
+  catch { fail('browser_handoff_session_mismatch'); }
+  if (!['codex', 'claude'].includes(actor) || !session?.candidate || !session.sessionFingerprint
+    || url.searchParams.get('session_id') !== session.sessionId
+    || url.searchParams.get('proof_jkt') !== session.sessionFingerprint
+    || url.searchParams.get('origin') !== state.origin
+    || url.searchParams.get('code_challenge_method') !== 'S256'
+    || !/^[A-Za-z0-9_-]{43}$/u.test(url.searchParams.get('code_challenge') ?? '')
+    || !/^[A-Za-z0-9_-]{22}$/u.test(url.searchParams.get('state') ?? '')
+    || !Number.isSafeInteger(Number(url.searchParams.get('generation')))
+    || Number(url.searchParams.get('generation')) < 0
+    || callback.protocol !== 'http:' || callback.hostname !== '127.0.0.1' || !callback.port
+    || !/^\/khala\/channel-discovery\/callback\/[a-f0-9]{16}$/u.test(callback.pathname)
+    || callback.search || callback.hash || callback.username || callback.password) fail('browser_handoff_session_mismatch');
+  return { actor, url: url.href };
+}
+
 function sourceAuth(sourceHome, privateHome) {
   const codex = privateFile(path.join(sourceHome, '.codex', 'auth.json'));
   const claude = JSON.parse(fs.readFileSync(privateFile(path.join(sourceHome, '.claude', '.credentials.json')), 'utf8'));
@@ -243,6 +294,8 @@ function main() {
     for (const [name, target] of [['codex', codex], ['claude', claude], ['node', process.execPath]]) {
       fs.symlinkSync(target, path.join(bin, name));
     }
+    const browserShim = path.join(bin, 'xdg-open');
+    fs.writeFileSync(browserShim, `#!/bin/sh\numask 077\nexec ${safeWord(process.execPath)} ${safeWord(fileURLToPath(import.meta.url))} capture-open ${safeWord(directory)} "$@"\n`, { mode: 0o700 });
     const env = { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, LANG: 'C.UTF-8', TERM: 'xterm-256color',
       HOME: privateHome, CODEX_HOME: path.join(privateHome, '.codex'), XDG_STATE_HOME: roots.state,
       XDG_DATA_HOME: roots.data, XDG_CONFIG_HOME: roots.config, TMPDIR: roots.tmp,
@@ -295,6 +348,21 @@ function main() {
     return;
   }
   const state = load(directory);
+  if (action === 'capture-open') {
+    if (args.length !== 1) fail('browser_handoff_arguments');
+    const pending = validateDiscoveryOpen(state, args[0]);
+    fs.writeFileSync(discoveryOpenFile(directory, pending.actor), JSON.stringify(pending) + '\n',
+      { flag: 'wx', mode: 0o600 });
+    process.stdout.write(JSON.stringify({ kind: 'browser_handoff_ready' }) + '\n');
+    return;
+  }
+  if (action === 'clear-open') {
+    if (args.length !== 1 || !['codex', 'claude'].includes(args[0])) fail('browser_handoff_arguments');
+    privateFile(discoveryOpenFile(directory, args[0]));
+    fs.unlinkSync(discoveryOpenFile(directory, args[0]));
+    process.stdout.write(JSON.stringify({ kind: 'browser_handoff_cleared' }) + '\n');
+    return;
+  }
   if (action === 'prompt') {
     if (args.length !== 2 || !['codex', 'claude'].includes(args[0])) fail('prompt_arguments');
     privateFile(args[1]);
@@ -313,6 +381,7 @@ function main() {
   }
   if (action === 'inspect') {
     if (args.length) fail('inspect_arguments');
+    serviceApprovals(state);
     for (const actor of ['codex', 'claude']) {
       tmux(state, ['has-session', '-t', actor]);
       const pid = Number(tmux(state, ['display-message', '-p', '-t', actor, '#{pane_pid}']));
@@ -334,6 +403,11 @@ function main() {
         .filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
       const candidate = proofCandidate(transcriptRows, actor);
       if (candidate) state.actors[actor].candidate = candidate;
+      const handoff = discoveryOpenFile(directory, actor);
+      if (fs.existsSync(handoff)) {
+        const pending = JSON.parse(fs.readFileSync(privateFile(handoff), 'utf8'));
+        state.actors[actor].discoveryConsentUrl = validateDiscoveryOpen(state, pending.url).url;
+      }
     }
     if (state.actors.codex.sessionId === state.actors.claude.sessionId) fail('duplicate_session');
     // A global `khala status` has no native session selector. Read only the
@@ -367,6 +441,12 @@ function main() {
     }
     save(directory, state);
     process.stdout.write(JSON.stringify({ kind: 'native_baseline_marked' }) + '\n');
+    return;
+  }
+  if (action === 'service') {
+    if (args.length) fail('service_arguments');
+    serviceApprovals(state);
+    process.stdout.write(JSON.stringify({ kind: 'native_service_checked' }) + '\n');
     return;
   }
   if (action === 'witness') {
