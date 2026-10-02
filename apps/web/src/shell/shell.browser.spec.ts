@@ -59,8 +59,7 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
     assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight), true, 'the page never scrolls');
 
     // Fonts: the UI font everywhere, the logo font on the wordmark only.
-    // The list head becomes .kh-list-head in KM-181; today's list header stands in for it.
-    for (const selector of ['body', '.khala-app', '.conversation-list__head strong', '.conversation-list__item']) {
+    for (const selector of ['body', '.khala-app', '.kh-list-head b', '.kh-cv']) {
       assert.match(await fontOf(page, selector), /^"Space Grotesk"/u, `${selector} uses the UI font`);
     }
     // The scoped base rules keep the design's (0,0,1) weight, so component rules win.
@@ -90,8 +89,8 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
 
     // An interactive (button) human avatar keeps its own font over `button { font: inherit }`.
     await page.goto(`${url}?probe`);
-    await page.locator('.kh-hav').waitFor();
-    assert.deepEqual(await styleOf(page, '.kh-hav', ['fontSize', 'fontWeight']), { fontSize: '11.52px', fontWeight: '700' });
+    await page.locator('.kh-detail .kh-hav').waitFor();
+    assert.deepEqual(await styleOf(page, '.kh-detail .kh-hav', ['fontSize', 'fontWeight']), { fontSize: '11.52px', fontWeight: '700' });
     await page.goto(url);
     await page.locator('.kh-card').waitFor();
 
