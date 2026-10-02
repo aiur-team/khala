@@ -29,7 +29,7 @@ test('public showcase stays local and works across themes and widths', { timeout
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(server.resolvedUrls!.local[0]!);
     const pane = page.locator('#exampleShowcase');
-    const list = pane.getByRole('complementary', { name: 'Conversations' });
+    const list = pane.getByRole('complementary', { name: 'Channels' });
     const thread = pane.getByRole('region', { name: 'Conversation thread' });
     assert.equal(await page.locator('.showcase-section').evaluate(node => node.previousElementSibling?.classList.contains('stage')), true);
     assert.equal(await page.locator('.showcase-section').evaluate(node => node.nextElementSibling?.classList.contains('feature-section')), true);
@@ -76,7 +76,7 @@ test('public showcase stays local and works across themes and widths', { timeout
         assert.ok(dimensions.left >= 0 && dimensions.right <= width, `${theme} ${width}: frame in viewport`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} ${width}: no overflow`);
         if (width <= 900) {
-          await pane.getByRole('button', { name: 'All conversations' }).click();
+          await pane.getByRole('button', { name: 'All channels' }).click();
           assert.equal(await list.isVisible(), true);
         }
         await pane.getByRole('button', { name: 'Design' }).click();
@@ -111,7 +111,7 @@ test('public showcase stays local and works across themes and widths', { timeout
       }
     }
     await page.setViewportSize({ width: 390, height: 844 });
-    await pane.getByRole('button', { name: 'All conversations' }).click();
+    await pane.getByRole('button', { name: 'All channels' }).click();
     assert.equal(await list.isVisible(), true);
     await pane.getByRole('button', { name: 'Handoff' }).click();
     assert.equal(await thread.getByText('I’ve outlined the next steps for both owners.').isVisible(), true);

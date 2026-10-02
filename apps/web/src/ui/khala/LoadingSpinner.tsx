@@ -1,7 +1,7 @@
 // The one loading state for the channel pane: a centred `.kh-spin` on the pane's
 // own background. The label is for assistive technology only.
 
-export function LoadingSpinner({ label = 'Loading conversation', overlay = false }: Readonly<{
+export function LoadingSpinner({ label = 'Loading channel', overlay = false }: Readonly<{
   label?: string;
   /** Centre over the positioned parent instead of filling the remaining flex space. */
   overlay?: boolean;

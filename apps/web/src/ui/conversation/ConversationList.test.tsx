@@ -87,7 +87,7 @@ describe('ConversationList', () => {
 
   it('marks unread rows and sums the head count, always shown', () => {
     const html = render([release, { ...release, id: 'quiet', unreadCount: null }]);
-    expect(html).toContain('<div class="kh-list-head"><b>Conversations</b><span>3 unread</span></div>');
+    expect(html).toContain('<div class="kh-list-head"><b>Channels</b><span>3 unread</span></div>');
     expect(html).toMatch(/aria-label="[^"]*, 3 unread"/u);
     expect(html).toContain('class="kh-cv" data-kh-convo="quiet"');
     expect(render([{ ...release, unreadCount: null }])).toContain('<span>0 unread</span>');
@@ -112,8 +112,8 @@ describe('ConversationList', () => {
   it('renders each list state', () => {
     const loading = render([], { status: 'loading' });
     expect(loading.match(/class="kh-cv kh-cv-skel"/gu)).toHaveLength(3);
-    expect(render([], { status: 'error' })).toContain('<div class="kh-cv-empty" role="alert">Conversations are unavailable. Try reloading.</div>');
+    expect(render([], { status: 'error' })).toContain('<div class="kh-cv-empty" role="alert">Channels are unavailable. Try reloading.</div>');
     expect(render([])).toContain('<div class="kh-cv-empty" role="status">No channels yet.</div>');
-    expect(render([release], { query: 'nothing here' })).toContain('<div class="kh-cv-empty" role="status">No conversations match.</div>');
+    expect(render([release], { query: 'nothing here' })).toContain('<div class="kh-cv-empty" role="status">No channels match.</div>');
   });
 });
