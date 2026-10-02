@@ -1,3 +1,4 @@
+import { readListeningMode } from '../mode';
 import { readActivity } from '../activity';
 import { readCursor, unreadCount } from '../inbox';
 import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
@@ -41,6 +42,7 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
         wakesAtCount.clear();
         pending = undefined;
       }
+      if (await readListeningMode(deps.files) === 'async') { pending = undefined; return; }
       const counts = await unreadCount(deps.files.dir);
       const cursor = await readCursor(deps.files);
       if (!counts.messages) { pending = undefined; return; }
@@ -51,6 +53,7 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
       if (stopped || activity.state !== 'idle') return;
       const wakes = wakesAtCount.get(cursor.deliveredCount) ?? 0;
       if (wakes >= 2) return;
+      if (await readListeningMode(deps.files) === 'async' || stopped) { pending = undefined; return; }
       pending = { at };
       wakesAtCount.set(cursor.deliveredCount, wakes + 1);
       const outcome = await port.run(codexIdleWakeArgv(deps.threadId), controller.signal);

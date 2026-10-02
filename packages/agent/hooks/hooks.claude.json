@@ -1,5 +1,8 @@
 {
   "hooks": {
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "khala hook deliver --harness claude", "timeout": 10 }] }
+    ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "khala hook deliver --harness claude", "timeout": 10 }] }
     ],

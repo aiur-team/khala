@@ -13,9 +13,9 @@ let home: string;
 const install = (action = 'install') => spawnSync(process.execPath, [installer, action, '--codex-home', home], { encoding: 'utf8' });
 beforeEach(async () => { home = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-853-config-')); });
 afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
-it('registers exactly the two shared delivery hooks', async () => {
+it('registers exactly the three shared delivery hooks', async () => {
   const config = JSON.parse(await fs.readFile(path.join(base, 'hooks/hooks.codex.json'), 'utf8'));
-  expect(Object.keys(config.hooks).sort()).toEqual(['Stop', 'UserPromptSubmit']);
+  expect(Object.keys(config.hooks).sort()).toEqual(['PostToolUse', 'Stop', 'UserPromptSubmit']);
   for (const groups of Object.values(config.hooks)) expect(groups).toEqual([{ hooks: [{ type: 'command', command, timeout: 10 }] }]);
 });
 it('preserves legacy and unrelated groups, backs up once, installs idempotently and uninstalls exactly ours', async () => {
@@ -29,7 +29,8 @@ it('preserves legacy and unrelated groups, backs up once, installs idempotently 
   const installed = await fs.readFile(file, 'utf8');
   const config = JSON.parse(installed);
   expect(config.hooks.UserPromptSubmit[0]).toEqual(original.hooks.UserPromptSubmit[0]);
-  expect(Object.values(config.hooks).flat()).toHaveLength(6);
+  expect(config.hooks.PostToolUse[1]).toEqual({ hooks: [{ type: 'command', command, timeout: 10 }] });
+  expect(Object.values(config.hooks).flat()).toHaveLength(7);
   expect((await fs.stat(file)).mode & 0o777).toBe(0o640);
   expect(install().status).toBe(0); expect(await fs.readFile(file, 'utf8')).toBe(installed);
   expect(await fs.readFile(file + '.khala-bak', 'utf8')).toBe(bytes);
