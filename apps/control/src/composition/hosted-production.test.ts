@@ -59,6 +59,12 @@ const keptRoutes = [
   ['/api/human/messaging/participants', ['POST']],
   ['/api/human/channel-link/resolve', ['POST']],
   ['/api/human/channel-link/personal', ['POST']],
+  ['/api/agent/join', ['POST']],
+  ['/api/agent/join/poll', ['GET']],
+  ['/api/agent/join/ready', ['POST']],
+  ['/api/human/agent-join', ['GET']],
+  ['/api/human/agent-join/confirm', ['POST']],
+  ['/api/human/agent-join/status', ['GET']],
 ];
 const deletedPaths = [
   '/api/human/room-send/ready', '/api/human/agent-bootstrap/authorize',
@@ -78,7 +84,7 @@ describe('generated hosted production composition', () => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
   });
   afterEach(() => vi.unstubAllEnvs());
-  it('registers exactly the M1 human paths and methods', () => {
+  it('registers exactly the M1 paths and methods', () => {
     const blobs = durableStores();
     expect(registerHostedProductionRoutes({ env, stores: blobs.storeFor }).map(({ path, methods }) => [path, methods]))
       .toEqual(keptRoutes);
