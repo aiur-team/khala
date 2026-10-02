@@ -215,7 +215,7 @@ const channelEvent = (id: string, sender = '@khala_abc:s', key: string | undefin
 it('dedupes keys across senders and drops own and malformed events before key consumption', async () => {
   await connected();
   handler!(channelEvent('$own', credentials.userId));
-  handler!({ ...channelEvent('$bad'), content: {} });
+  handler!({ ...channelEvent('$bad'), content: { ...channelEvent('$bad').content, url: 'javascript:x' } });
   handler!(channelEvent('$first'));
   handler!(channelEvent('$duplicate', '@agent-other:s'));
   expect(await entries()).toEqual([{ ...toInboxEntry(message('$first'), 'Maya'), kind: 'event', body: 'CI failed: test' }]);
@@ -240,5 +240,17 @@ it('reads own events, skips invalid and duplicate keys per page, and keeps intak
     expect(page.nextBefore).toBe('$1');
   }
   expect((await entries()).map(entry => entry.eventId)).toEqual(['$live']);
+  expect(waker).not.toHaveBeenCalled();
+});
+
+it('buffers events racing join and dedupes without waking after join', async () => {
+  const joining = deferred<void>(); vi.mocked(session.join).mockReturnValue(joining.promise);
+  await client.join(link, 'Codex'); poll.resolve(credentials);
+  await vi.waitFor(() => expect(session.join).toHaveBeenCalled());
+  handler!(channelEvent('$early')); handler!(channelEvent('$duplicate', '@agent-other:s'));
+  expect(await entries()).toEqual([]);
+  joining.resolve();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await entries()).map(entry => [entry.eventId, entry.kind])).toEqual([['$early', 'event']]);
   expect(waker).not.toHaveBeenCalled();
 });
