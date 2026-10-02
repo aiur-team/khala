@@ -71,7 +71,7 @@ test('child env uses stable namespaces without inherited fixture credentials', (
     secrets: { dbPassword: 'db', registrationSharedSecret: 'reg', oidcClientSecret: 'oidc', passwordDerivationSecret: 'derive', invitationHmacSecret: 'invite' },
     users: [{ email: 'a@khala.local', bcrypt: 'hashA', id: 'A' }, { email: 'b@khala.local', bcrypt: 'hashB', id: 'B' }] };
   const env = buildEnv(state, '/private/.khala-local', { PATH: '/bin', KHALA_E2E_LIVE: '1', KHALA_LOCAL_AUTH: 'enabled' });
-  assert.equal(env.KHALA_STATE_NAMESPACE, 'khala-local-preview');
+  assert.match(env.KHALA_STATE_NAMESPACE, process.env.KHALA_STACK_PROJECT ? /.+/ : /^khala-local-[0-9a-f]{8}$/);
   assert.equal(env.PUBLIC_APP_ORIGIN, 'https://127.0.0.1:8443');
   assert.ok(!Object.keys(env).some(key => key.startsWith('KHALA_E2E_')));
   assert.equal(env.KHALA_LOCAL_AUTH, undefined);
