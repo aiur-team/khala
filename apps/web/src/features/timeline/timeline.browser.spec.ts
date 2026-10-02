@@ -226,9 +226,47 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await page.evaluate(() => (window as unknown as { __timelineHarness: { pushLiveMessage: (body: string) => void } }).__timelineHarness.pushLiveMessage('a live arrival while scrolled away'));
     await page.getByRole('button', { name: /new message/ }).waitFor();
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
+    assert.equal(await list.evaluate(node => node.scrollTop), 0, 'another participant\'s arrival never moves a reader who scrolled away');
     await page.getByRole('button', { name: /new message/ }).click();
     assert.equal(await page.getByRole('button', { name: /new message/ }).count(), 0, 'jump-to-latest clears the new-message count');
     assert.equal(await page.getByText('a live arrival while scrolled away').count(), 1);
+
+    // The viewer's own send glides the list to its end, even from history and
+    // with a multi-line composer; reduced motion lands there without the glide.
+    const atEnd = () => list.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight < 2);
+    const sentRowVisible = (body: string) => page.locator('.timeline__row', { hasText: body }).last().evaluate(row => {
+      const box = row.getBoundingClientRect();
+      const frame = row.closest('.timeline__list')!.getBoundingClientRect();
+      return box.top >= frame.top - 1 && box.bottom <= frame.bottom + 1;
+    });
+    for (const width of [1024, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await list.evaluate(node => { node.scrollTop = 0; });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const body = `sent from history at ${width}`;
+      await composer.fill(`${body}\nsecond line\nthird line`);
+      await composer.press('Enter');
+      await page.waitForFunction(() => {
+        const node = document.querySelector('.timeline__list')!;
+        return node.scrollHeight - node.scrollTop - node.clientHeight < 2;
+      });
+      await page.locator('.timeline__row--pending', { hasText: body }).waitFor({ state: 'detached' });
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
+      assert.equal(await atEnd(), true, `the list ends at the bottom after sending at ${width}`);
+      assert.equal(await sentRowVisible(body), true, `the sent row is fully visible at ${width}`);
+    }
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await list.evaluate(node => { node.scrollTop = 0; });
+    await page.evaluate(() => window.__timelineHarness.delayNextSend());
+    await composer.fill('sent with reduced motion');
+    await composer.press('Enter');
+    await page.locator('.timeline__row--pending', { hasText: 'sent with reduced motion' }).waitFor();
+    assert.equal(await atEnd(), true, 'reduced motion jumps straight to the end');
+    await page.evaluate(() => window.__timelineHarness.releaseDelayedSend());
+    await page.locator('.timeline__row--pending', { hasText: 'sent with reduced motion' }).waitFor({ state: 'detached' });
+    await page.emulateMedia({ reducedMotion: null });
 
     // A revoked membership shows an explicit state and disables the composer;
     // it never leaves the reader typing into a room they can no longer reach.
