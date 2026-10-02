@@ -162,8 +162,11 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
       const summary = roomSummary(candidate, limits);
       const joinTs = ownJoinTs(candidate, client.getUserId());
       const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
-        !isPreJoinUndecryptable(event, joinTs) && ((event.getType() === EventType.RoomMessage && event.getContent().msgtype === MsgType.Text)
-        || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()));
+        !isPreJoinUndecryptable(event, joinTs) && (
+          (event.getType() === EventType.RoomMessage && event.getContent().msgtype === MsgType.Text)
+          || event.getType() === 'm.room.encrypted'
+          || event.isDecryptionFailure()
+        ));
       const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
         ? latest.getClearContent()?.body : null;
       const unread = candidate.getUnreadNotificationCount();
