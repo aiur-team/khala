@@ -39,6 +39,27 @@ const save = (directory, state) => fs.writeFileSync(stateFile(directory), JSON.s
   sessions: ['codex', 'claude'].filter(actor => state.actors?.[actor]).map(actor => ({ actor, ...state.actors[actor] })),
 }) + '\n', { mode: 0o600 });
 const tmux = (state, argv) => checked('/usr/bin/tmux', ['-S', state.socket, ...argv], state.env);
+const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function trustStartup(state, actor) {
+  const expected = actor === 'codex' ? ['Hooks need review', 'Trust all and continue']
+    : ['Quick safety check', 'Yes, I trust this folder'];
+  const ready = actor === 'codex' ? ['OpenAI Codex', '›'] : ['Claude Code', '❯'];
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const pane = tmux(state, ['capture-pane', '-p', '-t', actor]);
+    if (expected.every(text => pane.includes(text))) {
+      tmux(state, ['send-keys', '-t', actor, 'Down', 'Enter']);
+      for (let settled = 0; settled < 60; settled++) {
+        pause(500);
+        const current = tmux(state, ['capture-pane', '-p', '-t', actor]);
+        if (!current.includes(expected[0]) && ready.every(text => current.includes(text))) return;
+      }
+      fail(`${actor}_startup_trust_unconfirmed`);
+    }
+    pause(500);
+  }
+  fail(`${actor}_startup_trust_missing`);
+}
 
 function sourceAuth(sourceHome, privateHome) {
   const codex = privateFile(path.join(sourceHome, '.codex', 'auth.json'));
@@ -66,9 +87,10 @@ function sessions(root, since) {
   });
 }
 
-function observedSession(state, actor) {
+function observedSession(state, actor, expectedSessionId = null) {
   const root = actor === 'codex' ? path.join(state.home, '.codex', 'sessions') : path.join(state.home, '.claude', 'projects');
-  const candidates = sessions(root, state.startedAt).flatMap(file => {
+  const files = sessions(root, state.startedAt);
+  const candidates = files.flatMap(file => {
     const match = /([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/i.exec(file);
     if (!match) return [];
     const data = fs.readFileSync(file, 'utf8');
@@ -76,10 +98,52 @@ function observedSession(state, actor) {
     const authored = rows.some(row => actor === 'codex'
       ? row.type === 'response_item' && row.payload?.type === 'message' && row.payload?.role === 'assistant'
       : row.type === 'assistant' && row.message?.role === 'assistant');
-    return authored ? [{ sessionId: match[1], transcript: file }] : [];
+    return authored && (!expectedSessionId || match[1] === expectedSessionId)
+      ? [{ sessionId: match[1], transcript: file }] : [];
   });
-  if (candidates.length !== 1) fail(`${actor}_exact_session_unproven`);
+  if (candidates.length !== 1) fail(`${actor}_${candidates.length ? 'exact_session_ambiguous'
+    : files.length ? 'assistant_turn_absent' : 'transcript_absent'}`);
   return candidates[0];
+}
+
+const object = value => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value === 'string') { try { return object(JSON.parse(value)); } catch { /* text */ } }
+  return null;
+};
+const candidatesIn = value => {
+  if (typeof value === 'string') { try { return candidatesIn(JSON.parse(value)); } catch { return []; } }
+  if (Array.isArray(value)) return value.flatMap(candidatesIn);
+  if (!value || typeof value !== 'object') return [];
+  return [...(value.stage === 'proof_key_candidate' && /^[A-Za-z0-9_-]{43}$/u.test(value.candidateId ?? '')
+    && typeof value.operationId === 'string' ? [value] : []), ...Object.values(value).flatMap(candidatesIn)];
+};
+export function proofCandidate(rows, actor) {
+  const calls = [];
+  const results = new Map();
+  for (const row of rows) {
+    if (actor === 'codex' && row.type === 'response_item' && row.payload?.type === 'mcp_tool_call'
+      && /(?:^|__)khala_request_channel_access$/u.test(String(row.payload.tool ?? row.payload.name ?? '')))
+      calls.push({ input: row.payload.arguments, result: row.payload.result });
+    if (actor === 'claude' && row.type === 'assistant' && Array.isArray(row.message?.content)) for (const item of row.message.content) {
+      if (item?.type === 'tool_use' && /(?:^|__)khala_request_channel_access$/u.test(String(item.name ?? '')))
+        calls.push({ id: item.id, input: item.input });
+    }
+    if (actor === 'claude' && row.type === 'user' && Array.isArray(row.message?.content)) for (const item of row.message.content) {
+      if (item?.type === 'tool_result' && item.is_error !== true) results.set(item.tool_use_id, item.content);
+    }
+  }
+  const found = new Map();
+  for (const call of calls) {
+    const input = object(call.input);
+    const result = actor === 'codex' ? call.result : results.get(call.id);
+    for (const candidate of candidatesIn(result)) {
+      if (candidate.operationId !== input?.operationId) continue;
+      found.set(candidate.candidateId, { candidateId: candidate.candidateId, operationId: candidate.operationId });
+    }
+  }
+  if (found.size > 1) fail(`${actor}_candidate_ambiguous`);
+  return [...found.values()][0] ?? null;
 }
 
 export function proofFingerprint(state, actor, sessionId) {
@@ -88,16 +152,37 @@ export function proofFingerprint(state, actor, sessionId) {
   const file = path.join(directory, 'ledger.sqlite');
   if (!fs.existsSync(file)) return null;
   privateFile(file, 32 * 1024 * 1024);
-  const db = new DatabaseSync(file, { readOnly: true });
-  try {
-    const row = db.prepare('SELECT private_key FROM bootstrap_signer WHERE singleton = 1').get();
-    if (!(row?.private_key instanceof Uint8Array)) fail('proof_signer_unavailable');
-    const key = createPrivateKey({ key: Buffer.from(row.private_key), format: 'der', type: 'pkcs8' });
-    if (key.asymmetricKeyType !== 'ed25519') fail('proof_signer_invalid');
-    const publicJwk = createPublicKey(key).export({ format: 'jwk' });
-    if (typeof publicJwk.x !== 'string') fail('proof_signer_invalid');
-    return createHash('sha256').update(JSON.stringify({ crv: 'Ed25519', kty: 'OKP', x: publicJwk.x })).digest('base64url');
-  } finally { db.close(); }
+  // The live connector holds an EXCLUSIVE SQLite lock. Read a private copy of
+  // its database and WAL, never a second connection to the active ledger.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const snapshot = fs.mkdtempSync(path.join(state.directory, 'ledger-snapshot-'));
+    fs.chmodSync(snapshot, 0o700);
+    try {
+      const copy = path.join(snapshot, 'ledger.sqlite');
+      for (const suffix of ['', '-wal']) {
+        const source = `${file}${suffix}`;
+        if (!fs.existsSync(source)) continue;
+        if (suffix && fs.statSync(source).size === 0) continue;
+        privateFile(source, 32 * 1024 * 1024);
+        fs.copyFileSync(source, `${copy}${suffix}`, fs.constants.COPYFILE_EXCL);
+        fs.chmodSync(`${copy}${suffix}`, 0o600);
+      }
+      const db = new DatabaseSync(copy);
+      try {
+        const row = db.prepare('SELECT private_key FROM bootstrap_signer WHERE singleton = 1').get();
+        if (!(row?.private_key instanceof Uint8Array)) return null;
+        const key = createPrivateKey({ key: Buffer.from(row.private_key), format: 'der', type: 'pkcs8' });
+        if (key.asymmetricKeyType !== 'ed25519') fail('proof_signer_invalid');
+        const publicJwk = createPublicKey(key).export({ format: 'jwk' });
+        if (typeof publicJwk.x !== 'string') fail('proof_signer_invalid');
+        return createHash('sha256').update(JSON.stringify({ crv: 'Ed25519', kty: 'OKP', x: publicJwk.x })).digest('base64url');
+      } finally { db.close(); }
+    } catch {
+      if (attempt === 4) fail('proof_signer_unavailable');
+      pause(100);
+    } finally { fs.rmSync(snapshot, { recursive: true, force: true }); }
+  }
+  return null;
 }
 
 function nativeRows(session) {
@@ -170,14 +255,19 @@ function main() {
     if (entry?.transport?.command !== process.execPath || entry.transport.env?.XDG_STATE_HOME !== roots.state
       || entry.transport.env?.HOME !== privateHome || entry.transport.env?.KHALA_APP_ORIGIN !== origin)
       fail('codex_mcp_private_roots');
+    checked(codex, ['login', 'status'], env);
+    const claudeAuth = JSON.parse(checked(claude, ['auth', 'status'], env));
+    if (claudeAuth.loggedIn !== true) fail('claude_provider_auth');
     const state = { v: 1, id: randomBytes(12).toString('hex'), directory, home: privateHome,
       socket: path.join(directory, 'tmux.sock'), roots, cli, origin, codex, claude, versions, env,
       startedAt: Date.now(), actors: {} };
     save(directory, state);
     for (const [actor, bin, model] of [['codex', codex, 'gpt-6.1-sol'], ['claude', claude, 'sonnet']]) {
       const launcher = path.join(directory, `${actor}-launch.sh`);
-      fs.writeFileSync(launcher, `#!/bin/sh\nexec ${safeWord(bin)} --model ${safeWord(model)}\n`, { mode: 0o700 });
+      const flags = actor === 'codex' ? ' --no-daemon -c check_for_update_on_startup=false' : '';
+      fs.writeFileSync(launcher, `#!/bin/sh\numask 077\nexec ${safeWord(bin)} --model ${safeWord(model)}${flags}\n`, { mode: 0o700 });
       tmux(state, ['new-session', '-d', '-s', actor, '-c', directory, launcher]);
+      trustStartup(state, actor);
     }
     process.stdout.write(JSON.stringify({ kind: 'native_started', versions }) + '\n');
     return;
@@ -188,7 +278,13 @@ function main() {
     privateFile(args[1]);
     const buffer = `khala-${state.id}`;
     tmux(state, ['load-buffer', '-b', buffer, args[1]]);
-    try { tmux(state, ['paste-buffer', '-d', '-b', buffer, '-t', args[0]]); tmux(state, ['send-keys', '-t', args[0], 'Enter']); }
+    try {
+      tmux(state, ['paste-buffer', '-d', '-b', buffer, '-t', args[0]]);
+      pause(500);
+      tmux(state, ['send-keys', '-t', args[0], 'Enter']);
+      pause(700);
+      tmux(state, ['send-keys', '-t', args[0], 'Enter']);
+    }
     finally { try { tmux(state, ['delete-buffer', '-b', buffer]); } catch { /* best effort */ } }
     process.stdout.write(JSON.stringify({ kind: 'prompt_delivered', actor: args[0] }) + '\n');
     return;
@@ -203,7 +299,7 @@ function main() {
       const processStartTicks = stat.split(') ').at(-1)?.trim().split(/\s+/u)[19];
       const command = fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').split('\0').filter(Boolean);
       if (!processStartTicks || !command.includes('--model')) fail(`${actor}_process_unproven`);
-      const local = { ...observedSession(state, actor), pid, processStartTicks,
+      const local = { ...observedSession(state, actor, state.actors[actor]?.sessionId), pid, processStartTicks,
         cliVersion: state.versions[actor],
         home: state.home, xdgStateHome: state.roots.state, xdgDataHome: state.roots.data };
       const previous = state.actors[actor];
@@ -212,6 +308,10 @@ function main() {
       state.actors[actor] = { ...local, ...(previous?.baselineOffset === undefined ? {} : { baselineOffset: previous.baselineOffset }) };
       const sessionFingerprint = proofFingerprint(state, actor, local.sessionId);
       if (sessionFingerprint) state.actors[actor].sessionFingerprint = sessionFingerprint;
+      const transcriptRows = fs.readFileSync(privateFile(local.transcript, 32 * 1024 * 1024), 'utf8').split('\n')
+        .filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+      const candidate = proofCandidate(transcriptRows, actor);
+      if (candidate) state.actors[actor].candidate = candidate;
     }
     if (state.actors.codex.sessionId === state.actors.claude.sessionId) fail('duplicate_session');
     // A global `khala status` has no native session selector. Read only the
