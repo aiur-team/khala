@@ -19,11 +19,11 @@ test('details trap focus only as an overlay, stay nonmodal on desktop and carry 
       headless: true, args: ['--no-sandbox'] });
     const page = await browser.newPage({ viewport: { width: 760, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'conversation-fixture.html');
-    await page.getByRole('button', { name: /Khala design/ }).click();
-    const opener = page.getByRole('button', { name: 'Conversation details' });
+    // Maya's avatar in the channel header opens her detail.
+    const opener = page.locator('.kh-head .kh-stack').getByRole('button', { name: 'Maya Chen' });
     await opener.click();
     const close = page.getByRole('button', { name: 'Close details' });
-    const dialog = page.getByRole('dialog', { name: 'Conversation details' });
+    const dialog = page.getByRole('dialog', { name: 'Maya Chen’s details' });
     assert.equal(await dialog.getAttribute('aria-modal'), 'true');
     assert.equal(await close.evaluate(element => document.activeElement === element), true);
     for (let step = 0; step < 4; step += 1) {
@@ -36,17 +36,18 @@ test('details trap focus only as an overlay, stay nonmodal on desktop and carry 
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await opener.click();
-    const desktopDetail = page.getByRole('complementary', { name: 'Conversation details' });
+    const desktopDetail = page.getByRole('complementary', { name: 'Maya Chen’s details' });
     assert.equal(await desktopDetail.count(), 1);
     assert.equal(await desktopDetail.getAttribute('aria-modal'), null);
     assert.equal(await opener.evaluate(element => document.activeElement === element), true);
-    // D3: the owner pill keeps its own .78rem text.
+    // D5: the static agent avatar stays a 32px circle.
+    const avatar = await page.locator('.kh-d-agent > .kh-av').first().boundingBox();
+    assert.ok(avatar && Math.round(avatar.width) === 32 && Math.round(avatar.height) === 32, `agent avatar is 32×32, got ${JSON.stringify(avatar)}`);
+    // D3: the owner pill on Maya's agent keeps its own .78rem text.
+    await page.locator('.kh-d-agent').first().click();
     for (const part of ['.kh-d-owner b', '.kh-d-owner > span']) {
       assert.equal(await page.locator(part).evaluate(element => getComputedStyle(element).fontSize), '12.48px', `${part} is .78rem`);
     }
-    // D5: the static agent avatar stays a 32px circle.
-    const avatar = await page.locator('.kh-d-agent > .kh-av').boundingBox();
-    assert.ok(avatar && Math.round(avatar.width) === 32 && Math.round(avatar.height) === 32, `agent avatar is 32×32, got ${JSON.stringify(avatar)}`);
     await page.getByRole('button', { name: 'Close details' }).click();
 
     // D2: a closed sheet leaves no visible strip on a phone.

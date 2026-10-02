@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { clockLabel } from '../khala/format-time';
+import { clockLabel, type TimeOptions } from '../khala/format-time';
 import './conversation.css';
 
-type RenameProps = Readonly<{ id: string; previousName: string; name: string; actor: string; time: string }>;
+type RenameProps = Readonly<{ id: string; previousName: string; name: string; actor: string; time: string; timeOptions?: TimeOptions }>;
 type LegacyProps = Readonly<{ id: string; actor: string; children: ReactNode }>;
 
 /**
@@ -14,7 +14,7 @@ export function ChatSystemEvent(props: RenameProps | LegacyProps) {
   if ('previousName' in props) {
     return <li data-event-id={props.id} className="kh-ev kh-ev--static">
       <i aria-hidden="true" />
-      <span dir="auto">{props.previousName} is now {props.name} · {props.actor} · <time dateTime={props.time}>{clockLabel(new Date(props.time))}</time></span>
+      <span dir="auto">{props.previousName} is now {props.name} · {props.actor} · <time dateTime={props.time}>{clockLabel(new Date(props.time), props.timeOptions)}</time></span>
     </li>;
   }
   return <li data-event-id={props.id} className="conversation-system-event">

@@ -23,7 +23,7 @@ import { ChatComposer, ChatMessage, insertMention, type MentionTarget } from '..
 import { ChatSystemEvent } from '../../ui/conversation';
 import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
 import { Avatar } from '../../ui/khala/Avatar';
-import { clockLabel, dayLabel, dayTime } from '../../ui/khala/format-time';
+import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
 import { buildIdBadgeResolver, harnessLogo, initials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
@@ -59,6 +59,8 @@ export interface TimelineScreenProps {
   onInvite?: () => void;
   /** The clock for day separator labels; tests pin it. */
   now?: () => Date;
+  /** Fixtures and tests pass UTC; the product uses the viewer's local time. */
+  timeOptions?: TimeOptions;
 }
 
 export type TimelineComposerHandle = Readonly<{
@@ -155,8 +157,10 @@ function splitAgentName(name: string): Readonly<{ label: string; owner: string |
 
 const firstName = (name: string) => name.trim().split(/\s+/u)[0] ?? name;
 
-/** A local calendar day key; the product renders the viewer's own time zone. */
-const dayKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+/** A calendar day key in the viewer's own time zone, or in `options.timeZone`. */
+const dayKey = (date: Date, options: TimeOptions) => options.timeZone
+  ? date.toLocaleDateString('en-CA', { timeZone: options.timeZone })
+  : `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 
 /** Everything the thread needs to draw one participant: name line, avatar and mention target. */
 type Identity = Readonly<{
@@ -192,7 +196,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onInvite, now = () => new Date(),
+  unreadableActivity = false, composerRef, onOpenParticipant, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -423,7 +427,7 @@ export function TimelineScreen({
     return {
       label: identity.label, hue: identity.hue, tag,
       ...(identity.idBadge ? { idBadge: identity.idBadge } : {}),
-      ariaLabel: `${identity.label}${identity.idBadge ? ` ${identity.idBadge}` : ''}, ${ownership.charAt(0).toLocaleLowerCase('en-US')}${ownership.slice(1)}, ${clockLabel(new Date(time))}`,
+      ariaLabel: `${identity.label}${identity.idBadge ? ` ${identity.idBadge}` : ''}, ${ownership.charAt(0).toLocaleLowerCase('en-US')}${ownership.slice(1)}, ${clockLabel(new Date(time), timeOptions)}`,
       ...(identity.kind === 'unknown' ? {} : { onClick: open(identity.participantId) }),
     };
   }
@@ -475,11 +479,11 @@ export function TimelineScreen({
   const entries: ThreadEntry[] = [];
   let lastDay: string | null = null;
   const separateDay = (date: Date) => {
-    const key = dayKey(date);
+    const key = dayKey(date, timeOptions);
     if (key === lastDay) return;
     lastDay = key;
     entries.push({ type: 'break', key: `day-${entries.length}-${key}`, node: <li className="kh-day" role="separator">
-      <b>{dayLabel(date, today)}</b> {dayTime(date)}
+      <b>{dayLabel(date, today, timeOptions)}</b> {dayTime(date, timeOptions)}
     </li> });
   };
   for (const row of rows) {
@@ -500,7 +504,7 @@ export function TimelineScreen({
     if (item.content.kind === 'agent_rename') {
       if (data.namesReady !== false && nameEvent?.kind === 'agent_rename') {
         entries.push({ type: 'break', key: eventId, node: <ChatSystemEvent id={eventId} previousName={nameEvent.previousName}
-          name={nameEvent.name} actor={nameEvent.actorName} time={item.receivedAt} /> });
+          name={nameEvent.name} actor={nameEvent.actorName} time={item.receivedAt} timeOptions={timeOptions} /> });
       }
       continue;
     }
@@ -519,7 +523,7 @@ export function TimelineScreen({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
       render: run => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
-        time={item.receivedAt} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
+        time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
         after={<>
           {isReadableItem(item) && renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
