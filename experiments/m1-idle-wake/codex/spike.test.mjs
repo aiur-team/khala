@@ -71,3 +71,16 @@ test('MCP records meta and environment against default HOME state',t=>{
  assert.equal(logs.at(-1).metaThreadId,'test');assert.equal(logs.at(-1).xdgStateHome,f.env.XDG_STATE_HOME);
  assert.equal(JSON.parse(result.stdout.trim().split('\n')[1]).result.content[0].text,'probe recorded');
 });
+
+test('teardown permits only spike trust entries, refuses unrelated comments',t=>{
+ const f=fixture(t),h=path.join(f.env.CODEX_HOME,'hooks.json'),c=path.join(f.env.CODEX_HOME,'config.toml');
+ fs.writeFileSync(h,'{"hooks":{}}\n');fs.writeFileSync(c,'# baseline\n');
+ assert.equal(f.run('install.mjs',['install']).status,0);
+ const installed=fs.readFileSync(c,'utf8');
+ fs.writeFileSync(c,installed.replace('# baseline','# edited'));
+ assert.notEqual(f.run('install.mjs',['uninstall']).status,0);
+ const key=h+':Stop:0:0';
+ fs.writeFileSync(c,installed+`\n[hooks.state.${JSON.stringify(key)}]\ntrusted_hash = "synthetic"\n`);
+ assert.equal(f.run('install.mjs',['uninstall']).status,0);
+ assert.equal(fs.readFileSync(c,'utf8'),'# baseline\n');
+});

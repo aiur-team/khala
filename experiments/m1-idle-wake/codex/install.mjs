@@ -35,7 +35,9 @@ if (process.argv[2] === 'install') {
   console.log('installed; review and trust only the spike hooks');
 } else if (process.argv[2] === 'uninstall') {
   const original=backups.map(file=>fs.readFileSync(file));
-  const live=toml(fs.readFileSync(files[1],'utf8')), before=toml(original[1].toString());
+  const liveText=fs.readFileSync(files[1],'utf8');
+  const live=toml(liveText), before=toml(original[1].toString());
+  const allowedTrust=new Set();
   delete live.mcp_servers?.khala_spike;
   if (live.mcp_servers && !Object.keys(live.mcp_servers).length && !before.mcp_servers) delete live.mcp_servers;
   for (const key of Object.keys(live.hooks?.state || {})) {
@@ -44,10 +46,25 @@ if (process.argv[2] === 'install') {
     const tail=key.startsWith(prefix) ? key.slice(prefix.length).split(':') : [];
     const event=tail[0], index=Number(tail[1]);
     const originalHooks=JSON.parse(original[0]);
-    if (tail.length === 3 && event in groups() && index === (originalHooks.hooks?.[event]?.length || 0) && tail[2] === '0') delete live.hooks.state[key];
+    if (tail.length === 3 && event in groups() && index === (originalHooks.hooks?.[event]?.length || 0) && tail[2] === '0') { allowedTrust.add(key); delete live.hooks.state[key]; }
   }
   if (live.hooks?.state && !Object.keys(live.hooks.state).length && !before.hooks?.state) delete live.hooks.state;
   if (live.hooks && !Object.keys(live.hooks).length && !before.hooks) delete live.hooks;
+  // Preserve unrelated comments and formatting as well as semantic TOML values.
+  let skipping=false;
+  const retained=[];
+  for (const line of liveText.split('\n')) {
+    const section=line.trim().match(/^\[(.+)\]$/);
+    if (section) {
+      skipping=section[1] === 'mcp_servers.khala_spike';
+      if (section[1].startsWith('hooks.state.')) {
+        try { skipping=allowedTrust.has(JSON.parse(section[1].slice('hooks.state.'.length))); } catch { skipping=false; }
+      }
+    }
+    if (!skipping && line.trim()) retained.push(line);
+  }
+  const baseline=original[1].toString().split('\n').filter(line=>line.trim());
+  if (!isDeepStrictEqual(retained,baseline)) throw new Error('unrelated config lines changed; report to Executor; backups retained');
   if (!isDeepStrictEqual(live,before)) throw new Error('unrelated config changes: stop and report to Executor; backups retained');
   const liveHooks=JSON.parse(fs.readFileSync(files[0],'utf8')), oldHooks=JSON.parse(original[0]);
   for (const [event,group] of Object.entries(groups())) {

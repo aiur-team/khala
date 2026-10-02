@@ -22,7 +22,7 @@ The actual worker uses `/home/everdred/.codex`; it is outside this sandbox's
 writable roots, as are the default state root and the shared `AGENT-MESSAGES.md`.
 The Executor explicitly prohibited live installation for this ticket and moved the
 same-thread TUI experiment to KM-151. Fixture installation is the only installation run.
-Installer backups refuse overwrite. Teardown refuses unrelated semantic TOML or
+Installer backups refuse overwrite. Teardown refuses unrelated TOML values, comments, formatting or
 hooks changes and preserves the backups for Executor reconciliation. Normal hook
 trust records for the appended positional groups are removed during restoration.
 Live pre-install and post-teardown SHA-256 digests: deferred to KM-151 live acceptance;
@@ -32,7 +32,7 @@ this ticket did not install, so there is no live restoration to perform.
 
 | Leg | Timestamp | Observation | Result |
 | --- | --- | --- | --- |
-| Local suite | 2026-10-02T05:06Z | Six Node tests pass, including real child spawn, fixed notice/env, hook delivery, busy suppression, MCP JSON-RPC, byte restore | Harness only |
+| Local suite | 2026-10-02T05:06Z | Seven Node tests pass, including real child spawn, fixed notice/env, hook delivery, busy suppression, MCP JSON-RPC, byte restore | Harness only |
 | L0 | — | Pane identity and monitor readiness | deferred to KM-151 live acceptance |
 | L1/L1b | — | Hot hook loading versus resume and normal trust | deferred to KM-151 live acceptance |
 | L1c | — | MCP metadata and child environment | deferred to KM-151 live acceptance |
