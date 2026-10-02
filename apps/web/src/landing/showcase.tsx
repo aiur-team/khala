@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ChatComposer, ChatMessage, ChatSystemEvent, ConversationLayout, ParticipantDetail, type ConversationSummary } from '../ui/conversation';
 import { ShowcaseConversationList } from './ShowcaseConversationList';
+import '../ui/khala/composer.css';
 import './showcase.css';
 
 type Example = Readonly<{
