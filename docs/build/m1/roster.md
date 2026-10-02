@@ -72,13 +72,15 @@ Deletion PRs: `deletion-guard` needs admin approval on the head SHA for any PR t
 | KM-173 | Agent `khala_event` tool | events | 2 | 143, 144, 170, 171 | 174 | E-U4 | `khala_event` MCP tool + `sendChannelEvent` (C7, C11); emit with a key-derived txn id. No CLI |
 | KM-174 | Agent reads events as framed data | events | 2 | 143, 145, 170 | 173 | E-U5 | Events in the inbox as `kind:'event'`; never wake |
 | KM-175 | Aiur adapter integration doc | events | 1 | 170, 171, 173 | — | E-U6 | `docs/integrations/aiur-channel-events.md` |
-| KM-180 | Design: edge-to-edge Khala shell and tokens | design | 3 | — (gate G-DESIGN) | — | design | Recreate the design's tokens and the three-pane layout full-bleed; owns `apps/web/src/ui/conversation/tokens.css` and `ConversationLayout` |
-| KM-181 | Design: conversation list pane | design | 2 | 180 | — | design | `ConversationList` per design |
-| KM-182 | Design: thread, bubbles, day separators, event pill style | design | 3 | 180 | 172 | design | `ChatThread`, `ChatMessage`, event-row styles |
-| KM-183 | Design: header and roster disclosure | design | 3 | 180 | — | design | Avatar stack, title, member summary, human → agents roster tree |
-| KM-184 | Design: composer and recipient chips | design | 2 | 180 | — | design | `ChatComposer` with chips row |
-| KM-185 | Design: agent confirmation page visual | design | 1 | 134, 180 | — | design | Restyle KM-134's page to the design system |
-| KM-186 | Design parity audit | design | 2 | 181, 182, 183, 184, 185 | — | design | Side-by-side comparison against the imported design at 5 widths in both themes; fix drift |
+| KM-180 | Design: edge-to-edge shell, tokens, fonts, shared helpers, component split | design | 3 | 120 | 134, 135, 172, 187 | design §1-§3 | Full-bleed Khala card replacing app chrome; `brand/tokens.css` per design; Space Grotesk/JetBrains Mono UI fonts, Bungee only on the wordmark; split conversation components one file each |
+| KM-181 | Design: conversation list and New channel popover | design | 2 | 180 | 130, 134, 135, 172 | design | `ConversationList` per spec incl. brand row and create popover |
+| KM-182 | Design: thread, bubbles, day separators, event rows | design | 3 | 135, 180, 184 | 172, 183 | design | `ChatThread`/`ChatMessage` grouping, colors, name line, Delivered line, event-row styles |
+| KM-183 | Design: header, roster tree, popovers, detail pane | design | 3 | 135, 180, 184 | 134, 182 | design | Avatar stack, title + count, human→agents roster, invite/settings popovers (M2 controls disabled), detail pane |
+| KM-184 | Design: composer and mention chips | design | 2 | 180 | — | design | `ChatComposer` autosize, SVG send, chips row with +N expansion, D1 contrast fix |
+| KM-185 | Design: agent confirmation page visual | design | 1 | 134, 180 | — | design | Restyle KM-134 page per spec |
+| KM-186 | Design parity audit | design | 2 | 180, 181, 182, 183, 184, 185, 187, 188 | — | design | Compare against reference screens/computed styles at 5 widths × 2 themes; fix drift; font rule check |
+| KM-187 | Sign In button; remove sign-in page | design | 2 | 180 | 134 | operator UX 2026-10-02 | Landing: top-right Sign in pill → Google → `/conversations`; delete `SignInPanel`; signed-out routes redirect to sign-in |
+| KM-188 | Design fixture page with reference data | design | 2 | 181, 182, 183, 184 | — | design | `conversation-fixture.html` reproducing the design's reference data for parity audits |
 
 ## External gates
 
@@ -92,3 +94,5 @@ Deletion PRs: `deletion-guard` needs admin approval on the head SHA for any PR t
 - **Ordering.** KM-151 is suggested-after KM-161.
 - **README ownership.** `packages/agent/README.md` is owned by KM-144. KM-146 owns `docs/install-claude.md` and KM-147 owns `docs/install-codex.md`.
 - **Lockfile.** Any ticket that changes dependencies (for example KM-102, KM-103, KM-110) regenerates `pnpm-lock.yaml` on rebase with `pnpm install` and never hand-merges it.
+
+- **Design decisions.** D1: dark-theme human mention chips use the readable `hsl(oh 70% 72%)` (~8:1), not the design's 2.3:1 copy slip. This is an Executor decision, flagged to the operator. Design source of truth: `docs/design/khala-chat/` (RECREATION-SPEC.md v2, source/ sha256 `5242159e…`).
