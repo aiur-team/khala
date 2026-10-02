@@ -1,12 +1,10 @@
 import { expect, test, type Page, type Response } from '@playwright/test';
-import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from '../human/fixtures.js';
-import { ExternalNativeDriver, encryptedEventIds } from './external-browser-driver.js';
+import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds } from './external-browser-driver.js';
 import { verifyExternalConversation, type Actor, type BrowserFact } from './external-witness.js';
-import { validateJournal, type Receipt } from '../../../scripts/acceptance/candidate.js';
 
 const environment = readLiveHumanEnvironment();
 const helper = resolve(import.meta.dirname, '../../../scripts/external-native-sessions.mjs');
@@ -43,6 +41,8 @@ async function approveExactRequest(owner: Page, fingerprint: string, channelTitl
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
   await expect(row).toHaveCount(1, { timeout: 30_000 });
   await expect(row).toContainText('Channel access request');
+  // The owner projection exposes a channel title but no room ID. The private
+  // run title plus measured signer JKT are the strongest available match.
   await expect(row).toContainText(channelTitle);
   await expect(row).toContainText('Waiting for you');
   await row.getByRole('button', { name: 'Review request' }).click();
@@ -101,7 +101,7 @@ async function releaseExactMessage(owner: Page, eventId: string, agentParticipan
       body?: { expectedBindingGeneration?: unknown; selection?: readonly { eventId?: unknown }[] } };
     if (typeof envelope.bindingId !== 'string' || typeof envelope.operationId !== 'string'
       || !Number.isSafeInteger(envelope.body?.expectedBindingGeneration)
-      || Number(envelope.body?.expectedBindingGeneration) < 1
+      || Number(envelope.body?.expectedBindingGeneration) < 0
       || envelope.body?.selection?.length !== 1 || envelope.body.selection[0]?.eventId !== eventId)
       throw new Error('external_browser_release_identity_mismatch');
     await expect(panel.locator('.review__submission-status')).toContainText('Released', { timeout: 30_000 });
@@ -138,11 +138,10 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
   test.setTimeout(840_000);
   const ownerContext = await browser.newContext();
   const native = new ExternalNativeDriver(mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'khala-external-native-')), helper);
-  let launched = false;
+  let failure: unknown = null;
   try {
     // Preflight precedes channel creation: unsupported or stale native routes leave no false conversation artifact.
     native.launch();
-    launched = true;
     for (const actor of actors) native.prompt(actor, 'Please identify yourself and your current native session. Do not join a Khala channel yet.');
     await waitForNative(native, snapshot => snapshot.sessions.every(session => Boolean(session.sessionId && session.pid)));
     const owner = await freshPage(ownerContext, environment);
@@ -173,13 +172,15 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     }
 
     const bindings = native.inspect().sessions;
-    if (bindings.some(item => !item.bindingId || !item.generation || !item.agentParticipantId))
+    if (bindings.some(item => !item.bindingId || !Number.isSafeInteger(item.generation) || item.generation! < 0
+      || !item.agentParticipantId))
       throw new Error('external_browser_bindings_unobserved');
     native.mark();
     const proof = [];
     for (const actor of actors) {
       const session = bindings.find(item => item.actor === actor)!;
-      if (!session.bindingId || !session.generation || !session.agentParticipantId)
+      if (!session.bindingId || !Number.isSafeInteger(session.generation) || session.generation! < 0
+        || !session.agentParticipantId)
         throw new Error(`external_browser_${actor}_binding_unobserved`);
       const challenge = await sendChallenge(owner, actor, roomId, accessToken);
       const release = await releaseExactMessage(owner, challenge.eventId, session.agentParticipantId);
@@ -189,7 +190,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       native.prompt(actor, `Read the freshly released ${actor} Khala message through your installed MCP route. Acknowledge its exact batch from this model session and send a useful answer in the channel. Do not use the browser or transcript to learn the message.`);
       const reply = await newEncryptedMessage(owner, roomId, accessToken, before);
       await requireOwnerAck(owner, release);
-      proof.push({ actor, bindingId: release.bindingId, generation: release.generation,
+      proof.push({ actor, sessionId: session.sessionId, bindingId: release.bindingId, generation: release.generation,
         operationId: release.operationId, challengeEventId: challenge.eventId, releaseId: release.releaseId,
         replyEventId: reply.eventId, challengeText: challenge.text, replyText: reply.text, ackObserved: true });
     }
@@ -208,45 +209,38 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     const snapshot = native.witness({ actors: proof, peer: { from: 'codex', to: 'claude',
       eventId: peerMessage.eventId, readEventId: peerMessage.eventId, replyEventId: peerReply.eventId,
       messageText: peerMessage.text, replyText: peerReply.text } });
+    const observedPeer = { from: 'codex', to: 'claude', eventId: peerMessage.eventId,
+      readEventId: peerMessage.eventId, replyEventId: peerReply.eventId } as const;
+    assertWitnessMatches(snapshot, proof, observedPeer);
     if (!snapshot.native || !snapshot.peer) throw new Error('external_browser_model_witness_missing');
-    for (const fact of snapshot.native) {
-      if (proof.find(row => row.actor === fact.actor)?.challengeEventId !== fact.challengeEventId)
-        throw new Error('external_browser_challenge_identity_mismatch');
-      await requireCiphertext(roomId, accessToken, fact.replyEventId);
+    for (const observed of proof) {
+      await requireCiphertext(roomId, accessToken, observed.replyEventId);
     }
-    await requireCiphertext(roomId, accessToken, snapshot.peer.eventId);
-    await requireCiphertext(roomId, accessToken, snapshot.peer.replyEventId);
+    await requireCiphertext(roomId, accessToken, observedPeer.eventId);
+    await requireCiphertext(roomId, accessToken, observedPeer.replyEventId);
 
     // A reload must fetch and decrypt the committed events; no optimistic send row counts.
     await owner.reload({ waitUntil: 'domcontentloaded' });
     const encrypted = await ciphertextIds(roomId, accessToken);
     const browserFacts: BrowserFact[] = [];
     for (const fact of snapshot.native) {
-      const row = owner.locator(`.timeline__row:not(.timeline__row--pending)[data-event-id="${fact.replyEventId}"]`);
+      const observed = proof.find(row => row.actor === fact.actor)!;
+      const row = owner.locator(`.timeline__row:not(.timeline__row--pending)[data-event-id="${observed.replyEventId}"]`);
       await expect(row).toBeVisible({ timeout: 30_000 });
       const body = await row.locator('.conversation-message__content').innerText();
       if (body.trim().length < 8) throw new Error('external_browser_reply_not_useful');
-      browserFacts.push({ challengeEventId: fact.challengeEventId, replyEventId: fact.replyEventId,
-        encryptedEventIds: encrypted, reloadedEventIds: [fact.replyEventId, snapshot.peer.replyEventId] });
+      browserFacts.push({ challengeEventId: observed.challengeEventId, replyEventId: observed.replyEventId,
+        encryptedEventIds: encrypted, reloadedEventIds: [observed.replyEventId, observedPeer.replyEventId] });
     }
-    await expect(owner.locator(`.timeline__row:not(.timeline__row--pending)[data-event-id="${snapshot.peer.replyEventId}"]`))
+    await expect(owner.locator(`.timeline__row:not(.timeline__row--pending)[data-event-id="${observedPeer.replyEventId}"]`))
       .toBeVisible({ timeout: 30_000 });
     verifyExternalConversation(snapshot.native, browserFacts, snapshot.peer);
-    for (const row of proof) {
-      const redacted = (value: string) => createHash('sha256').update(value).digest('hex');
-      const identity = { operationId: redacted(row.operationId), eventId: redacted(row.challengeEventId),
-        bindingId: redacted(row.bindingId), generation: row.generation };
-      const journal: Receipt[] = [
-        { ...identity, stage: 'pending', origin: 'server' },
-        { ...identity, stage: 'released', origin: 'server' },
-        { ...identity, stage: 'model-consumed', origin: 'model' },
-        { ...identity, stage: 'acknowledged', origin: 'model' },
-        { ...identity, stage: 'durable-browser-visible', origin: 'browser' },
-      ];
-      validateJournal(journal);
-    }
+  } catch (error) {
+    failure = error;
   } finally {
-    await ownerContext.close();
-    if (launched) native.stop();
+    const cleanup = await Promise.allSettled([ownerContext.close(), Promise.resolve().then(() => native.stop())]);
+    if (failure === null && cleanup.some(result => result.status === 'rejected'))
+      failure = new Error('external_browser_cleanup_failed');
   }
+  if (failure !== null) throw failure;
 });

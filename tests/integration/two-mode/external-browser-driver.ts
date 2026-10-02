@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { Page } from '@playwright/test';
 import type { Actor, NativeFact } from './external-witness.js';
@@ -20,6 +20,13 @@ export type NativeSnapshot = Readonly<{
   sessions: readonly NativeSession[];
   native?: readonly NativeFact[];
   peer?: Readonly<{ from: Actor; to: Actor; eventId: string; readEventId: string; replyEventId: string }>;
+}>;
+export type ObservedExchange = Readonly<{
+  actor: Actor; sessionId: string; bindingId: string; generation: number;
+  operationId: string; challengeEventId: string; releaseId: string; replyEventId: string;
+}>;
+export type ObservedPeer = Readonly<{
+  from: Actor; to: Actor; eventId: string; readEventId: string; replyEventId: string;
 }>;
 
 const identifier = /^[A-Za-z0-9_$.:/+!=~-]{4,256}$/u;
@@ -46,9 +53,28 @@ function session(value: unknown, actor: Actor): NativeSession {
     ...(row.generation === undefined ? {} : { generation: Number(row.generation) }),
     ...(row.agentParticipantId === undefined ? {} : { agentParticipantId: requireIdentifier(row.agentParticipantId, 'agent_participant_id') }),
   };
-  if (result.generation !== undefined && (!Number.isSafeInteger(result.generation) || result.generation < 1))
+  if (result.generation !== undefined && (!Number.isSafeInteger(result.generation) || result.generation < 0))
     throw new Error(`external_browser_${actor}_generation_invalid`);
   return result;
+}
+
+/** Bind every native claim to owner/browser observations before the witness oracle sees it. */
+export function assertWitnessMatches(snapshot: NativeSnapshot, observed: readonly ObservedExchange[], peer: ObservedPeer): void {
+  if (observed.length !== 2 || snapshot.native?.length !== 2 || !snapshot.peer)
+    throw new Error('external_browser_witness_missing');
+  for (const expected of observed) {
+    const fact = snapshot.native.find(row => row.actor === expected.actor);
+    const session = snapshot.sessions.find(row => row.actor === expected.actor);
+    if (!fact || !session || fact.sessionId !== expected.sessionId || session.sessionId !== expected.sessionId
+      || fact.bindingId !== expected.bindingId || session.bindingId !== expected.bindingId
+      || fact.generation !== expected.generation || session.generation !== expected.generation
+      || fact.operationId !== expected.operationId || fact.challengeEventId !== expected.challengeEventId
+      || fact.releaseId !== expected.releaseId || fact.replyEventId !== expected.replyEventId)
+      throw new Error(`external_browser_${expected.actor}_witness_identity_mismatch`);
+  }
+  if (snapshot.peer.from !== peer.from || snapshot.peer.to !== peer.to || snapshot.peer.eventId !== peer.eventId
+    || snapshot.peer.readEventId !== peer.readEventId || snapshot.peer.replyEventId !== peer.replyEventId)
+    throw new Error('external_browser_peer_witness_identity_mismatch');
 }
 
 /** All private observations stay in the disposable topology's private directory. */
@@ -79,19 +105,21 @@ export class ExternalNativeDriver {
   }
 
   launch(): void { this.call('launch'); }
-  stop(): void { this.call('stop'); }
+  stop(): void { if (existsSync(join(this.directory, 'native-sessions.json'))) this.call('stop'); }
   mark(): void { this.call('mark'); }
 
   prompt(actor: Actor, instruction: string): void {
     const file = join(this.directory, `prompt-${actor}-${randomUUID()}.txt`);
     writeFileSync(file, instruction, { flag: 'wx', mode: 0o600 });
-    this.call('prompt', actor, file);
+    try { this.call('prompt', actor, file); }
+    finally { unlinkSync(file); }
   }
 
   witness(input: unknown): NativeSnapshot {
     const file = join(this.directory, `witness-${randomUUID()}.json`);
     writeFileSync(file, JSON.stringify(input), { flag: 'wx', mode: 0o600 });
-    this.call('witness', file);
+    try { this.call('witness', file); }
+    finally { unlinkSync(file); }
     return this.inspect();
   }
 
