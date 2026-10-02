@@ -85,6 +85,21 @@ describe('ConversationList', () => {
     expect(html).toContain(`<img src="${claudeSymbol.replaceAll("'", '&#x27;')}" alt=""/><span class="kh-own" style="--oh:330">KW</span>`);
   });
 
+  it('shows a human\'s chosen initials on them and on their agent\'s owner badge', () => {
+    const kai = { id: '@kai:khala.local', kind: 'human', displayName: 'Kai Watanabe', ownerId: 'kai', initials: 'ZZ' } as const;
+    const fromMember = avatars(render([{ ...release, members: [kai, release.members![1]!] }]));
+    expect(fromMember).toMatch(/<span class="kh-av kh-hav" style="--oh:\d+" aria-hidden="true">ZZ<\/span>/u);
+    expect(fromMember).toMatch(/<span class="kh-own" style="--oh:\d+">ZZ<\/span>/u);
+    // The agent's own `ownerInitials` wins, even when its owner isn't among the shown members.
+    const fromAgent = avatars(render([{ ...release, members: [{ ...release.members![1]!, ownerInitials: 'QQ' }] }]));
+    expect(fromAgent).toMatch(/<span class="kh-own" style="--oh:\d+">QQ<\/span>/u);
+  });
+
+  it('badges the viewer\'s own agents with their chosen initials once they have some', () => {
+    const html = avatars(render([release], { viewerOwnerId: 'kai', viewerInitials: 'MZ' }));
+    expect(html).toContain('<span class="kh-own" style="--oh:214">MZ</span>');
+  });
+
   it('marks unread rows and sums the head count, always shown', () => {
     const html = render([release, { ...release, id: 'quiet', unreadCount: null }]);
     expect(html).toContain('<div class="kh-list-head"><b>Channels</b><span>3 unread</span></div>');

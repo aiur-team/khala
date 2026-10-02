@@ -10,6 +10,7 @@ import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
+import { useProfile } from '../../features/profile/ProfileProvider';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
@@ -80,6 +81,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   routes?: HumanRouteCodec;
 }) {
   const conversations = useConversationIndex(context);
+  // Updates the instant a Profile save succeeds, so the viewer sees their own choice at once.
+  const { initials: viewerInitials } = useProfile();
   const selectedConversation = conversations?.find(item => item.id === roomId);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -166,6 +169,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       viewerOwnerId={viewer.ownerId}
       viewerName={viewer.displayName}
       viewerEmail={context.principal.verifiedEmail}
+      viewerInitials={viewerInitials}
       viewerParticipantId={viewer.participantId}
       viewerColor={viewerColor}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
@@ -197,7 +201,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       } : {})}
       renderTimeline={(openParticipant, openInvite, onMentionRoster) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
-          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} composerRef={composer}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} viewerInitials={viewerInitials} composerRef={composer}
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}

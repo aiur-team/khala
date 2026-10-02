@@ -2,17 +2,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultHumanColor, HUMAN_COLOR_IDS, type HumanColorId } from '@khala/contracts/m1/colors';
 import { HUMAN_PALETTE } from '../../ui/khala/human-colors';
-import { colorSaveMessage, initialColor, ProfileDialog, profileChanges, radioTarget, saveProfile } from './ProfileDialog';
+import {
+  clampInitials, colorSaveMessage, draftInitials, initialColor, initialsRuleError, initialsSaveMessage, ProfileDialog, profileChanges, radioTarget, saveProfile,
+} from './ProfileDialog';
 import { ProfileStoreProvider } from './ProfileProvider';
 import { createProfileStore } from './store';
 import type { ProfilePort } from './ports';
 
-async function readyStore(color: HumanColorId, overrides: Partial<ProfilePort> = {}) {
+async function readyStore(color: HumanColorId, overrides: Partial<ProfilePort> = {}, initials: string | null = null) {
   const port: ProfilePort = {
-    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color, initials: null })),
+    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color, initials })),
     setUsername: vi.fn(async (name: string) => ({ kind: 'ok' as const, username: name })),
     setColor: vi.fn(async (next: HumanColorId) => ({ kind: 'ok' as const, color: next })),
-    setInitials: async initials => ({ kind: 'ok', initials }),
+    setInitials: vi.fn(async (next: string | null) => ({ kind: 'ok' as const, initials: next })),
     ...overrides,
   };
   const store = createProfileStore(port);
@@ -27,18 +29,55 @@ const radios = (html: string) => [...html.matchAll(/<button type="button" role="
   .map(([, checked, label, tabIndex]) => ({ checked: checked === 'true', label, tabIndex: Number(tabIndex) }));
 
 describe('ProfileDialog', () => {
-  it('is a modal named Profile with the avatar preview, then Username, then the Color radio group', async () => {
+  it('is a modal named Profile with Username, then Initials beside the avatar preview, then the Color radio group', async () => {
     const { store } = await readyStore('teal');
     const html = dialog(store);
     const labelledBy = html.match(/role="dialog" aria-modal="true" aria-labelledby="([^"]+)"/u)![1];
     expect(html).toContain(`<h2 id="${labelledBy}" class="kh-prof-h">Profile</h2>`);
-    expect(html).toContain('<span class="kh-prof-av" style="background:#187b7e" aria-hidden="true">KE</span>');
     const inputId = html.match(/<label class="kh-prof-lbl" for="([^"]+)">Username<\/label>/u)![1];
     expect(html).toMatch(new RegExp(`<input id="${inputId}" class="kh-txt"[^>]* value="Kevin"/>`, 'u'));
+    // Without chosen initials the preview shows the derived ones, quieter, and so does the empty field's placeholder.
+    expect(html).toContain('<div class="kh-prof-ini"><span class="kh-prof-av is-default" style="background:#187b7e" aria-hidden="true"><span>KE</span></span>');
+    const initialsId = html.match(/<label class="kh-prof-lbl" for="([^"]+)">Initials<\/label>/u)![1];
+    expect(html).toContain(`<input id="${initialsId}" class="kh-txt kh-prof-ini-in" aria-label="Initials" placeholder="KE" autoComplete="off" autoCapitalize="characters" spellCheck="false" value=""/>`);
     const colorId = html.match(/<span class="kh-prof-lbl" id="([^"]+)">Color<\/span>/u)![1];
     expect(html).toContain(`<div class="kh-swatches" role="radiogroup" aria-labelledby="${colorId}">`);
-    expect(html.indexOf('kh-prof-av')).toBeLessThan(html.indexOf('Username'));
-    expect(html.indexOf('Username')).toBeLessThan(html.indexOf('radiogroup'));
+    expect(html.indexOf('Username')).toBeLessThan(html.indexOf('aria-label="Initials"'));
+    expect(html.indexOf('aria-label="Initials"')).toBeLessThan(html.indexOf('radiogroup'));
+  });
+
+  it('opens at the saved initials, previewed at full emphasis', async () => {
+    const { store } = await readyStore('teal', {}, 'ZZ');
+    const html = dialog(store);
+    expect(html).toContain('<span class="kh-prof-av" style="background:#187b7e" aria-hidden="true"><span>ZZ</span></span>');
+    expect(html).toMatch(/aria-label="Initials"[^>]* value="ZZ"\/>/u);
+  });
+
+  it('counts code points: two emoji are two characters, one emoji is one', () => {
+    expect(clampInitials('kwz')).toBe('kw');
+    expect(clampInitials('😀😀😀')).toBe('😀😀');
+    expect([...clampInitials('😀')]).toHaveLength(1);
+  });
+
+  it('reads a draft as canonical initials, none chosen, or invalid', () => {
+    expect(draftInitials('kw')).toBe('KW');
+    expect(draftInitials(' k7 ')).toBe('K7');
+    expect(draftInitials('')).toBeNull();
+    expect(draftInitials('  ')).toBeNull();
+    for (const invalid of ['k!', '😀', 'k', '😀😀']) expect(draftInitials(invalid)).toBeUndefined();
+  });
+
+  it('words an initials save failure: the rule for `invalid_initials`, else the shared messages', () => {
+    expect(initialsSaveMessage({ kind: 'ok', initials: 'KW' })).toBeNull();
+    expect(initialsSaveMessage({ kind: 'error', code: 'invalid_initials' })).toBe(initialsRuleError);
+    expect(initialsRuleError).toBe('2 letters or digits');
+    expect(initialsSaveMessage({ kind: 'error', code: 'signed_out' })).toBe('You were signed out. Sign in again.');
+    expect(initialsSaveMessage({ kind: 'error', code: 'unavailable' })).toBe('Couldn\'t save your initials. Try again.');
+  });
+
+  it('keeps Save off on open for a human who never saved a colour', () => {
+    const html = renderToStaticMarkup(<ProfileDialog onClose={vi.fn()} ownerId="owner_alice" />);
+    expect(html).toMatch(/<button type="submit" class="kh-btn pri" disabled="">Save<\/button>/u);
   });
 
   it('carries no helper text or notes', async () => {
@@ -96,26 +135,58 @@ describe('ProfileDialog', () => {
   });
 
   it('notices which fields changed', () => {
-    const saved = { username: 'Kevin', color: 'teal' as const };
-    expect(profileChanges({ name: ' Kevin ', color: 'teal' }, saved)).toEqual({ name: false, color: false });
-    expect(profileChanges({ name: 'Kev', color: 'teal' }, saved)).toEqual({ name: true, color: false });
-    expect(profileChanges({ name: 'Kevin', color: 'pink' }, saved)).toEqual({ name: false, color: true });
+    const saved = { username: 'Kevin', color: 'teal' as const, initials: null };
+    expect(profileChanges({ name: ' Kevin ', color: 'teal', initials: '' }, saved)).toEqual({ name: false, color: false, initials: false });
+    expect(profileChanges({ name: 'Kev', color: 'teal', initials: '' }, saved)).toEqual({ name: true, color: false, initials: false });
+    expect(profileChanges({ name: 'Kevin', color: 'pink', initials: '' }, saved)).toEqual({ name: false, color: true, initials: false });
+    expect(profileChanges({ name: 'Kevin', color: 'teal', initials: 'kw' }, saved)).toEqual({ name: false, color: false, initials: true });
+    // Invalid initials are not a change; the same initials in another case are not either.
+    expect(profileChanges({ name: 'Kevin', color: 'teal', initials: 'k!' }, saved).initials).toBe(false);
+    expect(profileChanges({ name: 'Kevin', color: 'teal', initials: 'kw' }, { ...saved, initials: 'KW' }).initials).toBe(false);
+    expect(profileChanges({ name: 'Kevin', color: 'teal', initials: '' }, { ...saved, initials: 'KW' }).initials).toBe(true);
   });
 
   it('saves only the changed fields, each through its own port call', async () => {
     const { store, port } = await readyStore('teal');
-    const saved = { username: 'Kevin', color: 'teal' as const };
-    expect(await saveProfile({ name: 'Kevin', color: 'indigo' }, saved, store)).toEqual({ name: null, color: null });
+    const saved = { username: 'Kevin', color: 'teal' as const, initials: null };
+    expect(await saveProfile({ name: 'Kevin', color: 'indigo', initials: '' }, saved, store)).toEqual({ name: null, color: null, initials: null });
     expect(port.setColor).toHaveBeenCalledWith('indigo');
     expect(port.setUsername).not.toHaveBeenCalled();
+    expect(port.setInitials).not.toHaveBeenCalled();
     expect(store.getSnapshot().color).toBe('indigo');
 
-    expect(await saveProfile({ name: 'Kev', color: 'indigo' }, store.getSnapshot(), store)).toEqual({ name: null, color: null });
+    expect(await saveProfile({ name: 'Kev', color: 'indigo', initials: '' }, store.getSnapshot(), store)).toEqual({ name: null, color: null, initials: null });
     expect(port.setUsername).toHaveBeenCalledWith('Kev');
     expect(port.setColor).toHaveBeenCalledTimes(1);
 
-    expect(await saveProfile({ name: 'Kevin', color: 'pink' }, store.getSnapshot(), store)).toEqual({ name: null, color: null });
+    expect(await saveProfile({ name: 'Kevin', color: 'pink', initials: '' }, store.getSnapshot(), store)).toEqual({ name: null, color: null, initials: null });
     expect(store.getSnapshot()).toMatchObject({ username: 'Kevin', color: 'pink' });
+    expect(port.setInitials).not.toHaveBeenCalled();
+  });
+
+  it('saves the initials alone when only they changed, uppercased, and clears them with `null`', async () => {
+    const { store, port } = await readyStore('teal');
+    expect(await saveProfile({ name: 'Kevin', color: 'teal', initials: 'kw' }, store.getSnapshot(), store)).toEqual({ name: null, color: null, initials: null });
+    expect(port.setInitials).toHaveBeenCalledExactlyOnceWith('KW');
+    expect(port.setUsername).not.toHaveBeenCalled();
+    expect(port.setColor).not.toHaveBeenCalled();
+    expect(store.getSnapshot().initials).toBe('KW');
+
+    // Unchanged initials are not sent again.
+    await saveProfile({ name: 'Kev', color: 'teal', initials: 'KW' }, store.getSnapshot(), store);
+    expect(port.setInitials).toHaveBeenCalledTimes(1);
+
+    // Clearing chosen initials sends `null`.
+    await saveProfile({ name: 'Kev', color: 'teal', initials: '' }, store.getSnapshot(), store);
+    expect(port.setInitials).toHaveBeenLastCalledWith(null);
+    expect(store.getSnapshot().initials).toBeNull();
+  });
+
+  it('shows a server `invalid_initials` as the field\'s rule error', async () => {
+    const { store } = await readyStore('teal', { setInitials: vi.fn(async () => ({ kind: 'error' as const, code: 'invalid_initials' as const })) });
+    expect(await saveProfile({ name: 'Kevin', color: 'teal', initials: 'KW' }, store.getSnapshot(), store))
+      .toEqual({ name: null, color: null, initials: '2 letters or digits' });
+    expect(store.getSnapshot().initials).toBeNull();
   });
 
   it('words each field\'s failure on its own, keeping the other field\'s save', async () => {
@@ -123,13 +194,15 @@ describe('ProfileDialog', () => {
       setColor: vi.fn(async () => ({ kind: 'error' as const, code: 'unavailable' as const })),
       setUsername: vi.fn(async () => ({ kind: 'error' as const, code: 'username_taken' as const })),
     });
-    const saved = { username: 'Kevin', color: 'teal' as const };
-    expect(await saveProfile({ name: 'taken', color: 'indigo' }, saved, store))
-      .toEqual({ name: 'That username is taken.', color: 'Couldn\'t save your color. Try again.' });
+    const saved = { username: 'Kevin', color: 'teal' as const, initials: null };
+    expect(await saveProfile({ name: 'taken', color: 'indigo', initials: '' }, saved, store))
+      .toEqual({ name: 'That username is taken.', color: 'Couldn\'t save your color. Try again.', initials: null });
     expect(store.getSnapshot()).toMatchObject({ username: 'Kevin', color: 'teal' });
 
     const { store: colorOnly } = await readyStore('teal', { setColor: vi.fn(async () => ({ kind: 'error' as const, code: 'unavailable' as const })) });
-    expect(await saveProfile({ name: 'Kev', color: 'indigo' }, saved, colorOnly)).toEqual({ name: null, color: 'Couldn\'t save your color. Try again.' });
+    expect(await saveProfile({ name: 'Kev', color: 'indigo', initials: 'kw' }, saved, colorOnly))
+      .toEqual({ name: null, color: 'Couldn\'t save your color. Try again.', initials: null });
+    expect(colorOnly.getSnapshot().initials).toBe('KW');
     expect(colorOnly.getSnapshot()).toMatchObject({ username: 'Kev', color: 'teal' });
     expect(colorSaveMessage({ kind: 'error', code: 'signed_out' })).toBe('You were signed out. Sign in again.');
   });

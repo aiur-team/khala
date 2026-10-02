@@ -5,7 +5,7 @@ import type { Harness } from '@khala/contracts/m1/agent-join';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ResolvedHumanColor } from '../../ui/khala/human-colors';
-import { buildIdBadgeResolver, initials, participantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, humanInitials, initials, participantHue } from '../../ui/khala/identity';
 import type { ChannelAgentView } from './controller';
 import { participantRosterName } from './participant-name';
 import { groupRoster, type RosterGroup } from './roster-model';
@@ -56,7 +56,11 @@ export type ChannelMembers = Readonly<{
 }>;
 
 export type MemberInput = Readonly<{
-  viewer: Readonly<{ participantId?: string; ownerId?: string; name?: string; email?: string }>;
+  viewer: Readonly<{
+    participantId?: string; ownerId?: string; name?: string; email?: string;
+    /** The viewer's chosen initials; without them the viewer reads `YO` (§3). */
+    initials?: string | null;
+  }>;
   humans: readonly Readonly<{ participantId: string; ownerId?: string; displayName: string }>[];
   agents: readonly ChannelAgentView[];
   currentNames?: ReadonlyMap<ParticipantId, string> | undefined;
@@ -72,20 +76,25 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     const detail = participantId === undefined ? undefined : describeParticipant?.(participantId);
     return detail?.kind === 'human' ? detail.email ?? null : null;
   };
+  const chosenInitials = (participantId: string): string | null => {
+    const detail = describeParticipant?.(participantId);
+    return detail?.kind === 'human' ? detail.initials ?? null : null;
+  };
   const viewerName = participantRosterName(viewer.name ?? '', 'You');
   const viewerOwnerId = viewer.ownerId ?? '';
   const viewerColor = colorFor?.(viewerOwnerId) ?? null;
   const viewerMember: HumanMember = {
     kind: 'human', participantId: viewer.participantId ?? 'viewer', ownerId: viewerOwnerId,
     name: viewerName || 'You', short: 'You', hue: viewerColor?.hue ?? participantHue({ kind: 'human', ownerId: viewerOwnerId, isViewer: true }), color: viewerColor,
-    initials: 'YO', isViewer: true, email: viewer.email ?? emailOf(viewer.participantId),
+    initials: viewer.initials ?? 'YO', isViewer: true, email: viewer.email ?? emailOf(viewer.participantId),
   };
   const humanMembers = humans.map((human): HumanMember => {
     const name = participantRosterName(human.displayName, 'Channel member');
     const ownerId = human.ownerId ?? human.participantId;
     const color = colorFor?.(ownerId) ?? null;
     return { kind: 'human', participantId: human.participantId, ownerId, name, short: firstName(name),
-      hue: color?.hue ?? participantHue({ kind: 'human', ownerId }), color, initials: initials(name), isViewer: false, email: emailOf(human.participantId) };
+      hue: color?.hue ?? participantHue({ kind: 'human', ownerId }), color, initials: humanInitials(name, chosenInitials(human.participantId)),
+      isViewer: false, email: emailOf(human.participantId) };
   });
   // The name the thread resolves for an agent, so both apply the badge rule to the same string.
   const threadName = (agent: ChannelAgentView) => {
@@ -117,8 +126,9 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
       idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
       hue: participantHue({ kind: 'agent', participantId: agent.participantId }),
       ownerHue: ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId }), ownerColor,
-      // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster.
-      ownerName, ownerInitials: owner?.isViewer ? viewerMember.initials : initials(ownerName), harness: described?.harness ?? null,
+      // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster, until they choose initials.
+      // Another owner's member initials already carry their choice.
+      ownerName, ownerInitials: owner?.isViewer ? viewerMember.initials : described?.ownerInitials ?? owner?.initials ?? initials(ownerName), harness: described?.harness ?? null,
       isViewerOwned: Boolean(viewer.ownerId && agent.ownerId === viewer.ownerId), agent,
     };
   });
