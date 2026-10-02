@@ -94,18 +94,21 @@ const SCREEN_SLACK = 0.005;
  * SCREEN_SLACK and its cause is `screenCause`; an unlisted screen gates at THRESHOLD.
  * The two `draft` ceilings were re-measured for operator request 2026-10-02: no machine tag; agent bubbles
  * tinted by owner (the agent-row-owner-tint mask leaves a bubble-edge residue; was .0625 dark, .0647 light).
+ * The 16 thread, chips, pop, failed-send and draft ceilings with a viewer, Kai or agent bubble on screen were
+ * re-measured for operator request 2026-10-02: per-human colours (the viewer's bubble is blue `solid`, Kai's are green
+ * and agent tints follow the owner's resolved colour; main's ratios on the same machine are unchanged).
  */
 const SCREEN_MEASURED: Readonly<Record<string, number>> = {
-  '1440-dark-thread': 0.0775, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0665, '1440-dark-detail-agent': 0.1267,
-  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0698, '1440-dark-pop-invite': 0.0794, '1440-dark-pop-add-agent': 0.0314,
-  '1440-dark-failed-send': 0.0775, '1440-dark-draft': 0.0678, '1100-dark-thread': 0.1340, '900-dark-thread': 0.1747,
+  '1440-dark-thread': 0.0938, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0881, '1440-dark-detail-agent': 0.1267,
+  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0892, '1440-dark-pop-invite': 0.0958, '1440-dark-pop-add-agent': 0.0314,
+  '1440-dark-failed-send': 0.0938, '1440-dark-draft': 0.0901, '1100-dark-thread': 0.1442, '900-dark-thread': 0.1747,
   '760-dark-thread': 0.0965, '760-dark-list': 0.0201, '390-dark-thread': 0.1055, '390-dark-list': 0.0855, '390-dark-roster': 0.0718,
-  '390-dark-chips': 0.0689, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
-  '1440-light-thread': 0.0807, '1440-light-roster': 0.0260, '1440-light-chips': 0.0684, '1440-light-detail-agent': 0.1332,
-  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0816, '1440-light-pop-invite': 0.0842, '1440-light-pop-add-agent': 0.0342,
-  '1440-light-failed-send': 0.0807, '1440-light-draft': 0.0705, '1100-light-thread': 0.1371, '900-light-thread': 0.1835,
+  '390-dark-chips': 0.0966, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
+  '1440-light-thread': 0.0973, '1440-light-roster': 0.0260, '1440-light-chips': 0.0919, '1440-light-detail-agent': 0.1332,
+  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0953, '1440-light-pop-invite': 0.1009, '1440-light-pop-add-agent': 0.0342,
+  '1440-light-failed-send': 0.0973, '1440-light-draft': 0.0929, '1100-light-thread': 0.1492, '900-light-thread': 0.1835,
   '760-light-thread': 0.0996, '760-light-list': 0.0205, '390-light-thread': 0.1139, '390-light-list': 0.0862,
-  '390-light-roster': 0.0727, '390-light-chips': 0.0756, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
+  '390-light-roster': 0.0727, '390-light-chips': 0.1023, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
 };
 const screenCeiling = (c: ScreenCase) => {
   const measured = SCREEN_MEASURED[screenName(c)];
