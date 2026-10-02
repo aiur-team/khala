@@ -96,7 +96,7 @@ The MCP tools use these shapes:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `khala_join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName }`. Errors: `invalid_link`, `link_unavailable`, `join_expired` |
+| `khala_join` | `{ link: string, label?: string }` | `{ state: 'awaiting_confirmation', confirmUrl }` or `{ state: 'connected', channelName }`. `label` is optional and ignored: Khala assigns `<OwnerUsername>-<Claude\|Codex>` (then `-2`, `-3`, etc. for collisions). Errors: `invalid_link`, `link_unavailable`, `join_expired` |
 | `khala_status` | `{}` | `{ state, channelName?, agentUserId?, unread: number, listeningMode: "steer" \| "sync" \| "async" }` |
 | `khala_read` | `{ limit?: number (1..100, default 30), before?: string }` | `{ messages: InboxEntry[], nextBefore?: string }` |
 | `khala_send` | `{ text: string (1..8000) }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |

@@ -1,52 +1,37 @@
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
+import { nameKey, ownerAgentsKey } from '@khala/contracts/m1/names';
+import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
 import type { Authentication, MutationAuthorization } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
-import { createControlStore, type BlobsStoreLike } from '../runtime/control-store';
+import { createControlStore } from '../runtime/control-store';
 import { createJoinStore, hashPollSecret, openCredentials, type JoinRecord } from './store';
 import { createAgentJoinHumanHandlers } from './human-routes';
+import { durableStores } from './testing/store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
-function durableStores() {
-  const namespaces = new Map<string, Map<string, { data: unknown; etag: string }>>();
-  let revision = 0;
-  const storeFor = (name: string): BlobsStoreLike => {
-    let records = namespaces.get(name);
-    if (!records) { records = new Map(); namespaces.set(name, records); }
-    const backing = records;
-    return {
-      async getWithMetadata(key) { return backing.get(key) ?? null; },
-      async setJSON(key, data, options) {
-        const current = backing.get(key);
-        if (options?.onlyIfNew && current) return { modified: false, etag: current.etag };
-        if (options?.onlyIfMatch && current?.etag !== options.onlyIfMatch) return { modified: false, ...(current ? { etag: current.etag } : {}) };
-        const etag = String(++revision);
-        backing.set(key, { data: structuredClone(data), etag });
-        return { modified: true, etag };
-      },
-    };
-  };
-  return { storeFor };
-}
-async function fixture() {
+
+async function fixture(options: { username?: string; harness?: 'claude' | 'codex'; email?: string } = {}) {
   let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
   const blobs = durableStores();
   const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
   const joins = createJoinStore({ store, clock, random: randomBytes });
   const joinId = randomBytes(16).toString('base64url');
-  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() };
+  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() };
   expect(await joins.create(record)).toBe('created');
   let ownerId = 'owner' as OwnerId;
-  const principal = () => ({ ownerId, verifiedEmail: 'maya99@x' } as AuthPrincipal);
+  const principal = () => ({ ownerId, verifiedEmail: options.email ?? 'maya99@x' } as AuthPrincipal);
+  if (options.username) await store.compareAndSet({ key: profileRecordKey(ownerId), expectedRevision: null, operationId: 'profile',
+    next: { value: { v: 1, ownerId, username: options.username, updatedAt: new Date(now).toISOString() }, expiresAt: null } });
   const auth = {
     authenticateRequest: vi.fn(async (): Promise<Authentication> => ({ kind: 'authenticated', context: { principal: principal(), csrfToken: 'csrf' } })),
     requireHumanMutation: vi.fn(async (): Promise<MutationAuthorization> => ({ kind: 'authorized', context: { principal: principal(), csrfToken: 'csrf' } })),
   };
   const deps = { auth, joins, store, clock, random: randomBytes, sealSecret: secret,
     inspectMembership: vi.fn(async (): Promise<GatewayInspection> => ({ kind: 'joined', historyReady: true })),
-    provisioner: { provision: vi.fn(async () => ({ kind: 'ok' as const, credentials })) },
+    provisioner: { agentUserId: vi.fn(() => credentials.userId), provision: vi.fn(async () => ({ kind: 'ok' as const, credentials })) },
   };
   const request = (method = 'GET', query = `joinId=${joinId}`) => new Request(`https://khala.test/api/human/agent-join?${query}`, { method });
   return { deps, joins, store, record, joinId, request, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
@@ -56,12 +41,12 @@ it('confirms, seals credentials and creates a permanent owner map through the re
   expect((await f.handlers.view(f.request())).status).toBe(200);
   const response = await f.handlers.confirm(f.request('POST'));
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ joinId: f.joinId, label: 'Claude', harness: 'claude', channelName: 'Channel', roomId: credentials.roomId, state: 'confirmed', agentUserId: credentials.userId });
+  expect(await response.json()).toEqual({ joinId: f.joinId, label: 'Maya-Claude', harness: 'claude', channelName: 'Channel', roomId: credentials.roomId, state: 'confirmed', agentUserId: credentials.userId });
   const read = await f.joins.read(f.joinId); if (read.kind !== 'found') throw Error();
   expect(read.record.ownerId).toBe('owner');
   expect(openCredentials(secret, f.joinId, read.record.sealedCredentials!)).toEqual(credentials);
   const map = await f.store.read(agentOwnerRecordKey(credentials.userId)); if (map.kind !== 'record') throw Error();
-  expect(map.record.value).toEqual({ matrixUserId: credentials.userId, ownerId: 'owner', ownerLabel: 'Maya', harness: 'claude', label: 'Claude', createdAt: f.record.createdAt });
+  expect(map.record.value).toEqual({ matrixUserId: credentials.userId, ownerId: 'owner', ownerLabel: 'Maya', harness: 'claude', label: 'Maya-Claude', createdAt: f.record.createdAt });
   expect(map.record.expiresAt).toBeNull(); expect(map.record.operationId).toMatch(/^agents\.[a-f0-9]{64}\.create\.[a-f0-9]{16}$/);
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
   expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
@@ -151,4 +136,53 @@ it('shows expired confirmed records with identity and refuses confirmation', asy
   const f = await fixture(); await f.handlers.confirm(f.request('POST')); f.advance();
   expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: 'expired', agentUserId: credentials.userId });
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
+});
+
+it('assigns the profile-based name, previews it and persists the reservation and owner index', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  for (const handler of [f.handlers.view, f.handlers.status]) {
+    expect(await (await handler(f.request())).json()).toMatchObject({ state: 'pending', label: 'Kevin-Codex' });
+  }
+  const confirmed = await f.handlers.confirm(f.request('POST'));
+  expect(confirmed.status).toBe(200);
+  expect(await confirmed.json()).toMatchObject({ label: 'Kevin-Codex', state: 'confirmed' });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledWith({ joinId: f.joinId, ownerId: 'owner', label: 'Kevin-Codex', roomId: credentials.roomId });
+  const owner = await f.store.read(agentOwnerRecordKey(credentials.userId));
+  expect(owner.kind === 'record' && owner.record.value).toMatchObject({ label: 'Kevin-Codex', ownerLabel: 'Kevin' });
+  const reservation = await f.store.read(nameKey('Kevin-Codex'));
+  expect(reservation.kind === 'record' && reservation.record.value).toEqual({ v: 1, kind: 'agent', ownerId: 'owner', matrixUserId: credentials.userId });
+  const index = await f.store.read(ownerAgentsKey('owner'));
+  expect(index.kind === 'record' && index.record.value).toEqual({ v: 1, ownerId: 'owner', agents: [credentials.userId] });
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+});
+it('uses the email suggestion without reserving a username when there is no profile', async () => {
+  const f = await fixture({ harness: 'codex', email: 'kevin.weaver2@x' });
+  expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ label: 'Kevin-Codex' });
+  expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ label: 'Kevin-Codex' });
+  expect(await f.store.read(nameKey('Kevin'))).toEqual({ kind: 'absent' });
+});
+it('reuses the reservation after provisioning fails and does not append the index twice', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  f.deps.provisioner.provision.mockRejectedValueOnce(Error('offline'));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ label: 'Kevin-Codex' });
+  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
+  const index = await f.store.read(ownerAgentsKey('owner'));
+  expect(index.kind === 'record' && index.record.value).toMatchObject({ agents: [credentials.userId] });
+});
+it('fails closed when the profile or name namespace is unavailable', async () => {
+  for (const prefix of ['profiles/', 'names/']) {
+    const f = await fixture(); const read = f.store.read, write = f.store.compareAndSet;
+    vi.spyOn(f.store, 'read').mockImplementation((key, ...args) => key.startsWith(prefix) ? Promise.resolve({ kind: 'unavailable' }) : read(key, ...args));
+    vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, ...args) => input.key.startsWith(prefix) ? Promise.resolve({ kind: 'unavailable' }) : write(input, ...args));
+    expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+    expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+  }
+});
+it('does not fail confirmation when the owner index is unavailable', async () => {
+  const f = await fixture(); const read = f.store.read;
+  vi.spyOn(f.store, 'read').mockImplementation((key, ...args) => key.startsWith('owner-agents/') ? Promise.reject(Error('offline')) : read(key, ...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
 });

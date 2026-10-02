@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
-import { agentOwnerRecordKey, ownerFirstName, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
+import { agentOwnerRecordKey, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
+import { defaultAgentName, suggestUsername } from '@khala/contracts/m1/names';
+import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
 import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
-import { writeAndResolve } from '../invitations/internal';
+import { safeRead, writeAndResolve } from '../invitations/internal';
+import { allocateAgentName, indexOwnerAgent } from './names';
 import type { AgentProvisioner } from './provision';
 import { createJoinStore, effectiveState, isJoinId, sealCredentials, type JoinRecord } from './store';
 
@@ -25,6 +28,13 @@ const error = (status: number, code: string) => json(status, { error: code });
 const unavailable = () => error(503, 'unavailable');
 
 export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
+  async function usernameOf(principal: AuthPrincipal): Promise<string | null> {
+    const read = await safeRead(deps.store, profileRecordKey(principal.ownerId));
+    if (read.kind === 'unavailable') return null;
+    if (read.kind === 'absent') return suggestUsername(principal.verifiedEmail);
+    const decoded = decodeProfileRecord(read.record.value);
+    return decoded.ok && decoded.value.ownerId === principal.ownerId ? decoded.value.username : null;
+  }
   function viewOf(record: JoinRecord): AgentJoinView {
     const state = effectiveState(record, deps.clock());
     return { joinId: record.joinId, label: record.label, harness: record.harness, channelName: record.channelName,
@@ -53,17 +63,24 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         if (result.kind !== 'applied') return unavailable();
         record = locked; revision = result.revision;
       }
-      const provisioned = await deps.provisioner.provision({ joinId, ownerId: principal.ownerId, ownerEmail: principal.verifiedEmail, label: record.label, roomId: record.roomId });
+      const username = await usernameOf(principal);
+      if (!username) return unavailable();
+      const userId = deps.provisioner.agentUserId(joinId, principal.ownerId);
+      const name = await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness });
+      if (!name) return unavailable();
+      const provisioned = await deps.provisioner.provision({ joinId, ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
       const { credentials } = provisioned;
+      if (credentials.userId !== userId) return unavailable();
       const owner: AgentOwnerRecord = { matrixUserId: credentials.userId, ownerId: principal.ownerId,
-        ownerLabel: ownerFirstName(principal.verifiedEmail), harness: record.harness, label: record.label, createdAt: new Date(deps.clock()).toISOString() };
+        ownerLabel: username, harness: record.harness, label: name, createdAt: new Date(deps.clock()).toISOString() };
       const mapped = await writeAndResolve(deps.store, { key: agentOwnerRecordKey(credentials.userId), expectedRevision: null,
         operationId: `agents.${createHash('sha256').update(credentials.userId).digest('hex')}.create.${Buffer.from(deps.random(8)).toString('hex')}`,
         next: { value: owner, expiresAt: null },
       });
       if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId)) return unavailable();
-      const next: JoinRecord = { ...record, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
+      await indexOwnerAgent(deps.store, principal.ownerId, userId);
+      const next: JoinRecord = { ...record, label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
         sealedCredentials: sealCredentials(deps.sealSecret, joinId, credentials) };
       const result = await deps.joins.replace(joinId, revision, next, 'confirm');
       if (result.kind === 'applied') return json(200, viewOf(next));
@@ -97,7 +114,15 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (mutation) return await confirm(joinId, principal);
       const read = await deps.joins.read(joinId);
       if (read.kind !== 'found') return read.kind === 'absent' ? error(404, 'not_found') : unavailable();
-      return await membership(principal, read.record) ?? json(200, viewOf(read.record));
+      const denied = await membership(principal, read.record);
+      if (denied) return denied;
+      const view = viewOf(read.record);
+      if (view.state === 'pending') {
+        const username = await usernameOf(principal);
+        if (!username) return unavailable();
+        view.label = defaultAgentName(username, read.record.harness);
+      }
+      return json(200, view);
     } catch { return unavailable(); }
   };
   return { view: handler(false), confirm: handler(true), status: handler(false) };

@@ -419,6 +419,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       // Owner-map agents are not indexed by participant id.
       void targetParticipantIds;
       const participants: Participant[] = [];
+      const ownerUsernames = new Map<string, string | null>();
       for (const userId of userIds) {
         const name = displayName(safeObject(joined[userId])?.display_name, userId);
         const human = participantFor(userId);
@@ -429,8 +430,17 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           continue;
         }
         const agent = await readAgentOwner(userId, call);
+        if (agent && !ownerUsernames.has(agent.ownerId)) {
+          let username: string | null = null;
+          try {
+            const read = await options.store.read(profileRecordKey(agent.ownerId), call);
+            const decoded = read.kind === 'record' ? decodeProfileRecord(read.record.value) : null;
+            if (decoded?.ok && decoded.value.ownerId === agent.ownerId) username = decoded.value.username;
+          } catch { /* Keep the stored owner label if the current profile cannot be read. */ }
+          ownerUsernames.set(agent.ownerId, username);
+        }
         participants.push(agent ? { matrixUserId: userId, participantId: agentParticipantId(userId),
-          ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: agent.ownerLabel, harness: agent.harness }
+          ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: ownerUsernames.get(agent.ownerId) ?? agent.ownerLabel, harness: agent.harness }
           : { matrixUserId: userId, displayName: name, kind: 'unknown' });
       }
       return { kind: 'ok', participants };
