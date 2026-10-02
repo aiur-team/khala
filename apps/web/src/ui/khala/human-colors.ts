@@ -129,9 +129,13 @@ export function humanColorStyle(color: ResolvedHumanColor, role: 'me' | 'human' 
   return { '--oh': color.hue, '--ob': color.tint } as CSSProperties;
 }
 
-/** The variant swatch for avatars, badges and chips: set only for tiers 1-2, which tier 0's hue rules cannot draw. */
-export function variantSwatch(color: ResolvedHumanColor | null | undefined): string | undefined {
-  return color && color.tier > 0 ? color.tint : undefined;
+/**
+ * The fill for avatars, badges and chips that carry white initials, at every
+ * tier. Tier 0's `solid` and the variants' `tiers[t].dark` all keep white text
+ * at least 4.5:1, which the hue-only fill did not for green, teal or lime.
+ */
+export function colorSwatch(color: ResolvedHumanColor | null | undefined): string | undefined {
+  return color?.tint;
 }
 
 const HumanColors = createContext<ReadonlyMap<string, ResolvedHumanColor> | undefined>(undefined);

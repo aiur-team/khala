@@ -8,7 +8,9 @@
 .kh-d-hero .kh-av { width: 64px; height: 64px; cursor: default; }
 .kh-d-hero .kh-av img { width: 32px; height: 32px; }
 .kh-d-hero b { font-size: 1.05rem; }
-.kh-d-hero span { font-size: .8rem; color: var(--muted); }
+.kh-d-hero span { font-size: .8rem; }
+/* Only the hero's own text lines are muted: an avatar keeps its white (or own) initials. */
+.kh-d-hero > span:where(:not(.kh-av)) { color: var(--muted); }
 .kh-d-hero .kh-email { max-width: 100%; color: var(--fg); overflow-wrap: anywhere; user-select: text; }
 .kh-d-sec { display: flex; flex-direction: column; gap: .4rem; padding: .85rem; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--hairline); }
 .kh-d-lbl { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 600; }
@@ -23,7 +25,7 @@
 .kh-d-owner { white-space: nowrap; max-width: 100%; display: inline-flex; align-items: center; gap: .4rem; margin-top: .2rem; padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid hsl(var(--oh) 60% 55% / .4); background: hsl(var(--oh) 60% 50% / .1); color: var(--fg); font: inherit; font-size: .78rem; cursor: pointer; }
 .kh-d-owner > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .kh-d-owner b { font-weight: 600; }
-.kh-d-owner i { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--hc, hsl(var(--oh) 65% 48%)); color: #fff; font: 700 8px/1 "JetBrains Mono", monospace; font-style: normal; }
+.kh-d-owner i { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; font: 700 8px/1 "JetBrains Mono", monospace; font-style: normal; }
 .kh-d-agents { display: flex; flex-direction: column; gap: .5rem; }
 .kh-d-agent { display: flex; align-items: center; gap: .6rem; padding: .4rem; border-radius: 12px; border: 1px solid transparent; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .kh-d-agent:hover { background: var(--surface-3); }

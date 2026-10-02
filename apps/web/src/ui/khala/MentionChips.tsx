@@ -15,7 +15,7 @@ export type MentionTarget = Readonly<{
   display: string;
   hue: number;
   ownerHue: number;
-  /** The human's (an agent's: its owner's) variant colour, tiers 1-2 only; tier 0 draws from the hue. */
+  /** The human's (an agent's: its owner's) resolved `tint`, the badge fill under white initials; absent falls back to the hue. */
   swatch?: string;
   /** An agent's owner initials; a human's own. */
   ownerInitials: string;

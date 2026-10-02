@@ -11,7 +11,7 @@ import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
 import { defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HumanColorsProvider, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, variantSwatch } from '../../ui/khala/human-colors';
+import { HumanColorsProvider, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, colorSwatch } from '../../ui/khala/human-colors';
 import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
@@ -132,7 +132,7 @@ function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, on
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
   const pill = <><i>{agent.ownerInitials}</i>
     {agent.isViewerOwned ? <span>Your agent</span> : <span>Owned by <b>{agent.ownerName}</b></span>}</>;
-  const swatch = variantSwatch(agent.ownerColor);
+  const swatch = colorSwatch(agent.ownerColor);
   const pillStyle = { '--oh': agent.ownerHue, ...(swatch ? { '--hc': swatch } : {}) } as CSSProperties;
   return <ParticipantDetail name={`${agent.name} details`} kind="Agent" onClose={onClose}>
     <div className="kh-d-hero"><MemberAvatar member={agent} /><AgentName agent={agent} /><span>{harnessName(agent)}</span>

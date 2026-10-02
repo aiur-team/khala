@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
-import { HUMAN_PALETTE, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, type ResolvedHumanColor } from './human-colors';
+import { HUMAN_PALETTE, colorSwatch, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, type ResolvedHumanColor } from './human-colors';
 
 const slot = (color: ResolvedHumanColor | undefined) => color ? `${color.id}@${color.tier}` : undefined;
 const slots = (map: ReadonlyMap<string, ResolvedHumanColor>) => Object.fromEntries([...map].map(([ownerId, color]) => [ownerId, slot(color)]));
@@ -124,5 +124,23 @@ describe('palette contrast (WCAG 2.x)', () => {
     const { tint } = resolvedColor(id, tier);
     expect(ratio(rgb('#edeef0'), mix(tint, 0.30, '#292d34'))).toBeGreaterThanOrEqual(4.5);
     expect(ratio(rgb('#2a2520'), mix(tint, 0.28, '#e9dcbf'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(cases)('%s tier %i keeps white avatar initials >= 4.5:1 on its swatch', (id, tier) => {
+    const color = resolvedColor(id, tier);
+    expect(colorSwatch(color)).toBe(color.tint);
+    expect(ratio(white, rgb(color.tint))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // The CSS fallback `hsl(var(--oh) 65% 29%)` for avatars drawn from a hue alone (no provider, the channel list).
+  const hsl = (h: number, s: number, l: number) => {
+    const a = s * Math.min(l, 1 - l);
+    const f = (n: number) => { const k = (n + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+    return [f(0), f(8), f(4)];
+  };
+
+  it('keeps white initials >= 4.5:1 on the hue-only fallback for every hue', () => {
+    const worst = Math.min(...Array.from({ length: 360 }, (_, hue) => ratio(white, hsl(hue, 0.65, 0.29))));
+    expect(worst).toBeGreaterThanOrEqual(4.5);
   });
 });

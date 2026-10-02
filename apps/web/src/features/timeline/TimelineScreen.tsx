@@ -27,7 +27,7 @@ import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
-import { humanColorOf, ownerColorOf, useHumanColor, variantSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
+import { humanColorOf, ownerColorOf, useHumanColor, colorSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
 import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
@@ -216,7 +216,7 @@ export function TimelineScreen({
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
   const colorFor = useHumanColor();
-  const data =useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const rows = useMemo(() => dedupeByKey(data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })),
     row => row.kind === 'channel_event' ? row.content.key : undefined), [data.rows, data.items]);
   const evidenceView = useSyncExternalStore(
@@ -477,9 +477,9 @@ export function TimelineScreen({
     }
     if (identity.kind === 'human') {
       return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={initials(identity.label)} ghost={ghost}
-        swatch={variantSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
+        swatch={colorSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
     }
-    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={variantSwatch(identity.color)}
+    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={colorSwatch(identity.color)}
       ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}
       initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
   }
@@ -493,7 +493,7 @@ export function TimelineScreen({
     return [{
       id: identity.participantId, kind: identity.kind, label, display: identity.idBadge ? `${label} ${identity.idBadge}` : label,
       hue: identity.hue, ownerHue: identity.kind === 'agent' ? identity.ownerHue : identity.hue,
-      ...(identity.color && identity.color.tier > 0 ? { swatch: identity.color.tint } : {}),
+      ...(identity.color ? { swatch: identity.color.tint } : {}),
       ownerInitials: ownerBadge(identity),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
     }];
