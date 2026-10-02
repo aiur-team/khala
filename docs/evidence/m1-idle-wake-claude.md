@@ -1,8 +1,8 @@
 # KM-111: Claude idle wake evidence
 
-Status: **prototype validated; live evidence pending**. Updated 2026-10-02T05:05Z.
+Status: **prototype validated; live acceptance deferred to KM-151**.
 Unit tests do not establish interactive idle wake, plugin reload, or session-id
-agreement. KM-146 must wait for the live decisions below.
+agreement. KM-146 uses the Executor defaults below pending KM-151.
 
 ## Versions and tested bytes
 
@@ -12,102 +12,62 @@ agreement. KM-146 must wait for the live decisions below.
 - SPIKE: `/home/everdred/.aiur/workspaces/aiur-team/khala/834/experiments/m1-idle-wake/claude`.
 - Integration base: `main`.
 
-## Setup actually needed
+## Setup and scope decision
 
-No plugin was installed and no shared spike state was created by this worker.
-The Step 8 worker preflight failed on both required paths with
-`[Errno 30] Read-only file system`:
-
-- Creating `/home/everdred/.local/state/khala/claude/.km111-worker-write-probe`.
-- Opening `/home/everdred/github/everdred/khala/AGENT-MESSAGES.md` for an empty append.
-
-The Executor must run the stub inbox and log commands and coordinate the pane.
-Do not substitute workspace-local state for the pane's default state: that would
-test a different environment. Do not install before confirming pane serialization
-with KM-112/KM-151 and monitor readiness.
+Acting on @its-everdred (CODEOWNER for all touched paths), issue comment
+5945958617: all manual pane legs are deferred to KM-151 live acceptance.
+No spike plugin was installed and no shared state was created. The earlier
+read-only preflight is superseded by this scope decision; no further shared
+state or AGENT-MESSAGES writes are required.
 
 ## Local validation
 
-All completed before live testing:
+- `node --test experiments/m1-idle-wake/claude/hook.test.mjs`: 8 passed.
+- `claude plugin validate experiments/m1-idle-wake/claude/marketplace`: passed.
+- `claude plugin validate --strict experiments/m1-idle-wake/claude/marketplace/plugins/khala-wake-spike`: passed.
+- `git diff --check`: passed.
 
-| Check | Result |
-| --- | --- |
-| `node --test experiments/m1-idle-wake/claude/hook.test.mjs` | 8 passed, 0 failed |
-| `claude plugin validate experiments/m1-idle-wake/claude/marketplace` | Passed, no warnings |
-| `claude plugin validate --strict experiments/m1-idle-wake/claude/marketplace/plugins/khala-wake-spike` | Passed, no warnings |
-| `git diff --check` | Passed |
-
-Tests cover inert sessions/missing inboxes, exact C6 delivery and deduplication,
-non-message cursor advancement, Stop recursion, busy suppression, idle wake exit
-2, unchanged watcher cursor, supersession, expiry, attribution of adversarial
-text, file modes, invalid ids, and MCP handshake/probe logging. These run in
-temporary state directories and leave no pane installation behind.
+Tests exercise inert sessions, exact C6 delivery, deduplication, Stop recursion,
+busy suppression, watcher ownership/expiry, unchanged watcher cursor, file modes,
+untrusted attributed text, invalid ids, and MCP handshake/probe logging.
+They establish prototype behavior only, not interactive harness behavior.
 
 ## Manual legs
 
 | Leg | Outcome | Hook timestamps | Pane reply time |
 | --- | --- | --- | --- |
-| L0 preflight | Pending Executor execution | None | None |
-| L1 install/reload hooks | Pending L0 | None | None |
-| L1b resume if needed | Pending L1 outcome | None | None |
-| L1c MCP and ids | Pending installation | None | None |
-| L2 10-minute idle, AE2 | Pending quiet window | None | None |
-| L3 20-second tool, AE3 | Pending pane | None | None |
-| L4 two entries 300 ms apart | Pending quiet window | None | None |
-| L5 65-minute lifetime | Not run: shared state/message writes denied | None | None |
-| L6 ids after clear | Not run: pane coordination writes denied | None | None |
-| L7 teardown | Pending; this worker installed nothing | None | None |
-
-## Executor handoff
-
-First append the following request to the shared `AGENT-MESSAGES.md` when the
-pane serialization lock is available. The worker cannot publish it itself.
-
-```text
-### 2026-10-02T05:05Z — From: KM-111 worker; To: Executor
-
-Request leg L0; target: Claude test session.
-KM-111 spike, leg L0. Do not use any Khala tool. Run these in Bash and reply with the outputs: `claude --version`, `echo "$CLAUDE_CODE_SESSION_ID"`, `pwd`. Also state whether your AGENT-MESSAGES monitor is armed. Reply under `### <ts> — From: Claude test session; To: Executor`.
-
-Worker Step 8 failed: both the default state path and AGENT-MESSAGES.md are read-only. Please execute the stub-inbox and log commands for each manual leg, relay the pane responses and sanitized logs back to ticket 834, and guard quiet windows. Prototype SPIKE=/home/everdred/.aiur/workspaces/aiur-team/khala/834/experiments/m1-idle-wake/claude; tested commit 5afe6e9f4745a4a00f526b793b9fbb0af8aa1147.
-```
-
-Continue with the exact leg text and timing criteria in
-`docs/build/m1/tickets/KM-111.md:195-247`. Logs use `event` for the hook event
-and `action` for `watch-armed`, `wake`, `watch-superseded`, `watch-orphan-exit`,
-and `watch-expired`. Record append receipt event ids and times, and reconcile
-them against delivery ids/counts; never infer delivery from a pane claim alone.
+| L0 preflight | deferred to KM-151 live acceptance | None | None |
+| L1 install/reload hooks | deferred to KM-151 live acceptance | None | None |
+| L1b resume | deferred to KM-151 live acceptance | None | None |
+| L1c MCP and ids | deferred to KM-151 live acceptance | None | None |
+| L2 10-minute idle, AE2 | deferred to KM-151 live acceptance | None | None |
+| L3 20-second tool, AE3 | deferred to KM-151 live acceptance | None | None |
+| L4 two entries 300 ms apart | deferred to KM-151 live acceptance | None | None |
+| L5 65-minute lifetime | deferred to KM-151 live acceptance | None | None |
+| L6 ids after clear | deferred to KM-151 live acceptance | None | None |
+| L7 teardown | deferred to KM-151 live acceptance | None | None |
 
 ## Gaps
 
-- Linear access returned `missing_linear_api_token`; no Agent Workpad comment
-  could be read or posted. The durable workpad below substitutes until restored.
-- Interactive version/monitor/session identity has not been observed by L0.
-- No AE2/AE3, reload, long-lifetime, or id-agreement claim is supported yet.
-- Local self-review moved the prompt's busy write before inbox reading and added
-  a final watcher ownership check. No independent review or full CI was run.
-- No product config or package surface changed. Contract C5/C6 remains untouched.
+Interactive idle wake, reload, lifetime, and session-id agreement on 2.1.287
+remain untested. Earlier 2.1.282 evidence of UserPromptSubmit on a wake turn is
+in `experiments/interactive-cli/claude/live-proof.md`; it is not a 2.1.287 result.
+No product package/config or contract changes are included.
 
 ## Agent Workpad
 
-Plan: implement isolated plugin/stub/probe; verify locally; coordinate L0–L7;
-replace pending decisions with observed outcomes; review and open ready PR after
-CI. Code and local validation are complete; live legs and shipping remain open.
-
-Handoff phase: work, waiting for Executor execution at the shared-pane gate.
-No quiet window is currently claimed by this worker. No manual test command
-was sent to a pane. Keep this ticket active until live outcomes and teardown
-are recorded; do not hand it to human review as completed.
+Prototype and local validation complete. Manual execution is deferred by the
+Executor scope decision above. Shipping targets `main`. No plugin or spike state
+requires cleanup. The earlier request for Executor pane execution is superseded.
 
 ## Decisions for KM-146
 
-**Pending values are intentionally outside the final yes/no schema. This block
-is not an acceptance result and must not be consumed as product configuration.**
+These are Executor-specified defaults, not live observations:
 
-- `reload_plugins_loads_hooks: pending`
-- `reload_plugins_loads_mcp: pending`
+- `reload_plugins_loads_hooks: untested`
+- `reload_plugins_loads_mcp: untested`
 - `resume_keeps_session_id: untested`
-- `rewake_fires_user_prompt_submit: pending`
-- `ids_agree (hook session_id = Bash $CLAUDE_CODE_SESSION_ID = MCP env): pending`
-- `recommended_watcher_deadline_seconds: pending (4200 if L5 passes, otherwise 3000)`
-- `required_user_setup: pending live reload/resume evidence`
+- `rewake_fires_user_prompt_submit: untested`
+- `ids_agree (hook session_id = Bash $CLAUDE_CODE_SESSION_ID = MCP env): untested`
+- `recommended_watcher_deadline_seconds: 3000`
+- `required_user_setup: install the plugin at user scope, then restart the session with claude --resume <id>`
