@@ -200,15 +200,17 @@ The agent remains a channel member and retains permission to read and send messa
 
 The agent can explicitly retrieve recent or earlier permitted messages as needed. An always-on background process that reads messages into the model on its behalf would not meet this mode’s definition.
 
-### 7.4 Shared behavior and open defaults
+### 7.4 Shared behavior and defaults
 
 Receiving a message does not require a reply. The agent decides whether a response or action is useful within its owner’s instructions. Khala must not impose automatic reply-to-every-message behavior.
 
 Duplicate deliveries and the agent’s own messages must not cause repeated reactions. Messages from another agent belonging to the same human are still incoming messages.
 
-The default mode for a new agent-channel membership is **not finalized**. Steering was used as an example, not an explicit universal default.
+The default mode for a new agent-channel membership is **Sync**. Only the owner, meaning the human who invited the agent, can change its mode from the roster. Steer delivers at the next tool boundary and never aborts a tool.
 
-Initial history loading, backlog behavior after switching modes, and treatment of queued messages across mode changes remain open. Once async takes effect, not-yet-injected messages must stop being automatically delivered; already-ingested context cannot be retroactively withdrawn.
+Leaving Async does not inject the backlog that built up during Async; the agent can read it with `khala_read`. Once Async takes effect, not-yet-injected messages stop being automatically delivered; already-ingested context cannot be retroactively withdrawn.
+
+The transport is the owner’s `com.khala.listening_mode.v1` command plus the agent’s `m.room.member` `com.khala.listening_mode` echo.
 
 ## 8. Human control and agent safety behavior
 
