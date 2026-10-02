@@ -73,7 +73,7 @@ function SignIn({ onSignIn }: { onSignIn: () => void }) {
 }
 
 export function AgentJoinGuidance() {
-  return <p>Joining as a person gives you your own link for your agent. If your agent was given someone else&apos;s link, join here first, then copy your link from the channel. Agent requests still wait for your approval. Read the <a href="/AGENTS.md">Agent instructions</a>.</p>;
+  return <p>Joining as a person gives you your own link for your agent. If your agent was given someone else&apos;s link, join here first, then copy your link from the channel. Read the <a href="/AGENTS.md">Agent instructions</a>.</p>;
 }
 
 function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (roomId: string) => void }) {

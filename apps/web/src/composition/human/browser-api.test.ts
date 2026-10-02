@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CLOSURE_CONSEQUENCES, decodeContentLimits, type ChannelAccessRequestHandle, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { createHumanBrowserApi } from './browser-api';
 import { createBrowserDeviceService } from '@khala/messaging/browser-device/index';
 
@@ -22,15 +22,13 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
-  it('recognizes a completed send transaction from the room fence', async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
-      .mockResolvedValueOnce(json(200, { kind: 'complete', eventId: '$sent:example' }));
+  it('exposes only the human admission and messaging adapters', () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(await api.roomSend.acquire({ roomId: '!room:example' as RoomId,
-      deviceId: 'DEVICE', matrixAccessToken: 'matrix-token' }, 'txn_completed'))
-      .toEqual({ kind: 'complete', eventId: '$sent:example' });
+    expect(Object.keys(api).sort()).toEqual(['admission', 'channelLinks', 'credentials', 'identity', 'participants']);
+    expect(fetch).not.toHaveBeenCalled();
   });
+
   it('decodes personal issuance and human resolution with the current CSRF proof', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
@@ -53,41 +51,6 @@ describe('createHumanBrowserApi', () => {
         shareUrl: 'https://other.example/join/invite_alice123', expiresAt: null }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     expect(await api.channelLinks.personal('room_1' as RoomId)).toEqual({ v: 1, kind: 'unavailable' });
-  });
-
-  it('retrieves exact owner cleanup requests without needing the closed room in its view', async () => {
-    const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
-    const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { kind: 'ok', value: [command] }))
-      .mockResolvedValueOnce(json(200, { kind: 'ok', value: [{ ...command, ownerId: 'peer_owner' }] }));
-    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(await api.cleanupRequests(principal.ownerId)).toEqual([command]);
-    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channel-closure?cleanup=1`);
-    expect(fetch.mock.calls[0]?.[1]?.credentials).toBe('same-origin');
-    expect(await api.cleanupRequests(principal.ownerId)).toBeNull();
-  });
-
-  it('reads a room-scoped closure capability and posts with the human CSRF proof', async () => {
-    const roomId = 'room_1' as RoomId;
-    const capability = { ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,
-      available: true, unavailableReason: null, consequences: CLOSURE_CONSEQUENCES };
-    const state = { operationId: 'close_1', state: 'partial', reason: 'local_cleanup_failed' };
-    const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { kind: 'ok', value: capability }))
-      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
-      .mockResolvedValueOnce(json(200, { kind: 'ok', value: state }))
-      .mockResolvedValueOnce(json(200, { kind: 'ok', value: state }));
-    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    const closure = api.closure(roomId);
-    expect(await closure.currentCapability()).toEqual(capability);
-    const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId, expectedRoomRevision: 0 };
-    expect(await closure.closeRoom(command)).toEqual({ kind: 'ok', value: state });
-    expect(await closure.inspectClosure('close_1')).toEqual({ kind: 'ok', value: state });
-    expect(fetch.mock.calls[0]?.[0]).toContain('roomId=room_1');
-    expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/channel-closure`);
-    expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
-    expect(await closure.closeRoom({ ...command, roomId: 'room_2' as RoomId })).toEqual({ kind: 'rejected', code: 'forbidden' });
-    expect(fetch).toHaveBeenCalledTimes(4);
   });
 
   it('projects the current verified principal and uses its CSRF proof for admission writes', async () => {
@@ -401,46 +364,4 @@ describe('createHumanBrowserApi', () => {
     expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never], session)).toBeNull();
   });
 
-  it('binds the channel-request inbox and decisions to human-cookie routes', async () => {
-    const requestHandle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
-    const projection = {
-      v: 1, requestHandle, operationKind: 'access', outcome: 'pending_owner', revision: 'carev_1',
-      requester: { sessionFingerprint: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq', harness: 'codex', displayLabel: null, workspaceLabel: null },
-      detail: { kind: 'access', title: 'Plans', history: 'none' }, createdAt: '2026-09-25T00:00:00.000Z',
-      deadline: '2026-10-02T00:00:00.000Z', ownerDecision: 'pending', decidedAt: null, muted: false, muteRevision: null,
-    };
-    const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { v: 1, kind: 'ok', requests: [projection] }))
-      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
-      .mockResolvedValueOnce(json(200, { ...projection, outcome: 'approved', ownerDecision: 'approved' }))
-      .mockResolvedValueOnce(json(200, { v: 1, operationKind: 'access', muted: true, revision: 'carev_2' }));
-    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-
-    expect(await api.channelAccess.inbox()).toEqual({ kind: 'ok', value: [projection] });
-    expect(await api.channelAccess.decide({
-      v: 1, requestHandle, expectedRevision: 'carev_1', decision: 'approve', operationId: 'decide_1',
-    })).toMatchObject({ kind: 'ok', value: { ownerDecision: 'approved' } });
-    expect(await api.channelAccess.setMute({
-      v: 1, requestHandle, expectedRevision: null, action: 'mute', operationId: 'mute_1',
-    })).toEqual({ kind: 'ok', value: { v: 1, operationKind: 'access', muted: true, revision: 'carev_2' } });
-
-    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channel-access/inbox`);
-    expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/channel-access/decision`);
-    expect(fetch.mock.calls[3]?.[0]).toBe(`${origin}/api/human/channel-access/mute`);
-    expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
-  });
-
-  it('distinguishes inbox authority loss from retryable route failures', async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(401, { code: 'signed_out' }))
-      .mockResolvedValueOnce(json(403, { code: 'forbidden' }))
-      .mockResolvedValueOnce(json(404, { code: 'not_found' }))
-      .mockResolvedValueOnce(json(200, { v: 1, kind: 'ok', requests: 'malformed' }));
-    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-
-    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
-    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
-    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
-    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
-  });
 });
