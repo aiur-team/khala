@@ -1,5 +1,90 @@
 # Codex 0.160.0 native hosted boundary
 
+## 2026-10-01 isolated later-call recheck (#810)
+
+An exact native `codex-cli 0.160.0` executable with SHA-256
+`12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad`
+ran in a new private home and workdir. A read-only link supplied provider auth;
+the saved owner session and its configuration were untouched. With Codex's own
+sandbox bypass enabled inside the externally restricted agent workspace, a
+model-origin shell call completed with exit code zero and returned the requested
+synthetic marker. The same pinned binary then started this checkout's bundled
+Khala MCP server through invocation-only configuration. The model called
+`khala_read`; the server returned `refused/not_connected`, as expected without a
+channel binding. Raw rollouts and auth material are excluded from this record.
+
+This narrows the earlier bubblewrap failure to that probe's sandbox execution
+path. The bound-channel result below supersedes this unconnected call.
+
+## 2026-10-01 bounded local manual read and ACK (#810)
+
+The same pinned 0.160.0 binary (SHA-256 above) and a locally built Khala CLI
+bundle (SHA-256 `a6fded7413118ef21447a43d300db750a1fa83073fc63d62442837751b0b8669`)
+ran with private home, state, runtime, workdir, and provider-auth handoff. A
+fresh internal channel used an isolated headless owner browser with no external
+browser requests. The browser approved one Codex session and sent one fresh
+human challenge. The native `codex exec` thread
+`01a0f985-723b-75e2-9178-28bfa276132c` resumed under the same ID. On its
+model-origin `khala_read`, Codex supplied `_meta.threadId` equal to that ID;
+the generic Khala `mcp-serve` entry resolved the exact grant and returned the
+challenge with a batch token. The model then made an independently intended
+`khala_send` reply with exactly that token in `ackBatchToken`; the reply was
+accepted and answered the challenge (`ine.`).
+
+The owner read a durable `agent_acknowledged` receipt for event
+`1f698095-33a3-40a3-a236-b411968f0fbe`, binding
+`binding_5BjQ9DgfBsoKa553DbMpo5MQeACYaqEng79w7reG1xU`, generation 1.
+The private inbox cursor advanced to offset 1256, and a later CLI read under
+the same grant returned no batch. A generated marker never submitted to the
+channel was absent from the model-visible read. The browser timeline contained
+the model reply. Raw rollout, credentials, grant, and channel payload were
+discarded after these sanitized facts were recorded.
+
+The MCP child required explicit `XDG_STATE_HOME` and `HOME` in the private
+invocation's `mcp_servers.khala.env` table. Without the private state root, the
+generic entry returned `not_connected` even after owner approval; that probe
+was an environment mismatch, not missing 0.160.0 `_meta.threadId`. This proof
+used a disposable `codex exec` session with Codex's inner sandbox bypassed
+inside the externally restricted workspace. It establishes local manual
+model-origin read, later ACK/cursor, and reply for this exact session and
+binding. It does not establish normal TUI hook trust, queue wake, Sync, Steer,
+hosted routing, or production owner approval.
+
+## 2026-10-01 normally trusted private TUI Sync proof (#810)
+
+The pinned native 0.160.0 binary above started a private TUI session
+`01a0f98b-5426-7822-a481-bd52e1211a91`. The operator reviewed and trusted
+the four installed Khala handlers through Codex's normal hooks dialog. The
+private installed Khala payload had SHA-256
+`236ad87b72f58e53c5cfcf4d25692f68bc19c0fb8daf087b6b9559e2c37966ef`.
+A private browser approved that exact session on channel
+`ch_sFIknJJZjYGXEOSlnnizJQ`, binding
+`binding_rkIQs38JtD75sOMFDTmaQ1Zg7k9Ldk0yEDrFl87669Y`, generation 1.
+The local Sync capability gate was provisionally enabled solely for this
+bounded test. A browser challenge caused an automatic content-free queued TUI
+turn, and the hook placed the challenge and batch token in model-visible
+context. The model's MCP call initially returned `not_connected`: the Codex
+MCP child did not inherit this test's private `XDG_STATE_HOME`. Adding that
+state root to the private `mcp_servers.khala.env` table and resuming the same
+native thread restored the MCP connection. This temporary config edit is not
+a shipped setup fix.
+
+The first challenge was acknowledged by a later model-origin `khala_read` with
+its exact batch token; its owner receipt linked event
+`8827d395-f4e5-4e5f-84ae-fb46d1619387`. A fresh second browser challenge
+then ran with the state-root pin already loaded and without another TUI
+restart. The trusted hook auto-delivered it; the model's later `khala_send`
+carried its batch token and replied `nce.`. The owner recorded a second durable
+`agent_acknowledged` receipt for event
+`e064dbae-28b3-4a11-bdc9-95ecac5cc772` on the same binding and generation.
+The private inbox cursor advanced to offset 2536. No production room, saved
+operator session, or external browser origin was used.
+
+This is local, normally trusted TUI Sync timing plus retained ACK and reply
+evidence for one exact native session. The route gate remains provisional
+until the managed MCP environment fix and negative tests are reviewed. It does
+not prove Steer timing, hosted admission, or owner-approved production behavior.
+
 The 2026-10-01 recheck of the installed package and native binary returned the
 same version and digest recorded below. The public launcher is a shell script
 with a different digest and is not the executable pin.
@@ -16,7 +101,7 @@ auth; it did not inspect or change the owner's saved thread, desktop focus,
 Khala binding, global install, or #787 releases. Raw rollout and auth material
 are not included here.
 
-## Exact-version observations
+## Earlier exact-version observations (#806)
 
 | Contract | Observation | Claim allowed |
 | --- | --- | --- |
@@ -35,23 +120,22 @@ limit and are **not** evidence that 0.160.0 removed later-call support.
 
 ## Gate result
 
-0.160.0 remains typed unsupported for the hosted native route. Setup's
-absent-home exception does not include it, although an existing home may pass
-direct MCP and hook probes. Hosted session inspection can retain the exact
+0.160.0 remains typed unsupported for the hosted native route. The setup
+absent-home exception is now admitted by this ticket's exact-version setup
+change; setup still cannot certify delivery. Hosted session inspection can retain the exact
 provider-named session label and generation while reporting unsupported
-delivery. The native queue and interactive hook gates still exclude 0.160.0;
-`hosted-codex.ts` therefore reports `native_version_unsupported` before any
-hook promotion. Manual `khala_read` / `khala_send` availability cannot be
-inferred from version, MCP listing, or a synthetic shell attempt. Steer, Sync,
-Async, and `batch_token_next_call` have no 0.160.0 native proof.
+delivery. The hosted gate still excludes 0.160.0; `hosted-codex.ts` reports
+`native_version_unsupported` before hosted promotion. The private manual MCP
+journey proves read, exact-token later ACK, and reply for one bounded exec
+session. The private TUI journey additionally proves local Sync hook and queue
+timing, subject to a reviewed setup fix and negative tests. Steer, hosted, and
+production remain unproven on 0.160.0.
 
-The smallest missing contract for promotion is one pinned, normally trusted
-0.160.0 TUI session with a held test binding and generation: a content-free
-native queue notice must wake that exact session; the installed Khala Sync hook
-must deliver one released marker; a model-origin later `khala_read` must return
-the offered token on the same binding/generation, advance the inbox, and record
-a correlated receipt while an unsubmitted marker remains absent. Steer and Async
-need their own boundary and receipt proof before their mode gates change.
+The remaining local source boundary is managed MCP state-root inheritance:
+Codex's child must resolve the same binding state as the trusted hooks. The
+hosted route also requires exact-version admission and negative tests; Steer
+and Async need their own boundary and receipt proof before their mode gates
+change.
 
 ## Controlled owner handoff
 
@@ -67,9 +151,10 @@ independent of this 0.160.0 observation.
 
 ## Precise unsupported finding and fallback
 
-The missing contract is a model-origin later-call receipt. The synthetic Stop
-continuation attempted a later call, but the sandbox refused it before
-execution. No exact-token ACK or inbox cursor movement was witnessed. A
+The earlier synthetic Stop continuation lacked an executed later call. The
+bounded manual proof above now has one model-origin later-call receipt and
+cursor advancement. The private TUI proof now supplies normally trusted hook
+and exact queue-wake timing for local Sync. A
 hosted-route regression test verifies that a claimed positive hook result
 cannot promote 0.160.0 without its native queue contract. The safe fallback is
 the separately pinned 0.159.3 native route in
@@ -106,5 +191,5 @@ batch token, cursor advancement, and correlated receipt. A wrong thread, stale
 generation, absent trust, revoked binding, duplicate token, or late receipt
 must leave delivery unavailable. After reviewed merge and deployment, the owner
 can repeat the bounded proof in production with explicit approval and an
-owner-selected room. Steer and Sync need separate timing and receipt evidence;
-a manual read/send result cannot promote either mode.
+owner-selected room. Local Sync timing and receipt evidence is recorded above;
+Steer and production still need separate timing and receipt evidence.

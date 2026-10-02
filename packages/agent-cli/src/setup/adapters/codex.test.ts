@@ -157,6 +157,8 @@ describe('Codex detection', () => {
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.158.0', supported: true });
     version = 'codex-cli 0.159.3\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.159.3', supported: true });
+    version = 'codex-cli 0.160.0\n';
+    expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.160.0', supported: true });
     version = 'codex-cli 0.157.0\n';
     expect(await adapter.detect(environment())).toEqual({ executable: CODEX, version: '0.157.0', supported: true });
     version = 'codex-cli 0.156.1\n';
@@ -212,6 +214,8 @@ describe('Codex detection', () => {
     version = 'codex-cli 0.159.4\n';
     expect((await observe()).observation.detection.supported).toBe(false);
     version = 'codex-cli 0.160.0\n';
+    expect((await observe()).observation.detection.supported).toBe(true);
+    version = 'codex-cli 0.160.1\n';
     expect((await observe()).observation.detection.supported).toBe(false);
     version = 'codex-cli 0.159.2\n';
     expect((await observe()).observation.detection.supported).toBe(true);
@@ -363,7 +367,7 @@ describe('Codex setup on 0.154.0', () => {
   });
 });
 
-describe.each(['0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3'])('Codex setup on %s', testedVersion => {
+describe.each(['0.158.0', '0.159.0', '0.159.1', '0.159.2', '0.159.3', '0.160.0'])('Codex setup on %s', testedVersion => {
   it('installs only the native skill, hooks and MCP entry, then restores the private home', async () => {
     version = `codex-cli ${testedVersion}\n`;
     const before = await everythingButExecutorState();
@@ -447,6 +451,40 @@ describe('Codex conflicts and drift', () => {
 });
 
 describe('Codex MCP table editing', () => {
+  it('pins the private state root for exact 0.160.0 and removes its managed table', async () => {
+    version = 'codex-cli 0.160.0\n';
+    expect((await run('setup')).kind).toBe('committed');
+    expect(await read(paths().config)).toBe(codexMcpBlock(paths().launcher, roots.xdgStateHome));
+    expect((parseToml(await read(paths().config)) as { mcp_servers: { khala: { env: { XDG_STATE_HOME: string } } } })
+      .mcp_servers.khala.env.XDG_STATE_HOME).toBe(roots.xdgStateHome);
+    expect(states((await observe()).observation).mcp_entry).toBe('ready');
+    expect((await run('remove')).kind).toBe('committed');
+    expect(await exists(paths().config)).toBe(false);
+  });
+
+  it('upgrades an exact older managed MCP table without changing native hook trust', async () => {
+    expect((await run('setup')).kind).toBe('committed');
+    const trust = await approveNatively();
+    version = 'codex-cli 0.160.0\n';
+    expect(states((await observe()).observation).mcp_entry).toBe('absent');
+    expect((await run('setup')).kind).toBe('committed');
+    expect(await read(paths().config)).toBe(withMcpBlock(trust, codexMcpBlock(paths().launcher, roots.xdgStateHome)));
+    expect((await run('remove')).kind).toBe('committed');
+    expect(await read(paths().config)).toBe(trust);
+  });
+
+  it('restores the exact older table when switching from 0.160.0 to a supported fallback', async () => {
+    version = 'codex-cli 0.160.0\n';
+    expect((await run('setup')).kind).toBe('committed');
+    const trust = await approveNatively();
+    version = 'codex-cli 0.159.3\n';
+    expect(states((await observe()).observation).mcp_entry).toBe('absent');
+    expect((await run('setup')).kind).toBe('committed');
+    expect(await read(paths().config)).toBe(withMcpBlock(trust, codexMcpBlock(paths().launcher)));
+    expect((await run('remove')).kind).toBe('committed');
+    expect(await read(paths().config)).toBe(trust);
+  });
+
   it.each(['', 'a = 1', 'a = 1\n', 'a = 1\n\n', 'a = 1\r\n'])('removal inverts insertion for %j', config => {
     const block = codexMcpBlock('/x/khala');
     expect(withoutMcpBlock(withMcpBlock(config, block), block)).toBe(config);
@@ -485,7 +523,7 @@ describe.skipIf(nativeCodex === undefined)('installed Codex setup contract', () 
       env: vendorEnvironment, cwd: roots.home, timeout: 15_000, maxBuffer: 1024 * 1024,
     });
     version = (await invoke(['--version'])).stdout;
-    expect(['0.159.0', '0.159.1', '0.159.2', '0.159.3']).toContain(parseCodexVersion(version));
+    expect(['0.159.0', '0.159.1', '0.159.2', '0.159.3', '0.160.0']).toContain(parseCodexVersion(version));
     await fsp.mkdir(paths().codexHome, { recursive: true });
     expect(JSON.parse((await invoke(['mcp', 'list', '--json'])).stdout)).toEqual([]);
     expect((await invoke(['features', 'list'])).stdout).toMatch(/^hooks\s+\S+\s+true\s*$/m);
