@@ -1,7 +1,7 @@
 // The roster disclosure (RECREATION-SPEC §6, M1 form per §22) and the
 // rename section the agent detail pane shows for the viewer's own agents.
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
@@ -148,6 +148,7 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
 }>) {
   const label = agentLabel(agent);
   const anchor = useRef<HTMLButtonElement>(null);
+  const activeItem = useRef<HTMLButtonElement>(null);
   const request = useRef(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pending, setPending] = useState<ListeningMode | null>(null);
@@ -168,6 +169,18 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
     }, MODE_CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [label, pending]);
+  useEffect(() => {
+    if (menuOpen) activeItem.current?.focus();
+  }, [menuOpen]);
+
+  function moveFocus(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    items[(at + step + items.length) % items.length]?.focus();
+  }
 
   async function choose(next: ListeningMode): Promise<void> {
     setMenuOpen(false);
@@ -184,11 +197,15 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
   return <>
     <div className="kh-rrow">{children}<span className="kh-racts">
       <Segmented icon label={`Listening mode for ${label}`} value={shown} options={MODES} onChange={value => void choose(value)} />
-      <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown)} aria-expanded={menuOpen}
-        aria-label={`Listening mode for ${label}: ${modeTip(shown)}`} onClick={() => setMenuOpen(open => !open)}><ModeIcon mode={shown} /></button>
+      <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown)} aria-haspopup="menu"
+        aria-expanded={menuOpen} aria-label={`Listening mode for ${label}: ${modeTip(shown)}`}
+        onClick={() => setMenuOpen(open => !open)}><ModeIcon mode={shown} /></button>
       <Popover anchor={anchor} open={menuOpen} menu onClose={() => setMenuOpen(false)}>
-        {MODE_COPY.map(([value, name, desc]) => <button key={value} type="button" className={`kh-mi${value === shown ? ' on' : ''}`}
-          data-v={value} onClick={() => void choose(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
+        <div role="menu" aria-label={`Listening mode for ${label}`} onKeyDown={moveFocus}>
+          {MODE_COPY.map(([value, name, desc]) => <button key={value} ref={value === shown ? activeItem : undefined} type="button"
+            role="menuitemradio" aria-checked={value === shown} className={`kh-mi${value === shown ? ' on' : ''}`}
+            data-v={value} onClick={() => void choose(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
+        </div>
       </Popover>
     </span></div>
     <p className="kh-roster-status kh-mode-status" role="status" hidden={!status}>{status}</p>

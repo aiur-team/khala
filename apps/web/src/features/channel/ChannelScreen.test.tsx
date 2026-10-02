@@ -132,7 +132,7 @@ describe('ChannelScreen roster', () => {
     expect(own).not.toContain('disabled');
     expect(own).not.toContain('title="Coming soon"');
     expect(own).toMatch(/aria-checked="true" class="on" data-v="steer"/);
-    expect(own).toContain('class="kh-ib sm kh-mode-btn" data-tip="Steer · interrupts" aria-expanded="false"');
+    expect(own).toContain('class="kh-ib sm kh-mode-btn" data-tip="Steer · interrupts" aria-haspopup="menu" aria-expanded="false"');
   });
 
   it('locks the modes, without Coming soon, when no mode port is wired', () => {

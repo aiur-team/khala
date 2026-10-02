@@ -171,6 +171,32 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await modeButton.getAttribute('data-tip'), 'Async · on demand');
     await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
     assert.equal(await modeButton.getAttribute('aria-label'), 'Listening mode for Dolan: Async · on demand');
+    // Keyboard: Enter opens the menu on the active item, arrows move, Escape returns to the trigger.
+    assert.equal(await modeButton.getAttribute('aria-haspopup'), 'menu');
+    await modeButton.focus();
+    await page.keyboard.press('Enter');
+    await menu.locator('[role="menu"]').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'async');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitemradio');
+    assert.equal(await menu.locator('[role="menuitemradio"][aria-checked="true"]').getAttribute('data-v'), 'async');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer', 'ArrowDown wraps to the first item');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'sync');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer');
+    await page.keyboard.press('Enter');
+    assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.getAttribute('data-tip'), 'Steer · interrupts');
+    await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
+    await modeButton.focus();
+    await page.keyboard.press('Enter');
+    await menu.locator('[role="menu"]').waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.evaluate(button => button === document.activeElement), true, 'Escape returns focus to the trigger');
     await page.locator('.kh-back').click();
     assert.equal(await page.title(), 'back');
 
