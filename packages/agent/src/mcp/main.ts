@@ -5,6 +5,7 @@ import { createToolRegistry } from './registry';
 import { runMcpServer } from './server';
 import { resolveHarness, resolveSessionId } from './session-id';
 import { createKhalaTools } from './tools';
+import { createRealClientFactory } from './wiring';
 
 export type ClientFactory = (input: { harness: Harness; sessionId: string }) => KhalaAgentClient;
 
@@ -55,5 +56,15 @@ export async function runMcpCommand(argv: readonly string[], deps: {
 }
 
 export default async function main(argv: readonly string[]): Promise<number> {
-  return runMcpCommand(argv, { createClient: () => createPlaceholderClient() });
+  const stop = new AbortController();
+  const onSignal = () => stop.abort();
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
+  try {
+    return await runMcpCommand(argv, { createClient: createRealClientFactory(process.env), signal: stop.signal });
+  } finally {
+    process.off('SIGTERM', onSignal);
+    process.off('SIGINT', onSignal);
+    if (stop.signal.aborted) process.stdin.destroy();
+  }
 }

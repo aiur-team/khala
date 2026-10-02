@@ -1,0 +1,35 @@
+import { createKhalaAgentClient } from '../client-impl';
+import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
+import { createCodexWaker } from '../wake/codex';
+import type { ClientFactory } from './main';
+
+export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
+  createClient?: typeof createKhalaAgentClient;
+  createWaker?: typeof createCodexWaker;
+} = {}): ClientFactory {
+  return ({ harness, sessionId }) => {
+    const files = sessionFiles(harness, sessionId, env);
+    const waker = harness === 'codex'
+      ? (deps.createWaker ?? createCodexWaker)({ files, threadId: sessionId }) : undefined;
+    const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, env,
+      ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
+    // The client initializes lazily. Clear the previous process's join before
+    // delegating any operation, so an expired join cannot reject a fresh one.
+    let initialization: Promise<void> | undefined;
+    const initialize = () => initialization ??= (async () => {
+      await ensureStateDir(files.dir);
+      await removeStateFile(files.dir, 'join.json');
+    })();
+    return {
+      async join(link, label) { await initialize(); return client.join(link, label); },
+      async status() { await initialize(); return client.status(); },
+      async read(limit, before) { await initialize(); return client.read(limit, before); },
+      async send(text) { await initialize(); return client.send(text); },
+      async sendChannelEvent(content) { await initialize(); return client.sendChannelEvent(content); },
+      async close() {
+        try { await initialize(); await client.close(); }
+        finally { await waker?.stop(); }
+      },
+    };
+  };
+}
