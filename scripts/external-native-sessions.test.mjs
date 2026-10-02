@@ -5,7 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+import { nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+
+test('native prompts wait until the previous model turn is idle', () => {
+  assert.equal(nativeIdle('› Ask Codex to do anything\nGPT-6.1-Sol default', 'codex'), true);
+  assert.equal(nativeIdle('• Working (9s • esc to interrupt)\n› Ask Codex to do anything', 'codex'), false);
+  assert.equal(nativeIdle('Allow the khala MCP server to run tool "khala_read"?\n› Ask Codex to do anything', 'codex'), false);
+  assert.equal(nativeIdle('❯\n⏵⏵ auto mode on', 'claude'), true);
+  assert.equal(nativeIdle('✻ Working (2s • esc to interrupt)\n❯\n⏵⏵ auto mode on', 'claude'), false);
+});
 
 test('browser handoff is exact-session discovery consent on loopback only', () => {
   const origin = 'https://127.0.0.1:4443';

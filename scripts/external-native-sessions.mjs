@@ -61,6 +61,20 @@ function trustStartup(state, actor) {
   fail(`${actor}_startup_trust_missing`);
 }
 
+export function nativeIdle(pane, actor) {
+  if (/Allow the khala MCP server to run tool|esc to interrupt|\bWorking\s*\(/iu.test(pane)) return false;
+  return actor === 'codex' ? pane.includes('› Ask Codex to do anything')
+    : actor === 'claude' && pane.includes('❯') && pane.includes('auto mode on');
+}
+function waitNativeIdle(state, actor) {
+  for (let attempt = 0; attempt < 240; attempt++) {
+    serviceApprovals(state);
+    if (nativeIdle(tmux(state, ['capture-pane', '-p', '-t', actor]), actor)) return;
+    pause(500);
+  }
+  fail(`${actor}_turn_not_idle`);
+}
+
 const approvedKhalaTools = new Set(['khala_request_channel_access', 'khala_channel_access_status',
   'khala_read', 'khala_send']);
 export function pendingMcpApproval(pane) {
@@ -366,6 +380,7 @@ function main() {
   if (action === 'prompt') {
     if (args.length !== 2 || !['codex', 'claude'].includes(args[0])) fail('prompt_arguments');
     privateFile(args[1]);
+    waitNativeIdle(state, args[0]);
     const buffer = `khala-${state.id}`;
     tmux(state, ['load-buffer', '-b', buffer, args[1]]);
     try {
