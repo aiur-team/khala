@@ -56,7 +56,9 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
   // until the caret leaves it.
   const [caret, setCaret] = useState(value.length);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  const query = disabled ? null : activeMentionQuery(value, caret);
+  // With no one to mention (the landing showcase) the draft stays a plain textbox.
+  const mentionable = filterMentionTargets(mentionTargets, '').length > 0;
+  const query = disabled || !mentionable ? null : activeMentionQuery(value, caret);
   if (query === null && dismissedAt !== null) setDismissedAt(null);
   const options = query ? filterMentionTargets(mentionTargets, query.query) : [];
   const mentionOpen = query !== null && options.length > 0 && query.start !== dismissedAt;
@@ -93,7 +95,8 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
       <textarea ref={input} className="kh-input" id="kh-input" rows={1} placeholder={placeholder} value={value}
         onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); }}
         disabled={disabled} aria-describedby={sendDescriptionId}
-        role="combobox" aria-autocomplete="list" aria-expanded={mentionOpen}
+        role={mentionable ? 'combobox' : undefined} aria-autocomplete={mentionable ? 'list' : undefined}
+        aria-expanded={mentionable ? mentionOpen : undefined}
         aria-controls={mentionOpen ? MENTION_LIST_ID : undefined}
         aria-activedescendant={mentionOpen ? mentionOptionId(options[active]!) : undefined}
         onSelect={syncCaret} onKeyUp={syncCaret} onClick={syncCaret}

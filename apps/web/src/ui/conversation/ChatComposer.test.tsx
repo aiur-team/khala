@@ -102,9 +102,17 @@ describe('ChatComposer', () => {
   });
 
   it('marks the draft as a collapsed combobox', () => {
-    const { html } = render({ value: 'hi' });
+    const target = { id: 'p-maya', kind: 'human', label: 'Maya', display: 'Maya', hue: 330, ownerHue: 330, ownerInitials: 'MC', ownerId: 'o-maya', isViewer: false } as const;
+    const { html } = render({ value: 'hi', mentionTargets: [target] });
     expect(html).toContain('role="combobox" aria-autocomplete="list" aria-expanded="false"');
     expect(html).not.toContain('aria-activedescendant');
+  });
+
+  it('keeps the draft a plain textbox when there is no one to mention', () => {
+    const { html } = render({ value: '@' });
+    expect(html).not.toContain('role="combobox"');
+    expect(html).not.toContain('aria-autocomplete');
+    expect(html).not.toContain('aria-expanded');
   });
 
   it('honours a controlled chipsOpen', () => {
