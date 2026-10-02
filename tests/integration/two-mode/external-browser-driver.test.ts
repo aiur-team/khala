@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExternalNativeDriver, assertWitnessMatches, decodeNativeSnapshot, exactOwnerAccessFingerprint,
+import { ExternalNativeDriver, assertWitnessMatches, decodeNativeSnapshot, exactOwnerAccessRequest,
   type ObservedExchange } from './external-browser-driver.js';
 import type { NativeFact } from './external-witness.js';
 
@@ -37,14 +37,14 @@ test('external browser accepts only a discovery consent URL in the expected rout
     discoveryConsentUrl: 'http://example.com/other' }, sessions[1]] }), /discovery_url_invalid/);
 });
 
-test('owner access row uses its unique server context digest rather than signer JKT', () => {
+test('owner access row uses the unique pending actor request and server context digest', () => {
   const contextFingerprint = 'C'.repeat(43);
   const request = { operationKind: 'access', ownerDecision: 'pending', detail: { kind: 'access', title: 'E2E unique' },
     requester: { harness: 'codex', sessionFingerprint: contextFingerprint } };
   const body = { v: 1, kind: 'ok', requests: [request] };
-  assert.equal(exactOwnerAccessFingerprint(body, 'codex', 'E2E unique'), contextFingerprint);
-  assert.equal(exactOwnerAccessFingerprint(body, 'claude', 'E2E unique'), null);
-  assert.throws(() => exactOwnerAccessFingerprint({ ...body, requests: [request, request] }, 'codex', 'E2E unique'),
+  assert.deepEqual(exactOwnerAccessRequest(body, 'codex'), { fingerprint: contextFingerprint, title: 'E2E unique' });
+  assert.throws(() => exactOwnerAccessRequest(body, 'claude'), /identity_mismatch/);
+  assert.throws(() => exactOwnerAccessRequest({ ...body, requests: [request, request] }, 'codex'),
     /owner_request_ambiguous/);
 });
 

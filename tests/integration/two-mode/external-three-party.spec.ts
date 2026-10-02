@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from '../human/fixtures.js';
-import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds, exactOwnerAccessFingerprint,
+import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds, exactOwnerAccessRequest,
   type NativeSession } from './external-browser-driver.js';
 import { verifyExternalConversation, type Actor, type BrowserFact } from './external-witness.js';
 
@@ -38,33 +38,34 @@ async function newEncryptedMessage(owner: Page, native: ExternalNativeDriver, ro
   return { eventId, text };
 }
 
-async function approveExactRequest(owner: Page, actor: Actor, channelTitle: string, roomId: string): Promise<void> {
+async function approveExactRequest(owner: Page, actor: Actor, roomId: string): Promise<void> {
   await owner.goto(`${environment.appOrigin}/channel-requests`);
   const pending = owner.getByRole('list', { name: 'Requests waiting for you' });
-  let fingerprint: string | null = null;
+  let access: ReturnType<typeof exactOwnerAccessRequest> = null;
   await expect.poll(async () => {
     const body = await owner.evaluate(async () => {
       const response = await fetch('/api/human/channel-access/inbox', { credentials: 'same-origin' });
       if (response.status !== 200) throw new Error('external_browser_owner_inbox_unavailable');
       return response.json() as Promise<unknown>;
     });
-    fingerprint = exactOwnerAccessFingerprint(body, actor, channelTitle);
-    return Boolean(fingerprint);
+    access = exactOwnerAccessRequest(body, actor);
+    return Boolean(access);
   }, { timeout: 90_000, intervals: [1_000, 2_000] }).toBe(true);
   await owner.reload({ waitUntil: 'domcontentloaded' });
-  if (!fingerprint) throw new Error('external_browser_owner_fingerprint_unobserved');
+  if (!access) throw new Error('external_browser_owner_request_unobserved');
+  const { fingerprint, title } = access;
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
   await expect(row).toHaveCount(1, { timeout: 30_000 });
   await expect(row).toContainText('Channel access request');
   // This digest attests the approved context; signer JKT was checked separately
   // on the proof-key and discovery-consent pages.
-  await expect(row).toContainText(channelTitle);
+  await expect(row).toContainText(title);
   await expect(row).toContainText(actor);
   await expect(row).toContainText('Waiting for you');
   await row.getByRole('button', { name: 'Review request' }).click();
   const dialog = owner.getByRole('dialog');
   await expect(dialog).toContainText(fingerprint);
-  await expect(dialog).toContainText(channelTitle);
+  await expect(dialog).toContainText(title);
   await dialog.getByRole('button', { name: 'Approve access' }).click();
   await expect(owner.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: fingerprint }))
     .toHaveCount(0, { timeout: 30_000 });
@@ -233,7 +234,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       const discovery = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.discoveryConsentUrl), 120_000);
       await authorizeDiscovery(owner, actor, discovery.sessions.find(item => item.actor === actor)!);
       native.clearDiscovery(actor);
-      await approveExactRequest(owner, actor, channelTitle, roomId);
+      await approveExactRequest(owner, actor, roomId);
     }
 
     const bindings = native.inspect().sessions;

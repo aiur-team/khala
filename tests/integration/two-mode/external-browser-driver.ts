@@ -34,26 +34,29 @@ export type ObservedPeer = Readonly<{
 const identifier = /^[A-Za-z0-9_$.:/+!=~-]{4,256}$/u;
 const version = /^[A-Za-z0-9._+ ()-]{3,80}$/u;
 
-/** The owner inbox uses a server-derived approval-context digest, distinct from signer JKT. */
-export function exactOwnerAccessFingerprint(body: unknown, actor: Actor, title: string): string | null {
+/** The fresh disposable owner inbox has exactly one pending access request per actor. */
+export function exactOwnerAccessRequest(body: unknown, actor: Actor): Readonly<{ fingerprint: string; title: string }> | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('external_browser_owner_inbox_invalid');
   const payload = body as Record<string, unknown>;
   if (payload.v !== 1 || payload.kind !== 'ok' || !Array.isArray(payload.requests))
     throw new Error('external_browser_owner_inbox_invalid');
-  const matches = payload.requests.filter(value => {
+  const pending = payload.requests.filter(value => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const row = value as Record<string, unknown>;
     const detail = row.detail as Record<string, unknown> | undefined;
-    const requester = row.requester as Record<string, unknown> | undefined;
-    return row.operationKind === 'access' && row.ownerDecision === 'pending' && detail?.kind === 'access'
-      && detail.title === title && requester?.harness === actor;
+    return row.operationKind === 'access' && row.ownerDecision === 'pending' && detail?.kind === 'access';
   }) as Array<Record<string, unknown>>;
-  if (matches.length > 1) throw new Error('external_browser_owner_request_ambiguous');
-  if (matches.length === 0) return null;
-  const fingerprint = (matches[0]!.requester as Record<string, unknown>).sessionFingerprint;
+  if (pending.length > 1) throw new Error('external_browser_owner_request_ambiguous');
+  if (pending.length === 0) return null;
+  const row = pending[0]!;
+  const requester = row.requester as Record<string, unknown> | undefined;
+  const detail = row.detail as Record<string, unknown> | undefined;
+  if (requester?.harness !== actor || typeof detail?.title !== 'string' || detail.title.length === 0)
+    throw new Error('external_browser_owner_request_identity_mismatch');
+  const fingerprint = requester.sessionFingerprint;
   if (typeof fingerprint !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(fingerprint))
     throw new Error('external_browser_owner_fingerprint_invalid');
-  return fingerprint;
+  return { fingerprint, title: detail.title };
 }
 
 function requireIdentifier(value: unknown, name: string): string {
