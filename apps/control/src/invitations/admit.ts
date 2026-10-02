@@ -144,10 +144,7 @@ async function resumeAdmission(
   if (admitted.kind === 'joined') {
     return complete(journal, operationId, entry, admitted.room, options);
   }
-  if (admitted.kind === 'outcome_unknown') {
-    return reconcileAmbiguous(runtime, journal, request, entry, options);
-  }
-  return outcomeUnknown(operationId);
+  return reconcileAmbiguous(runtime, journal, request, entry, options);
 }
 
 async function reconcileAmbiguous(

@@ -42,13 +42,12 @@ Adapters hash the bytes that will be released, not rendered HTML or markdown, an
 encrypted blob. An edit produces a new event with a new reference. `decodeTimelineItem`,
 `decodeTimelinePage` and `decodeChannelSnapshot` recompute every digest, so a reference paired
 with any other body is rejected. The author device is not checked against the participant's
-current devices, because devices rotate. To approve a specific event, compare the whole
-reference with `sameEventRef` — an approval or release API only ever takes an `EventRef`,
-so an `UnavailableEventRef` (see below) can never reach one.
+current devices, because devices rotate. Compare immutable references with
+`sameEventRef`; an `UnavailableEventRef` (see below) cannot satisfy `EventRef`.
 
 The worked fixture `fixtures/messaging/exact-intro.json` pins 71 bytes and
 `sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b`, computed
-independently with Python. The delivery fixtures in KHA-106 must carry the same literal.
+independently with Python.
 
 String escaping is exactly ECMAScript `JSON.stringify`. `"` and backslash are
 backslash-escaped. U+0008, U+0009, U+000A, U+000C and U+000D use their short forms
@@ -93,8 +92,7 @@ recovered plaintext to hash. `decodeTimelineItem`, `decodeTimelinePage` and
 `decodeChannelSnapshot` therefore skips digest verification for it, and rejects a
 `contentDigest` field on its reference outright. `UnavailableEventRef` is missing a
 field `EventRef` requires, so it is not assignable to `EventRef` and cannot reach
-`sameEventRef` or any approval or release API — approvals only ever apply to decrypted
-items. Ordering, per-page dedup and the snapshot room check are unaffected: they key on
+`sameEventRef`. Ordering, per-page dedup and the snapshot room check are unaffected: they key on
 `eventId`, which both reference shapes carry, so a producer may later deliver a
 decrypted item with the same `eventId` as an earlier placeholder; a consumer's store
 replaces the placeholder with that item. UI rendering of the placeholder is out of
@@ -129,7 +127,7 @@ external channel's end-to-end encryption; this contract adds no cryptography of 
   `chunkDigest` is SHA-256 over `encodeImportedHistoryChunk`, which is also the size
   that `maxChunkBytes` bounds. `digestImportedHistoryManifest` hashes the manifest's
   positional encoding, including every chunk digest, so one digest names one exact
-  archive, for example `HistoryTransferProgress.manifestDigest`. String escaping follows
+  archive. String escaping follows
   `encodeMessageContent`.
 - **Verification.** `decodeImportedHistoryChunk` recomputes every record digest and the
   chunk digest against the manifest's entry. `openImportedHistory` also requires every
@@ -143,7 +141,7 @@ external channel's end-to-end encryption; this contract adds no cryptography of 
   one maximum-sized body always fits on one agent page.
 
 An imported record carries none of `EventRef`'s fields, so it is not assignable to
-`EventRef`, and every native reference, timeline, selection and approval decoder rejects
+`EventRef`, and every native reference and timeline decoder rejects
 it as an unknown field. Imported history never enters approval, release, delivery,
 receipt or subscription paths. `@khala/messaging/channels/imported-history` projects a
 verified archive as a frozen read-only view for humans (`projectImportedHistory`), plus
@@ -160,85 +158,6 @@ and deduplicates on the part's deterministic transaction ID (`<archiveId>.chunk.
 lost acknowledgement is reconciled, not duplicated. `openImportedArchive` projects an
 archive only when its manifest digests to the transfer's final `manifestDigest`. Provider
 support is **unproven** until an adapter passes integration.
-
-`apps/internal/src/externalization/history-export.ts` implements `HistoryTransferPort`, and
-`apps/internal/src/composition/history-transfer.ts` routes its part writes through
-`deliverImportedPart`. `copy` (round 0) seals a snapshot of the SQLite log. `catch_up` rounds 1–3 each seal only
-what was appended after the last sealed sequence. A round reports `converged` once the
-backlog fits one maximum-sized chunk. If the backlog still exceeds that after round 3, it
-reports `drain_required`. `final_drain` pauses source writes, seals the rest and sends the
-manifest. It runs only in `history_catching_up` after convergence, or in `drain_required`
-after the human confirms. The drain is bounded by `maxDrainChunks` and by a deadline that
-holds across retries. When it exceeds either one, it resumes the source and returns
-`ceiling_exceeded`, which stays terminal. Other drain failures leave the source paused for
-a retry. Every retry re-reads the tail, so messages written while a caller had resumed the
-source are sealed too. Once the manifest is fixed, new messages make the drain resume the
-source and return `source_changed`. `lastAckChunk` and `afterChunk` count
-acknowledged chunks. Each step is authorized against the signed-in owner, the journaled
-`operationId` and the bound destination (`forbidden` or `operation_mismatch`).
-Acknowledgements persist in a 0600 `history-transfer.sqlite` inside an owner-private
-directory. It holds identifiers, sequence bounds and digests, never bodies or author
-labels. A resumed chunk is re-read from the source and must reproduce its digest
-(`source_changed` otherwise).
-
-### Start-fresh conversion
-
-`apps/internal/src/externalization/journal.ts` implements `ConversionJournalPort` inside
-the internal store. It keeps each conversion in `control_records`: the immutable
-`ConversionSnapshot` (channel revision, joined humans, and each selected agent's exact
-session and generation), the destination, and per-agent status. `decodeConversionStart`
-reads an omitted `visibility` as `secret`. `apps/internal/src/externalization/service.ts`
-drives the conversion through these steps:
-
-- `start` refuses (`forbidden`) any `ConversionOwner` that is not a human participant of
-  the source channel's owner. The snapshot records that owner and participant, and every
-  later call from anyone else is refused.
-- It creates the hosted channel once through `HostedChannelPort`. A lost create response is
-  reconciled by its idempotency key.
-- Only after the destination exists does it make one `ConversionAccessPort.request` per
-  selected agent.
-- A human batch decision grants each exact journaled request individually. Any other handle
-  is refused, including one whose agent is no longer requesting. Skipping or re-inviting an
-  agent first withdraws its earlier request.
-- An agent counts as ready only when its own request reports activation readiness. Its
-  destination binding stays conversion-paused until `ConversionBindingPort.release`. Nothing
-  binds an agent directly.
-- Commit requires every agent to be ready or skipped, and re-verifies each exact session.
-  `committing` pauses source writes. `activating` is the link commit: in one transaction the
-  source becomes read-only (`send` and joining return `read_only`, and admission is
-  refused), it stops being eligible for discovery (so old listing references stop
-  resolving), and the activation intent is journaled.
-- A failure before the link unfreezes the source and reports the orphan destination. A
-  commit still running in the same process is never failed by a concurrent `resume`. After
-  the link, recovery only releases the remaining bindings forward.
-- Start-fresh copies no message.
-- Carry-history runs only when the service is composed with a `HistoryTransferPort`, and is
-  `unsupported` otherwise. After the destination exists it moves through `history_copying`
-  and up to three `history_catching_up` rounds while the source stays writable. It then takes
-  the final delta under the drain's write pause, which holds until the link, a cancel or a
-  failure. If catch-up does not converge the conversion waits in `drain_required` until the
-  human confirms (`confirmDrain`). Access requests are made only after the history
-  converges. The entry journals `ConversionHistoryProgress` (counts and digests only). A
-  drain beyond its ceiling or a `source_changed` fails the conversion, which reopens the
-  source and reports the orphan destination.
-
-### Make-external journey
-
-`make-external.ts` is the browser protocol of the journey: `MakeExternalJourneyView` (hosted
-sign-in state, the reviewable roster, and the journaled conversion with each agent's exact
-session) and `MakeExternalAction`. `decodeMakeExternalAction` reads an omitted `start`
-visibility as `secret`. The loopback server serves it at
-`GET|POST /api/v1/channels/:channelId/make-external` to the browser human only, and only when
-the launch is composed with a journey (`apps/internal/src/composition/make-external.ts`).
-Before confirmation the only state is an in-memory hosted sign-in draft. After it, the
-conversion journal is authoritative, so a reload or a restarted server resumes the same
-conversion after a new sign-in. A durable per-channel pointer keeps a cancelled or failed
-conversion, and its orphaned destination, visible until the human dismisses it. Every hosted
-step requires that sign-in, including forward activation after a restart. Cancel does not.
-The history transfer takes its destination and owner from the journal entry, never from the
-request. No hosted adapter exists yet for sign-in, channel creation, channel access or the
-imported-history transport, so the launcher does not offer the journey. It is proven only
-against the fakes in `apps/internal/src/composition/fixtures/make-external-provider.ts`.
 
 ## Outcomes
 
@@ -317,20 +236,6 @@ requester tuple, after deriving the credential key's RFC 7638 SHA-256 OKP thumbp
 authenticated proof thumbprint plus the operation, device, origin, requester, generation
 and expiry. `AdmissionGrantExchangePort` accepts only that validated type.
 
-Channel-access requests bind a stable requester, current session fingerprint and
-generation, canonical origin, operation kind and hidden target or proposal. Owner-facing
-projections expose only bounded display text and operation-specific detail; they never
-carry credentials, grants or provider identifiers. Decisions require an `AuthPrincipal`
-and expected revision, while mutes are operation-specific. Approval only records an
-approved journal state; it does not itself create a channel, issue a grant or admit a
-device.
-
-Fulfillment consumes distinct branded `ChannelAccessAuthorization` and
-`ChannelCreateAuthorization` values through separate claim methods. Neither authority
-has a decoder from untrusted input, and the fulfillment port has no provider, grant or
-admission method. Notifications are also strict, minimal and revisioned so redelivery
-does not widen the owner or requester projection.
-
 Grant recovery uses pinned `libsodium-wrappers` and `crypto_box_seal` (X25519 plus
 XSalsa20-Poly1305), never HPKE or local cryptographic primitives. The v1 envelope names
 `crypto_box_seal_x25519_xsalsa20poly1305`, the recipient-key thumbprint and unpadded
@@ -368,8 +273,7 @@ Decoders reject unknown fields. The browser and the connector therefore deploy i
 lockstep for a given contract version. Every envelope with a `v` field (`AuthPrincipal`,
 `SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent`,
 `UnavailableContent` and `AdmissionPolicy`) bumps `v` on any change to its shape,
-and a bump is a reviewed change on both producer and consumer. `SessionBinding` carries `v` because the delivery
-domain mirrors it. `UnavailableEventRef` is a new type, not a change to `EventRef`'s
+and a bump is a reviewed change on both producer and consumer. `UnavailableEventRef` is a new type, not a change to `EventRef`'s
 shape, so `EventRef` keeps `v: 1`.
 
 ## Open product gates

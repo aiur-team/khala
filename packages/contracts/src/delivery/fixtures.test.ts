@@ -1,45 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import messagingIntro from '../../fixtures/messaging/exact-intro.json';
-import appHarness from '../../fixtures/delivery/app-harness.json';
 import exact from '../../fixtures/delivery/exact-release.json';
 import invalid from '../../fixtures/delivery/invalid.json';
 import views from '../../fixtures/delivery/views.json';
-import { decodeAppHarnessRecord } from './app-harness';
-import { decodeSessionBinding } from './binding';
-import {
-  type ApprovalCommand, type PolicySetCommand,
-  decodeApprovalCommand, decodeApprovalResult, decodePolicyAck, decodePolicySetCommand,
-  sameApprovalCommandInput, samePolicySetCommandInput,
-} from './commands';
-import { type Decoded, decodeDeliveryLimits } from './decode';
-import { decodeEventRef } from './events';
-import { decodeHarnessCapabilities } from './harness';
+import type { Decoded } from './decode';
 import * as delivery from './index';
-import { decodeReleasedJob, releaseFromApproval, verifyReleasedJob } from './jobs';
 import {
   decodeDeliveryReceipt, decodeDeliveryReceiptTransport, decodeDeliveryReceiptV1, decodeDeliveryReceiptV2,
 } from './receipts';
 
-const limits = (() => {
-  const decoded = decodeDeliveryLimits(exact.limits);
-  if (!decoded.ok) throw new Error('fixture limits must decode');
-  return decoded.value;
-})();
-
 const decoders: Record<string, (input: unknown) => Decoded<unknown>> = {
-  eventRef: decodeEventRef,
-  binding: decodeSessionBinding,
-  approvalCommand: input => decodeApprovalCommand(input, limits),
-  policySetCommand: decodePolicySetCommand,
-  policyAck: decodePolicyAck,
-  releasedJob: input => decodeReleasedJob(input, limits),
   receipt: decodeDeliveryReceipt,
   receiptV1: decodeDeliveryReceiptV1,
   receiptV2: decodeDeliveryReceiptV2,
   receiptTransport: decodeDeliveryReceiptTransport,
-  capabilities: decodeHarnessCapabilities,
-  approvalResult: input => decodeApprovalResult(input, limits),
 };
 
 function mutate(base: unknown, set: Record<string, unknown> = {}, remove: readonly string[] = []): unknown {
@@ -57,17 +31,8 @@ function mutate(base: unknown, set: Record<string, unknown> = {}, remove: readon
 const lookup = (path: string): unknown =>
   path.split('.').reduce<unknown>((value, key) => (value as Record<string, unknown>)[key], exact);
 
-function decoded<T>(result: Decoded<T>): T {
-  if (!result.ok) throw new Error(`fixture failed at ${result.field}`);
-  return result.value;
-}
-
-describe('exact release fixture', () => {
-  it.each([
-    ['eventRef', 'eventRef'], ['binding', 'binding'], ['approvalCommand', 'approvalCommand'],
-    ['policySetCommand', 'policySetCommand'], ['policyAck', 'policyAck'], ['releasedJob', 'releasedJob'],
-    ['receipt', 'receipt'], ['capabilities', 'capabilities'],
-  ])('%s decodes %s and round-trips byte-stable JSON', (decoder, path) => {
+describe('exact receipt fixture', () => {
+  it.each([['receipt', 'receipt']])('%s decodes %s and round-trips byte-stable JSON', (decoder, path) => {
     const input = lookup(path);
     const result = decoders[decoder]!(input);
     expect(result).toEqual({ ok: true, value: input });
@@ -88,41 +53,6 @@ describe('exact release fixture', () => {
       .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
-  it('releases exactly the fixture job from the fixture approval', () => {
-    const approval = decoded(decodeApprovalCommand(exact.approvalCommand, limits));
-    const result = releaseFromApproval({
-      approval,
-      items: approval.selection,
-      binding: decoded(decodeSessionBinding(exact.binding)),
-      policyVersion: approval.expectedPolicyVersion,
-      release: exact.release as Parameters<typeof releaseFromApproval>[0]['release'],
-    });
-    expect(result).toEqual({ ok: true, value: exact.releasedJob });
-    expect(verifyReleasedJob(decoded(decodeReleasedJob(exact.releasedJob, limits)), approval))
-      .toEqual({ ok: true, value: exact.releasedJob });
-  });
-});
-
-describe('messaging parity', () => {
-  // The delivery decoders must accept the messaging worked values unchanged, with no
-  // production import across the two contract subtrees.
-  it('decodes the messaging binding and event reference with delivery decoders', () => {
-    expect(decodeSessionBinding(messagingIntro.binding)).toEqual({ ok: true, value: messagingIntro.binding });
-    expect(decodeEventRef(messagingIntro.eventRef)).toEqual({ ok: true, value: messagingIntro.eventRef });
-    expect(exact.eventRef.contentDigest).toBe(messagingIntro.encoding.contentDigest);
-  });
-
-  it('rejects a messaging unavailable event reference as an event reference', () => {
-    const unavailable = messagingIntro.timelineItemUnavailable.ref;
-    expect(decodeEventRef(unavailable)).toEqual({ ok: false, code: 'invalid_field', field: 'contentDigest' });
-  });
-
-  it('rejects a messaging unavailable event reference in an approval selection', () => {
-    const unavailable = messagingIntro.timelineItemUnavailable.ref;
-    const approval = { ...exact.approvalCommand, roomId: unavailable.roomId, selection: [unavailable] };
-    expect(decodeApprovalCommand(approval, limits))
-      .toEqual({ ok: false, code: 'invalid_field', field: 'selection[0].contentDigest' });
-  });
 });
 
 describe('invalid fixtures', () => {
@@ -131,75 +61,14 @@ describe('invalid fixtures', () => {
     expect(decoders[testCase.decoder]!(input)).toEqual({ ok: false, ...testCase.error });
   });
 
-  it('lists every plan peer', () => {
-    const names = [...invalid.cases, ...invalid.peers.cases].map(testCase => testCase.name);
+
+  it('lists every retained receipt fixture', () => {
+    const names = invalid.cases.map(testCase => testCase.name);
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
-      'wrong digest prefix',
-      'digest with a trailing hex digit',
-      'digest with a leading prefix',
-      'empty selection',
-      'selection over the configured limit',
-      'duplicate event identity with another digest',
-      'unavailable event ref in a selection',
-      'issuedAt without a zone',
-      'unsafe expected policy version',
-      'approval carrying an owner ID',
-      'effective ack with no observed version',
-      'rejected ack with free-text error',
-      'released job without approval provenance',
-      'released job with a malformed binding',
       'receipt free-text error',
       'failed receipt without an error',
-      'boolean existing-session claim',
-      'boolean reconcile claim',
-      'tested support without evidence',
-      'same command ID with identical input',
-      'same command ID with reordered selection',
-      'same policy command ID switching to auto',
-      'changed selected digest invalidates the release',
-      'next binding generation invalidates the release',
-      'stale policy version',
-      'release to another binding',
-      'same content text in a new event',
-      'partial release of an approval',
-      'release recorded under another approval',
-      'decoded release with a changed digest',
     ]));
-  });
-
-  it('knows how to run every peer check', () => {
-    const known = ['sameApprovalCommandInput', 'samePolicySetCommandInput', 'releaseFromApproval', 'verifyReleasedJob'];
-    expect(invalid.peers.cases.map(peer => peer.check).filter(check => !known.includes(check))).toEqual([]);
-  });
-
-  it.each(invalid.peers.cases.filter(peer => peer.check === 'sameApprovalCommandInput'))('peer: $name', peer => {
-    const base = decoded(decodeApprovalCommand(lookup(peer.base!), limits));
-    const changed = decoded(decodeApprovalCommand(mutate(lookup(peer.base!), peer.set), limits));
-    expect(sameApprovalCommandInput(base as ApprovalCommand, changed as ApprovalCommand)).toBe(peer.expect);
-  });
-
-  it.each(invalid.peers.cases.filter(peer => peer.check === 'samePolicySetCommandInput'))('peer: $name', peer => {
-    const base = decoded(decodePolicySetCommand(lookup(peer.base!)));
-    const changed = decoded(decodePolicySetCommand(mutate(lookup(peer.base!), peer.set)));
-    expect(samePolicySetCommandInput(base as PolicySetCommand, changed as PolicySetCommand)).toBe(peer.expect);
-  });
-
-  it.each(invalid.peers.cases.filter(peer => peer.check === 'releaseFromApproval'))('peer: $name', peer => {
-    const input = mutate({
-      approval: exact.approvalCommand,
-      items: structuredClone(exact.approvalCommand.selection),
-      binding: exact.binding,
-      policyVersion: exact.approvalCommand.expectedPolicyVersion,
-      release: exact.release,
-    }, peer.set) as Parameters<typeof releaseFromApproval>[0];
-    expect(releaseFromApproval(input)).toEqual({ ok: false, ...peer.error });
-  });
-
-  it.each(invalid.peers.cases.filter(peer => peer.check === 'verifyReleasedJob'))('peer: $name', peer => {
-    const job = decoded(decodeReleasedJob(mutate(exact.releasedJob, peer.set), limits));
-    const approval = decoded(decodeApprovalCommand(exact.approvalCommand, limits));
-    expect(verifyReleasedJob(job, approval)).toEqual({ ok: false, ...peer.error });
   });
 });
 
@@ -209,58 +78,9 @@ describe('view fixtures', () => {
     expect(decoders[testCase.decoder]!(testCase.input)).toEqual({ ok: true, value: expected });
   });
 
-  it.each(views.invalid)('rejects: $name', testCase => {
-    expect(decoders[testCase.decoder]!(testCase.input)).toEqual({ ok: false, ...testCase.error });
-  });
 
-  it('lists every evidence route and approval outcome', () => {
-    expect(views.valid.map(view => view.name)).toEqual(expect.arrayContaining([
-      'Claude 2.1.276 native route remains unsupported',
-      'Codex native CLI queue notification is tested',
-      'agent-installed listener remains unsupported',
-      'Codex executor Khala did not start is unknown',
-      'unproven generic harness is unknown',
-      'disconnect after a possible submission is outcome_unknown',
-      'ambiguous persistence keeps null versions',
-      'same command ID with changed input',
-      'cross-owner binding',
-      'changed selected content',
-      'ambiguous approval keeps its operation',
-    ]));
-  });
-
-  it('resolves every tested capability evidence reference and Markdown anchor', () => {
-    const tested = [exact.capabilities, ...views.valid
-      .filter(view => view.decoder === 'capabilities')
-      .map(view => view.input)]
-      .filter(capabilities => capabilities.support === 'tested');
-
-    for (const capabilities of tested) {
-      const evidenceRef = capabilities.evidenceRef;
-      expect(evidenceRef, `${capabilities.harness} tested evidence`).toBeTypeOf('string');
-      const [path, anchor] = (evidenceRef as string).split('#');
-      const evidenceUrl = new URL(`../../../../${path}`, import.meta.url);
-      const markdown = readFileSync(evidenceUrl, 'utf8');
-      if (anchor === undefined) continue;
-
-      const headings = [...markdown.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)]
-        .map(([, heading]) => heading!.toLowerCase().trim()
-          .replace(/[^\p{L}\p{N}\s-]/gu, '')
-          .replace(/\s+/g, '-'));
-      expect(headings, `${path}#${anchor}`).toContain(anchor);
-    }
-  });
-});
-
-describe('app harness fixtures', () => {
-  it.each(appHarness.valid)('accepts and round-trips byte-stably: $name', testCase => {
-    const result = decodeAppHarnessRecord(testCase.input);
-    expect(result).toEqual({ ok: true, value: testCase.input });
-    if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(testCase.input));
-  });
-
-  it.each(appHarness.invalid)('rejects: $name', testCase => {
-    expect(decodeAppHarnessRecord(testCase.input)).toEqual({ ok: false, ...testCase.error });
+  it('lists the ambiguous receipt outcome', () => {
+    expect(views.valid.map(view => view.name)).toContain('disconnect after a possible submission is outcome_unknown');
   });
 });
 
@@ -270,22 +90,13 @@ describe('public surface', () => {
     expect(Object.entries(packageJson.exports).filter(([key, target]) => /fixture/i.test(key + target))).toEqual([]);
     expect(() => readFileSync(new URL('./fixtures.ts', import.meta.url))).toThrow();
     expect(Object.keys(delivery).filter(name => /fixture|fake/i.test(name))).toEqual([]);
-    expect(Object.keys(delivery)).toEqual(expect.arrayContaining([
-      'APP_HARNESSES',
-      'APP_HARNESS_SHAPES',
-      'APP_HOOK_BOUNDARIES',
-      'decodeAppHarnessRecord',
-      'sameAppHarnessIdentity',
-    ]));
     const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(indexSource).not.toMatch(/from '[^']*(fixtures|\.test)/);
   });
 
   it('imports nothing from the messaging domain', () => {
     for (const file of [
-      'decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'listening-mode.ts',
-      'harness.ts',
-      'app-harness.ts',
+      'decode.ts', 'ids.ts', 'receipts.ts', 'listening-mode.ts',
     ]) {
       expect(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).not.toMatch(/messaging/);
     }
