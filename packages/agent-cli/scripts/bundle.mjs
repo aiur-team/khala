@@ -72,7 +72,7 @@ export async function bundle({
   entryPoint = path.join(packageDirectory, 'src/cli/main.ts'),
   outfile = path.join(packageDirectory, 'dist/khala.js'),
   absWorkingDir = packageDirectory,
-  internalEntryPoint = INTERNAL_ENTRY_POINT,
+  internalEntryPoint = null,
   internalWebSource = INTERNAL_WEB_SOURCE,
 } = {}) {
   await fs.rm(path.dirname(outfile), { recursive: true, force: true });

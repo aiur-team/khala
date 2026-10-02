@@ -49,5 +49,4 @@ Run the checks with:
 
 ```sh
 pnpm --filter @khala/web test
-node --import tsx --test apps/web/src/internal/receipt-evidence.browser.spec.ts
 ```
