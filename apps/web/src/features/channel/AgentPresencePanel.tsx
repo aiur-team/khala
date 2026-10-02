@@ -194,6 +194,12 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
     setStatus(`Couldn't send the mode change to ${label}. Try again.`);
   }
 
+  /** A menu pick closes the menu and returns focus to the trigger, as Escape does. */
+  function chooseFromMenu(next: ListeningMode): void {
+    anchor.current?.focus();
+    void choose(next);
+  }
+
   return <>
     <div className="kh-rrow">{children}<span className="kh-racts">
       <Segmented icon label={`Listening mode for ${label}`} value={shown} options={MODES} onChange={value => void choose(value)} />
@@ -204,7 +210,7 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
         <div role="menu" aria-label={`Listening mode for ${label}`} onKeyDown={moveFocus}>
           {MODE_COPY.map(([value, name, desc]) => <button key={value} ref={value === shown ? activeItem : undefined} type="button"
             role="menuitemradio" aria-checked={value === shown} className={`kh-mi${value === shown ? ' on' : ''}`}
-            data-v={value} onClick={() => void choose(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
+            data-v={value} onClick={() => chooseFromMenu(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
         </div>
       </Popover>
     </span></div>
