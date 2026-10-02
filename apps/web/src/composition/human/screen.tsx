@@ -5,11 +5,11 @@
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Disposer } from '@khala/contracts/messaging/index';
-import { AiurShell } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import { resolveInitialTheme } from '../../shell/theme';
 import type { ShellMode, ThemeChoice } from '../../shell/types';
+import { KhalaApp } from '../../ui/khala/KhalaApp';
 import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from './application';
 
 export type HumanScreenRoutes<Route> = Readonly<{
@@ -43,8 +43,6 @@ export type HumanShellChrome = Readonly<{
   path: string;
   mode: ShellMode;
   theme: Readonly<{ theme: ThemeChoice; onThemeChange(theme: ThemeChoice): void }>;
-  collapsed: boolean;
-  onCollapsedChange(collapsed: boolean): void;
 }>;
 
 function statusContent(snapshot: HumanApplicationSnapshot): ReactNode {
@@ -104,7 +102,6 @@ export function HumanScreen<Route>({
   const [theme, setTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
     typeof localStorage === 'undefined' ? {} : { storage: localStorage },
   ));
-  const [collapsed, setCollapsed] = useState(false);
 
   let content: ReactNode;
   if (snapshot.phase === 'ready') {
@@ -142,8 +139,6 @@ export function HumanScreen<Route>({
     path: snapshot.path,
     mode,
     theme: { theme, onThemeChange: setTheme },
-    collapsed,
-    onCollapsedChange: setCollapsed,
   };
   if ((snapshot.phase === 'ready' || snapshot.phase === 'navigating') && renderReadyShell !== undefined) {
     return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
@@ -158,18 +153,13 @@ export function HumanScreen<Route>({
   const inactiveShell = snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
     && snapshot.reason === 'lease_unavailable';
   return (
-    <AiurShell
-      mode={mode}
-      brandHref={inactiveShell ? snapshot.path : routes.createPath()}
-      navigation={[]}
-      sidebar={inactiveShell ? <div className="khala-sidebar"><p className="khala-sidebar__inactive">Channels are paused in this tab.</p></div> : undefined}
-      actions={signedInAction}
-      theme={chrome.theme}
-      collapsed={collapsed}
-      onCollapsedChange={setCollapsed}
-    >
-      {mode === 'hosted-content' && signedInAction ? <div className="khala-content-actions">{signedInAction}</div> : null}
-      {content}
-    </AiurShell>
+    <KhalaApp
+      theme={theme}
+      onThemeChange={setTheme}
+      homeHref={inactiveShell ? snapshot.path : routes.createPath()}
+      brandActions={signedInAction}
+      {...(inactiveShell ? { list: <p className="kh-cv-empty">Channels are paused in this tab.</p> } : {})}
+      main={<div className="kh-state">{content}</div>}
+    />
   );
 }

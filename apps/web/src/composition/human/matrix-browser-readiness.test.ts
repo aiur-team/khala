@@ -56,3 +56,50 @@ it('opens locally and completes device start while cross-signing bootstrap never
   expect(vi.getTimerCount()).toBe(0);
   await engine.close();
 });
+
+it('reports the Live sync state from client sync events, scoped to the active owner and generation', async () => {
+  const listeners = new Set<(state: SyncState) => void>();
+  let state: SyncState | null = null;
+  const emit = (next: SyncState) => { state = next; for (const listener of [...listeners]) listener(next); };
+  const client = {
+    initRustCrypto: vi.fn(async () => {}), stopClient: vi.fn(), getUserId: () => '@bob:test',
+    getCrypto: () => ({ getOwnDeviceKeys: vi.fn(async () => ({ ed25519: 'fingerprint' })),
+      getCrossSigningStatus: vi.fn(async () => ({ privateKeysCachedLocally: { masterKey: true } })),
+      userHasCrossSigningKeys: vi.fn(async () => true) }),
+    getSyncState: () => state,
+    on: vi.fn((event, listener) => { if (event === ClientEvent.Sync) listeners.add(listener); }),
+    off: vi.fn((event, listener) => { if (event === ClientEvent.Sync) listeners.delete(listener); }),
+    startClient: vi.fn(async () => { emit(SyncState.Prepared); }),
+  } as unknown as MatrixClient;
+  vi.mocked(createClient).mockReturnValue(client);
+  const ports = createMatrixBrowserPorts({ identity: {} as never, credentials: {
+    resolve: vi.fn(async () => ({ kind: 'unavailable' as const })),
+  }, limits: {} as never, participants: {
+    resolve: vi.fn(async () => new Map([['@bob:test', { participantId: 'bob', kind: 'human', ownerId: 'bob', displayName: 'Bob', deviceIds: [] } as never]])),
+  } });
+  const bob = 'bob' as never;
+  expect(ports.syncStatus.live(bob, 1)).toBe(false);
+  const deps = vi.mocked(createBrowserDeviceService).mock.calls[0]![0] as BrowserDeviceDependencies;
+  const signal = new AbortController().signal;
+  await deps.credentials.resolve({ ownerId: 'bob', verifiedEmail: 'bob@test' } as never, signal);
+  const engine = await deps.engines.open({ ownerId: bob, session: {
+    deviceId: 'BOB' as never, publishedFingerprint: null,
+    credentials: { homeserverOrigin: 'https://test', userId: '@bob:test', accessToken: 'token' },
+  }, store: { name: 'bob', close: async () => {} }, signal, emit: vi.fn() });
+  await engine.start(signal);
+
+  expect(ports.syncStatus.live(bob, 1)).toBe(true);
+  expect(ports.syncStatus.live(bob, 2)).toBe(false);
+  expect(ports.syncStatus.live('alice' as never, 1)).toBe(false);
+  const listener = vi.fn();
+  const dispose = ports.syncStatus.subscribe(bob, 1, listener);
+  emit(SyncState.Reconnecting);
+  expect(listener).toHaveBeenCalledOnce();
+  expect(ports.syncStatus.live(bob, 1)).toBe(false);
+  emit(SyncState.Syncing);
+  expect(ports.syncStatus.live(bob, 1)).toBe(true);
+  dispose();
+  emit(SyncState.Error);
+  expect(listener).toHaveBeenCalledTimes(2);
+  await engine.close();
+});

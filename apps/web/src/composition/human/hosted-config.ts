@@ -60,7 +60,9 @@ export function contentSecurityPolicy(homeserverOrigin: string | null): string {
     "worker-src 'self' blob:",
     `connect-src ${connectSources}`,
     "img-src 'self' data:",
-    "style-src 'self' 'unsafe-inline'",
+    // The design's fonts load from Google Fonts (RECREATION-SPEC §2.1).
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "object-src 'none'",

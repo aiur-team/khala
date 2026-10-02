@@ -39,14 +39,15 @@ and device status, and the ready route. It imports no route feature and takes
 create/join/channel routes and OAuth sign-in to it. The internal browser entry is removed during M1; the frozen internal application
 is outside the workspace and build.
 
-The standalone mount owns Khala chrome. A host-content mount owns only route
-content and follows the same authentication and disposal rules, so a future
-Aiur host does not create duplicate chrome or alternate authority semantics.
-The owner shell links the top logo and KHALA wordmark to `/conversations`. The selected
-channel fills the main pane and its title appears in the top navigation. The
-sidebar header shows a request count before create only while requests are
-pending. Signed-in owners can switch themes and log out from the topbar (or the
-content edge in hosted mode). Successful logout
+Both mount modes render the edge-to-edge Khala frame (`ui/khala/KhalaApp`).
+It is one full-viewport card with no topbar, navigation rail or drawer. The
+list column starts with the brand row, whose KHALA wordmark links to
+`/conversations`. Signed-in owners switch themes and log out from the brand
+row's actions. The selected channel fills the main pane, which keeps the
+channel header. At 900px and below the card shows one pane. `/channels/<id>`
+shows the thread, which has a back control to the list, and every other route
+shows the list. Signed-out and account states render in the frame's main
+pane. Successful logout
 ends the route and Matrix device lease before showing sign-in at `/new`.
 After sign-in, the channel index shell appears while the device initializes.
 Its channel and create controls stay unavailable until the device is ready;
@@ -59,7 +60,7 @@ The site root `/` belongs to the public landing page (`netlify.toml`), so the
 application routes live below it: `/new` opens the signed-in index, `/join?invite=…`
 admits a shared link, `/agent/confirm?joinId=…` confirms an agent request, `/channels/<id>` opens a channel, and
 `/channels/<id>/tools` remains a direct link for recipient review. The SPA entry reads
-an optional `?mount=hosted-content` parameter to boot without standalone chrome,
+an optional `?mount=hosted-content` parameter to boot in host-content mode,
 then strips it before routing; any other value boots standalone.
 
 The Matrix adapter accepts timeline attribution only after the same-origin

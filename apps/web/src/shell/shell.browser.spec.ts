@@ -5,21 +5,29 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser } from '@playwright/test';
+import { chromium, type Browser, type Page } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
 
-async function isMobileLayout(page: import('@playwright/test').Page): Promise<boolean> {
-  return page.evaluate(() => getComputedStyle(document.querySelector('.aiur-shell__nav')!).flexDirection === 'row');
-}
+const fontOf = (page: Page, selector: string) =>
+  page.locator(selector).first().evaluate(node => getComputedStyle(node).fontFamily);
+const styleOf = <K extends keyof CSSStyleDeclaration>(page: Page, selector: string, keys: readonly K[]) =>
+  page.locator(selector).first().evaluate((node, names) => {
+    const style = getComputedStyle(node);
+    return Object.fromEntries(names.map(name => [name, String(style[name as keyof CSSStyleDeclaration])]));
+  }, keys as readonly string[]);
+const box = (page: Page, selector: string) =>
+  page.locator(selector).first().evaluate(node => new Promise<{ width: number; height: number }>(resolve =>
+    // Reduced motion still leaves a 0.01ms grid transition; measure after it lands.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const rect = node.getBoundingClientRect();
+      resolve({ width: rect.width, height: rect.height });
+    }))));
 
-// Real desktop and phone viewports plus the source-derived 960px breakpoint,
-// browser-verified per docs/evidence/ui-planning-grounding.md. This harness
-// renders the production AiurShell/KhalaPageFrame/Panel/StatusBadge
-// components with synthetic content; it is not a full-page or full-product
-// integration test.
-test('AiurShell layout survives desktop, phone and breakpoint viewports', { timeout: 90_000 }, async () => {
+// The edge-to-edge Khala frame (ui/khala/KhalaApp) rendered with today's list
+// and thread components and synthetic content; not a full-product test.
+test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on a phone', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-shell-dist-'));
   // Chromium's process-singleton lock is a unix-domain socket, capped at
   // ~104 bytes of path; a workspace-scoped TMPDIR can exceed that, so the
@@ -39,133 +47,68 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
       args: ['--no-sandbox'],
       env: { ...process.env, TMPDIR: chromiumProfileRoot },
     });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     await page.goto(url);
+    await page.locator('.kh-card').waitFor();
 
-    // Desktop: exactly one topbar/nav/main, long nav label visible, count badge shown.
-    await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
-    assert.equal(await page.getByRole('navigation').count(), 1);
-    assert.equal(await page.getByRole('main').count(), 1);
-    assert.equal(await page.getByText('2', { exact: true }).count(), 1);
-    assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1);
-    assert.equal(await page.locator('.aiur-shell__brand').innerText(), 'KHALA');
-    assert.equal(await page.locator('.aiur-shell__theme-toggle svg').count(), 2);
-    assert.equal(await page.locator('.aiur-shell__nav-toggle svg').count(), 1);
-    const themeWidth = await page.locator('.aiur-shell__theme-toggle').evaluate(node => node.getBoundingClientRect().width);
-    assert.ok(themeWidth > 32 && themeWidth < 34, `theme control should match Aiur's 2.05rem icon button; got ${themeWidth}px`);
+    // Desktop: one full-viewport card, 300px list, no legacy chrome.
+    assert.deepEqual(await box(page, '.kh-card'), { width: 1440, height: 900 });
+    assert.equal((await box(page, '.kh-list')).width, 300);
+    assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
+    assert.equal(await page.locator('nav').count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight), true, 'the page never scrolls');
 
-    // Collapse: focus does not move to a hidden element, and every nav link
-    // keeps an accessible name (the visible label text is hidden, not removed
-    // from the accessibility tree).
-    const collapseToggle = page.locator('.aiur-shell__nav-toggle');
-    const navWidthBefore = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
-    await collapseToggle.focus();
-    assert.equal(await collapseToggle.getAttribute('aria-label'), 'Collapse navigation');
-    await collapseToggle.click();
-    assert.equal(await collapseToggle.getAttribute('aria-label'), 'Expand navigation');
-    assert.equal(await collapseToggle.evaluate(node => node === document.activeElement), true);
-    assert.equal(await collapseToggle.isVisible(), true);
-    const navWidthAfter = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
-    assert.ok(navWidthAfter < navWidthBefore, `collapsed rail (${navWidthAfter}px) should be narrower than expanded (${navWidthBefore}px)`);
-    assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1, 'nav link keeps its accessible name while collapsed');
-    assert.equal(
-      await page.getByRole('link', { name: /A rather long navigation destination name/ }).count(),
-      1,
-      'long nav link keeps its accessible name while collapsed',
-    );
+    // Fonts: the UI font everywhere, the logo font on the wordmark only.
+    // The list head becomes .kh-list-head in KM-181; today's list header stands in for it.
+    for (const selector of ['body', '.khala-app', '.conversation-list__head strong', '.conversation-list__item']) {
+      assert.match(await fontOf(page, selector), /^"Space Grotesk"/u, `${selector} uses the UI font`);
+    }
+    // The scoped base rules keep the design's (0,0,1) weight, so component rules win.
+    assert.match(await fontOf(page, '.kh-brand-actions .tool-btn'), /^"JetBrains Mono"/u, '.tool-btn is a mono element (§2.1)');
+    assert.deepEqual(await styleOf(page, '.kh-brand .brand-live', ['fontSize', 'paddingTop', 'paddingLeft', 'minHeight']),
+      { fontSize: '10.88px', paddingTop: '2.56px', paddingLeft: '8px', minHeight: '0px' }, 'the Live badge keeps its §1.4 size');
+    assert.match(await fontOf(page, '.kh-brand .wm'), /^Bungee/u);
+    assert.equal(await page.locator('.kh-brand .wm').innerText(), 'KHALA');
+    const bungee = await page.evaluate(() => [...document.querySelectorAll('body *')]
+      .filter(node => getComputedStyle(node).fontFamily.startsWith('Bungee'))
+      .map(node => node.className));
+    assert.deepEqual(bungee, ['wm'], 'no element other than the wordmark is set in Bungee');
+
+    // The theme toggle lives in the brand actions and swaps the tokens.
+    const toggle = page.locator('.kh-brand-actions').getByRole('button', { name: 'Toggle color theme' });
+    // Reduced motion leaves a 0.01ms transition on every property; let it land.
+    const surface = () => page.locator('.kh-list').evaluate(node => new Promise<string>(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve(getComputedStyle(node).backgroundColor)))));
+    assert.equal(await surface(), 'rgb(30, 32, 37)');
+    assert.equal(await page.locator('.toggle-icon .sun').isVisible(), true);
+    await toggle.click();
+    assert.equal(await page.locator('.khala-app').getAttribute('data-theme'), 'light');
+    assert.equal(await surface(), 'rgb(244, 236, 217)');
+    assert.equal(await page.locator('.toggle-icon .moon').isVisible(), true);
+    await toggle.click();
+    assert.equal(await page.locator('.kh-brand-actions').getByRole('button', { name: 'Log out' }).count(), 1);
+
+    // An interactive (button) human avatar keeps its own font over `button { font: inherit }`.
+    await page.goto(`${url}?probe`);
+    await page.locator('.kh-hav').waitFor();
+    assert.deepEqual(await styleOf(page, '.kh-hav', ['fontSize', 'fontWeight']), { fontSize: '11.52px', fontWeight: '700' });
+    await page.goto(url);
+    await page.locator('.kh-card').waitFor();
+
+    // ≤1100px narrows the list to 260px.
+    await page.setViewportSize({ width: 1100, height: 900 });
+    assert.equal((await box(page, '.kh-list')).width, 260);
+
+    // Phone: the list view shows the brand row; the thread view hides the list.
     await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await collapseToggle.isVisible(), false, 'phone navigation has no collapse control');
-    const phoneLabelWidth = await page.locator('.aiur-shell__nav-label').first().evaluate(node => node.getBoundingClientRect().width);
-    assert.ok(phoneLabelWidth > 50, `collapsed desktop state must restore route labels on phone; got ${phoneLabelWidth}px`);
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await collapseToggle.click();
-
-    // Theme swap changes tokens without breaking legibility or focus.
-    const themeToggle = page.locator('.aiur-shell__theme-toggle');
-    await themeToggle.focus();
-    assert.equal(await themeToggle.getAttribute('aria-label'), 'Toggle color theme');
-    assert.equal(await page.locator('.aiur-shell__theme-icon .sun').isVisible(), true);
-    await themeToggle.click();
-    assert.equal(await page.locator('.aiur-shell__theme-icon .moon').isVisible(), true);
-    assert.equal(await page.evaluate(() => document.querySelector('.aiur-shell')!.getAttribute('data-theme')), 'light');
-    await themeToggle.click();
-
-    // A routed sign-in action uses Aiur's shared control treatment in both
-    // themes, including a visible keyboard focus ring.
-    await page.locator('.panel').first().evaluate(panel => {
-      const signIn = document.createElement('button');
-      signIn.type = 'button';
-      signIn.className = 'aiur-action';
-      signIn.textContent = 'Sign in';
-      panel.append(signIn);
-      const cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.textContent = 'Cancel';
-      panel.append(cancel);
-    });
-    const signIn = page.getByRole('button', { name: 'Sign in' });
-    const actionStyle = () => signIn.evaluate(node => {
-      const style = getComputedStyle(node);
-      return { background: style.backgroundColor, color: style.color, radius: style.borderRadius, height: node.getBoundingClientRect().height };
-    });
-    assert.deepEqual(await actionStyle(), { background: 'rgb(0, 112, 240)', color: 'rgb(255, 255, 255)', radius: '10px', height: 36 });
-    assert.notEqual(await page.getByRole('button', { name: 'Cancel' }).evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(0, 112, 240)', 'neutral controls stay distinct from the primary action');
-    for (let step = 0; step < 30 && !(await signIn.evaluate(node => node === document.activeElement)); step++) {
-      await page.keyboard.press('Tab');
-    }
-    assert.equal(await signIn.evaluate(node => node === document.activeElement), true);
-    assert.notEqual(await signIn.evaluate(node => getComputedStyle(node).outlineStyle), 'none');
-    await themeToggle.click();
-    assert.equal((await actionStyle()).background, 'rgb(31, 87, 196)');
-    await themeToggle.click();
-
-    // Keyboard reaches the review control and it stays visible.
-    const review = page.getByRole('button', { name: 'Review selected batch' });
-    await review.focus();
-    assert.equal(await review.evaluate(node => node === document.activeElement), true);
-    assert.equal(await review.isVisible(), true);
-
-    // The source breakpoint is min-width: 960px desktop; 959px is mobile.
-    await page.setViewportSize({ width: 960, height: 900 });
-    assert.equal(await isMobileLayout(page), false, '960px is the desktop side of the breakpoint');
-    await page.setViewportSize({ width: 959, height: 900 });
-    assert.equal(await isMobileLayout(page), true, '959px is the mobile side of the breakpoint');
-
-    for (const [label, width, height] of [
-      ['960px breakpoint (desktop side)', 960, 900],
-      ['959px breakpoint (mobile side)', 959, 900],
-      ['iPhone-class phone', 390, 844],
-      ['small-android-class phone', 360, 780],
-      ['landscape phone', 844, 390],
-    ] as const) {
-      await page.setViewportSize({ width, height });
-      assert.equal(
-        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
-        true,
-        `${label}: no horizontal overflow from the long nav label or wrapped message`,
-      );
-      assert.equal(await page.getByRole('navigation').count(), 1, `${label}: still exactly one navigation landmark`);
-      assert.equal(await review.isVisible(), true, `${label}: review control remains reachable`);
-    }
-
-    // 200% zoom (approximated by device scale factor) keeps content legible and non-overflowing.
-    await page.setViewportSize({ width: 720, height: 500 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, '200% zoom equivalent viewport: no overflow');
-    assert.equal(await review.isVisible(), true, '200% zoom equivalent viewport: review control remains visible');
-
-    // Hosted-content mode: no shell chrome is rendered, and the brand tokens
-    // still resolve on the content root the host mounted, not just .aiur-shell.
-    const hostedPage = await browser.newPage({ viewport: { width: 1024, height: 800 } });
-    await hostedPage.goto(`${url}?mode=hosted`);
-    await hostedPage.locator('.panel').first().waitFor();
-    assert.equal(await hostedPage.getByRole('navigation').count(), 0, 'hosted mode renders no shell navigation landmark');
-    assert.equal(await hostedPage.locator('.aiur-shell__topbar').count(), 0, 'hosted mode renders no shell topbar');
-    const resolvedFill = await hostedPage
-      .locator('.panel')
-      .first()
-      .evaluate(node => getComputedStyle(node).backgroundColor);
-    assert.notEqual(resolvedFill, 'rgba(0, 0, 0, 0)', 'panel background resolves to a real color under hosted-content mode');
-    await hostedPage.close();
+    assert.deepEqual(await box(page, '.kh-card'), { width: 390, height: 844 });
+    assert.equal(await page.locator('.kh-brand').isVisible(), true);
+    assert.equal(await page.locator('.kh-main').isVisible(), false);
+    await page.getByRole('button', { name: /Release retro/u }).click();
+    assert.match(await page.locator('.kh-card').getAttribute('class') ?? '', /\bin-thread\b/u);
+    assert.equal(await page.locator('.kh-list').isVisible(), false);
+    assert.equal(await page.locator('.kh-main').isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'no horizontal overflow on a phone');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
