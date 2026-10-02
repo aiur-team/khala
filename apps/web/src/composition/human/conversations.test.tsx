@@ -33,6 +33,6 @@ describe('conversation index presentation', () => {
     const html = renderToStaticMarkup(<ConversationList conversations={[{ ...items[0]!, unreadCount: 2 }, ...items.slice(1)]}
       query="" onQueryChange={vi.fn()} onSelect={vi.fn()} status="ready" />);
     expect(html).toContain('2 unread');
-    expect(html).toContain('2 unread notifications');
+    expect(html).toContain(', 2 unread"');
   });
 });

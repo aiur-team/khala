@@ -147,10 +147,10 @@ describe('HumanApplicationScreen', () => {
         routes={routes} renderRoom={renderRoom} mode="standalone" />);
       expect(html).toContain('khala-owner-shell');
       expect(html).toContain('aria-label="Conversations"');
-      expect(html).toContain('aria-label="Create channel" title="Create channel" disabled');
+      expect(html).toContain('aria-label="New channel" disabled');
       expect(html).toContain('aria-label="Log out"');
       expect(html).not.toContain('Account and device status');
-      expect(html).not.toContain('Create a channel');
+      expect(html).not.toContain('kh-pop-h');
       expect(renderRoom).not.toHaveBeenCalled();
     }
   });
@@ -187,7 +187,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(room).toContain('live room');
     expect(room).not.toContain('channel-requests');
-    expect(room).toContain('aria-label="Create channel"');
+    expect(room).toContain('aria-label="New channel"');
     expect(room).toContain('aria-label="Log out"');
     const actions = room.slice(room.indexOf('<span class="kh-brand-actions">'));
     expect(actions.indexOf('aria-label="Toggle color theme"')).toBeGreaterThan(-1);

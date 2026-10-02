@@ -17,7 +17,7 @@ import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList } from '../../ui/conversation';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { ChevronLeftIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
-import { CreateChannelDialog } from './CreateChannelDialog';
+import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
 import { useLiveSync } from './sync-status';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
@@ -175,7 +175,7 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
     list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
       showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
       emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
-      action={<button type="button" className="kh-ib sm" aria-label="Create channel" title="Create channel" disabled><PlusIcon /></button>} />}
+      action={<button type="button" className="kh-ib sm" aria-label="New channel" disabled><PlusIcon /></button>} />}
     main={children} />;
 }
 
@@ -192,7 +192,8 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const createButton = useRef<HTMLButtonElement>(null);
-  const restoreCreateFocus = useCallback(() => { createButton.current?.focus(); }, []);
+  const closeCreate = useCallback(() => setCreating(false), []);
+  const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
   const live = useLiveSync(context);
   const inThread = route.kind === 'channel';
@@ -200,20 +201,20 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
     homeHref={routes.conversationsPath()} inThread={inThread} live={live}
     brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
     list={<ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
-      query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."
+      query={query} onQueryChange={setQuery}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
-      action={<button ref={createButton} type="button" className="kh-ib sm" aria-label="Create channel" title="Create channel" onClick={() => setCreating(true)}><PlusIcon /></button>}
+      action={<>
+        <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded="false"
+          onClick={() => setCreating(open => !open)}><PlusIcon /></button>
+        <NewChannelPopover anchor={createButton} open={creating} onClose={closeCreate} ports={context} onOpenRoom={openCreatedRoom} />
+      </>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) navigateRoute(routes.roomPath(id)); }} />}
     main={<>
       {/* Phone-width thread view hides the list; the design's header back button (§5) replaces this. */}
       {inThread ? <div className="kh-shell-back"><button type="button" className="kh-back" aria-label="All conversations"
         onClick={() => navigateRoute(routes.conversationsPath())}><ChevronLeftIcon /></button></div> : null}
       {children}
-    </>}
-    overlay={creating ? <CreateChannelDialog context={context}
-      returnFocus={restoreCreateFocus}
-      onClose={() => setCreating(false)}
-      onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null} />;
+    </>} />;
 }
 
 /** The hosted human application: create, join and channel routes behind OAuth sign-in. */

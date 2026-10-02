@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
-import type { AuthPrincipal, DevicePort, DeviceView, IdentityPort } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, DevicePort, DeviceView, IdentityPort, RoomId } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, ok } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from '../application';
 import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
@@ -61,8 +62,12 @@ const conversations = {
   ],
   subscribe: () => () => undefined,
 };
-const application = createHumanApplication({ identity, device, room: {} as never, admission: {} as never, conversations,
-  limits: {} as never }, { initialPath: holdDeviceHarness ? '/new' : '/channels/room_1' });
+const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+if (!limits.ok) throw new Error('invalid harness limits');
+// Creating from the New channel popover "creates" the second listed channel.
+const room = { create: async ({ title }: { title: string | null }) => ok({ roomId: 'room_2' as RoomId, title, membership: 'joined' as const, revision: 'rev_created' }) };
+const application = createHumanApplication({ identity, device, room: room as never, admission: {} as never, conversations,
+  limits: limits.value },{ initialPath: holdDeviceHarness ? '/new' : '/channels/room_1' });
 function VisualRoom() {
   return <ChannelScreen embedded title="First channel" viewerName="Alice" controller={visualController}
     renderTimeline={() => <><ul className="fixture-messages"><ChatMessage id="hello" author="Alice">A shared place for the release.</ChatMessage></ul>

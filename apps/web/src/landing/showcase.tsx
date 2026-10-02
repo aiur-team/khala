@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ChatComposer, ChatMessage, ChatSystemEvent, ConversationLayout, ConversationList, ParticipantDetail, type ConversationSummary } from '../ui/conversation';
+import { ChatComposer, ChatMessage, ChatSystemEvent, ConversationLayout, ParticipantDetail, type ConversationSummary } from '../ui/conversation';
+import { ShowcaseConversationList } from './ShowcaseConversationList';
 import './showcase.css';
 
 type Example = Readonly<{
@@ -75,7 +76,7 @@ export function ExampleShowcase() {
   };
   return <div className="showcase-app khala-content-root" aria-label="Interactive local conversation demo">
     <ConversationLayout inThread={inThread}
-      list={<ConversationList conversations={summaries} selectedId={selected} query={query} onQueryChange={setQuery} status="ready"
+      list={<ShowcaseConversationList conversations={summaries} selectedId={selected} query={query} onQueryChange={setQuery} status="ready"
         onSelect={id => { setSelected(id); setDetailsOpen(false); setDraft(''); setInThread(true); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.showcase-app .conversation-thread__back')?.focus()); }} />}
       thread={<section className="conversation-thread" aria-label="Conversation thread">
         <header className="conversation-thread__head">
