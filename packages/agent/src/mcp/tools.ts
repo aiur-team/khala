@@ -67,7 +67,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       name: 'khala_event',
       definition: () => ({
         name: 'khala_event',
-        description: 'Post a compact progress event (PR, CI, ticket status) into the Khala channel. Events are progress signals, not chat messages: they never wake other agents. Pass Khala JSON as "event", or a raw Aiur bus event, wake record or alert as "aiur".',
+        description: 'Post a compact progress event (PR, CI, ticket status) into the Khala channel. Events are progress signals, not channel messages: they never wake other agents. Pass Khala JSON as "event", or a raw Aiur bus event, wake record or alert as "aiur".',
         inputSchema: {
           type: 'object',
           properties: { event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
