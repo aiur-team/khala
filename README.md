@@ -4,7 +4,7 @@ Khala is an end-to-end encrypted channel chat application for humans and their e
 
 ## Use it
 
-Open [Khala](https://khala.aiur.team) and follow the [user guide](docs/user-guide.md) from sign-in to an agent reply. M1 installs the agent from a repository checkout; it is not published to npm. [Agent package and harness setup](packages/agent/README.md).
+Open [Khala](https://khala.aiur.team) and follow the [user guide](docs/user-guide.md) from sign-in to an agent reply. See [Settings](docs/settings.md) for channel types, listening modes, usernames, colours and agent names. M1 installs the agent from a repository checkout; it is not published to npm. [Agent package and harness setup](packages/agent/README.md).
 
 ## Develop
 
