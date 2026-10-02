@@ -25,6 +25,7 @@ const correlation = `external-${runId}`;
 let stage = 'preflight';
 let browserDiagnostic;
 let connectorDiagnostic;
+let consumerDiagnostic;
 let connectorStartup = 'unproven';
 const owned = [];
 const abort = new AbortController();
@@ -44,6 +45,11 @@ export function parseExternalCommand(args) {
   if (args.length === 0) return null;
   if (execAt !== 0 || argv.length < 2) throw new Error('invalid_exec_arguments');
   return argv.slice(1);
+}
+
+export function sanitizeConsumerDiagnostic(value) {
+  return value && typeof value === 'object' && /^[a-z][a-z0-9_]{1,80}$/u.test(value.stage)
+    ? { stage: value.stage } : null;
 }
 
 async function command(bin, args, options = {}) {
@@ -463,8 +469,19 @@ async function main() {
         KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token,
         KHALA_EXTERNAL_CLI: installedCli, KHALA_EXTERNAL_ORIGIN: origin,
         KHALA_APP_ORIGIN: origin,
+        KHALA_E2E_CONSUMER_DIAGNOSTIC: path.join(scratch, 'consumer-stage.json'),
       });
-      await command(extraCommand[0], extraCommand.slice(1), { env: consumerEnv, timeout: 300_000 });
+      try {
+        // Native model turns and two owner approvals exceed the topology smoke.
+        // Keep the consumer bounded, with a shorter inner Playwright deadline.
+        await command(extraCommand[0], extraCommand.slice(1), { env: consumerEnv, timeout: 900_000 });
+      } catch (error) {
+        try {
+          const diagnostic = JSON.parse(await readFile(consumerEnv.KHALA_E2E_CONSUMER_DIAGNOSTIC, 'utf8'));
+          consumerDiagnostic = sanitizeConsumerDiagnostic(diagnostic);
+        } catch { /* Consumer diagnostics are optional and never raw output. */ }
+        throw error;
+      }
     }
     stage = 'report';
     const source = await command('git', ['rev-parse', 'HEAD']);
@@ -493,5 +510,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     code: /^(?:child_exited_[\w-]+|readiness_timeout|hosted_agent_route_missing|[a-z_]+_failed_\d+)$/u.test(error?.message) ? error.message
       : ['ESRCH', 'ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'stage_failed',
     ...(browserDiagnostic ? { browserDiagnostic } : {}),
-    ...(connectorDiagnostic ? { connectorDiagnostic } : {}) }) + '\n'); process.exitCode = 1; });
+    ...(connectorDiagnostic ? { connectorDiagnostic } : {}),
+    ...(consumerDiagnostic ? { consumerDiagnostic } : {}) }) + '\n'); process.exitCode = 1; });
 }
