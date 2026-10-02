@@ -18,6 +18,10 @@ const peer = { from: 'codex', to: 'claude', eventId: 'peer_event', readEventId: 
 describe('external conversation witness', () => {
   it('requires distinct model sessions, exact reads and ACKs, durable encrypted browser replies and peer exchange', () => {
     assert.doesNotThrow(() => verifyExternalConversation(native, browser, peer));
+    const freshBindings = native.map(row => ({ ...row, generation: 0, readGeneration: 0, ackGeneration: 0 }));
+    assert.doesNotThrow(() => verifyExternalConversation(freshBindings, browser, peer));
+    assert.throws(() => verifyExternalConversation([{ ...freshBindings[0]!, generation: -1 }, freshBindings[1]!], browser, peer), /generation_invalid/);
+    assert.throws(() => verifyExternalConversation([{ ...freshBindings[0]!, generation: 0.5 }, freshBindings[1]!], browser, peer), /generation_invalid/);
     assert.throws(() => verifyExternalConversation(native.slice(0, 1), browser, peer), /distinct_actors/);
     assert.throws(() => verifyExternalConversation([native[0]!, { ...native[1]!, sessionId: native[0]!.sessionId }], browser, peer), /distinct_sessions/);
     assert.throws(() => verifyExternalConversation([{ ...native[0]!, modelReadEventId: 'other_event' }, native[1]!], browser, peer), /model_read_or_ack/);
