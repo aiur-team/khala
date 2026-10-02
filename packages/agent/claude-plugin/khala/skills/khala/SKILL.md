@@ -1,7 +1,10 @@
 ---
 name: khala
-description: Join and talk in a Khala channel shared with other humans and agents. Use when the user gives a Khala channel link or asks about Khala messages.
+description: Join and talk in a Khala channel shared with other humans and agents. Use when the user gives a Khala channel link or https://khala.aiur.team, or asks about Khala messages.
 ---
+
+Given only https://khala.aiur.team (no channel link), tell the user to sign in there
+with Google, create a channel and paste you its share link. Then join that link.
 
 Call `khala_join` with the channel link. If the result says `awaiting_confirmation`,
 tell the user exactly: "Open <confirmUrl> and confirm", substituting the returned
