@@ -3,6 +3,7 @@ import {
   agentOwnerRecordKey, decodeAgentOwnerRecord, humanEmailRecordKey, ownerFirstName, readParticipantEmail,
   type AgentOwnerRecord, type HumanEmailRecord, type Participant,
 } from '@khala/contracts/m1/participants';
+import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
 import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
@@ -75,6 +76,7 @@ export type MatrixHumanServices = Readonly<{
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
+  setOwnerDisplayName(ownerId: OwnerId, name: string): Promise<boolean>;
 
 }>;
 
@@ -357,17 +359,29 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
+  async function setDisplayName(session: MatrixLogin, name: string, call?: CallOptions): Promise<boolean> {
+    try {
+      const path = `/_matrix/client/v3/profile/${encodeURIComponent(session.userId)}/displayname`;
+      const headers = { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' };
+      const profile = await request(path, { headers }, call);
+      if (profile.status === 200 && (await body(profile))?.displayname === name) return true;
+      if (profile.status !== 200 && profile.status !== 404) return false;
+      const written = await request(path, { method: 'PUT', headers, body: JSON.stringify({ displayname: name }) }, call);
+      return written.ok;
+    } catch { return false; }
+  }
+
   const sessions: MatrixSessionIssuer = {
     async issue(principal, deviceId, call) {
       const session = await login(principal.ownerId, deviceId, call);
       if (session === null) return { kind: 'unavailable' };
       try {
-        const path = `/_matrix/client/v3/profile/${encodeURIComponent(session.userId)}/displayname`;
-        const headers = { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' };
-        const profile = await request(path, { headers }, call);
-        const desired = ownerFirstName(principal.verifiedEmail);
-        if (profile.status === 404 || (profile.status === 200 && (await body(profile))?.displayname !== desired)) {
-          await request(path, { method: 'PUT', headers, body: JSON.stringify({ displayname: desired }) }, call);
+        const stored = await options.store.read(profileRecordKey(principal.ownerId), call);
+        if (stored.kind === 'record' || stored.kind === 'absent') {
+          const decoded = stored.kind === 'record' ? decodeProfileRecord(stored.record.value) : null;
+          const desired = decoded?.ok && decoded.value.ownerId === principal.ownerId
+            ? decoded.value.username : ownerFirstName(principal.verifiedEmail);
+          await setDisplayName(session, desired, call);
         }
       } catch { /* Profile labels are best effort and never prevent session minting. */ }
       await rememberHumanEmail(principal.ownerId, principal.verifiedEmail, call);
@@ -571,6 +585,12 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   };
 
   return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
+    setOwnerDisplayName: async (ownerId, name) => {
+      try {
+        const session = await controlLogin(ownerId);
+        return session ? await setDisplayName(session, name) : false;
+      } catch { return false; }
+    },
     roomName: async (ownerId, roomId) => {
       const session = await controlLogin(ownerId);
       return session ? (await roomName(session, roomId)) || null : null;

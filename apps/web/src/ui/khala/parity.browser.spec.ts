@@ -92,16 +92,18 @@ const SCREEN_SLACK = 0.005;
  * The measured ratio of every screen over THRESHOLD on the capture machine,
  * while decision dec_4e1280cb3a29b228 is open. Its ceiling is this plus
  * SCREEN_SLACK and its cause is `screenCause`; an unlisted screen gates at THRESHOLD.
+ * The two `draft` ceilings were re-measured for operator request 2026-10-02: no machine tag; agent bubbles
+ * tinted by owner (the agent-row-owner-tint mask leaves a bubble-edge residue; was .0625 dark, .0647 light).
  */
 const SCREEN_MEASURED: Readonly<Record<string, number>> = {
   '1440-dark-thread': 0.0775, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0665, '1440-dark-detail-agent': 0.1267,
   '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0698, '1440-dark-pop-invite': 0.0794, '1440-dark-pop-add-agent': 0.0314,
-  '1440-dark-failed-send': 0.0775, '1440-dark-draft': 0.0625, '1100-dark-thread': 0.1340, '900-dark-thread': 0.1747,
+  '1440-dark-failed-send': 0.0775, '1440-dark-draft': 0.0678, '1100-dark-thread': 0.1340, '900-dark-thread': 0.1747,
   '760-dark-thread': 0.0965, '760-dark-list': 0.0201, '390-dark-thread': 0.1055, '390-dark-list': 0.0855, '390-dark-roster': 0.0718,
   '390-dark-chips': 0.0689, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
   '1440-light-thread': 0.0807, '1440-light-roster': 0.0260, '1440-light-chips': 0.0684, '1440-light-detail-agent': 0.1332,
   '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0816, '1440-light-pop-invite': 0.0842, '1440-light-pop-add-agent': 0.0342,
-  '1440-light-failed-send': 0.0807, '1440-light-draft': 0.0647, '1100-light-thread': 0.1371, '900-light-thread': 0.1835,
+  '1440-light-failed-send': 0.0807, '1440-light-draft': 0.0705, '1100-light-thread': 0.1371, '900-light-thread': 0.1835,
   '760-light-thread': 0.0996, '760-light-list': 0.0205, '390-light-thread': 0.1139, '390-light-list': 0.0862,
   '390-light-roster': 0.0727, '390-light-chips': 0.0756, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
 };
@@ -114,7 +116,26 @@ const screenCeiling = (c: ScreenCase) => {
  * and property. The test expects the current value instead, so any other
  * change still fails.
  */
-const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {};
+const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
+  // The fixture's first agent row is the viewer's own: a greyed accent (dark) / muted accent tint (light).
+  '.kh-row:not(.me):not(.human) .kh-b': {
+    reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+    values: {
+      '1440-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
+      '1440-light': { 'background-color': 'color(srgb 0.691922 0.716706 0.75451)' },
+      '390-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
+    },
+  },
+  // The fixture's first mention sits in that agent row; on a tinted bubble it takes the bubble's text colour.
+  '.kh-mention': {
+    reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+    values: {
+      '1440-dark': { color: 'rgb(237, 238, 240)', border: '0px none rgb(237, 238, 240)' },
+      '1440-light': { color: 'rgb(42, 37, 32)', border: '0px none rgb(42, 37, 32)' },
+      '390-dark': { color: 'rgb(237, 238, 240)', border: '0px none rgb(237, 238, 240)' },
+    },
+  },
+};
 
 // --- The design page, for mask boxes: the same page and steps as reference/capture.mjs. ---
 
@@ -454,6 +475,7 @@ const EXACT = ['color', 'background-color', 'font-size', 'font-weight', 'font-fa
 /** Selectors with nothing to compare in M1, with the reason. */
 const COMPUTED_SKIP: Readonly<Record<string, string>> = {
   '.kh-id': 'Executor decision (dec_f83838efca089ad3): #id badges are Aiur ticket numbers and M1 omits them; `.kh-id` renders only for colliding names',
+  '.kh-otag': 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
 };
 const SIZE_ONLY = 'position follows text length or thread scroll; size compared';
 /** Boxes that follow dataset text, thread scroll or an omitted neighbour; their styles are still compared. */
@@ -714,20 +736,22 @@ describe('behaviour', { concurrency: 1 }, () => {
     assert.ok(longest >= 2, 'the fixture has a multi-row run');
   });
 
-  it('ownership: the viewer is .me with no avatar; the viewer’s agents are left rows tagged “Your machine”; other humans are .human', { timeout: 60_000 }, async () => {
+  // Operator request 2026-10-02: no machine tag; agent bubbles tinted by owner.
+  it('ownership: the viewer is .me with no avatar; the viewer’s agents are left `.agent.yours` rows with no machine tag; other humans are .human', { timeout: 60_000 }, async () => {
     await withFixture(at1440('thread'), async page => {
       const rows = await page.locator('.kh-thread .kh-row').evaluateAll(list => list.map(row => ({
         me: row.classList.contains('me'), human: row.classList.contains('human'), avatar: row.querySelector('.kh-av') !== null,
-        name: row.querySelector('.kh-name b')?.textContent ?? null, tag: row.querySelector('.kh-otag, .kh-htag')?.textContent ?? null,
-        tagTransform: row.querySelector('.kh-otag') ? getComputedStyle(row.querySelector('.kh-otag')!).textTransform : null,
+        yours: row.classList.contains('agent') && row.classList.contains('yours'),
+        name: row.querySelector('.kh-name b')?.textContent ?? null, machine: /machine/u.test(row.querySelector('.kh-name')?.textContent ?? ''),
         justify: getComputedStyle(row).justifyContent,
       })));
       const mine = rows.filter(row => row.me);
       assert.ok(mine.length >= 2);
       assert.ok(mine.every(row => !row.avatar && !row.human), 'the viewer’s rows are .me without an avatar');
-      const yourMachine = rows.filter(row => row.tag === 'Your machine');
-      assert.ok(yourMachine.length >= 1, 'the viewer’s agents carry “Your machine”');
-      assert.ok(yourMachine.every(row => !row.me && row.avatar && row.tagTransform === 'uppercase'), 'agent rows are left-aligned, uppercase tag');
+      assert.ok(rows.every(row => !row.machine), 'no row carries a machine tag');
+      const yours = rows.filter(row => row.yours);
+      assert.ok(yours.length >= 1, 'the viewer’s agents are `.agent.yours`');
+      assert.ok(yours.every(row => !row.me && row.avatar), 'agent rows are left-aligned with an avatar');
       const humans = rows.filter(row => row.human);
       assert.deepEqual([...new Set(humans.map(row => row.name).filter(Boolean))].sort(), ['Kai Watanabe', 'Maya Chen']);
     });

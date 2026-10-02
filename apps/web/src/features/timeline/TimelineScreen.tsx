@@ -433,10 +433,7 @@ export function TimelineScreen({
 
   function nameLine(identity: Identity, participant: ParticipantView, time: string): ThreadRowName {
     const ownership = identity.kind === 'unknown' ? 'unknown participant' : ownershipLabel(attributionFor(participant, viewer.ownerId));
-    const tag: ThreadRowName['tag'] = identity.kind === 'human' ? { kind: 'htag' }
-      : identity.kind === 'agent' && (identity.isViewerOwned || identity.ownerLabel)
-        ? { kind: 'otag', text: identity.isViewerOwned ? 'Your machine' : `${identity.ownerLabel}’s machine`, ownerHue: identity.ownerHue }
-        : null;
+    const tag: ThreadRowName['tag'] = identity.kind === 'human' ? { kind: 'htag' } : null;
     return {
       label: identity.label, hue: identity.hue, tag,
       ...(identity.idBadge ? { idBadge: identity.idBadge } : {}),
@@ -537,6 +534,7 @@ export function TimelineScreen({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
       render: run => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
+        {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.ownerHue } } : {})}
         time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
         after={<>

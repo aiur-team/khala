@@ -11,7 +11,7 @@ export type ParticipantsResponse = { participants: Participant[] };
 
 /**
  * `ownerFirstName` is derived from the owner's verified email. Take the first `.`, `_`, `-` or `+`-separated token of the local part, strip trailing digits and capitalise it; if the result is empty, use `Owner`. Example: `kevin.weaver2@gmail.com` → `Kevin`. KM-122, KM-132 and KM-135 use this same rule via `ownerFirstName(email)` exported from `packages/contracts/src/m1/participants.ts`, which KM-104 owns.
- * - **Human labels come from Matrix display names, everywhere.** When KM-122 mints a browser session, it sets the human's own Matrix display name to `ownerFirstName(verifiedEmail)`: read it first, write only if different. Readers (control participants, browser, KM-143 agent intake) use the display name. Fallback when it is missing: control's participants `displayName` falls back to the full `matrixUserId` (C3); KM-143's `senderLabel` falls back to the user id localpart.
+ * - **Human labels come from Matrix display names, everywhere.** When KM-122 mints a browser session, it sets the human's own Matrix display name to the stored username, or `ownerFirstName(verifiedEmail)` when no profile exists: read it first, write only if different. Readers (control participants, browser, KM-143 agent intake) use the display name. Fallback when it is missing: control's participants `displayName` falls back to the full `matrixUserId` (C3); KM-143's `senderLabel` falls back to the user id localpart.
  */
 export const MAX_PARTICIPANTS = 100;
 /**

@@ -5,6 +5,7 @@ import { createProductionHumanRuntimeLoader, type ProductionHumanDependencies } 
 import { createHostedHumanChannelLinkRoutes } from '../channel-link/production';
 
 import { createAgentJoinRoutes } from '../agent-join/production';
+import { createProfileRoutes } from '../profile/production';
 
 export type HostedProductionOptions = ProductionHumanDependencies;
 
@@ -15,5 +16,6 @@ export function registerHostedProductionRoutes(options: HostedProductionOptions 
     ...registerHumanHandlers({ channelLink: () => createHostedHumanChannelLinkRoutes(options) }),
     ...registerAgentHandlers(),
     ...createAgentJoinRoutes(runtime, options.fetch),
+    ...createProfileRoutes(runtime),
   ]);
 }
