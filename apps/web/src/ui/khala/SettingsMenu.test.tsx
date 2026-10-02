@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { KhalaApp } from './KhalaApp';
 import { menuFocusTarget, openingFocus, SettingsMenu, SettingsMenuItems, settingsItems, type SettingsMenuProps } from './SettingsMenu';
 
-const base: SettingsMenuProps = { theme: 'dark', username: 'Kevin', onEditUsername: vi.fn(), onSignOut: vi.fn() };
+const base: SettingsMenuProps = { theme: 'dark', username: 'Kevin', color: 'blue', onEditProfile: vi.fn(), onSignOut: vi.fn() };
 
 function cog(props: Partial<SettingsMenuProps> = {}) {
   const html = renderToStaticMarkup(<KhalaApp theme="dark" main={null} brandMenu={<SettingsMenu {...base} {...props} />} />);
@@ -25,14 +25,14 @@ describe('SettingsMenu', () => {
     expect(html).not.toContain('role="menu"');
   });
 
-  it('lists Mode, Username and Log out in order', () => {
-    expect(labels(items().html)).toEqual(['Light mode', 'Username<em>@Kevin</em>', 'Log out']);
-    expect(items().built.map(item => item.id)).toEqual(['mode', 'username', 'log-out']);
+  it('lists Mode, Profile and Log out in order, with no separate Username or Color item', () => {
+    expect(labels(items().html)).toEqual(['Light mode', 'Profile<em><span class="kh-swatch-dot" style="background:#276ecb"></span>@Kevin</em>', 'Log out']);
+    expect(items().built.map(item => item.id)).toEqual(['mode', 'profile', 'log-out']);
     expect(labels(items({ theme: 'light' }).html)[0]).toBe('Dark mode');
-    expect(labels(items({ username: null }).html)[1]).toBe('Username<em>Not set</em>');
+    expect(labels(items({ username: null, color: null }).html)[1]).toBe('Profile<em>Not set</em>');
   });
 
-  it('omits Username without onEditUsername and Log out without onSignOut', () => {
+  it('omits Profile without onEditProfile and Log out without onSignOut', () => {
     expect(settingsItems({ theme: 'dark', username: 'Kevin' }).map(item => item.label)).toEqual(['Light mode']);
   });
 
@@ -44,10 +44,10 @@ describe('SettingsMenu', () => {
     expect(onThemeChange).toHaveBeenLastCalledWith('dark');
   });
 
-  it('opens the username editor from Username', () => {
-    const onEditUsername = vi.fn();
-    items({ onEditUsername }).built[1]!.run();
-    expect(onEditUsername).toHaveBeenCalledTimes(1);
+  it('opens the profile editor from Profile', () => {
+    const onEditProfile = vi.fn();
+    items({ onEditProfile }).built[1]!.run();
+    expect(onEditProfile).toHaveBeenCalledTimes(1);
   });
 
   it('signs out from Log out, which is disabled while signing out', () => {

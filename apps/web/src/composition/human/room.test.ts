@@ -18,7 +18,7 @@ const describeParticipant = (participantId: string): Participant | undefined => 
 
 describe('renameChannelAgent', () => {
   it('renames through the agent names API by the agent’s Matrix user id', async () => {
-    const rename = vi.fn(async (_matrixUserId: string, name: string) => ({ kind: 'ok' as const, name }));
+    const rename = vi.fn<(matrixUserId: string, name: string, signal?: AbortSignal) => Promise<{ kind: 'ok'; name: string }>>(async (_matrixUserId, name) => ({ kind: 'ok', name }));
     const { signal } = new AbortController();
     const result = await renameChannelAgent({ agentNames: { rename }, describeParticipant }, room(kevin), viewer, agentX, 'Reviewer', signal);
     expect(result).toEqual({ kind: 'ok', name: 'Reviewer' });
