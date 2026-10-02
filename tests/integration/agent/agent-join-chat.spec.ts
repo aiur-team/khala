@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import type { InboxEntry } from '../../../packages/contracts/src/m1/inbox';
@@ -18,12 +17,14 @@ async function inbox(file: string): Promise<InboxEntry[]> {
 }
 async function send(page: Page, text: string) {
   await page.getByLabel('Message', { exact: true }).fill(text);
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: text })).toBeVisible({ timeout: 30_000 });
 }
 
 // Run this spec alone on a fresh operator-started stack. Each human must use
 // their first browser device so MSC4268 can share the owner's historical keys.
+test.use({ actionTimeout: 15_000 });
+
 test('a real MCP agent joins, reads owner history, receives and sends attributed chat', async ({ browser }) => {
   test.setTimeout(300_000);
   const environment = readLiveHumanEnvironment();
@@ -39,12 +40,13 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
   const aliceContext = await browser.newContext();
   const bobContext = await browser.newContext();
   let mcp: ReturnType<typeof startMcp> | undefined;
+  let failure: unknown;
   try {
     const alice = await freshPage(aliceContext, environment);
     await signIn(alice, environment, environment.users[0]);
-    await alice.getByRole('button', { name: 'Create channel', exact: true }).last().click();
-    await alice.getByLabel('Channel name (optional)').fill(`Agent ${environment.environmentId}`);
-    await alice.getByRole('button', { name: 'Create channel', exact: true }).last().click();
+    await alice.getByRole('button', { name: 'New channel', exact: true }).click();
+    await alice.getByLabel('Channel name', { exact: true }).fill(`Agent ${environment.environmentId}`);
+    await alice.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(alice).toHaveURL(/\/channels\//u);
     const channelUrl = alice.url();
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
@@ -103,9 +105,13 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
     const sent = await agent.call('khala_send', { text: reply });
     expect(sent.isError).not.toBe(true);
     expect(sent.structuredContent.eventId).toMatch(/^\$/u);
-    await delay(5000);
+    // A later human append proves sync passed the reply before checking AE4.
+    const afterReply = `after-reply-${id}`;
+    await send(alice, afterReply);
+    await expect.poll(async () => (await inbox(inboxFile)).some(entry => entry.body === afterReply),
+      { timeout: 30_000, intervals: [2000] }).toBe(true);
     const entries = await inbox(inboxFile);
-    expect(entries.some(entry => entry.body === reply || entry.sender === agentUserId)).toBe(false);
+    expect(entries.some(entry => entry.eventId === sent.structuredContent.eventId || entry.body === reply || entry.sender === agentUserId)).toBe(false);
     await bob.goto(channelUrl);
     const row = bob.locator('.timeline__row:not(.timeline__row--pending)', { hasText: reply });
     await expect(row).toBeVisible({ timeout: 30_000 });
@@ -116,12 +122,20 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
       await expect(page.locator('.timeline__row', { hasText: reply })).toBeVisible({ timeout: 30_000 });
     }
     for (const text of history) await expect(bob.locator('.timeline__row', { hasText: text })).toBeVisible();
+    test.info().annotations.push({ type: 'acceptance', description: 'join, AE1 history, live intake, AE4 own-sender filter, attributed reply and reload passed' });
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     try {
       await mcp?.close();
       await expect(access(sessionFile)).rejects.toMatchObject({ code: 'ENOENT' });
+    } catch (cleanupError) {
+      if (failure === undefined) throw cleanupError;
+      test.info().annotations.push({ type: 'cleanup failure', description: cleanupError instanceof Error ? cleanupError.message : 'unknown' });
     } finally {
-      await Promise.all([aliceContext.close(), bobContext.close(), rm(stateHome, { recursive: true, force: true })]);
+      await Promise.allSettled([aliceContext.close(), bobContext.close()]);
+      await rm(stateHome, { recursive: true, force: true });
     }
   }
 });

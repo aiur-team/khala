@@ -1,3 +1,4 @@
+import { Console } from 'node:console';
 import type { Readable, Writable } from 'node:stream';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { KhalaClientError, type KhalaAgentClient } from '../client';
@@ -56,6 +57,8 @@ export async function runMcpCommand(argv: readonly string[], deps: {
 }
 
 export default async function main(argv: readonly string[]): Promise<number> {
+  // SDK diagnostics must never share the JSON-RPC stream, including late logs.
+  globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
   const stop = new AbortController();
   const onSignal = () => stop.abort();
   process.once('SIGTERM', onSignal);
