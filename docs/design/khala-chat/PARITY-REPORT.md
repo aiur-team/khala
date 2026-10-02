@@ -102,7 +102,7 @@ Screens marked **ratchet** exceed 0.02 and are held to their ceiling, which is t
 - **1440 and 1100 screens with the list column:** the design lists the unsent message as Release's preview (open item 4).
 - **`roster`, `pop-add-agent`:** KM-183's §22 Live roster copy (`Owner of N agents`, the harness).
 - **`detail-agent`:** KM-183's §22 Live detail, meaning the harness line, the Harness/Owner table and a full-width @ Mention.
-- **`detail-human`:** the KM-183 defect in open item 1, plus the §22 copy.
+- **`detail-human`:** the §22 copy, and the #id badges rewrapping Recent in Khala. Its mention chips (open item 1) did not move the ratio, because those lines already differ.
 - **Only 4 screens pass:** 1440 empty-channel and 900 list, in both themes. 760 list is just over the threshold, at 0.0201 dark and 0.0205 light.
 
 ### Computed styles
@@ -232,7 +232,7 @@ The Executor answered the audit's three operator decisions on #872 (2026-10-02):
 
 ## Open items
 
-1. **Blocking, KM-183:** "Recent in Khala" in the detail pane shows mentions as plain text (`@Sonnet`), while the design renders `.kh-mention` links. This is a DOM change, so it isn't fixed here.
+1. **Fixed, #937:** "Recent in Khala" in the detail pane renders mentions as the thread's `.kh-mention` chips, as the design does. `D6` checks it.
 2. **Resolved, #936:** `/agent/confirm` used to render inside the owner shell, next to the conversation list. It is now a standalone full-viewport page (§20), and its device-pending states use the same frame. `screens: agent confirm page` compares it with the `agent-finish` references at 1440 and 390 in both themes, gated at 0.02 (0.004 at 1440 and 0.015–0.017 at 390). The design's close button and the page's brand row are masked, and the rest of the difference is §20's copy.
 3. **Note, §22 roster modes:** the viewer's agents render the disabled listening-mode segment and a disabled `.kh-mode-btn`, the narrow-width trigger for the mode menu. §22 says to omit the menu; the trigger never opens it. Confirm whether the disabled button should stay.
 4. **Note, data rather than drift:**

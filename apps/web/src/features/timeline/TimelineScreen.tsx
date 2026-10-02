@@ -16,6 +16,7 @@ import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from
 import { attributionFor, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent, type RenderOptions } from './message-renderer';
+import type { MentionCandidate } from './mentions';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
@@ -57,6 +58,8 @@ export interface TimelineScreenProps {
   composerRef?: Ref<TimelineComposerHandle>;
   /** A name, avatar or `@mention` was activated. KM-183 opens the detail pane. */
   onOpenParticipant?: (participantId: string) => void;
+  /** Receives the `@mention` roster on change, so the detail pane's Recent in Khala draws the same chips. */
+  onMentionRoster?: (roster: readonly MentionCandidate[]) => void;
   /** The empty thread's Invite button. KM-183 opens the invite popover. */
   onInvite?: () => void;
   /** The clock for day separator labels; tests pin it. */
@@ -198,7 +201,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, composerRef, onOpenParticipant, onInvite, now = () => new Date(), timeOptions = {},
+  unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -473,6 +476,7 @@ export function TimelineScreen({
   // A stable array per roster, so `segmentMentions` compiles its matcher once.
   const mentionRoster = useMemo(() => (JSON.parse(mentionKey) as [string, string, 'human' | 'agent', number][])
     .map(([label, participantId, kind, hue]) => ({ label, participantId, kind, hue })), [mentionKey]);
+  useEffect(() => { onMentionRoster?.(mentionRoster); }, [mentionRoster, onMentionRoster]);
   const renderOptions: RenderOptions = { mentions: mentionRoster, ...(onOpenParticipant ? { onOpenParticipant } : {}) };
 
   // A `failed` or `outcome_unknown` send keeps its body in the pending row, but

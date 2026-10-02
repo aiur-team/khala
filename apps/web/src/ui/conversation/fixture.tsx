@@ -142,19 +142,19 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
       main={<ChannelScreen key={channel.id} title={channel.title} controller={controller} timeOptions={FIXTURE_TIME}
         viewerOwnerId={VIEWER.ownerId} viewerName={VIEWER.displayName} viewerParticipantId={VIEWER.participantId}
         humanParticipants={humanParticipants(channel)} describeParticipant={describeParticipant}
-        recentActivity={participantId => timelineData(channel).items
+        recentActivity={(participantId, render) => timelineData(channel).items
           .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
-            ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content) }] : [])
+            ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content, render) }] : [])
           .slice(-3).reverse()}
         onMention={label => composer.current?.insertMention(label)}
         onRosterOpen={() => composer.current?.closeChips()}
         onBack={() => setInThread(false)}
         renderShare={() => <ChannelInvite admission={admission} roomId={channel.id as RoomId} />}
         renderAddAgent={() => <ChannelAddAgent admission={admission} roomId={channel.id as RoomId} />}
-        renderTimeline={(openParticipant, openInvite) => {
+        renderTimeline={(openParticipant, openInvite, onMentionRoster) => {
           actions.current = { openParticipant, openInvite };
           return <TimelineScreen key={`${channel.id}:${params.failed}`} controller={timeline} roomPort={roomPort} roomId={channel.id as RoomId}
-            viewer={VIEWER} members={channelMembers(channel)} composerRef={composer} describeParticipant={describeParticipant} onOpenParticipant={openParticipant}
+            viewer={VIEWER} members={channelMembers(channel)} composerRef={composer} describeParticipant={describeParticipant} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
             {...(openInvite ? { onInvite: openInvite } : {})} {...(pendingStore ? { pendingStore } : {})}
             now={() => FIXTURE_NOW} timeOptions={FIXTURE_TIME} />;
         }} />} />

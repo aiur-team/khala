@@ -133,9 +133,9 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         if (result.kind === 'rejected') return 'rejected';
         return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
       }}
-      recentActivity={participantId => timelineData.items
+      recentActivity={(participantId, render) => timelineData.items
         .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
-          ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content) }] : [])
+          ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content, render) }] : [])
         .slice(-3).reverse()}
       onMention={label => composer.current?.insertMention(label)}
       onRosterOpen={() => composer.current?.closeChips()}
@@ -144,10 +144,10 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         renderShare: () => <ChannelInvite key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
         renderAddAgent: () => <ChannelAddAgent key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
       } : {})}
-      renderTimeline={(openParticipant, openInvite) => (
+      renderTimeline={(openParticipant, openInvite, onMentionRoster) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} composerRef={composer}
-          extraParticipants={extraParticipants} onOpenParticipant={openParticipant}
+          extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
           {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
