@@ -76,11 +76,20 @@ export function createAgentParticipantDirectoryRoute(input: Readonly<{
         agentParticipantId: participant.participantId });
       if (found.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (found.kind !== 'found' || found.record.revokedGeneration !== null
+        || found.record.capability === null
         || found.record.binding.agentParticipantId !== participant.participantId) {
         pinned.push(participant);
         continue;
       }
-      const device = await input.lookupAgentDevice(found.record.binding);
+      const peerBinding = found.record.binding;
+      const peer = await input.capabilities.lookupBinding(peerBinding.bindingId);
+      if (peer.kind === 'unavailable') return json(503, { code: 'unavailable' });
+      if (peer.kind !== 'found' || peer.status !== 'active' || peer.ownerId !== participant.ownerId
+        || peer.generation !== peerBinding.generation || peer.deviceId !== peerBinding.deviceId) {
+        pinned.push(participant);
+        continue;
+      }
+      const device = await input.lookupAgentDevice(peerBinding);
       if (device.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (device.kind === 'absent') {
         pinned.push(participant);

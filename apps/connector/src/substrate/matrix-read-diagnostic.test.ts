@@ -19,6 +19,7 @@ it('reports distinct redacted Matrix read boundaries without changing unavailabl
   const bundle = path.join(root, 'bundle');
   await mkdir(driver);
   await mkdir(bundle);
+  await writeFile(path.join(driver, 'package.json'), '{"type":"commonjs"}');
   await writeFile(path.join(bundle, 'index.html'), '<!doctype html>');
   await writeFile(path.join(driver, 'index.js'), `module.exports = { chromium: {
     launchPersistentContext: async () => ({
@@ -88,6 +89,7 @@ it('ingests a verified peer agent as its own participant and excludes its own se
   const bundle = path.join(root, 'bundle');
   await mkdir(driver);
   await mkdir(bundle);
+  await writeFile(path.join(driver, 'package.json'), '{"type":"commonjs"}');
   await writeFile(path.join(bundle, 'index.html'), '<!doctype html>');
   await writeFile(path.join(driver, 'index.js'), `module.exports = { chromium: {
     launchPersistentContext: async () => ({
@@ -101,18 +103,26 @@ it('ingests a verified peer agent as its own participant and excludes its own se
   const peer = '@peer:example';
   const own = '@self:example';
   const stale = '@stale:example';
+  const unknown = '@unknown:example';
   const trusted: unknown[] = [];
   const observed: string[] = [];
-  const event = (senderUserId: string, eventId: string, senderDeviceId: string) => ({
+  const renamed: string[] = [];
+  let includeUnknown = false;
+  const event = (senderUserId: string, eventId: string, senderDeviceId: string,
+    agentParticipantId: string | null = null) => ({
     senderUserId, eventId, senderDeviceId, roomId: room, receivedAt: '2026-09-30T00:00:00.000Z',
-    body: 'hello', agentParticipantId: null, failure: null,
+    body: 'hello', agentParticipantId, failure: null,
   });
   (globalThis as { __khalaFakeBridge?: unknown }).__khalaFakeBridge = {
     open: async () => ({ fingerprint: 'A'.repeat(43), deviceId: 'SELF' }),
     read: async () => {
       expect(trusted).toEqual([[peer, 'SELF', 'B'.repeat(43)]]);
-      return { events: [event(stale, '$stale:example', 'OLD'), event(peer, '$peer:example', 'SELF'),
-        event(own, '$self:example', 'SELF')],
+      if (includeUnknown) return { events: [event(unknown, '$unknown:example', 'OTHER')],
+        nextCursor: 'cursor-2', limited: false };
+      return { events: [event(stale, '$stale:example', 'OLD'),
+        event(peer, '$wrong-device:example', 'OTHER'),
+        event(peer, '$forged-rename:example', 'SELF', 'agent_self'),
+        event(peer, '$peer:example', 'SELF'), event(own, '$self:example', 'SELF')],
         nextCursor: 'cursor', limited: false };
     },
     members: async () => [peer, own, stale], trustPeer: async (...args: unknown[]) => { trusted.push(args); },
@@ -123,7 +133,7 @@ it('ingests a verified peer agent as its own participant and excludes its own se
     profileDirectory: path.join(root, 'profile'), browserBundleDirectory: bundle,
     browserDriverDirectory: driver,
     participantIdFor: userId => userId === own ? 'agent_self' as ParticipantId : null,
-    resolveParticipants: async () => new Map([
+    resolveParticipants: async userIds => userIds.includes(unknown) ? null : new Map([
       [peer, { participantId: 'agent_peer' as ParticipantId, ownerId: 'owner' as never,
         kind: 'agent' as const, initialName: 'Peer', deviceId: 'SELF', fingerprint: 'B'.repeat(43) }],
       [own, { participantId: 'agent_self' as ParticipantId, ownerId: 'owner' as never,
@@ -132,6 +142,7 @@ it('ingests a verified peer agent as its own participant and excludes its own se
         kind: 'agent' as const, initialName: 'Stale' }],
     ]),
     onText: async item => { observed.push(item.eventId); return true; },
+    onRename: async item => { renamed.push(item.eventId); return true; },
   });
   try {
     const page = await substrate.source.read({ cursor: null, limit: 10 });
@@ -139,13 +150,18 @@ it('ingests a verified peer agent as its own participant and excludes its own se
     if (page.kind !== 'page') return;
     expect(page.events).toHaveLength(1);
     expect(observed).toEqual(['$peer:example']);
+    expect(renamed).toEqual([]);
     expect(trusted).toEqual([[peer, 'SELF', 'B'.repeat(43)]]);
     expect(page.events[0]).toMatchObject({ kind: 'decrypted', ref: {
       eventId: '$peer:example', authorParticipantId: 'agent_peer', authorDeviceId: 'SELF',
     }, verifiedSenderUserId: peer, verifiedDeviceId: 'SELF' });
     expect(substrate.participantForDevice(room as never, peer, 'SELF' as never)).toBe('agent_peer');
     expect(substrate.participantForDevice(room as never, own, 'SELF' as never)).toBeNull();
+    expect(substrate.participantForDevice(room as never, peer, 'OTHER' as never)).toBeNull();
     expect(substrate.participantForDevice('!other:example' as never, peer, 'PEER' as never)).toBeNull();
     expect(await substrate.reviewMembers()).toEqual(['agent_peer']);
+    includeUnknown = true;
+    expect(await substrate.source.read({ cursor: 'cursor', limit: 10 })).toEqual({ kind: 'unavailable' });
+    expect(observed).toEqual(['$peer:example']);
   } finally { await substrate.close(); }
 });

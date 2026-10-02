@@ -16,7 +16,7 @@ describe('agent participant directory', () => {
     const bindings = createAgentBindingStore({ store: state.store });
     expect((await bindings.putParticipant({ ownerId: binding.ownerId, roomId,
       agentParticipantId: binding.agentParticipantId, expectedBindingId: null,
-      record: { binding, revokedGeneration: null, capability: null } })).kind).toBe('applied');
+      record: { binding, revokedGeneration: null, capability: 'a'.repeat(43) } })).kind).toBe('applied');
     expect(await createAgentIdentityDirectory(state.store).remember({ v: 1, roomId,
       matrixUserId: '@departed:matrix.example.test', participantId: 'agent_departed' as ParticipantId,
       ownerId: binding.ownerId, harness: 'codex' })).toBe(true);
@@ -58,5 +58,47 @@ describe('agent participant directory', () => {
     active = false;
     expect((await route.handle(request(roomId))).status).toBe(403);
     expect(resolveRoomParticipants).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['approved', 'active', true, null, 'device_peer', true],
+    ['unapproved', 'active', false, null, 'device_peer', false],
+    ['revoked record', 'active', true, null, 'device_peer', false],
+    ['revoked', 'revoked', true, null, 'device_peer', false],
+    ['stale generation', 'active', true, 2, 'device_peer', false],
+    ['wrong device', 'active', true, null, 'other_device', false],
+  ] as const)('pins only a current %s peer session', async (_case, status, approved, generation, deviceId, expectedPin) => {
+    const state = fakeStore(() => T0);
+    const bindings = createAgentBindingStore({ store: state.store });
+    const peerBinding = { ...binding, bindingId: 'binding_peer', agentParticipantId: 'agent_peer',
+      deviceId: 'device_peer', sessionId: 'session_peer' } as SessionBinding;
+    for (const item of [binding, peerBinding]) {
+      expect((await bindings.putParticipant({ ownerId: item.ownerId, roomId,
+        agentParticipantId: item.agentParticipantId, expectedBindingId: null,
+        record: { binding: item, revokedGeneration: item === peerBinding && _case === 'revoked record' ? 2 : null,
+          capability: item === peerBinding && !approved ? null : 'a'.repeat(43) } })).kind).toBe('applied');
+    }
+    const lookupAgentDevice = vi.fn(async () => ({ kind: 'found' as const,
+      deviceId: peerBinding.deviceId, fingerprint: 'A'.repeat(43) }));
+    const route = createAgentParticipantDirectoryRoute({ store: state.store,
+      capabilities: { async authorize() { return { kind: 'authorized', ownerId: binding.ownerId, roomId,
+        binding, action: 'receive_released' }; }, async lookupBinding(id: string) {
+        return { kind: 'found', ownerId: binding.ownerId,
+          generation: id === peerBinding.bindingId ? generation ?? peerBinding.generation : binding.generation,
+          deviceId: id === peerBinding.bindingId ? deviceId : binding.deviceId,
+          status: id === peerBinding.bindingId ? status : 'active' };
+      } } as unknown as AdapterCapabilities,
+      sessions: { resolveRoomParticipants: async () => ({ kind: 'ok', participants: [{
+        matrixUserId: '@peer:matrix.example.test', participantId: peerBinding.agentParticipantId,
+        ownerId: peerBinding.ownerId, displayName: 'Peer', kind: 'agent' as const,
+      }] }) }, lookupAgentDevice });
+    const response = await route.handle(new Request('https://khala.example' + route.path, { method: 'POST',
+      body: JSON.stringify({ roomId, userIds: ['@peer:matrix.example.test'], targetParticipantIds: [] }) }));
+    expect(response.status).toBe(200);
+    const peer = (await response.json() as { participants: Record<string, unknown>[] }).participants[0];
+    expect(peer).toMatchObject({ matrixUserId: '@peer:matrix.example.test' });
+    if (expectedPin) expect(peer).toMatchObject({ deviceId: 'device_peer', fingerprint: 'A'.repeat(43) });
+    else expect(peer).not.toHaveProperty('deviceId');
+    expect(lookupAgentDevice).toHaveBeenCalledTimes(expectedPin ? 1 : 0);
   });
 });
