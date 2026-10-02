@@ -1219,7 +1219,8 @@ describe('Claude delivery through the internal launcher', () => {
     }
     expect(await client.read('session-process-b')).toEqual({ kind: 'refused', code: 'unproven' });
     expect(await client.send('session-process-b', 'forged legacy send')).toEqual({ kind: 'refused', code: 'unproven' });
-    const challenge = await process({ v: 1, op: 'process_challenge', sessionId: 'session-process-b', keyId: candidateB.keyId as string });
+    const challenge = await process({ v: 1, op: 'process_challenge', sessionId: 'session-process-b',
+      keyId: candidateB.keyId as string, operation: 'send', bodyHash: claudeProcessBodyHash('send', 'safe body') });
     expect(challenge.kind).toBe('process_challenge');
     const scope = challenge.scope as ClaudeProcessScope;
     const signFor = (key: typeof a, operation: 'read' | 'send', body?: string) => sign(null,
@@ -1230,6 +1231,8 @@ describe('Claude delivery through the internal launcher', () => {
     expect(await process({ ...request, signature: signFor(a, 'send', 'safe body') }))
       .toEqual({ kind: 'refused', code: 'unproven' });
     expect(await process({ ...request, message: 'changed body', signature: signFor(b, 'send', 'safe body') }))
+      .toEqual({ kind: 'refused', code: 'unproven' });
+    expect(await process({ ...request, message: 'changed body', signature: signFor(b, 'send', 'changed body') }))
       .toEqual({ kind: 'refused', code: 'unproven' });
     expect(await process({ ...request, signature: signFor(b, 'send', 'safe body') }))
       .toMatchObject({ kind: 'accepted' });
@@ -1287,7 +1290,8 @@ describe('Claude delivery through the internal launcher', () => {
       expect(await running).toBe(0);
       const client = createClaudeSessionClient({ descriptorPath: session.report.descriptorPath });
       expect(await client.process!({ v: 1, op: 'process_challenge', sessionId: 'session-process-live',
-        keyId: candidate.keyId as string })).toEqual({ kind: 'refused', code: 'unproven' });
+        keyId: candidate.keyId as string, operation: 'read', bodyHash: claudeProcessBodyHash('read') }))
+        .toEqual({ kind: 'refused', code: 'unproven' });
     } finally {
       input.end();
       await running;

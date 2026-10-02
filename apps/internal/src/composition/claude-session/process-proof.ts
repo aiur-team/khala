@@ -17,7 +17,8 @@ type Candidate = Readonly<{
   scope: string; key: string; keyId: string; codeDigest: Buffer; expiresAt: number;
 }>;
 type Approved = Readonly<{ scope: string; key: string; keyId: string; expiresAt: number }>;
-type Challenge = Readonly<{ scope: string; keyId: string; expiresAt: number }>;
+type Challenge = Readonly<{ scope: string; keyId: string; operation: ClaudeProofOperation;
+  bodyHash: string; expiresAt: number }>;
 
 const digest = (value: string): Buffer => createHash('sha256').update(value).digest();
 const scopeKey = (scope: ClaudeProcessScope): string => JSON.stringify([
@@ -68,14 +69,15 @@ export function createClaudeProcessProof(clock: () => number = Date.now) {
     return true;
   }
 
-  function challenge(scope: ClaudeProcessScope, keyId: string): string | null {
+  function challenge(scope: ClaudeProcessScope, keyId: string,
+    operation: ClaudeProofOperation, bodyHash: string): string | null {
     prune();
     if (challenges.size >= MAX_CHALLENGES) return null;
+    if (!['read', 'send', 'end'].includes(operation) || !KEY.test(bodyHash) || !canonical(bodyHash, 32)) return null;
     const current = approved.get(scopeKey(scope));
     if (current?.keyId !== keyId) return null;
-    approved.set(current.scope, { ...current, expiresAt: clock() + APPROVED_IDLE_MS });
     const nonce = randomBytes(32).toString('base64url');
-    challenges.set(nonce, { scope: current.scope, keyId, expiresAt: clock() + CHALLENGE_MS });
+    challenges.set(nonce, { scope: current.scope, keyId, operation, bodyHash, expiresAt: clock() + CHALLENGE_MS });
     return nonce;
   }
 
@@ -87,6 +89,7 @@ export function createClaudeProcessProof(clock: () => number = Date.now) {
     const issued = challenges.get(input.challenge);
     if (current?.keyId !== input.keyId || current.expiresAt <= clock()
       || issued?.scope !== current.scope || issued.keyId !== current.keyId
+      || issued.operation !== input.operation || issued.bodyHash !== input.bodyHash
       || issued.expiresAt <= clock() || !KEY.test(input.challenge) || !canonical(input.challenge, 32)
       || !SIGNATURE.test(input.signature) || !canonical(input.signature, 64)
       || !KEY.test(input.bodyHash) || !canonical(input.bodyHash, 32)) return false;
@@ -98,6 +101,7 @@ export function createClaudeProcessProof(clock: () => number = Date.now) {
     } catch { return false; }
     if (!valid) return false;
     challenges.delete(input.challenge);
+    approved.set(current.scope, { ...current, expiresAt: clock() + APPROVED_IDLE_MS });
     return true;
   }
 

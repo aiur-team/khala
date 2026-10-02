@@ -450,6 +450,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
+        if (!await handoff(resolved)) return refused('unproven');
         const { value: result, batch } = await tokenBearing(resolved, false, current => resolved.services.setMode({
           commandId: input.commandId,
           expectedVersion: input.expectedVersion,

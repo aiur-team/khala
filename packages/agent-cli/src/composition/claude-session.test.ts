@@ -491,6 +491,9 @@ describe('Claude session adapter', () => {
         kind: 'mode', requested: 'sync', acknowledgement,
         support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
       });
+      await expect(claude.setMode(A1, { commandId: 'mode-unproven', expectedVersion: 0,
+        requested: 'steer', issuedAt: '2026-01-01T00:00:00.000Z' }))
+        .resolves.toEqual({ kind: 'refused', code: 'unproven' });
     }
   });
 

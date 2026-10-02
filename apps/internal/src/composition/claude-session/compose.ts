@@ -584,8 +584,9 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
                 sessionId, bindingId: binding.bindingId } };
           }
           if (body.op === 'process_challenge' && typeof body.keyId === 'string'
-            && Object.keys(body).length === 4) {
-            const challenge = processProof.challenge(scope, body.keyId);
+            && (body.operation === 'read' || body.operation === 'send' || body.operation === 'end')
+            && typeof body.bodyHash === 'string' && Object.keys(body).length === 6) {
+            const challenge = processProof.challenge(scope, body.keyId, body.operation, body.bodyHash);
             return { status: 200, body: challenge === null
               ? { kind: 'refused', code: 'unproven' } : { kind: 'process_challenge', scope, challenge } };
           }

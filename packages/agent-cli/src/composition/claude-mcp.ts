@@ -412,13 +412,15 @@ export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promi
   };
   async function signed(operation: ClaudeProofOperation, target: string, message?: string): Promise<Outcome> {
     if (processClient === null || pair === null || keyId === null) return { kind: 'refused', code: 'unproven' };
-    const challenged = await processClient.process!({ v: 1, op: 'process_challenge', sessionId: target, keyId });
+    const bodyHash = claudeProcessBodyHash(operation, message);
+    const challenged = await processClient.process!({ v: 1, op: 'process_challenge', sessionId: target,
+      keyId, operation, bodyHash });
     if (!plainObject(challenged) || challenged.kind !== 'process_challenge'
       || typeof challenged.challenge !== 'string' || !validProcessScope(challenged.scope, target)) {
       return plainObject(challenged) && challenged.kind === 'refused' ? challenged as Outcome : { kind: 'refused', code: 'unavailable' };
     }
     const signature = sign(null, claudeProcessProofMessage({ scope: challenged.scope,
-      operation, bodyHash: claudeProcessBodyHash(operation, message), challenge: challenged.challenge }),
+      operation, bodyHash, challenge: challenged.challenge }),
     pair.privateKey).toString('base64url');
     const response = await processClient.process!(operation === 'read'
       ? { v: 1, op: 'process_read', sessionId: target, keyId, challenge: challenged.challenge, signature }

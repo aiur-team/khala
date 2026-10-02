@@ -37,7 +37,8 @@ export type ClaudeSessionRequest =
 
 export type ClaudeProcessRequest =
   | Readonly<{ v: 1; op: 'process_begin'; sessionId: string; publicKey: string }>
-  | Readonly<{ v: 1; op: 'process_challenge'; sessionId: string; keyId: string }>
+  | Readonly<{ v: 1; op: 'process_challenge'; sessionId: string; keyId: string;
+    operation: 'read' | 'send' | 'end'; bodyHash: string }>
   | Readonly<{ v: 1; op: 'process_read'; sessionId: string; keyId: string; challenge: string; signature: string }>
   | Readonly<{ v: 1; op: 'process_end'; sessionId: string; keyId: string; challenge: string; signature: string }>
   | Readonly<{ v: 1; op: 'process_send'; sessionId: string; keyId: string; challenge: string; signature: string; message: string }>;
