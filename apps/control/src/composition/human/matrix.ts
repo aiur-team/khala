@@ -71,6 +71,7 @@ export type MatrixHumanServices = Readonly<{
   gateway: AdmissionGateway;
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
 
 }>;
 
@@ -536,5 +537,10 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
-  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner };
+  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
+    roomName: async (ownerId, roomId) => {
+      const session = await controlLogin(ownerId);
+      return session ? (await roomName(session, roomId)) || null : null;
+    },
+  };
 }

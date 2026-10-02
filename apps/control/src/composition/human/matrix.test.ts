@@ -65,6 +65,34 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('reads a room name using the owner control session and returns null for empty names or failed login', async () => {
+    const roomId = '!room:matrix.example.test' as RoomId;
+    let name = 'Release planning';
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        const request = JSON.parse(String(init?.body));
+        return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'control-token' });
+      }
+      expect(path).toBe(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name/`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
+      return json(200, { name });
+    });
+    const matrix = services(fetch);
+    expect(await matrix.roomName(principal.ownerId, roomId)).toBe('Release planning');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    name = '';
+    expect(await matrix.roomName(principal.ownerId, roomId)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(3);
+
+    const failedLogin = vi.fn<typeof globalThis.fetch>(async input => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      expect(path).toBe('/_matrix/client/v3/login');
+      return json(403, { errcode: 'M_FORBIDDEN' });
+    });
+    expect(await services(failedLogin).roomName(principal.ownerId, roomId)).toBeNull();
+    expect(failedLogin).toHaveBeenCalledTimes(1);
+  });
   it('reuses one server-only control login across concurrent and repeated membership checks', async () => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let logins = 0;
