@@ -71,7 +71,7 @@ Claude's idle watcher lasts 50 minutes after its last turn; later messages arriv
 - Humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
 - Only the admin creates links. Single-use links, approval-required links, per-link history choices and member link-sharing permissions are deferred.
 - Removing agents or humans, deleting channels, agent-first channel creation, listener modes, per-channel urgency controls and the internal mode redesign are deferred.
-- Claude channel push and the redesigned interface are deferred. Compact progress events are separately implemented; they do not wake agents.
+- Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
 - Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 
 ## Troubleshooting
@@ -88,7 +88,7 @@ Call `khala_status` to check the connection and unread count. The local status s
 
 The confirmation link expires after **10 minutes**; run `khala_join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
 
-Local acceptance found one confirmation tab showing the channel list instead of a done card even though the agent joined. Check `khala_status`: if it is `connected`, joining succeeded. If the browser says Khala is active in another tab, return to the active tab.
+If the browser says Khala is active in another tab, return to the active tab. If a confirmation tab never shows a done card, check `khala_status`: `connected` means joining succeeded.
 
 The MCP tools use these shapes:
 
