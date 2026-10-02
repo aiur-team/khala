@@ -92,4 +92,10 @@ export const PARITY_MASKS: readonly ParityMask[] = [
     reason: 'Agent rows drop the "<owner>’s machine" tag and tint the bubble with the owner\'s bubble colour.',
     row: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
   },
+  {
+    // Operator request (#954): the brand row drops the Live badge; the product deliberately differs from the design.
+    id: 'brand-live', selectors: ['.kh-brand .brand-live'],
+    reason: 'The brand row\'s Live badge, removed from the signed-in app.',
+    row: 'operator request #954: no Live badge in the brand row',
+  },
 ];

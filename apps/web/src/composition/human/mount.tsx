@@ -18,8 +18,9 @@ import { ConversationList, type ConversationSummary } from '../../ui/conversatio
 import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
-import { useLiveSync } from './sync-status';
-import { ProfileProvider } from '../../features/profile/ProfileProvider';
+import { SettingsMenu } from '../../ui/khala/SettingsMenu';
+import { ProfileProvider, useProfile } from '../../features/profile/ProfileProvider';
+import { UsernameDialog } from '../../features/profile/UsernameDialog';
 import { UsernameGate } from '../../features/profile/UsernameGate';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
@@ -168,35 +169,51 @@ function LostDevicePanel() {
   );
 }
 
-function LogoutAction({ application, routes, mode }: {
-  application: HumanApplicationHandle;
-  routes: HumanRouteCodec;
-  mode: ShellMode;
-}) {
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutFailed, setSignOutFailed] = useState(false);
-  const signOutInFlight = useRef(false);
+type SignOut = Readonly<{ signOut(): void; signingOut: boolean; failed: boolean }>;
 
-  async function signOut() {
-    if (signOutInFlight.current) return;
-    signOutInFlight.current = true;
+/** Signs out once at a time; in the standalone shell the URL returns to create. */
+function useSignOut(application: HumanApplicationHandle, routes: HumanRouteCodec, mode: ShellMode): SignOut {
+  const [signingOut, setSigningOut] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const inFlight = useRef(false);
+
+  async function run() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSigningOut(true);
-    setSignOutFailed(false);
+    setFailed(false);
     try {
       const result = await application.signOut();
-      if (result.kind !== 'ok') setSignOutFailed(true);
+      if (result.kind !== 'ok') setFailed(true);
       else if (mode === 'standalone') globalThis.history?.replaceState(null, '', routes.createPath());
     } finally {
-      signOutInFlight.current = false;
+      inFlight.current = false;
       setSigningOut(false);
     }
   }
 
+  return { signOut: () => void run(), signingOut, failed };
+}
+
+/** The brand row's sign-out messages, kept beside the control that started it. */
+function SignOutStatus({ signingOut, failed }: Pick<SignOut, 'signingOut' | 'failed'>) {
   return <>
-    {signOutFailed ? <span className="kh-brand-status" role="alert">Log out failed. Try again.</span> : null}
+    {failed ? <span className="kh-brand-status" role="alert">Log out failed. Try again.</span> : null}
     {signingOut ? <span className="kh-brand-status" role="status">Logging out…</span> : null}
+  </>;
+}
+
+/** The standalone Log out button, for signed-in failure screens outside the owner shell. */
+export function LogoutAction({ application, routes, mode }: {
+  application: HumanApplicationHandle;
+  routes: HumanRouteCodec;
+  mode: ShellMode;
+}) {
+  const { signOut, signingOut, failed } = useSignOut(application, routes, mode);
+  return <>
+    <SignOutStatus signingOut={signingOut} failed={failed} />
     <button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"
-      disabled={signingOut} onClick={() => void signOut()}><LogOutIcon /></button>
+      disabled={signingOut} onClick={signOut}><LogOutIcon /></button>
   </>;
 }
 
@@ -207,12 +224,15 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
   phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable';
   children: ReactNode;
 }) {
-  const actions = phase === 'checking_identity' ? null
-    : <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
+  const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
+  // No Log out while identity is still being checked; the theme stays switchable.
+  const checking = phase === 'checking_identity';
   // The device status and its retry stay reachable on a phone: the pending
   // frame stacks the list above the status instead of hiding either.
   return <KhalaApp className="khala-owner-shell khala-pending" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-    homeHref={routes.conversationsPath()} brandActions={actions}
+    homeHref={routes.conversationsPath()} brandActions={checking ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
+    brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+      username={null} {...(checking ? {} : { onSignOut: signOut, signingOut })} />}
     list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
       showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
       emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
@@ -245,11 +265,18 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const closeCreate = useCallback(() => setCreating(false), []);
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
-  const live = useLiveSync(context);
+  const { username } = useProfile();
+  // The settings dialog open over the card; a new settings dialog adds a member.
+  const [dialog, setDialog] = useState<'username' | null>(null);
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
   const inThread = route.kind === 'channel' || route.kind === 'join';
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-    homeHref={routes.conversationsPath()} inThread={inThread} live={live}
-    brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
+    homeHref={routes.conversationsPath()} inThread={inThread}
+    brandActions={<SignOutStatus signingOut={signingOut} failed={failed} />}
+    brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+      username={username} onEditUsername={() => setDialog('username')} onSignOut={signOut} signingOut={signingOut} />}
+    overlay={dialog === 'username' ? <UsernameDialog onClose={closeDialog} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}

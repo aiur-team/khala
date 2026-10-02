@@ -55,6 +55,16 @@ describe('UsernameForm', () => {
   it('shows a save error until the value changes', () => {
     expect(fields('Kevin', { error: 'That username is taken.' })).toContain('role="alert">That username is taken.</p>');
   });
+
+  it('describes the input by the hint and, when shown, the error', () => {
+    const describedBy = (html: string) => html.match(/<input[^>]*aria-describedby="([^"]*)"/u)![1]!.split(' ');
+    const id = (html: string, className: string) => html.match(new RegExp(`<p class="${className}" id="([^"]*)"`, 'u'))![1];
+    const plain = fields('Kevin');
+    expect(describedBy(plain)).toEqual([id(plain, 'kh-uname-hint')]);
+    for (const html of [fields('a'), fields('Kevin', { error: 'That username is taken.' })]) {
+      expect(describedBy(html)).toEqual([id(html, 'kh-uname-hint'), id(html, 'kh-uname-err')]);
+    }
+  });
 });
 
 describe('submitUsername', () => {
@@ -85,6 +95,11 @@ describe('submitUsername', () => {
     expect(await submitUsername('Kevin', async () => { throw new Error('offline'); })).toEqual(retry);
     expect(await submitUsername('Kevin', saving({ kind: 'error', code: 'invalid_username', reason: 'reserved' })))
       .toEqual({ kind: 'error', message: 'That name is reserved.' });
+  });
+
+  it('asks a signed-out human to sign in again', async () => {
+    expect(await submitUsername('Kevin', saving({ kind: 'error', code: 'signed_out' })))
+      .toEqual({ kind: 'error', message: 'You were signed out. Sign in again.' });
   });
 
   it('never saves an invalid name', async () => {

@@ -84,8 +84,7 @@
 .kh-brand { display: flex; align-items: center; gap: .55rem; padding: .9rem .8rem .35rem 1rem; }
 .kh-brand .brand-logo { height: 24px; width: auto; display: block; }
 .kh-brand .wm { font-family: "Bungee", sans-serif; font-size: 1.05rem; line-height: 1; letter-spacing: .01em; color: var(--fg); text-transform: uppercase; text-decoration: none; }
-.khala-app .kh-brand .brand-live { margin-left: .15rem; font-size: .68rem; padding: .16rem .5rem; min-height: 0; }
-.kh-brand-actions { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+.kh-brand-actions { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: .4rem; }
 
 /* Tool buttons, theme glyphs and the live badge (source:226-271). */
 .tool-btn {
@@ -116,7 +115,8 @@
 .status-badge-live .status-badge-dot { background: var(--good); box-shadow: 0 0 8px var(--good); animation: pulse 2s ease-in-out infinite; }
 .status-badge-offline { display: none; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-.kh-brand-status { font-size: .72rem; color: var(--muted); }
+/* A sign-out message wraps rather than widening the brand row past a phone. */
+.kh-brand-status { min-width: 0; font-size: .72rem; color: var(--muted); text-align: right; }
 .kh-brand-status[role="alert"] { color: var(--block-ink); }
 
 /* §3 avatars (source:472, 508-511, 577-580, 687-688, 727) */

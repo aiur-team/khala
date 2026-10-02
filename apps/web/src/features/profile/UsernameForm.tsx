@@ -14,6 +14,7 @@ const nameErrors: Record<NameError, string> = {
 };
 const takenError = 'That username is taken.';
 const saveError = 'Couldn\'t save. Try again.';
+const signedOutError = 'You were signed out. Sign in again.';
 
 export type UsernameSubmit = { kind: 'saved'; username: string } | { kind: 'error'; message: string };
 
@@ -30,6 +31,7 @@ export async function submitUsername(value: string, save: (username: string) => 
   if (result.kind === 'ok') return { kind: 'saved', username: result.username };
   if (result.code === 'username_taken') return { kind: 'error', message: takenError };
   if (result.code === 'invalid_username' && result.reason) return { kind: 'error', message: nameErrors[result.reason] };
+  if (result.code === 'signed_out') return { kind: 'error', message: signedOutError };
   return { kind: 'error', message: saveError };
 }
 
@@ -47,18 +49,19 @@ export type UsernameFieldsProps = Readonly<{
 /** The controlled form; `UsernameForm` owns its state and the save. */
 export function UsernameFields({ value, submitLabel, saving, error, onChange, onSubmit, onCancel }: UsernameFieldsProps) {
   const hintId = useId();
+  const errorId = useId();
   const checked = checkName(value, 'username');
   const message = checked.ok ? error : nameErrors[checked.error];
   const name = value.trim();
   return <form className="kh-uname" noValidate onSubmit={event => { event.preventDefault(); if (checked.ok && !saving) onSubmit(); }}>
     <div className="kh-uname-field">
       <span className="kh-uname-at" aria-hidden="true">@</span>
-      <input className="kh-txt" aria-label="Username" aria-describedby={hintId} aria-invalid={checked.ok ? undefined : true}
+      <input className="kh-txt" aria-label="Username" aria-describedby={message ? `${hintId} ${errorId}` : hintId} aria-invalid={checked.ok ? undefined : true}
         value={value} maxLength={USERNAME_MAX} autoComplete="nickname" spellCheck={false} autoCapitalize="none"
         onChange={event => onChange(event.target.value)} />
     </div>
     <p className="kh-uname-hint" id={hintId}>{USERNAME_MIN}–{USERNAME_MAX} letters, numbers, . _ or -</p>
-    {message ? <p className="kh-uname-err" role="alert">{message}</p> : null}
+    {message ? <p className="kh-uname-err" id={errorId} role="alert">{message}</p> : null}
     {name ? <p className="kh-uname-preview">
       Your agents will be named @{defaultAgentName(name, 'claude')} and @{defaultAgentName(name, 'codex')}.
     </p> : null}

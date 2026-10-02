@@ -13,8 +13,9 @@ const limits = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 12
 if (!limits.ok) throw new Error('invalid fixture limits');
 const routes = createHumanRouteCodec({ origin: location.origin, basePath: '/', allowInsecureLoopback: true });
 const api = createHumanBrowserApi({ origin: location.origin, homeserverOrigin: location.origin, limits: limits.value, allowInsecureLoopback: true });
-// The route the human asked for; it renders once a username is saved.
-const path = routes.roomPath('!r1:khala.local');
+// The route the human asked for; it renders once a username is saved. `?list`
+// asks for the conversations list, whose brand row a phone also shows.
+const path = new URLSearchParams(location.search).has('list') ? routes.conversationsPath() : routes.roomPath('!r1:khala.local');
 const context = {
   path, principal: { ownerId: 'owner_alice' }, profile: api.profile,
   registerDisposer: () => () => undefined,
