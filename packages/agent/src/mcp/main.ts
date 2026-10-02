@@ -1,3 +1,4 @@
+import { Console } from 'node:console';
 import type { Readable, Writable } from 'node:stream';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { KhalaClientError, type KhalaAgentClient } from '../client';
@@ -5,6 +6,8 @@ import { createToolRegistry } from './registry';
 import { runMcpServer } from './server';
 import { resolveHarness, resolveSessionId } from './session-id';
 import { createKhalaTools } from './tools';
+import { createRealClientFactory } from './wiring';
+import { readStatus, sessionFiles } from '../state';
 
 export type ClientFactory = (input: { harness: Harness; sessionId: string }) => KhalaAgentClient;
 
@@ -55,5 +58,51 @@ export async function runMcpCommand(argv: readonly string[], deps: {
 }
 
 export default async function main(argv: readonly string[]): Promise<number> {
-  return runMcpCommand(argv, { createClient: () => createPlaceholderClient() });
+  // SDK diagnostics must never share the JSON-RPC stream, including late logs.
+  globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
+  const stop = new AbortController();
+  const onSignal = () => stop.abort();
+  const factory = createRealClientFactory(process.env);
+  let cleanupFailed = false;
+  let exitCode = 1;
+  const createClient: ClientFactory = input => {
+    const client = factory(input);
+    return {
+      ...client,
+      async close() {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            (async () => {
+              await client.close();
+              const status = await readStatus(sessionFiles(input.harness, input.sessionId, process.env));
+              if (status?.state !== 'disconnected' || status.detail !== 'closed') throw new Error('cleanup_not_closed');
+            })(),
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error('cleanup_timeout')), 5000);
+            }),
+          ]);
+        } catch (error) {
+          cleanupFailed = true;
+          const code = error instanceof Error && ['cleanup_timeout', 'cleanup_not_closed'].includes(error.message)
+            ? error.message : 'cleanup_failed';
+          process.stderr.write(`khala: ${code}\n`);
+          throw error;
+        } finally { if (timer) clearTimeout(timer); }
+      },
+    };
+  };
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
+  try {
+    const code = await runMcpCommand(argv, { createClient, signal: stop.signal });
+    exitCode = cleanupFailed ? 1 : code;
+    return exitCode;
+  } finally {
+    process.off('SIGTERM', onSignal);
+    process.off('SIGINT', onSignal);
+    process.stdin.destroy();
+    // CLI cleanup is finished; SDK request-deadline timers may still be alive.
+    setImmediate(() => process.exit(exitCode));
+  }
 }
