@@ -414,7 +414,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         const [view, capabilities] = await Promise.all([resolved.services.readMode(), resolved.services.capabilities()]);
         if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
         // A mode read is agent-initiated too, so it acknowledges what hooks delivered.
-        if (await handoff(resolved)) {
+        if (capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call') {
           await agentCall(resolved, acknowledgeCurrent(resolved));
         }
         // Effective support comes from HarnessCapabilities; anything unevidenced stays unproven.
