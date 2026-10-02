@@ -520,6 +520,59 @@ describe('createMatrixHumanServices', () => {
       .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: userId }] });
   });
 
+  it.each(['same', 'different', 'read_failure', 'write_failure', 'throw', 'login_failure'])('sets the owner display name with a %s response', async state => {
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const writes: unknown[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/login')) {
+        const payload = JSON.parse(String(init?.body));
+        return state === 'login_failure' ? json(503, {})
+          : json(200, { user_id: userId, device_id: payload.device_id, access_token: 'control-token' });
+      }
+      if (path.endsWith('/displayname')) {
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
+        if (state === 'throw') throw new Error('offline');
+        if (init?.method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)));
+          return json(state === 'write_failure' ? 503 : 200, {});
+        }
+        return json(state === 'read_failure' ? 503 : 200, { displayname: state === 'same' ? 'Alice.W' : 'Old' });
+      }
+      return json(503, {});
+    });
+    expect(await services(fetch).setOwnerDisplayName(principal.ownerId, 'Alice.W'))
+      .toBe(state === 'same' || state === 'different');
+    expect(writes).toEqual(['different', 'write_failure'].includes(state) ? [{ displayname: 'Alice.W' }] : []);
+  });
+
+  it.each(['stored', 'unavailable', 'throw'])('reconciles the session display name safely with a %s profile', async state => {
+    const store = memoryStore();
+    const key = `profiles/${encodeURIComponent(principal.ownerId)}`;
+    await store.compareAndSet({ key, expectedRevision: null, operationId: 'profile-test', next: {
+      value: { v: 1, ownerId: principal.ownerId, username: 'Alice.W', updatedAt: '2026-10-02T18:00:00.000Z' }, expiresAt: null,
+    } });
+    const read = store.read.bind(store);
+    store.read = async (requested, options) => {
+      if (requested === key && state === 'unavailable') return { kind: 'unavailable' };
+      if (requested === key && state === 'throw') throw new Error('offline');
+      return read(requested, options);
+    };
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const writes: unknown[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      if (path.endsWith('/displayname')) {
+        if (init?.method === 'PUT') writes.push(JSON.parse(String(init.body)));
+        return json(200, { displayname: 'Old' });
+      }
+      return json(200, { device_keys: {} });
+    });
+    expect(await services(fetch, store).sessions.issue(principal, 'WEB' as DeviceId)).toMatchObject({ kind: 'ok' });
+    expect(writes).toEqual(state === 'stored' ? [{ displayname: 'Alice.W' }] : []);
+  });
+
   it.each(['missing', 'read', 'write', 'throw', 'malformed'])('mints a session despite a %s display-name response', async failure => {
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
     const writes: unknown[] = [];

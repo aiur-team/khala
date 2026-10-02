@@ -54,6 +54,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     admission: api.admission,
     channelLinks: api.channelLinks,
     agentJoin: api.agentJoin,
+    profile: api.profile,
     inviteAgent: (roomId, userId) => matrix.inviteAgent(roomId as RoomId, userId),
     listeningMode: matrix.listeningMode,
     subscribeListeningModes: matrix.subscribeListeningModes,

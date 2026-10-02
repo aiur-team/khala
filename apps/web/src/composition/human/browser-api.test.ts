@@ -25,7 +25,7 @@ describe('createHumanBrowserApi', () => {
   it('exposes only the human admission and messaging adapters', () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'channelLinks', 'credentials', 'identity', 'participants']);
+    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'channelLinks', 'credentials', 'identity', 'participants', 'profile']);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -455,5 +455,65 @@ describe('agent join browser API', () => {
     if (result.kind === 'ok' && result.value.kind === 'navigate') {
       expect(new URL(result.value.url).searchParams.get('return_to')).toBe('/agent/confirm?joinId=j1');
     }
+  });
+});
+
+
+describe('human profile adapter', () => {
+  it('decodes profile reads and sends username mutations with CSRF', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin' }))
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { username: 'Kevin' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.get()).toEqual({ kind: 'ok', username: null, suggestion: 'Kevin' });
+    expect(await api.profile.setUsername('Kevin')).toEqual({ kind: 'ok', username: 'Kevin' });
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/profile`);
+    expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/profile/username`);
+    expect(fetch.mock.calls[2]?.[1]?.body).toBe(JSON.stringify({ username: 'Kevin' }));
+    expect(fetch.mock.calls[2]?.[1]?.credentials).toBe('same-origin');
+    expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it.each([
+    [400, { error: 'invalid_username', reason: 'too_short' }, { kind: 'error', code: 'invalid_username', reason: 'too_short' }],
+    [400, { error: 'invalid_username', reason: 'invented' }, { kind: 'error', code: 'invalid_username' }],
+    [409, { error: 'username_taken' }, { kind: 'error', code: 'username_taken' }],
+    [401, { error: 'signed_out' }, { kind: 'error', code: 'signed_out' }],
+    [503, { error: 'unavailable' }, { kind: 'error', code: 'unavailable' }],
+    [403, { error: 'csrf_mismatch' }, { kind: 'error', code: 'unavailable' }],
+  ])('maps username mutation status %s to finite errors', async (status, body, expected) => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(status, body));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setUsername('Kevin')).toEqual(expected);
+  });
+
+  it.each([401, 503])('maps profile read status %s', async status => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(status, {}));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.get()).toEqual({ kind: 'error', code: status === 401 ? 'signed_out' : 'unavailable' });
+  });
+
+  it('preserves signed-out preflight and does not send a mutation', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(401, {}));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setUsername('Kevin')).toEqual({ kind: 'error', code: 'signed_out' });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ username: 'Kevin', extra: true }, { username: 'admin' }, { username: ' Kevin ' }])('rejects malformed mutation success %j', async body => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, body));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setUsername('Kevin')).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+
+  it('rejects malformed profile read success', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', extra: true }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.get()).toEqual({ kind: 'error', code: 'unavailable' });
   });
 });
