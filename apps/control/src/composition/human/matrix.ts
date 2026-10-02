@@ -4,6 +4,7 @@ import {
   type AgentOwnerRecord, type HumanEmailRecord, type Participant,
 } from '@khala/contracts/m1/participants';
 import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
+import { decodeHumanColorRecord, defaultHumanColor, humanColorRecordKey, type HumanColorId } from '@khala/contracts/m1/colors';
 import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
@@ -200,6 +201,14 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const value = safeObject(read.record.value);
       return value?.v === 1 && value.ownerId === ownerId ? readParticipantEmail(value.email, 'email') : null;
     } catch { return null; }
+  }
+  async function readHumanColor(ownerId: string, call?: CallOptions): Promise<HumanColorId> {
+    try {
+      const read = await options.store.read(humanColorRecordKey(ownerId), call);
+      const decoded = read.kind === 'record' ? decodeHumanColorRecord(read.record.value) : null;
+      if (decoded?.ok && decoded.value.ownerId === ownerId) return decoded.value.color;
+    } catch { /* Colours are best effort display data. */ }
+    return defaultHumanColor(ownerId);
   }
   /** Best effort: records the owner's current verified email so channel members can see it. */
   async function rememberHumanEmail(ownerId: OwnerId, email: string, call?: CallOptions): Promise<void> {
@@ -420,13 +429,18 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       void targetParticipantIds;
       const participants: Participant[] = [];
       const ownerUsernames = new Map<string, string | null>();
+      const ownerColors = new Map<string, HumanColorId>();
+      const colorOf = async (ownerId: string): Promise<HumanColorId> => {
+        if (!ownerColors.has(ownerId)) ownerColors.set(ownerId, await readHumanColor(ownerId, call));
+        return ownerColors.get(ownerId)!;
+      };
       for (const userId of userIds) {
         const name = displayName(safeObject(joined[userId])?.display_name, userId);
         const human = participantFor(userId);
         if (human) {
           // Members of the same channel may see each other's verified email (membership checked above).
           const email = await readHumanEmail(human.ownerId, call);
-          participants.push({ ...human, displayName: name, ...(email ? { email } : {}) });
+          participants.push({ ...human, displayName: name, color: await colorOf(human.ownerId), ...(email ? { email } : {}) });
           continue;
         }
         const agent = await readAgentOwner(userId, call);
@@ -440,7 +454,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           ownerUsernames.set(agent.ownerId, username);
         }
         participants.push(agent ? { matrixUserId: userId, participantId: agentParticipantId(userId),
-          ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: ownerUsernames.get(agent.ownerId) ?? agent.ownerLabel, harness: agent.harness }
+          ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: ownerUsernames.get(agent.ownerId) ?? agent.ownerLabel,
+          harness: agent.harness, ownerColor: await colorOf(agent.ownerId) }
           : { matrixUserId: userId, displayName: name, kind: 'unknown' });
       }
       return { kind: 'ok', participants };

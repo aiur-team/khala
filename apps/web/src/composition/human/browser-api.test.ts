@@ -462,17 +462,54 @@ describe('agent join browser API', () => {
 describe('human profile adapter', () => {
   it('decodes profile reads and sends username mutations with CSRF', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin' }))
+      .mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal' }))
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
       .mockResolvedValueOnce(json(200, { username: 'Kevin' }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(await api.profile.get()).toEqual({ kind: 'ok', username: null, suggestion: 'Kevin' });
+    expect(await api.profile.get()).toEqual({ kind: 'ok', username: null, suggestion: 'Kevin', color: 'teal' });
     expect(await api.profile.setUsername('Kevin')).toEqual({ kind: 'ok', username: 'Kevin' });
     expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/profile`);
     expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/profile/username`);
     expect(fetch.mock.calls[2]?.[1]?.body).toBe(JSON.stringify({ username: 'Kevin' }));
     expect(fetch.mock.calls[2]?.[1]?.credentials).toBe('same-origin');
     expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it('sends color mutations with CSRF', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { color: 'pink' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setColor('pink')).toEqual({ kind: 'ok', color: 'pink' });
+    expect(fetch.mock.calls[1]?.[0]).toBe(`${origin}/api/human/profile/color`);
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ color: 'pink' }));
+    expect(fetch.mock.calls[1]?.[1]?.credentials).toBe('same-origin');
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it.each([[400, 'invalid_color'], [401, 'signed_out'], [403, 'unavailable'], [503, 'unavailable']])(
+    'maps color mutation status %s', async (status, code) => {
+      const fetch = vi.fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+        .mockResolvedValueOnce(json(status as number, {}));
+      const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+      expect(await api.profile.setColor('pink')).toEqual({ kind: 'error', code });
+    });
+
+  it.each([{ color: 'pink', extra: true }, { color: 'chartreuse' }, {}])(
+    'rejects malformed color success %j', async body => {
+      const fetch = vi.fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+        .mockResolvedValueOnce(json(200, body));
+      const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+      expect(await api.profile.setColor('pink')).toEqual({ kind: 'error', code: 'unavailable' });
+    });
+
+  it.each([[401, 'signed_out'], [503, 'unavailable']])('preserves color preflight failure %s', async (status, code) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(status as number, {}));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setColor('pink')).toEqual({ kind: 'error', code });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -512,7 +549,7 @@ describe('human profile adapter', () => {
   });
 
   it('rejects malformed profile read success', async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', extra: true }));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal', extra: true }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     expect(await api.profile.get()).toEqual({ kind: 'error', code: 'unavailable' });
   });

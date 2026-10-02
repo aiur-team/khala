@@ -1,11 +1,12 @@
 import { type Decoded, array, decodeWith, elementPath, fail, identifier, label, literal, object, utcTimestamp } from '../messaging/decode';
 import { type Harness, M1_LABEL_MAX_BYTES, readAgentLabel, readHarness, readMatrixUserId } from './agent-join';
+import { type HumanColorId, readHumanColorId } from './colors';
 
 export type AgentOwnerRecord = { matrixUserId: string; ownerId: string; ownerLabel: string; harness: Harness; label: string; createdAt: string };
 
 export type Participant =
-  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human'; email?: string }
-  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'agent'; ownerLabel: string; harness: Harness }
+  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human'; email?: string; color?: HumanColorId }
+  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'agent'; ownerLabel: string; harness: Harness; ownerColor?: HumanColorId }
   | { matrixUserId: string; displayName: string; kind: 'unknown' };   // an unknown member never fails the whole response
 export type ParticipantsResponse = { participants: Participant[] };
 
@@ -57,6 +58,8 @@ function readParticipant(input: unknown, path: string): Participant {
   if (kind !== 'unknown') keys.push('participantId', 'ownerId');
   if (kind === 'human' && typeof input === 'object' && input !== null && Object.hasOwn(input, 'email')) keys.push('email');
   if (kind === 'agent') keys.push('ownerLabel', 'harness');
+  const colorKey = kind === 'human' ? 'color' : kind === 'agent' ? 'ownerColor' : null;
+  if (colorKey && typeof input === 'object' && input !== null && Object.hasOwn(input, colorKey)) keys.push(colorKey);
   const r = object(input, path, keys);
   const common = {
     matrixUserId: readMatrixUserId(r.field('matrixUserId'), r.at('matrixUserId')),
@@ -68,12 +71,16 @@ function readParticipant(input: unknown, path: string): Participant {
     participantId: identifier(r.field('participantId'), r.at('participantId')),
     ownerId: identifier(r.field('ownerId'), r.at('ownerId')),
   };
-  if (kind === 'human') return keys.includes('email') ? { ...known, kind, email: readParticipantEmail(r.field('email'), r.at('email')) } : { ...known, kind };
+  if (kind === 'human') return { ...known, kind,
+    ...(keys.includes('email') ? { email: readParticipantEmail(r.field('email'), r.at('email')) } : {}),
+    ...(keys.includes('color') ? { color: readHumanColorId(r.field('color'), r.at('color')) } : {}),
+  };
   return {
     ...known,
     kind,
     ownerLabel: label(r.field('ownerLabel'), r.at('ownerLabel'), M1_LABEL_MAX_BYTES),
     harness: readHarness(r.field('harness'), r.at('harness')),
+    ...(keys.includes('ownerColor') ? { ownerColor: readHumanColorId(r.field('ownerColor'), r.at('ownerColor')) } : {}),
   };
 }
 

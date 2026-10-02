@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
+import { defaultHumanColor, humanColorRecordKey } from '@khala/contracts/m1/colors';
 import { nameKey } from '@khala/contracts/m1/names';
 import { profileRecordKey } from '@khala/contracts/m1/profile';
 import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
@@ -52,9 +53,9 @@ function fixture() {
 }
 it('suggests an available username and returns null for existing owners without a profile', async () => {
   const f = fixture();
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin' });
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin', color: defaultHumanColor('own_abc') });
   await f.seed(nameKey('Kevin'), { v: 1, kind: 'human', ownerId: 'other' });
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2' });
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2', color: defaultHumanColor('own_abc') });
 });
 it('stores the profile and reservation then updates Matrix', async () => {
   const f = fixture(); const response = await f.set(' Kevin ');
@@ -66,7 +67,7 @@ it('stores the profile and reservation then updates Matrix', async () => {
   expect(f.deps.setDisplayName).toHaveBeenCalledWith('own_abc', 'Kevin');
   expect(f.deps.afterUsernameChange).toHaveBeenCalledWith('own_abc', null, 'Kevin');
   expect(response.headers.get('cache-control')).toBe('no-store');
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: 'Kevin', suggestion: 'Kevin' });
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: 'Kevin', suggestion: 'Kevin', color: defaultHumanColor('own_abc') });
 });
 it('rejects another owner claiming a case-insensitive reservation', async () => {
   const f = fixture(); expect((await f.set('Kevin')).status).toBe(200);
@@ -119,12 +120,12 @@ it('keeps successful writes when Matrix or post-change hooks fail', async () => 
 it('does not treat agent reservations as the same human owner', async () => {
   const f = fixture(); await f.seed(nameKey('Kevin'), { v: 1, kind: 'agent', ownerId: 'own_abc', matrixUserId: '@agent:matrix.test' });
   expect((await f.set('Kevin')).status).toBe(409);
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2' });
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2', color: defaultHumanColor('own_abc') });
 });
 it('truncates suggestion suffixes and bounds exhausted suggestions', async () => {
   const f = fixture(); f.email('a'.repeat(24) + '@x');
   await f.seed(nameKey('A' + 'a'.repeat(23)), { v: 1, kind: 'human', ownerId: 'other' });
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'A' + 'a'.repeat(22) + '2' });
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'A' + 'a'.repeat(22) + '2', color: defaultHumanColor('own_abc') });
   const g = fixture();
   for (const suffix of ['', ...Array.from({ length: 98 }, (_, i) => String(i + 2))]) {
     await g.seed(nameKey('Kevin' + suffix), { v: 1, kind: 'human', ownerId: 'other' });
@@ -259,4 +260,93 @@ it('skips Matrix updates when the committed profile cannot be reread', async () 
     expect(log).toHaveBeenCalledWith('profile_display_name_unavailable');
     expect(f.deps.afterUsernameChange).toHaveBeenCalledWith('own_abc', null, 'Kevin');
   } finally { log.mockRestore(); }
+});
+
+it('stores a colour independently of username and skips identical chosen-colour writes', async () => {
+  const f = fixture(); const writes = vi.spyOn(f.store, 'compareAndSet');
+  expect(await (await f.handlers.get(f.request())).json()).toMatchObject({ color: defaultHumanColor('own_abc') });
+  const response = await f.handlers.setColor(f.request({ color: 'pink' }));
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ color: 'pink' });
+  expect(writes).toHaveBeenCalledTimes(1);
+  const stored = await f.store.read(humanColorRecordKey('own_abc'));
+  expect(stored.kind === 'record' && stored.record.value).toEqual({ v: 1, ownerId: 'own_abc', color: 'pink' });
+  expect((await f.store.read(profileRecordKey('own_abc'))).kind).toBe('absent');
+  expect((await f.store.read(nameKey('Kevin'))).kind).toBe('absent');
+  expect(f.deps.setDisplayName).not.toHaveBeenCalled();
+  expect(f.deps.afterUsernameChange).not.toHaveBeenCalled();
+  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin', color: 'pink' });
+  expect((await f.handlers.setColor(f.request({ color: 'pink' }))).status).toBe(200);
+  expect(writes).toHaveBeenCalledTimes(1);
+});
+it('rejects invalid colour ids and non-exact colour bodies', async () => {
+  const f = fixture(); const writes = vi.spyOn(f.store, 'compareAndSet');
+  for (const color of ['chartreuse', '#ff0000', 'Pink', '', null, 1]) {
+    const response = await f.handlers.setColor(f.request({ color }));
+    expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: 'invalid_color' });
+  }
+  for (const body of [{}, { color: 'pink', extra: true }, [], null]) {
+    const response = await f.handlers.setColor(f.request(body));
+    expect(response.status).toBe(400); expect(await response.json()).toEqual({ error: 'invalid_request' });
+  }
+  expect((await f.handlers.setColor(new Request('https://khala.test/api/human/profile/color', {
+    method: 'POST', headers: { 'x-khala-csrf': 'csrf' }, body: '{',
+  }))).status).toBe(400);
+  expect(writes).not.toHaveBeenCalled();
+});
+it('requires human mutation authorization for colours, including CSRF', async () => {
+  const f = fixture(); const writes = vi.spyOn(f.store, 'compareAndSet');
+  expect((await f.handlers.setColor(f.request({ color: 'pink' }, false))).status).toBe(403);
+  expect(f.deps.auth.requireHumanMutation).toHaveBeenCalledTimes(1);
+  expect(f.deps.auth.authenticateRequest).not.toHaveBeenCalled();
+  for (const code of ['signed_out', 'forbidden_origin', 'csrf_mismatch'] as const) {
+    f.deps.auth.requireHumanMutation.mockResolvedValue({ kind: 'rejected', code });
+    expect((await f.handlers.setColor(f.request({ color: 'pink' }))).status).toBe(code === 'signed_out' ? 401 : 403);
+  }
+  expect(writes).not.toHaveBeenCalled();
+});
+it('defaults corrupt or mismatched colour records and overwrites their revisions', async () => {
+  for (const value of [{ v: 1, ownerId: 'own_abc', color: 'chartreuse' },
+    { v: 1, ownerId: 'other', color: 'pink' }]) {
+    const f = fixture(); await f.seed(humanColorRecordKey('own_abc'), value);
+    expect(await (await f.handlers.get(f.request())).json()).toMatchObject({ color: defaultHumanColor('own_abc') });
+    // Even a request matching the fallback must repair the corrupt stored record.
+    const color = defaultHumanColor('own_abc');
+    const writes = vi.spyOn(f.store, 'compareAndSet');
+    expect((await f.handlers.setColor(f.request({ color }))).status).toBe(200);
+    expect(writes).toHaveBeenCalledTimes(1);
+    const read = await f.store.read(humanColorRecordKey('own_abc'));
+    expect(read.kind === 'record' && read.record.value).toEqual({ v: 1, ownerId: 'own_abc', color });
+  }
+});
+it('retries a colour conflict once and bounds repeated conflicts', async () => {
+  const f = fixture(); const cas = f.store.compareAndSet.bind(f.store); let raced = false;
+  const writes = vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => {
+    if (!raced) {
+      raced = true;
+      await cas({ ...input, operationId: 'racing-colour', next: { value: { v: 1, ownerId: 'own_abc', color: 'blue' }, expiresAt: null } });
+    }
+    return cas(input);
+  });
+  expect((await f.handlers.setColor(f.request({ color: 'pink' }))).status).toBe(200);
+  expect(writes).toHaveBeenCalledTimes(2);
+  expect(await (await f.handlers.get(f.request())).json()).toMatchObject({ color: 'pink' });
+  const g = fixture(); const conflicts = vi.spyOn(g.store, 'compareAndSet').mockResolvedValue({ kind: 'conflict', current: null });
+  expect((await g.handlers.setColor(g.request({ color: 'pink' }))).status).toBe(503);
+  expect(conflicts).toHaveBeenCalledTimes(2);
+});
+it('returns unavailable for colour read/write failures and resolves uncertain writes', async () => {
+  const f = fixture(); const read = f.store.read.bind(f.store);
+  vi.spyOn(f.store, 'read').mockImplementation(key => key === humanColorRecordKey('own_abc') ? Promise.resolve({ kind: 'unavailable' }) : read(key));
+  expect((await f.handlers.get(f.request())).status).toBe(503);
+  expect((await f.handlers.setColor(f.request({ color: 'pink' }))).status).toBe(503);
+  const g = fixture(); vi.spyOn(g.store, 'compareAndSet').mockResolvedValue({ kind: 'unavailable' });
+  expect((await g.handlers.setColor(g.request({ color: 'pink' }))).status).toBe(503);
+  const h = fixture(); const cas = h.store.compareAndSet.bind(h.store);
+  vi.spyOn(h.store, 'compareAndSet').mockImplementation(async input => {
+    const written = await cas(input);
+    return written.kind === 'applied' ? { kind: 'outcome_unknown', operationId: input.operationId } : written;
+  });
+  const resolve = vi.spyOn(h.store, 'resolve');
+  expect((await h.handlers.setColor(h.request({ color: 'pink' }))).status).toBe(200);
+  expect(resolve).toHaveBeenCalledTimes(1);
 });

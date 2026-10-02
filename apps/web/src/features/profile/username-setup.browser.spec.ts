@@ -28,7 +28,7 @@ async function withFixture(viewport: { width: number; height: number }, username
       principal: { v: 1, ownerId: 'owner_alice', providerIssuer: 'https://issuer.example', providerSubject: 'alice',
         verifiedEmail: 'alice@example.test', sessionExpiresAt: '2030-01-01T00:00:00Z' }, csrfToken: 'browser-proof',
     } }));
-    await page.route('**/api/human/profile', route => route.fulfill({ json: { username, suggestion: 'alice' } }));
+    await page.route('**/api/human/profile', route => route.fulfill({ json: { username, suggestion: 'alice', color: 'teal' } }));
     await page.route('**/api/human/profile/username', async route => {
       assert.equal(route.request().method(), 'POST');
       const name = (route.request().postDataJSON() as { username: string }).username;

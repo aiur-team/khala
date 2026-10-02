@@ -1,8 +1,9 @@
 import { type Decoded, decodeWith, fail, identifier, literal, nullable, object, utcTimestamp, version } from '../messaging/decode';
 import { readMatrixUserId } from './agent-join';
+import { type HumanColorId, readHumanColorId } from './colors';
 import { checkName } from './names';
 
-export type ProfileView = { username: string | null; suggestion: string };
+export type ProfileView = { username: string | null; suggestion: string; color: HumanColorId };
 export type ProfileRecord = { v: 1; ownerId: string; username: string; updatedAt: string };
 export type NameReservation =
   | { v: 1; kind: 'human'; ownerId: string }
@@ -19,9 +20,10 @@ function readUsername(input: unknown, path: string): string {
 }
 export function decodeProfileView(input: unknown): Decoded<ProfileView> {
   return decodeWith(() => {
-    const r = object(input, '', ['username', 'suggestion']);
+    const r = object(input, '', ['username', 'suggestion', 'color']);
     return { username: nullable(r.field('username'), value => readUsername(value, r.at('username'))),
-      suggestion: readUsername(r.field('suggestion'), r.at('suggestion')) };
+      suggestion: readUsername(r.field('suggestion'), r.at('suggestion')),
+      color: readHumanColorId(r.field('color'), r.at('color')) };
   });
 }
 export function decodeProfileRecord(input: unknown): Decoded<ProfileRecord> {

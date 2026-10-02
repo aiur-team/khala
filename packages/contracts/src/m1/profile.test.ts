@@ -5,7 +5,7 @@ it('decodes exact profile and reservation contracts', () => {
   expect(decodeProfileRecord(record)).toEqual({ ok: true, value: record });
   expect(profileRecordKey('own_abc')).toBe('profiles/own_abc');
   expect(profileRecordKey('owner/a')).toBe('profiles/owner%2Fa');
-  for (const view of [{ username: null, suggestion: 'Kevin' }, { username: 'KEVIN', suggestion: 'Kevin' }]) {
+  for (const view of [{ username: null, suggestion: 'Kevin', color: 'blue' }, { username: 'KEVIN', suggestion: 'Kevin', color: 'blue' }]) {
     expect(decodeProfileView(view)).toEqual({ ok: true, value: view });
   }
   for (const value of [{ v: 1, kind: 'human', ownerId: 'own_abc' },
@@ -14,12 +14,17 @@ it('decodes exact profile and reservation contracts', () => {
     expect(decodeNameReservation({ ...value, extra: true }).ok).toBe(false);
   }
   expect(decodeProfileRecord({ ...record, extra: true }).ok).toBe(false);
-  expect(decodeProfileView({ username: null, suggestion: 'Kevin', extra: true }).ok).toBe(false);
+  expect(decodeProfileView({ username: null, suggestion: 'Kevin', color: 'blue', extra: true }).ok).toBe(false);
 });
 it('rejects malformed names, versions and timestamps', () => {
   for (const patch of [{ username: 'admin' }, { username: ' Kevin ' }, { updatedAt: 'yesterday' }, { v: 2 }, { ownerId: '' }]) {
     expect(decodeProfileRecord({ ...record, ...patch }).ok).toBe(false);
   }
-  expect(decodeProfileView({ username: null, suggestion: 'a' }).ok).toBe(false);
+  expect(decodeProfileView({ username: null, suggestion: 'a', color: 'blue' }).ok).toBe(false);
   expect(decodeNameReservation({ v: 1, kind: 'agent', ownerId: 'own_abc' }).ok).toBe(false);
+});
+
+it('requires a valid colour in profile views', () => {
+  expect(decodeProfileView({ username: null, suggestion: 'Kevin' }).ok).toBe(false);
+  expect(decodeProfileView({ username: null, suggestion: 'Kevin', color: 'chartreuse' }).ok).toBe(false);
 });

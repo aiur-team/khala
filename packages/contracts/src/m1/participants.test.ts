@@ -58,3 +58,13 @@ it('decodes an optional verified email on human participants only', () => {
   expect(decodeParticipant({ ...unknown, email: 'kevin@example.com' }).ok).toBe(false);
   expect(humanEmailRecordKey('own_a/b')).toBe('humans/own_a%2Fb/email');
 });
+
+it('accepts optional human and owner colours and rejects invalid or misplaced colours', () => {
+  for (const value of [human, agent, { ...human, color: 'pink' }, { ...agent, ownerColor: 'teal' }]) {
+    expect(decodeParticipant(value)).toEqual({ ok: true, value });
+  }
+  expect(decodeParticipant({ ...human, color: 'chartreuse' }).ok).toBe(false);
+  expect(decodeParticipant({ ...agent, ownerColor: 'chartreuse' }).ok).toBe(false);
+  expect(decodeParticipant({ ...human, ownerColor: 'pink' }).ok).toBe(false);
+  expect(decodeParticipant({ ...agent, color: 'pink' }).ok).toBe(false);
+});

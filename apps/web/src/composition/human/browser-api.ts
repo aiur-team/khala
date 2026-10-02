@@ -1,3 +1,4 @@
+import { isHumanColorId, PROFILE_COLOR_PATH } from '@khala/contracts/m1/colors';
 import { AGENT_RENAME_PATH, decodeAgentRenameResult } from '@khala/contracts/m1/agent-names';
 import type { AgentNamesPort } from '../../features/channel/ports';
 import { checkName, type NameError } from '@khala/contracts/m1/names';
@@ -396,6 +397,21 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         const decoded = decodeProfileView(await jsonObject(response));
         return decoded.ok ? { kind: 'ok', ...decoded.value } : { kind: 'error', code: 'unavailable' };
       } catch { return { kind: 'error', code: 'unavailable' }; }
+    },
+    async setColor(color, signal) {
+      if (csrfToken === null) {
+        const state = await readCurrent(signal);
+        if (state.kind !== 'signed_in') return { kind: 'error', code: state.kind === 'signed_out' ? 'signed_out' : 'unavailable' };
+      }
+      const response = await mutation(PROFILE_COLOR_PATH, { color }, signal);
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      if (response.status === 401) return { kind: 'error', code: 'signed_out' };
+      if (response.status === 400) return { kind: 'error', code: 'invalid_color' };
+      const body = await jsonObject(response);
+      if (response.status !== 200 || body === null || !hasExactKeys(body, ['color']) || !isHumanColorId(body.color)) {
+        return { kind: 'error', code: 'unavailable' };
+      }
+      return { kind: 'ok', color: body.color };
     },
     async setUsername(username, signal) {
       // Keep a failed authentication preflight distinct from a failed mutation.

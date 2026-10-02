@@ -7,8 +7,9 @@ import { UsernameGate } from './UsernameGate';
 
 function port(username: string | null, overrides: Partial<ProfilePort> = {}): ProfilePort {
   return {
-    get: vi.fn(async () => ({ kind: 'ok' as const, username, suggestion: 'kevin42' })),
+    get: vi.fn(async () => ({ kind: 'ok' as const, username, suggestion: 'kevin42', color: 'teal' as const })),
     setUsername: vi.fn(async (name: string) => ({ kind: 'ok' as const, username: name })),
+    setColor: async color => ({ kind: 'ok', color }),
     ...overrides,
   };
 }
@@ -67,7 +68,7 @@ describe('UsernameGate', () => {
   it('loads again on retry after a failure', async () => {
     let calls = 0;
     const store = await loaded(port(null, { get: async () => (++calls === 1
-      ? { kind: 'error', code: 'unavailable' } : { kind: 'ok', username: null, suggestion: 'kevin42' }) }));
+      ? { kind: 'error', code: 'unavailable' } : { kind: 'ok', username: null, suggestion: 'kevin42', color: 'teal' as const }) }));
     store.retry();
     await vi.waitFor(() => expect(store.getSnapshot().status).toBe('ready'));
     expect(render(store)).toContain('Choose your username');
