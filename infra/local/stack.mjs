@@ -3,7 +3,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createHash, createHmac, createPublicKey, randomBytes, randomUUID } from 'node:crypto';
 import { openSync, closeSync, realpathSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, request as createHttpRequest } from 'node:http';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 import path from 'node:path';
@@ -378,6 +378,19 @@ async function writeFixtures(state) {
   await chmod(path.join(localDir, 'e2e.env'), 0o600);
 }
 
+export async function netlifyBase(checkoutRoot) {
+  let candidate = checkoutRoot;
+  while (true) {
+    try {
+      if ((await stat(path.join(candidate, '.git'))).isDirectory()) break;
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const parent = path.dirname(candidate);
+    if (parent === candidate) { candidate = checkoutRoot; break; }
+    candidate = parent;
+  }
+  return path.relative(candidate, path.join(checkoutRoot, '.khala-local/netlify'));
+}
+
 async function up() {
   let state;
   let service = 'netlify';
@@ -422,7 +435,7 @@ async function up() {
       await loggedCommand(service, 'pnpm', ['--filter', '@khala/control', 'build:functions'], { env, maxBuffer: 4 * 1024 * 1024 });
       await loggedCommand(service, 'pnpm', ['--filter', '@khala/web', 'build'], { env, maxBuffer: 4 * 1024 * 1024 });
       // Keep Netlify's config re-resolution in the persistent directory.
-      const config = (await readFile(path.join(root, 'netlify.toml'), 'utf8')).replace('base = "."', 'base = ".khala-local/netlify"');
+      const config = (await readFile(path.join(root, 'netlify.toml'), 'utf8')).replace('base = "."', `base = ${JSON.stringify(await netlifyBase(root))}`);
       await writeFile(path.join(localDir, 'netlify/netlify.toml'), `${config}\n[dev.https]\n  keyFile = ${JSON.stringify(tls.key)}\n  certFile = ${JSON.stringify(tls.cert)}\n`, { mode: 0o600 });
       const executable = (await command('sh', ['-c', 'command -v netlify'])).stdout.trim();
       const bundledBlobs = path.join(path.resolve(path.dirname(realpathSync(executable)), '..'), 'node_modules/@netlify/blobs');

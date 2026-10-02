@@ -151,3 +151,16 @@ test('observer login outages do not attempt duplicate registration', async t => 
   }), /observer_login_failed/);
   assert.equal(calls, 1);
 });
+
+test('Netlify base follows directory-only Git root detection in worktrees', async t => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { netlifyBase } = await import('./stack.mjs');
+  const dir = await mkdtemp(path.join(tmpdir(), 'khala-local-worktree-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, '.git'));
+  const worktree = path.join(dir, 'worktrees', 'ticket');
+  await mkdir(worktree, { recursive: true });
+  await writeFile(path.join(worktree, '.git'), 'gitdir: ../../.git/worktrees/ticket');
+  assert.equal(await netlifyBase(worktree), path.join('worktrees', 'ticket', '.khala-local', 'netlify'));
+  assert.equal(await netlifyBase(dir), path.join('.khala-local', 'netlify'));
+});
