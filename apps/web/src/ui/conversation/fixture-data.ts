@@ -14,6 +14,7 @@ import type { AgentPresence } from '../../features/channel/ports';
 import type { TimelineData, TimelineRow } from '../../features/timeline/controller';
 import type { PendingSend } from '../../features/timeline/send';
 import type { TimeOptions } from '../khala/format-time';
+import type { HumanColorId } from '../khala/human-color-ids';
 import type { ConversationMember, ConversationSummary } from './ConversationList';
 
 /** The fixture clock: every day label and list time is relative to this. */
@@ -24,7 +25,7 @@ export type HumanKey = 'me' | 'maya' | 'kai';
 export type AgentKey = 'AIUR-395' | 'AIUR-530' | 'AIUR-620' | 'AIUR-640' | 'AIUR-520' | 'AIUR-540';
 export type MemberKey = HumanKey | AgentKey;
 
-type FixtureHuman = Readonly<{ participantId: ParticipantId; ownerId: OwnerId; displayName: string; hue: number }>;
+type FixtureHuman = Readonly<{ participantId: ParticipantId; ownerId: OwnerId; displayName: string; hue: number; color: HumanColorId }>;
 type FixtureAgent = Readonly<{
   participantId: ParticipantId; owner: HumanKey; displayName: string; harness: 'claude' | 'codex'; idBadge: string; hue: number;
 }>;
@@ -33,9 +34,9 @@ type FixtureAgent = Readonly<{
 // (`participantHue`) already equals the design hue: the roster and header
 // derive hues from these ids without the fixture's `hueOverride`.
 export const HUMANS: Readonly<Record<HumanKey, FixtureHuman>> = {
-  me: { participantId: 'participant-kevin' as ParticipantId, ownerId: 'owner-kevin' as OwnerId, displayName: 'Kevin', hue: 214 },
-  maya: { participantId: 'participant-maya' as ParticipantId, ownerId: 'owner-maya-2' as OwnerId, displayName: 'Maya Chen', hue: 330 },
-  kai: { participantId: 'participant-kai' as ParticipantId, ownerId: 'owner-kai-2' as OwnerId, displayName: 'Kai Watanabe', hue: 150 },
+  me: { participantId: 'participant-kevin' as ParticipantId, ownerId: 'owner-kevin' as OwnerId, displayName: 'Kevin', hue: 214, color: 'blue' },
+  maya: { participantId: 'participant-maya' as ParticipantId, ownerId: 'owner-maya-2' as OwnerId, displayName: 'Maya Chen', hue: 330, color: 'pink' },
+  kai: { participantId: 'participant-kai' as ParticipantId, ownerId: 'owner-kai-2' as OwnerId, displayName: 'Kai Watanabe', hue: 150, color: 'green' },
 };
 
 export const AGENTS: Readonly<Record<AgentKey, FixtureAgent>> = {
@@ -195,11 +196,11 @@ export function describeParticipant(participantId: string): Participant | undefi
   for (const agent of Object.values(AGENTS)) {
     if (agent.participantId !== participantId) continue;
     return { kind: 'agent', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: HUMANS[agent.owner].ownerId,
-      displayName: agent.displayName, ownerLabel: firstName(HUMANS[agent.owner].displayName), harness: agent.harness };
+      displayName: agent.displayName, ownerLabel: firstName(HUMANS[agent.owner].displayName), harness: agent.harness, ownerColor: HUMANS[agent.owner].color } as Participant;
   }
   for (const human of Object.values(HUMANS)) {
     if (human.participantId === participantId) {
-      return { kind: 'human', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: human.ownerId, displayName: human.displayName };
+      return { kind: 'human', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: human.ownerId, displayName: human.displayName, color: human.color } as Participant;
     }
   }
   return undefined;

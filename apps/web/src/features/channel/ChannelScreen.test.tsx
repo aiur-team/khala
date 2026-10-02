@@ -95,6 +95,34 @@ describe('ChannelScreen human emails', () => {
   });
 });
 
+describe('ChannelScreen per-human colours (operator request 2026-10-02: per-human colours)', () => {
+  const zed = { participantId: 'p_zed' as ParticipantId, ownerId: 'owner_zed' as OwnerId, displayName: 'Zed Ito' };
+  // Both other humans chose blue.
+  const describe_ = (participantId: string): Participant | undefined => {
+    const human = [theoHuman, zed].find(candidate => candidate.participantId === participantId);
+    return human ? { kind: 'human', matrixUserId: '@h:x', participantId, ownerId: human.ownerId, displayName: human.displayName, color: 'blue' } as Participant
+      : undefined;
+  };
+  const rosterHue = (html: string, participantId: string) =>
+    Number(new RegExp(`data-kh-human="${participantId}"[^>]*><span class="kh-av kh-hav" style="--oh:(\\d+)`).exec(html)?.[1]);
+
+  it('draws two humans who chose the same colour apart, and the viewer in their own choice', () => {
+    const html = render({ phase: 'ready', agents: [] }, { humanParticipants: [theoHuman, zed], describeParticipant: describe_, viewerColor: 'blue' });
+    expect(rosterHue(html, 'p_mira')).toBe(214);
+    const theoHue = rosterHue(html, 'p_theo');
+    const zedHue = rosterHue(html, 'p_zed');
+    expect(new Set([214, theoHue, zedHue]).size).toBe(3);
+  });
+
+  it('honours the viewer colour from the profile, and an exact choice that is free', () => {
+    const html = render({ phase: 'ready', agents: [] }, { humanParticipants: [theoHuman, zed], describeParticipant: describe_, viewerColor: 'purple' });
+    expect(rosterHue(html, 'p_mira')).toBe(278);
+    // owner_theo sorts first, so Theo keeps blue; Zed is moved.
+    expect(rosterHue(html, 'p_theo')).toBe(214);
+    expect(rosterHue(html, 'p_zed')).not.toBe(214);
+  });
+});
+
 describe('ChannelScreen roster', () => {
   const describe_ = (participantId: string): Participant | undefined => participantId === 'agent_own'
     ? { kind: 'agent', matrixUserId: '@a:x', participantId, ownerId: mira, displayName: 'Claude', ownerLabel: 'Mira', harness: 'claude' }

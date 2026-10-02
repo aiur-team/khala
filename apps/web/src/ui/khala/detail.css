@@ -23,7 +23,7 @@
 .kh-d-owner { white-space: nowrap; max-width: 100%; display: inline-flex; align-items: center; gap: .4rem; margin-top: .2rem; padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid hsl(var(--oh) 60% 55% / .4); background: hsl(var(--oh) 60% 50% / .1); color: var(--fg); font: inherit; font-size: .78rem; cursor: pointer; }
 .kh-d-owner > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .kh-d-owner b { font-weight: 600; }
-.kh-d-owner i { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: hsl(var(--oh) 65% 48%); color: #fff; font: 700 8px/1 "JetBrains Mono", monospace; font-style: normal; }
+.kh-d-owner i { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--hc, hsl(var(--oh) 65% 48%)); color: #fff; font: 700 8px/1 "JetBrains Mono", monospace; font-style: normal; }
 .kh-d-agents { display: flex; flex-direction: column; gap: .5rem; }
 .kh-d-agent { display: flex; align-items: center; gap: .6rem; padding: .4rem; border-radius: 12px; border: 1px solid transparent; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .kh-d-agent:hover { background: var(--surface-3); }

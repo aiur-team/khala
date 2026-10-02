@@ -23,7 +23,7 @@
 .kh-row:not(.me) .kh-b { border-top-left-radius: 18px; }
 .kh-row:not(.me).mid .kh-b, .kh-row:not(.me).last-of .kh-b { border-top-left-radius: 6px; }
 .kh-row:not(.me).first:not(.last-of) .kh-b, .kh-row:not(.me).mid .kh-b { border-bottom-left-radius: 6px; }
-.kh-row.me .kh-b { background: var(--accent); color: #fff; }
+.kh-row.me .kh-b { background: var(--hs, var(--accent)); color: #fff; }
 .kh-row.me.mid .kh-b, .kh-row.me.last-of .kh-b { border-top-right-radius: 6px; }
 .kh-row.me.first:not(.last-of) .kh-b, .kh-row.me.mid .kh-b { border-bottom-right-radius: 6px; }
 .kh-b code { font-family: "JetBrains Mono", monospace; font-size: .82em; padding: 1px 5px; border-radius: 5px; background: rgba(0,0,0,.22); }
@@ -31,17 +31,16 @@
 .khala-app[data-theme="light"] .kh-mention { color: hsl(var(--mh) 60% 34%); }
 .kh-row.me .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
 .kh-mention:hover { text-decoration: underline; }
-.kh-row.human .kh-b { background: hsl(330 42% 30%); color: #fff; }
-.khala-app[data-theme="light"] .kh-row.human .kh-b { background: hsl(330 62% 86%); color: #3a1026; }
+.kh-row.human .kh-b { background: var(--hb, hsl(330 42% 30%)); color: #fff; }
+.khala-app[data-theme="light"] .kh-row.human .kh-b { background: var(--hb-l, hsl(330 62% 86%)); color: var(--hk, #3a1026); }
 .kh-row.human .kh-b code { background: rgba(0,0,0,.2); }
 .kh-row.human .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
-.khala-app[data-theme="light"] .kh-row.human .kh-mention { color: #3a1026; }
+.khala-app[data-theme="light"] .kh-row.human .kh-mention { color: var(--hk, #3a1026); }
 .kh-htag { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; background: hsl(330 65% 48%); color: #fff; }
 /* Operator request 2026-10-02: an agent's bubble is a greyed, darker (light theme: muted) tint of its
-   owner's colour — the viewer's accent for `.yours`, the owner's badge hue `--oh` for `.theirs`.
-   Text stays --fg at >= 4.5:1 in both themes. */
+   owner's resolved colour (operator request 2026-10-02: per-human colours): the row's inline `--ob`, for
+   `.yours` and `.theirs` alike; `--oh` is the fallback. Text stays --fg at >= 4.5:1 in both themes. */
 .kh-row.agent { --ob: hsl(var(--oh) 65% 48%); --ob-mix: 30%; }
-.kh-row.agent.yours { --ob: var(--accent); }
 .khala-app[data-theme="light"] .kh-row.agent { --ob-mix: 28%; }
 .kh-row.agent .kh-b { background: color-mix(in srgb, var(--ob) var(--ob-mix), var(--surface-3)); }
 /* As on human bubbles, mentions take the bubble's text colour (hue-on-tint would drop below 4.5:1). */

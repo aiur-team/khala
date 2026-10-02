@@ -19,12 +19,19 @@ export type AvatarProps =
     hue: number;
     ownerHue: number;
     ownerInitials: string;
+    /** The owner's variant colour (tiers 1-2), which `ownerHue` alone cannot draw. */
+    ownerSwatch?: string | undefined;
     ownerHost?: string;
     /** Harness logo URL; `null` renders the agent's initials instead. */
     logo: string | null;
     initials: string;
   }>
-  | Shared & Readonly<{ kind: 'human'; label: string; hue: number; initials: string }>
+  | Shared & Readonly<{
+    kind: 'human'; label: string; hue: number; initials: string;
+    /** A variant colour (tiers 1-2) and its tier, which get a ring marker so they don't rely on colour alone. */
+    swatch?: string | undefined;
+    tier?: 0 | 1 | 2 | undefined;
+  }>
   | Readonly<{ kind: 'generic' }>
   | Readonly<{ kind: 'more'; count: number }>;
 
@@ -33,15 +40,17 @@ export function Avatar(props: AvatarProps) {
   if (props.kind === 'more') return <span className="kh-av kh-more">+{props.count}</span>;
 
   const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ''}${props.ghost ? ' ghost' : ''}`;
-  const style = { [props.kind === 'agent' ? '--h' : '--oh']: props.hue } as CSSProperties;
+  const style = props.kind === 'agent' ? { '--h': props.hue } as CSSProperties
+    : { '--oh': props.hue, ...(props.swatch ? { '--hc': props.swatch } : {}) } as CSSProperties;
+  const tier = props.kind === 'human' && props.tier ? { 'data-kh-tier': String(props.tier) } : {};
   const content = props.kind === 'agent' ? <>
     {props.logo ? <img src={props.logo} alt="" /> : <span className="kh-ini">{props.initials}</span>}
-    <span className="kh-own" style={{ '--oh': props.ownerHue } as CSSProperties}
+    <span className="kh-own" style={{ '--oh': props.ownerHue, ...(props.ownerSwatch ? { '--hc': props.ownerSwatch } : {}) } as CSSProperties}
       {...(props.ownerHost ? { title: `Running on ${props.ownerHost}` } : {})}>{props.ownerInitials}</span>
   </> : props.initials;
 
   if (props.static || props.ghost) {
-    return <span className={className} style={style} aria-hidden="true">{content}</span>;
+    return <span className={className} style={style} aria-hidden="true" {...tier}>{content}</span>;
   }
-  return <button type="button" className={className} style={style} aria-label={props.label} onClick={props.onClick}>{content}</button>;
+  return <button type="button" className={className} style={style} aria-label={props.label} onClick={props.onClick} {...tier}>{content}</button>;
 }

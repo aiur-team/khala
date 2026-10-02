@@ -18,6 +18,8 @@ import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
 import { guardedListeningModeSetter } from './listening-modes';
+import { useProfile } from '../../features/profile/ProfileProvider';
+import { profileColor } from '../../ui/khala/human-color-ids';
 
 function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
   let readEpoch = 0;
@@ -104,6 +106,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   useSyncExternalStore(subscribeModes, modesSnapshot, modesSnapshot);
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
   const composer = useRef<TimelineComposerHandle>(null);
+  const viewerColor = profileColor(useProfile());
   if (context.conversations && conversations === undefined) {
     return <LoadingSpinner />;
   }
@@ -131,6 +134,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       viewerName={viewer.displayName}
       viewerEmail={context.principal.verifiedEmail}
       viewerParticipantId={viewer.participantId}
+      viewerColor={viewerColor}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
         .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}
       namesPending={timelineData.namesReady === false}

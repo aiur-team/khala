@@ -6,6 +6,7 @@ import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Avatar } from '../../ui/khala/Avatar';
+import { variantSwatch } from '../../ui/khala/human-colors';
 import { harnessLogo, initials } from '../../ui/khala/identity';
 import { AgentIcon, AsyncIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
@@ -98,8 +99,11 @@ export function MemberAvatar({ member, interactive = false, onClick }: Readonly<
   onClick?: () => void;
 }>) {
   const shared = interactive ? { onClick: () => onClick?.() } : { static: true as const };
-  if (member.kind === 'human') return <Avatar kind="human" label={member.name} hue={member.hue} initials={member.initials} {...shared} />;
-  return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue}
+  if (member.kind === 'human') {
+    return <Avatar kind="human" label={member.name} hue={member.hue} initials={member.initials}
+      swatch={variantSwatch(member.color)} tier={member.color?.tier} {...shared} />;
+  }
+  return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue} ownerSwatch={variantSwatch(member.ownerColor)}
     ownerInitials={member.ownerInitials} logo={member.harness ? harnessLogo(member.harness) : null}
     initials={initials(member.name)} {...shared} />;
 }
@@ -273,7 +277,8 @@ export function ChannelRoster({ members, phase, onOpen, renderAddAgent, modeFor,
             <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b>
               {human.email ? <em className="kh-email" title={human.email}>{human.email}</em> : null}<em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
           </button> : <div className="kh-rh">
-            <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'} />
+            <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'}
+              swatch={variantSwatch(agents[0]?.ownerColor)} tier={agents[0]?.ownerColor?.tier} />
             <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
           </div>}
           {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}

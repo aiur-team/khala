@@ -27,6 +27,8 @@ import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
+import { participantColor, participantOwnerColor } from '../../ui/khala/human-color-ids';
+import { useHumanColor, variantSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
 import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
@@ -180,6 +182,8 @@ type Identity = Readonly<{
   idBadge: string | undefined;
   ownerLabel: string | null;
   ownerHue: number;
+  /** As the viewer sees them: a human's own colour, an agent's owner's colour; `null` for an unknown participant. */
+  color: ResolvedHumanColor | null;
   harness: Extract<Participant, { kind: 'agent' }>['harness'] | undefined;
   isViewerOwned: boolean;
 }>;
@@ -205,7 +209,8 @@ export function TimelineScreen({
   unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
-  const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const colorFor = useHumanColor();
+  const data =useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const rows = useMemo(() => dedupeByKey(data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })),
     row => row.kind === 'channel_event' ? row.content.key : undefined), [data.rows, data.items]);
   const evidenceView = useSyncExternalStore(
@@ -411,20 +416,19 @@ export function TimelineScreen({
   function identityFor(participant: ParticipantView, fullName: string): Identity {
     const detail = describeParticipant?.(participant.participantId);
     const isViewerOwned = participant.ownerId === viewer.ownerId;
-    const ownerHue = hueFor({ kind: 'human', ownerId: participant.ownerId, isViewer: isViewerOwned });
-    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue, isViewerOwned };
+    // The human's colour as this viewer sees it (operator request 2026-10-02: per-human colours); for an agent, its owner's.
+    const color = colorFor(participant.ownerId, participant.kind === 'agent' ? participantOwnerColor(detail) : participantColor(detail));
+    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: color.hue, isViewerOwned };
     if (detail?.kind === 'unknown') {
-      return { ...shared, kind: 'unknown', label: 'Unknown', hue: 0, idBadge: undefined, ownerLabel: null, harness: undefined };
+      return { ...shared, kind: 'unknown', label: 'Unknown', hue: 0, color: null, idBadge: undefined, ownerLabel: null, harness: undefined };
     }
     // Names that collide across owners get the shared `.kh-id` owner suffix (roster and detail match).
     const idBadge = resolveIdBadge({ ownerId: participant.ownerId, displayName: fullName });
     if (participant.kind === 'human') {
-      return { ...shared, kind: 'human', label: fullName, idBadge, ownerLabel: null, harness: undefined,
-        hue: hueFor({ kind: 'human', ownerId: participant.ownerId, participantId: participant.participantId,
-          isViewer: participant.participantId === viewer.participantId }) };
+      return { ...shared, kind: 'human', label: fullName, idBadge, ownerLabel: null, harness: undefined, hue: color.hue, color };
     }
     const split = splitAgentName(fullName);
-    return { ...shared, kind: 'agent', label: split.label, idBadge, hue: hueFor({ kind: 'agent', participantId: participant.participantId }),
+    return { ...shared, kind: 'agent', label: split.label, idBadge, color, hue: hueFor({ kind: 'agent', participantId: participant.participantId }),
       ownerLabel: detail?.kind === 'agent' ? detail.ownerLabel : split.owner ?? (isViewerOwned ? firstName(viewer.displayName) : null),
       harness: detail?.kind === 'agent' ? detail.harness : undefined };
   }
@@ -450,9 +454,9 @@ export function TimelineScreen({
     }
     if (identity.kind === 'human') {
       return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={initials(identity.label)} ghost={ghost}
-        onClick={open(identity.participantId)} />;
+        swatch={variantSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
     }
-    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue}
+    return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={variantSwatch(identity.color)}
       ownerInitials={ownerBadge(identity)} logo={identity.harness ? harnessLogo(identity.harness) : null}
       initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
   }
@@ -466,6 +470,7 @@ export function TimelineScreen({
     return [{
       id: identity.participantId, kind: identity.kind, label, display: identity.idBadge ? `${label} ${identity.idBadge}` : label,
       hue: identity.hue, ownerHue: identity.kind === 'agent' ? identity.ownerHue : identity.hue,
+      ...(identity.color && identity.color.tier > 0 ? { swatch: identity.color.tint } : {}),
       ownerInitials: ownerBadge(identity),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
     }];
@@ -534,7 +539,8 @@ export function TimelineScreen({
       type: 'message', key: eventId, run: { kind: 'message', participantId: item.participant.participantId, isViewer },
       ...(isViewer ? { receipt: 'reconciled' as const } : {}),
       render: run => <ChatMessage id={eventId} run={run} sender={isViewer ? 'me' : identity.kind === 'human' ? 'human' : 'agent'}
-        {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.ownerHue } } : {})}
+        {...(identity.kind === 'agent' ? { agentOwner: { yours: identity.isViewerOwned, hue: identity.ownerHue, tint: identity.color?.tint } }
+          : { humanColor: identity.color })}
         time={item.receivedAt} timeOptions={timeOptions} name={nameLine(identity, item.participant, item.receivedAt)} avatar={avatarFor(identity, run.ghost)}
         pop={popIds.has(eventId)} onPopEnd={() => dropPop(eventId)} className="timeline__row"
         after={<>

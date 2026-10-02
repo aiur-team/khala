@@ -21,9 +21,9 @@
 .kh-chip:hover { color: var(--fg); border-color: var(--line-strong); }
 .kh-chip-a { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 3px 2px 7px; color: var(--fg); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .08); }
 .kh-chip-a img { width: 12px; height: 12px; flex: 0 0 auto; }
-.kh-chip-a i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: hsl(var(--oh) 65% 48%); color: #fff; }
+.kh-chip-a i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 48%)); color: #fff; }
 .kh-chip-h { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 9px 2px 3px; }
-.kh-chip-h i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: hsl(var(--oh) 65% 48%); color: #fff; }
+.kh-chip-h i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 48%)); color: #fff; }
 .kh-chip-h { color: hsl(var(--oh) 70% 72%); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .1); }
 .khala-app[data-theme="light"] .kh-chip-h { color: hsl(var(--oh) 60% 36%); }
 
