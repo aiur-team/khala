@@ -9,6 +9,7 @@
 .kh-d-hero .kh-av img { width: 32px; height: 32px; }
 .kh-d-hero b { font-size: 1.05rem; }
 .kh-d-hero span { font-size: .8rem; color: var(--muted); }
+.kh-d-hero .kh-email { max-width: 100%; color: var(--fg); overflow-wrap: anywhere; user-select: text; }
 .kh-d-sec { display: flex; flex-direction: column; gap: .4rem; padding: .85rem; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--hairline); }
 .kh-d-lbl { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 600; }
 .kh-d-sec p { margin: 0; font-size: .88rem; line-height: 1.45; }

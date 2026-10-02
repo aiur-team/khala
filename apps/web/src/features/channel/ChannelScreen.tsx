@@ -35,6 +35,8 @@ export interface ChannelScreenProps {
   controller: ChannelController;
   viewerOwnerId?: OwnerId;
   viewerName?: string;
+  /** The viewer's verified sign-in email, shown beside their name in the roster and detail pane. */
+  viewerEmail?: string;
   viewerParticipantId?: ParticipantId;
   /** Other humans in member order. */
   humanParticipants?: readonly Readonly<{ participantId: ParticipantId; displayName: string; ownerId?: OwnerId }>[];
@@ -99,6 +101,7 @@ function HumanDetail({ human, members, recent, timeOptions, onOpen, onMention, o
   const openAgent = (agent: AgentMember) => onOpen(agent.participantId);
   return <ParticipantDetail name={`${human.isViewer ? 'Your' : `${human.name}’s`} details`} kind="Human" onClose={onClose}>
     <div className="kh-d-hero"><MemberAvatar member={human} /><b>{human.isViewer ? `${human.name} (you)` : human.name}</b>
+      {human.email ? <span className="kh-email" title={human.email}>{human.email}</span> : null}
       <span>{ownerOfLabel(agents.length)}</span></div>
     {agents.length > 0 ? <div className="kh-d-sec"><span className="kh-d-lbl">Agents · {agents.length}</span>
       <div className="kh-d-agents">{agents.map(agent => <div key={agent.participantId} role="button" tabIndex={0} className="kh-d-agent"
@@ -144,15 +147,15 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
   main.style.setProperty('--kh-roster-max', `${Math.max(160, Math.round((main.clientHeight - headHeight) * 0.7))}px`);
 }
 
-export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerParticipantId, humanParticipants, currentNames,
+export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, humanParticipants, currentNames,
   namesPending = false, renameAgent, renameScope, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
-      ...(viewerName ? { name: viewerName } : {}) },
+      ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}) },
     humans: humanParticipants ?? [], agents: view.agents, currentNames, describeParticipant,
-  }), [describeParticipant, currentNames, humanParticipants, view.agents, viewerName, viewerOwnerId, viewerParticipantId]);
+  }), [describeParticipant, currentNames, humanParticipants, view.agents, viewerEmail, viewerName, viewerOwnerId, viewerParticipantId]);
 
   const room = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);

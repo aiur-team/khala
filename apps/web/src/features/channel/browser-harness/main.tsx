@@ -45,6 +45,8 @@ const port: ChannelUiPort = {
 };
 const controller = createChannelController(port, { roomId, generation: 1 });
 const describeParticipant = (participantId: string): Participant | undefined => {
+  if (participantId === 'p_theo') return { kind: 'human', matrixUserId: '@theo:khala.example', participantId, ownerId: theo,
+    displayName: 'Theo Park', email: 'theo.park@example.com' };
   const agent = snapshot.agents.find(item => item.participantId === participantId);
   if (!agent || !harnesses[participantId]) return undefined;
   return { kind: 'agent', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: agent.ownerId ?? '',
@@ -71,7 +73,7 @@ function Harness() {
   return <KhalaApp theme={theme} onThemeChange={setTheme} inThread
     list={<p className="kh-cv-empty">Release channel</p>}
     main={<ChannelScreen title="Release channel" controller={controller}
-      viewerOwnerId={mira} viewerName="Mira" viewerParticipantId={'p_mira' as ParticipantId}
+      viewerOwnerId={mira} viewerName="Mira" viewerEmail="mira@example.com" viewerParticipantId={'p_mira' as ParticipantId}
       humanParticipants={humans} currentNames={names} describeParticipant={describeParticipant}
       renameScope={roomId}
       renameAgent={async (participantId, name) => {

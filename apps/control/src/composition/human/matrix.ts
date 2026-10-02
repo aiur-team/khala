@@ -1,5 +1,8 @@
 import { createHash, createHmac } from 'node:crypto';
-import { agentOwnerRecordKey, decodeAgentOwnerRecord, ownerFirstName, type AgentOwnerRecord, type Participant } from '@khala/contracts/m1/participants';
+import {
+  agentOwnerRecordKey, decodeAgentOwnerRecord, humanEmailRecordKey, ownerFirstName, readParticipantEmail,
+  type AgentOwnerRecord, type HumanEmailRecord, type Participant,
+} from '@khala/contracts/m1/participants';
 import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
@@ -188,6 +191,30 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       return decoded.ok && decoded.value.matrixUserId === userId ? decoded.value : null;
     } catch { return null; }
   }
+  async function readHumanEmail(ownerId: OwnerId, call?: CallOptions): Promise<string | null> {
+    try {
+      const read = await options.store.read<HumanEmailRecord>(humanEmailRecordKey(ownerId), call);
+      if (read.kind !== 'record') return null;
+      const value = safeObject(read.record.value);
+      return value?.v === 1 && value.ownerId === ownerId ? readParticipantEmail(value.email, 'email') : null;
+    } catch { return null; }
+  }
+  /** Best effort: records the owner's current verified email so channel members can see it. */
+  async function rememberHumanEmail(ownerId: OwnerId, email: string, call?: CallOptions): Promise<void> {
+    try {
+      const key = humanEmailRecordKey(ownerId);
+      const current = await options.store.read<HumanEmailRecord>(key, call);
+      if (current.kind === 'unavailable') return;
+      if (current.kind === 'record' && current.record.value.email === email && current.record.value.ownerId === ownerId) return;
+      const value: HumanEmailRecord = { v: 1, ownerId, email };
+      const expectedRevision = current.kind === 'record' ? current.record.revision : null;
+      await options.store.compareAndSet({
+        key, expectedRevision,
+        operationId: `humans.email.${createHash('sha256').update(JSON.stringify([ownerId, email, expectedRevision])).digest('hex')}`,
+        next: { value, expiresAt: null },
+      }, call);
+    } catch { /* Emails are display data; a failed write never prevents session minting. */ }
+  }
   const password = (ownerId: OwnerId) => createHmac('sha256', passwordSecret)
     .update('khala-matrix-password-v1\0')
     .update(ownerId)
@@ -343,6 +370,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           await request(path, { method: 'PUT', headers, body: JSON.stringify({ displayname: desired }) }, call);
         }
       } catch { /* Profile labels are best effort and never prevent session minting. */ }
+      await rememberHumanEmail(principal.ownerId, principal.verifiedEmail, call);
       return {
         kind: 'ok',
         session: {
@@ -380,7 +408,12 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       for (const userId of userIds) {
         const name = displayName(safeObject(joined[userId])?.display_name, userId);
         const human = participantFor(userId);
-        if (human) { participants.push({ ...human, displayName: name }); continue; }
+        if (human) {
+          // Members of the same channel may see each other's verified email (membership checked above).
+          const email = await readHumanEmail(human.ownerId, call);
+          participants.push({ ...human, displayName: name, ...(email ? { email } : {}) });
+          continue;
+        }
         const agent = await readAgentOwner(userId, call);
         participants.push(agent ? { matrixUserId: userId, participantId: agentParticipantId(userId),
           ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: agent.ownerLabel, harness: agent.harness }

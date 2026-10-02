@@ -116,6 +116,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       controller={room}
       viewerOwnerId={viewer.ownerId}
       viewerName={viewer.displayName}
+      viewerEmail={context.principal.verifiedEmail}
       viewerParticipantId={viewer.participantId}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
         .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}

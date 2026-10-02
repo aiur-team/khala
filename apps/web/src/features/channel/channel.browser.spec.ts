@@ -110,6 +110,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     const theo = page.getByRole('complementary', { name: 'Theo Park’s details' });
     await theo.waitFor();
     assert.equal(await theo.locator('.kh-d-hero > span:last-child').textContent(), 'Owner of 1 agent');
+    assert.equal(await theo.locator('.kh-d-hero .kh-email').textContent(), 'theo.park@example.com');
     await theo.getByRole('button', { name: '@ Mention Theo' }).click();
     assert.equal(await page.getByLabel('Message').inputValue(), '@Scout @Theo ');
 
@@ -134,6 +135,8 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await page.locator('.kh-stack .kh-more').textContent(), '+3');
     await headButton.click();
     assert.equal(await page.locator('.kh-rh em', { hasText: 'Not in this channel' }).count(), 1);
+    assert.deepEqual(await page.locator('.kh-rh .kh-email').allTextContents(), ['mira@example.com', 'theo.park@example.com'],
+      'the roster shows each human’s email when known, and nothing for a human without one');
     for (const absent of ['.kh-keb', '.kh-crw', '.kh-confirm', '.kh-req', '.kh-badge', '.kh-st']) {
       assert.equal(await page.locator(absent).count(), 0, `${absent} is M2`);
     }

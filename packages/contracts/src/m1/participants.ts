@@ -4,7 +4,7 @@ import { type Harness, M1_LABEL_MAX_BYTES, readAgentLabel, readHarness, readMatr
 export type AgentOwnerRecord = { matrixUserId: string; ownerId: string; ownerLabel: string; harness: Harness; label: string; createdAt: string };
 
 export type Participant =
-  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human' }
+  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human'; email?: string }
   | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'agent'; ownerLabel: string; harness: Harness }
   | { matrixUserId: string; displayName: string; kind: 'unknown' };   // an unknown member never fails the whole response
 export type ParticipantsResponse = { participants: Participant[] };
@@ -14,6 +14,19 @@ export type ParticipantsResponse = { participants: Participant[] };
  * - **Human labels come from Matrix display names, everywhere.** When KM-122 mints a browser session, it sets the human's own Matrix display name to `ownerFirstName(verifiedEmail)`: read it first, write only if different. Readers (control participants, browser, KM-143 agent intake) use the display name. Fallback when it is missing: control's participants `displayName` falls back to the full `matrixUserId` (C3); KM-143's `senderLabel` falls back to the user id localpart.
  */
 export const MAX_PARTICIPANTS = 100;
+/**
+ * A human's verified sign-in email, shown to other members of the same channel.
+ * Control writes it at browser-session mint and returns it only from the
+ * room-scoped participants lookup, after checking the caller is joined.
+ */
+export type HumanEmailRecord = { v: 1; ownerId: string; email: string };
+export const humanEmailRecordKey = (ownerId: string): string => `humans/${encodeURIComponent(ownerId)}/email`;
+const EMAIL = /^[^\s@]+@[^\s@]+$/u;
+export function readParticipantEmail(input: unknown, path: string): string {
+  const email = identifier(input, path);
+  if (!EMAIL.test(email)) fail(path, 'invalid_value');
+  return email;
+}
 export const agentOwnerRecordKey = (matrixUserId: string): string => `agents/${encodeURIComponent(matrixUserId)}`;
 export function ownerFirstName(email: string): string {
   const at = email.lastIndexOf('@');
@@ -42,6 +55,7 @@ function readParticipant(input: unknown, path: string): Participant {
   const kind = literal((input as Record<string, unknown> | null)?.['kind'], path ? `${path}.kind` : 'kind', ['human', 'agent', 'unknown']);
   const keys = ['matrixUserId', 'displayName', 'kind'];
   if (kind !== 'unknown') keys.push('participantId', 'ownerId');
+  if (kind === 'human' && typeof input === 'object' && input !== null && Object.hasOwn(input, 'email')) keys.push('email');
   if (kind === 'agent') keys.push('ownerLabel', 'harness');
   const r = object(input, path, keys);
   const common = {
@@ -54,7 +68,7 @@ function readParticipant(input: unknown, path: string): Participant {
     participantId: identifier(r.field('participantId'), r.at('participantId')),
     ownerId: identifier(r.field('ownerId'), r.at('ownerId')),
   };
-  if (kind === 'human') return { ...known, kind };
+  if (kind === 'human') return keys.includes('email') ? { ...known, kind, email: readParticipantEmail(r.field('email'), r.at('email')) } : { ...known, kind };
   return {
     ...known,
     kind,
