@@ -10,7 +10,6 @@ import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
-import { useProfile } from '../../features/profile/ProfileProvider';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
@@ -82,7 +81,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
 }) {
   const conversations = useConversationIndex(context);
   // Updates the instant a Profile save succeeds, so the viewer sees their own choice at once.
-  const { initials: viewerInitials } = useProfile();
+  const { initials: viewerInitials, color: viewerColor } = useProfile();
   const selectedConversation = conversations?.find(item => item.id === roomId);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -142,7 +141,6 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     return detail?.kind === 'agent' && name !== undefined ? { ...detail, displayName: name } : detail;
   }), [baseDescribe, renamed]);
   const composer = useRef<TimelineComposerHandle>(null);
-  const viewerColor = useProfile().color;
   if (context.conversations && conversations === undefined) {
     return <LoadingSpinner />;
   }
