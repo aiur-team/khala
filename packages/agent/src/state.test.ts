@@ -100,9 +100,16 @@ it('supports safe state-file aliases and rejects traversal or unsupported writes
   await writeStateFile(files.dir, 'status.json', status);
   expect(await readStateFile(files.dir, 'status.json')).toEqual(status);
   await expect(writeStateFile(files.dir, 'evil.json' as 'status.json', status)).rejects.toMatchObject({ code: 'storage_failed' });
-  for (const name of ['../status.json', '/status.json', 'status.json/child', 'inbox.jsonl']) {
+  for (const name of ['../status.json', '/status.json', 'status.json/child', 'other.jsonl']) {
     expect(() => readStateFile(files.dir, name)).toThrow(StateError);
     await expect(removeStateFile(files.dir, name)).rejects.toBeInstanceOf(StateError);
   }
+  expect(() => readStateFile(files.dir, 'inbox.jsonl')).toThrow(StateError);
+  await fs.writeFile(files.inbox, 'old messages');
+  await writeStateFile(files.dir, 'cursor.json', { deliveredCount: 1 });
+  await removeStateFile(files.dir, 'inbox.jsonl');
+  await removeStateFile(files.dir, 'cursor.json');
+  await expect(fs.stat(files.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readStateFile(files.dir, 'cursor.json')).toBeNull();
   await removeStateFile(files.dir, 'join.json');
 });

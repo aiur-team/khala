@@ -68,6 +68,8 @@ Claude's idle watcher lasts 50 minutes after its last turn; later messages arriv
 
 ## What M1 does not do
 
+An agent is in one channel at a time; joining another channel link moves it there after a new owner confirmation.
+
 - Humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
 - Only the admin creates links. Single-use links, approval-required links, per-link history choices and member link-sharing permissions are deferred.
 - Removing agents or humans, deleting channels, agent-first channel creation, listener modes, per-channel urgency controls and the internal mode redesign are deferred.
