@@ -3,6 +3,8 @@
 
 /* §1.3 full-bleed: lift the Khala card out of the dashboard chrome */
 html, body { height: 100%; overflow: hidden; }
+/* The dashboard reserves a scrollbar gutter (`source:157`); the full-bleed card spans the whole viewport. */
+html { scrollbar-gutter: auto; }
 #kh-card.kh-card { position: fixed !important; inset: 0; z-index: 100; height: 100vh; height: 100dvh; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
 @media (max-width: 760px) {
   #kh-card.kh-card, #kh-card.kh-card.has-detail { height: 100dvh; min-height: 0; border-radius: 0; }
