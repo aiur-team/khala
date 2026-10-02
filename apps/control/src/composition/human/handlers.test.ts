@@ -263,8 +263,8 @@ describe('admission route handlers', () => {
         policy: { v: 1, kind: 'link', history: 'full' },
       }),
     }));
-    expect(unavailableHistory.status).toBe(503);
-    expect(await body(unavailableHistory)).toEqual({ code: 'history_unavailable' });
+    expect(unavailableHistory.status).toBe(200);
+    expect(state.admission.share).toHaveBeenLastCalledWith({ operationId: 'operation_history', roomId: 'room_1', policy: { v: 1, kind: 'link', history: 'full' } });
 
     const admit = await route(registrations, ADMIT_PATH).handle(request(ADMIT_PATH, {
       method: 'POST', body: JSON.stringify({ operationId: 'operation_2', inviteRef: 'invite_1', deviceId: 'device_1' }),
