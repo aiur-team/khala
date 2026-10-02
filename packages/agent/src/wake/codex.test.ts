@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
 import { appendEntries } from '../inbox';
-import { openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
+import { openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
 import { createCodexWaker, type CodexWaker } from './codex';
 import { CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
@@ -70,6 +70,30 @@ it('allows at most two wakes per cursor count, and permits waking after cursor a
   expect(run).toHaveBeenCalledTimes(2);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: '1', deliveredCount: 1 });
   waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(3);
+});
+it('resets the attempt cap and pending retry when switching channels at cursor zero', async () => {
+  const credentials = { homeserver: 'https://example.test', userId: '@agent-a:example.test',
+    accessToken: 'token', deviceId: 'device-a', roomId: '!room-a:example.test' };
+  await saveSession(files, credentials);
+  await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
+  await append('a'); await activity('idle'); start(); await wait();
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+
+  await fs.unlink(files.inbox);
+  await fs.unlink(files.cursor);
+  await saveSession(files, { ...credentials, userId: '@agent-b:example.test', roomId: '!room-b:example.test' });
+  await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
+  await appendEntries(files, [{ eventId: 'b', roomId: '!room-b:example.test', ts: new Date(time).toISOString(),
+    sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
+  waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(3);
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(4);
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(4);
 });
 it('reports failure without content and waits before retrying', async () => {
   outcome = { status: 'exited', code: 1 };

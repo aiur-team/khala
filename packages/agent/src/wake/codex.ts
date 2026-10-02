@@ -1,6 +1,6 @@
 import { readActivity } from '../activity';
 import { readCursor, unreadCount } from '../inbox';
-import { SESSION_ID_PATTERN, type SessionFiles } from '../state';
+import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
 import { codexIdleWakeArgv, type CodexIdleWakePort } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
 
@@ -23,6 +23,7 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   const controller = new AbortController();
   let pending: { at: number } | undefined;
   const wakesAtCount = new Map<number, number>();
+  let channelIdentity: string | undefined;
   let stopped = false;
   let again = false;
   let inFlight: Promise<void> | undefined;
@@ -33,6 +34,13 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   };
   const evaluate = async () => {
     try {
+      const session = await readJson<{ roomId: string; userId: string }>(deps.files.session);
+      const identity = JSON.stringify([session?.roomId, session?.userId]);
+      if (identity !== channelIdentity) {
+        channelIdentity = identity;
+        wakesAtCount.clear();
+        pending = undefined;
+      }
       const counts = await unreadCount(deps.files.dir);
       const cursor = await readCursor(deps.files);
       if (!counts.messages) { pending = undefined; return; }
