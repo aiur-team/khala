@@ -50,12 +50,13 @@ export function useDetailHost(open: boolean): HTMLElement | null {
   return context?.host ?? null;
 }
 
-function Brand({ theme, onThemeChange, homeHref, live, actions }: Readonly<{
+/** The brand row (§1.4): logo, wordmark, Live badge and the theme toggle; the confirm page reuses it. */
+export function Brand({ theme, onThemeChange, homeHref, live = false, actions }: Readonly<{
   theme: ThemeChoice;
   onThemeChange: ((theme: ThemeChoice) => void) | undefined;
   homeHref: string;
-  live: boolean;
-  actions: ReactNode;
+  live?: boolean;
+  actions?: ReactNode;
 }>) {
   return <div className="kh-brand">
     <img className="brand-logo" src={aiurLogo} alt="" />
@@ -84,7 +85,7 @@ export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', br
       <PopoverHostProvider host={pop} card={card}><DetailHostContext.Provider value={detailContext}>
         <section ref={card} className={classes} id="kh-card">
           {solo ? null : <aside className="kh-list" aria-label="Conversations">{brand}{list}</aside>}
-          <div className="kh-main">{solo ? brand : null}{main}<Toast /></div>
+          <main className="kh-main">{solo ? brand : null}{main}<Toast /></main>
           {/* The pane's content (ParticipantDetail) carries its own landmark or dialog role. */}
           <div ref={setDetailHost} className="kh-detail">{detail}</div>
           <div ref={pop} className="kh-pop" hidden />

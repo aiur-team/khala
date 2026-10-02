@@ -57,6 +57,12 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible();
       assert.equal(new URL(page.url()).pathname + new URL(page.url()).search, '/agent/confirm?joinId=j1');
       assert.match(await page.locator('body').innerText(), /Helper \(Claude Code\) wants to join Launch\./);
+      // The page's theme toggle is remembered, like the app's.
+      const confirmPage = page.locator('.kh-agent-confirm');
+      const toggled = await confirmPage.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      await confirmPage.getByRole('button', { name: 'Toggle color theme' }).click();
+      assert.equal(await confirmPage.getAttribute('data-theme'), toggled);
+      assert.equal(await page.evaluate(() => localStorage.getItem('khala.theme')), toggled);
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
       await page.getByText('Connecting Helper… Keep this tab open.').waitFor();
       await page.getByRole('link', { name: 'Open channel' }).waitFor();

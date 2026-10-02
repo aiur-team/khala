@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import codexColor from './assets/codex-color.svg';
 import claudeSymbol from './assets/claude-symbol.svg';
-import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessLogo, initials, participantHue } from './identity';
+import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessLogo, initials, ownerInitials, participantHue } from './identity';
 
 describe('participantHue', () => {
   it('gives the viewer 214', () => {
@@ -53,5 +53,18 @@ describe('harnessLogo', () => {
     expect(harnessLogo('codex')).toBe(codexColor);
     expect(harnessLogo('claude')).toBe(claudeSymbol);
     expect(harnessLogo('gemini')).toBeNull();
+  });
+});
+
+describe('ownerInitials', () => {
+  const humans = [{ ownerId: 'owner_kai', displayName: 'Kai Watanabe' }, { displayName: 'Maya Chen' }];
+
+  it('uses the owner full name, found by owner id or first name', () => {
+    expect(ownerInitials({ ownerId: 'owner_kai', label: 'Kai' }, humans)).toBe('KW');
+    expect(ownerInitials({ label: 'Maya' }, humans)).toBe('MC');
+  });
+
+  it('falls back to the label for an owner not on screen', () => {
+    expect(ownerInitials({ ownerId: 'owner_bob', label: 'Bob' }, humans)).toBe('BO');
   });
 });

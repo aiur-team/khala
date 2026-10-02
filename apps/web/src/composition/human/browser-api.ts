@@ -64,6 +64,8 @@ export type HumanBrowserApi = Readonly<{
   credentials: CredentialSource;
   participants: Readonly<{
     describe(participantId: string): Participant | undefined;
+    /** The same details by Matrix user id, once a room has resolved that member. */
+    describeUser(matrixUserId: string): Participant | undefined;
     resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
 }>;
@@ -307,8 +309,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   };
 
   const details = new Map<string, Participant>();
+  const detailsByUser = new Map<string, Participant>();
   const participants = {
     describe: (participantId: string): Participant | undefined => details.get(participantId),
+    describeUser: (matrixUserId: string): Participant | undefined => detailsByUser.get(matrixUserId),
     async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null> {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
       if (roomId && (!session?.deviceId || !session.matrixAccessToken)) return null;
@@ -335,7 +339,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       }
       if (!userIds.every(userId => resolved.has(userId))
         || ![...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId))) return null;
-      for (const [participantId, entry] of pendingDetails) details.set(participantId, entry);
+      for (const [participantId, entry] of pendingDetails) {
+        details.set(participantId, entry);
+        detailsByUser.set(entry.matrixUserId, entry);
+      }
       return resolved;
     },
   };

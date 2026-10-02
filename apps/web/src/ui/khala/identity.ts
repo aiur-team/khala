@@ -65,6 +65,24 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase('en-US');
 }
 
+type OwnerCandidate = Readonly<{ ownerId?: string | undefined; displayName: string }>;
+
+/**
+ * An agent's owner badge initials (`.kh-own`), by the design's rule: the
+ * owner's full name, first and last initial (`Kai Watanabe` → `KW`). The
+ * owner is found among `humans` by owner id, else by first name; an owner
+ * who isn't among them falls back to the initials of `ownerLabel`.
+ */
+export function ownerInitials(owner: Readonly<{ ownerId?: string | undefined; label: string }>, humans: Iterable<OwnerCandidate>): string {
+  const first = (name: string) => name.trim().split(/\s+/u)[0]?.toLocaleLowerCase('en-US') ?? '';
+  let byName: OwnerCandidate | undefined;
+  for (const human of humans) {
+    if (owner.ownerId !== undefined && human.ownerId === owner.ownerId) return initials(human.displayName);
+    if (!byName && first(human.displayName) === first(owner.label)) byName = human;
+  }
+  return initials(byName?.displayName ?? owner.label);
+}
+
 type BadgeSubject = Readonly<{ ownerId: string; displayName: string }>;
 
 /**

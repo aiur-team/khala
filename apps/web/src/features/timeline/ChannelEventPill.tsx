@@ -10,8 +10,10 @@ export function ChannelEventPill({ id, content, senderName, receivedAt }: Readon
   const label = new Date(time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
   const children = <>
     <i className={`channel-event-pill__dot channel-event-pill__dot--${status}`} aria-hidden="true" />
-    <span className="channel-event-pill__text" dir="auto">{line}</span>
-    <span aria-hidden="true"> · </span><time dateTime={time}>{label}</time>
+    <span className="channel-event-pill__body">
+      <span className="channel-event-pill__text" dir="auto">{line}</span>
+      <span aria-hidden="true"> · </span><time dateTime={time}>{label}</time>
+    </span>
   </>;
   return <li data-event-id={id} className="channel-event-pill">
     {content.url ? <a className="channel-event-pill__link" href={content.url} target="_blank"

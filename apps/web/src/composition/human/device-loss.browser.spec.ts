@@ -87,7 +87,10 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     assert.equal(await button.isVisible(), true);
     const brand = page.getByRole('link', { name: 'Khala home' });
     assert.equal(await brand.getAttribute('href'), '/conversations');
-    assert.equal(await page.locator('.kh-brand .brand-logo').evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
+    // Wait for the load to settle: under a busy runner the logo can still be decoding here.
+    const logo = page.locator('.kh-brand .brand-logo');
+    await logo.evaluate(image => (image as HTMLImageElement).decode().catch(() => undefined));
+    assert.equal(await logo.evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
     assert.equal(await page.locator('nav').count(), 0);
     const shell = await page.locator('.khala-app').elementHandle();
     assert.ok(shell);

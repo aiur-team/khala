@@ -257,9 +257,15 @@ export function humanParticipants(channel: FixtureChannel) {
   return channel.members.flatMap(key => key === 'me' || isAgent(key) ? [] : [{ ...HUMANS[key] }]);
 }
 
+/** The channel's participants in member order (`KH_CONVOS[].members`). */
+export function channelMembers(channel: FixtureChannel): readonly ParticipantView[] {
+  return channel.members.map(participantView);
+}
+
 function member(key: MemberKey): ConversationMember {
   const participant = participantView(key);
-  return { id: participant.participantId, kind: participant.kind, displayName: participant.displayName, ownerId: participant.ownerId };
+  return { id: participant.participantId, kind: participant.kind, displayName: participant.displayName, ownerId: participant.ownerId,
+    ...(isAgent(key) ? { harness: AGENTS[key].harness } : {}) };
 }
 
 /** The list rows: the latest durable message is the preview. */

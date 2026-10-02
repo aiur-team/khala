@@ -45,6 +45,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   });
   const application = createHumanApplication({
     describeParticipant: api.participants.describe,
+    describeMatrixUser: api.participants.describeUser,
     identity: api.identity,
     device: matrix.device,
     room: matrix.room,

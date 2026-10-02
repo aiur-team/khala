@@ -56,6 +56,7 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
     assert.equal((await box(page, '.kh-list')).width, 300);
     assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
     assert.equal(await page.locator('nav').count(), 0);
+    assert.equal(await page.getByRole('main').count(), 1, 'the thread pane is the one main landmark');
     assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight), true, 'the page never scrolls');
 
     // Fonts: the UI font everywhere, the logo font on the wordmark only.

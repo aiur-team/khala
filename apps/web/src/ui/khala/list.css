@@ -40,6 +40,5 @@
 .kh-cv-skel .kh-cv-t > span + span { width: 85%; }
 @keyframes khSkel { to { background-position-x: -200%; } }
 
-/* The New channel popover's error line (§4.3), on the §12.2 hint. */
-.kh-hint { font-size: .74rem; color: var(--faint); text-align: center; margin-top: -.3rem; }
+/* The New channel popover's error line (§4.3), on the §12.2 `.kh-hint` (controls.css). */
 .kh-new-err { color: var(--block-ink); }

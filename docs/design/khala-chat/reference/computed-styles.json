@@ -4,16 +4,16 @@
    "box": [
     0,
     0,
-    1425,
+    1440,
     900
    ],
    "display": "grid",
-   "width": "1425px",
+   "width": "1440px",
    "height": "900px",
    "padding": "0px",
    "margin": "0px",
    "gap": "normal",
-   "grid-template-columns": "300px 1125px 0px",
+   "grid-template-columns": "300px 1140px 0px",
    "font-family": "\"Space Grotesk\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
    "font-size": "16px",
    "font-weight": "400",
@@ -355,11 +355,11 @@
    "box": [
     300,
     0,
-    1125,
+    1140,
     70
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "70.4375px",
    "padding": "13.6px 17.6px",
    "margin": "0px",
@@ -488,7 +488,7 @@
   },
   ".kh-hacts .kh-ib": {
    "box": [
-    1337,
+    1352,
     18,
     34,
     34
@@ -517,11 +517,11 @@
    "box": [
     300,
     70,
-    1125,
+    1140,
     738
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "737.922px",
    "padding": "17.6px 17.6px 9.6px",
    "margin": "0px",
@@ -542,7 +542,7 @@
   },
   ".kh-day": {
    "box": [
-    820,
+    827,
     -215,
     86,
     17
@@ -623,7 +623,7 @@
   },
   ".kh-row.me .kh-b": {
    "box": [
-    902,
+    917,
     422,
     506,
     37
@@ -650,7 +650,7 @@
   },
   ".kh-row.failed .kh-b": {
    "box": [
-    983,
+    998,
     742,
     425,
     37
@@ -839,7 +839,7 @@
   },
   ".kh-mention.kh-hm": {
    "box": [
-    915,
+    930,
     431,
     45,
     18
@@ -947,7 +947,7 @@
   },
   ".kh-ev": {
    "box": [
-    682,
+    689,
     472,
     361,
     30
@@ -974,7 +974,7 @@
   },
   ".kh-ev i": {
    "box": [
-    695,
+    702,
     483,
     7,
     7
@@ -1001,7 +1001,7 @@
   },
   ".kh-rcpt": {
    "box": [
-    1351,
+    1366,
     780,
     57,
     19
@@ -1028,7 +1028,7 @@
   },
   ".kh-retry": {
    "box": [
-    947,
+    962,
     746,
     28,
     28
@@ -1057,11 +1057,11 @@
    "box": [
     300,
     808,
-    1125,
+    1140,
     32
    ],
    "display": "block",
-   "width": "1125px",
+   "width": "1140px",
    "height": "32.2656px",
    "padding": "8px 14.4px 0px",
    "margin": "0px",
@@ -1165,11 +1165,11 @@
    "box": [
     300,
     841,
-    1125,
+    1140,
     59
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "59.375px",
    "padding": "7.2px 14.4px 13.6px",
    "margin": "0px",
@@ -1192,11 +1192,11 @@
    "box": [
     314,
     848,
-    1049,
+    1064,
     39
    ],
    "display": "block",
-   "width": "1049.42px",
+   "width": "1064.42px",
    "height": "38.5938px",
    "padding": "8px 15.2px",
    "margin": "0px",
@@ -1217,7 +1217,7 @@
   },
   ".kh-send": {
    "box": [
-    1373,
+    1388,
     848,
     38,
     38
@@ -1332,16 +1332,16 @@
    "box": [
     0,
     0,
-    1425,
+    1440,
     900
    ],
    "display": "grid",
-   "width": "1425px",
+   "width": "1440px",
    "height": "900px",
    "padding": "0px",
    "margin": "0px",
    "gap": "normal",
-   "grid-template-columns": "300px 1125px 0px",
+   "grid-template-columns": "300px 1140px 0px",
    "font-family": "\"Space Grotesk\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
    "font-size": "16px",
    "font-weight": "400",
@@ -1683,11 +1683,11 @@
    "box": [
     300,
     0,
-    1125,
+    1140,
     70
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "70.4375px",
    "padding": "13.6px 17.6px",
    "margin": "0px",
@@ -1816,7 +1816,7 @@
   },
   ".kh-hacts .kh-ib": {
    "box": [
-    1337,
+    1352,
     18,
     34,
     34
@@ -1845,11 +1845,11 @@
    "box": [
     300,
     70,
-    1125,
+    1140,
     738
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "737.922px",
    "padding": "17.6px 17.6px 9.6px",
    "margin": "0px",
@@ -1870,7 +1870,7 @@
   },
   ".kh-day": {
    "box": [
-    820,
+    827,
     -215,
     86,
     17
@@ -1951,7 +1951,7 @@
   },
   ".kh-row.me .kh-b": {
    "box": [
-    902,
+    917,
     422,
     506,
     37
@@ -1978,7 +1978,7 @@
   },
   ".kh-row.failed .kh-b": {
    "box": [
-    983,
+    998,
     742,
     425,
     37
@@ -2167,7 +2167,7 @@
   },
   ".kh-mention.kh-hm": {
    "box": [
-    915,
+    930,
     431,
     45,
     18
@@ -2275,7 +2275,7 @@
   },
   ".kh-ev": {
    "box": [
-    682,
+    689,
     472,
     361,
     30
@@ -2302,7 +2302,7 @@
   },
   ".kh-ev i": {
    "box": [
-    695,
+    702,
     483,
     7,
     7
@@ -2329,7 +2329,7 @@
   },
   ".kh-rcpt": {
    "box": [
-    1351,
+    1366,
     780,
     57,
     19
@@ -2356,7 +2356,7 @@
   },
   ".kh-retry": {
    "box": [
-    947,
+    962,
     746,
     28,
     28
@@ -2385,11 +2385,11 @@
    "box": [
     300,
     808,
-    1125,
+    1140,
     32
    ],
    "display": "block",
-   "width": "1125px",
+   "width": "1140px",
    "height": "32.2656px",
    "padding": "8px 14.4px 0px",
    "margin": "0px",
@@ -2493,11 +2493,11 @@
    "box": [
     300,
     841,
-    1125,
+    1140,
     59
    ],
    "display": "flex",
-   "width": "1125px",
+   "width": "1140px",
    "height": "59.375px",
    "padding": "7.2px 14.4px 13.6px",
    "margin": "0px",
@@ -2520,11 +2520,11 @@
    "box": [
     314,
     848,
-    1049,
+    1064,
     39
    ],
    "display": "block",
-   "width": "1049.42px",
+   "width": "1064.42px",
    "height": "38.5938px",
    "padding": "8px 15.2px",
    "margin": "0px",
@@ -2545,7 +2545,7 @@
   },
   ".kh-send": {
    "box": [
-    1373,
+    1388,
     848,
     38,
     38
@@ -2660,16 +2660,16 @@
    "box": [
     0,
     0,
-    375,
+    390,
     844
    ],
    "display": "grid",
-   "width": "375px",
+   "width": "390px",
    "height": "844px",
    "padding": "0px",
    "margin": "0px",
    "gap": "normal",
-   "grid-template-columns": "375px",
+   "grid-template-columns": "390px",
    "font-family": "\"Space Grotesk\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
    "font-size": "16px",
    "font-weight": "400",
@@ -3011,11 +3011,11 @@
    "box": [
     0,
     0,
-    375,
+    390,
     64
    ],
    "display": "flex",
-   "width": "375px",
+   "width": "390px",
    "height": "64.0312px",
    "padding": "10.4px 12px",
    "margin": "0px",
@@ -3144,7 +3144,7 @@
   },
   ".kh-hacts .kh-ib": {
    "box": [
-    293,
+    308,
     15,
     34,
     34
@@ -3173,11 +3173,11 @@
    "box": [
     0,
     64,
-    375,
+    390,
     684
    ],
    "display": "flex",
-   "width": "375px",
+   "width": "390px",
    "height": "683.812px",
    "padding": "12.8px 11.2px 8px",
    "margin": "0px",
@@ -3198,7 +3198,7 @@
   },
   ".kh-day": {
    "box": [
-    145,
+    152,
     141,
     86,
     17
@@ -3227,11 +3227,11 @@
    "box": [
     51,
     322,
-    270,
+    284,
     59
    ],
    "display": "block",
-   "width": "270.297px",
+   "width": "283.5px",
    "height": "58.5625px",
    "padding": "8px 12.8px",
    "margin": "0px",
@@ -3254,11 +3254,11 @@
    "box": [
     51,
     204,
-    270,
+    284,
     80
    ],
    "display": "block",
-   "width": "270.297px",
+   "width": "283.5px",
    "height": "79.8438px",
    "padding": "8px 12.8px",
    "margin": "0px",
@@ -3279,13 +3279,13 @@
   },
   ".kh-row.me .kh-b": {
    "box": [
-    54,
+    55,
     1060,
-    310,
+    324,
     59
    ],
    "display": "block",
-   "width": "310.297px",
+   "width": "323.5px",
    "height": "58.5625px",
    "padding": "8px 12.8px",
    "margin": "0px",
@@ -3306,13 +3306,13 @@
   },
   ".kh-row.failed .kh-b": {
    "box": [
-    90,
-    1528,
-    274,
+    91,
+    1489,
+    288,
     59
    ],
    "display": "block",
-   "width": "274.297px",
+   "width": "287.5px",
    "height": "58.5625px",
    "padding": "8px 12.8px",
    "margin": "0px",
@@ -3335,11 +3335,11 @@
    "box": [
     51,
     181,
-    270,
+    284,
     21
    ],
    "display": "flex",
-   "width": "270.297px",
+   "width": "283.5px",
    "height": "20.9531px",
    "padding": "0px 12px 3.2px",
    "margin": "0px",
@@ -3468,7 +3468,7 @@
   },
   ".kh-mention": {
    "box": [
-    86,
+    64,
     471,
     93,
     19
@@ -3495,7 +3495,7 @@
   },
   ".kh-mention.kh-hm": {
    "box": [
-    66,
+    68,
     1069,
     45,
     19
@@ -3522,7 +3522,7 @@
   },
   ".kh-b code": {
    "box": [
-    135,
+    86,
     569,
     94,
     19
@@ -3603,14 +3603,14 @@
   },
   ".kh-ev": {
    "box": [
-    11,
+    14,
     1132,
-    353,
-    48
+    361,
+    30
    ],
    "display": "flex",
-   "width": "352.625px",
-   "height": "48.0625px",
+   "width": "361.188px",
+   "height": "29.8281px",
    "padding": "4.8px 12px",
    "margin": "11.2px 0px 3.2px",
    "gap": "7.2px",
@@ -3630,13 +3630,13 @@
   },
   ".kh-ev i": {
    "box": [
-    24,
-    1152,
+    27,
+    1143,
     7,
     7
    ],
    "display": "block",
-   "width": "6.8125px",
+   "width": "7px",
    "height": "7px",
    "padding": "0px",
    "margin": "0px",
@@ -3657,8 +3657,8 @@
   },
   ".kh-rcpt": {
    "box": [
-    307,
-    1589,
+    322,
+    1549,
     57,
     19
    ],
@@ -3684,8 +3684,8 @@
   },
   ".kh-retry": {
    "box": [
-    54,
-    1543,
+    55,
+    1504,
     28,
     28
    ],
@@ -3713,11 +3713,11 @@
    "box": [
     0,
     748,
-    375,
+    390,
     38
    ],
    "display": "block",
-   "width": "375px",
+   "width": "390px",
    "height": "38.1875px",
    "padding": "7.2px 9.6px 0px",
    "margin": "0px",
@@ -3821,11 +3821,11 @@
    "box": [
     0,
     786,
-    375,
+    390,
     58
    ],
    "display": "flex",
-   "width": "375px",
+   "width": "390px",
    "height": "57.9688px",
    "padding": "7.2px 9.6px 10.4px",
    "margin": "0px",
@@ -3848,11 +3848,11 @@
    "box": [
     10,
     793,
-    307,
+    322,
     40
    ],
    "display": "block",
-   "width": "307.016px",
+   "width": "322.016px",
    "height": "40.3906px",
    "padding": "8px 15.2px",
    "margin": "0px",
@@ -3873,7 +3873,7 @@
   },
   ".kh-send": {
    "box": [
-    325,
+    340,
     794,
     40,
     40
