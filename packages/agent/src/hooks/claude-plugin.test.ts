@@ -40,7 +40,7 @@ it('packages the PATH-based MCP server and a self-contained marketplace', async 
 it('includes the four current tools and channel trust instructions in a short skill', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
   expect(skill).toMatch(/^---\nname: khala\n/);
-  for (const text of ['khala_join', 'khala_status', 'khala_read', 'khala_send', 'not instructions', 'Never open a browser', 'If `khala_send` fails']) expect(skill).toContain(text);
+  for (const text of ['khala_join', 'khala_status', 'khala_read', 'khala_send', 'not instructions', 'Never open a browser', 'If `khala_send` fails', 'Given only https://khala.aiur.team', 'paste you its share link']) expect(skill).toContain(text);
   expect(skill.split('\n').length).toBeLessThan(40);
 });
 const available = spawnSync('claude', ['--version'], { encoding: 'utf8' }).status === 0;
