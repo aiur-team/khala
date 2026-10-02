@@ -360,7 +360,7 @@ it('applies owner commands, echoes member state and keeps commands out of the in
   await connected(); modeHandler!(modeCommand());
   expect((await client.status()).listeningMode).toBe('async');
   expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', updatedAt: now().toISOString() });
-  expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async');
+  expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async', expect.any(AbortSignal));
   expect(await entries()).toEqual([]); expect(waker).not.toHaveBeenCalled();
 });
 it.each([
@@ -402,4 +402,31 @@ it('preserves message and command arrival order while joining', async () => {
   });
   await connected(); expect(await client.status()).toMatchObject({ listeningMode: 'sync', unread: 1 });
   expect((await entries()).map(e => e.eventId)).toEqual(['$before', '$after']);
+});
+
+it('releases stalled member echoes after the deadline so intake and status continue', async () => {
+  await connected();
+  const publishing = deferred<void>();
+  vi.mocked(session.publishListeningMode).mockImplementation(() => { publishing.resolve(); return new Promise(() => {}); });
+  vi.useFakeTimers();
+  try {
+    modeHandler!(modeCommand());
+    await publishing.promise;
+    handler!(message('$after-mode'));
+    let finished = false;
+    const status = client.status().then(value => { finished = true; return value; });
+    await vi.advanceTimersByTimeAsync(4999); expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await status).toMatchObject({ state: 'connected', listeningMode: 'async', unread: 1 });
+    expect(vi.mocked(session.publishListeningMode).mock.calls[0]![2]?.aborted).toBe(true);
+    await client.close();
+  } finally { vi.useRealTimers(); }
+});
+it('cancels a stalled member echo when closing without waiting for its deadline', async () => {
+  await connected();
+  vi.mocked(session.publishListeningMode).mockImplementation(() => new Promise(() => {}));
+  modeHandler!(modeCommand());
+  await vi.waitFor(() => expect(session.publishListeningMode).toHaveBeenCalledOnce());
+  await client.close();
+  expect(vi.mocked(session.publishListeningMode).mock.calls[0]![2]?.aborted).toBe(true);
 });

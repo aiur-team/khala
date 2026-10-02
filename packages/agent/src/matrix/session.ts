@@ -9,7 +9,7 @@ export type SessionModeCommand = { eventId: string; roomId: string; sender: stri
 export interface AgentMatrixSession {
   inviter(roomId: string): string | undefined;
   onListeningModeCommand(handler: (c: SessionModeCommand) => void): () => void;
-  publishListeningMode(roomId: string, mode: ListeningMode): Promise<void>;
+  publishListeningMode(roomId: string, mode: ListeningMode, signal?: AbortSignal): Promise<void>;
   readonly userId: string;
   onMessage(handler: (m: SessionMessage) => void): () => void;
   waitForInvite(roomId: string, timeoutMs: number): Promise<void>;
@@ -159,11 +159,11 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     userId: creds.userId,
     inviter(roomId) { return inviters.get(roomId); },
     onListeningModeCommand(handler) { modeHandlers.add(handler); return () => { modeHandlers.delete(handler); }; },
-    async publishListeningMode(roomId, mode) {
+    async publishListeningMode(roomId, mode, signal) {
       const content = client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent();
       if (!content) throw new Error('join_state_unavailable');
       const next = { ...content, membership: 'join' as const, [LISTENING_MODE_MEMBER_KEY]: mode };
-      await client.sendStateEvent(roomId, EventType.RoomMember, next, creds.userId);
+      await client.sendStateEvent(roomId, EventType.RoomMember, next, creds.userId, { localTimeoutMs: 5000, ...(signal ? { abortSignal: signal } : {}) });
     },
     onMessage(handler) { handlers.add(handler); return () => { handlers.delete(handler); }; },
     waitForInvite(roomId, timeoutMs) {

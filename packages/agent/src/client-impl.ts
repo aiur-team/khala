@@ -1,4 +1,4 @@
-import { decodeListeningModeCommand } from '@khala/contracts/m1/listening-mode';
+import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { applyListeningMode, readListeningMode } from './mode';
 import { createHash } from 'node:crypto';
 import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
@@ -93,6 +93,21 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     if (closed || !active?.joined || !active.session || !active.credentials) throw new KhalaClientError('not_connected');
     return { session: active.session, credentials: active.credentials, attempt: active };
   }
+  async function publishMode(attempt: Attempt, session: AgentMatrixSession, roomId: string, mode: ListeningMode): Promise<void> {
+    const controller = new AbortController();
+    let release = () => {};
+    const aborted = new Promise<void>(resolve => { release = resolve; });
+    const abort = () => { controller.abort(); release(); };
+    const timer = setTimeout(abort, 5000);
+    attempt.controller.signal.addEventListener('abort', abort, { once: true });
+    try {
+      if (attempt.controller.signal.aborted) { abort(); return; }
+      await Promise.race([session.publishListeningMode(roomId, mode, controller.signal).catch(() => {}), aborted]);
+    } finally {
+      clearTimeout(timer);
+      attempt.controller.signal.removeEventListener('abort', abort);
+    }
+  }
   async function background(attempt: Attempt): Promise<void> {
     const { signal } = attempt.controller;
     let abort: (() => void) | undefined;
@@ -139,7 +154,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         appends = appends.then(async () => {
           if (!current(attempt)) return;
           await applyListeningMode(filesForDir(dir), decoded.value.mode, { changedBy: 'owner', eventId: command.eventId }, now);
-          await session.publishListeningMode(credentials.roomId, decoded.value.mode).catch(() => {});
+          await publishMode(attempt, session, credentials.roomId, decoded.value.mode);
         }).catch(async () => {
           if (current(attempt)) await setStatus('disconnected', 'internal_error').catch(() => {});
         });

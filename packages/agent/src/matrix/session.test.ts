@@ -169,7 +169,7 @@ it('captures the inviter before joining and preserves own member content when ec
   await s.publishListeningMode('!r:hs', 'async');
   expect(client.sendStateEvent).toHaveBeenCalledWith('!r:hs', 'm.room.member', {
     membership: 'join', displayname: 'Agent', avatar_url: 'mxc://hs/avatar', 'com.khala.listening_mode': 'async',
-  }, creds.userId);
+  }, creds.userId, { localTimeoutMs: 5000 });
 });
 it('has no inviter for an already joined membership', async () => {
   membership = 'join'; const s = await joined(); expect(s.inviter('!r:hs')).toBeUndefined();
