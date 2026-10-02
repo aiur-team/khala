@@ -78,6 +78,23 @@ describe('ChannelScreen header', () => {
   });
 });
 
+describe('ChannelScreen human emails', () => {
+  it('shows each human’s username and email in the roster', () => {
+    const describe_ = (participantId: string): Participant | undefined => participantId === 'p_theo'
+      ? { kind: 'human', matrixUserId: '@t:x', participantId, ownerId: theo, displayName: 'Theo Park', email: 'theo@example.com' }
+      : undefined;
+    const html = render({ phase: 'ready', agents: [] }, { describeParticipant: describe_, viewerEmail: 'mira@example.com' });
+    const roster = html.slice(html.indexOf('id="kh-roster"'), html.indexOf('class="kh-channel-thread"'));
+    expect(roster).toContain('<b>You</b><em class="kh-email" title="mira@example.com">mira@example.com</em>');
+    expect(roster).toContain('<b>Theo Park</b><em class="kh-email" title="theo@example.com">theo@example.com</em><em>Owner of 0 agents</em>');
+  });
+
+  it('omits the email line when control has not recorded one', () => {
+    const html = render({ phase: 'ready', agents: [] });
+    expect(html).not.toContain('kh-email');
+  });
+});
+
 describe('ChannelScreen roster', () => {
   const describe_ = (participantId: string): Participant | undefined => participantId === 'agent_own'
     ? { kind: 'agent', matrixUserId: '@a:x', participantId, ownerId: mira, displayName: 'Claude', ownerLabel: 'Mira', harness: 'claude' }

@@ -85,7 +85,7 @@ Participants: there is **no new route**. The existing `POST /api/human/messaging
 
 ```ts
 export type Participant =
-  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human' }
+  | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'human'; email?: string }   // verified email, room-scoped lookup only (recorded at browser-session mint)
   | { matrixUserId: string; participantId: string; ownerId: string; displayName: string; kind: 'agent'; ownerLabel: string; harness: Harness }
   | { matrixUserId: string; displayName: string; kind: 'unknown' };   // an unknown member never fails the whole response
 export type ParticipantsResponse = { participants: Participant[] };

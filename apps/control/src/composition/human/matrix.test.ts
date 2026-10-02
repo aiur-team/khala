@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, ParticipantId } from '@khala/contracts/messaging/index';
-import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
+import { agentOwnerRecordKey, humanEmailRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import { ensureMessagingAccount } from '../../auth/provisioning';
@@ -443,6 +443,7 @@ describe('createMatrixHumanServices', () => {
     const human = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
     const store = memoryStore();
     store.read = vi.fn(async key => {
+      if (key === humanEmailRecordKey(principal.ownerId)) return { kind: 'absent' };
       expect(key).toBe(agentOwnerRecordKey(userId));
       if (defect === 'throw') throw new Error('store offline');
       if (defect === 'absent') return { kind: 'absent' };
@@ -461,6 +462,34 @@ describe('createMatrixHumanServices', () => {
       [userId, human], undefined, [], { matrixUserId: human, accessToken: 'browser-token' }))
       .toMatchObject({ kind: 'ok', participants: [{ matrixUserId: userId, displayName: 'Agent label', kind: 'unknown' },
         { matrixUserId: human, displayName: 'Alice', kind: 'human' }] });
+  });
+
+  it('records the verified email at session mint and returns it only to joined channel members', async () => {
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const store = memoryStore();
+    let membership = 'join';
+    const fetch = vi.fn<typeof globalThis.fetch>(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      if (path.endsWith('/displayname')) return json(200, { displayname: 'Alice' });
+      if (path.includes('/state/m.room.member/')) return json(200, { membership });
+      if (path.endsWith('/joined_members')) return json(200, { joined: { [userId]: { display_name: 'Alice' } } });
+      return json(200, { device_keys: {} });
+    });
+    const matrix = services(fetch, store);
+    const room = '!room:matrix.example.test' as RoomId;
+    const session = { matrixUserId: userId, accessToken: 'browser-token' };
+    expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [userId], undefined, [], session))
+      .toEqual({ kind: 'ok', participants: [expect.not.objectContaining({ email: expect.anything() })] });
+    expect((await matrix.sessions.issue(principal, 'WEB' as DeviceId)).kind).toBe('ok');
+    expect(await store.read(humanEmailRecordKey(principal.ownerId))).toMatchObject({ kind: 'record',
+      record: { value: { v: 1, ownerId: principal.ownerId, email: principal.verifiedEmail } } });
+    expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [userId], undefined, [], session))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: 'Alice', email: principal.verifiedEmail }] });
+    expect(await matrix.sessions.resolveParticipants([userId]))
+      .toEqual({ kind: 'ok', participants: [expect.not.objectContaining({ email: expect.anything() })] });
+    membership = 'leave';
+    expect((await matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [userId], undefined, [], session)).kind).not.toBe('ok');
   });
 
   it.each([undefined, '', 'x'.repeat(257), 'bad\u0000label', 'bad\u0080label'])('falls back for invalid joined display names', async name => {

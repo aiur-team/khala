@@ -19,6 +19,8 @@ export type HumanMember = Readonly<{
   hue: number;
   initials: string;
   isViewer: boolean;
+  /** Verified sign-in email, visible to members of the same channel; `null` until control has recorded it. */
+  email: string | null;
 }>;
 
 export type AgentMember = Readonly<{
@@ -49,7 +51,7 @@ export type ChannelMembers = Readonly<{
 }>;
 
 export type MemberInput = Readonly<{
-  viewer: Readonly<{ participantId?: string; ownerId?: string; name?: string }>;
+  viewer: Readonly<{ participantId?: string; ownerId?: string; name?: string; email?: string }>;
   humans: readonly Readonly<{ participantId: string; ownerId?: string; displayName: string }>[];
   agents: readonly ChannelAgentView[];
   currentNames?: ReadonlyMap<ParticipantId, string> | undefined;
@@ -59,18 +61,22 @@ export type MemberInput = Readonly<{
 const firstName = (name: string) => name.trim().split(/\s+/u)[0] ?? name;
 
 export function resolveMembers({ viewer, humans, agents, currentNames, describeParticipant }: MemberInput): ChannelMembers {
+  const emailOf = (participantId: string | undefined): string | null => {
+    const detail = participantId === undefined ? undefined : describeParticipant?.(participantId);
+    return detail?.kind === 'human' ? detail.email ?? null : null;
+  };
   const viewerName = participantRosterName(viewer.name ?? '', 'You');
   const viewerOwnerId = viewer.ownerId ?? '';
   const viewerMember: HumanMember = {
     kind: 'human', participantId: viewer.participantId ?? 'viewer', ownerId: viewerOwnerId,
     name: viewerName || 'You', short: 'You', hue: participantHue({ kind: 'human', ownerId: viewerOwnerId, isViewer: true }),
-    initials: 'YO', isViewer: true,
+    initials: 'YO', isViewer: true, email: viewer.email ?? emailOf(viewer.participantId),
   };
   const humanMembers = humans.map((human): HumanMember => {
     const name = participantRosterName(human.displayName, 'Channel member');
     const ownerId = human.ownerId ?? human.participantId;
     return { kind: 'human', participantId: human.participantId, ownerId, name, short: firstName(name),
-      hue: participantHue({ kind: 'human', ownerId }), initials: initials(name), isViewer: false };
+      hue: participantHue({ kind: 'human', ownerId }), initials: initials(name), isViewer: false, email: emailOf(human.participantId) };
   });
   // The name the thread resolves for an agent, so both apply the badge rule to the same string.
   const threadName = (agent: ChannelAgentView) => {

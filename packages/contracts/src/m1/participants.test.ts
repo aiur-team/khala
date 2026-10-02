@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { agentOwnerRecordKey, decodeAgentOwnerRecord, decodeParticipant, decodeParticipantsResponse, ownerFirstName } from './participants';
+import { agentOwnerRecordKey, decodeAgentOwnerRecord, decodeParticipant, decodeParticipantsResponse, humanEmailRecordKey, ownerFirstName } from './participants';
 
 const human = { matrixUserId: '@human:khala.local', participantId: 'human_123', ownerId: 'owner_kevin', displayName: 'Kevin', kind: 'human' };
 const agent = { ...human, matrixUserId: '@agent:khala.local', kind: 'agent', displayName: 'Claude · Kevin', ownerLabel: 'Kevin', harness: 'claude' };
@@ -47,4 +47,14 @@ it('bounds lists, rejects duplicates and preserves element error paths', () => {
   expect(decodeParticipantsResponse({ participants: [] })).toEqual({ ok: true, value: { participants: [] } });
   expect(decodeParticipantsResponse({ participants: 'bad' }).ok).toBe(false);
   expect(decodeParticipantsResponse({ participants: [], extra: true }).ok).toBe(false);
+});
+it('decodes an optional verified email on human participants only', () => {
+  const withEmail = { ...human, email: 'kevin.weaver2@gmail.com' };
+  expect(decodeParticipant(withEmail)).toEqual({ ok: true, value: withEmail });
+  expect(decodeParticipantsResponse({ participants: [withEmail, agent] })).toEqual({ ok: true, value: { participants: [withEmail, agent] } });
+  expect(decodeParticipant({ ...human, email: 'not-an-email' })).toEqual({ ok: false, error: { path: 'email', code: 'invalid_value' } });
+  expect(decodeParticipant({ ...human, email: '' }).ok).toBe(false);
+  expect(decodeParticipant({ ...agent, email: 'kevin@example.com' })).toEqual({ ok: false, error: { path: 'email', code: 'unknown_field' } });
+  expect(decodeParticipant({ ...unknown, email: 'kevin@example.com' }).ok).toBe(false);
+  expect(humanEmailRecordKey('own_a/b')).toBe('humans/own_a%2Fb/email');
 });

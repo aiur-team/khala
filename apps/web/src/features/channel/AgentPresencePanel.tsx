@@ -170,7 +170,8 @@ export function ChannelRoster({ members, phase, onOpen, renderAddAgent }: Channe
       return <div key={`${group.human.ownerId}:${'notInChannel' in group ? 'absent' : 'member'}`} className="kh-rg">
         <div className="kh-rrow">
           {human ? <button type="button" className="kh-rh" data-kh-human={human.participantId} onClick={() => onOpen(human.participantId)}>
-            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b><em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
+            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b>
+              {human.email ? <em className="kh-email" title={human.email}>{human.email}</em> : null}<em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
           </button> : <div className="kh-rh">
             <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'} />
             <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
