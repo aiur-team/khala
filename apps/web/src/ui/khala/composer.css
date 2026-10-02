@@ -1,1 +1,49 @@
-/* Owned by a later design ticket (KM-181..184); imported once from khala-app.css. */
+/* Mention chips and composer (RECREATION-SPEC §9, §10), verbatim from
+   source:490-500,545-555,593-604,756-764 with `html[data-theme="light"]`
+   re-rooted. The duplicated chip rules (D6) are kept once, and the unscoped
+   light colour on line 604 is scoped to the light theme (D1). */
+
+/* §9 mention chips */
+.kh-to { display: block; padding: .5rem .9rem 0; background: var(--surface); border-top: 1px solid var(--line); }
+.kh-to + .kh-comp { border-top: 0; padding-top: .45rem; }
+.kh-to-flat { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; }
+.kh-to-grid { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .4rem .5rem; align-items: start; max-height: min(38vh, 180px); overflow-y: auto; }
+.kh-to-h { display: flex; }
+.kh-to-ags { display: flex; flex-wrap: wrap; gap: .35rem; }
+.kh-to-foot { display: flex; align-items: center; justify-content: space-between; margin-top: .45rem; font-size: .72rem; color: var(--faint); }
+.kh-to.is-open { padding-top: .7rem; animation: khUp .2s ease-out; }
+@keyframes khUp { from { opacity: .4; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.kh-to-tog { display: inline-flex; align-items: center; gap: .25rem; font: 600 .72rem "JetBrains Mono", monospace; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--fg); cursor: pointer; }
+.kh-to-tog svg { width: 12px; height: 12px; transition: transform .2s; }
+.kh-to.is-open .kh-to-tog svg { transform: rotate(180deg); }
+.kh-chip-me { cursor: default; opacity: .85; }
+.kh-chip { font-family: "JetBrains Mono", monospace; font-size: .72rem; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--pill-bd); background: var(--pill-bg); color: var(--muted); cursor: pointer; }
+.kh-chip:hover { color: var(--fg); border-color: var(--line-strong); }
+.kh-chip-a { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 3px 2px 7px; color: var(--fg); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .08); }
+.kh-chip-a img { width: 12px; height: 12px; flex: 0 0 auto; }
+.kh-chip-a i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: hsl(var(--oh) 65% 48%); color: #fff; }
+.kh-chip-h { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 9px 2px 3px; }
+.kh-chip-h i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: hsl(var(--oh) 65% 48%); color: #fff; }
+.kh-chip-h { color: hsl(var(--oh) 70% 72%); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .1); }
+.khala-app[data-theme="light"] .kh-chip-h { color: hsl(var(--oh) 60% 36%); }
+
+/* §10 composer */
+.kh-comp { display: flex; align-items: flex-end; gap: .55rem; padding: .7rem .9rem .85rem; border-top: 1px solid var(--line); background: var(--surface); }
+.kh-input { flex: 1 1 auto; min-height: 38px; max-height: 140px; resize: none; border-radius: 19px; border: 1px solid var(--line-strong); background: var(--bg-2); color: var(--fg); padding: .5rem .95rem; font: inherit; font-size: .92rem; line-height: 1.4; outline: none; }
+.kh-input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.kh-send { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; transition: opacity .15s, transform .15s; }
+.kh-send:disabled { opacity: .35; cursor: default; }
+.kh-send:not(:disabled):active { transform: scale(.92); }
+.kh-send svg { width: 18px; height: 18px; }
+
+@media (max-width: 760px) {
+  .kh-to { padding: .45rem .6rem 0; }
+  .kh-to-flat { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .kh-to-flat > * { flex: 0 0 auto; }
+  .kh-chip, .kh-to-tog { min-height: 30px; }
+  .kh-to-grid { grid-template-columns: minmax(0,1fr); gap: .25rem; }
+  .kh-to-ags { padding-left: 1.4rem; margin-bottom: .35rem; }
+  .kh-input { font-size: 16px; min-height: 40px; }
+  .kh-send { width: 40px; height: 40px; }
+  .kh-comp { padding: .55rem .6rem .65rem; }
+}

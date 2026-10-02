@@ -28,8 +28,7 @@ export function ConversationFixture() {
         <ChatMessage id="three" author="You" time="2026-09-28T12:10:00.000Z" mine>The conversation view is ready for review.</ChatMessage>
         </>}
       </ol>
-      <ChatComposer value={draft} onChange={setDraft} onSend={() => setDraft('')}
-        participants={<><span className="conversation-participant"><span className="conversation-participant__avatar" aria-hidden="true">A</span>Alex</span><span className="conversation-participant"><span className="conversation-participant__avatar" aria-hidden="true">M</span>Mira</span></>} />
+      <ChatComposer value={draft} onChange={setDraft} onSend={() => setDraft('')} />
     </ChatThread>}
     detail={detail ? <ParticipantDetail name={current.title} onClose={() => setDetail(false)}><p>Encrypted conversation</p></ParticipantDetail> : undefined} />;
 }

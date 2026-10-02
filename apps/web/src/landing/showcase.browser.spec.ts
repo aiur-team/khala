@@ -42,7 +42,7 @@ test('public showcase stays local and works across themes and widths', { timeout
     assert.equal(await page.getByText('EXAMPLE · LOCAL ONLY').count(), 0);
     assert.equal(await page.getByText('Open the real Khala app').count(), 0);
     assert.equal(await pane.getByRole('button', { name: 'Participants and agents' }).count(), 1);
-    assert.equal(await pane.getByRole('button', { name: 'Send message' }).getAttribute('aria-describedby'), 'showcase-local-note');
+    assert.equal(await pane.getByRole('button', { name: 'Send', exact: true }).getAttribute('aria-describedby'), 'showcase-local-note');
     assert.equal(await pane.getByRole('textbox', { name: 'Message' }).getAttribute('aria-describedby'), 'showcase-local-note');
     assert.equal(await pane.getByRole('textbox', { name: 'Message' }).getAttribute('placeholder') ?? '', '');
     assert.match(await pane.locator('#showcase-local-note').textContent() ?? '', /not sent to agents/);
@@ -119,7 +119,7 @@ test('public showcase stays local and works across themes and widths', { timeout
     assert.equal(await pane.locator('.showcase-app__participants').getByText('Priya’s agent').isVisible(), true);
     await pane.getByRole('button', { name: 'Close details' }).click();
     await pane.getByRole('textbox', { name: 'Message' }).fill('A local note');
-    await pane.getByRole('button', { name: 'Send message' }).click();
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
     assert.equal(await pane.getByText('A local note').isVisible(), true);
     await pane.getByRole('textbox', { name: 'Message' }).fill('An Enter note');
     await pane.getByRole('textbox', { name: 'Message' }).press('Enter');
