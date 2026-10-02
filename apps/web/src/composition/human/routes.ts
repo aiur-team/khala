@@ -1,22 +1,21 @@
-import { decodeRoomId, type ChannelAccessRequestHandle, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/index';
+import { agentConfirmPagePath } from '@khala/contracts/m1/agent-join';
 import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../../features/join/location';
 
 export type HumanRoute =
   | Readonly<{ kind: 'conversations'; path: string }>
+  | Readonly<{ kind: 'agent_confirm'; path: string; joinId: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
-  | Readonly<{ kind: 'channel_tools'; path: string; roomId: RoomId }>
-  | Readonly<{ kind: 'channel_requests'; path: string; selectedHandle: ChannelAccessRequestHandle | null }>
   | Readonly<{ kind: 'not_found'; path: string }>;
 
 export interface HumanRouteCodec extends RouteCodec {
   parse(location: string): HumanRoute;
   createPath(): string;
+  agentConfirmPath(joinId: string): string;
   conversationsPath(): string;
   joinPath(inviteRef: string): string;
   roomPath(roomId: string): string;
-  channelToolsPath(roomId: string): string;
-  channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string;
 }
 
 export type HumanRouteCodecOptions = Readonly<{
@@ -57,11 +56,10 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   // application's legacy entry route lives one segment below the base path.
   const createPath = () => `${base}/new`;
   const conversationsPath = () => `${base}/conversations`;
+  const agentConfirmPath = (joinId: string) => `${base}${agentConfirmPagePath(joinId)}`;
   const joinRoot = `${base}/join`;
   const roomsRoot = `${base}/channels/`;
-  const channelRequestsRoot = `${base}/channel-requests`;
   const notFound = (path: string): HumanRoute => ({ kind: 'not_found', path });
-  const requestHandlePattern = /^careq_[A-Za-z0-9_-]{43}$/;
 
   function joinPath(inviteRef: string): string {
     const candidate = `${joinRoot}?invite=${encodeURIComponent(inviteRef)}`;
@@ -75,13 +73,6 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     if (!decoded.ok) throw new Error('invalid channel identifier');
     return `${roomsRoot}${encodeURIComponent(decoded.value)}`;
   }
-  const channelToolsPath = (roomId: string) => `${roomPath(roomId)}/tools`;
-
-  function channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string {
-    if (requestHandle == null) return channelRequestsRoot;
-    if (!requestHandlePattern.test(requestHandle)) throw new Error('invalid channel request handle');
-    return `${channelRequestsRoot}/${encodeURIComponent(requestHandle)}`;
-  }
 
   function parse(location: string): HumanRoute {
     let parsed: URL;
@@ -94,6 +85,12 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     if (parsed.origin !== origin || parsed.username || parsed.password) return notFound(requestedPath);
     if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'conversations', path: createPath() };
     if (parsed.pathname === conversationsPath() && parsed.search === '') return { kind: 'conversations', path: conversationsPath() };
+    if (parsed.pathname === `${base}/agent/confirm`) {
+      const keys = [...parsed.searchParams.keys()];
+      const joinId = parsed.searchParams.get('joinId');
+      if (keys.length !== 1 || keys[0] !== 'joinId' || !joinId || !/^[A-Za-z0-9_-]{1,128}$/.test(joinId)) return notFound(requestedPath);
+      return { kind: 'agent_confirm', path: requestedPath, joinId };
+    }
     if (parsed.pathname === joinRoot) {
       const decoded = parseJoinLocation(parsed.href);
       if ('error' in decoded) return notFound(requestedPath);
@@ -116,8 +113,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       }
     }
     if (parsed.pathname.startsWith(roomsRoot) && !parsed.search) {
-      const tools = parsed.pathname.endsWith('/tools');
-      const encoded = parsed.pathname.slice(roomsRoot.length, tools ? -'/tools'.length : undefined);
+      const encoded = parsed.pathname.slice(roomsRoot.length);
       if (!encoded || encoded.includes('/')) return notFound(requestedPath);
       let raw: string;
       try {
@@ -127,23 +123,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       }
       const decoded = decodeRoomId(raw);
       if (!decoded.ok) return notFound(requestedPath);
-      return tools
-        ? { kind: 'channel_tools', path: channelToolsPath(decoded.value), roomId: decoded.value }
-        : { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
-    }
-    if (parsed.pathname === channelRequestsRoot && !parsed.search) {
-      return { kind: 'channel_requests', path: channelRequestsRoot, selectedHandle: null };
-    }
-    if (parsed.pathname.startsWith(`${channelRequestsRoot}/`) && !parsed.search) {
-      const encoded = parsed.pathname.slice(channelRequestsRoot.length + 1);
-      if (!encoded || encoded.includes('/')) return notFound(requestedPath);
-      try {
-        const selectedHandle = decodeURIComponent(encoded) as ChannelAccessRequestHandle;
-        if (!requestHandlePattern.test(selectedHandle)) return notFound(requestedPath);
-        return { kind: 'channel_requests', path: channelRequestsPath(selectedHandle), selectedHandle };
-      } catch {
-        return notFound(requestedPath);
-      }
+      return { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
     }
     return notFound(requestedPath);
   }
@@ -151,11 +131,10 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   return {
     parse,
     createPath,
+    agentConfirmPath,
     conversationsPath,
     joinPath,
     roomPath,
-    channelToolsPath,
-    channelRequestsPath,
     parseJoinLocation(location: string): ReturnType<RouteCodec['parseJoinLocation']> {
       const route = parse(location);
       return route.kind === 'join' ? { inviteRef: route.inviteRef } : ({ error: 'invalid_location' } satisfies JoinLocationError);

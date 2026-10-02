@@ -1,3 +1,4 @@
+import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
 // The narrow messaging-SDK surface the channel service needs. G-SUBSTRATE is still
 // open, so no SDK is imported here: the selected SDK's adapter implements this
 // interface and the composition root injects it. Nothing here reaches UI callers.
@@ -43,6 +44,7 @@ export type AcceptedEvent = Readonly<{ eventId: EventId; authorDeviceId: DeviceI
  * message or an SDK exception.
  */
 export type SubstrateEvent =
+  | Readonly<{ kind: 'channel_event'; eventId: EventId; participant: ParticipantView; content: ChannelEventContent; receivedAt: string }>
   | Readonly<{
     kind: 'message';
     eventId: EventId;
@@ -65,7 +67,7 @@ export type SubstrateEvent =
 export type SubstratePage = Readonly<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>;
 
 /** A live room update; `generation` is the client lifecycle generation that produced it. */
-export type SubstrateUpdate = Readonly<{ generation: number; room: ChannelSummary | null; events: readonly SubstrateEvent[] }>;
+export type SubstrateUpdate = Readonly<{ generation: number; room: ChannelSummary | null; events: readonly SubstrateEvent[]; ignoredEventIds?: readonly EventId[] }>;
 
 export interface ChannelSubstrate {
   /**

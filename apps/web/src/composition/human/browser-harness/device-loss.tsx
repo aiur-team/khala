@@ -1,18 +1,14 @@
 import { createRoot } from 'react-dom/client';
 import type { AuthPrincipal, DevicePort, DeviceView, IdentityPort } from '@khala/contracts/messaging/index';
-import { createChannelAccessInboxController } from '../../../features/channel-access/controller';
-import { createFakeJournal } from '../../../features/channel-access/fakes';
 import { createHumanApplication } from '../application';
 import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
 import { ChannelScreen } from '../../../features/channel/ChannelScreen';
 import { ChannelSharePanel } from '../../../features/channel/ChannelSharePanel';
-import { KhalaPageFrame } from '../../../shell/KhalaPageFrame';
 import { ChatComposer, ChatMessage } from '../../../ui/conversation';
 import '../../../brand/tokens.css';
 import '../../../brand/fonts.css';
 import '../../../shell/shell.css';
-import '../../../features/channel-access/channel-access.css';
 import '../../../features/channel/channel.css';
 
 const alice: AuthPrincipal = { v: 1, ownerId: 'owner_alice' as never, providerIssuer: 'https://id.example',
@@ -22,11 +18,9 @@ let principal = alice;
 let state: 'lost' | 'ready' | 'revoked' = new URLSearchParams(location.search).get('state') === 'ready' ? 'ready' : 'lost';
 let reason: DeviceView['reason'] = state === 'ready' ? null : 'storage_cleared';
 let activationCount = 0;
-let inboxCount = 0;
 const logoutHarness = new URLSearchParams(location.search).has('logout');
 const hostedHarness = new URLSearchParams(location.search).has('hosted');
 const visualHarness = new URLSearchParams(location.search).has('visual');
-const longRequestsHarness = new URLSearchParams(location.search).has('long-requests');
 const holdDeviceHarness = new URLSearchParams(location.search).has('hold-device');
 const failDeviceHarness = new URLSearchParams(location.search).has('fail-device');
 let releaseDevice: (() => void) | null = null;
@@ -81,22 +75,7 @@ const visualController = { getSnapshot: () => visualSnapshot, subscribe: () => (
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
     renderRoom={(context, route) => visualHarness ? <VisualRoom /> : <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}
-    {...(visualHarness ? { renderChannelTools: () => <div className="channel-tools-page"><KhalaPageFrame model={{ title: 'Recipient review', labelledBy: 'visual-recipient-review-title' }}>
-      <p>Recipient review is available here.</p>
-    </KhalaPageFrame></div> } : {})}
-    createChannelAccess={() => {
-      inboxCount += 1;
-      const journal = createFakeJournal();
-      if (longRequestsHarness) {
-        for (let index = 1; index <= 50; index += 1) {
-          journal.submit({ kind: 'access', title: `Channel ${index}`, fingerprint: `agent-${index}` });
-        }
-      } else if (visualHarness) {
-        journal.submit({ kind: 'access', title: 'First channel', fingerprint: 'agent-one' });
-        journal.submit({ kind: 'create', title: 'New channel', fingerprint: 'agent-two' });
-      }
-      return createChannelAccessInboxController({ requests: journal.port });
-    }} capabilities={[]} mode={logoutHarness && !hostedHarness ? 'standalone' : 'hosted-content'} />,
+    mode={logoutHarness && !hostedHarness ? 'standalone' : 'hosted-content'} />,
 );
 if (!holdDeviceHarness) application.navigate('/channels/room_1');
 
@@ -105,7 +84,6 @@ declare global { interface Window {
     setDevice(next: 'lost' | 'ready' | 'revoked', nextReason?: DeviceView['reason']): void;
     switchAccount(): void;
     activationCount(): number;
-    inboxCount(): number;
     signOutCount(): number;
     stopCount(): number;
     holdNavigation(): void;
@@ -129,7 +107,6 @@ window.__lossHarness = {
     application.navigate('/channels/room_1');
   },
   activationCount: () => activationCount,
-  inboxCount: () => inboxCount,
   signOutCount: () => signOutCount,
   stopCount: () => stopCount,
   holdNavigation() { holdIdentity = new Promise(resolve => { releaseIdentity = resolve; }); },

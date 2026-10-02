@@ -1,28 +1,22 @@
+import { decodeAgentJoinView, humanAgentJoinPath, humanAgentJoinConfirmPath, humanAgentJoinStatusPath } from '@khala/contracts/m1/agent-join';
+import type { AgentJoinPort, AgentJoinResult, AgentJoinError } from '../../features/agent-confirm/ports';
 import {
   decodeAdmission,
   decodeAuthPrincipal,
-  decodeClosureCapability,
-  decodeClosureStatus,
-  decodeClosureRequest,
   decodeDeviceId,
   decodeInviteState,
   decodeParticipantView,
-  decodeRevocationProgress,
   decodeShareGrant,
   decodeHumanChannelLinkResult,
   decodePersonalChannelLinkResult,
   isSameOriginReturnPath,
   sameProviderIdentity,
   outcomeUnknown,
-  ok,
   rejected,
   unavailable,
   type AdmissionPort,
   type AdmissionRejection,
   type ContentLimits,
-  type ClosurePort,
-  type ClosureCapability,
-  type ClosureRequest,
   type DeviceId,
   type OwnerId,
   type RoomId,
@@ -32,12 +26,6 @@ import {
   type ParticipantView,
 } from '@khala/contracts/messaging/index';
 import { createIndexedDbMarkerStore, hasOwnerCryptoStore, type CredentialSource } from '@khala/messaging/browser-device/index';
-import type {
-  ChannelAccessInboxPort,
-  InboxRejection,
-  MuteRejection,
-} from '../../features/channel-access/ports';
-import type { BrowserRevocation } from '../recovery/browser-port';
 import { parsePublicOrigin } from './hosted-config';
 import type { HumanChannelLinks } from './channel-links';
 
@@ -51,26 +39,7 @@ const INSPECT_PATH = '/api/human/invitations/inspect';
 const ADMIT_PATH = '/api/human/invitations/admit';
 const MATRIX_SESSION_PATH = '/api/human/messaging/session';
 const MATRIX_PARTICIPANTS_PATH = '/api/human/messaging/participants';
-const CHANNEL_ACCESS_INBOX_PATH = '/api/human/channel-access/inbox';
-const CHANNEL_ACCESS_DECISION_PATH = '/api/human/channel-access/decision';
-const CHANNEL_ACCESS_MUTE_PATH = '/api/human/channel-access/mute';
-const CLOSURE_PATH = '/api/human/channel-closure';
-const REVOCATION_TARGETS_PATH = '/api/human/revocation/targets';
-const REVOCATION_REVOKE_PATH = '/api/human/revocation/revoke';
-const REVOCATION_STATUS_PATH = '/api/human/revocation/status';
-// khala-terminology-allow: fixed machine route for the Matrix room send fence.
-const ROOM_SEND_PATH = '/api/human/room-send';
-export type BrowserSendProof = Readonly<{ roomId: RoomId; deviceId: string; matrixAccessToken: string }>;
 export type BrowserParticipantSession = Readonly<{ deviceId: string; matrixAccessToken: string }>;
-export type BrowserSendFence = Readonly<{
-  ready(proof: BrowserSendProof): Promise<boolean>;
-  acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }>
-    | Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'held'; operationId: string; epoch: number }> | null>;
-  finish(proof: BrowserSendProof, permitId: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>): Promise<boolean>;
-  rotation(proof: BrowserSendProof, operationId: string, epoch: number): Promise<boolean>;
-  inspect(proof: BrowserSendProof): Promise<Readonly<{ operationId: string; epoch: number }> | null>;
-}>;
-
 type Fetch = typeof globalThis.fetch;
 
 export type HumanBrowserApiOptions = Readonly<{
@@ -87,7 +56,7 @@ export type HumanBrowserApiOptions = Readonly<{
 }>;
 
 export type HumanBrowserApi = Readonly<{
-  reviewCsrf(): Promise<string | null>;
+  agentJoin: AgentJoinPort;
   identity: IdentityPort;
   admission: AdmissionPort;
   channelLinks: HumanChannelLinks;
@@ -95,13 +64,6 @@ export type HumanBrowserApi = Readonly<{
   participants: Readonly<{
     resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
-  channelAccess: ChannelAccessInboxPort;
-  closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
-    currentCapability(): Promise<ClosureCapability | null>;
-  }>;
-  cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null>;
-  revocation: (roomId: RoomId) => BrowserRevocation;
-  roomSend: BrowserSendFence;
 }>;
 
 function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
@@ -370,246 +332,6 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     },
   };
 
-  function rejectedCode(body: Record<string, unknown> | null): string | null {
-    return typeof body?.code === 'string' ? body.code : null;
-  }
-
-  const channelAccess: ChannelAccessInboxPort = {
-    async inbox(callOptions) {
-      try {
-        const response = await request(`${origin}${CHANNEL_ACCESS_INBOX_PATH}`, {
-          method: 'GET',
-          credentials: 'same-origin',
-          headers: { accept: 'application/json' },
-          signal: requestSignal(callOptions?.signal),
-        });
-        const body = await jsonObject(response);
-        if (response.status === 200 && body !== null && hasExactKeys(body, ['v', 'kind', 'requests'])
-          && body.v === 1 && body.kind === 'ok' && Array.isArray(body.requests)) {
-          return { kind: 'ok', value: body.requests };
-        }
-        if (response.status === 401 || response.status === 403) {
-          return rejected('forbidden' satisfies InboxRejection);
-        }
-        return unavailable();
-      } catch {
-        return unavailable();
-      }
-    },
-
-    async decide(input, callOptions) {
-      const response = await mutation(CHANNEL_ACCESS_DECISION_PATH, input, callOptions?.signal);
-      if (response === null) return unavailable();
-      const body = await jsonObject(response);
-      if (response.status === 200 && body !== null) return { kind: 'ok', value: body };
-      const code = rejectedCode(body);
-      if (code === 'not_found' || code === 'stale_revision' || code === 'decision_conflict'
-        || code === 'expired' || code === 'revoked' || code === 'operation_mismatch' || code === 'forbidden') {
-        return rejected(code);
-      }
-      return unavailable();
-    },
-
-    async setMute(input, callOptions) {
-      const response = await mutation(CHANNEL_ACCESS_MUTE_PATH, input, callOptions?.signal);
-      if (response === null) return unavailable();
-      const body = await jsonObject(response);
-      if (response.status === 200 && body !== null && hasExactKeys(body, ['v', 'operationKind', 'muted', 'revision'])
-        && body.v === 1 && (body.operationKind === 'access' || body.operationKind === 'create')
-        && typeof body.muted === 'boolean' && typeof body.revision === 'string') {
-        return { kind: 'ok', value: {
-          v: 1, operationKind: body.operationKind, muted: body.muted, revision: body.revision,
-        } };
-      }
-      const code = rejectedCode(body);
-      if (code === 'forbidden' || code === 'not_found' || code === 'stale_revision' || code === 'operation_mismatch') {
-        return rejected(code satisfies MuteRejection);
-      }
-      return unavailable();
-    },
-
-    // Hosted notification delivery supplies deep links to the route codec.
-    // The finite HTTP surface has no streaming endpoint, so this adapter has
-    // no ambient subscription of its own.
-    subscribe: () => () => undefined,
-  };
-
-  function closure(roomId: RoomId): ReturnType<HumanBrowserApi['closure']> {
-    return {
-      async currentCapability() {
-        try {
-          const url = new URL(CLOSURE_PATH, origin);
-          url.searchParams.set('roomId', roomId);
-          const response = await request(url.href, {
-            method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' },
-            signal: requestSignal(),
-          });
-          if (response.status !== 200) return null;
-          const body = await jsonObject(response);
-          if (body?.kind !== 'ok') return null;
-          const decoded = decodeClosureCapability(body.value);
-          return decoded.ok && decoded.value.roomId === roomId ? decoded.value : null;
-        } catch { return null; }
-      },
-      async closeRoom(input, options) {
-        if (input.roomId !== roomId) return rejected('forbidden');
-        const response = await mutation(CLOSURE_PATH, input, options?.signal);
-        if (response === null) return unavailable();
-        const body = await jsonObject(response);
-        if (response.status === 200 && body?.kind === 'ok') {
-          const decoded = decodeClosureStatus(body.value);
-          return decoded.ok && decoded.value.operationId === input.operationId ? ok(decoded.value) : unavailable();
-        }
-        if (response.status === 502 && body?.code === 'outcome_unknown' && body.operationId === input.operationId) return outcomeUnknown(input.operationId);
-        if (body?.code === 'forbidden' || body?.code === 'stale_room' || body?.code === 'operation_mismatch') return rejected(body.code);
-        return unavailable();
-      },
-      async inspectClosure(operationId, options) {
-        try {
-          const url = new URL(CLOSURE_PATH, origin);
-          url.searchParams.set('operationId', operationId);
-          const response = await request(url.href, {
-            method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' },
-            signal: requestSignal(options?.signal),
-          });
-          const body = await jsonObject(response);
-          if (response.status === 200 && body?.kind === 'ok') {
-            const decoded = decodeClosureStatus(body.value);
-            return decoded.ok && decoded.value.operationId === operationId ? ok(decoded.value) : unavailable();
-          }
-          if (response.status === 404) return rejected('not_found');
-          if (response.status === 403) return rejected('forbidden');
-          return unavailable();
-        } catch { return unavailable(); }
-      },
-    };
-  }
-
-  async function cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null> {
-    try {
-      const url = new URL(CLOSURE_PATH, origin);
-      url.searchParams.set('cleanup', '1');
-      const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
-        headers: { accept: 'application/json' }, signal: requestSignal() });
-      if (response.status !== 200) return null;
-      const body = await jsonObject(response);
-      if (body?.kind !== 'ok' || !Array.isArray(body.value) || body.value.length > 512) return null;
-      const requests: ClosureRequest[] = [];
-      for (const item of body.value) {
-        const decoded = decodeClosureRequest(item);
-        if (!decoded.ok || decoded.value.ownerId !== ownerId || decoded.value.expectedRoomRevision !== 0) return null;
-        requests.push(decoded.value);
-      }
-      return requests;
-    } catch { return null; }
-  }
-
-  function revocation(roomId: RoomId): BrowserRevocation {
-    return {
-      async targets() {
-        try {
-          const url = new URL(REVOCATION_TARGETS_PATH, origin);
-          url.searchParams.set('roomId', roomId);
-          const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
-            headers: { accept: 'application/json' }, signal: requestSignal() });
-          if (response.status !== 200) return null;
-          const body = await jsonObject(response);
-          if (!body || !Array.isArray(body.targets) || body.targets.length > 128
-            || typeof body.ownerId !== 'string' || typeof body.providerIssuer !== 'string'
-            || typeof body.providerSubject !== 'string') return null;
-          const targets = [];
-          for (const value of body.targets) {
-            if (!isObject(value) || !hasExactKeys(value, ['targetKind', 'targetId', 'expectedGeneration'])
-              || value.targetKind !== 'binding' || typeof value.targetId !== 'string'
-              || !Number.isSafeInteger(value.expectedGeneration) || (value.expectedGeneration as number) < 0) return null;
-            targets.push({ targetKind: 'binding' as const, targetId: value.targetId as never,
-              expectedGeneration: value.expectedGeneration as number });
-          }
-          return { ownerId: body.ownerId as OwnerId, providerIssuer: body.providerIssuer,
-            providerSubject: body.providerSubject, targets };
-        } catch { return null; }
-      },
-      async revoke(input, options) {
-        const response = await mutation(REVOCATION_REVOKE_PATH, input, options?.signal);
-        if (!response) return unavailable();
-        const body = await jsonObject(response);
-        if (response.status === 200 && body?.kind === 'ok') {
-          const decoded = decodeRevocationProgress(body.value);
-          return decoded.ok && decoded.value.operationId === input.operationId ? ok(decoded.value) : unavailable();
-        }
-        if (response.status === 502 && body?.kind === 'outcome_unknown' && body.operationId === input.operationId) {
-          return outcomeUnknown(input.operationId);
-        }
-        if (body?.kind === 'rejected' && ['stale_generation', 'not_found', 'forbidden', 'operation_mismatch'].includes(String(body.code))) {
-          return rejected(body.code as 'stale_generation' | 'not_found' | 'forbidden' | 'operation_mismatch');
-        }
-        return unavailable();
-      },
-      async inspect(operationId, options) {
-        try {
-          const url = new URL(REVOCATION_STATUS_PATH, origin);
-          url.searchParams.set('operationId', operationId);
-          const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
-            headers: { accept: 'application/json' }, signal: requestSignal(options?.signal) });
-          const body = await jsonObject(response);
-          if (response.status === 404) return rejected('not_found');
-          if (response.status !== 200 || body?.kind !== 'ok' || !isObject(body.value)) return unavailable();
-          const status = body.value;
-          if (status.operationId !== operationId || status.targetKind !== 'binding'
-            || typeof status.targetId !== 'string' || !Number.isSafeInteger(status.generation)
-            || typeof status.state !== 'string') return unavailable();
-          if (status.retryable === true && (status.generation as number) > 0) {
-            const continued = await this.revoke({ operationId, targetKind: 'binding',
-              targetId: status.targetId as never, expectedGeneration: (status.generation as number) - 1 }, options);
-            if (continued.kind === 'ok' || continued.kind === 'outcome_unknown') return continued;
-          }
-          const state = status.state === 'completed' ? 'complete'
-            : status.state === 'partial' ? 'partial'
-              : status.state === 'requested' ? 'pending' : 'propagating';
-          const decoded = decodeRevocationProgress({ operationId, targetKind: status.targetKind,
-            targetId: status.targetId, generation: status.generation, state });
-          return decoded.ok ? ok(decoded.value) : unavailable();
-        } catch { return unavailable(); }
-      },
-    };
-  }
-
-  const roomSend: BrowserSendFence = {
-    async ready(proof) {
-      const response = await mutation(`${ROOM_SEND_PATH}/ready`, proof);
-      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
-    },
-    async acquire(proof, clientTxnId) {
-      const response = await mutation(`${ROOM_SEND_PATH}/acquire`, { ...proof, clientTxnId });
-      if (!response || (response.status !== 200 && response.status !== 423)) return null;
-      const body = await jsonObject(response);
-      if (response.status === 200 && body?.kind === 'granted' && typeof body.permitId === 'string') {
-        return { kind: 'granted', permitId: body.permitId };
-      }
-      if (response.status === 200 && body?.kind === 'complete' && typeof body.eventId === 'string'
-        && body.eventId.startsWith('$')) return { kind: 'complete', eventId: body.eventId };
-      if (response.status === 423 && body?.kind === 'held' && typeof body.operationId === 'string'
-        && Number.isSafeInteger(body.epoch)) return { kind: 'held', operationId: body.operationId, epoch: body.epoch as number };
-      return null;
-    },
-    async finish(proof, permitId, outcome) {
-      const response = await mutation(`${ROOM_SEND_PATH}/finish`, { ...proof, permitId,
-        outcome: outcome.kind, eventId: outcome.kind === 'complete' ? outcome.eventId : null });
-      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
-    },
-    async rotation(proof, operationId, epoch) {
-      const response = await mutation(`${ROOM_SEND_PATH}/rotation`, { ...proof, operationId, epoch });
-      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
-    },
-    async inspect(proof) {
-      const response = await mutation(`${ROOM_SEND_PATH}/inspect`, proof);
-      if (response?.status !== 200) return null;
-      const body = await jsonObject(response);
-      if (body?.kind !== 'ok' || !isObject(body.hold) || typeof body.hold.operationId !== 'string'
-        || !Number.isSafeInteger(body.hold.epoch)) return null;
-      return { operationId: body.hold.operationId, epoch: body.hold.epoch as number };
-    },
-  };
   const channelLinks: HumanChannelLinks = {
     async resolve(channelUrl, signal) {
       const response = await mutation(LINK_RESOLVE_PATH, { v: 1, channelUrl }, signal);
@@ -623,10 +345,24 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         ? decoded.value : { v: 1, kind: 'unavailable' };
     },
   };
-  return { identity, admission, channelLinks, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
-    async reviewCsrf() {
-      if (csrfToken !== null) return csrfToken;
-      return (await readCurrent()).kind === 'signed_in' ? csrfToken : null;
-    },
+  async function agentJoinRequest(path: string, post: boolean, signal?: AbortSignal): Promise<AgentJoinResult> {
+    try {
+      const response = post ? await mutation(path, {}, signal) : await request(`${origin}${path}`, {
+        method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(signal),
+      });
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      const codes: Partial<Record<number, AgentJoinError>> = {
+        401: 'signed_out', 403: 'not_member', 404: 'not_found', 409: 'already_confirmed_by_other',
+      };
+      if (response.status !== 200) return { kind: 'error', code: codes[response.status] ?? 'unavailable' };
+      const decoded = decodeAgentJoinView(await jsonObject(response));
+      return decoded.ok ? { kind: 'ok', view: decoded.value } : { kind: 'error', code: 'unavailable' };
+    } catch { return { kind: 'error', code: 'unavailable' }; }
+  }
+  const agentJoin: AgentJoinPort = {
+    view: (joinId, signal) => agentJoinRequest(humanAgentJoinPath(joinId), false, signal),
+    confirm: (joinId, signal) => agentJoinRequest(humanAgentJoinConfirmPath(joinId), true, signal),
+    status: (joinId, signal) => agentJoinRequest(humanAgentJoinStatusPath(joinId), false, signal),
   };
+  return { agentJoin, identity, admission, channelLinks, credentials, participants };
 }

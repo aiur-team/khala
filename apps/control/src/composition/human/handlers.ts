@@ -296,7 +296,6 @@ export function createHumanHandlers(
         const roomId = decodeRoomId(value.roomId);
         const policy = value.policy === undefined ? undefined : admissionPolicy(value.policy);
         if (operationId === null || !roomId.ok || policy === null) return json(400, { code: 'invalid_request' });
-        if (policy?.history === 'full') return json(503, { code: 'history_unavailable' });
         const result = await admission.share({ operationId, roomId: roomId.value, ...(policy ? { policy } : {}) });
         return result.kind === 'ok' ? json(200, result) : responseForOperationFailure(result);
       }),

@@ -1,3 +1,5 @@
+import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
+import type { ParticipantView } from '@khala/contracts/messaging/index';
 // Projects SDK events and local sends into channel timeline views. Each
 // event appears once however the remote echo and the send response interleave.
 
@@ -16,6 +18,7 @@ import type { SubstrateEvent } from './substrate';
  * channel has not yet echoed.
  */
 export type TimelineEntry =
+  | Readonly<{ kind: 'channel_event'; eventId: EventId; participant: ParticipantView; content: ChannelEventContent; receivedAt: string }>
   | Readonly<{ kind: 'message'; item: TimelineItem }>
   | Readonly<{
     kind: 'unavailable';
@@ -35,6 +38,8 @@ export type ChannelEntriesView = Readonly<{
   generation: number;
   /** Events obtained through pagination, including ciphertext omitted from contract pages. */
   historicalEventIds?: readonly EventId[];
+  /** Known decrypted events intentionally omitted from the entries view. */
+  ignoredEventIds?: readonly EventId[];
 }>;
 
 /** @deprecated Use `ChannelEntriesView`. Kept through the first tagged release containing #163. */
@@ -44,6 +49,7 @@ type RemoteEntry = Exclude<TimelineEntry, { kind: 'local' }>;
 
 /** Binds decrypted content to a reference whose digest is computed here, over the exact bytes. */
 export async function toEntry(roomId: RoomId, event: SubstrateEvent): Promise<RemoteEntry> {
+  if (event.kind === 'channel_event') return event;
   if (event.kind === 'undecryptable') {
     return { kind: 'unavailable', eventId: event.eventId, authorParticipantId: event.authorParticipantId, reason: event.reason, receivedAt: event.receivedAt };
   }
@@ -101,7 +107,7 @@ export async function timeline(
 
 /** A duplicate or replayed event never adds a row; only a late decryption replaces its placeholder. */
 function supersedes(existing: RemoteEntry | undefined, entry: RemoteEntry): boolean {
-  return existing === undefined || (existing.kind === 'unavailable' && entry.kind === 'message');
+  return existing === undefined || (existing.kind === 'unavailable' && entry.kind !== 'unavailable');
 }
 
 /**
@@ -110,6 +116,7 @@ function supersedes(existing: RemoteEntry | undefined, entry: RemoteEntry): bool
  */
 export class ChannelProjection {
   private readonly remote = new Map<EventId, RemoteEntry>();
+  private readonly ignored = new Set<EventId>();
   private readonly local = new Map<string, Readonly<{ send: SendState; content: MessageContent }>>();
   private room: ChannelSummary | null = null;
   private revision = 0;
@@ -126,13 +133,39 @@ export class ChannelProjection {
     this.revision += 1;
   }
 
-  applyRemote(entries: readonly RemoteEntry[]): void {
+  applyRemote(entries: readonly RemoteEntry[], ignoredEventIds: readonly EventId[] = []): void {
+    for (const eventId of ignoredEventIds) {
+      if (this.remote.get(eventId)?.kind === 'unavailable') this.remote.delete(eventId);
+      this.ignored.add(eventId);
+    }
+    const knownIds = new Set(this.remote.keys());
     for (const entry of entries) {
       const eventId = eventIdOf(entry);
+      if (this.ignored.has(eventId)) continue;
       if (!supersedes(this.remote.get(eventId), entry)) continue;
       this.remote.set(eventId, entry);
       if (entry.kind === 'message' && entry.item.clientTxnId !== null) this.local.delete(entry.item.clientTxnId);
     }
+    // Incoming SDK arrays are in timeline order. Anchor newly fetched history
+    // before its known successor without reordering replayed, cached entries.
+    const before = new Map<EventId, RemoteEntry[]>();
+    const tail: RemoteEntry[] = [];
+    let successor: EventId | undefined;
+    const placed = new Set<EventId>();
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const id = eventIdOf(entries[index]!);
+      if (knownIds.has(id)) { successor = id; continue; }
+      const entry = this.remote.get(id);
+      if (!entry || placed.has(id)) continue;
+      placed.add(id);
+      const bucket = successor === undefined ? tail : before.get(successor) ?? [];
+      bucket.unshift(entry);
+      if (successor !== undefined) before.set(successor, bucket);
+    }
+    const ordered = [...this.remote].filter(([id]) => knownIds.has(id))
+      .flatMap(([id, entry]) => [...(before.get(id) ?? []), entry]);
+    this.remote.clear();
+    for (const entry of [...ordered, ...tail]) this.remote.set(eventIdOf(entry), entry);
     this.revision += 1;
   }
 
@@ -154,7 +187,8 @@ export class ChannelProjection {
   entries(generation: number): ChannelEntriesView {
     const entries: TimelineEntry[] = [...this.remote.values()];
     for (const pending of this.local.values()) entries.push({ kind: 'local', ...pending });
-    return { roomId: this.roomId, room: this.room, entries, snapshotRevision: String(this.revision), generation };
+    return { roomId: this.roomId, room: this.room, entries, snapshotRevision: String(this.revision), generation,
+      ...(this.ignored.size ? { ignoredEventIds: [...this.ignored] } : {}) };
   }
 
   /** The contract snapshot: known channel and decrypted messages only. */

@@ -622,9 +622,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     return {
       kind: 'joined',
       room: matrixRoom(input.roomId, await roomName(session, input.roomId, call)),
-      // The production default is no-history. Full-history remains fail-closed
-      // until the crypto adapter proves the requested historical keys arrived.
-      historyReady: input.history === 'none',
+      historyReady: true,
     };
   }
 
@@ -632,10 +630,6 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     inspectMembership: (input, call) => membership(input.principal, input.roomId, call),
     lookup,
     async admit(input, call): Promise<GatewayAdmission> {
-      // Full-history disclosure requires an explicit crypto key-transfer proof.
-      // The selected production adapter does not have that proof yet, so reject
-      // the policy before changing membership instead of leaving it ambiguous.
-      if (input.history === 'full') return { kind: 'forbidden' };
       const current = await lookup(input, call);
       if (current.kind === 'joined') return current;
       if (current.kind === 'unavailable' || current.kind === 'outcome_unknown') return current;
@@ -673,7 +667,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         return {
           kind: 'joined',
           room: matrixRoom(input.roomId, await roomName(session, input.roomId, call)),
-          historyReady: input.history === 'none',
+          historyReady: true,
         };
       } catch {
         return { kind: 'outcome_unknown' };
@@ -694,7 +688,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
               ...(input.title ? { name: input.title } : {}),
               initial_state: [
                 { type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } },
-                { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
+                { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'shared' } },
                 { type: 'com.aiur.khala.create.v1', state_key: '', content: { operation_id: input.operationId } },
               ] }),
           }, call);

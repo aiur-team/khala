@@ -1,0 +1,26 @@
+/* Functional baseline. Visual design owned by KM-182. */
+.channel-event-pill {
+  align-self: center;
+  list-style: none;
+  max-width: 100%;
+}
+.channel-event-pill__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  color: var(--khala-ink-muted);
+  font-size: 0.75rem;
+  text-decoration: none;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.channel-event-pill__text { min-width: 0; overflow-wrap: anywhere; }
+.channel-event-pill__dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.channel-event-pill__dot--success { background: var(--khala-status-positive); }
+.channel-event-pill__dot--failure { background: var(--khala-status-critical); }
+.channel-event-pill__dot--attention { background: var(--khala-status-caution); }
+.channel-event-pill__dot--pending { background: var(--khala-accent); }
+.channel-event-pill__dot--info { background: var(--khala-ink-muted); }

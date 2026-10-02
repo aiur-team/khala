@@ -1,0 +1,14 @@
+{
+  "name": "khala-wake-spike",
+  "description": "Throwaway M1 idle-wake spike marketplace",
+  "owner": {
+    "name": "Khala M1 spike"
+  },
+  "plugins": [
+    {
+      "name": "khala-wake-spike",
+      "source": "./plugins/khala-wake-spike",
+      "description": "Throwaway M1 idle-wake spike"
+    }
+  ]
+}

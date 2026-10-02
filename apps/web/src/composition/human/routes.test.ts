@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'vitest';
-import type { ChannelAccessRequestHandle } from '@khala/contracts/messaging/index';
 import { createHumanRouteCodec } from './routes';
 
 describe('createHumanRouteCodec', () => {
@@ -12,20 +11,10 @@ describe('createHumanRouteCodec', () => {
     expect(codec.parse('https://khala.aiur.team/')).toEqual({ kind: 'not_found', path: '/' });
     expect(codec.parse('/join?invite=invite_1')).toEqual({ kind: 'join', path: '/join?invite=invite_1', inviteRef: 'invite_1' });
     expect(codec.parse('/channels/room_1')).toEqual({ kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
-    expect(codec.channelToolsPath('room_1')).toBe('/channels/room_1/tools');
-    expect(codec.parse('/channels/room_1/tools')).toEqual({ kind: 'channel_tools', path: '/channels/room_1/tools', roomId: 'room_1' });
   });
 
-  test('maps the owner inbox and request deep links to the same route', () => {
-    const handle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
-    expect(codec.channelRequestsPath()).toBe('/channel-requests');
-    expect(codec.channelRequestsPath(handle)).toBe(`/channel-requests/${handle}`);
-    expect(codec.parse('/channel-requests')).toEqual({
-      kind: 'channel_requests', path: '/channel-requests', selectedHandle: null,
-    });
-    expect(codec.parse(`/channel-requests/${handle}`)).toEqual({
-      kind: 'channel_requests', path: `/channel-requests/${handle}`, selectedHandle: handle,
-    });
+  test.each(['/channels/room_1/tools', '/channel-requests', '/channel-requests/careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq'])('rejects removed route %s', path => {
+    expect(codec.parse(path)).toEqual({ kind: 'not_found', path });
   });
 
   test('accepts the canonical /join/<inviteRef> share-link form', () => {
@@ -43,8 +32,6 @@ describe('createHumanRouteCodec', () => {
     expect(based.conversationsPath()).toBe('/khala/conversations');
     expect(based.joinPath('invite 1')).toBe('/khala/join?invite=invite%201');
     expect(based.roomPath('room_1')).toBe('/khala/channels/room_1');
-    expect(based.channelToolsPath('room_1')).toBe('/khala/channels/room_1/tools');
-    expect(based.channelRequestsPath()).toBe('/khala/channel-requests');
     expect(based.parse('/khala/channels/room_1')).toEqual({ kind: 'channel', path: '/khala/channels/room_1', roomId: 'room_1' });
   });
 
@@ -60,5 +47,22 @@ describe('createHumanRouteCodec', () => {
     expect(() => createHumanRouteCodec({ origin: 'http://khala.aiur.team', basePath: '/' })).toThrow(/https origin/);
     expect(() => createHumanRouteCodec({ origin: 'https://khala.aiur.team/path', basePath: '/' })).toThrow(/exact origin/);
     expect(() => createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '//evil.example' })).toThrow(/base path/);
+  });
+});
+
+describe('agent confirmation routes', () => {
+  const codec = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
+  test('preserves the confirmation path and join identifier', () => {
+    expect(codec.parse('/agent/confirm?joinId=j_7Qx2')).toEqual({ kind: 'agent_confirm', path: '/agent/confirm?joinId=j_7Qx2', joinId: 'j_7Qx2' });
+    expect(codec.parse('/agent/confirm?joinId=%6A1')).toEqual({ kind: 'agent_confirm', path: '/agent/confirm?joinId=%6A1', joinId: 'j1' });
+    const based = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/khala' });
+    expect(based.agentConfirmPath('j1')).toBe('/khala/agent/confirm?joinId=j1');
+    expect(based.parse(based.agentConfirmPath('j1')).kind).toBe('agent_confirm');
+  });
+  test.each(['/agent/confirm', '/agent/confirm/j_7Qx2', '/agent/confirm?joinId=a&joinId=b',
+    '/agent/confirm?joinId=x&y=1', '/agent/confirm?joinId=%2F', '/agent/confirm?joinId=',
+    `/agent/confirm?joinId=${'x'.repeat(129)}`, '/agent/confirm?joinId=a%20b',
+    'https://other.example/agent/confirm?joinId=j1'])('rejects invalid confirmation link %s', path => {
+    expect(codec.parse(path).kind).toBe('not_found');
   });
 });

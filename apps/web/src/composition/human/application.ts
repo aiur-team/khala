@@ -16,22 +16,18 @@ import type {
   ParticipantView,
   RoomPort,
   RoomId,
-  ClosureCapability,
-  ClosurePort,
-  RevocationPort,
-  RevocationSubject,
 } from '@khala/contracts/messaging/index';
 import type { ChannelService } from '@khala/messaging/channels/index';
+import type { AgentJoinPort, AgentInvitePort } from '../../features/agent-confirm/ports';
 import type { ConversationIndexPort } from './conversations';
 
-type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
-  currentCapability(): Promise<ClosureCapability | null>;
-}>;
 import { createHumanDeviceSession } from './device-session';
 import type { TabHandoff } from './tab-handoff';
 import type { HumanChannelLinks } from './channel-links';
 
 export interface HumanApplicationPorts {
+  readonly agentJoin?: AgentJoinPort;
+  readonly inviteAgent?: AgentInvitePort;
   readonly identity: IdentityPort;
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
@@ -43,14 +39,6 @@ export interface HumanApplicationPorts {
   readonly participant?: () => ParticipantView | null;
   /** Joined Matrix members resolved through the authenticated participant directory. */
   readonly roomParticipants?: (roomId: RoomId, signal?: AbortSignal) => Promise<readonly ParticipantView[] | null>;
-  readonly closure?: (roomId: RoomId) => ChannelClosureContext;
-  readonly revocation?: (roomId: RoomId) => RevocationPort & Readonly<{
-    targets(): Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
-      targets: readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[];
-    }> | null | Promise<Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
-      targets: readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[];
-    }> | null>;
-  }>;
 }
 
 export interface HumanRouteContext extends HumanApplicationPorts {
