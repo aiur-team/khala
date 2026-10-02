@@ -7,9 +7,10 @@ import type { ProfilePort } from './ports';
 
 async function readyStore(username: string | null) {
   const port: ProfilePort = {
-    get: vi.fn(async () => ({ kind: 'ok' as const, username, suggestion: 'alice', color: 'teal' as const })),
+    get: vi.fn(async () => ({ kind: 'ok' as const, username, suggestion: 'alice', color: 'teal' as const, initials: null })),
     setUsername: vi.fn(async (name: string) => ({ kind: 'ok' as const, username: name })),
     setColor: async color => ({ kind: 'ok', color }),
+    setInitials: async initials => ({ kind: 'ok', initials }),
   };
   const store = createProfileStore(port);
   store.start();

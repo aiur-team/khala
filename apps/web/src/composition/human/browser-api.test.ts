@@ -462,11 +462,11 @@ describe('agent join browser API', () => {
 describe('human profile adapter', () => {
   it('decodes profile reads and sends username mutations with CSRF', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal' }))
+      .mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal', initials: null }))
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
       .mockResolvedValueOnce(json(200, { username: 'Kevin' }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(await api.profile.get()).toEqual({ kind: 'ok', username: null, suggestion: 'Kevin', color: 'teal' });
+    expect(await api.profile.get()).toEqual({ kind: 'ok', username: null, suggestion: 'Kevin', color: 'teal', initials: null });
     expect(await api.profile.setUsername('Kevin')).toEqual({ kind: 'ok', username: 'Kevin' });
     expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/profile`);
     expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/profile/username`);
@@ -512,6 +512,43 @@ describe('human profile adapter', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it.each(['KW', null])('sends initials mutation %s with CSRF', async initials => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { initials }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setInitials(initials)).toEqual({ kind: 'ok', initials });
+    expect(fetch.mock.calls[1]?.[0]).toBe(`${origin}/api/human/profile/initials`);
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ initials }));
+    expect(fetch.mock.calls[1]?.[1]?.credentials).toBe('same-origin');
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it.each([[400, 'invalid_initials'], [401, 'signed_out'], [403, 'unavailable'], [503, 'unavailable']])(
+    'maps initials mutation status %s', async (status, code) => {
+      const fetch = vi.fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+        .mockResolvedValueOnce(json(status as number, {}));
+      const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+      expect(await api.profile.setInitials('KW')).toEqual({ kind: 'error', code });
+    });
+
+  it.each([{ initials: 'KW', extra: true }, { initials: 'kw' }, { initials: 42 }, { initials: 'K.' }, {}])(
+    'rejects malformed initials success %j', async body => {
+      const fetch = vi.fn<typeof globalThis.fetch>()
+        .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+        .mockResolvedValueOnce(json(200, body));
+      const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+      expect(await api.profile.setInitials('KW')).toEqual({ kind: 'error', code: 'unavailable' });
+    });
+
+  it.each([[401, 'signed_out'], [503, 'unavailable']])('preserves initials preflight failure %s', async (status, code) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(status as number, {}));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.profile.setInitials('KW')).toEqual({ kind: 'error', code });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each([
     [400, { error: 'invalid_username', reason: 'too_short' }, { kind: 'error', code: 'invalid_username', reason: 'too_short' }],
     [400, { error: 'invalid_username', reason: 'invented' }, { kind: 'error', code: 'invalid_username' }],
@@ -549,7 +586,7 @@ describe('human profile adapter', () => {
   });
 
   it('rejects malformed profile read success', async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal', extra: true }));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', color: 'teal', initials: null, extra: true }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     expect(await api.profile.get()).toEqual({ kind: 'error', code: 'unavailable' });
   });
