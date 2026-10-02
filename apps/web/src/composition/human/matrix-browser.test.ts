@@ -344,6 +344,7 @@ describe('channel event decoding', () => {
 });
 
 describe('browser cross-signing and shared history', () => {
+  afterEach(() => vi.useRealTimers());
   const cryptoMock = (cached = false, server = false) => ({
     getCrossSigningStatus: vi.fn(async () => ({ privateKeysCachedLocally: { masterKey: cached, selfSigningKey: cached, userSigningKey: cached } })),
     userHasCrossSigningKeys: vi.fn(async () => server),
@@ -373,6 +374,38 @@ describe('browser cross-signing and shared history', () => {
     const crypto = cryptoMock();
     crypto[method].mockRejectedValueOnce(new Error('offline'));
     expect(await ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test')).toBe('failed');
+  });
+  it.each(['getCrossSigningStatus', 'userHasCrossSigningKeys', 'bootstrapCrossSigning'] as const)('bounds a hanging %s', async method => {
+    vi.useFakeTimers();
+    const crypto = cryptoMock();
+    crypto[method].mockImplementationOnce(() => new Promise(() => {}) as never);
+    const attempt = ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await attempt).toBe('failed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('does not bootstrap when a server lookup completes after the deadline', async () => {
+    vi.useFakeTimers();
+    const crypto = cryptoMock();
+    let resolve!: (exists: boolean) => void;
+    crypto.userHasCrossSigningKeys.mockImplementationOnce(() => new Promise<boolean>(done => { resolve = done; }));
+    const attempt = ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await attempt).toBe('failed');
+    resolve(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+  });
+  it('stops maintenance when the device generation closes', async () => {
+    vi.useFakeTimers();
+    const crypto = cryptoMock();
+    crypto.getCrossSigningStatus.mockImplementationOnce(() => new Promise(() => {}));
+    const abort = new AbortController();
+    const attempt = ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test', abort.signal);
+    abort.abort();
+    expect(await attempt).toBe('failed');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
   });
   it.each([
     [true, 'm.room.encrypted', 900, null, 1000, true],
