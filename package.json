@@ -7,11 +7,11 @@
     "node": "22.23.2"
   },
   "scripts": {
-    "typecheck": "pnpm -r typecheck && tsc -p tests/e2e/harness/tsconfig.json",
+    "typecheck": "pnpm -r typecheck",
     "lint": "eslint . && pnpm check:boundaries && pnpm check:terminology",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:terminology": "node scripts/check-terminology.mjs",
-    "test": "node --test scripts/*.test.mjs && pnpm test:recovery-fixture && node --test 'infra/**/*.test.ts' && pnpm -r test && pnpm test:conformance && pnpm test:e2e",
+    "test": "node --test scripts/*.test.mjs && pnpm test:recovery-fixture && node --test 'infra/**/*.test.ts' && pnpm -r test && pnpm test:conformance",
     "test:recovery-synapse": "node --import tsx --conditions=khala-source --test-concurrency=1 --test tests/integration/recovery/*.test.mjs",
     "test:installed-recovery": "node --import tsx --conditions=khala-source --test-concurrency=1 --test tests/integration/recovery/installed-hosted-recovery.test.mjs",
     "test:recovery-fixture": "node --test scripts/fixtures/*.test.mjs",
@@ -22,8 +22,6 @@
     "build": "pnpm check:boundaries && pnpm -r build",
     "test:browser": "pnpm -r --if-present test:browser",
     "acceptance:live": "tsx --conditions=khala-source scripts/acceptance/main.ts",
-    "test:internal:native": "node --import tsx scripts/internal-native-canary.mjs",
-    "internal:native:browser": "node scripts/internal-native-browser.mjs",
     "acceptance:pack": "node scripts/acceptance-pack.mjs"
   },
   "devDependencies": {

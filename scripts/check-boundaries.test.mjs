@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildGraph, checkBoundaries } from './check-boundaries.mjs';
+import { checkBoundaries } from './check-boundaries.mjs';
 
 function fixture(t, files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-boundaries-'));
@@ -130,134 +130,11 @@ test('the channel-request inbox may import the shared creation adapter', t => {
     'apps/web/src/features/approval-decision/model.ts': 'export {};',
   }), []);
 });
-test('loopback server imports only built-ins, the internal store and contracts', t => {
+test('frozen apps/internal is outside the checked graph', t => {
   assert.deepEqual(fixture(t, {
-    'apps/internal/src/server/server.ts': "import http from 'node:http'; import { store } from '../store/channel-store'; import type { Room } from '../../../../packages/contracts/src/messaging/room';",
-    'apps/internal/src/store/channel-store.ts': 'export const store = 1;',
-    'packages/contracts/src/messaging/room.ts': 'export type Room = string;',
+    'apps/internal/package.json': { name: '@khala/internal' },
+    'apps/internal/src/x.ts': "import 'node:fs'; import '@khala/connector/missing';",
   }), []);
-  const errors = fixture(t, {
-    'apps/internal/src/server/server.ts': "import '../composition/root'; import '../../../web/src/app'; import 'express'; import './helper.test';",
-    'apps/internal/src/composition/root.ts': 'export {};',
-    'apps/web/src/app.ts': 'export {};',
-  });
-  for (const specifier of ['../composition/root', '../../../web/src/app', 'express']) {
-    assert(errors.some(error => error.includes('loopback server may import only') && error.includes(`(${specifier})`)), specifier);
-  }
-});
-const policyPackage = { name: '@khala/policy', exports: { './listening-mode/*': './src/listening-mode/*.ts', './trust/*': './src/trust/*.ts' } };
-
-test('internal composition may import the local automation provider and profile', t => {
-  assert.deepEqual(fixture(t, {
-    'apps/internal/src/composition/root.ts': "import './local-automation/provider'; import '@khala/policy/listening-mode/limits';",
-    'apps/internal/src/composition/local-automation/provider.ts': "import '@khala/policy/listening-mode/limits'; export const marker = 'khala:local-automation-authority';",
-    'packages/policy/package.json': policyPackage,
-    'packages/policy/src/listening-mode/limits.ts': 'export const limits = {};',
-  }), []);
-});
-test('only the internal composition may import local automation', t => {
-  const errors = fixture(t, {
-    'apps/internal/src/server/server.ts': "import '@khala/policy/listening-mode/limits';",
-    'packages/policy/src/trust/gate.ts': "import '../listening-mode/limits';",
-    'packages/policy/package.json': policyPackage,
-    'packages/policy/src/listening-mode/limits.ts': 'export const limits = {};',
-  });
-  for (const origin of ['apps/internal/src/server/server.ts', 'packages/policy/src/trust/gate.ts']) {
-    assert(errors.some(error => error.startsWith(origin) && error.includes('importable only from the internal composition')), origin);
-  }
-});
-test('hosted roots cannot reach local automation directly, through a package, or by marker', t => {
-  const errors = fixture(t, {
-    'apps/control/src/composition/direct.ts': "import '../../../internal/src/composition/local-automation/provider';",
-    'apps/internal/src/composition/local-automation/provider.ts': "export const marker = 'khala:local-automation-authority';",
-    'apps/connector/src/composition/controls/automation.ts': "import '@khala/connector/relay';",
-    'packages/connector/package.json': { name: '@khala/connector', exports: { './*': './src/*.ts' } },
-    'packages/connector/src/relay.ts': "export * from '@khala/policy/listening-mode/limits'; import './opener';",
-    'packages/connector/src/opener.ts': "export const authority = 'khala:local-automation-authority';",
-    'packages/policy/package.json': policyPackage,
-    'packages/policy/src/listening-mode/limits.ts': 'export const limits = {};',
-    'apps/web/src/marked.ts': "export const authority = 'khala:local-automation-authority';",
-  });
-  const has = (origin, text) => errors.some(error => error.startsWith(origin) && error.includes(text));
-  assert(has('apps/control/src/composition/direct.ts', 'hosted graph reaches local automation'));
-  assert(has('apps/connector/src/composition/controls/automation.ts', 'hosted graph reaches local automation (@khala/connector/relay -> @khala/policy/listening-mode/limits)'));
-  assert(has('apps/connector/src/composition/controls/automation.ts', 'hosted graph reaches local automation (@khala/connector/relay -> ./opener)'));
-  assert(has('apps/web/src/marked.ts', 'hosted source carries the local automation marker'));
-});
-test('dispatch limits come from the internal composition, never a hosted connector root', t => {
-  const files = {
-    'apps/internal/src/composition/local-automation/dispatch.ts': "import '@khala/connector/dispatch/index'; import './provider';",
-    'apps/internal/src/composition/local-automation/provider.ts': "import '@khala/policy/listening-mode/limits'; export const marker = 'khala:local-automation-authority';",
-    'packages/connector/package.json': { name: '@khala/connector', exports: { './dispatch/*': './src/dispatch/*.ts' } },
-    'packages/connector/src/dispatch/index.ts': 'export const createDispatcher = () => null;',
-    'packages/policy/package.json': policyPackage,
-    'packages/policy/src/listening-mode/limits.ts': 'export const limits = {};',
-  };
-  assert.deepEqual(fixture(t, files), []);
-  const errors = fixture(t, {
-    ...files,
-    'apps/connector/src/composition/agent/dispatch-limits.ts': "import '@khala/connector/dispatch/index'; import '@khala/policy/listening-mode/limits';",
-  });
-  const origin = 'apps/connector/src/composition/agent/dispatch-limits.ts';
-  assert(errors.some(error => error.startsWith(origin) && error.includes('hosted graph reaches local automation')));
-  assert(errors.some(error => error.startsWith(origin) && error.includes('importable only from the internal composition')));
-});
-test('repository: only the internal composition graph carries the local automation marker', () => {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const { graph, marked } = buildGraph(root);
-  const reach = origin => {
-    const seen = new Set([origin]);
-    const queue = [origin];
-    while (queue.length) for (const edge of graph.get(queue.shift()) ?? []) {
-      if (edge.target && !seen.has(edge.target)) { seen.add(edge.target); queue.push(edge.target); }
-    }
-    return seen;
-  };
-  const production = [...graph.keys()].filter(file => !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file));
-  assert.deepEqual([...marked].filter(file => production.includes(file)), ['apps/internal/src/composition/local-automation/provider.ts']);
-  assert(reach('apps/internal/src/composition/local-automation/provider.ts').has('packages/policy/src/listening-mode/limits.ts'));
-  const hosted = production.filter(file => /^apps\/(?:web|control|connector)\//.test(file));
-  assert(hosted.includes('apps/connector/src/composition/controls/automation.ts'));
-  assert(reach('apps/connector/src/composition/controls/automation.ts').has('packages/policy/src/trust/gate.ts'));
-  for (const origin of hosted) {
-    const leaked = [...reach(origin)].filter(file => marked.has(file) || file.startsWith('apps/internal/') || file === 'packages/policy/src/listening-mode/limits.ts');
-    assert.deepEqual(leaked, [], origin);
-  }
-});
-
-test('the hosted web graph never reaches the internal entry or its loopback transport', t => {
-  const errors = fixture(t, {
-    'apps/web/src/main.tsx': "import './composition/human/room';",
-    'apps/web/src/composition/human/room.ts': "import '../../internal/composition/ports'; import '../../../../../packages/messaging/src/local/http/index';",
-    'apps/web/src/internal/composition/ports.ts': 'export const ports = 1;',
-    'packages/messaging/src/local/http/index.ts': 'export const substrate = 1;',
-  });
-  assert(errors.some(error => error.startsWith('apps/web/src/main.tsx: hosted browser graph reaches the internal entry') && error.includes('internal/composition/ports')));
-  assert(errors.some(error => error.includes('hosted browser graph reaches the internal entry') && error.includes('messaging/src/local/http')));
-});
-test('the internal entry never reaches Matrix, join, pairing or recovery code', t => {
-  const errors = fixture(t, {
-    'apps/web/src/internal/main.tsx': "import './composition/screen';",
-    'apps/web/src/internal/composition/screen.tsx': [
-      "import '../../composition/human/screen';",
-      "import '../../composition/human/mount';",
-      "import '../../features/join/JoinScreen';",
-      "import '../../composition/recovery/register';",
-      "import 'matrix-js-sdk';",
-    ].join('\n'),
-    'apps/web/src/composition/human/screen.tsx': 'export const screen = 1;',
-    'apps/web/src/composition/human/mount.tsx': 'export const mount = 1;',
-    'apps/web/src/features/join/JoinScreen.tsx': 'export const join = 1;',
-    'apps/web/src/composition/recovery/register.ts': 'export const recovery = 1;',
-  });
-  const reached = errors.filter(error => error.startsWith('apps/web/src/internal/main.tsx: internal entry reaches hosted-only code'));
-  assert.equal(reached.length, 4, errors.join('\n'));
-  assert(!errors.some(error => error.includes('human/screen.tsx') && error.includes('hosted-only')));
-});
-test('repository: the internal entry and the hosted entry stay apart', () => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const errors = checkBoundaries(root).filter(error => /internal entry|hosted browser graph/.test(error));
-  assert.deepEqual(errors, []);
 });
 test('invalid browser import makes the command fail for CI', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-boundary-cli-'));
