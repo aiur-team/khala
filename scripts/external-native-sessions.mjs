@@ -30,6 +30,19 @@ const checked = (bin, argv, env = process.env) => {
   return result.stdout.trim();
 };
 const safeWord = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+export function installDisposableBrowserTrust(cli, descriptor, spki) {
+  if (!/^[A-Za-z0-9+/]{43}=$/u.test(spki ?? '')
+    || cli !== path.join(path.dirname(descriptor), 'installed', 'node_modules', '@aiur', 'khala', 'dist', 'khala.js'))
+    fail('disposable_browser_provenance');
+  const directory = path.join(path.dirname(cli), 'chromium', 'chrome-linux64');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const browser = path.join(directory, 'chrome');
+  fs.writeFileSync(browser, `#!/bin/sh
+umask 077
+exec /usr/bin/chromium --ignore-certificate-errors-spki-list=${safeWord(spki)} "$@"
+`, { flag: 'wx', mode: 0o700 });
+  return browser;
+}
 const stateFile = directory => path.join(directory, 'native-sessions.json');
 const load = directory => {
   privateDirectory(directory);
@@ -292,9 +305,12 @@ function main() {
     const cli = process.env.KHALA_EXTERNAL_CLI;
     const origin = process.env.KHALA_EXTERNAL_ORIGIN;
     if (!descriptor || !path.isAbsolute(descriptor) || !cli || !path.isAbsolute(cli)
-      || !/^https:\/\/127\.0\.0\.1:\d+$/u.test(origin ?? '') || !process.env.NODE_EXTRA_CA_CERTS)
+      || !/^https:\/\/127\.0\.0\.1:\d+$/u.test(origin ?? '') || !process.env.NODE_EXTRA_CA_CERTS
+      || !process.env.KHALA_E2E_CERT_SPKI)
       fail('disposable_environment_required');
     privateFile(descriptor);
+    const browser = installDisposableBrowserTrust(cli, descriptor, process.env.KHALA_E2E_CERT_SPKI);
+    if (!/^Chromium 15[0-3]\./u.test(checked(browser, ['--version']))) fail('disposable_browser_version');
     const privateHome = path.join(directory, 'home');
     fs.mkdirSync(privateHome, { mode: 0o700 });
     sourceAuth(os.userInfo().homedir, privateHome);

@@ -6,7 +6,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+import { installDisposableBrowserTrust, nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+
+test('disposable Chromium wrapper trusts only the pinned certificate key', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-browser-test-'));
+  fs.chmodSync(root, 0o700);
+  const descriptor = path.join(root, 'descriptor.json');
+  const cli = path.join(root, 'installed', 'node_modules', '@aiur', 'khala', 'dist', 'khala.js');
+  const spki = `${'A'.repeat(43)}=`;
+  try {
+    assert.throws(() => installDisposableBrowserTrust(cli, descriptor, 'invalid'), /disposable_browser_provenance/);
+    assert.throws(() => installDisposableBrowserTrust(path.join(root, 'other.js'), descriptor, spki), /disposable_browser_provenance/);
+    const wrapper = installDisposableBrowserTrust(cli, descriptor, spki);
+    const body = fs.readFileSync(wrapper, 'utf8');
+    assert.match(body, /--ignore-certificate-errors-spki-list='A{43}='/u);
+    assert.doesNotMatch(body, /--ignore-certificate-errors\s/u);
+    assert.equal(fs.statSync(wrapper).mode & 0o777, 0o700);
+    const version = spawnSync(wrapper, ['--version'], { encoding: 'utf8' });
+    assert.equal(version.status, 0);
+    assert.match(version.stdout, /^Chromium 15[0-3]\./u);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('native stop removes only its exact short private TMPDIR alias', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-alias-test-'));
