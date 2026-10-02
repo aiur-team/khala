@@ -437,16 +437,15 @@ function pageHelpers() {
       const ownership = parts.length >= 3 ? parts[parts.length - 2] : parts[1] ?? '';
       const kind = ownership.charAt(0).toUpperCase() + ownership.slice(1); // "Human", "Your agent", "Another person's agent"
       const label = norm(nameButton.querySelector('b')?.textContent) || parts.slice(0, Math.max(1, parts.length - 2)).join(', ');
-      // Visible tags after the label: an id badge (#…), "Human", or an owner tag ("Kevin’s machine").
+      // Visible tags after the label: an id badge (#…) or "Human". Agent rows carry no owner tag; `kind` says whose.
       const tags = [...nameButton.children].filter(child => child.tagName === 'SPAN').map(textOf);
       const badge = tags.find(tag => tag.startsWith('#'));
-      const owner = tags.find(tag => !tag.startsWith('#') && tag !== 'Human') ?? null;
-      return { sender: badge ? `${label} ${badge}` : label, kind, owner, text, pending };
+      return { sender: badge ? `${label} ${badge}` : label, kind, text, pending };
     }
-    if (!hasAvatar) return { sender: 'You', kind: 'You', owner: null, text, pending };
-    if (previous) return { sender: previous.sender, kind: previous.kind, owner: previous.owner, text, pending };
+    if (!hasAvatar) return { sender: 'You', kind: 'You', text, pending };
+    if (previous) return { sender: previous.sender, kind: previous.kind, text, pending };
     const avatarName = children[0].getAttribute('aria-label') ?? '';
-    return { sender: avatarName.replace(/ details$/u, ''), kind: '', owner: null, text, pending };
+    return { sender: avatarName.replace(/ details$/u, ''), kind: '', text, pending };
   };
   // Earlier card markup: <header><strong>author</strong><span>kind</span><time/><span>status</span></header>.
   const describeLegacyRow = (li, header) => {
@@ -456,14 +455,14 @@ function pageHelpers() {
     if (pending && spans.length) spans.pop(); // trailing send-state ("Sending…", "Sent")
     const bodyParts = [];
     for (let node = header.nextElementSibling; node; node = node.nextElementSibling) bodyParts.push(textOf(node));
-    return { sender, kind: spans[0] || sender, owner: null, text: norm(bodyParts.join(' ')), pending };
+    return { sender, kind: spans[0] || sender, text: norm(bodyParts.join(' ')), pending };
   };
   // Events, pills and unavailable rows: no bubble column and no byline.
   const describeEventRow = li => {
     const titled = li.querySelector('[title^="From "]');
     const sender = titled ? titled.getAttribute('title').slice(5) : (/Changed by (.+)$/u.exec(textOf(li))?.[1] ?? '');
     const unavailable = /unavailable on this device/iu.test(li.textContent ?? '');
-    return { sender, kind: unavailable ? 'unavailable' : 'event', owner: null, text: textOf(li), pending: false };
+    return { sender, kind: unavailable ? 'unavailable' : 'event', text: textOf(li), pending: false };
   };
   /** Every list item in "Messages" in order; rows without an event id (days, receipts) break runs. */
   const describeRows = () => {
@@ -1047,7 +1046,7 @@ async function cmdWaitFor(options) {
     await ensureOnChannel(bidi, context, state);
     const row = await bidi.waitFor(context, findMatchingRow,
       { text: options.text, sender: options.sender }, { timeoutMs: (options.timeout ?? 300) * 1_000, step: 'wait-for', code: 'wait_timeout' });
-    process.stdout.write(`${JSON.stringify({ sender: row.sender, kind: row.kind, ...(row.owner ? { owner: row.owner } : {}), text: row.text })}\n`);
+    process.stdout.write(`${JSON.stringify({ sender: row.sender, kind: row.kind, text: row.text })}\n`);
   });
 }
 
@@ -1079,7 +1078,7 @@ async function cmdTranscript(options) {
     }
     const rows = await bidi.run(context, H => H.describeRows());
     const transcript = (rows ?? []).filter(row => !row.pending)
-      .map(({ sender, kind, owner, text }) => (owner ? { sender, kind, owner, text } : { sender, kind, text }));
+      .map(({ sender, kind, text }) => ({ sender, kind, text }));
     process.stdout.write(`${JSON.stringify(transcript, null, 2)}\n`);
   });
 }

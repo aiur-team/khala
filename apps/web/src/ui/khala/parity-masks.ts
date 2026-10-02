@@ -85,4 +85,11 @@ export const PARITY_MASKS: readonly ParityMask[] = [
     reason: 'The per-agent percentage in a human\'s detail.',
     row: 'Progress bar and % (`.kh-rai-p`, `.kh-d-agent > i`, Working on) — Omit',
   },
+  {
+    // Operator request 2026-10-02: no machine tag; agent bubbles tinted by owner. The product deliberately
+    // differs from the design here (not an M1 omission), so these regions are masked rather than re-captured.
+    id: 'agent-row-owner-tint', selectors: ['#kh-thread .kh-row:not(.human):not(.me) .kh-name', '#kh-thread .kh-row:not(.human):not(.me) .kh-b'],
+    reason: 'Agent rows drop the "<owner>’s machine" tag and tint the bubble with the owner\'s bubble colour.',
+    row: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+  },
 ];

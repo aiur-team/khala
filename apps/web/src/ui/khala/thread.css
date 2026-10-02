@@ -36,10 +36,16 @@
 .kh-row.human .kh-b code { background: rgba(0,0,0,.2); }
 .kh-row.human .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
 .khala-app[data-theme="light"] .kh-row.human .kh-mention { color: #3a1026; }
-.kh-htag, .kh-otag { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; }
-.kh-htag { background: hsl(330 65% 48%); color: #fff; }
-.kh-otag { color: hsl(var(--oh) 70% 72%); border: 1px solid hsl(var(--oh) 60% 55% / .4); }
-.khala-app[data-theme="light"] .kh-otag { color: hsl(var(--oh) 60% 36%); }
+.kh-htag { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; background: hsl(330 65% 48%); color: #fff; }
+/* Operator request 2026-10-02: an agent's bubble is a greyed, darker (light theme: muted) tint of its
+   owner's colour — the viewer's accent for `.yours`, the owner's badge hue `--oh` for `.theirs`.
+   Text stays --fg at >= 4.5:1 in both themes. */
+.kh-row.agent { --ob: hsl(var(--oh) 65% 48%); --ob-mix: 30%; }
+.kh-row.agent.yours { --ob: var(--accent); }
+.khala-app[data-theme="light"] .kh-row.agent { --ob-mix: 28%; }
+.kh-row.agent .kh-b { background: color-mix(in srgb, var(--ob) var(--ob-mix), var(--surface-3)); }
+/* As on human bubbles, mentions take the bubble's text colour (hue-on-tint would drop below 4.5:1). */
+.kh-row.agent .kh-mention { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .kh-mention.kh-hm { background: hsl(var(--mh) 60% 50% / .16); padding: 0 4px; border-radius: 5px; }
 .kh-row.me .kh-mention.kh-hm, .kh-row.human .kh-mention.kh-hm { background: rgba(255,255,255,.18); text-decoration: none; }
 .kh-retry { align-self: center; color: var(--block); }
