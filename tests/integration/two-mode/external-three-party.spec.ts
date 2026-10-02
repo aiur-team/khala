@@ -269,7 +269,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
         native.clearDiscovery(actor);
       }
       const requestFingerprint = await approveExactRequest(owner, actor);
-      native.prompt(actor, `The owner approved the pending request. In this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite} to pick up that decision and connect. Do not create a new operation ID.`);
+      native.prompt(actor, `The owner approved the pending request. In this same native session, call the installed Khala MCP tool khala_channel_access_status with operationId ${operationId} and origin ${environment.appOrigin} to observe that decision and connect. Do not create a new operation ID.`);
       await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.bindingId), 120_000);
       await requireConnectedRequest(owner, requestFingerprint, roomId);
     }
