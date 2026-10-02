@@ -264,7 +264,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   return <HumanColorsProvider value={humanColors}><div ref={room} className={`kh-channel${rosterOpen ? ' roster-open' : ''}`}>
     <h1 className="sr-only" id="khala-channel-title" dir="auto">{title}</h1>
     <div ref={head} className="kh-head" onKeyDown={onRosterKeyDown}>
-      {onBack ? <button type="button" className="kh-back" aria-label="All conversations" onClick={onBack}><ChevronLeftIcon /></button> : null}
+      {onBack ? <button type="button" className="kh-back" aria-label="All channels" onClick={onBack}><ChevronLeftIcon /></button> : null}
       <div className="kh-stack">
         {others.slice(0, 4).map(member => <MemberAvatar key={member.participantId} member={member} interactive
           onClick={() => toggleParticipant(member.participantId)} />)}

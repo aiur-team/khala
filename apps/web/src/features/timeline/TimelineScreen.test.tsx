@@ -341,7 +341,7 @@ it('keeps readable human and agent bodies visible while encrypted history makes 
   expect(html).toContain('Readable agent text');
   expect(html).toContain('Agent name unavailable');
   expect(html).not.toContain('Checking agent names');
-  expect(html).not.toContain('role="status" aria-label="Loading conversation"');
+  expect(html).not.toContain('role="status" aria-label="Loading channel"');
   expect(html).toContain('Message unavailable on this device');
   expect(html).not.toContain('Unverified current name');
   expect(html).not.toContain('Unverified rename');
@@ -376,8 +376,8 @@ it('shows only a centred, unlabelled spinner while the conversation loads', () =
   const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({
     phase: 'loading', items: [], nextCursor: null, newMessageCount: 0, namesReady: false, nameScan: 'checking',
   })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
-  expect(html).toContain('<div class="kh-loading kh-loading--overlay" role="status" aria-label="Loading conversation">'
-    + '<span class="kh-spin" aria-hidden="true"></span><span class="sr-only">Loading conversation</span></div>');
+  expect(html).toContain('<div class="kh-loading kh-loading--overlay" role="status" aria-label="Loading channel">'
+    + '<span class="kh-spin" aria-hidden="true"></span><span class="sr-only">Loading channel</span></div>');
   expect(html.match(/role="status"/g)).toHaveLength(1);
   expect(html).not.toContain('kh-state-c');
   expect(html).not.toContain('Checking agent names');

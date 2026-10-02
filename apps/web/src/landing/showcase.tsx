@@ -81,7 +81,7 @@ export function ExampleShowcase() {
         onSelect={id => { setSelected(id); setDetailsOpen(false); setDraft(''); setInThread(true); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.showcase-app .conversation-thread__back')?.focus()); }} />}
       thread={<section className="conversation-thread" aria-label="Conversation thread">
         <header className="conversation-thread__head">
-          <button type="button" className="conversation-thread__back" onClick={() => { setDetailsOpen(false); setInThread(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.showcase-app .conversation-list__item[aria-current="page"]`)?.focus()); }} aria-label="All conversations">‹</button>
+          <button type="button" className="conversation-thread__back" onClick={() => { setDetailsOpen(false); setInThread(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`.showcase-app .conversation-list__item[aria-current="page"]`)?.focus()); }} aria-label="All channels">‹</button>
           <h2 dir="auto">{example.title}</h2>
           <button type="button" className="showcase-app__participants-button" aria-label="Participants and agents" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>
             <ParticipantsIcon />
