@@ -32,7 +32,10 @@ Ownership: A1 (Alice) owns Codex; A2 (Bob) owns Claude.
 | Agent ↔ agent | PASS | Alice 09:03:12 → Claude asked "Codex: what is the current time in UTC?" → Codex answered "09:03:26 UTC". No follow-on loop in the next 60 s. |
 | AE4 no self-wake | PASS | Codex reports no turn started from its own messages. Its `inbox.jsonl` holds 3 `@agent-` rows, all Claude's (`@agent-5563…`), none with Codex's own id (`@agent-7709…`). |
 | AE5 fallback | n/a | No wake leg failed. |
+| AE7 (pending run) | PENDING | Executor to run AE7a–AE7e for Codex owned by A1 and Claude owned by A2; record candidate SHA, versions, UTC timestamps, roster observations, hook frame and pane quotes, and wake latencies. |
 | AE6 reload + attribution | PASS | Both `transcript --reload` outputs hold all 13 messages from 3d–3f. Every agent row has its label, kind and owner tag, correct from each viewer's side (below). |
+
+AE7 is pending a separate Executor run; the PASS above covers only the original AE1–AE6 run.
 
 ## Reload transcripts (AE6)
 

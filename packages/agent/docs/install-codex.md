@@ -30,7 +30,7 @@
    environment; explicit paths keep its state aligned with the shell hooks.
    These are KM-112's provisional integration defaults, pending KM-151 live verification.
 
-5. Install the two hooks:
+5. Install the three hooks:
    ```sh
    node packages/agent/codex/install-hooks.mjs install
    ```
@@ -39,16 +39,22 @@
    old `codex-hook` handlers it warns about before continuing.
 
 6. Exit the existing Codex session, then run `codex resume <thread id>`.
-   In **Hooks need review**, trust the **two** Khala hooks with command
-   `khala hook deliver --harness codex` (UserPromptSubmit and Stop).
+   In **Hooks need review**, trust the **three** Khala hooks with command
+   `khala hook deliver --harness codex` (UserPromptSubmit, PostToolUse and Stop).
+   After updating, re-run `node packages/agent/codex/install-hooks.mjs install`,
+   then approve the new `PostToolUse` hook in **Hooks need review**. Without that
+   approval, Steer works like Sync.
 
 7. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
    the confirmation link it returns.
 
 8. Known limits: untrusted hooks prevent delivery; queued notices cannot deliver
    messages until the hooks are trusted, and the waker caps attempts at two per
-   cursor position. A busy session receives messages at its turn's Stop; only
-   idle sessions are woken. The waker acts only while the Khala MCP server runs.
+   cursor position. Sync delivers at the turn's Stop; Steer delivers at the next
+   tool boundary
+   without aborting the tool. Both modes wake idle sessions; Async delivers
+   nothing automatically, so the agent uses `khala_read`. The waker acts only
+   while the Khala MCP server runs.
 
 To remove these hooks, run `node packages/agent/codex/install-hooks.mjs uninstall`
 and remove the MCP table from your config. The backup is retained.

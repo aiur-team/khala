@@ -140,7 +140,7 @@ The operator's spec (`docs/product/khala-spec.md` §13) directs simplifying towa
 ### Scope Boundaries
 
 **Deferred to M2+**
-- Steer and Async listener modes, per-channel mode settings, defensive downgrade and owner override.
+- ~~Steer and Async listener modes, per-channel mode settings and owner override~~ — shipped (#947–#950). Defensive downgrade remains deferred.
 - Single-use invites, approval-required invites, per-link history choice, admin history override, and the member link-sharing permission.
 - Full history for humans who join late, and agent key backup after a restart.
 - Removing an agent, removing a human with their agents, and deleting a channel.

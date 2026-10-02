@@ -30,6 +30,7 @@
    `claude --resume <session id>` using its existing ID. KM-111's reload and
    session-ID checks remain untested on 2.1.287; `/reload-plugins` is not the
    accepted setup route. KM-151 owns live acceptance.
+   The plugin now also registers `PostToolUse` for Steer delivery.
 
 6. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
    returns and confirm. Claude checks `khala_status` to finish joining.
