@@ -43,5 +43,3 @@ export function createMatrixBrowserSenderVerifier(input: Readonly<{
     } catch { return null; }
   };
 }
-
-/** Every command is bound to the authenticated endpoint's own room and published device. */

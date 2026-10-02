@@ -529,28 +529,40 @@ describe('createMatrixHumanServices', () => {
     expect((await services(fetch).sessions.issue(principal, 'WEB' as DeviceId)).kind).toBe('ok');
     expect(writes).toEqual(current === 'Alice' ? [] : [{ displayname: 'Alice' }]);
     expect(await services(fetch).sessions.resolveParticipants([userId]))
-      .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: current }] });
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: userId }] });
   });
 
-  it.each(['read', 'write', 'throw'])('refuses a session when the display-name %s fails', async failure => {
+  it.each(['missing', 'read', 'write', 'throw', 'malformed'])('mints a session despite a %s display-name response', async failure => {
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const writes: unknown[] = [];
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      if (String(input).endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      if (path.endsWith('/keys/query')) return json(200, { device_keys: {} });
+      if (init?.method === 'PUT') {
+        writes.push(JSON.parse(String(init.body)));
+        return json(failure === 'write' ? 500 : 200, {});
+      }
       if (failure === 'throw') throw new Error('offline');
-      return json(failure === 'read' || init?.method === 'PUT' ? 503 : 200, { displayname: 'Old' });
+      if (failure === 'malformed') return new Response('invalid JSON', { status: 200 });
+      return json(failure === 'missing' ? 404 : failure === 'read' ? 503 : 200, { displayname: 'Old' });
     });
-    expect(await services(fetch).sessions.issue(principal, 'WEB' as DeviceId)).toEqual({ kind: 'unavailable' });
+    expect(await services(fetch).sessions.issue(principal, 'WEB' as DeviceId)).toMatchObject({ kind: 'ok' });
+    expect(writes).toEqual(['missing', 'write', 'malformed'].includes(failure) ? [{ displayname: 'Alice' }] : []);
   });
 
   it('resolves only canonical local participant accounts', async () => {
-    const matrix = services(vi.fn());
+    const fetch = vi.fn();
+    const matrix = services(fetch);
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
     const result = await matrix.sessions.resolveParticipants([userId]);
     expect(result).toMatchObject({
       kind: 'ok',
       participants: [{ matrixUserId: userId, ownerId: principal.ownerId, displayName: userId }],
     });
-    expect(await matrix.sessions.resolveParticipants(['@khala_bad:elsewhere.test'])).toEqual({ kind: 'unavailable' });
+    expect(await matrix.sessions.resolveParticipants(['@khala_bad:elsewhere.test'])).toEqual({ kind: 'ok',
+      participants: [{ matrixUserId: '@khala_bad:elsewhere.test', displayName: '@khala_bad:elsewhere.test', kind: 'unknown' }] });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

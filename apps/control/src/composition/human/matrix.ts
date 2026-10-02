@@ -378,15 +378,11 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         const path = `/_matrix/client/v3/profile/${encodeURIComponent(session.userId)}/displayname`;
         const headers = { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' };
         const profile = await request(path, { headers }, call);
-        if (profile.status !== 200) return { kind: 'unavailable' };
-        const current = await body(profile);
-        if (!current) return { kind: 'unavailable' };
         const desired = ownerFirstName(principal.verifiedEmail);
-        if (current.displayname !== desired) {
-          const written = await request(path, { method: 'PUT', headers, body: JSON.stringify({ displayname: desired }) }, call);
-          if (written.status !== 200) return { kind: 'unavailable' };
+        if (profile.status === 404 || (profile.status === 200 && (await body(profile))?.displayname !== desired)) {
+          await request(path, { method: 'PUT', headers, body: JSON.stringify({ displayname: desired }) }, call);
         }
-      } catch { return { kind: 'unavailable' }; }
+      } catch { /* Profile labels are best effort and never prevent session minting. */ }
       return {
         kind: 'ok',
         session: {
@@ -396,19 +392,10 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         },
       };
     },
-    async resolveParticipants(userIds, call) {
+    async resolveParticipants(userIds) {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
-      const participants: MatrixParticipant[] = [];
-      for (const userId of userIds) {
-        const human = participantFor(userId);
-        if (!human) return { kind: 'unavailable' };
-        let name: unknown;
-        try {
-          const profile = await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {}, call);
-          if (profile.status === 200) name = (await body(profile))?.displayname;
-        } catch { /* Missing profiles use the Matrix user id. */ }
-        participants.push({ ...human, displayName: displayName(name, userId) });
-      }
+      const participants = userIds.map(userId => participantFor(userId)
+        ?? { matrixUserId: userId, displayName: userId, kind: 'unknown' as const });
       return { kind: 'ok', participants };
     },
     async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = [], browserSession) {

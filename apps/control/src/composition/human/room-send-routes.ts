@@ -42,6 +42,7 @@ function validBody(value: unknown, human: boolean, action: Action): value is Rec
 
 export { createMatrixBrowserSenderVerifier, type BrowserSenderVerifier } from './browser-sender';
 
+/** Every command is bound to the authenticated endpoint's own room and published device. */
 export function createRoomSendRoutes(input: Readonly<{
   store: ControlStore;
   auth: Pick<AuthService, 'requireHumanMutation'>;
