@@ -12,7 +12,7 @@ describe('KhalaApp', () => {
   it('renders the full-bleed card with list, main, detail, popover and toast hosts', () => {
     const html = render();
     expect(html).toMatch(/<div class="khala-app" data-theme="dark"><section class="section-card kh-card" id="kh-card">/u);
-    expect(html).toContain('<aside class="kh-list" aria-label="Conversations"><div class="kh-brand">');
+    expect(html).toContain('<aside class="kh-list" aria-label="Channels"><div class="kh-brand">');
     expect(html).toContain('<p>list</p></aside><main class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></main>');
     expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div></section></div>');
   });

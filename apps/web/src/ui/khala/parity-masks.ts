@@ -98,4 +98,11 @@ export const PARITY_MASKS: readonly ParityMask[] = [
     reason: 'The brand row\'s Live badge, removed from the signed-in app.',
     row: 'operator request #954: no Live badge in the brand row',
   },
+  {
+    // Operator request 2026-10-02: Channels label. The list heading reads "Channels" where the design says
+    // "Conversations"; an intentional copy difference, so only the heading word is masked.
+    id: 'list-head-channels', selectors: ['.kh-list-head > b'],
+    reason: 'The list heading reads "Channels" instead of the design\'s "Conversations".',
+    row: 'operator request 2026-10-02: Channels label',
+  },
 ];
