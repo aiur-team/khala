@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import type { Disposer } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
+import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { persistTheme, resolveInitialTheme } from '../../shell/theme';
 import type { ShellMode, ThemeChoice } from '../../shell/types';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
@@ -70,12 +71,6 @@ function InactiveDevice({ application, timedOut }: { application: HumanApplicati
   </section>;
 }
 
-function RouteLoading() {
-  return <section className="khala-route-loading" role="status" aria-label="Loading conversation">
-    <span /><span /><span />
-  </section>;
-}
-
 function ReadyRoute<Route>({ context, chrome, routes, renderRoute, attachCapabilities }: {
   context: HumanRouteContext;
   chrome: HumanShellChrome;
@@ -120,7 +115,7 @@ export function HumanScreen<Route>({
       <ReadyRoute context={snapshot.context} chrome={chrome} routes={routes} renderRoute={renderRoute} attachCapabilities={attachCapabilities} />
     );
   } else if (snapshot.phase === 'navigating') {
-    content = <RouteLoading />;
+    content = <LoadingSpinner />;
   } else if (snapshot.phase === 'signed_out') {
     content = renderSignedOut(snapshot.path);
   } else if (snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'

@@ -1070,7 +1070,7 @@ async function cmdTranscript(options) {
       const snapshot = await bidi.run(context, H => {
         const older = H.find('Load earlier messages');
         if (H.enabled(older)) { H.click(older); return { loading: true, count: -1 }; }
-        const loading = [...document.querySelectorAll('[role=status]')].some(node => /Loading conversation|Checking agent names/u.test(node.textContent ?? ''));
+        const loading = document.querySelector('.kh-loading') !== null;
         return { loading, count: H.rows().length, empty: H.hasText('No messages yet.') };
       }).catch(() => ({ loading: true, count: -1 }));
       if (snapshot.loading || snapshot.count !== lastCount) { lastCount = snapshot.count; stableSince = Date.now(); }

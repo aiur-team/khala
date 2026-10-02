@@ -10,6 +10,7 @@ import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
+import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import type { HumanRoomRenderer } from './mount';
 import { ChannelAddAgent, ChannelInvite } from '../../features/channel/ChannelSharePanel';
 import { useConversationIndex } from './ConversationIndexRoute';
@@ -92,7 +93,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
   const composer = useRef<TimelineComposerHandle>(null);
   if (context.conversations && conversations === undefined) {
-    return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
+    return <LoadingSpinner />;
   }
   if (context.conversations && conversations === null) {
     return <Panel heading="Conversation unavailable"><p role="alert">Channel access could not be checked. Try reloading.</p></Panel>;
