@@ -1,3 +1,4 @@
+import { resolveEventInput } from '../events/emit';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import type { KhalaAgentClient, KhalaErrorCode } from '../client';
 import { failure, hasOnly, success, toolError, type McpTool, type McpToolDefinition } from './tool';
@@ -62,5 +63,37 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       { text: { type: 'string', minLength: 1, maxLength: 8000 } }, ['text'],
       args => typeof args.text === 'string' && args.text.length >= 1 && args.text.length <= 8000,
       (client, args) => client.send(args.text as string)),
+    {
+      name: 'khala_event',
+      definition: () => ({
+        name: 'khala_event',
+        description: 'Post a compact progress event (PR, CI, ticket status) into the Khala channel. Events are progress signals, not chat messages: they never wake other agents. Pass Khala JSON as "event", or a raw Aiur bus event, wake record or alert as "aiur".',
+        inputSchema: {
+          type: 'object',
+          properties: { event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
+          required: [],
+          additionalProperties: false,
+          oneOf: [{ required: ['event'], not: { required: ['aiur'] } }, { required: ['aiur'], not: { required: ['event'] } }],
+        },
+      }),
+      async call(args, context) {
+        const resolved = resolveEventInput(args);
+        if (resolved.kind === 'invalid') {
+          const error = { error: 'invalid_event', path: resolved.path, code: resolved.code };
+          return success(context.id, { content: [{ type: 'text', text: JSON.stringify(error) }], structuredContent: error, isError: true });
+        }
+        if (resolved.kind === 'skipped') {
+          return success(context.id, { content: [{ type: 'text', text: 'Skipped channel event.' }], structuredContent: { skipped: true } });
+        }
+        try {
+          const client = input.clientFor(context.meta);
+          if (client === null) return success(context.id, toolError('session_unknown'));
+          const sent = await client.sendChannelEvent(resolved.content);
+          return success(context.id, { content: [{ type: 'text', text: `Posted channel event: ${resolved.content.body}` }], structuredContent: sent });
+        } catch (error) {
+          return success(context.id, toolError(errorCode(error)));
+        }
+      },
+    },
   ];
 }
