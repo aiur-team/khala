@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 ROSTER = os.path.join(HERE, 'roster.md')
 TICKETS = os.path.join(HERE, 'tickets')
-SHA = '5ad41c8b'
+SHA = os.environ.get('KI_SHA', '7672b0e5')
 PREFIX = 'KI-'
 
 def ids(cell):

@@ -10,6 +10,8 @@ execution: code
 build_order_id: aiur-team/khala:internal-mode
 plan_version: 1
 researched_at_commit: 5ad41c8b
+refreshed_at_commit: 7672b0e5
+build_order_root: aiur-team/khala#828
 ---
 
 # Khala Internal Mode (Local Channels) - Plan
@@ -247,7 +249,7 @@ AE1–AE12 pass scripted (KI-160) and live (KI-161); hosted tests unchanged and 
 | DNS rebinding / CSRF against the owner surface | KTD8 guards with tests (AE11) |
 | Auto-join on loopback: any same-uid process with a link joins | Accepted (D5); single-use + 10 min + join line + remove |
 | `matrix-js-sdk` loaded in local agent processes | Lazy import in `startChannelSession`; KI-151 asserts it is not loaded |
-| In-flight web PRs (#976 rename, #978 colours, #986 initials) change ports the local adapter implements | Web tickets refresh pointers at pickup; KI-140/KI-135 implement whatever port shape merged; listed in each ticket's stop conditions |
+| In-flight web PRs (#976 rename, #978 colours, #986 initials) change ports the local adapter implements | #976, #986 and #989 merged before promotion and the tickets were refreshed at `7672b0e5` (reconciliation R-REFRESH); #978 and #982 remain stop conditions; web tickets refresh pointers at pickup |
 | Codex/Claude harness drift | Live capstone KI-161 reuses the M1 KM-151 runbook |
 
 ## Follow-on note: cross-machine (D1, later phase)

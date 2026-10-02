@@ -1,6 +1,6 @@
 # Internal mode build — validation report (plan_version 1)
 
-Command: `python3 docs/build/internal/build_pack.py` (exit 0). Reviewed against `origin/main` `5ad41c8b`.
+Command: `python3 docs/build/internal/build_pack.py` (exit 0). Reviewed against `origin/main` `5ad41c8b`; re-run before promotion against `7672b0e5` (exit 0, 1264 pointers, 0 errors, graph unchanged; reconciliation R-REFRESH).
 
 ## Mechanical checks
 
@@ -35,4 +35,4 @@ Critical path: 8 waves (KI-101 → KI-110 → KI-140 → KI-141 → KI-143 → K
 - Every data-flow coupling dropped from the hard graph is reconnected by KI-137, KI-143, KI-145 or KI-160 (plan § Integration ledger).
 - Integration and feature acceptance: KI-160 (scripted, agent-runnable) and KI-161 (live, Executor-owned).
 - Ticket-writer findings were reconciled in [`reconciliation.md`](reconciliation.md) (R1–R18 contract rulings, G1–G4 graph/scope rulings); one P3 gap moved to the deferred ledger (ID13).
-- In-flight PRs (#976, #978, #986, #979, #972, #982) are stop conditions in the affected tickets, not edges; #976 is a soft gate for the rename legs of KI-145/KI-161 (G3).
+- In-flight PRs (#976, #978, #986, #979, #972, #982) are stop conditions in the affected tickets, not edges; #976 is a soft gate for the rename legs of KI-145/KI-161 (G3). At promotion (`7672b0e5`) #976, #986 and #989 (#972's Profile item) have merged; #978, #979 and #982 are still open.

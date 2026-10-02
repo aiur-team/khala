@@ -1,8 +1,8 @@
 # Internal mode build — ticket roster (plan_version 1)
 
-- Build order: `aiur-team/khala:internal-mode`. Logical prefix `KI-`; IDs are opaque and do not encode phase.
+- Build order: `aiur-team/khala:internal-mode`, promoted as sub-issues of the existing Build Order root **#828** ("Build Order: Khala M1 external chat"); there is no separate internal-mode root. Logical prefix `KI-`; IDs are opaque and do not encode phase.
 - Plan: [`docs/plans/2026-10-02-001-feat-internal-mode-plan.md`](../../plans/2026-10-02-001-feat-internal-mode-plan.md). Shapes: [`contracts.md`](contracts.md) as amended by [`reconciliation.md`](reconciliation.md) (every ticket quotes it verbatim). Deferred: [`deferred-findings.md`](deferred-findings.md). Questions: [`questions-or-commands.md`](questions-or-commands.md). Research: [`research/`](research/).
-- Researched at `origin/main` `5ad41c8b` (2026-10-02). Implementation pointers in each ticket are refreshable at pickup; contract names are pinned.
+- Researched at `origin/main` `5ad41c8b` (2026-10-02); pointers refreshed at `7672b0e5` before promotion (reconciliation R-REFRESH). Implementation pointers in each ticket are refreshable at pickup; contract names are pinned.
 - Validate with `python3 docs/build/internal/build_pack.py <out_dir>` (writes `build-order.json`, prints waves, critical path and lane starts; exits non-zero on any error).
 
 ## Lanes
@@ -79,7 +79,7 @@ Contract-layer ticket KI-110 is the spine: every helper route, the agent seam an
 
 - **G-PANES** (KI-161): the operator's Claude Code and Codex panes listen on `AGENT-MESSAGES.md`, with the current Khala plugin installed (the old E09 plugin tools must be removed first; research-1 side note).
 - **G-AIUR-DOCS** (KI-170): a PR in `aiur-team/aiur` (`website/docs-app/khala/quick-start.md`, section "Local agents only") — opened by the KI-170 worker if it has push access, else by the Executor.
-- **In-flight PRs** that touch surfaces the web adapter implements: #976 (agent rename via `AgentNamesPort`), #978 (per-human colours), #986 (custom initials), #979 (docs/settings.md). Tickets name them in their stop conditions and refresh pointers at pickup; none is a hard edge.
+- **In-flight PRs** that touch surfaces the web adapter implements: #976 (agent rename via `AgentNamesPort`, merged `574d126d`), #978 (per-human colours, open), #986 (custom initials, merged `1ed09f0a`), #989 (Profile dialog, merged `7672b0e5`), #982 (Initials field, open), #979 (docs/settings.md, open). Tickets name them in their stop conditions and refresh pointers at pickup; none is a hard edge.
 
 ## Promotion notes for the Executor
 

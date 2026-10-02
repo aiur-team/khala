@@ -247,7 +247,7 @@ export type LocalChannelCreated = { roomId: string; name: string; selfLink: stri
 ```ts
 export type OwnerProfile = { v: 1; username: string; color: HumanColorId; initials: string | null; updatedAt: string };   // initials per R10   // <stateRoot>/local/owner.json
 export type OwnerProfileView = { userId: typeof LOCAL_OWNER_USER_ID; ownerId: typeof LOCAL_OWNER_ID; username: string; suggestion: string; color: HumanColorId; initials: string | null };
-// The web's ProfilePort.get() maps it to ProfileView {username, suggestion, color} (`packages/contracts/src/m1/profile.ts:6`); username is never null locally, so the first-run username gate never shows.
+// The web's ProfilePort.get() maps it to ProfileView {username, suggestion, color} (`packages/contracts/src/m1/profile.ts:7`); username is never null locally, so the first-run username gate never shows.
 ```
 
 - First helper start with no `owner.json`: `username = resolveLocalOwnerName(env)` (L10); `color = defaultHumanColor(LOCAL_OWNER_USER_ID)` (`packages/contracts/src/m1/colors.ts:19-21`).
