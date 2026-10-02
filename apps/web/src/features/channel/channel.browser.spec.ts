@@ -104,9 +104,15 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Name for Scout');
     const nameField = renaming.getByLabel('Name for Scout');
     assert.equal(await nameField.getAttribute('maxlength'), '40');
+    assert.equal(await nameField.getAttribute('aria-invalid'), null);
+    assert.equal(await nameField.getAttribute('aria-describedby'), null);
+    assert.equal(await renaming.getByRole('alert').count(), 0, 'no rule text while the name is valid');
     await nameField.fill('a');
-    await renaming.getByRole('button', { name: 'Rename' }).click();
-    assert.equal(await renaming.getByRole('alert').textContent(), 'At least 2 characters.');
+    const ruleError = renaming.getByRole('alert');
+    assert.equal(await ruleError.textContent(), 'At least 2 characters.');
+    assert.equal(await nameField.getAttribute('aria-invalid'), 'true');
+    assert.equal(await nameField.getAttribute('aria-describedby'), await ruleError.getAttribute('id'));
+    assert.equal(await renaming.getByRole('button', { name: 'Rename' }).isDisabled(), true);
     await nameField.fill('Builder');
     await renaming.getByRole('button', { name: 'Rename' }).click();
     await renaming.getByRole('alert').filter({ hasText: 'That name is taken.' }).waitFor();
@@ -219,7 +225,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     if (process.env.KHALA_ROSTER_SCREENSHOT_DIR) {
       const shots = process.env.KHALA_ROSTER_SCREENSHOT_DIR;
       await mkdir(shots, { recursive: true });
-      for (const width of [1440, 390]) {
+      for (const width of [1280, 390]) {
         for (const theme of ['dark', 'light']) {
           const shot = await context.newPage();
           await shot.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -236,6 +242,8 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
           await shot.getByRole('button', { name: 'Rename Scout' }).first().click();
           await shot.waitForTimeout(300);
           await shot.screenshot({ path: join(shots, `rename-${width}-${theme}.png`) });
+          await shot.getByLabel('Name for Scout').fill('two words');
+          await shot.screenshot({ path: join(shots, `rename-error-${width}-${theme}.png`) });
           await shot.getByRole('button', { name: 'Close details' }).click();
           await shot.locator('#kh-head-btn').click();
           await shot.getByRole('button', { name: '@Scout' }).click();

@@ -58,12 +58,13 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipant
  */
 export async function renameChannelAgent(context: Pick<Parameters<HumanRoomRenderer>[0], 'agentNames' | 'describeParticipant'>,
   room: Pick<ChannelController, 'getSnapshot'>, viewer: ParticipantView, participantId: ParticipantId, name: string,
+  signal?: AbortSignal,
 ): Promise<RenameAgentResult> {
   const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
   if (viewer.kind !== 'human' || target?.ownerId !== viewer.ownerId) return { kind: 'error', code: 'not_owner' };
   const detail = context.describeParticipant?.(participantId);
   if (!context.agentNames || detail?.kind !== 'agent') return { kind: 'error', code: 'unavailable' };
-  return context.agentNames.rename(detail.matrixUserId, name);
+  return context.agentNames.rename(detail.matrixUserId, name, signal);
 }
 
 export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, routes) => (
@@ -172,8 +173,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       {...(context.setListeningMode ? { onSetMode: guardedListeningModeSetter({ roomId, viewer, matrixUserId,
         ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
         joined: () => timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
-      {...(context.agentNames ? { renameAgent: async (participantId: ParticipantId, name: string) => {
-        const result = await renameChannelAgent(context, room, viewer, participantId, name);
+      {...(context.agentNames ? { renameAgent: async (participantId: ParticipantId, name: string, signal?: AbortSignal) => {
+        const result = await renameChannelAgent(context, room, viewer, participantId, name, signal);
         if (result.kind === 'ok') {
           setRenamed(current => new Map([...current, [participantId, result.name]]));
           room.refresh?.();
