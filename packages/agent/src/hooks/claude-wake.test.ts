@@ -55,10 +55,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await fs.rm(root, { recursive: true, force: true });
 });
-it('ignores missing sessions without creating files within 500ms', async () => {
-  const started = Date.now();
+it('ignores missing sessions without creating files or entering the timed watcher', async () => {
+  const now = vi.fn(() => new Date());
+  const stderr = { write: vi.fn() };
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now, stderr })).toBe(0);
+  expect(now).not.toHaveBeenCalled();
+  expect(stderr.write).not.toHaveBeenCalled();
   expect(await start().result).toEqual({ code: 0, stdout: '', stderr: '' });
-  expect(Date.now() - started).toBeLessThan(500);
   expect(await fs.readdir(root)).toEqual([]);
 });
 it.each(['garbage', 'null', '{}', '{"session_id":"..","hook_event_name":"Stop"}', '{"session_id":"../x","hook_event_name":"Stop"}', '{"session_id":"session","hook_event_name":"UserPromptSubmit"}'])('silently ignores invalid input %s', async stdin => {
