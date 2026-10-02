@@ -1,19 +1,17 @@
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
-import { validateAgentName } from '@khala/contracts/messaging/agent-names';
-import type { ChannelAgentView, ChannelController } from './controller';
-import { participantRosterName } from './participant-name';
+// The roster disclosure (RECREATION-SPEC §6, M1 form per §22) and the
+// rename section the agent detail pane shows for the viewer's own agents.
 
-export interface AgentPresencePanelProps {
-  controller: ChannelController;
-  copyText?: (value: string) => Promise<void>;
-  viewerOwnerId?: OwnerId;
-  currentNames?: ReadonlyMap<ParticipantId, string>;
-  namesPending?: boolean;
-  renameAgent?: (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
-  renameScope?: string;
-  renderOwnerControls?: (agent: ChannelAgentView) => ReactNode;
-}
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import { Avatar } from '../../ui/khala/Avatar';
+import { harnessLogo, initials } from '../../ui/khala/identity';
+import { AgentIcon, AsyncIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
+import { COMING_SOON } from '../../ui/khala/InvitePopover';
+import { Popover } from '../../ui/khala/Popover';
+import { Segmented } from '../../ui/khala/Segmented';
+import type { AgentMember, ChannelMembers, HumanMember } from './members';
+import { HARNESS_NAMES, ownerOfLabel } from './roster-model';
 
 type PendingRename = { name: string; clientTxnId: string };
 
@@ -36,20 +34,25 @@ function writePending(key: string, value: PendingRename | null): boolean {
   } catch { return false; }
 }
 
-function RenameAgent({ agent, name, renameAgent, storageKey }: {
-  agent: ChannelAgentView; name: string;
-  renameAgent(participantId: ParticipantId, name: string, clientTxnId: string): Promise<'accepted' | 'unknown' | 'rejected'>;
+export type RenameAgentHandler = (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
+
+/**
+ * Renames one of the viewer's agents. An unconfirmed request survives a
+ * reload under `storageKey` and is retried with the same `clientTxnId`.
+ */
+export function RenameAgent({ participantId, name, renameAgent, storageKey }: Readonly<{
+  participantId: ParticipantId;
+  name: string;
+  renameAgent: RenameAgentHandler;
   storageKey: string;
-}) {
+}>) {
   const [pending, setPending] = useState<PendingRename | null>(() => readPending(storageKey));
-  const [editing, setEditing] = useState(pending !== null);
   const [draft, setDraft] = useState(pending?.name ?? name);
   const [status, setStatus] = useState('');
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!pending || name !== pending.name) return;
-    setEditing(false);
     setStatus('');
     setPending(null);
     writePending(storageKey, null);
@@ -70,7 +73,7 @@ function RenameAgent({ agent, name, renameAgent, storageKey }: {
     setSending(true);
     setStatus('Waiting for the channel to confirm the name…');
     try {
-      const result = await renameAgent(agent.participantId, request.name, request.clientTxnId);
+      const result = await renameAgent(participantId, request.name, request.clientTxnId);
       if (result === 'rejected') { writePending(storageKey, null); setPending(null); setStatus('Name change was refused. Check your channel access and try again.'); }
       else if (result === 'unknown') setStatus('Delivery is unknown. Check delivery using the same request.');
     } catch {
@@ -79,125 +82,107 @@ function RenameAgent({ agent, name, renameAgent, storageKey }: {
       setSending(false);
     }
   }
-  return editing ? <form onSubmit={event => { event.preventDefault(); void submit(); }}>
-    <label htmlFor={`agent-name-${agent.participantId}`}>Agent name</label>
-    <input id={`agent-name-${agent.participantId}`} value={draft} onChange={event => setDraft(event.target.value)} maxLength={80} />
-    <button type="submit" disabled={sending}>{pending ? 'Check delivery' : 'Save name'}</button>
-    <button type="button" onClick={() => { setEditing(false); setStatus(''); }}>Cancel</button>
-    {status ? <p role="alert">{status}</p> : null}
-  </form> : <button type="button" onClick={() => { setDraft(pending?.name ?? name); setEditing(true); }}
-    aria-label={`Edit name for ${name}`}>{name === agent.displayName ? 'Name agent' : 'Edit name'}</button>;
-}
-
-function defaultCopyText(value: string): Promise<void> {
-  return navigator.clipboard.writeText(value);
-}
-
-function Onboarding({ agent, copy, copyState }: {
-  agent: ChannelAgentView;
-  copy: (agent: ChannelAgentView) => void;
-  copyState: 'idle' | 'copied' | 'failed';
-}) {
-  if (agent.connection === 'connected' || agent.routeLabel === 'Channel agent') return null;
-  return (
-    <section className="agent-presence__onboarding" aria-labelledby={`connect-${agent.participantId}`}>
-      <h3 id={`connect-${agent.participantId}`}>Connect {agent.displayName}</h3>
-      {agent.installCommand ? (
-        <>
-          <p>Give this one command to the agent:</p>
-          <code className="agent-presence__command">{agent.installCommand}</code>
-          <button type="button" className="agent-presence__copy aiur-action" onClick={() => copy(agent)}>
-            {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy install command'}
-          </button>
-        </>
-      ) : agent.installCommandError ? (
-        <p role="alert">The install command is unavailable right now.</p>
-      ) : (
-        <p role="status">Preparing the install command…</p>
-      )}
-    </section>
-  );
-}
-
-export function AgentPresencePanel({ controller, copyText = defaultCopyText, viewerOwnerId, currentNames, namesPending = false, renameAgent, renameScope, renderOwnerControls }: AgentPresencePanelProps) {
-  const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const [copyStatus, setCopyStatus] = useState<Readonly<{ participantId: ParticipantId | null; state: 'idle' | 'copied' | 'failed' }>>({
-    participantId: null,
-    state: 'idle',
-  });
-  const panelStatusMessage = view.phase === 'unavailable'
-    ? 'Agent presence is unavailable right now.'
-    : view.phase === 'ready' && view.agents.length === 0
-      ? 'No agents have joined this channel yet.'
-      : null;
-  const nameCounts = new Map<string, number>();
-  for (const agent of view.agents) {
-    const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
-    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
-  }
-  const nameOrdinals = new Map<ParticipantId, number>();
-  const nextOrdinal = new Map<string, number>();
-  for (const agent of [...view.agents].sort((left, right) => left.participantId.localeCompare(right.participantId))) {
-    const name = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
-    const ordinal = (nextOrdinal.get(name) ?? 0) + 1;
-    nextOrdinal.set(name, ordinal);
-    nameOrdinals.set(agent.participantId, ordinal);
-  }
-
-  function copy(agent: ChannelAgentView): void {
-    if (!agent.installCommand) return;
-    void copyText(agent.installCommand).then(
-      () => setCopyStatus({ participantId: agent.participantId, state: 'copied' }),
-      () => setCopyStatus({ participantId: agent.participantId, state: 'failed' }),
-    );
-  }
-
-  return (
-    <div className="agent-presence">
-      {view.phase === 'loading' ? <p role="status">Loading…</p> : null}
-      {panelStatusMessage ? <p role="status">{panelStatusMessage}</p> : null}
-      <ol className="agent-presence__list">
-        {view.agents.map(agent => {
-          const baseName = participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent');
-          const name = (nameCounts.get(baseName) ?? 0) > 1
-            ? `${baseName} (agent ${nameOrdinals.get(agent.participantId)})` : baseName;
-          const owned = Boolean(viewerOwnerId && agent.ownerId === viewerOwnerId);
-          const ownerName = participantRosterName(agent.ownerDisplayName, 'Channel member');
-          const hasOwnerName = ownerName !== 'Channel member' && ownerName.trim().length > 0;
-          const ownerLabel = owned ? 'Your agent' : hasOwnerName ? `${ownerName}’s agent` : null;
-          const connectionLabel = agent.connection === 'connected' ? 'Connected'
-            : agent.connection === 'unknown' ? 'Checking connection…' : 'Unavailable';
-          return <li key={agent.participantId} className="agent-presence__agent">
-            <details className="agent-presence__details" onKeyDown={event => {
-              if (event.key !== 'Escape' || !event.currentTarget.open) return;
-              event.preventDefault();
-              event.stopPropagation();
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector('summary')?.focus();
-            }}>
-              <summary aria-label={`Details for ${name}, ${connectionLabel}${ownerLabel ? `, ${ownerLabel}` : ''}`}>
-                <span className="channel-participants__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
-                <span className="agent-presence__identity"><span className="agent-presence__name">{name}</span>
-                  {ownerLabel ? <span className="agent-presence__owner">{ownerLabel}</span> : null}
-                  <span className="agent-presence__connection">{connectionLabel}</span></span>
-                <span className="agent-presence__chevron" aria-hidden="true">⌄</span>
-              </summary>
-              <div className="agent-presence__detail-body">
-                {owned ? renderOwnerControls?.(agent) : null}
-                {!namesPending && renameAgent && viewerOwnerId && renameScope && owned ? <RenameAgent
-                  agent={agent} name={currentNames?.get(agent.participantId) ?? agent.displayName} renameAgent={renameAgent}
-                  storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, agent.participantId])}`} /> : null}
-                {owned ? <Onboarding agent={{ ...agent, displayName: name }} copy={copy}
-                  copyState={copyStatus.participantId === agent.participantId ? copyStatus.state : 'idle'} />
-                  : null}
-              </div>
-            </details>
-          </li>;
-        })}
-      </ol>
-      <p className="agent-presence__copy-status" role="status" aria-live="polite">
-        {copyStatus.state === 'copied' ? 'Install command copied.' : copyStatus.state === 'failed' ? 'Install command could not be copied.' : ''}
-      </p>
+  return <form className="kh-d-rename" onSubmit={event => { event.preventDefault(); void submit(); }}>
+    <div className="kh-row2">
+      <input className="kh-txt" aria-label={`Name for ${name}`} value={draft} onChange={event => setDraft(event.target.value)} maxLength={80} />
+      <button type="submit" className="kh-btn pri" disabled={sending}>{pending ? 'Check delivery' : 'Rename'}</button>
     </div>
-  );
+    {status ? <p role="alert">{status}</p> : null}
+  </form>;
 }
+
+/** Static or interactive avatar for a member. */
+export function MemberAvatar({ member, interactive = false, onClick }: Readonly<{
+  member: HumanMember | AgentMember;
+  interactive?: boolean;
+  onClick?: () => void;
+}>) {
+  const shared = interactive ? { onClick: () => onClick?.() } : { static: true as const };
+  if (member.kind === 'human') return <Avatar kind="human" label={member.name} hue={member.hue} initials={member.initials} {...shared} />;
+  return <Avatar kind="agent" label={agentLabel(member)} hue={member.hue} ownerHue={member.ownerHue}
+    ownerInitials={member.ownerInitials} logo={member.harness ? harnessLogo(member.harness) : null}
+    initials={initials(member.name)} {...shared} />;
+}
+
+/** `Claude`, or `Claude #a1b2` when another owner has an agent with the same name. */
+export function agentLabel(agent: AgentMember): string {
+  return agent.idBadge === null ? agent.name : `${agent.name} ${agent.idBadge}`;
+}
+
+/** `<b>{label}{.kh-id}</b>` */
+export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
+  return <b>{agent.name}{agent.idBadge === null ? null
+    : <span className="kh-id" style={{ '--h': agent.hue } as CSSProperties}>{agent.idBadge}</span>}</b>;
+}
+
+export const harnessName = (agent: AgentMember) => agent.harness ? HARNESS_NAMES[agent.harness] : 'Agent';
+
+const SYNC_TIP = 'Sync · next turn';
+const MODES = [
+  { value: 'steer', label: <SteerIcon />, tip: 'Steer · interrupts' },
+  { value: 'sync', label: <SyncIcon />, tip: SYNC_TIP },
+  { value: 'async', label: <AsyncIcon />, tip: 'Async · on demand' },
+] as const;
+
+function AgentRow({ agent, onOpen }: Readonly<{ agent: AgentMember; onOpen(participantId: string): void }>) {
+  return <div className="kh-rrow">
+    <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
+      <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
+    </button>
+    <span className="kh-racts">{agent.isViewerOwned ? <>
+      {/* Listening modes are M2 (§22): shown locked on Sync. */}
+      <Segmented icon locked title={COMING_SOON} label={`Listening mode for ${agentLabel(agent)}`} value="sync" options={MODES} />
+      <button type="button" className="kh-ib sm kh-mode-btn" disabled title={COMING_SOON} data-tip={SYNC_TIP}
+        aria-label={`Listening mode for ${agentLabel(agent)}: ${SYNC_TIP}`}><SyncIcon /></button>
+    </> : <span className="kh-mode-ro" role="img" data-tip={SYNC_TIP} aria-label={SYNC_TIP}><SyncIcon /></span>}</span>
+  </div>;
+}
+
+function AddAgent({ renderAddAgent }: Readonly<{ renderAddAgent: () => ReactNode }>) {
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return <span className="kh-racts">
+    <button ref={anchor} type="button" className="kh-ib sm" data-tip="Add agent" aria-label="Add agent" aria-expanded={open}
+      onClick={() => setOpen(current => !current)}><AgentIcon /></button>
+    <Popover anchor={anchor} open={open} onClose={() => setOpen(false)}>{renderAddAgent()}</Popover>
+  </span>;
+}
+
+export type ChannelRosterProps = Readonly<{
+  members: ChannelMembers;
+  phase: 'loading' | 'ready' | 'unavailable';
+  onOpen(participantId: string): void;
+  /** The Add agent popover body on the viewer's row. */
+  renderAddAgent?: (() => ReactNode) | undefined;
+}>;
+
+/** The roster tree: one group per human, each with the agents it owns. */
+export function ChannelRoster({ members, phase, onOpen, renderAddAgent }: ChannelRosterProps) {
+  const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
+  const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
+  return <>
+    {phase === 'loading' ? <p className="kh-roster-status" role="status">Checking participants…</p> : null}
+    {phase === 'unavailable' ? <p className="kh-roster-status" role="status">Agent presence is unavailable right now.</p> : null}
+    {members.groups.map(group => {
+      const human = 'notInChannel' in group ? null : humansById.get(group.human.ownerId) ?? null;
+      const agents = group.agents.flatMap(agent => agentsById.get(agent.participantId) ?? []);
+      const agentCount = agents.length > 0 ? <i>{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</i> : null;
+      return <div key={`${group.human.ownerId}:${'notInChannel' in group ? 'absent' : 'member'}`} className="kh-rg">
+        <div className="kh-rrow">
+          {human ? <button type="button" className="kh-rh" data-kh-human={human.participantId} onClick={() => onOpen(human.participantId)}>
+            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b><em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
+          </button> : <div className="kh-rh">
+            <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'} />
+            <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
+          </div>}
+          {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
+        </div>
+        {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent} onOpen={onOpen} />)}</div> : null}
+      </div>;
+    })}
+  </>;
+}
+
+/** @deprecated Use `ChannelRoster`; the agent list is now the roster tree. */
+export const AgentPresencePanel = ChannelRoster;
+export type AgentPresencePanelProps = ChannelRosterProps;

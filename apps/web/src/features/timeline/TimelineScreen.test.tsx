@@ -157,6 +157,8 @@ describe('TimelineScreen', () => {
     expect(html).toContain('aria-label="Assistant, your agent,');
     expect(html).toContain('Maya’s machine</span>');
     expect(html).not.toMatch(/class="kh-row me/);
+    // §3: the viewer's owner badge reads `YO`, as in the roster and chips.
+    expect(html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1))).toEqual(['YO', 'MA']);
   });
 
   it('R1: disambiguates two different owners sharing the same display name with an id badge', () => {
@@ -460,6 +462,11 @@ describe('thread design (KM-182)', () => {
   it('shows the empty thread with an Invite button', () => {
     const html = renderToStaticMarkup(<TimelineScreen controller={ready([])} roomPort={noopSendPort} roomId={roomId} viewer={viewer} onInvite={() => {}} />);
     expect(html).toContain('<li class="kh-empty"><b>No messages yet</b><button type="button" class="kh-btn pri">Invite</button></li>');
+  });
+
+  it('omits the empty thread\'s Invite button without an invite path', () => {
+    const html = renderToStaticMarkup(<TimelineScreen controller={ready([])} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(html).toContain('<li class="kh-empty"><b>No messages yet</b></li>');
   });
 
   it('renders history-unavailable and access-lost as state cards', () => {

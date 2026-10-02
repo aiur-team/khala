@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
+import { renderMessageContent } from '../../features/timeline/message-renderer';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
@@ -8,7 +11,7 @@ import { projectTimelineNames } from '../../features/timeline/names';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import type { HumanRoomRenderer } from './mount';
-import { ChannelSharePanel } from '../../features/channel/ChannelSharePanel';
+import { ChannelAddAgent, ChannelInvite } from '../../features/channel/ChannelSharePanel';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
 import { createHumanPendingSendStore } from './pending-send-store';
@@ -87,6 +90,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     initialName: agent.displayName,
   }] : []);
   const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  const composer = useRef<TimelineComposerHandle>(null);
   if (context.conversations && conversations === undefined) {
     return <Panel heading="Loading conversation"><p role="status">Checking channel access…</p></Panel>;
   }
@@ -104,24 +108,47 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     );
   }
 
+  const linkSource = context.admission ? { admission: context.admission, roomId,
+    ...(context.channelLinks ? { channelLinks: context.channelLinks } : {}) } : null;
   return (
     <ChannelScreen
-      embedded={Boolean(context.conversations && routes && navigate)}
       title={selectedConversation?.title ?? 'Encrypted conversation'}
       controller={room}
       viewerOwnerId={viewer.ownerId}
       viewerName={viewer.displayName}
+      viewerParticipantId={viewer.participantId}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
         .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}
       namesPending={timelineData.namesReady === false}
       {...(currentNames ? { currentNames } : {})}
-      renderShare={() => context.admission ? <ChannelSharePanel key={`${context.principal.ownerId}:${context.generation}:${roomId}`}
-        admission={context.admission} roomId={roomId}
-        {...(context.channelLinks ? { channelLinks: context.channelLinks } : {})} /> : null}
-      renderTimeline={() => (
+      {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
+      renameScope={roomId}
+      renameAgent={async (participantId, name, clientTxnId) => {
+        const checked = validateAgentName(name);
+        const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
+        if (!checked.ok || checked.name !== name || viewer.kind !== 'human'
+          || target?.ownerId !== viewer.ownerId || timeline.getSnapshot().membership !== 'joined') return 'rejected';
+        const result = await context.room.send({ roomId, clientTxnId,
+          content: { v: 1, kind: 'agent_rename', agentParticipantId: participantId, body: name } });
+        if (result.kind === 'rejected') return 'rejected';
+        return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
+      }}
+      recentActivity={participantId => timelineData.items
+        .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
+          ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content) }] : [])
+        .slice(-3).reverse()}
+      onMention={label => composer.current?.insertMention(label)}
+      onRosterOpen={() => composer.current?.closeChips()}
+      {...(navigate && routes ? { onBack: () => navigate(routes.conversationsPath()) } : {})}
+      {...(linkSource ? {
+        renderShare: () => <ChannelInvite key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
+        renderAddAgent: () => <ChannelAddAgent key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
+      } : {})}
+      renderTimeline={(openParticipant, openInvite) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
-          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer}
-          extraParticipants={extraParticipants}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} composerRef={composer}
+          extraParticipants={extraParticipants} onOpenParticipant={openParticipant}
+          {...(openInvite ? { onInvite: openInvite } : {})}
           {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />

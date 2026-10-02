@@ -1,16 +1,19 @@
 # Channel page
 
-The hosted channel page renders the timeline and its share action without a detail pane or settings entry in the chat chrome. Its sidebar links to channel care for recipient review, agent controls, and recovery. The local channel page has a local-only tools control for Stop, Make external, and discovery settings. Presence remains a separate feature module.
+`ChannelScreen` is the channel's main pane inside `KhalaApp` (design spec §5, §6, §11, §22):
 
-`ChannelUiPort` is the only presence dependency. It returns generation-tagged agent snapshots, publishes live changes, and provides the one-command onboarding string for agents that have not connected. Its live implementation owns the connection state by combining subscription liveness with receipt evidence and must publish `stale` after its bounded liveness interval; the channel controller does not invent a second liveness clock. `createChannelController` subscribes before its initial read, ignores snapshots from another generation, and prevents a late initial read from rolling a live update back.
+- **Header.** It holds the back button (≤900px), a stack of up to four other members plus `+N`, the title button with the "You, … · N humans · N agents" subtitle, and the Invite action. Invite shows only when the composition supplies `renderShare`, the admin path. The title is also a visually hidden `<h1>`.
+- **Roster.** The title button opens a disclosure over the thread. It shows one group per human: the viewer first, then other humans in member order. Each agent sits under its owner; an agent whose owner is not a member goes under a "Not in this channel" group. The roster closes on Escape, which returns focus to the title, and on a click in the thread. It stays `inert` while closed. Opening it calls `onRosterOpen`.
+- **Agent rows.** The viewer's own agents show the listening-mode segment locked on Sync (M2). Other agents show a read-only Sync icon. The viewer's row has Add agent, which copies the channel link an agent passes to `khala_join`.
+- **Detail pane.** Avatars, roster rows, the owner pill and the thread's `openParticipant` callback open the participant detail. It renders into the card's `.kh-detail` through `useDetailHost`. Selecting the open participant again closes it, and so does that participant leaving. The detail shows Recent in Khala and `@ Mention` (`onMention`). For the viewer's own agents it adds Rename, whose unconfirmed requests survive a reload and retry with the same `clientTxnId`.
 
-`AgentPresencePanel` shows each agent's readable name and owner. Routing and proof-key labels fall back to "Agent"; connection diagnostics stay out of the ordinary participant list. Selecting an agent expands a compact detail inside the participant list; Escape closes that detail and returns focus to its summary. Route, receipt, and batch-token diagnostics remain in their source data and developer evidence surfaces. The panel calls `renderOwnerControls` only when the signed-in owner's ID matches the agent's owner ID.
+`roster-model.ts` holds the pure grouping, and `members.ts` resolves names, hues, initials, harness and ownership. Routing and proof-key labels fall back to "Agent", "You" or "Channel member", and connection diagnostics never appear.
 
-Rename and onboarding actions appear only in the owning human's agent detail. Commands remain selectable as text and have a copy control with an announced success or failure state. `AgentListeningControls` supplies the compact Steer / Sync / Async control through the existing agent-controls controller. The hosted composition matches the selected agent to the signed-in owner's verified binding before mounting its controls.
+`useChannelLink` (in `ChannelSharePanel.tsx`) owns the one share link. A personal channel link loads on mount; an admission share is minted on the first copy unless `eager` is set. `ChannelInvite` and `ChannelAddAgent` are the two popover bodies over it. A failed copy leaves the link selected in a field for copying by hand.
 
-The browser harness uses only in-memory fixtures. KHA-153 supplies the live `ChannelUiPort`; KHA-132 owns the browser entry point and router; KHA-134 owns live review wiring.
+`ChannelUiPort` is the only presence dependency. `createChannelController` subscribes before its initial read, ignores snapshots from another generation, and prevents a late initial read from rolling a live update back.
 
-Run the feature checks with:
+The browser harness uses only in-memory fixtures. Run the feature checks with:
 
 ```sh
 pnpm --filter @khala/web test

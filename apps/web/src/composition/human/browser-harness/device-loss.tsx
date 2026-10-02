@@ -5,7 +5,7 @@ import { createHumanApplication } from '../application';
 import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
 import { ChannelScreen } from '../../../features/channel/ChannelScreen';
-import { ChannelSharePanel } from '../../../features/channel/ChannelSharePanel';
+import { ChannelInvite } from '../../../features/channel/ChannelSharePanel';
 import { ChatComposer, ChatMessage } from '../../../ui/conversation';
 import '../../../brand/tokens.css';
 import '../../../brand/fonts.css';
@@ -63,24 +63,30 @@ const conversations = {
   ],
   subscribe: () => () => undefined,
 };
-const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+const limits =decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
 if (!limits.ok) throw new Error('invalid harness limits');
 // Creating from the New channel popover "creates" the second listed channel.
 const room = { create: async ({ title }: { title: string | null }) => ok({ roomId: 'room_2' as RoomId, title, membership: 'joined' as const, revision: 'rev_created' }) };
 const application = createHumanApplication({ identity, device, room: room as never, admission: {} as never, conversations,
   limits: limits.value },{ initialPath: holdDeviceHarness ? '/new' : '/channels/room_1' });
-function VisualRoom() {
-  return <ChannelScreen embedded title="First channel" viewerName="Alice" controller={visualController}
+function VisualRoom({ onBack }: { onBack?: () => void }) {
+  return <ChannelScreen title="First channel" viewerName="Alice" controller={visualController} {...(onBack ? { onBack } : {})}
     renderTimeline={() => <><ul className="fixture-messages"><ChatMessage id="hello" author="Alice">A shared place for the release.</ChatMessage></ul>
       <ChatComposer value="" onChange={() => {}} onSend={() => {}} /></>}
-    renderShare={() => <ChannelSharePanel roomId={'room_1' as never} admission={{ share: async () => ({ kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null } }) }} />}
+    renderShare={() => <ChannelInvite roomId={'room_1' as never} admission={{ share: async () => ({ kind: 'ok', value: { inviteRef: 'visual', shareUrl: 'https://khala.example/join/visual', expiresAt: null } }) }} />}
     />;
 }
 const visualSnapshot = { phase: 'ready' as const, agents: [] };
 const visualController = { getSnapshot: () => visualSnapshot, subscribe: () => () => {}, dispose: () => {} };
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes}
-    renderRoom={(context, route) => visualHarness ? <VisualRoom /> : <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>}
+    renderRoom={(context, route, navigate, codec) => {
+      const onBack = navigate && codec ? () => navigate(codec.conversationsPath()) : undefined;
+      return visualHarness ? <VisualRoom {...(onBack ? { onBack } : {})} /> : <div>
+        {onBack ? <button type="button" className="kh-back" aria-label="All conversations" onClick={onBack}>‹</button> : null}
+        <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>
+      </div>;
+    }}
     mode={logoutHarness && !hostedHarness ? 'standalone' : 'hosted-content'} />,
 );
 if (!holdDeviceHarness) application.navigate('/channels/room_1');

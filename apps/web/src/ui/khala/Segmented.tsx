@@ -9,7 +9,7 @@ export type SegmentOption<Value extends string> = Readonly<{
   tip?: string;
 }>;
 
-export function Segmented<Value extends string>({ options, value, onChange, icon = false, full = false, locked = false }: Readonly<{
+export function Segmented<Value extends string>({ options, value, onChange, icon = false, full = false, locked = false, title, label }: Readonly<{
   options: readonly SegmentOption<Value>[];
   value: Value;
   onChange?(value: Value): void;
@@ -19,11 +19,16 @@ export function Segmented<Value extends string>({ options, value, onChange, icon
   full?: boolean;
   /** Disabled with the lock treatment (`.kh-seg.lock`). */
   locked?: boolean;
+  /** Every button's `title`, e.g. `Coming soon` on a locked M2 control. */
+  title?: string;
+  /** The radiogroup's accessible name. */
+  label?: string;
 }>) {
-  return <span className={`kh-seg${icon ? ' ic' : ''}${full ? ' full' : ''}${locked ? ' lock' : ''}`} role="radiogroup">
+  return <span className={`kh-seg${icon ? ' ic' : ''}${full ? ' full' : ''}${locked ? ' lock' : ''}`} role="radiogroup"
+    {...(label ? { 'aria-label': label } : {})}>
     {options.map(option => <button key={option.value} type="button" role="radio" aria-checked={option.value === value}
       className={option.value === value ? 'on' : ''} data-v={option.value}
-      {...(option.tip ? { 'data-tip': option.tip, 'aria-label': option.tip } : {})}
+      {...(option.tip ? { 'data-tip': option.tip, 'aria-label': option.tip } : {})} {...(title ? { title } : {})}
       disabled={locked} onClick={() => onChange?.(option.value)}>{option.label}</button>)}
   </span>;
 }

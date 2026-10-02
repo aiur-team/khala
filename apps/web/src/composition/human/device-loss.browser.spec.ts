@@ -268,11 +268,11 @@ test('owner conversation shell fills desktop and phone with channel creation', {
       headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual');
-    const title = page.locator('.channel-roster__summary');
+    const title = page.locator('#kh-head-btn');
     await title.getByText('First channel').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Channel settings' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
-    assert.equal(await page.locator('.conversation-detail').count(), 0);
+    assert.equal(await page.locator('.kh-card.has-detail').count(), 0);
     assert.equal(await page.locator('.channel-share__more').count(), 0);
     const brand = await page.locator('.kh-brand .wm').boundingBox();
     const theme = await page.getByRole('button', { name: 'Toggle color theme' }).boundingBox();
@@ -281,10 +281,8 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     assert.ok(brand && theme && logout && list && brand.x < theme.x && theme.x < logout.x
       && logout.x + logout.width <= list.x + list.width, 'the brand row holds the wordmark, theme toggle and Log out');
     assert.deepEqual(await page.locator('.kh-card').boundingBox(), { x: 0, y: 0, width: 1440, height: 900 });
-    assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopWidth), '0px');
-    assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopLeftRadius), '0px');
     const main = await page.locator('.kh-main').boundingBox();
-    const chat = await page.locator('.conversation-layout').boundingBox();
+    const chat = await page.locator('.kh-channel').boundingBox();
     assert.ok(main && chat && Math.abs(main.width - chat.width) < 1 && Math.abs(main.height - chat.height) < 1,
       JSON.stringify({ main, chat }));
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
@@ -298,8 +296,6 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    await page.locator('.conversation-thread__head .channel-roster').waitFor();
-    assert.equal(await page.locator('#khala-channel-toolbar').count(), 0, 'the channel header stays in the thread, not a portal');
     assert.equal(await page.locator('.kh-list').isVisible(), false, 'the phone thread view hides the list');
     assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).count(), 1);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
@@ -307,19 +303,18 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     await page.locator('.kh-card:not(.in-thread)').waitFor();
     assert.equal(await page.locator('.kh-list').isVisible(), true);
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
-    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-care.png') });
+
+    // The roster opens from the header by keyboard and Escape returns focus to it.
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual&hosted');
-    const roster = page.locator('.conversation-thread__head details.channel-roster');
-    await roster.waitFor();
-    assert.equal(await page.locator('#khala-channel-toolbar').count(), 0, 'hosted channel keeps its header in the thread');
+    await title.waitFor();
     const hostedMain = await page.locator('.kh-main').boundingBox();
-    const hostedThread = await page.locator('.conversation-thread').boundingBox();
-    assert.ok(hostedMain && hostedThread && hostedThread.width >= hostedMain.width - 2, 'hosted thread fills the main column');
-    await roster.locator('summary').focus();
+    const hostedRoom = await page.locator('.kh-channel').boundingBox();
+    assert.ok(hostedMain && hostedRoom && hostedRoom.width >= hostedMain.width - 2, 'hosted room fills the main column');
+    await title.focus();
     await page.keyboard.press('Enter');
-    assert.equal(await roster.getAttribute('open'), '', 'keyboard opens the participant details');
-    await page.getByText('No agents have joined this channel yet.').waitFor();
+    assert.equal(await title.getAttribute('aria-expanded'), 'true', 'keyboard opens the roster');
+    await page.locator('#kh-roster').getByText('Owner of 0 agents').waitFor();
     if (screenshotDir) {
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
@@ -328,19 +323,18 @@ test('owner conversation shell fills desktop and phone with channel creation', {
           await page.screenshot({ path: join(screenshotDir, `hosted-roster-${width}-${theme}.png`) });
         }
       }
+      await page.setViewportSize({ width: 1440, height: 900 });
     }
     await page.keyboard.press('Escape');
-    assert.equal(await roster.getAttribute('open'), null, 'Escape closes the participant details');
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    const share = page.getByRole('button', { name: 'Copy channel invite link' });
-    await share.click();
-    assert.equal(await roster.getAttribute('open'), null, 'share does not toggle participant details');
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    assert.equal(await page.getByRole('button', { name: 'All conversations' }).first().isVisible(), true);
+    assert.equal(await title.getAttribute('aria-expanded'), 'false', 'Escape closes the roster');
+    assert.equal(await title.evaluate(element => element === document.activeElement), true);
+    await page.getByRole('button', { name: 'Invite' }).click();
+    assert.equal(await title.getAttribute('aria-expanded'), 'false', 'Invite does not toggle the roster');
+    await page.locator('.kh-pop .kh-link code', { hasText: 'https://khala.example/join/visual' }).waitFor();
+    await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 320, height: 740 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'the thread fits a 320px window');
-    assert.equal(await page.getByRole('heading', { name: 'First channel', level: 2 }).isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'All conversations' }).isVisible(), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

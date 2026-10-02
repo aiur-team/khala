@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { ChatComposer, ChatMessage, ChatThread, ConversationLayout, ConversationList, ParticipantDetail, type ConversationSummary } from './index';
+import { useState, type CSSProperties } from 'react';
+import { Avatar } from '../khala/Avatar';
+import { KhalaApp } from '../khala/KhalaApp';
+import { ChatComposer, ChatMessage, ChatThread, ConversationList, ParticipantDetail, type ConversationSummary } from './index';
 
 /** Deterministic populated visual state for screenshot comparison. Never imported by production. */
 const conversations: readonly ConversationSummary[] = [
@@ -15,10 +17,10 @@ export function ConversationFixture() {
   const [detail, setDetail] = useState(false);
   const [inThread, setInThread] = useState(false);
   const current = conversations.find(item => item.id === selected)!;
-  return <ConversationLayout inThread={inThread}
-    list={<aside className="conversation-list" aria-label="Conversations"><ConversationList conversations={conversations} selectedId={selected} query={query} onQueryChange={setQuery}
-      onSelect={id => { setSelected(id); setInThread(true); }} status="ready" /></aside>}
-    thread={<ChatThread title={current.title} onBack={() => setInThread(false)}
+  return <KhalaApp theme="dark" inThread={inThread}
+    list={<ConversationList conversations={conversations} selectedId={selected} query={query} onQueryChange={setQuery}
+      onSelect={id => { setSelected(id); setInThread(true); }} status="ready" />}
+    main={<ChatThread title={current.title} onBack={() => setInThread(false)}
       headerDetail={<span className="conversation-fixture__subtitle">Alex, Mira · encrypted</span>}
       headerActions={<button type="button" className="conversation-fixture__details" onClick={() => setDetail(true)}>Conversation details</button>}>
       <ol className="fixture-messages" aria-label="Messages">
@@ -30,5 +32,12 @@ export function ConversationFixture() {
       </ol>
       <ChatComposer value={draft} onChange={setDraft} onSend={() => setDraft('')} />
     </ChatThread>}
-    detail={detail ? <ParticipantDetail name={current.title} onClose={() => setDetail(false)}><p>Encrypted conversation</p></ParticipantDetail> : undefined} />;
+    detail={detail ? <ParticipantDetail name="Conversation details" kind="Human" onClose={() => setDetail(false)}>
+      <div className="kh-d-hero"><Avatar kind="human" static label="Mira" hue={330} initials="MI" /><b>Mira</b><span>Owner of 1 agent</span>
+        <button type="button" className="kh-d-owner" style={{ '--oh': 330 } as CSSProperties}><i>MI</i><span>Owned by <b>Mira</b></span></button></div>
+      <div className="kh-d-sec"><span className="kh-d-lbl">Agents · 1</span><div className="kh-d-agents">
+        <div role="button" tabIndex={0} className="kh-d-agent"><Avatar kind="agent" static label="Scout" hue={210} ownerHue={330}
+          ownerInitials="MI" logo={null} initials="SC" /><span><b>Scout</b><em>Claude Code</em></span></div>
+      </div></div>
+    </ParticipantDetail> : undefined} />;
 }

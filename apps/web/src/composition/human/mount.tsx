@@ -16,7 +16,7 @@ import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList } from '../../ui/conversation';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
-import { ChevronLeftIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
+import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
 import { useLiveSync } from './sync-status';
 
@@ -231,12 +231,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
         <NewChannelPopover anchor={createButton} open={creating} onClose={closeCreate} ports={context} onOpenRoom={openCreatedRoom} />
       </>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) navigateRoute(routes.roomPath(id)); }} />}
-    main={<>
-      {/* Phone-width thread view hides the list; the design's header back button (§5) replaces this. */}
-      {inThread ? <div className="kh-shell-back"><button type="button" className="kh-back" aria-label="All conversations"
-        onClick={() => navigateRoute(routes.conversationsPath())}><ChevronLeftIcon /></button></div> : null}
-      {children}
-    </>} />;
+    main={children} />;
 }
 
 /** The hosted human application: create, join and channel routes behind OAuth sign-in. */

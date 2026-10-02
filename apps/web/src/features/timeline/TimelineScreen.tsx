@@ -7,25 +7,25 @@ import { ChannelEventPill } from './ChannelEventPill';
 // review-action slot) render outside the message-content renderer, so
 // message syntax can never create them (KTD4).
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type Ref } from 'react';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
 import { type EvidenceUnit, isInlineUnit } from '../receipt-evidence/model';
 import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from '../receipt-evidence/ReceiptEvidence';
-import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
+import { attributionFor, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent, type RenderOptions } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
-import { ChatComposer, ChatMessage, type MentionTarget } from '../../ui/conversation';
+import { ChatComposer, ChatMessage, insertMention, type MentionTarget } from '../../ui/conversation';
 import { ChatSystemEvent } from '../../ui/conversation';
 import type { ThreadRowName } from '../../ui/conversation/ChatMessage';
 import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime } from '../../ui/khala/format-time';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
-import { harnessLogo, initials, useParticipantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, harnessLogo, initials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
@@ -51,6 +51,8 @@ export interface TimelineScreenProps {
   evidence?: ReceiptEvidenceController;
   /** The room index has encrypted activity that this device cannot preview. */
   unreadableActivity?: boolean;
+  /** Lets the room's detail pane and roster reach the composer. */
+  composerRef?: Ref<TimelineComposerHandle>;
   /** A name, avatar or `@mention` was activated. KM-183 opens the detail pane. */
   onOpenParticipant?: (participantId: string) => void;
   /** The empty thread's Invite button. KM-183 opens the invite popover. */
@@ -58,6 +60,13 @@ export interface TimelineScreenProps {
   /** The clock for day separator labels; tests pin it. */
   now?: () => Date;
 }
+
+export type TimelineComposerHandle = Readonly<{
+  /** Inserts `@{label} ` into the draft (§9 `khInsert`). */
+  insertMention(label: string): void;
+  /** Collapses the mention chips grid. */
+  closeChips(): void;
+}>
 
 /** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
 function evidenceLinkId(unit: EvidenceUnit, eventId: string): string {
@@ -183,7 +192,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 
 export function TimelineScreen({
   describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
-  unreadableActivity = false, onOpenParticipant, onInvite, now = () => new Date(),
+  unreadableActivity = false, composerRef, onOpenParticipant, onInvite, now = () => new Date(),
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -228,6 +237,11 @@ export function TimelineScreen({
     heading?.focus();
   }
   const [draft, setDraft] = useState('');
+  const [chipsOpen, setChipsOpen] = useState(false);
+  useImperativeHandle(composerRef, () => ({
+    insertMention: label => setDraft(current => insertMention(current, label)),
+    closeChips: () => setChipsOpen(false),
+  }), []);
   // Every send keeps its own row by `clientTxnId` until reconciled: a later
   // send never silently replaces an earlier failed/outcome_unknown one (R3).
   const [pendingList, setPendingList] = useState<readonly PendingSend[]>(() => pendingStore?.load().map(restored) ?? []);
@@ -372,7 +386,7 @@ export function TimelineScreen({
     if (!rosterParticipants.has(participant.participantId)) rosterParticipants.set(participant.participantId,
       { ...viewer, participantId: participant.participantId, ownerId: participant.ownerId, kind: participant.kind, displayName: participant.initialName });
   }
-  const resolveDisplayName = buildDisplayNameResolver([
+  const resolveIdBadge = buildIdBadgeResolver([
     ...data.items.map(item => ({ ...item.participant, displayName: fullNameFor(item.participant, item.ref.eventId) })),
     ...[...rosterParticipants.values()].map(participant => ({ ...participant, displayName: fullNameFor(participant, null) })),
   ]);
@@ -385,8 +399,8 @@ export function TimelineScreen({
     if (detail?.kind === 'unknown') {
       return { ...shared, kind: 'unknown', label: 'Unknown', hue: 0, idBadge: undefined, ownerLabel: null, harness: undefined };
     }
-    // The collision suffix `buildDisplayNameResolver` would append, shown as its own `.kh-id` badge.
-    const idBadge = resolveDisplayName({ ...participant, displayName: fullName }) === fullName ? undefined : `#${participant.ownerId.slice(-4)}`;
+    // Names that collide across owners get the shared `.kh-id` owner suffix (roster and detail match).
+    const idBadge = resolveIdBadge({ ownerId: participant.ownerId, displayName: fullName });
     if (participant.kind === 'human') {
       return { ...shared, kind: 'human', label: fullName, idBadge, ownerLabel: null, harness: undefined,
         hue: hueFor({ kind: 'human', ownerId: participant.ownerId, participantId: participant.participantId,
@@ -425,7 +439,7 @@ export function TimelineScreen({
         onClick={open(identity.participantId)} />;
     }
     return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue}
-      ownerInitials={initials(identity.ownerLabel ?? '?')} logo={identity.harness ? harnessLogo(identity.harness) : null}
+      ownerInitials={identity.isViewerOwned ? 'YO' : initials(identity.ownerLabel ?? '?')} logo={identity.harness ? harnessLogo(identity.harness) : null}
       initials={initials(identity.label)} ghost={ghost} onClick={open(identity.participantId)} />;
   }
 
@@ -438,7 +452,7 @@ export function TimelineScreen({
     return [{
       id: identity.participantId, kind: identity.kind, label, display: identity.idBadge ? `${label} ${identity.idBadge}` : label,
       hue: identity.hue, ownerHue: identity.kind === 'agent' ? identity.ownerHue : identity.hue,
-      ownerInitials: isViewer ? 'YO' : initials(identity.kind === 'agent' ? identity.ownerLabel ?? '?' : identity.label),
+      ownerInitials: identity.isViewerOwned ? 'YO' : initials(identity.kind === 'agent' ? identity.ownerLabel ?? '?' : identity.label),
       ...(identity.harness ? { harness: identity.harness } : {}), ownerId: identity.ownerId, isViewer,
     }];
   });
@@ -599,7 +613,7 @@ export function TimelineScreen({
         {rows.length === 0 && visiblePending.length === 0 && data.phase === 'ready' ? (unreadableActivity
           ? <li className="kh-empty">Messages in this channel are unavailable on this device.</li>
           : <li className="kh-empty"><b>No messages yet</b>
-            <button type="button" className="kh-btn pri" onClick={onInvite}>Invite</button></li>) : null}
+            {onInvite ? <button type="button" className="kh-btn pri" onClick={onInvite}>Invite</button> : null}</li>) : null}
         {entries.map((entry, index) => {
           const receipt = index === receiptAt && entry.type === 'message' && entry.receipt ? receiptFor(entry.receipt) : null;
           return <Fragment key={entry.key}>
@@ -621,7 +635,7 @@ export function TimelineScreen({
           {data.newMessageCount} new message{data.newMessageCount === 1 ? '' : 's'}
         </button>
       ) : null}
-      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
+      <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()} chipsOpen={chipsOpen} onChipsOpenChange={setChipsOpen}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked} mentionTargets={mentionTargets}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}

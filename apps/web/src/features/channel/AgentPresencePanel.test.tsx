@@ -1,111 +1,62 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
-import { AgentPresencePanel } from './AgentPresencePanel';
-import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
+import { ChannelRoster, RenameAgent } from './AgentPresencePanel';
+import type { ChannelAgentView } from './controller';
+import { resolveMembers } from './members';
 
-const ownerId = 'owner_maya' as OwnerId;
-const otherId = 'owner_theo' as OwnerId;
-const agentId = 'agent_scout' as ParticipantId;
-const agent: ChannelAgentView = {
-  participantId: agentId, ownerId, displayName: 'Scout', ownerDisplayName: 'Maya',
-  connection: 'offline', routeLabel: 'Khala skill', acknowledgement: 'unknown',
-  lastReceipt: { kind: 'queued', observedAt: '2026-09-18T14:31:02.402Z' },
-  installCommand: 'khala connect https://khala.example/r/one', installCommandError: false,
+const mira = 'owner_mira' as OwnerId;
+const scout: ChannelAgentView = {
+  participantId: 'agent_scout' as ParticipantId, ownerId: mira, displayName: 'Scout', ownerDisplayName: 'Mira',
+  connection: 'unknown', routeLabel: 'Channel agent', acknowledgement: 'unknown', lastReceipt: null,
+  installCommand: null, installCommandError: false,
 };
+const members = (agents: readonly ChannelAgentView[]) => resolveMembers({ viewer: { participantId: 'p_mira', ownerId: mira, name: 'Mira' },
+  humans: [], agents });
 
-function controller(view: ChannelView): ChannelController {
-  return { getSnapshot: () => view, subscribe: () => () => {}, dispose: () => {} };
-}
-function render(viewerOwnerId?: OwnerId, item: ChannelAgentView = agent, renderOwnerControls?: (agent: ChannelAgentView) => string) {
-  return renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents: [item] })}
-    {...(viewerOwnerId ? { viewerOwnerId } : {})} renameScope="room_1"
-    renameAgent={async () => 'accepted'} {...(renderOwnerControls ? { renderOwnerControls } : {})} />);
-}
-
-describe('AgentPresencePanel', () => {
-  it('gives same-named agents distinct keyboard-selectable identities', () => {
-    const agents = [agent, { ...agent, participantId: 'agent_other' as ParticipantId }];
-    const html = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'ready', agents })} />);
-    expect(html).toContain('Details for Scout (agent 1), Unavailable, Maya’s agent');
-    expect(html).toContain('Details for Scout (agent 2), Unavailable, Maya’s agent');
-    expect(html.match(/<summary /g)).toHaveLength(2);
+describe('ChannelRoster', () => {
+  it('badges names that collide across owners with the thread owner suffix', () => {
+    const theosScout = { ...scout, participantId: 'agent_other' as ParticipantId, ownerId: 'owner_theo' as OwnerId };
+    const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout, theosScout])} />);
+    expect(html).toContain('Scout<span class="kh-id" style="--h:');
+    expect(html).toContain('>#mira</span>');
+    expect(html).toContain('>#theo</span>');
+    expect(html).toContain('aria-label="Listening mode for Scout #mira"');
   });
 
-  it('shows a readable identity without technical connection diagnostics', () => {
-    const html = render(otherId);
-    expect(html).toContain('Details for Scout');
-    expect(html).toContain('Unavailable');
-    expect(html).toContain('Maya’s agent');
-    for (const diagnostic of ['Route', 'Batch-token return', 'Last receipt', 'Queued for delivery', 'Khala skill']) {
-      expect(html).not.toContain(diagnostic);
-    }
-    expect(html).not.toContain('Copy install command');
+  it('does not badge same-named agents of one owner, as the thread does not', () => {
+    const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}}
+      members={members([scout, { ...scout, participantId: 'agent_other' as ParticipantId }])} />);
+    expect(html).not.toContain('kh-id');
   });
 
-  it('puts the owner controls, rename, and onboarding inside only the owning human’s detail', () => {
-    const controls = vi.fn(() => 'Listening controls');
-    const own = render(ownerId, agent, controls);
-    expect(own).toContain('Your agent');
-    expect(own).toContain('Listening controls');
-    expect(own).toContain('Edit name for Scout');
-    expect(own).toContain('Copy install command');
-    expect(own.indexOf('Listening controls')).toBeGreaterThan(own.indexOf('</summary>'));
-    expect(controls).toHaveBeenCalledWith(agent);
-    controls.mockClear();
-    const other = render(otherId, agent, controls);
-    expect(other).not.toContain('Listening controls');
-    expect(other).not.toContain('Edit name');
-    expect(other).not.toContain('Copy install command');
-    expect(controls).not.toHaveBeenCalled();
-  });
-
-  it('never turns an unverified connection into Connected', () => {
-    const html = render(ownerId, { ...agent, connection: 'unknown' });
-    expect(html).toContain('Details for Scout');
-    expect(html).toContain('Checking connection…');
-    expect(html).not.toContain('Connection unavailable');
-    expect(html).not.toContain('Connection unknown');
-    expect(html).not.toMatch(/>Connected</);
-  });
-
-  it('shows Connected only with confirmed connection evidence', () => {
-    expect(render(otherId, { ...agent, connection: 'connected' })).toContain('>Connected</span>');
-    expect(render(otherId, { ...agent, connection: 'offline' })).not.toContain('>Connected</span>');
-  });
-
-  it('hides Matrix routing IDs without inventing an owner label', () => {
-    const html = render(otherId, { ...agent, displayName: '@khala:matrix.example.test', ownerDisplayName: '@maya:matrix.example.test' });
-    expect(html).toContain('Details for Agent');
-    expect(html).not.toContain('Another member’s agent');
-    expect(html).not.toContain('Owned by');
-    expect(html).not.toContain('@khala:matrix.example.test');
-    expect(html).not.toContain('@maya:matrix.example.test');
-  });
-
-  it('omits the owner label when the owner name is blank', () => {
-    const html = render(otherId, { ...agent, ownerDisplayName: '  ' });
-    expect(html).not.toContain('’s agent');
-    expect(html).not.toContain('Channel member');
-  });
-
-  it('identifies the current owner even without a public owner name', () => {
-    const html = render(ownerId, { ...agent, ownerDisplayName: '  ' });
-    expect(html.slice(html.indexOf('<summary'), html.indexOf('</summary>'))).toContain('Your agent');
-  });
-
-  it('hides proof-key labels in agent details', () => {
-    const html = render(otherId, { ...agent, displayName: 'proof-key:abc123', connection: 'unknown' });
-    expect(html).toContain('Details for Agent');
-    expect(html).not.toContain('proof-key');
-    expect(html).not.toContain('Connection unavailable');
+  it('counts the agents on each human row', () => {
+    const one = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout])} />);
+    expect(one).toContain('</span><i>1 agent</i></button>');
+    const two = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}}
+      members={members([scout, { ...scout, participantId: 'agent_other' as ParticipantId }])} />);
+    expect(two).toContain('<i>2 agents</i>');
+    expect(renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([])} />)).not.toContain('<i>');
   });
 
   it('announces loading and failed presence reads distinctly', () => {
-    const loading = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'loading', agents: [] })} />);
-    const unavailable = renderToStaticMarkup(<AgentPresencePanel controller={controller({ phase: 'unavailable', agents: [] })} />);
-    expect(loading).toContain('Loading…');
-    expect(unavailable).toContain('Agent presence is unavailable right now.');
-    expect(unavailable).not.toContain('No agents have joined');
+    expect(renderToStaticMarkup(<ChannelRoster phase="loading" onOpen={() => {}} members={members([])} />)).toContain('Checking participants…');
+    expect(renderToStaticMarkup(<ChannelRoster phase="unavailable" onOpen={() => {}} members={members([])} />))
+      .toContain('Agent presence is unavailable right now.');
+  });
+
+  it('shows no connection diagnostics', () => {
+    const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([{ ...scout, connection: 'offline' }])} />);
+    for (const diagnostic of ['Connected', 'Unavailable', 'Channel agent', 'install']) expect(html).not.toContain(diagnostic);
+  });
+});
+
+describe('RenameAgent', () => {
+  it('renders the restyled rename field prefilled with the current name', () => {
+    const html = renderToStaticMarkup(<RenameAgent participantId={scout.participantId} name="Scout" storageKey="k"
+      renameAgent={async () => 'accepted'} />);
+    expect(html).toContain('class="kh-txt" aria-label="Name for Scout" maxLength="80" value="Scout"');
+    expect(html).toContain('class="kh-btn pri"');
+    expect(html).toContain('>Rename</button>');
   });
 });

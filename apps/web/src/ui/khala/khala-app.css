@@ -149,12 +149,12 @@
  */
 .kh-list > .conversation-list { flex: 1; min-height: 0; border-right: 0; background: none; }
 /* The page never scrolls (§1.3), so each route screen scrolls itself. */
-.kh-main > :not(.kh-toast, .kh-brand, .kh-shell-back) { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.kh-shell-back { display: none; }
-@media (max-width: 900px) { .kh-shell-back { display: flex; flex: none; padding: .45rem .75rem 0; background: var(--surface); } }
+.kh-main > :not(.kh-toast, .kh-brand) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .kh-main > .khala-page-frame, .kh-main > .khala-inactive-device { width: 100%; padding: clamp(1rem, 3vw, 2rem); }
 .kh-main > .channel-page, .kh-main > .channel-page > .khala-page-frame, .kh-main > .channel-page .khala-page-frame__body { display: flex; flex-direction: column; min-height: 0; max-width: none; margin: 0; }
 .kh-main > .channel-page > .khala-page-frame, .kh-main > .channel-page .khala-page-frame__body { flex: 1 1 auto; }
 .kh-main > .channel-page .conversation-layout { flex: 1 1 auto; height: auto; min-height: 0; border: 0; border-radius: 0; }
+/* The room (header.css) keeps its header fixed and scrolls the thread itself. */
+.kh-main > .kh-channel { display: flex; flex-direction: column; overflow: hidden; }
 .kh-state > .khala-page-frame { width: min(36rem, 100%); }
 .kh-main > .kh-state { place-items: safe center; }
