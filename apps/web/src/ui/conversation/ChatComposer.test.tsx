@@ -81,6 +81,32 @@ describe('ChatComposer', () => {
     expect(render({ mentionTargets: [target] }).html).toMatch(/^<div class="kh-to">.*<\/div><form class="kh-comp">/u);
   });
 
+  it('picks a mention instead of sending on Enter while the suggestions are open', () => {
+    const onSend = vi.fn();
+    const onChange = vi.fn();
+    const target = { id: 'p-maya', kind: 'human', label: 'Maya', display: 'Maya', hue: 330, ownerHue: 330, ownerInitials: 'MC', ownerId: 'o-maya', isViewer: false } as const;
+    const { html, tree } = render({ value: '@', onSend, onChange, mentionTargets: [target] });
+    expect(html).toContain('role="listbox" id="kh-mention-list"');
+    expect(html).toContain('aria-expanded="true" aria-controls="kh-mention-list" aria-activedescendant="kh-mention-opt-p-maya"');
+    expect(keyDown(tree, {})).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith('@Maya ');
+  });
+
+  it('still sends on Enter after an @ when there is no one to suggest', () => {
+    const onSend = vi.fn();
+    const { html, tree } = render({ value: '@', onSend });
+    expect(html).not.toContain('kh-mpop');
+    keyDown(tree, {});
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the draft as a collapsed combobox', () => {
+    const { html } = render({ value: 'hi' });
+    expect(html).toContain('role="combobox" aria-autocomplete="list" aria-expanded="false"');
+    expect(html).not.toContain('aria-activedescendant');
+  });
+
   it('honours a controlled chipsOpen', () => {
     const targets = ['a', 'b', 'c', 'd'].map(id => ({ id, kind: 'agent', label: id, display: id, hue: 210, ownerHue: 214, ownerInitials: 'YO', ownerId: 'o', isViewer: false }) as const);
     expect(render({ mentionTargets: targets, chipsOpen: true }).html).toContain('class="kh-to is-open"');

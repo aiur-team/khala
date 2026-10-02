@@ -47,3 +47,16 @@
   .kh-send { width: 40px; height: 40px; }
   .kh-comp { padding: .55rem .6rem .65rem; }
 }
+
+/* @mention autocomplete: a listbox anchored above the composer, built from
+   the .kh-pop / .kh-mi menu vocabulary (controls.css owns khPopIn). */
+.kh-comp { position: relative; }
+.kh-mpop { position: absolute; left: .9rem; bottom: calc(100% + 6px); z-index: 25; width: min(320px, calc(100% - 1.8rem)); max-height: min(40vh, 296px); overflow-y: auto; box-sizing: border-box; margin: 0; padding: .3rem; list-style: none; border-radius: 14px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-lg); animation: khPopIn .14s ease-out; }
+.kh-mpop-opt { display: flex; align-items: center; gap: .55rem; padding: .45rem .6rem; border-radius: 9px; min-height: 36px; box-sizing: border-box; cursor: pointer; color: var(--fg); font-size: .84rem; }
+.kh-mpop-opt[aria-selected="true"], .kh-mpop-opt:hover { background: var(--surface-2); }
+.kh-mpop-opt b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.kh-mpop-opt em { margin-left: auto; padding-left: .8rem; flex: 0 0 auto; font-style: normal; font-size: .72rem; color: var(--faint); white-space: nowrap; }
+.kh-mpop-opt img { width: 20px; height: 20px; flex: 0 0 auto; }
+.kh-mpop-opt i { flex: 0 0 auto; font: 700 9px/20px "JetBrains Mono", monospace; min-width: 20px; height: 20px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: hsl(var(--oh) 65% 48%); color: #fff; }
+@media (pointer: coarse) { .kh-mpop-opt { min-height: 44px; } }
+@media (max-width: 760px) { .kh-mpop { left: .6rem; right: .6rem; width: auto; } }
