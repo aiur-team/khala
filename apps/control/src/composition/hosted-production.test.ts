@@ -65,6 +65,8 @@ const keptRoutes = [
   ['/api/human/agent-join', ['GET']],
   ['/api/human/agent-join/confirm', ['POST']],
   ['/api/human/agent-join/status', ['GET']],
+  ['/api/human/profile', ['GET']],
+  ['/api/human/profile/username', ['POST']],
 ];
 const deletedPaths = [
   '/api/human/room-send/ready', '/api/human/agent-bootstrap/authorize',
