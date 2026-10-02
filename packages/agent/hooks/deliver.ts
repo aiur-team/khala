@@ -3,6 +3,7 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { sessionFiles, readStatus, StateError } from '../src/state';
 import { unread, advanceCursor } from '../src/inbox';
 import { writeActivity } from '../src/activity';
+import { readListeningMode } from '../src/mode';
 import { isWakeEntry } from '../src/events/receive';
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -77,11 +78,11 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
     diagnostic(io, 'invalid_harness');
     return 0;
   }
-  let input: { session_id: string; hook_event_name: 'UserPromptSubmit' | 'Stop'; stop_hook_active?: boolean };
+  let input: { session_id: string; hook_event_name: 'UserPromptSubmit' | 'Stop' | 'PostToolUse'; stop_hook_active?: boolean };
   try {
     input = JSON.parse(stdin);
     if (!input || typeof input.session_id !== 'string'
-      || !['UserPromptSubmit', 'Stop'].includes(input.hook_event_name)
+      || !['UserPromptSubmit', 'Stop', 'PostToolUse'].includes(input.hook_event_name)
       || (input.stop_hook_active !== undefined && typeof input.stop_hook_active !== 'boolean')) return 0;
   } catch { return 0; }
   let files;
@@ -90,9 +91,15 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
     if (!(await fs.stat(files.dir)).isDirectory()) return 0;
   } catch { return 0; }
   try {
+    const mode = await readListeningMode(files);
+    if (input.hook_event_name === 'PostToolUse' && mode !== 'steer') return 0;
     if (input.hook_event_name === 'UserPromptSubmit') await writeActivity(files, 'busy', io.now);
     if (input.hook_event_name === 'Stop' && input.stop_hook_active === true) {
       await writeActivity(files, 'idle', io.now);
+      return 0;
+    }
+    if (mode === 'async') {
+      if (input.hook_event_name === 'Stop') await writeActivity(files, 'idle', io.now);
       return 0;
     }
     const status = await readStatus(files);
@@ -100,12 +107,12 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
       const { entries, cursor } = await unread(files);
       const { frame, consumed } = selectFrame(status?.channelName, entries);
       if (!frame) break;
-      if (input.hook_event_name === 'Stop' && !consumed.some(isWakeEntry)) break;
+      if (input.hook_event_name !== 'UserPromptSubmit' && !consumed.some(isWakeEntry)) break;
       if (await advanceCursor(files, cursor, consumed) === 'conflict') continue;
       await writeActivity(files, 'busy', io.now);
       const envelope = input.hook_event_name === 'Stop'
         ? { decision: 'block', reason: frame }
-        : { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: frame } };
+        : { hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext: frame } };
       io.stdout.write(JSON.stringify(envelope) + '\n');
       return 0;
     }

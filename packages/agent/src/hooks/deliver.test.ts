@@ -220,3 +220,31 @@ it('recomputes the unread slice when another delivery advances the cursor', asyn
   expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$e2', deliveredCount: 2 });
   expect((await unread(files)).entries).toEqual([]);
 });
+
+it.each(['claude', 'codex'] as const)('delivers steer PostToolUse messages on %s', async harness => {
+  await seed([message()], harness);
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'steer' }));
+  expect(await hook('PostToolUse', harness)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: exactFrame } }) + '\n' });
+  expect((await readCursor(files)).deliveredCount).toBe(1);
+  expect((await readActivity(files)).state).toBe('busy');
+});
+it.each(['steer', 'sync', 'async', 'missing'])('preserves cursor for silent %s PostToolUse', async mode => {
+  await seed([message(1, mode === 'steer' ? { kind: 'event' } : {})]);
+  if (mode !== 'missing') await fs.writeFile(files.mode, JSON.stringify({ mode }));
+  expect(await hook('PostToolUse')).toEqual({ code: 0, stderr: '', stdout: '' });
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+});
+it.each(['UserPromptSubmit', 'Stop'])('async %s records activity without reading or consuming inbox', async event => {
+  await seed([message()]);
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'async' }));
+  expect(await hook(event)).toEqual({ code: 0, stderr: '', stdout: '' });
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+  expect((await readActivity(files)).state).toBe(event === 'Stop' ? 'idle' : 'busy');
+  expect((await unread(files)).entries).toHaveLength(1);
+});
+it.each(['UserPromptSubmit', 'Stop'])('steer %s keeps the exact sync envelope', async event => {
+  await seed([message()]);
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'steer' }));
+  const envelope = event === 'Stop' ? { decision: 'block', reason: exactFrame } : { hookSpecificOutput: { hookEventName: event, additionalContext: exactFrame } };
+  expect(await hook(event)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify(envelope) + '\n' });
+});

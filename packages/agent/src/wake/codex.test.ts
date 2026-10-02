@@ -163,3 +163,22 @@ it('requires a strictly later hook timestamp and retries at exactly 60 seconds',
   time += 1; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(2);
 });
+
+it('suppresses async wakes and resumes on sync without moving the cursor', async () => {
+  await append('1'); await activity('idle');
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  start(); await wait(150);
+  expect(run).not.toHaveBeenCalled();
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
+it('clears a pending wake when async is entered', async () => {
+  await append('1'); await activity('idle'); start(); await wait();
+  expect(run).toHaveBeenCalledTimes(1);
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  waker!.notify(); await wait();
+  await writeJsonAtomic(files.mode, { mode: 'steer' });
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
