@@ -269,8 +269,16 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
         native.clearDiscovery(actor);
       }
       const requestFingerprint = await approveExactRequest(owner, actor);
-      native.prompt(actor, `The owner approved the pending request. In this same native session, call the installed Khala MCP tool khala_channel_access_status with operationId ${operationId} and origin ${environment.appOrigin} to observe that decision and connect. Do not create a new operation ID.`);
-      await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.bindingId), 120_000);
+      // One model status call per turn; a bounded retry can outlive a transient connector or Control response.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        native.prompt(actor, `The owner approved the pending request. In this same native session, call the installed Khala MCP tool khala_channel_access_status exactly once with operationId ${operationId} and origin ${environment.appOrigin}. If unavailable, stop after that one call. Do not create a new operation ID.`);
+        try {
+          await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.bindingId), 40_000);
+          break;
+        } catch (error) {
+          if (attempt === 2 || (error as Error).message !== 'external_browser_native_wait_predicate_false') throw error;
+        }
+      }
       await requireConnectedRequest(owner, requestFingerprint, roomId);
     }
 
