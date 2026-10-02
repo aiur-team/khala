@@ -1,3 +1,4 @@
+import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 
 export interface KhalaAgentClient {
@@ -5,6 +6,7 @@ export interface KhalaAgentClient {
   status(): Promise<{ state: string; channelName?: string; agentUserId?: string; unread: number }>;
   read(limit: number, before?: string): Promise<{ messages: InboxEntry[]; nextBefore?: string }>;
   send(text: string): Promise<{ eventId: string }>;
+  sendChannelEvent(content: ChannelEventContent): Promise<{ eventId: string }>;
   close(): Promise<void>;
 }
 
