@@ -1,0 +1,11 @@
+{
+  "event": "alert",
+  "name": "ticket.395.agent.attention.ci",
+  "topic": "ticket.395.agent.attention.ci",
+  "message": "CI needs attention",
+  "reason": "CI failed",
+  "severity": "warning",
+  "needs_attention": true,
+  "source_ticket_id": "395",
+  "sound": null
+}
