@@ -25,7 +25,7 @@ describe('createHumanBrowserApi', () => {
   it('exposes only the human admission and messaging adapters', () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(Object.keys(api).sort()).toEqual(['admission', 'channelLinks', 'credentials', 'identity', 'participants']);
+    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'channelLinks', 'credentials', 'identity', 'participants']);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -364,4 +364,54 @@ describe('createHumanBrowserApi', () => {
     expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never], session)).toBeNull();
   });
 
+});
+
+describe('agent join browser API', () => {
+  const view = { joinId: 'j1', label: 'Helper', harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' };
+  it.each(['view', 'status'] as const)('decodes %s and forwards the abort signal on a same-origin GET', async method => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(200, view));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    const abort = new AbortController();
+    expect(await api.agentJoin[method]('j1', abort.signal)).toEqual({ kind: 'ok', view });
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/agent-join${method === 'status' ? '/status' : ''}?joinId=j1`);
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: 'GET', credentials: 'same-origin' });
+    abort.abort();
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+  it.each([[401, 'signed_out'], [403, 'not_member'], [404, 'not_found'], [409, 'already_confirmed_by_other'], [500, 'unavailable']] as const)('maps HTTP %s', async (status, code) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(status, { error: code }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.view('j1')).toEqual({ kind: 'error', code });
+    expect(await api.agentJoin.status('j1')).toEqual({ kind: 'error', code });
+  });
+  it.each([{ ...view, harness: 'unknown' }, { ...view, roomId: 'bad' }, {}, { ...view, extra: true }])('rejects malformed views', async body => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(200, body));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.view('j1')).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+  it('posts an empty confirmation body using the current CSRF token', async () => {
+    const confirmed = { ...view, state: 'confirmed', agentUserId: '@agent-x:hs' };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'current-proof' }))
+      .mockResolvedValueOnce(json(200, confirmed));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.confirm('j1')).toEqual({ kind: 'ok', view: confirmed });
+    expect(fetch.mock.calls[1]?.[0]).toBe(`${origin}/api/human/agent-join/confirm?joinId=j1`);
+    expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: 'POST', credentials: 'same-origin', body: '{}' });
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('x-khala-csrf')).toBe('current-proof');
+  });
+  it('returns unavailable on network failures and encodes query identifiers', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error('offline'));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentJoin.view('a&b')).toEqual({ kind: 'error', code: 'unavailable' });
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/agent-join?joinId=a%26b`);
+  });
+  it('retains the confirmation return path when signing in', async () => {
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch: vi.fn() });
+    const result = await api.identity.beginSignIn('/agent/confirm?joinId=j1');
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok' && result.value.kind === 'navigate') {
+      expect(new URL(result.value.url).searchParams.get('return_to')).toBe('/agent/confirm?joinId=j1');
+    }
+  });
 });

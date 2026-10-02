@@ -1,0 +1,18 @@
+{
+  "id": 88123,
+  "topic": "ticket.395.ci.failed",
+  "source": "github",
+  "head_sha": "3F9C2AB0D1",
+  "pr_number": 412,
+  "checks": [
+    {
+      "name": "test",
+      "conclusion": "failure"
+    }
+  ],
+  "failure_excerpt": "SECRET failing assertion excerpt",
+  "message": "Diagnose this failure and push the fix",
+  "ticket_observation": {
+    "occurred_at": null
+  }
+}

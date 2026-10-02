@@ -642,10 +642,23 @@ class MatrixSubstrate implements RoomSubstrate {
   }
 }
 
+/** Use the browser SDK invite so its verified identity can share encrypted history. */
+export async function inviteWithHistory(client: Pick<MatrixClient, 'getRoom' | 'invite'>, roomId: string, userId: string): Promise<boolean> {
+  try {
+    const room = client.getRoom(roomId);
+    if (!room?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return false;
+    const membership = room.getMember(userId)?.membership;
+    if (membership === 'invite' || membership === 'join') return true;
+    await client.invite(roomId, userId);
+    return true;
+  } catch { return false; }
+}
+
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
+  inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
   participant(): ParticipantView | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
@@ -738,6 +751,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
   };
 
   return {
+    inviteAgent: (roomId, userId) => runtime.active
+      ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
     device, room, conversations, participant: () => runtime.active?.actor ?? null,
     async roomParticipants(roomId, signal) {
       const active = runtime.active;

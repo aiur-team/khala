@@ -1,0 +1,17 @@
+{
+  "wake_id": "wake-1",
+  "topic": "ticket.395.pr.opened",
+  "topic_class": "ticket.pr.opened",
+  "event_id": 88123,
+  "ticket": "395",
+  "pr_number": 412,
+  "head_sha": "3F9C2AB0D1",
+  "action": "opened",
+  "draft": true,
+  "author_trusted?": true,
+  "ci_conclusion": null,
+  "needs_attention": false,
+  "count": 1,
+  "first_seen_at": "2026-10-01T10:09:00Z",
+  "last_seen_at": "2026-10-01T10:09:01Z"
+}
