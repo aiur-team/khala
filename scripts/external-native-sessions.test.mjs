@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { installDisposableBrowserTrust, nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+import { installDisposableBrowserTrust, installStagedBrowserTrust, nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
 
 test('disposable Chromium wrapper trusts only the pinned certificate key', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-browser-test-'));
@@ -25,6 +25,24 @@ test('disposable Chromium wrapper trusts only the pinned certificate key', () =>
     const version = spawnSync(wrapper, ['--version'], { encoding: 'utf8' });
     assert.equal(version.status, 0);
     assert.match(version.stdout, /^Chromium 15[0-3]\./u);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Claude staged launcher gets the same private certificate pin', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-staged-browser-test-'));
+  fs.chmodSync(root, 0o700);
+  const runtime = path.join(root, 'khala', 'versions', '0.1.0', 'khala.js');
+  const spki = `${'B'.repeat(43)}=`;
+  try {
+    fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
+    assert.throws(() => installStagedBrowserTrust(root, '0.1.0', spki), /staged_runtime_missing/);
+    fs.writeFileSync(runtime, 'runtime', { mode: 0o600 });
+    assert.throws(() => installStagedBrowserTrust(root, '../other', spki), /disposable_browser_provenance/);
+    assert.throws(() => installStagedBrowserTrust(root, '0.1.0', 'invalid'), /disposable_browser_provenance/);
+    const wrapper = installStagedBrowserTrust(root, '0.1.0', spki);
+    assert.equal(wrapper, path.join(root, 'khala', 'versions', '0.1.0', 'chromium', 'chrome-linux64', 'chrome'));
+    assert.match(fs.readFileSync(wrapper, 'utf8'), /--ignore-certificate-errors-spki-list='B{43}='/u);
+    assert.equal(fs.statSync(wrapper).mode & 0o777, 0o700);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

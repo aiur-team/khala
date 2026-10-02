@@ -34,7 +34,10 @@ export function installDisposableBrowserTrust(cli, descriptor, spki) {
   if (!/^[A-Za-z0-9+/]{43}=$/u.test(spki ?? '')
     || cli !== path.join(path.dirname(descriptor), 'installed', 'node_modules', '@aiur', 'khala', 'dist', 'khala.js'))
     fail('disposable_browser_provenance');
-  const directory = path.join(path.dirname(cli), 'chromium', 'chrome-linux64');
+  return writeDisposableBrowser(path.dirname(cli), spki);
+}
+function writeDisposableBrowser(runtimeDirectory, spki) {
+  const directory = path.join(runtimeDirectory, 'chromium', 'chrome-linux64');
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const browser = path.join(directory, 'chrome');
   fs.writeFileSync(browser, `#!/bin/sh
@@ -42,6 +45,15 @@ umask 077
 exec /usr/bin/chromium --ignore-certificate-errors-spki-list=${safeWord(spki)} "$@"
 `, { flag: 'wx', mode: 0o700 });
   return browser;
+}
+export function installStagedBrowserTrust(dataRoot, version, spki) {
+  if (!/^[A-Za-z0-9+/]{43}=$/u.test(spki ?? '') || !/^\d+\.\d+\.\d+$/u.test(version))
+    fail('disposable_browser_provenance');
+  const runtimeDirectory = path.join(dataRoot, 'khala', 'versions', version);
+  const runtime = path.join(runtimeDirectory, 'khala.js');
+  if (!fs.existsSync(runtime)) fail('staged_runtime_missing');
+  privateFile(runtime, 32 * 1024 * 1024);
+  return writeDisposableBrowser(runtimeDirectory, spki);
 }
 const stateFile = directory => path.join(directory, 'native-sessions.json');
 const load = directory => {
@@ -349,6 +361,8 @@ function main() {
       if (!Array.isArray(applied.harnesses)) fail('setup_apply');
     } else if (dry.operations?.length) fail('setup_plan');
     const status = JSON.parse(checked(process.execPath, [cli, 'status'], env));
+    const stagedBrowser = installStagedBrowserTrust(roots.data, '0.1.0', process.env.KHALA_E2E_CERT_SPKI);
+    if (!/^Chromium 15[0-3]\./u.test(checked(stagedBrowser, ['--version']))) fail('staged_browser_version');
     const claudeSetup = status.configuration?.harnesses?.find(item => item.harness === 'claude');
     if (!claudeSetup?.version?.supported || !claudeSetup.components?.length
       || claudeSetup.components.some(item => item.state !== 'ready')) fail('claude_setup');
