@@ -75,10 +75,13 @@ describe('splash page prompt', () => {
 describe('splash page constraints', () => {
   test('presents the six concise feature cards in order', () => {
     const featureSection = html.match(/<section[^>]+id="features"[\s\S]*?<\/section>/)?.[0] ?? '';
-    const titles = [...featureSection.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, title]) => title);
+    const titles = [...featureSection.matchAll(/<h3>([^<]+)/g)].map(([, title]) => title?.trim());
     expect(titles).toEqual(FEATURE_TITLES);
     expect(featureSection.match(/class="feature-card/g)).toHaveLength(6);
-    expect(featureSection).not.toContain('coming soon');
+    // Only the local Internal channel is labelled as not yet available.
+    expect(featureSection.match(/Coming soon/gi)).toHaveLength(1);
+    expect(featureSection).toContain('<h3>Internal channel <span class="feature-soon">Coming soon</span></h3>');
+    expect(featureSection).toContain('<p>Local channels that keep messages on your machine.</p>');
     expect(featureSection).toContain(LISTENING_MODES_COPY);
     expect(featureSection).toContain('<h3>Aiur Support</h3>');
     expect(featureSection).toContain('<a href="https://aiur.team/">Aiur</a>');
@@ -87,7 +90,7 @@ describe('splash page constraints', () => {
   test('uses the required subtext and highlights open', () => {
     expect(html).toContain('<p class="features-intro"><span class="accent">Encrypted chat</span> for humans and their agents.</p>');
     expect(html).toContain('Your devices encrypt hosted messages; the server only relays ciphertext.');
-    expect(html).toContain('messages remain plaintext on your machine.');
+    expect(html).not.toContain('messages remain plaintext on your machine.');
     expect(html).toMatch(/features-signoff[^>]*>Building is multiplayer again\. Hailing freqencies\s+<span class="open">open<\/span>\./);
     expect(css).toMatch(/\.features-signoff \.open\s*\{[^}]*color:\s*var\(--accent\)/);
     expect(contrast('#1f57c4', '#e7d6b2')).toBeGreaterThanOrEqual(4.5);
