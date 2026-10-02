@@ -118,6 +118,23 @@ async function authorizeDiscovery(owner: Page, actor: Actor, session: NativeSess
   await expect(owner).toHaveURL(/^http:\/\/127\.0\.0\.1:\d+\/khala\/channel-discovery\/callback\//u);
 }
 
+async function waitForAccessGate(owner: Page, native: ExternalNativeDriver, actor: Actor): Promise<NativeSession | null> {
+  let discovery: NativeSession | null = null;
+  await expect.poll(async () => {
+    try {
+      const session = native.inspect().sessions.find(item => item.actor === actor);
+      if (session?.discoveryConsentUrl) { discovery = session; return true; }
+    } catch { return false; }
+    const body = await owner.evaluate(async () => {
+      const response = await fetch('/api/human/channel-access/inbox', { credentials: 'same-origin' });
+      if (response.status !== 200) throw new Error('external_browser_owner_inbox_unavailable');
+      return response.json() as Promise<unknown>;
+    });
+    return Boolean(exactOwnerAccessRequest(body, actor));
+  }, { timeout: 120_000, intervals: [1_000, 2_000] }).toBe(true);
+  return discovery;
+}
+
 async function sendChallenge(owner: Page, actor: Actor, roomId: string, accessToken: string): Promise<{ eventId: string; text: string }> {
   const challenge = syntheticCanary(`challenge-${actor}`);
   const text = `Please read this ${actor} challenge and send a useful reply: ${challenge}`;
@@ -246,9 +263,11 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       await approveProofCandidate(owner, actor, session, invite);
       phase = `${actor}_access`;
       native.prompt(actor, `Using the installed Khala connector in this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite}. The owner approved your proof key. Do not create a new operation ID.`);
-      const discovery = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.discoveryConsentUrl), 120_000);
-      await authorizeDiscovery(owner, actor, discovery.sessions.find(item => item.actor === actor)!);
-      native.clearDiscovery(actor);
+      const discovery = await waitForAccessGate(owner, native, actor);
+      if (discovery) {
+        await authorizeDiscovery(owner, actor, discovery);
+        native.clearDiscovery(actor);
+      }
       const requestFingerprint = await approveExactRequest(owner, actor);
       native.prompt(actor, `The owner approved the pending request. In this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite} to pick up that decision and connect. Do not create a new operation ID.`);
       await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.bindingId), 120_000);
