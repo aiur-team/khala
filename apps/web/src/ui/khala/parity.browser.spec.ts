@@ -117,13 +117,35 @@ const screenCeiling = (c: ScreenCase) => {
  * change still fails.
  */
 const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
-  // The fixture's first agent row is the viewer's own: a greyed accent (dark) / muted accent tint (light).
+  // The fixture's first agent row is the viewer's own: a greyed (dark) / muted (light) tint of the owner's colour
+  // (no machine tag; agent bubbles tinted by owner). Operator request 2026-10-02: per-human colours: that colour is
+  // the viewer's resolved blue `solid` (#276ecb), not the accent.
   '.kh-row:not(.me):not(.human) .kh-b': {
-    reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+    reason: 'operator request 2026-10-02: per-human colours',
     values: {
-      '1440-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
-      '1440-light': { 'background-color': 'color(srgb 0.691922 0.716706 0.75451)' },
-      '390-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
+      '1440-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
+      '1440-light': { 'background-color': 'color(srgb 0.700706 0.741961 0.762196)' },
+      '390-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
+    },
+  },
+  // Operator request 2026-10-02: per-human colours. The viewer's own bubble is their colour's `solid` (blue #276ecb,
+  // 5.03:1 with white); the design's accent #2f86ff gives only 3.51:1.
+  '.kh-row.me .kh-b': {
+    reason: 'operator request 2026-10-02: per-human colours',
+    values: {
+      '1440-dark': { 'background-color': 'rgb(39, 110, 203)' },
+      '1440-light': { 'background-color': 'rgb(39, 110, 203)' },
+      '390-dark': { 'background-color': 'rgb(39, 110, 203)' },
+    },
+  },
+  // Operator request 2026-10-02: per-human colours. The fixture's first other-human row is Kai, who is green;
+  // the design draws every other human pink (Maya, pink, is unchanged).
+  '.kh-row.human .kh-b': {
+    reason: 'operator request 2026-10-02: per-human colours',
+    values: {
+      '1440-dark': { 'background-color': 'rgb(30, 74, 52)' },
+      '1440-light': { color: 'rgb(16, 60, 38)', 'background-color': 'rgb(135, 227, 181)', border: '0px none rgb(16, 60, 38)' },
+      '390-dark': { 'background-color': 'rgb(30, 74, 52)' },
     },
   },
   // The fixture's first mention sits in that agent row; on a tinted bubble it takes the bubble's text colour.
