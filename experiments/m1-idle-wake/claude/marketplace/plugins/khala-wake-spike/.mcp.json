@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "khala-spike-probe": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/probe-mcp.mjs"
+      ]
+    }
+  }
+}
