@@ -141,7 +141,7 @@ export function ConversationFixture({ search = location.search }: Readonly<{ sea
           <NewChannelPopover anchor={createButton} open={creating} onClose={() => setCreating(false)} ports={newChannelPorts} onOpenRoom={() => undefined} />
         </>} />}
       main={<ChannelScreen key={channel.id} title={channel.title} controller={controller} timeOptions={FIXTURE_TIME}
-        viewerOwnerId={VIEWER.ownerId} viewerName={VIEWER.displayName} viewerParticipantId={VIEWER.participantId}
+        viewerOwnerId={VIEWER.ownerId} viewerName={VIEWER.displayName} viewerParticipantId={VIEWER.participantId} viewerColor={HUMANS.me.color}
         humanParticipants={humanParticipants(channel)} describeParticipant={describeParticipant}
         modeFor={participantId => modes[participantId] ?? 'sync'}
         onSetMode={async (participantId, mode) => {

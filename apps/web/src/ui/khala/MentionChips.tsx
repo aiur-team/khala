@@ -15,6 +15,8 @@ export type MentionTarget = Readonly<{
   display: string;
   hue: number;
   ownerHue: number;
+  /** The human's (an agent's: its owner's) resolved `tint`, the badge fill under white initials; absent falls back to the hue. */
+  swatch?: string;
   /** An agent's owner initials; a human's own. */
   ownerInitials: string;
   harness?: 'claude' | 'codex';
@@ -61,15 +63,16 @@ export function flatMentionOrder(targets: readonly MentionTarget[]): readonly Me
 }
 
 function Chip({ target, onPick }: Readonly<{ target: MentionTarget; onPick(target: MentionTarget): void }>) {
+  const swatch: Readonly<Record<string, string>> = target.swatch ? { '--hc': target.swatch } : {};
   if (target.kind === 'human') {
-    const style = { '--oh': target.hue } as CSSProperties;
+    const style = { '--oh': target.hue, ...swatch } as CSSProperties;
     if (target.isViewer) return <span className="kh-chip kh-chip-h kh-chip-me" style={style}><i>{target.ownerInitials}</i>You</span>;
     return <button type="button" className="kh-chip kh-chip-h" style={style} data-kh-mention={target.id} onClick={() => onPick(target)}>
       <i>{target.ownerInitials}</i>@{target.display}
     </button>;
   }
   const logo = target.harness ? harnessLogo(target.harness) : null;
-  return <button type="button" className="kh-chip kh-chip-a" style={{ '--oh': target.ownerHue } as CSSProperties} data-kh-mention={target.id} onClick={() => onPick(target)}>
+  return <button type="button" className="kh-chip kh-chip-a" style={{ '--oh': target.ownerHue, ...swatch } as CSSProperties} data-kh-mention={target.id} onClick={() => onPick(target)}>
     {logo ? <img src={logo} alt="" /> : null}@{target.display}<i>{target.ownerInitials}</i>
   </button>;
 }

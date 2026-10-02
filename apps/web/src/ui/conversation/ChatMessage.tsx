@@ -1,5 +1,6 @@
 import type { AnimationEventHandler, CSSProperties, ReactNode } from 'react';
 import { clockLabel, type TimeOptions } from '../khala/format-time';
+import { humanColorStyle, type ResolvedHumanColor } from '../khala/human-colors';
 import './conversation.css';
 
 /** Where a row sits in its run (`features/timeline/runs.ts`, RECREATION-SPEC §7.1). */
@@ -22,10 +23,12 @@ type ThreadRowProps = Readonly<{
   run: ThreadRun;
   sender: 'me' | 'human' | 'agent';
   /**
-   * Agent rows: whose agent it is. The bubble takes a greyed tint of its owner's colour: the viewer's
-   * accent for `.yours`, the owner's identity hue (`--oh`, as on the avatar's owner badge) for `.theirs`.
+   * Agent rows: whose agent it is. The bubble takes a greyed tint of its owner's resolved colour
+   * (`tint`, as `--ob`), else of the owner's identity hue (`--oh`, as on the avatar's owner badge).
    */
-  agentOwner?: Readonly<{ yours: boolean; hue: number }>;
+  agentOwner?: Readonly<{ yours: boolean; hue: number; tint?: string | undefined }>;
+  /** `me` and `human` rows: the sender's resolved colour, for the bubble. Without it, the design's colours. */
+  humanColor?: ResolvedHumanColor | null | undefined;
   /** ISO time: the row `title` and the name line's `dateTime`. */
   time?: string;
   /** Fixtures and tests pass UTC; the product uses the viewer's local time. */
@@ -60,14 +63,22 @@ export function ChatMessage(props: ThreadRowProps | LegacyProps) {
   return 'run' in props ? <ThreadRow {...props} /> : <LegacyMessage {...props} />;
 }
 
-function ThreadRow({ id, run, sender, agentOwner, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
+function rowStyle(sender: ThreadRowProps['sender'], agentOwner: ThreadRowProps['agentOwner'], humanColor: ThreadRowProps['humanColor']): CSSProperties | undefined {
+  if (sender === 'agent') {
+    if (!agentOwner) return undefined;
+    return { '--oh': agentOwner.hue, ...(agentOwner.tint ? { '--ob': agentOwner.tint } : {}) } as CSSProperties;
+  }
+  return humanColor ? humanColorStyle(humanColor, sender) : undefined;
+}
+
+function ThreadRow({ id, run, sender, agentOwner, humanColor, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
   retry, after, className = '', children }: ThreadRowProps) {
   const position = run.first ? 'first' : run.mid ? 'mid' : 'last-of';
   const classes = ['kh-row', sender === 'me' ? 'me' : sender === 'human' ? 'human' : '',
     sender === 'agent' && agentOwner ? `agent ${agentOwner.yours ? 'yours' : 'theirs'}` : '', position,
     pop ? 'pop' : '', pending ? 'pending' : '', failed ? 'failed' : '', className].filter(Boolean).join(' ');
   return <li data-event-id={id} aria-live={live ? 'polite' : undefined} className={classes} title={time}
-    style={sender === 'agent' && agentOwner ? { '--oh': agentOwner.hue } as CSSProperties : undefined} onAnimationEnd={pop ? onPopEnd : undefined}>
+    style={rowStyle(sender, agentOwner, humanColor)} onAnimationEnd={pop ? onPopEnd : undefined}>
     {run.showAvatar ? avatar : null}
     <div className="kh-col">
       {run.showName && name ? <button type="button" className="kh-name" style={{ '--h': name.hue } as CSSProperties}

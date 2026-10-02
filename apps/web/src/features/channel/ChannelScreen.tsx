@@ -10,6 +10,8 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
+import { defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
+import { HumanColorsProvider, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, colorSwatch } from '../../ui/khala/human-colors';
 import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
@@ -39,6 +41,8 @@ export interface ChannelScreenProps {
   /** The viewer's verified sign-in email, shown beside their name in the roster and detail pane. */
   viewerEmail?: string;
   viewerParticipantId?: ParticipantId;
+  /** The viewer's chosen colour; `null`/absent (profile loading or errored) uses their default colour. */
+  viewerColor?: HumanColorId | null;
   /** Other humans in member order. */
   humanParticipants?: readonly Readonly<{ participantId: ParticipantId; displayName: string; ownerId?: OwnerId }>[];
   currentNames?: ReadonlyMap<ParticipantId, string>;
@@ -127,7 +131,8 @@ function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, on
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
   const pill = <><i>{agent.ownerInitials}</i>
     {agent.isViewerOwned ? <span>Your agent</span> : <span>Owned by <b>{agent.ownerName}</b></span>}</>;
-  const pillStyle = { '--oh': agent.ownerHue } as CSSProperties;
+  const swatch = colorSwatch(agent.ownerColor);
+  const pillStyle = { '--oh': agent.ownerHue, ...(swatch ? { '--hc': swatch } : {}) } as CSSProperties;
   return <ParticipantDetail name={`${agent.name} details`} kind="Agent" onClose={onClose}>
     <div className="kh-d-hero"><MemberAvatar member={agent} /><AgentName agent={agent} /><span>{harnessName(agent)}</span>
       {owner ? <button type="button" className="kh-d-owner" data-kh-human={owner.participantId} style={pillStyle}
@@ -151,15 +156,27 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
   main.style.setProperty('--kh-roster-max', `${Math.max(160, Math.round((main.clientHeight - headHeight) * 0.7))}px`);
 }
 
-export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, humanParticipants, currentNames,
+export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, viewerColor, humanParticipants, currentNames,
   renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
+  const humanColors = useMemo(() => {
+    const viewerOwner = viewerOwnerId ?? '';
+    const humans = (humanParticipants ?? []).map(human => ({ ownerId: human.ownerId ?? human.participantId,
+      color: humanColorOf(describeParticipant?.(human.participantId)) }));
+    const humanOwners = new Set(humans.map(human => human.ownerId));
+    const agentOwners = view.agents.flatMap(agent => agent.ownerId && !humanOwners.has(agent.ownerId)
+      ? [{ ownerId: agent.ownerId, color: ownerColorOf(describeParticipant?.(agent.participantId)) }] : []);
+    return resolveHumanColors({ viewer: { ownerId: viewerOwner, color: viewerColor ?? defaultHumanColor(viewerOwner) },
+      others: [...humans, ...agentOwners] });
+  }, [describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
       ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}) },
     humans: humanParticipants ?? [], agents: view.agents, currentNames, describeParticipant,
-  }), [describeParticipant, currentNames, humanParticipants, view.agents, viewerEmail, viewerName, viewerOwnerId, viewerParticipantId]);
+    colorFor: ownerId => humanColors.get(ownerId) ?? resolvedColor(defaultHumanColor(ownerId), 0),
+  }), [describeParticipant, currentNames, humanColors, humanParticipants, view.agents, viewerEmail, viewerName, viewerOwnerId, viewerParticipantId]);
 
   const room = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);
@@ -251,7 +268,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
     closeRoster(true);
   }
 
-  return <div ref={room} className={`kh-channel${rosterOpen ? ' roster-open' : ''}`}>
+  return <HumanColorsProvider value={humanColors}><div ref={room} className={`kh-channel${rosterOpen ? ' roster-open' : ''}`}>
     <h1 className="sr-only" id="khala-channel-title" dir="auto">{title}</h1>
     <div ref={head} className="kh-head" onKeyDown={onRosterKeyDown}>
       {onBack ? <button type="button" className="kh-back" aria-label="All channels" onClick={onBack}><ChevronLeftIcon /></button> : null}
@@ -283,7 +300,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       {renderTimeline(toggleParticipant, renderShare ? () => setInviteOpen(true) : undefined, setMentionRoster)}
     </div>
     {detail && detailHost ? createPortal(detail, detailHost) : null}
-  </div>;
+  </div></HumanColorsProvider>;
 }
 
 /** @deprecated Use `ChannelScreen`. Kept through the first tagged release containing #163. */

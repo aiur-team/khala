@@ -4,6 +4,7 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import type { ResolvedHumanColor } from '../../ui/khala/human-colors';
 import { buildIdBadgeResolver, initials, participantHue } from '../../ui/khala/identity';
 import type { ChannelAgentView } from './controller';
 import { participantRosterName } from './participant-name';
@@ -17,6 +18,8 @@ export type HumanMember = Readonly<{
   /** The first name, for the subtitle and `@ Mention {first name}`. */
   short: string;
   hue: number;
+  /** The colour the viewer sees this human in; `null` without `MemberInput.colorFor`. */
+  color: ResolvedHumanColor | null;
   initials: string;
   isViewer: boolean;
   /** Verified sign-in email, visible to members of the same channel; `null` until control has recorded it. */
@@ -32,6 +35,8 @@ export type AgentMember = Readonly<{
   idBadge: string | null;
   hue: number;
   ownerHue: number;
+  /** The colour the viewer sees the owner in; `null` without `MemberInput.colorFor`. */
+  ownerColor: ResolvedHumanColor | null;
   ownerName: string;
   ownerInitials: string;
   harness: Harness | null;
@@ -56,27 +61,31 @@ export type MemberInput = Readonly<{
   agents: readonly ChannelAgentView[];
   currentNames?: ReadonlyMap<ParticipantId, string> | undefined;
   describeParticipant?: ((participantId: string) => Participant | undefined) | undefined;
+  /** The channel's per-viewer human colours (`resolveHumanColors`); without it, hues hash as before. */
+  colorFor?: ((ownerId: string) => ResolvedHumanColor) | undefined;
 }>;
 
 const firstName = (name: string) => name.trim().split(/\s+/u)[0] ?? name;
 
-export function resolveMembers({ viewer, humans, agents, currentNames, describeParticipant }: MemberInput): ChannelMembers {
+export function resolveMembers({ viewer, humans, agents, currentNames, describeParticipant, colorFor }: MemberInput): ChannelMembers {
   const emailOf = (participantId: string | undefined): string | null => {
     const detail = participantId === undefined ? undefined : describeParticipant?.(participantId);
     return detail?.kind === 'human' ? detail.email ?? null : null;
   };
   const viewerName = participantRosterName(viewer.name ?? '', 'You');
   const viewerOwnerId = viewer.ownerId ?? '';
+  const viewerColor = colorFor?.(viewerOwnerId) ?? null;
   const viewerMember: HumanMember = {
     kind: 'human', participantId: viewer.participantId ?? 'viewer', ownerId: viewerOwnerId,
-    name: viewerName || 'You', short: 'You', hue: participantHue({ kind: 'human', ownerId: viewerOwnerId, isViewer: true }),
+    name: viewerName || 'You', short: 'You', hue: viewerColor?.hue ?? participantHue({ kind: 'human', ownerId: viewerOwnerId, isViewer: true }), color: viewerColor,
     initials: 'YO', isViewer: true, email: viewer.email ?? emailOf(viewer.participantId),
   };
   const humanMembers = humans.map((human): HumanMember => {
     const name = participantRosterName(human.displayName, 'Channel member');
     const ownerId = human.ownerId ?? human.participantId;
+    const color = colorFor?.(ownerId) ?? null;
     return { kind: 'human', participantId: human.participantId, ownerId, name, short: firstName(name),
-      hue: participantHue({ kind: 'human', ownerId }), initials: initials(name), isViewer: false, email: emailOf(human.participantId) };
+      hue: color?.hue ?? participantHue({ kind: 'human', ownerId }), color, initials: initials(name), isViewer: false, email: emailOf(human.participantId) };
   });
   // The name the thread resolves for an agent, so both apply the badge rule to the same string.
   const threadName = (agent: ChannelAgentView) => {
@@ -102,11 +111,12 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
       : owner?.name ?? described?.ownerLabel ?? participantRosterName(agent.ownerDisplayName, 'Channel member');
     const ownerId = agent.ownerId ?? null;
     const name = baseNames[index]!;
+    const ownerColor = colorFor?.(ownerId ?? agent.participantId) ?? null;
     return {
       kind: 'agent', participantId: agent.participantId, ownerId, name,
       idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
       hue: participantHue({ kind: 'agent', participantId: agent.participantId }),
-      ownerHue: owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId }),
+      ownerHue: ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId }), ownerColor,
       // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster.
       ownerName, ownerInitials: owner?.isViewer ? viewerMember.initials : initials(ownerName), harness: described?.harness ?? null,
       isViewerOwned: Boolean(viewer.ownerId && agent.ownerId === viewer.ownerId), agent,

@@ -94,18 +94,23 @@ const SCREEN_SLACK = 0.005;
  * SCREEN_SLACK and its cause is `screenCause`; an unlisted screen gates at THRESHOLD.
  * The two `draft` ceilings were re-measured for operator request 2026-10-02: no machine tag; agent bubbles
  * tinted by owner (the agent-row-owner-tint mask leaves a bubble-edge residue; was .0625 dark, .0647 light).
+ * The 16 thread, chips, pop, failed-send and draft ceilings with a viewer, Kai or agent bubble on screen were
+ * re-measured for operator request 2026-10-02: per-human colours (the viewer's bubble is blue `solid`, Kai's are green
+ * and agent tints follow the owner's resolved colour; main's ratios on the same machine are unchanged).
+ * The six list and two 1100 thread ceilings were re-measured for the same request, for initials contrast: avatars and
+ * owner badges fill from the resolved `tint`, and the list's hue-only avatars from `hsl(hue 65% 29%)`.
  */
 const SCREEN_MEASURED: Readonly<Record<string, number>> = {
-  '1440-dark-thread': 0.0775, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0665, '1440-dark-detail-agent': 0.1267,
-  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0698, '1440-dark-pop-invite': 0.0794, '1440-dark-pop-add-agent': 0.0314,
-  '1440-dark-failed-send': 0.0775, '1440-dark-draft': 0.0678, '1100-dark-thread': 0.1340, '900-dark-thread': 0.1747,
-  '760-dark-thread': 0.0965, '760-dark-list': 0.0201, '390-dark-thread': 0.1055, '390-dark-list': 0.0855, '390-dark-roster': 0.0718,
-  '390-dark-chips': 0.0689, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
-  '1440-light-thread': 0.0807, '1440-light-roster': 0.0260, '1440-light-chips': 0.0684, '1440-light-detail-agent': 0.1332,
-  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0816, '1440-light-pop-invite': 0.0842, '1440-light-pop-add-agent': 0.0342,
-  '1440-light-failed-send': 0.0807, '1440-light-draft': 0.0705, '1100-light-thread': 0.1371, '900-light-thread': 0.1835,
-  '760-light-thread': 0.0996, '760-light-list': 0.0205, '390-light-thread': 0.1139, '390-light-list': 0.0862,
-  '390-light-roster': 0.0727, '390-light-chips': 0.0756, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
+  '1440-dark-thread': 0.0938, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0881, '1440-dark-detail-agent': 0.1267,
+  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0892, '1440-dark-pop-invite': 0.0958, '1440-dark-pop-add-agent': 0.0314,
+  '1440-dark-failed-send': 0.0938, '1440-dark-draft': 0.0901, '1100-dark-thread': 0.1495, '900-dark-thread': 0.1747, '900-dark-list': 0.0240,
+  '760-dark-thread': 0.0965, '760-dark-list': 0.0254, '390-dark-thread': 0.1055, '390-dark-list': 0.0920, '390-dark-roster': 0.0718,
+  '390-dark-chips': 0.0966, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
+  '1440-light-thread': 0.0973, '1440-light-roster': 0.0260, '1440-light-chips': 0.0919, '1440-light-detail-agent': 0.1332,
+  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0953, '1440-light-pop-invite': 0.1009, '1440-light-pop-add-agent': 0.0342,
+  '1440-light-failed-send': 0.0973, '1440-light-draft': 0.0929, '1100-light-thread': 0.1545, '900-light-thread': 0.1835, '900-light-list': 0.0243,
+  '760-light-thread': 0.0996, '760-light-list': 0.0258, '390-light-thread': 0.1139, '390-light-list': 0.0928,
+  '390-light-roster': 0.0727, '390-light-chips': 0.1023, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
 };
 const screenCeiling = (c: ScreenCase) => {
   const measured = SCREEN_MEASURED[screenName(c)];
@@ -117,15 +122,47 @@ const screenCeiling = (c: ScreenCase) => {
  * change still fails.
  */
 const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
-  // The fixture's first agent row is the viewer's own: a greyed accent (dark) / muted accent tint (light).
+  // The fixture's first agent row is the viewer's own: a greyed (dark) / muted (light) tint of the owner's colour
+  // (no machine tag; agent bubbles tinted by owner). Operator request 2026-10-02: per-human colours: that colour is
+  // the viewer's resolved blue `solid` (#276ecb), not the accent.
   '.kh-row:not(.me):not(.human) .kh-b': {
-    reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+    reason: 'operator request 2026-10-02: per-human colours',
     values: {
-      '1440-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
-      '1440-light': { 'background-color': 'color(srgb 0.691922 0.716706 0.75451)' },
-      '390-dark': { 'background-color': 'color(srgb 0.167843 0.281176 0.442745)' },
+      '1440-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
+      '1440-light': { 'background-color': 'color(srgb 0.700706 0.741961 0.762196)' },
+      '390-dark': { 'background-color': 'color(srgb 0.158431 0.252941 0.381569)' },
     },
   },
+  // Operator request 2026-10-02: per-human colours. The viewer's own bubble is their colour's `solid` (blue #276ecb,
+  // 5.03:1 with white); the design's accent #2f86ff gives only 3.51:1.
+  '.kh-row.me .kh-b': {
+    reason: 'operator request 2026-10-02: per-human colours',
+    values: {
+      '1440-dark': { 'background-color': 'rgb(39, 110, 203)' },
+      '1440-light': { 'background-color': 'rgb(39, 110, 203)' },
+      '390-dark': { 'background-color': 'rgb(39, 110, 203)' },
+    },
+  },
+  // Operator request 2026-10-02: per-human colours. The fixture's first other-human row is Kai, who is green;
+  // the design draws every other human pink (Maya, pink, is unchanged).
+  '.kh-row.human .kh-b': {
+    reason: 'operator request 2026-10-02: per-human colours',
+    values: {
+      '1440-dark': { 'background-color': 'rgb(30, 74, 52)' },
+      '1440-light': { color: 'rgb(16, 60, 38)', 'background-color': 'rgb(135, 227, 181)', border: '0px none rgb(16, 60, 38)' },
+      '390-dark': { 'background-color': 'rgb(30, 74, 52)' },
+    },
+  },
+  // Operator request 2026-10-02: per-human colours, for initials contrast. White initials on the design's
+  // `hsl(var(--oh) 65% 48%)` fall to 2.14:1 (green); a palette avatar or badge fills from the resolved `tint`
+  // (pink `solid` #ce277a in the head stack) and a hue-only one (the channel list) from `hsl(var(--oh) 65% 29%)`.
+  ...Object.fromEntries(([
+    ['.kh-av', 'rgb(122, 26, 74)'], ['.kh-cv-av .kh-av', 'rgb(122, 26, 74)'],
+    ['.kh-stack .kh-av', 'rgb(206, 39, 122)'], ['.kh-own', 'rgb(26, 68, 122)'],
+  ] as const).map(([selector, fill]) => [selector, {
+    reason: 'operator request 2026-10-02: per-human colours',
+    values: Object.fromEntries(['1440-dark', '1440-light', '390-dark'].map(viewport => [viewport, { 'background-color': fill }])),
+  }])),
   // The fixture's first mention sits in that agent row; on a tinted bubble it takes the bubble's text colour.
   '.kh-mention': {
     reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
@@ -870,6 +907,29 @@ describe('behaviour', { concurrency: 1 }, () => {
       assert.ok((await page.locator('.kh-d-log .kh-mention').allTextContents()).includes('@Sonnet'));
     });
   });
+
+  // Operator request 2026-10-02: per-human colours. Kai is green, whose hue-only fill gave white 2.14:1, and the
+  // hero's muted text colour used to grey his initials.
+  for (const theme of ['dark', 'light'] as const) {
+    it(`D7: ${theme} the hero avatar of a green human keeps white initials >= 4.5:1`, { timeout: 60_000 }, async () => {
+      await withFixture(at1440('detail-human', theme), async page => {
+        const { color, ratio } = await page.locator('.kh-d-hero .kh-hav').evaluate(element => {
+          const style = getComputedStyle(element);
+          const luminance = (rgb: string) => {
+            const [r, g, b] = rgb.match(/\d+/g)!.slice(0, 3).map(value => {
+              const c = Number(value) / 255;
+              return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+          };
+          const [high, low] = [luminance(style.color), luminance(style.backgroundColor)].sort((x, y) => y - x);
+          return { color: style.color, ratio: (high! + 0.05) / (low! + 0.05) };
+        });
+        assert.equal(color, 'rgb(255, 255, 255)');
+        assert.ok(ratio >= 4.5, `contrast ${ratio.toFixed(2)}`);
+      });
+    });
+  }
 
   it('m1-matrix: every §22 Omit element is absent; every Disabled control is disabled with “Coming soon”; listening modes are live', { timeout: 120_000 }, async () => {
     const OMIT = ['.kh-ask', '.kh-badge', '.kh-req', '.kh-crw', '.kh-rai-p', '.kh-d-bar', '.kh-d-kv dt:nth-of-type(5)', '#kh-d-open',

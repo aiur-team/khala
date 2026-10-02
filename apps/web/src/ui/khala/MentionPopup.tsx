@@ -14,10 +14,11 @@ export const mentionOptionId = (target: MentionTarget) => `kh-mention-opt-${targ
 const keepFocus = (event: SyntheticEvent) => event.preventDefault();
 
 function Avatar({ target }: Readonly<{ target: MentionTarget }>) {
-  if (target.kind === 'human') return <i style={{ '--oh': target.hue } as CSSProperties}>{target.ownerInitials}</i>;
+  const swatch: Readonly<Record<string, string>> = target.swatch ? { '--hc': target.swatch } : {};
+  if (target.kind === 'human') return <i style={{ '--oh': target.hue, ...swatch } as CSSProperties}>{target.ownerInitials}</i>;
   const logo = target.harness ? harnessLogo(target.harness) : null;
   if (logo) return <img src={logo} alt="" />;
-  return <i style={{ '--oh': target.ownerHue } as CSSProperties}>{initials(target.label)}</i>;
+  return <i style={{ '--oh': target.ownerHue, ...swatch } as CSSProperties}>{initials(target.label)}</i>;
 }
 
 export function MentionPopup({ options, active, onPick, onHover, targets }: Readonly<{

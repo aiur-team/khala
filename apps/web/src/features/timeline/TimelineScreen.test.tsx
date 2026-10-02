@@ -6,6 +6,7 @@ import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/c
 import type { ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { TimelineController, TimelineData } from './controller';
 import { TimelineScreen } from './TimelineScreen';
+import { HumanColorsProvider, resolveHumanColors } from '../../ui/khala/human-colors';
 import type { PendingSend } from './send';
 
 const roomId = 'room_demo' as RoomId;
@@ -158,10 +159,40 @@ describe('TimelineScreen', () => {
     expect(html).toContain('aria-label="Assistant, your agent,');
     expect(html).toContain('aria-label="Assistant, another person&#x27;s agent,');
     expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first/);
-    expect(html).toMatch(/<li data-event-id="E2" class="kh-row agent theirs first[^>]*style="--oh:\d+"/);
+    expect(html).toMatch(/<li data-event-id="E2" class="kh-row agent theirs first[^>]*style="--oh:\d+;--ob:#[0-9a-f]{6}"/);
     expect(html).not.toMatch(/class="kh-row me/);
     // §3: the viewer's owner badge reads `YO`, as in the roster and chips.
     expect(html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1))).toEqual(['YO', 'MA']);
+  });
+
+  it('colours bubbles by the per-viewer human colours (operator request 2026-10-02: per-human colours)', () => {
+    const maya = participant('maya', 'human', 'Maya');
+    const ownAgent = { ...participant('own-agent', 'agent', 'Assistant'), ownerId: viewer.ownerId };
+    const mayaAgent = { ...participant('maya-agent', 'agent', 'Assistant · Maya'), ownerId: maya.ownerId };
+    const colors = resolveHumanColors({ viewer: { ownerId: viewer.ownerId, color: 'blue' }, others: [{ ownerId: maya.ownerId, color: 'blue' }] });
+    const data = { phase: 'ready' as const, nextCursor: null, newMessageCount: 0, items: [
+      item('E1', viewer, 'mine'), item('E2', maya, 'hers'), item('E3', ownAgent, 'my agent'), item('E4', mayaAgent, 'her agent'),
+    ] };
+    const html = renderToStaticMarkup(<HumanColorsProvider value={colors}>
+      <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />
+    </HumanColorsProvider>);
+    const mayaColor = colors.get(maya.ownerId)!;
+    expect(mayaColor.id).not.toBe('blue');
+    expect(html).toMatch(/<li data-event-id="E1" class="kh-row me[^"]*"[^>]*style="--hs:#276ecb"/);
+    expect(html).toMatch(new RegExp(`<li data-event-id="E2" class="kh-row human[^"]*"[^>]*style="--hb:${mayaColor.bubbleDark};--hb-l:${mayaColor.bubbleLight};--hk:${mayaColor.ink}"`));
+    expect(html).toMatch(/<li data-event-id="E3" class="kh-row agent yours[^"]*"[^>]*style="--oh:214;--ob:#276ecb"/);
+    expect(html).toMatch(new RegExp(`<li data-event-id="E4" class="kh-row agent theirs[^"]*"[^>]*style="--oh:${mayaColor.hue};--ob:${mayaColor.tint}"`));
+  });
+
+  it('marks a colour variant avatar with its tier and swatch', () => {
+    const others = Array.from({ length: 10 }, (_, index) => participant(`h${index}`, 'human', `Human ${index}`));
+    const colors = resolveHumanColors({ viewer: { ownerId: viewer.ownerId, color: 'red' }, others: others.map(human => ({ ownerId: human.ownerId, color: 'red' as const })) });
+    const variant = others.find(human => colors.get(human.ownerId)?.tier === 1)!;
+    const data = { phase: 'ready' as const, nextCursor: null, newMessageCount: 0, items: [item('E1', variant, 'hi')] };
+    const html = renderToStaticMarkup(<HumanColorsProvider value={colors}>
+      <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />
+    </HumanColorsProvider>);
+    expect(html).toMatch(new RegExp(`class="kh-av kh-hav" style="--oh:0;--hc:${colors.get(variant.ownerId)!.tint}"[^>]*data-kh-tier="1"`));
   });
 
   it('R1: disambiguates two different owners sharing the same display name with an id badge', () => {

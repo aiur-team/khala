@@ -125,10 +125,15 @@
 .kh-av img { width: 17px; height: 17px; }
 .kh-av.ghost { visibility: hidden; cursor: default; }
 .kh-av { position: relative; }
-.kh-own { position: absolute; right: -4px; bottom: -4px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; font: 700 8px/16px "JetBrains Mono", monospace; letter-spacing: -.02em; color: #fff; background: hsl(var(--oh) 65% 48%); border: 2px solid var(--bg-2); box-sizing: content-box; }
+.kh-own { position: absolute; right: -4px; bottom: -4px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; font: 700 8px/16px "JetBrains Mono", monospace; letter-spacing: -.02em; color: #fff; background: var(--hc, hsl(var(--oh) 65% 29%)); border: 2px solid var(--bg-2); box-sizing: content-box; }
 .kh-stack .kh-own, .kh-d-hero .kh-own { display: none; }
-.kh-hav { background: hsl(var(--oh) 65% 48%) !important; border-color: transparent; color: #fff; font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; }
+.kh-hav { background: var(--hc, hsl(var(--oh) 65% 29%)) !important; border-color: transparent; color: #fff; font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; }
 .kh-d-hero .kh-hav { font-size: 1.3rem; }
+/* Operator request 2026-10-02: per-human colours. `--hc` is the resolved colour's `tint` at every tier, so
+   white initials keep at least 4.5:1; the hue-only fallback is 29% lightness for the same reason. A colour
+   variant (tiers 1-2, past the 10 base colours) also carries a ring marker, so it doesn't rely on colour alone. */
+[data-kh-tier="1"].kh-hav { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 3.5px var(--hc); }
+[data-kh-tier="2"].kh-hav { outline: 1.5px dashed var(--hc); outline-offset: 2px; }
 .kh-more { font: 700 .66rem/1 "JetBrains Mono", monospace; color: var(--muted); background: var(--surface-3) !important; border-color: var(--line) !important; cursor: default; }
 .kh-gen { background: var(--surface-3) !important; border-color: var(--line) !important; color: var(--faint); font: 700 .9rem/1 "JetBrains Mono", monospace; }
 .kh-st { position: absolute; left: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--surface); background: var(--good); }
