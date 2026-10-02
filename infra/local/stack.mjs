@@ -14,7 +14,7 @@ const exec = promisify(execFile);
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const localDir = path.join(root, '.khala-local');
 // One stack per checkout: derive the Compose project from the checkout path so parallel worktrees never collide.
-const project = process.env.KHALA_STACK_PROJECT ?? `khala-local-${createHash('sha256').update(root).digest('hex').slice(0, 8)}`;
+const project = process.env.KHALA_STACK_PROJECT ?? `khala-local-${createHash('sha256').update(root).digest('hex').slice(0, 8)}-preview`;
 const services = ['synapse', 'postgres', 'dex', 'netlify', 'gateway'];
 const secret = () => randomBytes(32).toString('hex');
 const compose = [path.join(root, 'infra/messaging/compose.yaml'), path.join(root, 'infra/local/compose.dex.yaml')];
