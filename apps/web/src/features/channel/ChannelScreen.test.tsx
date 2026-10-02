@@ -100,7 +100,7 @@ describe('ChannelScreen per-human colours (operator request 2026-10-02: per-huma
   // Both other humans chose blue.
   const describe_ = (participantId: string): Participant | undefined => {
     const human = [theoHuman, zed].find(candidate => candidate.participantId === participantId);
-    return human ? { kind: 'human', matrixUserId: '@h:x', participantId, ownerId: human.ownerId, displayName: human.displayName, color: 'blue' } as Participant
+    return human ? { kind: 'human', matrixUserId: '@h:x', participantId, ownerId: human.ownerId, displayName: human.displayName, color: 'blue' }
       : undefined;
   };
   const rosterHue = (html: string, participantId: string) =>

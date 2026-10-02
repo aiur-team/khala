@@ -5,7 +5,8 @@
 // colour, then to a vivid (tier 1) and a muted (tier 2) variant.
 
 import { createContext, createElement, useCallback, useContext, type CSSProperties, type ReactNode } from 'react';
-import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from './human-color-ids';
+import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
+import type { Participant } from '@khala/contracts/m1/participants';
 
 export type HumanColorTier = 0 | 1 | 2;
 
@@ -112,6 +113,14 @@ function freeSlot(preferred: HumanColorId, taken: ReadonlySet<string>): { id: Hu
   }
   return null;
 }
+
+/** A human participant's chosen colour; absent from responses older than the colour field. */
+export const humanColorOf = (detail: Participant | undefined): HumanColorId | undefined =>
+  detail?.kind === 'human' ? detail.color : undefined;
+
+/** An agent participant's owner's colour, which control sends even when the owner isn't in the channel. */
+export const ownerColorOf = (detail: Participant | undefined): HumanColorId | undefined =>
+  detail?.kind === 'agent' ? detail.ownerColor : undefined;
 
 /** The inline custom properties a thread row needs for its bubble, by sender. */
 export function humanColorStyle(color: ResolvedHumanColor, role: 'me' | 'human' | 'agent'): CSSProperties {

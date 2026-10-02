@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from './human-color-ids';
+import { HUMAN_COLOR_IDS, defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
 import { HUMAN_PALETTE, humanColorStyle, nearestColors, resolveHumanColors, resolvedColor, type ResolvedHumanColor } from './human-colors';
 
 const slot = (color: ResolvedHumanColor | undefined) => color ? `${color.id}@${color.tier}` : undefined;

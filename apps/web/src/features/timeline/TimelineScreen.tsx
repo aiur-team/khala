@@ -27,8 +27,7 @@ import { Avatar } from '../../ui/khala/Avatar';
 import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/format-time';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
-import { participantColor, participantOwnerColor } from '../../ui/khala/human-color-ids';
-import { useHumanColor, variantSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
+import { humanColorOf, ownerColorOf, useHumanColor, variantSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
 import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
@@ -417,7 +416,7 @@ export function TimelineScreen({
     const detail = describeParticipant?.(participant.participantId);
     const isViewerOwned = participant.ownerId === viewer.ownerId;
     // The human's colour as this viewer sees it (operator request 2026-10-02: per-human colours); for an agent, its owner's.
-    const color = colorFor(participant.ownerId, participant.kind === 'agent' ? participantOwnerColor(detail) : participantColor(detail));
+    const color = colorFor(participant.ownerId, participant.kind === 'agent' ? ownerColorOf(detail) : humanColorOf(detail));
     const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: color.hue, isViewerOwned };
     if (detail?.kind === 'unknown') {
       return { ...shared, kind: 'unknown', label: 'Unknown', hue: 0, color: null, idBadge: undefined, ownerLabel: null, harness: undefined };

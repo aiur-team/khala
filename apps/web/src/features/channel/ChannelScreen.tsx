@@ -10,8 +10,8 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
-import { defaultHumanColor, participantColor, participantOwnerColor, type HumanColorId } from '../../ui/khala/human-color-ids';
-import { HumanColorsProvider, resolveHumanColors, resolvedColor, variantSwatch } from '../../ui/khala/human-colors';
+import { defaultHumanColor, type HumanColorId } from '@khala/contracts/m1/colors';
+import { HumanColorsProvider, humanColorOf, ownerColorOf, resolveHumanColors, resolvedColor, variantSwatch } from '../../ui/khala/human-colors';
 import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
@@ -166,10 +166,10 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   const humanColors = useMemo(() => {
     const viewerOwner = viewerOwnerId ?? '';
     const humans = (humanParticipants ?? []).map(human => ({ ownerId: human.ownerId ?? human.participantId,
-      color: participantColor(describeParticipant?.(human.participantId)) }));
+      color: humanColorOf(describeParticipant?.(human.participantId)) }));
     const humanOwners = new Set(humans.map(human => human.ownerId));
     const agentOwners = view.agents.flatMap(agent => agent.ownerId && !humanOwners.has(agent.ownerId)
-      ? [{ ownerId: agent.ownerId, color: participantOwnerColor(describeParticipant?.(agent.participantId)) }] : []);
+      ? [{ ownerId: agent.ownerId, color: ownerColorOf(describeParticipant?.(agent.participantId)) }] : []);
     return resolveHumanColors({ viewer: { ownerId: viewerOwner, color: viewerColor ?? defaultHumanColor(viewerOwner) },
       others: [...humans, ...agentOwners] });
   }, [describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);

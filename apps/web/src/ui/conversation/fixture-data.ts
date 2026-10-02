@@ -14,7 +14,7 @@ import type { AgentPresence } from '../../features/channel/ports';
 import type { TimelineData, TimelineRow } from '../../features/timeline/controller';
 import type { PendingSend } from '../../features/timeline/send';
 import type { TimeOptions } from '../khala/format-time';
-import type { HumanColorId } from '../khala/human-color-ids';
+import type { HumanColorId } from '@khala/contracts/m1/colors';
 import type { ConversationMember, ConversationSummary } from './ConversationList';
 
 /** The fixture clock: every day label and list time is relative to this. */
@@ -196,11 +196,11 @@ export function describeParticipant(participantId: string): Participant | undefi
   for (const agent of Object.values(AGENTS)) {
     if (agent.participantId !== participantId) continue;
     return { kind: 'agent', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: HUMANS[agent.owner].ownerId,
-      displayName: agent.displayName, ownerLabel: firstName(HUMANS[agent.owner].displayName), harness: agent.harness, ownerColor: HUMANS[agent.owner].color } as Participant;
+      displayName: agent.displayName, ownerLabel: firstName(HUMANS[agent.owner].displayName), harness: agent.harness, ownerColor: HUMANS[agent.owner].color };
   }
   for (const human of Object.values(HUMANS)) {
     if (human.participantId === participantId) {
-      return { kind: 'human', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: human.ownerId, displayName: human.displayName, color: human.color } as Participant;
+      return { kind: 'human', matrixUserId: `@${participantId}:khala.example`, participantId, ownerId: human.ownerId, displayName: human.displayName, color: human.color };
     }
   }
   return undefined;
