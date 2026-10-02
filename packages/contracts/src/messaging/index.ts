@@ -50,11 +50,6 @@ export {
   decodeRevocationProgress, decodeRevocationRequest,
 } from './revocation';
 export {
-  type ClosureBindingFence, type ClosureCapability, type ClosureConnectorReceipt, type ClosureConnectorStopResult, type ClosureConsequences, type ClosureFailureReason, type ClosurePort,
-  type ClosureRejection, type ClosureRequest, type ClosureStatus, type ClosureUnavailableReason,
-  CLOSURE_CONSEQUENCES, decodeClosureCapability, decodeClosureConnectorReceipt, decodeClosureRequest, decodeClosureStatus,
-} from './closure';
-export {
   type ProvideRecoverySecret, type RecoveryCapabilities, type RecoveryFailureReason, type RecoveryPort,
   type RecoveryRejection, type RecoveryState, type RecoveryStatus, type RecoveryUnavailableReason,
   RECOVERY_FAILURE_REASONS, RECOVERY_UNAVAILABLE_REASONS, decodeRecoveryCapabilities, decodeRecoveryStatus,
@@ -87,25 +82,6 @@ export {
   validateSealedGrantPayload,
 } from './discovery';
 export {
-  type ChannelAccessAuthorization, type ChannelAccessDecisionCommand, type ChannelAccessDecisionPort,
-  type ChannelAccessDecisionRejection, type ChannelAccessFulfillmentClaim, type ChannelAccessFulfillmentPort,
-  type ChannelAccessFulfillmentRejection, type ChannelAccessFulfillmentUpdate, type ChannelAccessMuteCommand,
-  type ChannelAccessMuteResult, type ChannelAccessNotification, type ChannelAccessNotificationPort,
-  type ChannelAccessOperationKind, type ChannelAccessOwnerOutcome, type ChannelAccessOwnerProjection,
-  type ChannelAccessOwnershipResult, type ChannelAccessRequesterCheck, type ChannelAccessRequesterContext,
-  type ChannelAccessRequesterProjection, type ChannelAccessRequestHandle, type ChannelAccessRequestJournalPort,
-  type ChannelAccessResolutionPort, type ChannelAccessResolutionResult, type ChannelAccessResolvedTarget,
-  type ChannelAccessRevalidationResult, type ChannelAccessStatusQuery, type ChannelCreateAuthorization,
-  type ChannelAccessRevokeCommand, decodeChannelAccessRevokeCommand,
-  type ChannelCreateResolutionResult, type ChannelCreateResolvedTarget, type ChannelCreateRevalidationResult,
-  CHANNEL_ACCESS_COOLDOWN_MS, CHANNEL_ACCESS_OWNER_OUTCOMES, CHANNEL_ACCESS_REQUEST_LIFETIME_MS,
-  CHANNEL_ACCESS_SENSITIVE_RETENTION_MS, MAX_CHANNEL_ACCESS_LABEL_BYTES, MAX_CHANNEL_ACCESS_NOTIFICATIONS_PER_MINUTE,
-  MAX_CHANNEL_ACCESS_OWNER_PENDING, MAX_CHANNEL_ACCESS_REQUESTER_PENDING, decodeChannelAccessDecisionCommand,
-  decodeChannelAccessFulfillmentClaim, decodeChannelAccessFulfillmentUpdate, decodeChannelAccessMuteCommand,
-  decodeChannelAccessNotification, decodeChannelAccessOwnerProjection, decodeChannelAccessRequesterContext,
-  decodeChannelAccessStatusQuery,
-} from './channel-access';
-export {
   type PairingApprovalResult, type PairingClaimProjection, type PairingClaimRequest, type PairingClaimResult,
   type PairingCreateRequest, type PairingCreateResult, type PairingDecisionRequest, type PairingDecisionResult,
   type PairingFailure, type PairingFailureCode, type PairingFailureRoute, type PairingGrantRedemptionRequest,
@@ -115,20 +91,6 @@ export {
   decodePairingFailure, decodePairingGrantRedemptionRequest, decodePairingOwnerProjection, decodePairingOwnerResult,
   decodePairingResultRequest, readCanonicalCode, readCanonicalOrigin,
 } from './pairing';
-export {
-  type ConversionAdvance, type ConversionCreate, type ConversionJournalPort, type ConversionJournalRejection,
-  type ConversionRecord, type ConversionState, type HistoryMode, type HistoryTransferPhase, type HistoryTransferPort,
-  type HistoryTransferProgress, type HistoryTransferRejection, type HistoryTransferStep,
-  type ConversionAccessPort, type ConversionAccessReadiness, type ConversionAccessRequest, type ConversionAgentBlock,
-  type ConversionAgentIdentity, type ConversionAgentState, type ConversionAgentStatus, type ConversionBindingPort,
-  type ConversionGrantRejection, type ConversionOwner, type ConversionSessionCheck, type ConversionSessionPort,
-  type ConversionSnapshot,
-  type ConversionStart, type ConversionVisibility, type HostedChannelCreate, type HostedChannelCreated, type HostedChannelPort,
-  CONVERSION_AGENT_BLOCKS, CONVERSION_AGENT_STATUSES, CONVERSION_STATES, CONVERSION_TRANSITIONS, CONVERSION_VERSION,
-  DEFAULT_CONVERSION_VISIBILITY, decodeConversionStart,
-  decodeConversionAdvance, decodeConversionCreate, decodeConversionRecord,
-  decodeHistoryTransferProgress, decodeHistoryTransferStep, isAllowedTransition,
-} from './externalization';
 export {
   type ImportedHistoryActor, type ImportedHistoryChunk, type ImportedHistoryChunkEntry, type ImportedHistoryLimits,
   type ImportedHistoryManifest, type ImportedHistoryRecord, type ImportedHistoryRecordInput, type ImportedHistorySource,
