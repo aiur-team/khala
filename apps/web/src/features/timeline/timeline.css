@@ -72,10 +72,55 @@
   font-style: italic;
 }
 
+/* The list and its new-messages pill: the pill floats over the list's foot,
+   centred just above the composer, and never scrolls with the rows. */
+.timeline__viewport {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.timeline__jump {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  z-index: 5;
+}
+
 .timeline__jump-latest {
-  align-self: center;
-  border-radius: 10px;
+  display: block;
   padding: 0.4rem 0.9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.45);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  animation: timelineJumpIn 0.16s ease-out;
+}
+
+.timeline__jump-latest:hover {
+  background: var(--surface-2);
+}
+
+.timeline__jump-latest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes timelineJumpIn {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline__jump-latest { animation: none; }
 }
 
 .timeline__composer {
