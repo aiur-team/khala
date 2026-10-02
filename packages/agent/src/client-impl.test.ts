@@ -208,3 +208,37 @@ it('falls back to the room id and propagates injected fetch and invite timeout',
   expect(joinApi.reportReady.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 321);
 });
+
+const channelEvent = (id: string, sender = '@khala_abc:s', key: string | undefined = 'key'): SessionMessage => ({
+  ...message(id, sender), type: 'com.khala.event.v1', content: { v: 1, kind: 'ci.failed', summary: 'CI failed: test', body: 'fallback', ...(key !== undefined ? { key } : {}) },
+});
+it('dedupes keys across senders and drops own and malformed events before key consumption', async () => {
+  await connected();
+  handler!(channelEvent('$own', credentials.userId));
+  handler!({ ...channelEvent('$bad'), content: {} });
+  handler!(channelEvent('$first'));
+  handler!(channelEvent('$duplicate', '@agent-other:s'));
+  expect(await entries()).toEqual([{ ...toInboxEntry(message('$first'), 'Maya'), kind: 'event', body: 'CI failed: test' }]);
+  expect(waker).not.toHaveBeenCalled();
+});
+it('preserves message/event order and wakes only for messages', async () => {
+  await connected();
+  handler!(message('$1')); handler!(channelEvent('$2')); handler!(message('$3'));
+  expect((await entries()).map(entry => [entry.eventId, entry.kind])).toEqual([['$1', 'message'], ['$2', 'event'], ['$3', 'message']]);
+  expect(waker.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$1', '$3']);
+  expect((await client.status()).unread).toBe(3);
+});
+it('reads own events, skips invalid and duplicate keys per page, and keeps intake dedupe separate', async () => {
+  await connected();
+  handler!(channelEvent('$live')); await entries();
+  const own = channelEvent('$own', credentials.userId);
+  vi.mocked(session.history).mockResolvedValue({ messages: [message('$1'), own, channelEvent('$dup'), { ...channelEvent('$bad'), content: {} }, { ...channelEvent('$unkeyed1'), content: { v: 1, kind: 'custom', summary: 'unkeyed', body: '' } }, { ...channelEvent('$unkeyed2'), content: { v: 1, kind: 'custom', summary: 'unkeyed', body: '' } }], nextBefore: '$1' });
+  for (let i = 0; i < 2; i++) {
+    const page = await client.read(10);
+    expect(page.messages.map(entry => entry.eventId)).toEqual(['$1', '$own', '$unkeyed1', '$unkeyed2']);
+    expect(page.messages[1]).toMatchObject({ kind: 'event', sender: credentials.userId, body: 'CI failed: test' });
+    expect(page.nextBefore).toBe('$1');
+  }
+  expect((await entries()).map(entry => entry.eventId)).toEqual(['$live']);
+  expect(waker).not.toHaveBeenCalled();
+});
