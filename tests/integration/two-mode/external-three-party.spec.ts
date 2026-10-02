@@ -3,7 +3,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from '../human/fixtures.js';
-import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds, type NativeSession } from './external-browser-driver.js';
+import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds, exactOwnerAccessFingerprint,
+  type NativeSession } from './external-browser-driver.js';
 import { verifyExternalConversation, type Actor, type BrowserFact } from './external-witness.js';
 
 const environment = readLiveHumanEnvironment();
@@ -21,12 +22,14 @@ async function requireCiphertext(roomId: string, accessToken: string, eventId: s
   await expect.poll(async () => (await ciphertextIds(roomId, accessToken)).includes(eventId), { timeout: 30_000 }).toBe(true);
 }
 
-async function newEncryptedMessage(owner: Page, roomId: string, accessToken: string, before: readonly string[]): Promise<{ eventId: string; text: string }> {
+async function newEncryptedMessage(owner: Page, native: ExternalNativeDriver, roomId: string, accessToken: string,
+  before: readonly string[]): Promise<{ eventId: string; text: string }> {
   let fresh: string[] = [];
   await expect.poll(async () => {
+    native.service();
     fresh = (await ciphertextIds(roomId, accessToken)).filter(id => !before.includes(id));
     return fresh.length;
-  }, { timeout: 60_000 }).toBe(1);
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(1);
   const eventId = fresh[0]!;
   const row = owner.locator(`.timeline__row:not(.timeline__row--pending)[data-event-id="${eventId}"]`);
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -35,15 +38,29 @@ async function newEncryptedMessage(owner: Page, roomId: string, accessToken: str
   return { eventId, text };
 }
 
-async function approveExactRequest(owner: Page, fingerprint: string, channelTitle: string, roomId: string): Promise<void> {
+async function approveExactRequest(owner: Page, actor: Actor, channelTitle: string, roomId: string): Promise<void> {
   await owner.goto(`${environment.appOrigin}/channel-requests`);
   const pending = owner.getByRole('list', { name: 'Requests waiting for you' });
+  let fingerprint: string | null = null;
+  await expect.poll(async () => {
+    await owner.reload({ waitUntil: 'domcontentloaded' });
+    const body = await owner.evaluate(async () => {
+      const response = await fetch('/api/human/channel-access/inbox', { credentials: 'same-origin' });
+      if (response.status !== 200) throw new Error('external_browser_owner_inbox_unavailable');
+      return response.json() as Promise<unknown>;
+    });
+    fingerprint = exactOwnerAccessFingerprint(body, actor, channelTitle);
+    if (!fingerprint) return false;
+    await pending.waitFor({ state: 'visible' });
+    return pending.locator('.channel-requests__row', { hasText: fingerprint }).count().then(count => count === 1);
+  }, { timeout: 90_000, intervals: [1_000, 2_000] }).toBe(true);
+  if (!fingerprint) throw new Error('external_browser_owner_fingerprint_unobserved');
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
-  await expect(row).toHaveCount(1, { timeout: 60_000 });
   await expect(row).toContainText('Channel access request');
-  // The owner projection exposes a channel title but no room ID. The private
-  // run title plus measured signer JKT are the strongest available match.
+  // This digest attests the approved context; signer JKT was checked separately
+  // on the proof-key and discovery-consent pages.
   await expect(row).toContainText(channelTitle);
+  await expect(row).toContainText(actor);
   await expect(row).toContainText('Waiting for you');
   await row.getByRole('button', { name: 'Review request' }).click();
   const dialog = owner.getByRole('dialog');
@@ -72,6 +89,23 @@ async function approveProofCandidate(owner: Page, actor: Actor, session: NativeS
   await owner.getByRole('button', { name: 'Approve key' }).click();
   const response = JSON.parse(await owner.locator('body').innerText()) as { kind?: unknown };
   if (response.kind !== 'approved') throw new Error(`external_browser_${actor}_candidate_approval_failed`);
+}
+
+async function authorizeDiscovery(owner: Page, actor: Actor, session: NativeSession): Promise<void> {
+  if (!session.discoveryConsentUrl || !session.sessionFingerprint) throw new Error(`external_browser_${actor}_discovery_missing`);
+  const url = new URL(session.discoveryConsentUrl);
+  if (url.origin !== environment.appOrigin || url.searchParams.get('harness') !== actor
+    || url.searchParams.get('session_id') !== session.sessionId
+    || url.searchParams.get('proof_jkt') !== session.sessionFingerprint)
+    throw new Error(`external_browser_${actor}_discovery_identity_mismatch`);
+  await owner.goto(url.href);
+  await expect(owner.getByRole('heading', { name: 'Authorize channel discovery?' })).toBeVisible();
+  const details = owner.locator('dl');
+  await expect(details).toContainText(session.sessionFingerprint);
+  await expect(details).toContainText(session.sessionId);
+  await expect(details).toContainText(actor);
+  await owner.getByRole('button', { name: 'Authorize', exact: true }).click();
+  await expect(owner).toHaveURL(/^http:\/\/127\.0\.0\.1:\d+\/khala\/channel-discovery\/callback\//u);
 }
 
 async function sendChallenge(owner: Page, actor: Actor, roomId: string, accessToken: string): Promise<{ eventId: string; text: string }> {
@@ -197,7 +231,10 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
         throw new Error(`external_browser_${actor}_proof_key_unobserved`);
       await approveProofCandidate(owner, actor, session, invite);
       native.prompt(actor, `Using the installed Khala connector in this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite}. The owner approved your proof key. Do not create a new operation ID.`);
-      await approveExactRequest(owner, session.sessionFingerprint, channelTitle, roomId);
+      const discovery = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.discoveryConsentUrl), 120_000);
+      await authorizeDiscovery(owner, actor, discovery.sessions.find(item => item.actor === actor)!);
+      native.clearDiscovery(actor);
+      await approveExactRequest(owner, actor, channelTitle, roomId);
     }
 
     const bindings = native.inspect().sessions;
@@ -217,7 +254,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
         throw new Error(`external_browser_${actor}_release_binding_mismatch`);
       const before = await ciphertextIds(roomId, accessToken);
       native.prompt(actor, `Read the freshly released ${actor} Khala message through your installed MCP route. Acknowledge its exact batch from this model session and send a useful answer in the channel. Do not use the browser or transcript to learn the message.`);
-      const reply = await newEncryptedMessage(owner, roomId, accessToken, before);
+      const reply = await newEncryptedMessage(owner, native, roomId, accessToken, before);
       await requireOwnerAck(owner, release);
       proof.push({ actor, sessionId: session.sessionId, bindingId: release.bindingId, generation: release.generation,
         operationId: release.operationId, challengeEventId: challenge.eventId, releaseId: release.releaseId,
@@ -225,14 +262,14 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     }
     const beforePeer = await ciphertextIds(roomId, accessToken);
     native.prompt('codex', 'Send Claude a new, specific question in this Khala channel using your installed MCP route.');
-    const peerMessage = await newEncryptedMessage(owner, roomId, accessToken, beforePeer);
+    const peerMessage = await newEncryptedMessage(owner, native, roomId, accessToken, beforePeer);
     const claudeBinding = bindings.find(item => item.actor === 'claude')!;
     const peerRelease = await releaseExactMessage(owner, peerMessage.eventId, claudeBinding.agentParticipantId!);
     if (peerRelease.bindingId !== claudeBinding.bindingId || peerRelease.generation !== claudeBinding.generation)
       throw new Error('external_browser_peer_release_binding_mismatch');
     const beforePeerReply = await ciphertextIds(roomId, accessToken);
     native.prompt('claude', 'Read and acknowledge the new Codex message, then answer it in this Khala channel.');
-    const peerReply = await newEncryptedMessage(owner, roomId, accessToken, beforePeerReply);
+    const peerReply = await newEncryptedMessage(owner, native, roomId, accessToken, beforePeerReply);
     await requireOwnerAck(owner, peerRelease);
 
     const snapshot = native.witness({ actors: proof, peer: { from: 'codex', to: 'claude',

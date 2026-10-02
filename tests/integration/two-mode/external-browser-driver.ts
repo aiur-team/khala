@@ -13,6 +13,7 @@ export type NativeSession = Readonly<{
   processStartTicks: string;
   cliVersion: string;
   candidate?: Readonly<{ candidateId: string; operationId: string }>;
+  discoveryConsentUrl?: string;
   bindingId?: string;
   generation?: number;
   agentParticipantId?: string;
@@ -32,6 +33,28 @@ export type ObservedPeer = Readonly<{
 
 const identifier = /^[A-Za-z0-9_$.:/+!=~-]{4,256}$/u;
 const version = /^[A-Za-z0-9._+ ()-]{3,80}$/u;
+
+/** The owner inbox uses a server-derived approval-context digest, distinct from signer JKT. */
+export function exactOwnerAccessFingerprint(body: unknown, actor: Actor, title: string): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('external_browser_owner_inbox_invalid');
+  const payload = body as Record<string, unknown>;
+  if (payload.v !== 1 || payload.kind !== 'ok' || !Array.isArray(payload.requests))
+    throw new Error('external_browser_owner_inbox_invalid');
+  const matches = payload.requests.filter(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const row = value as Record<string, unknown>;
+    const detail = row.detail as Record<string, unknown> | undefined;
+    const requester = row.requester as Record<string, unknown> | undefined;
+    return row.operationKind === 'access' && row.ownerDecision === 'pending' && detail?.kind === 'access'
+      && detail.title === title && requester?.harness === actor;
+  }) as Array<Record<string, unknown>>;
+  if (matches.length > 1) throw new Error('external_browser_owner_request_ambiguous');
+  if (matches.length === 0) return null;
+  const fingerprint = (matches[0]!.requester as Record<string, unknown>).sessionFingerprint;
+  if (typeof fingerprint !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(fingerprint))
+    throw new Error('external_browser_owner_fingerprint_invalid');
+  return fingerprint;
+}
 
 function requireIdentifier(value: unknown, name: string): string {
   if (typeof value !== 'string' || !identifier.test(value)) throw new Error(`external_browser_${name}_invalid`);
@@ -57,6 +80,14 @@ function session(value: unknown, actor: Actor): NativeSession {
       const candidateId = requireIdentifier(candidate.candidateId, 'candidate_id');
       if (!/^[A-Za-z0-9_-]{43}$/u.test(candidateId)) throw new Error(`external_browser_${actor}_candidate_invalid`);
       return { candidateId, operationId: requireIdentifier(candidate.operationId, 'candidate_operation_id') };
+    })() }),
+    ...(row.discoveryConsentUrl === undefined ? {} : { discoveryConsentUrl: (() => {
+      if (typeof row.discoveryConsentUrl !== 'string') throw new Error(`external_browser_${actor}_discovery_url_invalid`);
+      let url: URL;
+      try { url = new URL(row.discoveryConsentUrl); } catch { throw new Error(`external_browser_${actor}_discovery_url_invalid`); }
+      if (url.protocol !== 'https:' || url.pathname !== '/api/human/channel-discovery/bootstrap/authorize')
+        throw new Error(`external_browser_${actor}_discovery_url_invalid`);
+      return url.href;
     })() }),
     ...(row.bindingId === undefined ? {} : { bindingId: requireIdentifier(row.bindingId, 'binding_id') }),
     ...(row.generation === undefined ? {} : { generation: Number(row.generation) }),
@@ -115,6 +146,8 @@ export class ExternalNativeDriver {
 
   launch(): void { this.call('launch'); }
   stop(): void { if (existsSync(join(this.directory, 'native-sessions.json'))) this.call('stop'); }
+  service(): void { this.call('service'); }
+  clearDiscovery(actor: Actor): void { this.call('clear-open', actor); }
   mark(): void { this.call('mark'); }
 
   prompt(actor: Actor, instruction: string): void {

@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExternalNativeDriver, assertWitnessMatches, decodeNativeSnapshot, type ObservedExchange } from './external-browser-driver.js';
+import { ExternalNativeDriver, assertWitnessMatches, decodeNativeSnapshot, exactOwnerAccessFingerprint,
+  type ObservedExchange } from './external-browser-driver.js';
 import type { NativeFact } from './external-witness.js';
 
 const sessions = [
@@ -26,6 +27,25 @@ test('external browser accepts only a well-formed native proof-key candidate', (
     candidate);
   assert.throws(() => decodeNativeSnapshot({ sessions: [{ ...sessions[0], candidate: {
     ...candidate, candidateId: 'wrong' } }, sessions[1]] }), /candidate_invalid/);
+});
+
+test('external browser accepts only a discovery consent URL in the expected route', () => {
+  const discoveryConsentUrl = 'https://127.0.0.1:4443/api/human/channel-discovery/bootstrap/authorize?state=private';
+  assert.equal(decodeNativeSnapshot({ sessions: [{ ...sessions[0], discoveryConsentUrl }, sessions[1]] })
+    .sessions[0]?.discoveryConsentUrl, discoveryConsentUrl);
+  assert.throws(() => decodeNativeSnapshot({ sessions: [{ ...sessions[0],
+    discoveryConsentUrl: 'http://example.com/other' }, sessions[1]] }), /discovery_url_invalid/);
+});
+
+test('owner access row uses its unique server context digest rather than signer JKT', () => {
+  const contextFingerprint = 'C'.repeat(43);
+  const request = { operationKind: 'access', ownerDecision: 'pending', detail: { kind: 'access', title: 'E2E unique' },
+    requester: { harness: 'codex', sessionFingerprint: contextFingerprint } };
+  const body = { v: 1, kind: 'ok', requests: [request] };
+  assert.equal(exactOwnerAccessFingerprint(body, 'codex', 'E2E unique'), contextFingerprint);
+  assert.equal(exactOwnerAccessFingerprint(body, 'claude', 'E2E unique'), null);
+  assert.throws(() => exactOwnerAccessFingerprint({ ...body, requests: [request, request] }, 'codex', 'E2E unique'),
+    /owner_request_ambiguous/);
 });
 
 test('external browser refuses a reused native identity or proof key', () => {
