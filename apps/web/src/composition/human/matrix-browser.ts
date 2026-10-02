@@ -1,5 +1,6 @@
 import { ownerFirstName } from '@khala/contracts/m1/participants';
 import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
+import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 import {
   ClientEvent,
   Direction,
@@ -10,6 +11,7 @@ import {
   Preset,
   Room,
   RoomEvent,
+  RoomStateEvent,
   SyncState,
   Visibility,
   createClient,
@@ -36,6 +38,7 @@ import {
   type RoomSummary,
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
+import { DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode } from './listening-mode-wire';
 import {
   createBrowserDeviceService,
   createIndexedDbMarkerStore,
@@ -728,12 +731,32 @@ export async function inviteWithHistory(client: Pick<MatrixClient, 'getRoom' | '
   } catch { return false; }
 }
 
+/** The listening mode `userId` reports in its `m.room.member` content. */
+export function readListeningMode(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): ListeningMode {
+  return memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
+}
+
+/** Sends the owner's encrypted listening-mode command to one agent. */
+export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent'>, roomId: string, userId: string,
+  mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'> {
+  try {
+    if (!client.getRoom(roomId)?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return 'failed';
+    const send = client.sendEvent as unknown as (roomId: string, type: string, content: object, txnId: string) => Promise<unknown>;
+    await send.call(client, roomId, LISTENING_MODE_COMMAND_TYPE, { v: 1, agent: userId, mode }, txnId);
+    return 'sent';
+  } catch { return 'failed'; }
+}
+
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
   syncStatus: SyncStatusPort;
   inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
+  listeningMode(roomId: RoomId, userId: string): ListeningMode;
+  /** Calls `listener` whenever a member event lands in `roomId`. */
+  subscribeListeningModes(roomId: RoomId, listener: () => void): () => void;
+  setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'>;
   participant(): ParticipantView | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
@@ -844,6 +867,19 @@ export function createMatrixBrowserPorts(input: Readonly<{
   return {
     inviteAgent: (roomId, userId) => runtime.active
       ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
+    listeningMode: (roomId, userId) => runtime.active
+      ? readListeningMode(runtime.active.client, roomId, userId) : DEFAULT_LISTENING_MODE,
+    subscribeListeningModes(roomId, listener) {
+      const active = runtime.active;
+      if (!active) return () => undefined;
+      const publish = (event: MatrixEvent) => {
+        if (runtime.active === active && event.getRoomId() === roomId && event.getType() === EventType.RoomMember) listener();
+      };
+      active.client.on(RoomStateEvent.Events, publish);
+      return () => { active.client.off(RoomStateEvent.Events, publish); };
+    },
+    setListeningMode: (roomId, userId, mode, txnId) => runtime.active
+      ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId) : Promise.resolve('failed'),
     device, room, conversations, syncStatus, participant: () => runtime.active?.actor ?? null,
     async roomParticipants(roomId, signal) {
       const active = runtime.active;

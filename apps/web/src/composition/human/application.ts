@@ -1,4 +1,5 @@
 import type { Participant } from '@khala/contracts/m1/participants';
+import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 // Browser composition lifecycle for the ordinary human flow. It exposes only
 // verified contract ports to route composition and owns their route/device
 // teardown ordering; UI modules never locate global services themselves.
@@ -33,6 +34,11 @@ export interface HumanApplicationPorts {
   readonly describeMatrixUser?: (matrixUserId: string) => Participant | undefined;
   readonly agentJoin?: AgentJoinPort;
   readonly inviteAgent?: AgentInvitePort;
+  /** The listening mode a Matrix user reports in `roomId`; `sync` when unknown. */
+  readonly listeningMode?: (roomId: RoomId, matrixUserId: string) => ListeningMode;
+  readonly subscribeListeningModes?: (roomId: RoomId, listener: () => void) => Disposer;
+  /** Sends the owner's listening-mode command to their agent. */
+  readonly setListeningMode?: (roomId: RoomId, matrixUserId: string, mode: ListeningMode, txnId: string) => Promise<'sent' | 'failed'>;
   readonly identity: IdentityPort;
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;

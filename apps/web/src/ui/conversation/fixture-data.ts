@@ -5,6 +5,7 @@
 // rewrite (`<code>` to backticks, `@395`-style references to mention labels).
 // Never imported by production.
 
+import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 import type { Participant } from '@khala/contracts/m1/participants';
 import { encodeChannelEvent, type ChannelEventContent, type ChannelEventSubject } from '@khala/contracts/m1/channel-event';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
@@ -44,6 +45,12 @@ export const AGENTS: Readonly<Record<AgentKey, FixtureAgent>> = {
   'AIUR-640': { participantId: 'agent-aiur-640-4' as ParticipantId, owner: 'maya', displayName: 'Codex · Maya', harness: 'codex', idBadge: '#640', hue: 265 },
   'AIUR-520': { participantId: 'agent-aiur-520' as ParticipantId, owner: 'kai', displayName: 'Sonnet · Kai', harness: 'claude', idBadge: '#520', hue: 210 },
   'AIUR-540': { participantId: 'agent-aiur-540-1' as ParticipantId, owner: 'kai', displayName: 'Sonnet · Kai', harness: 'claude', idBadge: '#540', hue: 210 },
+};
+
+/** The design's listening modes (source:4095), keyed by participant id; others are Sync. */
+export const AGENT_MODES: Readonly<Record<string, ListeningMode>> = {
+  [AGENTS['AIUR-395'].participantId]: 'steer', [AGENTS['AIUR-530'].participantId]: 'async',
+  [AGENTS['AIUR-520'].participantId]: 'steer', [AGENTS['AIUR-640'].participantId]: 'async',
 };
 
 const isAgent = (key: MemberKey): key is AgentKey => key in AGENTS;

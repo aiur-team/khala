@@ -14,7 +14,8 @@ import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-ti
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
-import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler } from './AgentPresencePanel';
+import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
+import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type SetModeHandler } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';
 import { memberCountLabel, ownerOfLabel } from './roster-model';
@@ -44,6 +45,10 @@ export interface ChannelScreenProps {
   namesPending?: boolean;
   renameAgent?: RenameAgentHandler;
   renameScope?: string;
+  /** An agent's reported listening mode; read-only rows show it. */
+  modeFor?: (participantId: string) => ListeningMode;
+  /** Sends a listening-mode change for one of the viewer's agents. Without it the control stays locked. */
+  onSetMode?: SetModeHandler;
   /** C3 participant details: an agent's harness and owner label. */
   describeParticipant?: (participantId: string) => Participant | undefined;
   /**
@@ -148,7 +153,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 }
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, humanParticipants, currentNames,
-  namesPending = false, renameAgent, renameScope, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+  namesPending = false, renameAgent, renameScope, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const members = useMemo(() => resolveMembers({
@@ -263,7 +268,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       <div ref={rosterList} className={`kh-roster-in${more ? ' more' : ''}`} role="group" aria-label="Channel members"
         onScroll={event => { const list = event.currentTarget; setMore(list.scrollHeight - list.scrollTop - list.clientHeight >= 4); }}>
         <ChannelRoster members={members} phase={view.phase} onOpen={openFromRoster}
-          {...(renderAddAgent ? { renderAddAgent } : {})} />
+          {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})} />
       </div>
     </div>
     <div className="kh-channel-thread" onPointerDown={() => { if (rosterOpen) closeRoster(false); }}>

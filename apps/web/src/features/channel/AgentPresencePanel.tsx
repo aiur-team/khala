@@ -2,12 +2,12 @@
 // rename section the agent detail pane shows for the viewer's own agents.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { Avatar } from '../../ui/khala/Avatar';
 import { harnessLogo, initials } from '../../ui/khala/identity';
 import { AgentIcon, AsyncIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
-import { COMING_SOON } from '../../ui/khala/InvitePopover';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
@@ -117,24 +117,103 @@ export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
 
 export const harnessName = (agent: AgentMember) => agent.harness ? HARNESS_NAMES[agent.harness] : 'Agent';
 
-const SYNC_TIP = 'Sync · next turn';
-const MODES = [
-  { value: 'steer', label: <SteerIcon />, tip: 'Steer · interrupts' },
-  { value: 'sync', label: <SyncIcon />, tip: SYNC_TIP },
-  { value: 'async', label: <AsyncIcon />, tip: 'Async · on demand' },
-] as const;
+export type SetModeHandler = (participantId: string, mode: ListeningMode) => Promise<'sent' | 'failed'>;
 
-function AgentRow({ agent, onOpen }: Readonly<{ agent: AgentMember; onOpen(participantId: string): void }>) {
+/** How long a requested mode stays selected before an unconfirmed request reverts. */
+export const MODE_CONFIRM_MS = 15_000;
+
+// `KH_MODES` (source:4394): value, label, description.
+const MODE_COPY = [['steer', 'Steer', 'interrupts'], ['sync', 'Sync', 'next turn'], ['async', 'Async', 'on demand']] as const;
+const MODE_ICONS: Readonly<Record<ListeningMode, () => ReactNode>> = { steer: SteerIcon, sync: SyncIcon, async: AsyncIcon };
+const MODE_TIPS = Object.fromEntries(MODE_COPY.map(([value, label, desc]) => [value, `${label} · ${desc}`])) as Readonly<Record<ListeningMode, string>>;
+const modeTip = (mode: ListeningMode) => MODE_TIPS[mode];
+const MODES = MODE_COPY.map(([value]) => ({ value, label: <ModeIcon mode={value} />, tip: modeTip(value) }));
+
+function ModeIcon({ mode }: Readonly<{ mode: ListeningMode }>) {
+  const Icon = MODE_ICONS[mode];
+  return <Icon />;
+}
+
+/**
+ * An owned agent's row with the live mode control. A chosen mode shows as
+ * selected until the agent's member state reports it, or reverts after
+ * `MODE_CONFIRM_MS`.
+ */
+function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
+  agent: AgentMember;
+  mode: ListeningMode;
+  onSetMode: SetModeHandler;
+  /** The row's opener button. */
+  children: ReactNode;
+}>) {
+  const label = agentLabel(agent);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const request = useRef(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pending, setPending] = useState<ListeningMode | null>(null);
+  const [status, setStatus] = useState('');
+  const shown = pending ?? mode;
+
+  useEffect(() => {
+    if (pending === null || mode !== pending) return;
+    setPending(null);
+    setStatus('');
+  }, [mode, pending]);
+  useEffect(() => {
+    if (pending === null) return undefined;
+    const timer = setTimeout(() => {
+      request.current += 1;
+      setPending(null);
+      setStatus(`${label} didn't confirm. It may be offline.`);
+    }, MODE_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [label, pending]);
+
+  async function choose(next: ListeningMode): Promise<void> {
+    setMenuOpen(false);
+    if (next === shown) return;
+    const id = ++request.current;
+    setPending(next);
+    setStatus(`Waiting for ${label} to switch…`);
+    const result = await onSetMode(agent.participantId, next).catch(() => 'failed' as const);
+    if (result === 'sent' || id !== request.current) return;
+    setPending(null);
+    setStatus(`Couldn't send the mode change to ${label}. Try again.`);
+  }
+
+  return <>
+    <div className="kh-rrow">{children}<span className="kh-racts">
+      <Segmented icon label={`Listening mode for ${label}`} value={shown} options={MODES} onChange={value => void choose(value)} />
+      <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown)} aria-expanded={menuOpen}
+        aria-label={`Listening mode for ${label}: ${modeTip(shown)}`} onClick={() => setMenuOpen(open => !open)}><ModeIcon mode={shown} /></button>
+      <Popover anchor={anchor} open={menuOpen} menu onClose={() => setMenuOpen(false)}>
+        {MODE_COPY.map(([value, name, desc]) => <button key={value} type="button" className={`kh-mi${value === shown ? ' on' : ''}`}
+          data-v={value} onClick={() => void choose(value)}><ModeIcon mode={value} />{name}<em>{desc}</em></button>)}
+      </Popover>
+    </span></div>
+    <p className="kh-roster-status kh-mode-status" role="status" hidden={!status}>{status}</p>
+  </>;
+}
+
+function AgentRow({ agent, mode, onOpen, onSetMode }: Readonly<{
+  agent: AgentMember;
+  mode: ListeningMode;
+  onOpen(participantId: string): void;
+  onSetMode?: SetModeHandler | undefined;
+}>) {
+  const label = agentLabel(agent);
+  const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
+    <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
+  </button>;
+  if (agent.isViewerOwned && onSetMode) return <ModeControl agent={agent} mode={mode} onSetMode={onSetMode}>{opener}</ModeControl>;
   return <div className="kh-rrow">
-    <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
-      <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
-    </button>
+    {opener}
     <span className="kh-racts">{agent.isViewerOwned ? <>
-      {/* Listening modes are M2 (§22): shown locked on Sync. */}
-      <Segmented icon locked title={COMING_SOON} label={`Listening mode for ${agentLabel(agent)}`} value="sync" options={MODES} />
-      <button type="button" className="kh-ib sm kh-mode-btn" disabled title={COMING_SOON} data-tip={SYNC_TIP}
-        aria-label={`Listening mode for ${agentLabel(agent)}: ${SYNC_TIP}`}><SyncIcon /></button>
-    </> : <span className="kh-mode-ro" role="img" data-tip={SYNC_TIP} aria-label={SYNC_TIP}><SyncIcon /></span>}</span>
+      {/* No mode port (fixtures, harnesses): the reported mode, locked. */}
+      <Segmented icon locked label={`Listening mode for ${label}`} value={mode} options={MODES} />
+      <button type="button" className="kh-ib sm kh-mode-btn" disabled data-tip={modeTip(mode)}
+        aria-label={`Listening mode for ${label}: ${modeTip(mode)}`}><ModeIcon mode={mode} /></button>
+    </> : <span className="kh-mode-ro" role="img" data-tip={modeTip(mode)} aria-label={modeTip(mode)}><ModeIcon mode={mode} /></span>}</span>
   </div>;
 }
 
@@ -154,10 +233,14 @@ export type ChannelRosterProps = Readonly<{
   onOpen(participantId: string): void;
   /** The Add agent popover body on the viewer's row. */
   renderAddAgent?: (() => ReactNode) | undefined;
+  /** An agent's reported listening mode; `sync` when absent. */
+  modeFor?: ((participantId: string) => ListeningMode) | undefined;
+  /** Makes the viewer's agents' mode controls live. */
+  onSetMode?: SetModeHandler | undefined;
 }>;
 
 /** The roster tree: one group per human, each with the agents it owns. */
-export function ChannelRoster({ members, phase, onOpen, renderAddAgent }: ChannelRosterProps) {
+export function ChannelRoster({ members, phase, onOpen, renderAddAgent, modeFor, onSetMode }: ChannelRosterProps) {
   const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
   const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
   return <>
@@ -178,7 +261,8 @@ export function ChannelRoster({ members, phase, onOpen, renderAddAgent }: Channe
           </div>}
           {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
         </div>
-        {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent} onOpen={onOpen} />)}</div> : null}
+        {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent}
+          mode={modeFor?.(agent.participantId) ?? 'sync'} onOpen={onOpen} onSetMode={onSetMode} />)}</div> : null}
       </div>;
     })}
   </>;

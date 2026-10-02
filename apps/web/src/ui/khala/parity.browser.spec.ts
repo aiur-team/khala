@@ -847,7 +847,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     });
   });
 
-  it('m1-matrix: every §22 Omit element is absent; every Disabled control is disabled with “Coming soon”', { timeout: 120_000 }, async () => {
+  it('m1-matrix: every §22 Omit element is absent; every Disabled control is disabled with “Coming soon”; listening modes are live', { timeout: 120_000 }, async () => {
     const OMIT = ['.kh-ask', '.kh-badge', '.kh-req', '.kh-crw', '.kh-rai-p', '.kh-d-bar', '.kh-d-kv dt:nth-of-type(5)', '#kh-d-open',
       '.kh-keb', '.kh-confirm', '.kh-react', '.kh-typing', '[data-kh-act="settings"]', '.kh-list-foot', '.kh-cv.dead', '.kh-fin',
       '.kh-st', '.kh-d-agent > i', '.kh-rcpt.read'];
@@ -863,8 +863,8 @@ describe('behaviour', { concurrency: 1 }, () => {
         }
         if (state === 'roster') {
           const modes = await page.locator('.kh-roster .kh-seg.ic button').evaluateAll(list => list.map(control =>
-            control.hasAttribute('disabled') && control.getAttribute('title') === 'Coming soon'));
-          assert.ok(modes.length >= 3 && modes.every(Boolean), 'listening modes are disabled “Coming soon”');
+            !control.hasAttribute('disabled') && !control.hasAttribute('title')));
+          assert.ok(modes.length >= 3 && modes.every(Boolean), 'listening modes are live');
         }
       });
     }
