@@ -1,5 +1,7 @@
 import { reserved } from '../messaging/agent-names';
 import type { Harness } from './agent-join';
+import { readMatrixUserId } from './agent-join';
+import { type Decoded, array, decodeWith, elementPath, fail, identifier, object, version } from '../messaging/decode';
 import { ownerFirstName } from './participants';
 
 export const USERNAME_MIN = 2;
@@ -36,4 +38,23 @@ export function suggestUsername(email: string): string {
   const base = ownerFirstName(email).replace(/[^A-Za-z0-9._-]/gu, '')
     .replace(/^[._-]+|[._-]+$/gu, '').slice(0, USERNAME_MAX).replace(/[._-]+$/gu, '');
   return checkName(base, 'username').ok ? base : 'User';
+}
+
+export type OwnerAgents = { v: 1; ownerId: string; agents: string[] };
+export const ownerAgentsKey = (ownerId: string): string => `owner-agents/${encodeURIComponent(ownerId)}`;
+export function decodeOwnerAgents(input: unknown): Decoded<OwnerAgents> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'ownerId', 'agents']);
+    const entries = array(r.field('agents'), r.at('agents'));
+    if (entries.length > 200) fail(r.at('agents'), 'too_long');
+    const seen = new Set<string>();
+    const agents = entries.map((value, index) => {
+      const path = elementPath(r.at('agents'), index);
+      const userId = readMatrixUserId(value, path);
+      if (seen.has(userId)) fail(path, 'duplicate');
+      seen.add(userId);
+      return userId;
+    });
+    return { v: version(r.field('v'), r.at('v')), ownerId: identifier(r.field('ownerId'), r.at('ownerId')), agents };
+  });
 }

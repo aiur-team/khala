@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type SyntheticEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SendIcon } from '../khala/icons';
 import { MentionChips, type MentionTarget } from '../khala/MentionChips';
+import { MENTION_LIST_ID, MentionPopup, mentionOptionId } from '../khala/MentionPopup';
+import { activeMentionQuery, applyMention, filterMentionTargets } from '../khala/mention-autocomplete';
 import './conversation.css';
 
 export { insertMention, type MentionTarget } from '../khala/MentionChips';
 
 /**
  * The composer (RECREATION-SPEC §10) with the mention chips bar (§9) above it.
- * `chipsOpen` is controllable so the roster can close the chips grid.
+ * `chipsOpen` is controllable so the roster can close the chips grid. Typing
+ * `@` at a word boundary opens the mention suggestions above the form.
  */
 export function ChatComposer({ value, onChange, onSend, disabled = false, sendDisabled = false, sendDescriptionId,
   placeholder = 'Message the Khala', mentionTargets = [], chipsOpen, onChipsOpenChange }: Readonly<{
@@ -47,15 +50,78 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
     observer.observe(textarea);
     return () => observer.disconnect();
   }, [fitDraft]);
+
+  // Mention autocomplete. The caret starts at the end of the draft the
+  // composer mounts with; Esc or blur dismisses the `@` at `dismissedAt`
+  // until the caret leaves it.
+  const [caret, setCaret] = useState(value.length);
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  // With no one to mention (the landing showcase) the draft stays a plain textbox.
+  const mentionable = filterMentionTargets(mentionTargets, '').length > 0;
+  const query = disabled || !mentionable ? null : activeMentionQuery(value, caret);
+  if (query === null && dismissedAt !== null) setDismissedAt(null);
+  const options = query ? filterMentionTargets(mentionTargets, query.query) : [];
+  const mentionOpen = query !== null && options.length > 0 && query.start !== dismissedAt;
+  // The highlight belongs to one query; a changed query starts back at the top.
+  const queryKey = query ? `${query.start}:${query.query}` : '';
+  const [highlight, setHighlight] = useState({ key: '', index: 0 });
+  const active = highlight.key === queryKey ? Math.min(highlight.index, options.length - 1) : 0;
+  const setActive = (index: number) => setHighlight({ key: queryKey, index });
+  const syncCaret = (event: SyntheticEvent<HTMLTextAreaElement>) => setCaret(event.currentTarget.selectionStart);
+  // A pick moves the caret once the new draft is in the textarea, before the
+  // next keystroke can land: a later frame would drag typing back to it.
+  const pickedCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const textarea = input.current;
+    if (pickedCaret.current === null || !textarea) return;
+    textarea.setSelectionRange(pickedCaret.current, pickedCaret.current);
+    textarea.focus();
+    pickedCaret.current = null;
+  }, [value]);
+  const pick = (target: MentionTarget) => {
+    if (!query) return;
+    const next = applyMention(value, query, target.label);
+    pickedCaret.current = next.caret;
+    onChange(next.value);
+    setCaret(next.caret);
+  };
+
   return <>
     <MentionChips targets={mentionTargets} value={value} open={open} onOpenChange={setOpen}
-      onChange={next => { onChange(next); input.current?.focus(); }} />
+      onChange={next => { onChange(next); setCaret(next.length); input.current?.focus(); }} />
     <form className="kh-comp" onSubmit={event => { event.preventDefault(); onSend(); }}>
+      {mentionOpen ? <MentionPopup options={options} active={active} onPick={pick} onHover={setActive} targets={mentionTargets} /> : null}
       <label className="sr-only" htmlFor="kh-input">Message</label>
       <textarea ref={input} className="kh-input" id="kh-input" rows={1} placeholder={placeholder} value={value}
-        onChange={event => onChange(event.target.value)} disabled={disabled} aria-describedby={sendDescriptionId}
+        onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); }}
+        disabled={disabled} aria-describedby={sendDescriptionId}
+        role={mentionable ? 'combobox' : undefined} aria-autocomplete={mentionable ? 'list' : undefined}
+        aria-expanded={mentionable ? mentionOpen : undefined}
+        aria-controls={mentionOpen ? MENTION_LIST_ID : undefined}
+        aria-activedescendant={mentionOpen ? mentionOptionId(options[active]!) : undefined}
+        onSelect={syncCaret} onKeyUp={syncCaret} onClick={syncCaret}
+        onBlur={() => setDismissedAt(query?.start ?? null)}
         onKeyDown={event => {
-          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+          if (mentionOpen && query && !composing) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              setActive((active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length);
+              return;
+            }
+            if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+              event.preventDefault();
+              pick(options[active]!);
+              return;
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              setDismissedAt(query.start);
+              return;
+            }
+          }
+          if (event.key !== 'Enter' || event.shiftKey || composing) return;
           event.preventDefault();
           if (!disabled && !sendDisabled && value.trim()) onSend();
         }} />
