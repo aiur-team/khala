@@ -189,9 +189,9 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-v')), 'steer');
     await page.keyboard.press('Enter');
     assert.equal(await menu.isHidden(), true);
+    assert.equal(await modeButton.evaluate(button => button === document.activeElement), true, 'choosing a mode returns focus to the trigger');
     assert.equal(await modeButton.getAttribute('data-tip'), 'Steer · interrupts');
     await page.locator('.kh-rrow:has([data-kh-agent="agent_scout"]) + .kh-mode-status').waitFor({ state: 'hidden' });
-    await modeButton.focus();
     await page.keyboard.press('Enter');
     await menu.locator('[role="menu"]').waitFor();
     await page.keyboard.press('Escape');
