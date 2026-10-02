@@ -684,7 +684,7 @@ describe('browser-backed room participant reads', () => {
       .toEqual({ kind: 'forbidden' });
     membershipStatus = 401;
     expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, roomId, [userId], undefined, [], session))
-      .toEqual({ kind: 'unavailable' });
+      .toEqual({ kind: 'unavailable', localDiagnostic: { stage: 'membership', status: 401 } });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
