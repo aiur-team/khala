@@ -46,9 +46,8 @@ export interface ChannelScreenProps {
   /** Other humans in member order. */
   humanParticipants?: readonly Readonly<{ participantId: ParticipantId; displayName: string; ownerId?: OwnerId }>[];
   currentNames?: ReadonlyMap<ParticipantId, string>;
-  namesPending?: boolean;
+  /** Renames one of the viewer's agents; the roster's Rename buttons and the detail pane's Rename section need it. */
   renameAgent?: RenameAgentHandler;
-  renameScope?: string;
   /** An agent's reported listening mode; read-only rows show it. */
   modeFor?: (participantId: string) => ListeningMode;
   /** Sends a listening-mode change for one of the viewer's agents. Without it the control stays locked. */
@@ -157,9 +156,9 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
   main.style.setProperty('--kh-roster-max', `${Math.max(160, Math.round((main.clientHeight - headHeight) * 0.7))}px`);
 }
 
-export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, viewerColor, humanParticipants,
-  currentNames, namesPending = false, renameAgent, renameScope, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline,
-  renderShare, renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
+export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, viewerColor, humanParticipants, currentNames,
+  renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
   const humanColors = useMemo(() => {
@@ -225,11 +224,20 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   const openFromRoster = useCallback((participantId: string) => {
     toggleParticipant(participantId);
   }, [toggleParticipant]);
+  // A roster Rename opens the agent's pane with the rename field focused; each press refocuses it.
+  const [renameFocus, setRenameFocus] = useState<Readonly<{ participantId: string; request: number }> | null>(null);
+  const renameFromRoster = useCallback((participantId: string) => {
+    setSelected(participantId);
+    setRenameFocus(current => ({ participantId, request: (current?.request ?? 0) + 1 }));
+  }, []);
   const selectedMember = selected === null ? undefined : members.byId.get(selected);
   // The pane closes when its participant leaves the channel.
   useEffect(() => {
     if (selected !== null && !selectedMember && view.phase === 'ready') setSelected(null);
   }, [selected, selectedMember, view.phase]);
+  useEffect(() => {
+    if (renameFocus && renameFocus.participantId !== selected) setRenameFocus(null);
+  }, [renameFocus, selected]);
 
   const detailHost = useDetailHost(selectedMember !== undefined);
   const closeDetail = () => setSelected(null);
@@ -239,12 +247,11 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
     detail = <HumanDetail key={selectedMember.participantId} human={selectedMember} members={members}
       recent={recent(selectedMember.participantId)} onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   } else if (selectedMember?.kind === 'agent') {
-    const canRename = selectedMember.isViewerOwned && renameAgent && viewerOwnerId && renameScope && !namesPending;
+    const focus = renameFocus?.participantId === selectedMember.participantId ? renameFocus : null;
     detail = <AgentDetail key={selectedMember.participantId} agent={selectedMember} members={members}
       recent={recent(selectedMember.participantId)} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
-      rename={canRename ? <RenameAgent participantId={selectedMember.participantId}
-        name={currentNames?.get(selectedMember.participantId) ?? selectedMember.agent.displayName} renameAgent={renameAgent}
-        storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, selectedMember.participantId])}`} /> : null}
+      rename={selectedMember.isViewerOwned && renameAgent ? <RenameAgent key={focus?.request ?? 0}
+        participantId={selectedMember.participantId} name={selectedMember.name} renameAgent={renameAgent} autoFocus={focus !== null} /> : null}
       onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   }
 
@@ -285,6 +292,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       <div ref={rosterList} className={`kh-roster-in${more ? ' more' : ''}`} role="group" aria-label="Channel members"
         onScroll={event => { const list = event.currentTarget; setMore(list.scrollHeight - list.scrollTop - list.clientHeight >= 4); }}>
         <ChannelRoster members={members} phase={view.phase} onOpen={openFromRoster}
+          {...(renameAgent ? { onRename: renameFromRoster } : {})}
           {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})} />
       </div>
     </div>

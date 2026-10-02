@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
-import { createChannelController } from '../../features/channel/controller';
+import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
+import { createChannelController, type ChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
@@ -50,6 +51,21 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipant
     },
     async installCommand() { throw new Error('agent onboarding unavailable'); },
   };
+}
+
+/**
+ * Renames one of the viewer's agents in this channel through the global rename
+ * API, which also sets the agent's Matrix display name in every room.
+ */
+export async function renameChannelAgent(context: Pick<Parameters<HumanRoomRenderer>[0], 'agentNames' | 'describeParticipant'>,
+  room: Pick<ChannelController, 'getSnapshot'>, viewer: ParticipantView, participantId: ParticipantId, name: string,
+  signal?: AbortSignal,
+): Promise<RenameAgentResult> {
+  const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
+  if (viewer.kind !== 'human' || target?.ownerId !== viewer.ownerId) return { kind: 'error', code: 'not_owner' };
+  const detail = context.describeParticipant?.(participantId);
+  if (!context.agentNames || detail?.kind !== 'agent') return { kind: 'error', code: 'unavailable' };
+  return context.agentNames.rename(detail.matrixUserId, name, signal);
 }
 
 export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, routes) => (
@@ -103,7 +119,25 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   // Re-renders the roster when any agent's reported mode changes.
   const modesSnapshot = () => presence.agents.map(agent => modeFor(agent.participantId)).join();
   useSyncExternalStore(subscribeModes, modesSnapshot, modesSnapshot);
-  const currentNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  // Names this tab just set through the rename API. They show at once, ahead of
+  // the participant directory and the agent's Matrix display name, and drop once
+  // a presence read reports the same name.
+  const [renamed, setRenamed] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
+  useEffect(() => {
+    const participants = participantRoster?.participants;
+    if (!participants || renamed.size === 0) return;
+    const settled = [...renamed].filter(([participantId, name]) =>
+      participants.some(item => item.participantId === participantId && item.displayName === name));
+    if (settled.length > 0) setRenamed(current => new Map([...current].filter(([participantId]) => !settled.some(([id]) => id === participantId))));
+  }, [participantRoster, renamed]);
+  const projectedNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  const currentNames = projectedNames && renamed.size > 0 ? new Map([...projectedNames, ...renamed]) : projectedNames;
+  const baseDescribe = context.describeParticipant;
+  const describeParticipant = useMemo(() => baseDescribe && ((participantId: string) => {
+    const detail = baseDescribe(participantId);
+    const name = renamed.get(participantId as ParticipantId);
+    return detail?.kind === 'agent' && name !== undefined ? { ...detail, displayName: name } : detail;
+  }), [baseDescribe, renamed]);
   const composer = useRef<TimelineComposerHandle>(null);
   const viewerColor = useProfile().color;
   if (context.conversations && conversations === undefined) {
@@ -136,24 +170,20 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       viewerColor={viewerColor}
       {...(participantRoster?.scope === participantScope ? { humanParticipants: participantRoster.participants
         .filter(participant => participant.kind === 'human' && participant.participantId !== viewer.participantId) } : {})}
-      namesPending={timelineData.namesReady === false}
       {...(currentNames ? { currentNames } : {})}
-      {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
-      renameScope={roomId}
-      renameAgent={async (participantId, name, clientTxnId) => {
-        const checked = validateAgentName(name);
-        const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
-        if (!checked.ok || checked.name !== name || viewer.kind !== 'human'
-          || target?.ownerId !== viewer.ownerId || timeline.getSnapshot().membership !== 'joined') return 'rejected';
-        const result = await context.room.send({ roomId, clientTxnId,
-          content: { v: 1, kind: 'agent_rename', agentParticipantId: participantId, body: name } });
-        if (result.kind === 'rejected') return 'rejected';
-        return result.kind === 'ok' && result.value.state === 'accepted' ? 'accepted' : 'unknown';
-      }}
+      {...(describeParticipant ? { describeParticipant } : {})}
       modeFor={modeFor}
       {...(context.setListeningMode ? { onSetMode: guardedListeningModeSetter({ roomId, viewer, matrixUserId,
         ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
         joined: () => timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
+      {...(context.agentNames ? { renameAgent: async (participantId: ParticipantId, name: string, signal?: AbortSignal) => {
+        const result = await renameChannelAgent(context, room, viewer, participantId, name, signal);
+        if (result.kind === 'ok') {
+          setRenamed(current => new Map([...current, [participantId, result.name]]));
+          room.refresh?.();
+        }
+        return result;
+      } } : {})}
       recentActivity={(participantId, render) => timelineData.items
         .flatMap(item => item.content.kind === 'text' && item.ref.authorParticipantId === participantId
           ? [{ id: item.ref.eventId, at: item.receivedAt, body: renderMessageContent(item.content, render) }] : [])
@@ -171,7 +201,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
-          {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
+          {...(describeParticipant ? { describeParticipant } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}

@@ -1,3 +1,4 @@
+import { decodeHumanInitialsRecord, humanInitialsRecordKey, normalizeInitials } from '@khala/contracts/m1/initials';
 import { decodeHumanColorRecord, defaultHumanColor, humanColorRecordKey, isHumanColorId, type HumanColorId } from '@khala/contracts/m1/colors';
 import { checkName, nameKey, suggestUsername, USERNAME_MAX } from '@khala/contracts/m1/names';
 import { decodeNameReservation, decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
@@ -45,11 +46,23 @@ export function createProfileHandlers(deps: ProfileDeps) {
     return { kind: 'ok', color: chosen ? decoded.value.color : defaultHumanColor(ownerId),
       revision: read.record.revision, chosen };
   }
+  async function readInitials(ownerId: OwnerId): Promise<
+    { kind: 'ok'; initials: string | null; revision: string | null; valid: boolean } | { kind: 'unavailable' }
+  > {
+    const read = await safeRead(deps.store, humanInitialsRecordKey(ownerId));
+    if (read.kind === 'unavailable') return { kind: 'unavailable' };
+    if (read.kind === 'absent') return { kind: 'ok', initials: null, revision: null, valid: true };
+    const decoded = decodeHumanInitialsRecord(read.record.value);
+    const valid = decoded.ok && decoded.value.ownerId === ownerId;
+    return { kind: 'ok', initials: valid ? decoded.value.initials : null, revision: read.record.revision, valid };
+  }
   async function getProfile(principal: AuthPrincipal): Promise<Response> {
     const profile = await readProfile(principal.ownerId);
     if (profile.kind !== 'ok') return unavailable();
     const color = await readColor(principal.ownerId);
     if (color.kind !== 'ok') return unavailable();
+    const initials = await readInitials(principal.ownerId);
+    if (initials.kind !== 'ok') return unavailable();
     const base = suggestUsername(principal.verifiedEmail);
     for (let n = 1; n <= 99; n++) {
       const suffix = n === 1 ? '' : String(n);
@@ -58,7 +71,7 @@ export function createProfileHandlers(deps: ProfileDeps) {
       const reservation = await safeRead(deps.store, nameKey(suggestion));
       if (reservation.kind === 'unavailable') return unavailable();
       if (reservation.kind === 'absent' || ownReservation(reservation.record.value, principal.ownerId)) {
-        return json(200, { username: profile.record?.username ?? null, suggestion, color: color.color });
+        return json(200, { username: profile.record?.username ?? null, suggestion, color: color.color, initials: initials.initials });
       }
     }
     return unavailable();
@@ -160,7 +173,26 @@ export function createProfileHandlers(deps: ProfileDeps) {
     }
     return unavailable();
   }
-  const handler = (kind: 'get' | 'username' | 'color') => async (request: Request): Promise<Response> => {
+  async function setInitials(request: Request, principal: AuthPrincipal): Promise<Response> {
+    let input: unknown;
+    try { input = await request.json(); } catch { return error(400, 'invalid_request'); }
+    const parsed = decodeWith(() => object(input, '', ['initials']).field('initials'));
+    if (!parsed.ok) return error(400, 'invalid_request');
+    const initials = parsed.value === null ? null : normalizeInitials(parsed.value);
+    if (parsed.value !== null && initials === null) return error(400, 'invalid_initials');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = await readInitials(principal.ownerId);
+      if (current.kind !== 'ok') return unavailable();
+      if (current.valid && current.initials === initials) return json(200, { initials });
+      const written = await writeAndResolve(deps.store, { key: humanInitialsRecordKey(principal.ownerId),
+        expectedRevision: current.revision, operationId: operationId(),
+        next: { value: { v: 1, ownerId: principal.ownerId, initials }, expiresAt: null } });
+      if (written.kind === 'applied') return json(200, { initials });
+      if (written.kind !== 'conflict') return unavailable();
+    }
+    return unavailable();
+  }
+  const handler = (kind: 'get' | 'username' | 'color' | 'initials') => async (request: Request): Promise<Response> => {
     const mutation = kind !== 'get';
     try {
       if (request.method !== (mutation ? 'POST' : 'GET')) return error(405, 'method_not_allowed');
@@ -179,10 +211,11 @@ export function createProfileHandlers(deps: ProfileDeps) {
         if (auth.kind !== 'authenticated') return auth.kind === 'signed_out' ? error(401, 'signed_out') : unavailable();
         principal = auth.context.principal;
       }
+      if (kind === 'initials') return await setInitials(request, principal);
       if (kind === 'color') return await setColor(request, principal);
       if (kind === 'username') return await setUsername(request, principal);
       return await getProfile(principal);
     } catch { return unavailable(); }
   };
-  return { get: handler('get'), setUsername: handler('username'), setColor: handler('color') };
+  return { get: handler('get'), setUsername: handler('username'), setColor: handler('color'), setInitials: handler('initials') };
 }

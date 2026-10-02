@@ -1,3 +1,4 @@
+import { decodeHumanInitialsRecord, humanInitialsRecordKey } from '@khala/contracts/m1/initials';
 import { createHash, createHmac } from 'node:crypto';
 import {
   agentOwnerRecordKey, decodeAgentOwnerRecord, humanEmailRecordKey, ownerFirstName, readParticipantEmail,
@@ -201,6 +202,14 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const value = safeObject(read.record.value);
       return value?.v === 1 && value.ownerId === ownerId ? readParticipantEmail(value.email, 'email') : null;
     } catch { return null; }
+  }
+  async function readHumanInitials(ownerId: string, call?: CallOptions): Promise<string | null> {
+    try {
+      const read = await options.store.read(humanInitialsRecordKey(ownerId), call);
+      const decoded = read.kind === 'record' ? decodeHumanInitialsRecord(read.record.value) : null;
+      if (decoded?.ok && decoded.value.ownerId === ownerId) return decoded.value.initials;
+    } catch { /* Initials are optional display data. */ }
+    return null;
   }
   async function readHumanColor(ownerId: string, call?: CallOptions): Promise<HumanColorId> {
     try {
@@ -429,6 +438,11 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       void targetParticipantIds;
       const participants: Participant[] = [];
       const ownerUsernames = new Map<string, string | null>();
+      const ownerInitials = new Map<string, string | null>();
+      const initialsOf = async (ownerId: string): Promise<string | null> => {
+        if (!ownerInitials.has(ownerId)) ownerInitials.set(ownerId, await readHumanInitials(ownerId, call));
+        return ownerInitials.get(ownerId)!;
+      };
       const ownerColors = new Map<string, HumanColorId>();
       const colorOf = async (ownerId: string): Promise<HumanColorId> => {
         if (!ownerColors.has(ownerId)) ownerColors.set(ownerId, await readHumanColor(ownerId, call));
@@ -440,7 +454,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         if (human) {
           // Members of the same channel may see each other's verified email (membership checked above).
           const email = await readHumanEmail(human.ownerId, call);
-          participants.push({ ...human, displayName: name, color: await colorOf(human.ownerId), ...(email ? { email } : {}) });
+          const initials = await initialsOf(human.ownerId);
+          participants.push({ ...human, ...(initials ? { initials } : {}), displayName: name, color: await colorOf(human.ownerId), ...(email ? { email } : {}) });
           continue;
         }
         const agent = await readAgentOwner(userId, call);
@@ -453,9 +468,10 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           } catch { /* Keep the stored owner label if the current profile cannot be read. */ }
           ownerUsernames.set(agent.ownerId, username);
         }
+        const initials = agent ? await initialsOf(agent.ownerId) : null;
         participants.push(agent ? { matrixUserId: userId, participantId: agentParticipantId(userId),
           ownerId: agent.ownerId, displayName: name, kind: 'agent', ownerLabel: ownerUsernames.get(agent.ownerId) ?? agent.ownerLabel,
-          harness: agent.harness, ownerColor: await colorOf(agent.ownerId) }
+          harness: agent.harness, ...(initials ? { ownerInitials: initials } : {}), ownerColor: await colorOf(agent.ownerId) }
           : { matrixUserId: userId, displayName: name, kind: 'unknown' });
       }
       return { kind: 'ok', participants };

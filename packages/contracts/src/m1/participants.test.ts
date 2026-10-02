@@ -68,3 +68,17 @@ it('accepts optional human and owner colours and rejects invalid or misplaced co
   expect(decodeParticipant({ ...human, ownerColor: 'pink' }).ok).toBe(false);
   expect(decodeParticipant({ ...agent, color: 'pink' }).ok).toBe(false);
 });
+
+it('accepts canonical chosen initials only on the appropriate participant kind', () => {
+  for (const value of [{ ...human, initials: 'É1' }, { ...agent, ownerInitials: 'KW' }]) {
+    expect(decodeParticipant(value)).toEqual({ ok: true, value });
+  }
+  for (const initials of ['kw', null, 'K', 'ßa']) {
+    expect(decodeParticipant({ ...human, initials }).ok).toBe(false);
+    expect(decodeParticipant({ ...agent, ownerInitials: initials }).ok).toBe(false);
+  }
+  for (const value of [{ ...human, ownerInitials: 'KW' }, { ...agent, initials: 'KW' }, { ...unknown, initials: 'KW' }, { ...unknown, ownerInitials: 'KW' }]) {
+    expect(decodeParticipant(value).ok).toBe(false);
+  }
+  expect(decodeParticipantsResponse({ participants: [{ ...human, initials: 'kw' }] })).toEqual({ ok: false, error: { path: 'participants[0].initials', code: 'invalid_value' } });
+});

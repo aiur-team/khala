@@ -268,6 +268,64 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.locator('.timeline__row--pending', { hasText: 'sent with reduced motion' }).waitFor({ state: 'detached' });
     await page.emulateMedia({ reducedMotion: null });
 
+    // Stick to bottom: a reader at (or within 80px of) latest stays pinned as
+    // another participant's message arrives. A reader in history is never
+    // moved; a fixed, centred pill counts the arrivals instead, and either
+    // clicking it or scrolling down to latest hides it.
+    const settle = (ms = 400) => page.evaluate(wait => new Promise(resolve => setTimeout(resolve, wait)), ms);
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const pushLive = (body: string) => page.evaluate(text => window.__timelineHarness.pushLiveMessage(text), body);
+    const scrollToOffset = async (fromEnd: number) => {
+      await list.evaluate((node, offset) => { node.scrollTop = node.scrollHeight - node.clientHeight - offset; }, fromEnd);
+      await frames();
+    };
+    const pill = page.locator('.timeline__jump-latest');
+    for (const width of [1024, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      for (const offset of [0, 40]) {
+        await scrollToOffset(offset);
+        const body = `incoming while at latest (${offset}px) at ${width}`;
+        await pushLive(body);
+        await page.locator('.timeline__row', { hasText: body }).waitFor();
+        await settle();
+        assert.equal(await atEnd(), true, `an arrival keeps a reader ${offset}px from the end pinned at ${width}`);
+        assert.equal(await sentRowVisible(body), true, `the arrival is fully visible at ${width}`);
+        assert.equal(await pill.count(), 0, 'no pill while at latest');
+      }
+
+      await scrollToOffset(300);
+      const readingAt = await list.evaluate(node => node.scrollTop);
+      await pushLive(`first arrival while reading at ${width}`);
+      await pill.waitFor();
+      assert.equal(await pill.textContent(), '1 new message');
+      assert.equal(await pill.evaluate(button => button.parentElement?.getAttribute('aria-live')), 'polite');
+      await pushLive(`second arrival while reading at ${width}`);
+      await page.getByRole('button', { name: '2 new messages' }).waitFor();
+      await settle();
+      assert.equal(await list.evaluate(node => node.scrollTop), readingAt, `arrivals never move a reader in history at ${width}`);
+      const pillBox = async () => {
+        const [box, frame] = await Promise.all([pill.boundingBox(), list.boundingBox()]);
+        return { centre: box!.x + box!.width / 2 - (frame!.x + frame!.width / 2), gap: frame!.y + frame!.height - (box!.y + box!.height) };
+      };
+      const placed = await pillBox();
+      assert.ok(Math.abs(placed.centre) < 2 && placed.gap > 0 && placed.gap < 40, `pill is centred at the list's foot at ${width}: ${JSON.stringify(placed)}`);
+      await scrollToOffset(250);
+      assert.deepEqual(await pillBox(), placed, 'the pill does not scroll with the rows');
+      await pill.click();
+      assert.equal(await pill.count(), 0, 'clicking the pill hides it');
+      await page.waitForFunction(() => {
+        const node = document.querySelector('.timeline__list')!;
+        return node.scrollHeight - node.scrollTop - node.clientHeight < 2;
+      });
+
+      await scrollToOffset(300);
+      await pushLive(`arrival before a manual return at ${width}`);
+      await pill.waitFor();
+      await scrollToOffset(0);
+      await pill.waitFor({ state: 'detached' });
+    }
+    await page.setViewportSize({ width: 1024, height: 900 });
+
     // A revoked membership shows an explicit state and disables the composer;
     // it never leaves the reader typing into a room they can no longer reach.
     await page.evaluate(() => (window as unknown as { __timelineHarness: { revokeMembership: () => void } }).__timelineHarness.revokeMembership());

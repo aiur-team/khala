@@ -1,3 +1,4 @@
+import { isCanonicalInitials, PROFILE_INITIALS_PATH } from '@khala/contracts/m1/initials';
 import { isHumanColorId, PROFILE_COLOR_PATH } from '@khala/contracts/m1/colors';
 import { AGENT_RENAME_PATH, decodeAgentRenameResult } from '@khala/contracts/m1/agent-names';
 import type { AgentNamesPort } from '../../features/channel/ports';
@@ -412,6 +413,21 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         return { kind: 'error', code: 'unavailable' };
       }
       return { kind: 'ok', color: body.color };
+    },
+    async setInitials(initials, signal) {
+      if (csrfToken === null) {
+        const state = await readCurrent(signal);
+        if (state.kind !== 'signed_in') return { kind: 'error', code: state.kind === 'signed_out' ? 'signed_out' : 'unavailable' };
+      }
+      const response = await mutation(PROFILE_INITIALS_PATH, { initials }, signal);
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      if (response.status === 401) return { kind: 'error', code: 'signed_out' };
+      if (response.status === 400) return { kind: 'error', code: 'invalid_initials' };
+      const body = await jsonObject(response);
+      if (response.status !== 200 || body === null || !hasExactKeys(body, ['initials']) || (body.initials !== null && !isCanonicalInitials(body.initials))) {
+        return { kind: 'error', code: 'unavailable' };
+      }
+      return { kind: 'ok', initials: body.initials };
     },
     async setUsername(username, signal) {
       // Keep a failed authentication preflight distinct from a failed mutation.

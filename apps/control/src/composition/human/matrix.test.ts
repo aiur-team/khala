@@ -1,3 +1,4 @@
+import { humanInitialsRecordKey } from '@khala/contracts/m1/initials';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, ParticipantId } from '@khala/contracts/messaging/index';
@@ -672,6 +673,49 @@ describe('owner-map room participants', () => {
       .toMatchObject({ kind: 'ok', participants: [
         { color: defaultHumanColor(principal.ownerId) }, { ownerColor: defaultHumanColor(principal.ownerId) },
       ] });
+  });
+  it('shares stored initials across humans and agents and defaults unconfigured humans', async () => {
+    const f = await fixture();
+    const key = humanInitialsRecordKey(principal.ownerId);
+    await f.store.compareAndSet({ key, expectedRevision: null, operationId: 'initials',
+      next: { expiresAt: null, value: { v: 1, ownerId: principal.ownerId, initials: 'KW' } } });
+    const otherOwner = 'owner_bob' as OwnerId;
+    const otherUser = ownerMatrixUserId(otherOwner, 'matrix.example.test');
+    f.joined[otherUser] = {};
+    const spy = vi.spyOn(f.store, 'read');
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId, otherUser]))
+      .toMatchObject({ kind: 'ok', participants: [
+        { kind: 'human', initials: 'KW' }, { kind: 'agent', ownerInitials: 'KW' },
+        expect.not.objectContaining({ initials: expect.anything() }),
+      ] });
+    expect(spy.mock.calls.filter(([readKey]) => readKey === key)).toHaveLength(1);
+    // An owner's agent still receives the initials when the owner is not in this channel.
+    delete f.joined[user];
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', ownerInitials: 'KW' }] });
+    spy.mockClear();
+    expect(await f.matrix.sessions.resolveParticipants([user]))
+      .toEqual({ kind: 'ok', participants: [expect.not.objectContaining({ initials: expect.anything() })] });
+    expect(spy.mock.calls.filter(([readKey]) => readKey.endsWith('/initials'))).toHaveLength(0);
+  });
+  it.each(['absent', 'invalid', 'foreign', 'unavailable', 'throw', 'cleared'] as const)('defaults human and agent initials on %s records', async failure => {
+    const f = await fixture();
+    const key = humanInitialsRecordKey(principal.ownerId);
+    const read = f.store.read;
+    vi.spyOn(f.store, 'read').mockImplementation(async <T extends JsonValue>(readKey: string) => {
+      if (readKey !== key) return read<T>(readKey);
+      if (failure === 'throw') throw Error('offline');
+      if (failure === 'unavailable' || failure === 'absent') return { kind: failure };
+      return { kind: 'record', record: { key, revision: 'initials-r1', operationId: 'initials', expiresAt: null,
+        value: { v: 1, ownerId: failure === 'foreign' ? 'owner_other' : principal.ownerId,
+          initials: failure === 'invalid' ? 'kw' : failure === 'cleared' ? null : 'KW' } as unknown as T } };
+    });
+    const result = await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId]);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.participants[0]).not.toHaveProperty('initials');
+      expect(result.participants[1]).not.toHaveProperty('ownerInitials');
+    }
   });
   it('resolves an agent from its owner map only for a joined human', async () => {
     const f = await fixture();

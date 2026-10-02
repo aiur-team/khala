@@ -5,7 +5,8 @@ import type { HumanColorId } from '@khala/contracts/m1/colors';
 import type { ProfilePort } from './ports';
 
 export type ProfileStatus = 'loading' | 'ready' | 'error';
-export type ProfileSnapshot = Readonly<{ status: ProfileStatus; username: string | null; suggestion: string; color: HumanColorId | null }>;
+export type ProfileSnapshot = Readonly<{ status: ProfileStatus; username: string | null; suggestion: string; color: HumanColorId | null; initials: string | null }>;
+export type ProfileInitialsSaveResult = Awaited<ReturnType<ProfilePort['setInitials']>>;
 export type ProfileColorSaveResult = Awaited<ReturnType<ProfilePort['setColor']>>;
 export type ProfileSaveResult = Awaited<ReturnType<ProfilePort['setUsername']>>;
 
@@ -17,6 +18,7 @@ export interface ProfileStore {
   retry(): void;
   save(username: string): Promise<ProfileSaveResult>;
   saveColor(color: HumanColorId): Promise<ProfileColorSaveResult>;
+  saveInitials(initials: string | null): Promise<ProfileInitialsSaveResult>;
   dispose(): void;
 }
 
@@ -24,7 +26,7 @@ const unavailable: Extract<ProfileSaveResult, { kind: 'error' }> = { kind: 'erro
 
 /** Without a port the store is in `error` from the start, so the gate fails open. */
 export function createProfileStore(port: ProfilePort | undefined): ProfileStore {
-  let snapshot: ProfileSnapshot = { status: port ? 'loading' : 'error', username: null, suggestion: '', color: null };
+  let snapshot: ProfileSnapshot = { status: port ? 'loading' : 'error', username: null, suggestion: '', color: null, initials: null };
   let loading: AbortController | null = null;
   const listeners = new Set<() => void>();
   const set = (next: ProfileSnapshot) => {
@@ -43,7 +45,7 @@ export function createProfileStore(port: ProfilePort | undefined): ProfileStore 
     };
     port.get(controller.signal).then(
       result => settle(result.kind === 'ok'
-        ? { status: 'ready', username: result.username, suggestion: result.suggestion, color: result.color }
+        ? { status: 'ready', username: result.username, suggestion: result.suggestion, color: result.color, initials: result.initials }
         : { ...snapshot, status: 'error' }),
       () => settle({ ...snapshot, status: 'error' }),
     );
@@ -83,6 +85,17 @@ export function createProfileStore(port: ProfilePort | undefined): ProfileStore 
         return unavailable;
       }
       if (result.kind === 'ok') set({ ...snapshot, status: 'ready', color: result.color });
+      return result;
+    },
+    async saveInitials(initials) {
+      if (!port) return unavailable;
+      let result: ProfileInitialsSaveResult;
+      try {
+        result = await port.setInitials(initials);
+      } catch {
+        return unavailable;
+      }
+      if (result.kind === 'ok') set({ ...snapshot, status: 'ready', initials: result.initials });
       return result;
     },
     dispose() {
