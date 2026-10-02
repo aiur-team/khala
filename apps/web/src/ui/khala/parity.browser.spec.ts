@@ -31,6 +31,8 @@ const OUT = join(WEB, 'test-results/parity');
 const THRESHOLD = 0.02;
 /** A pixel differs when any channel moves by more than this. */
 const CHANNEL_DELTA = 16;
+/** The app entry's font stylesheet (§2.1). */
+const GOOGLE_FONTS = 'https://fonts.googleapis.com/css2?family=Bungee&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap';
 const SCREENS_SKIP = process.env.CI ? 'the references only match the capture machine’s rasteriser; the CI gate is a follow-up' : false;
 
 type Theme = 'dark' | 'light';
@@ -371,6 +373,78 @@ describe('screens', { concurrency: 1 }, () => {
   }
 });
 
+/**
+ * §20: the agent confirm page against the design's agent-finish card, as a
+ * standalone page. The design's close button and the page's brand row (§1.4)
+ * are masked on both images: §20 drops the one and adds the other.
+ */
+describe('screens: agent confirm page', { concurrency: 1 }, () => {
+  let url = '';
+  before(async () => {
+    url = await serve({ root: join(WEB, 'src/features/agent-confirm/browser-harness') }, join(scratch, 'finish'));
+  });
+  for (const width of [1440, 390]) {
+    for (const theme of ['dark', 'light'] as const) {
+      const shot = `${width}-${theme}-agent-finish`;
+      it(`screens: ${shot}`, { timeout: 120_000, skip: SCREENS_SKIP }, async () => {
+        const reference = await readFile(join(SCREENS, `fullbleed-${shot}.png`));
+        const inject = await readFile(join(DESIGN, 'reference/fullbleed-inject.css'), 'utf8');
+        const boxOf = (selector: string) => (page: Page) => page.evaluate(sel => [...document.querySelectorAll<HTMLElement>(sel)]
+          .filter(element => element.checkVisibility()).map(element => {
+            const { left, top, width: w, height: h } = element.getBoundingClientRect();
+            return [Math.floor(left), Math.floor(top), Math.ceil(w), Math.ceil(h)] as const;
+          }), selector);
+        const design = await newContext(browser!, width, HEIGHTS[width]!, theme);
+        let close: readonly Box[];
+        try {
+          const page = await design.newPage();
+          await page.goto(`${DESIGN_URL}?theme=${theme}`, { waitUntil: 'load', timeout: 60_000 });
+          await page.evaluate(next => { document.documentElement.dataset.theme = next; }, theme);
+          await page.click('.snav[data-tab="khala"]');
+          await page.addStyleTag({ content: inject });
+          await page.evaluate(() => document.fonts.ready);
+          await page.waitForTimeout(300);
+          if (width < 1440) { await toThread(page); await page.waitForTimeout(200); }
+          await clickJS('[data-kh-act="pv-finish"]')(page);
+          await page.waitForTimeout(450);
+          close = await boxOf('.kh-fin:not([hidden]) .kh-fin-x')(page);
+        } finally {
+          await design.close();
+        }
+        const product = await newContext(browser!, width, HEIGHTS[width]!, theme);
+        let actual: Buffer;
+        let brand: readonly Box[];
+        try {
+          const page = await product.newPage();
+          await page.addInitScript(next => localStorage.setItem('khala.theme', next), theme);
+          // The design's card names "Release retro"; the same label keeps the comparison on layout, not copy.
+          await mockConfirm(page, 'Release retro');
+          await page.goto(url);
+          await page.getByRole('button', { name: 'Confirm', exact: true }).waitFor();
+          // The harness page has no font link; the app entry's (index.html) renders the design faces.
+          await page.addStyleTag({ url: GOOGLE_FONTS });
+          await page.evaluate(() => document.fonts.ready);
+          await page.waitForTimeout(300);
+          brand = await boxOf('.kh-agent-confirm > .kh-brand')(page);
+          actual = await page.screenshot();
+        } finally {
+          await product.close();
+        }
+        const boxes = [...close, ...brand];
+        const result = await pixelDiff(actual, reference, boxes);
+        const diffPath = join(OUT, `${shot}.diff.png`);
+        if (result.png) await writeFile(diffPath, Buffer.from(result.png.split(',')[1]!, 'base64'));
+        await writeFile(join(OUT, `${shot}.fixture.png`), actual);
+        const ratio = result.diff / result.total;
+        results.push({ check: 'screen', width, theme, state: 'agent-finish', ratio: Number(ratio.toFixed(4)), ceiling: THRESHOLD,
+          cause: null, size: result.size, masks: ['kh-fin-x', 'kh-brand'], maskedPixels: boxes.reduce((sum, box) => sum + box[2] * box[3], 0) });
+        assert.ok(result.diff >= 0, `screenshot size ${result.size}`);
+        assert.ok(ratio <= THRESHOLD, `${shot}: ${ratio.toFixed(4)} of pixels differ (> ${THRESHOLD}); diff at ${diffPath}`);
+      });
+    }
+  }
+});
+
 // --- §25.2/§25.3 computed styles and tokens. ---
 
 type ComputedEntry = Readonly<Record<string, string>> & Readonly<{ box: readonly number[] }>;
@@ -580,13 +654,13 @@ describe('fonts', { concurrency: 1 }, () => {
   });
 });
 
-async function mockConfirm(page: Page) {
+async function mockConfirm(page: Page, label = 'Helper') {
   await page.route('**/api/human/me', route => route.fulfill({ json: {
     principal: { v: 1, ownerId: 'owner_alice', providerIssuer: 'https://issuer.example', providerSubject: 'alice',
       verifiedEmail: 'alice@example.test', sessionExpiresAt: '2030-01-01T00:00:00Z' }, csrfToken: 'browser-proof',
   } }));
   await page.route('**/api/human/agent-join?*', route => route.fulfill({ json:
-    { joinId: 'j1', label: 'Helper', harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' } }));
+    { joinId: 'j1', label, harness: 'claude', channelName: 'Launch', roomId: '!r1:khala.local', state: 'pending' } }));
 }
 
 // --- §25.5–10 behaviour and structure, on the fixture. ---

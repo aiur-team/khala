@@ -1,7 +1,7 @@
 // The agent confirmation page (RECREATION-SPEC §20): the design's agent-finish
 // card `.kh-fin` on a full-viewport page, below the brand row (§1.4).
 
-import { useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { AgentJoinView, Harness } from '@khala/contracts/m1/agent-join';
 import { persistTheme, resolveInitialTheme } from '../../shell/theme';
 import type { ThemeChoice } from '../../shell/types';
@@ -38,20 +38,23 @@ function Agent({ view }: Readonly<{ view: AgentJoinView }>) {
   </>;
 }
 
-export function AgentConfirm({ controller, roomHref, onOpenRoom, theme: hostTheme, onThemeChange, homeHref = '/conversations' }: {
-  controller: AgentConfirmController;
-  roomHref: (roomId: string) => string;
-  onOpenRoom: (roomId: string) => void;
+type PageTheme = Readonly<{
   /** The shell's theme; without one the page resolves and owns its own. */
   theme?: ThemeChoice;
   onThemeChange?: (theme: ThemeChoice) => void;
   /** Target of the wordmark. */
   homeHref?: string;
+}>;
+
+/**
+ * The full-viewport page and its card, without a confirmation: the app shows
+ * its device status here while the route waits for the device (§20).
+ */
+export function AgentConfirmFrame({ theme: hostTheme, onThemeChange, homeHref = '/conversations', children }: PageTheme & {
+  children: ReactNode;
 }) {
-  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [ownTheme, setOwnTheme] = useState<ThemeChoice>(initialTheme);
   const theme = hostTheme ?? ownTheme;
-  const view = snapshot.state === 'loading' ? undefined : snapshot.view;
   return (
     <div className="khala-app kh-agent-confirm" data-theme={theme}>
       <Brand theme={theme} homeHref={homeHref} onThemeChange={next => {
@@ -64,35 +67,49 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, theme: hostThem
       <section className="kh-fin kh-fin--page" aria-label="Confirm agent">
         <div className="kh-fin-c">
           <span className="kh-fin-eb">Khala</span>
-          {view ? <Agent view={view} /> : <h1 className="kh-fin-n">Agent confirmation</h1>}
-          {snapshot.state === 'loading' ? <>
-            <span className="kh-spin" aria-hidden="true" />
-            <p className="kh-fin-p" role="status">Loading agent request…</p>
-          </> : null}
-          {snapshot.state === 'review' ? <>
-            <p className="kh-fin-p" aria-hidden="true">wants to join <b>{snapshot.view.channelName}</b></p>
-            <span className="kh-fin-sr">{snapshot.view.label} ({harnessNames[snapshot.view.harness]}) wants to join {snapshot.view.channelName}.</span>
-            <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>
-          </> : null}
-          {snapshot.state === 'connecting' ? <>
-            <span className="kh-spin" aria-hidden="true" />
-            <p className="kh-fin-p" role="status">Connecting {snapshot.view.label}… Keep this tab open.</p>
-          </> : null}
-          {snapshot.state === 'done' ? <>
-            <span className="kh-fin-ok"><CheckIcon />{snapshot.view.label} joined {snapshot.view.channelName}.</span>
-            <a className="kh-btn pri" href={roomHref(snapshot.view.roomId)} onClick={event => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              onOpenRoom(snapshot.view.roomId);
-            }}>Open channel</a>
-          </> : null}
-          {snapshot.state === 'error' ? <>
-            <p className="kh-fin-p kh-fin-err" role="alert">{errors[snapshot.code]}</p>
-            {retryable.includes(snapshot.code)
-              ? <button type="button" className="kh-btn" onClick={() => controller.retry()}>Retry</button> : null}
-          </> : null}
+          {children}
         </div>
       </section>
     </div>
+  );
+}
+
+export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: PageTheme & {
+  controller: AgentConfirmController;
+  roomHref: (roomId: string) => string;
+  onOpenRoom: (roomId: string) => void;
+}) {
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const view = snapshot.state === 'loading' ? undefined : snapshot.view;
+  return (
+    <AgentConfirmFrame {...page}>
+      {view ? <Agent view={view} /> : <h1 className="kh-fin-n">Agent confirmation</h1>}
+      {snapshot.state === 'loading' ? <>
+        <span className="kh-spin" aria-hidden="true" />
+        <p className="kh-fin-p" role="status">Loading agent request…</p>
+      </> : null}
+      {snapshot.state === 'review' ? <>
+        <p className="kh-fin-p" aria-hidden="true">wants to join <b>{snapshot.view.channelName}</b></p>
+        <span className="kh-fin-sr">{snapshot.view.label} ({harnessNames[snapshot.view.harness]}) wants to join {snapshot.view.channelName}.</span>
+        <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>
+      </> : null}
+      {snapshot.state === 'connecting' ? <>
+        <span className="kh-spin" aria-hidden="true" />
+        <p className="kh-fin-p" role="status">Connecting {snapshot.view.label}… Keep this tab open.</p>
+      </> : null}
+      {snapshot.state === 'done' ? <>
+        <span className="kh-fin-ok"><CheckIcon />{snapshot.view.label} joined {snapshot.view.channelName}.</span>
+        <a className="kh-btn pri" href={roomHref(snapshot.view.roomId)} onClick={event => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          onOpenRoom(snapshot.view.roomId);
+        }}>Open channel</a>
+      </> : null}
+      {snapshot.state === 'error' ? <>
+        <p className="kh-fin-p kh-fin-err" role="alert">{errors[snapshot.code]}</p>
+        {retryable.includes(snapshot.code)
+          ? <button type="button" className="kh-btn" onClick={() => controller.retry()}>Retry</button> : null}
+      </> : null}
+    </AgentConfirmFrame>
   );
 }
