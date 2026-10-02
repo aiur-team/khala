@@ -532,6 +532,16 @@ describe('createMatrixHumanServices', () => {
       .toMatchObject({ kind: 'ok', participants: [{ kind: 'human', displayName: current }] });
   });
 
+  it.each(['read', 'write', 'throw'])('refuses a session when the display-name %s fails', async failure => {
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      if (String(input).endsWith('/login')) return json(200, { user_id: userId, device_id: 'WEB', access_token: 'token' });
+      if (failure === 'throw') throw new Error('offline');
+      return json(failure === 'read' || init?.method === 'PUT' ? 503 : 200, { displayname: 'Old' });
+    });
+    expect(await services(fetch).sessions.issue(principal, 'WEB' as DeviceId)).toEqual({ kind: 'unavailable' });
+  });
+
   it('resolves only canonical local participant accounts', async () => {
     const matrix = services(vi.fn());
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
@@ -610,12 +620,14 @@ describe('Matrix room sender inventory', () => {
       changeMembers: () => { mutateMembership = true; },
       onQuery: (callback: () => Promise<void>) => { afterQuery = callback; } };
   }
-  it('resolves an agent with its indexed owner only for a joined human', async () => {
+  it('resolves an agent from its owner map only for a joined human', async () => {
     const f = await fixture();
+    f.joined[user] = { display_name: 'Alice' };
+    f.joined[f.identity.userId] = { display_name: 'Codex · Alice' };
     const result = await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId]);
     expect(result).toMatchObject({ kind: 'ok', participants: [
-      { matrixUserId: user, ownerId: principal.ownerId },
-      { matrixUserId: f.identity.userId, kind: 'agent', ownerId: principal.ownerId,
+      { matrixUserId: user, ownerId: principal.ownerId, kind: 'human', displayName: 'Alice' },
+      { matrixUserId: f.identity.userId, kind: 'agent', ownerId: principal.ownerId, displayName: 'Codex · Alice', ownerLabel: 'Alice', harness: 'codex',
         participantId: `agent_${createHash('sha256').update(f.identity.userId).digest('hex').slice(0, 40)}` },
     ] });
     delete f.joined[f.identity.userId];
