@@ -1,3 +1,5 @@
+import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
+import { applyListeningMode, readListeningMode } from './mode';
 import { createHash } from 'node:crypto';
 import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import type { AgentCredentials, AgentJoinCreated, Harness } from '@khala/contracts/m1/agent-join';
@@ -7,9 +9,9 @@ import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/r
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
-import { createAgentMatrixSession, type AgentMatrixSession, type SessionMessage } from './matrix/session';
+import { createAgentMatrixSession, type AgentMatrixSession, type SessionModeCommand, type SessionMessage } from './matrix/session';
 import { toInboxEntry } from './sender';
-import { ensureStateDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, type JoinFile, type StatusFile } from './state';
+import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, type JoinFile, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
   harness: Harness; sessionId: string; env?: NodeJS.ProcessEnv;
@@ -20,7 +22,7 @@ export type KhalaAgentClientOptions = {
 type Attempt = {
   link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: AgentMatrixSession; credentials?: AgentCredentials;
-  unsubscribe?: () => void; joined: boolean;
+  unsubscribe?: () => void; unsubscribeMode?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
   return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error');
@@ -63,6 +65,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await ensureStateDir(dir);
       // M1 never resumes a saved Matrix account on a new process/device.
       await removeStateFile(dir, 'session.json');
+      await removeStateFile(dir, 'mode.json');
       await setStatus('idle');
     })();
   }
@@ -71,6 +74,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   }
   async function cleanup(attempt: Attempt): Promise<void> {
     attempt.unsubscribe?.();
+    attempt.unsubscribeMode?.();
     const session = attempt.session;
     delete attempt.session;
     await session?.stop().catch(() => {});
@@ -88,6 +92,21 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function requireSession(): { session: AgentMatrixSession; credentials: AgentCredentials; attempt: Attempt } {
     if (closed || !active?.joined || !active.session || !active.credentials) throw new KhalaClientError('not_connected');
     return { session: active.session, credentials: active.credentials, attempt: active };
+  }
+  async function publishMode(attempt: Attempt, session: AgentMatrixSession, roomId: string, mode: ListeningMode): Promise<void> {
+    const controller = new AbortController();
+    let release = () => {};
+    const aborted = new Promise<void>(resolve => { release = resolve; });
+    const abort = () => { controller.abort(); release(); };
+    const timer = setTimeout(abort, 5000);
+    attempt.controller.signal.addEventListener('abort', abort, { once: true });
+    try {
+      if (attempt.controller.signal.aborted) { abort(); return; }
+      await Promise.race([session.publishListeningMode(roomId, mode, controller.signal).catch(() => {}), aborted]);
+    } finally {
+      clearTimeout(timer);
+      attempt.controller.signal.removeEventListener('abort', abort);
+    }
   }
   async function background(attempt: Attempt): Promise<void> {
     const { signal } = attempt.controller;
@@ -111,10 +130,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         return session;
       });
       const session = await wait(starting);
-      const buffered: SessionMessage[] = [];
+      const buffered: (() => void)[] = [];
       const intake = (message: SessionMessage): void => {
         if (!current(attempt) || message.roomId !== credentials.roomId || message.sender === session.userId) return;
-        if (!attempt.joined) { buffered.push(message); return; }
+        if (!attempt.joined) { buffered.push(() => intake(message)); return; }
         appends = appends.then(async () => {
           if (!current(attempt)) return;
           const entry = inboxEntry(message, session, acceptEventKey);
@@ -126,14 +145,29 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           if (current(attempt)) await setStatus('disconnected', 'internal_error').catch(() => {});
         });
       };
+      const intakeMode = (command: SessionModeCommand): void => {
+        if (!current(attempt) || command.roomId !== credentials.roomId) return;
+        if (!attempt.joined) { buffered.push(() => intakeMode(command)); return; }
+        if (command.sender !== session.inviter(credentials.roomId)) return;
+        const decoded = decodeListeningModeCommand(command.content);
+        if (!decoded.ok || decoded.value.agent !== session.userId) return;
+        appends = appends.then(async () => {
+          if (!current(attempt)) return;
+          await applyListeningMode(filesForDir(dir), decoded.value.mode, { changedBy: 'owner', eventId: command.eventId }, now);
+          await publishMode(attempt, session, credentials.roomId, decoded.value.mode);
+        }).catch(async () => {
+          if (current(attempt)) await setStatus('disconnected', 'internal_error').catch(() => {});
+        });
+      };
       attempt.unsubscribe = session.onMessage(intake);
+      attempt.unsubscribeMode = session.onListeningModeCommand(intakeMode);
       await wait(api.reportReady(input, fetchDeps));
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;
       attempt.joined = true;
       status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
-      for (const message of buffered) intake(message);
+      for (const deliver of buffered) deliver();
       await removeStateFile(dir, 'join.json');
       if (current(attempt)) await setStatus('connected');
     } catch (error) {
@@ -166,6 +200,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           acceptEventKey = createEventKeyFilter();
           delete status.channelName;
         }
+        await removeStateFile(dir, 'mode.json');
         const saved = await readStateFile<JoinFile>(dir, 'join.json');
         if (saved?.link === link && Date.parse(saved.expiresAt) <= now().getTime()) {
           await removeStateFile(dir, 'join.json');
@@ -197,7 +232,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await appends;
       const unread = (await unreadCount(dir)).total;
       return { state: status.state, ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
-        ...(active?.joined && active.session ? { agentUserId: active.session.userId } : {}), unread };
+        ...(active?.joined && active.session ? { agentUserId: active.session.userId } : {}), unread, listeningMode: await readListeningMode(filesForDir(dir)) };
     },
     async read(limit, before) {
       await initialize();

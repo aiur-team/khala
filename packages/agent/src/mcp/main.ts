@@ -14,7 +14,7 @@ export type ClientFactory = (input: { harness: Harness; sessionId: string }) => 
 export function createPlaceholderClient(): KhalaAgentClient {
   return {
     async join() { throw new KhalaClientError('link_unavailable'); },
-    async status() { return { state: 'idle', unread: 0 }; },
+    async status() { return { state: 'idle', unread: 0, listeningMode: 'sync' }; },
     async read() { throw new KhalaClientError('not_connected'); },
     async send() { throw new KhalaClientError('not_connected'); },
     async sendChannelEvent() { throw new KhalaClientError('not_connected'); },

@@ -1,10 +1,15 @@
+import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
-import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method } from 'matrix-js-sdk';
+import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
 
 export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1'; body: string; content: Record<string, unknown> };
+export type SessionModeCommand = { eventId: string; roomId: string; sender: string; ts: number; content: unknown };
 export interface AgentMatrixSession {
+  inviter(roomId: string): string | undefined;
+  onListeningModeCommand(handler: (c: SessionModeCommand) => void): () => void;
+  publishListeningMode(roomId: string, mode: ListeningMode, signal?: AbortSignal): Promise<void>;
   readonly userId: string;
   onMessage(handler: (m: SessionMessage) => void): () => void;
   waitForInvite(roomId: string, timeoutMs: number): Promise<void>;
@@ -32,6 +37,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
   const log = (line: string) => opts?.log?.(line);
   const client = createClient({ baseUrl: creds.homeserver, userId: creds.userId, accessToken: creds.accessToken, deviceId: creds.deviceId });
   const handlers = new Set<(m: SessionMessage) => void>();
+  const modeHandlers = new Set<(c: SessionModeCommand) => void>();
+  const inviters = new Map<string, string>();
   const emitted = new Set<string>();
   // Only events originating in a live timeline may later be emitted by Decrypted.
   const liveEvents = new Set<MatrixEvent>();
@@ -42,7 +49,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
 
   const deliver = (event: MatrixEvent) => {
     if (stopped || !liveEvents.has(event)) return;
-    const m = message(event);
+    const command = event.getType() === LISTENING_MODE_COMMAND_TYPE && !event.isDecryptionFailure()
+      && event.getId() && event.getRoomId() && event.getSender()
+      ? { eventId: event.getId()!, roomId: event.getRoomId()!, sender: event.getSender()!, ts: event.getTs(), content: event.getContent() } : undefined;
+    const m = command ?? message(event);
     if (!m) {
       if (event.getType() !== 'm.room.encrypted' && !event.isDecryptionFailure()) liveEvents.delete(event);
       return;
@@ -56,8 +66,15 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     liveEvents.delete(event);
     if (emitted.has(m.eventId)) return;
     emitted.add(m.eventId);
-    for (const handler of handlers) {
-      try { handler(m); } catch { log('message_handler_error'); }
+    if (command) {
+      for (const handler of modeHandlers) {
+        try { handler(command); } catch { log('mode_handler_error'); }
+      }
+    } else {
+      const entry = message(event)!;
+      for (const handler of handlers) {
+        try { handler(entry); } catch { log('message_handler_error'); }
+      }
     }
   };
   const timeline = (event: MatrixEvent, _room: Room | undefined, toStart: boolean | undefined, _removed: boolean, data: IRoomTimelineData) => {
@@ -99,6 +116,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     liveEvents.clear();
     emitted.clear();
     handlers.clear();
+    modeHandlers.clear();
   };
   try {
     await client.initRustCrypto({ useIndexedDB: false });
@@ -139,6 +157,14 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
 
   return {
     userId: creds.userId,
+    inviter(roomId) { return inviters.get(roomId); },
+    onListeningModeCommand(handler) { modeHandlers.add(handler); return () => { modeHandlers.delete(handler); }; },
+    async publishListeningMode(roomId, mode, signal) {
+      const content = client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent();
+      if (!content) throw new Error('join_state_unavailable');
+      const next = { ...content, membership: 'join' as const, [LISTENING_MODE_MEMBER_KEY]: mode };
+      await client.sendStateEvent(roomId, EventType.RoomMember, next, creds.userId, { localTimeoutMs: 5000, ...(signal ? { abortSignal: signal } : {}) });
+    },
     onMessage(handler) { handlers.add(handler); return () => { handlers.delete(handler); }; },
     waitForInvite(roomId, timeoutMs) {
       return membershipWait(roomId, () => ['invite', 'join'].includes(client.getRoom(roomId)?.getMyMembership() ?? ''), timeoutMs, 'invite_timeout');
@@ -148,6 +174,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       const membership = client.getRoom(roomId)?.getMyMembership();
       if (membership !== 'join') {
         if (membership !== 'invite') throw new Error('not_invited');
+        const inviter = client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getSender();
+        if (inviter) inviters.set(roomId, inviter);
         await client.joinRoom(roomId);
       }
       await membershipWait(roomId, () => client.getRoom(roomId)?.getMyMembership() === 'join', 30_000, 'join_timeout');
