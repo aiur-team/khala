@@ -1,3 +1,7 @@
+import ready from '../../contracts/fixtures/aiur-events/pr-ready-for-review.json';
+import { createKhalaTools } from './mcp/tools';
+import { createHash } from 'node:crypto';
+import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -207,4 +211,102 @@ it('falls back to the room id and propagates injected fetch and invite timeout',
   expect(joinApi.pollJoin.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(joinApi.reportReady.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 321);
+});
+
+const channelEvent = (id: string, sender = '@khala_abc:s', key: string | undefined = 'key'): SessionMessage => ({
+  ...message(id, sender), type: 'com.khala.event.v1', content: { v: 1, kind: 'ci.failed', summary: 'CI failed: test', body: 'fallback', ...(key !== undefined ? { key } : {}) },
+});
+it('dedupes keys across senders and drops own and malformed events before key consumption', async () => {
+  await connected();
+  handler!(channelEvent('$own', credentials.userId));
+  handler!({ ...channelEvent('$bad'), content: { ...channelEvent('$bad').content, url: 'javascript:x' } });
+  handler!(channelEvent('$first'));
+  handler!(channelEvent('$duplicate', '@agent-other:s'));
+  expect(await entries()).toEqual([{ ...toInboxEntry(message('$first'), 'Maya'), kind: 'event', body: 'CI failed: test' }]);
+  expect(waker).not.toHaveBeenCalled();
+});
+it('preserves message/event order and wakes only for messages', async () => {
+  await connected();
+  handler!(message('$1')); handler!(channelEvent('$2')); handler!(message('$3'));
+  expect((await entries()).map(entry => [entry.eventId, entry.kind])).toEqual([['$1', 'message'], ['$2', 'event'], ['$3', 'message']]);
+  expect(waker.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$1', '$3']);
+  expect((await client.status()).unread).toBe(3);
+});
+it('reads own events, skips invalid and duplicate keys per page, and keeps intake dedupe separate', async () => {
+  await connected();
+  handler!(channelEvent('$live')); await entries();
+  const own = channelEvent('$own', credentials.userId);
+  vi.mocked(session.history).mockResolvedValue({ messages: [message('$1'), own, channelEvent('$dup'), { ...channelEvent('$bad'), content: {} }, { ...channelEvent('$unkeyed1'), content: { v: 1, kind: 'custom', summary: 'unkeyed', body: '' } }, { ...channelEvent('$unkeyed2'), content: { v: 1, kind: 'custom', summary: 'unkeyed', body: '' } }], nextBefore: '$1' });
+  for (let i = 0; i < 2; i++) {
+    const page = await client.read(10);
+    expect(page.messages.map(entry => entry.eventId)).toEqual(['$1', '$own', '$unkeyed1', '$unkeyed2']);
+    expect(page.messages[1]).toMatchObject({ kind: 'event', sender: credentials.userId, body: 'CI failed: test' });
+    expect(page.nextBefore).toBe('$1');
+  }
+  expect((await entries()).map(entry => entry.eventId)).toEqual(['$live']);
+  expect(waker).not.toHaveBeenCalled();
+});
+
+it('buffers events racing join and dedupes without waking after join', async () => {
+  const joining = deferred<void>(); vi.mocked(session.join).mockReturnValue(joining.promise);
+  await client.join(link, 'Codex'); poll.resolve(credentials);
+  await vi.waitFor(() => expect(session.join).toHaveBeenCalled());
+  handler!(channelEvent('$early')); handler!(channelEvent('$duplicate', '@agent-other:s'));
+  expect(await entries()).toEqual([]);
+  joining.resolve();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await entries()).map(entry => [entry.eventId, entry.kind])).toEqual([['$early', 'event']]);
+  expect(waker).not.toHaveBeenCalled();
+});
+
+function outgoingEvent(key?: string) {
+  const encoded = encodeChannelEvent({ kind: 'ci.passed', summary: 'CI passed', ...(key === undefined ? {} : { key }) });
+  if (!encoded.ok) throw new Error('invalid fixture');
+  return encoded.value;
+}
+it('uses stable key-derived transaction ids and leaves unkeyed ids to the SDK', async () => {
+  await connected();
+  const content = outgoingEvent('retry-key');
+  expect(await client.sendChannelEvent(content)).toEqual({ eventId: '$event' });
+  await client.sendChannelEvent(content);
+  await client.sendChannelEvent(outgoingEvent('another-key'));
+  await client.sendChannelEvent(outgoingEvent());
+  const calls = vi.mocked(session.sendChannelEvent).mock.calls;
+  const expected = 'khev-' + createHash('sha256').update('retry-key').digest('hex').slice(0, 32);
+  expect(calls[0]).toEqual([credentials.roomId, content, expected]);
+  expect(calls[1]?.[2]).toBe(expected);
+  expect(calls[2]?.[2]).toMatch(/^khev-[0-9a-f]{32}$/);
+  expect(calls[2]?.[2]).not.toBe(expected);
+  expect(calls[3]?.[2]).toBeUndefined();
+  expect(waker).not.toHaveBeenCalled();
+});
+it('guards event sends and restores connected status after retry', async () => {
+  const content = outgoingEvent();
+  await expect(client.sendChannelEvent(content)).rejects.toMatchObject({ code: 'not_connected' });
+  expect(session.sendChannelEvent).not.toHaveBeenCalled();
+  await connected();
+  vi.mocked(session.sendChannelEvent).mockRejectedValueOnce(new Error('SECRET'));
+  await expect(client.sendChannelEvent(content)).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await client.sendChannelEvent(content)).toEqual({ eventId: '$event' });
+  expect((await statusFile())?.state).toBe('connected');
+});
+it('revalidates and canonicalizes content before reaching the session', async () => {
+  await connected();
+  await expect(client.sendChannelEvent({ ...outgoingEvent(), url: 'javascript:alert(1)' })).rejects.toMatchObject({ code: 'internal_error', message: 'invalid_event' });
+  expect(session.sendChannelEvent).not.toHaveBeenCalled();
+  expect((await statusFile())?.state).toBe('connected');
+  await client.sendChannelEvent({ ...outgoingEvent(), body: 'raw body' });
+  expect(session.sendChannelEvent).toHaveBeenCalledWith(credentials.roomId, outgoingEvent(), undefined);
+});
+
+it('routes a real Aiur fixture from the tool through the client to the joined session', async () => {
+  await connected();
+  const tool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(tool => tool.name === 'khala_event')!;
+  const response = await tool.call({ aiur: ready, ticketPrefix: 'AIUR-' }, { id: 1, notification: false, meta: undefined });
+  expect(response.result).toMatchObject({ structuredContent: { eventId: '$event' }, content: [{ type: 'text', text: 'Posted channel event: AIUR-395 review requested · feat/events-cursor' }] });
+  expect(session.sendChannelEvent).toHaveBeenCalledExactlyOnceWith(credentials.roomId,
+    expect.objectContaining({ v: 1, body: 'AIUR-395 review requested · feat/events-cursor', key: 'pr:aiur-team/aiur:ready_for_review:412:3f9c2ab0d1' }),
+    'khev-' + createHash('sha256').update('pr:aiur-team/aiur:ready_for_review:412:3f9c2ab0d1').digest('hex').slice(0, 32));
+  expect(waker).not.toHaveBeenCalled();
 });

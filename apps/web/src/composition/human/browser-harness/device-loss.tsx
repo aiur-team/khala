@@ -27,6 +27,7 @@ let releaseDevice: (() => void) | null = null;
 const heldDevice = holdDeviceHarness ? new Promise<void>(resolve => { releaseDevice = resolve; }) : null;
 let signedOut = false;
 let signOutCount = 0;
+let signInCount = 0;
 let stopCount = 0;
 let releaseIdentity: (() => void) | null = null;
 let holdIdentity: Promise<void> | null = null;
@@ -34,7 +35,7 @@ const listeners = new Set<(view: DeviceView) => void>();
 const view = (): DeviceView => ({ deviceId: `device_${principal.ownerId}` as never, state, generation: 1, reason });
 const identity: IdentityPort = {
   async current() { if (holdIdentity) { await holdIdentity; holdIdentity = null; } return signedOut ? { kind: 'signed_out' } : { kind: 'signed_in', principal }; },
-  async beginSignIn() { return { kind: 'rejected', code: 'invalid_return_path' }; },
+  async beginSignIn() { signInCount += 1; return { kind: 'rejected', code: 'invalid_return_path' }; },
   async signOut() {
     signOutCount += 1;
     if (logoutHarness) await new Promise(resolve => setTimeout(resolve, 150));
@@ -85,6 +86,7 @@ declare global { interface Window {
     switchAccount(): void;
     activationCount(): number;
     signOutCount(): number;
+    signInCount(): number;
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
@@ -108,6 +110,7 @@ window.__lossHarness = {
   },
   activationCount: () => activationCount,
   signOutCount: () => signOutCount,
+  signInCount: () => signInCount,
   stopCount: () => stopCount,
   holdNavigation() { holdIdentity = new Promise(resolve => { releaseIdentity = resolve; }); },
   releaseNavigation() { releaseIdentity?.(); releaseIdentity = null; },

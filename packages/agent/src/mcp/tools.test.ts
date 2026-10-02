@@ -1,3 +1,5 @@
+import ready from '../../../contracts/fixtures/aiur-events/pr-ready-for-review.json';
+import push from '../../../contracts/fixtures/aiur-events/system-branch-push.json';
 import { Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { KhalaClientError, type KhalaAgentClient } from '../client';
@@ -12,6 +14,7 @@ const fake = (): KhalaAgentClient => ({
   status: vi.fn(async () => ({ state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17 })),
   read: vi.fn(async () => ({ messages: [], nextBefore: '$next' })),
   send: vi.fn(async () => ({ eventId: '$sent' })),
+  sendChannelEvent: vi.fn(async () => ({ eventId: '$event' })),
   close: vi.fn(async () => {}),
 });
 const call = (name: string, args: unknown = {}) => ({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args, _meta: { threadId: '019a-thread' } } });
@@ -26,10 +29,10 @@ async function exchange(messages: unknown[], client: KhalaAgentClient | null = f
   return { responses: text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)), text, clientFor };
 }
 
-describe('four Khala tools through stdio', () => {
-  it('advertises exactly four strict schemas in order', async () => {
+describe('five Khala tools through stdio', () => {
+  it('advertises exactly five strict schemas in order', async () => {
     const { responses } = await exchange([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
-    expect(responses[0].result.tools.map((tool: { name: string }) => tool.name)).toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send']);
+    expect(responses[0].result.tools.map((tool: { name: string }) => tool.name)).toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event']);
     expect(responses[0].result.tools.every((tool: { inputSchema: { additionalProperties: boolean } }) => tool.inputSchema.additionalProperties === false)).toBe(true);
   });
   it('returns confirmation instructions and forwards metadata and default label', async () => {
@@ -99,5 +102,56 @@ describe('four Khala tools through stdio', () => {
   it('only exposes allowlisted error codes', () => {
     expect(errorCode({ code: 'send_failed' })).toBe('send_failed');
     for (const error of [null, 'send_failed', { code: 1 }, { code: 'token=abc' }]) expect(errorCode(error)).toBe('internal_error');
+  });
+});
+
+describe('channel event tool through stdio', () => {
+  const event = { kind: 'ci.passed', summary: 'CI passed' };
+  it('sends canonical native content and renders the posted line', async () => {
+    const client = fake();
+    const { responses } = await exchange([call('khala_event', { event })], client);
+    expect(client.sendChannelEvent).toHaveBeenCalledExactlyOnceWith({ ...event, v: 1, body: 'CI passed' });
+    expect(responses[0].result).toEqual({ content: [{ type: 'text', text: 'Posted channel event: CI passed' }], structuredContent: { eventId: '$event' } });
+    expect(client.send).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ event: { ...event, url: 'javascript:alert(1)' } }, 'url'],
+    [{ event, aiur: ready }, ''], [{}, ''], [{ event: [] }, 'event'],
+    [{ aiur: ready, ticketPrefix: 1 }, 'ticketPrefix'], [{ event, extra: true }, 'extra'],
+  ])('returns invalid_event with a location and never looks up a client', async (args, path) => {
+    const client = fake();
+    const { responses, clientFor } = await exchange([call('khala_event', args)], client);
+    expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'invalid_event', path, code: 'invalid_value' } });
+    expect(clientFor).not.toHaveBeenCalled();
+    expect(client.sendChannelEvent).not.toHaveBeenCalled();
+  });
+  it('skips system records without a session and sends the prefixed review fixture', async () => {
+    const client = fake();
+    const skipped = await exchange([call('khala_event', { aiur: push })], null);
+    expect(skipped.responses[0].result.structuredContent).toEqual({ skipped: true });
+    expect(skipped.clientFor).not.toHaveBeenCalled();
+    const { responses } = await exchange([call('khala_event', { aiur: ready, ticketPrefix: 'AIUR-' })], client);
+    expect(client.sendChannelEvent).toHaveBeenCalledOnce();
+    expect(client.sendChannelEvent).toHaveBeenCalledWith(expect.objectContaining({ body: 'AIUR-395 review requested · feat/events-cursor' }));
+    expect(responses[0].result.content[0].text).toBe('Posted channel event: AIUR-395 review requested · feat/events-cursor');
+  });
+  it.each(['not_connected', 'send_failed'] as const)('preserves %s event-send errors', async code => {
+    const client = fake();
+    client.sendChannelEvent = vi.fn(async () => { throw new KhalaClientError(code, 'SECRET'); });
+    const { responses, text } = await exchange([call('khala_event', { event })], client);
+    expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: code } });
+    expect(text).not.toContain('SECRET');
+  });
+  it('returns session_unknown for a send without a client', async () => {
+    const { responses } = await exchange([call('khala_event', { event })], null);
+    expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'session_unknown' } });
+  });
+  it('advertises the exclusive object inputs and bounded optional prefix', async () => {
+    const { responses } = await exchange([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
+    expect(responses[0].result.tools[4].inputSchema).toEqual({
+      type: 'object', properties: { event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
+      required: [], additionalProperties: false,
+      oneOf: [{ required: ['event'], not: { required: ['aiur'] } }, { required: ['aiur'], not: { required: ['event'] } }],
+    });
   });
 });

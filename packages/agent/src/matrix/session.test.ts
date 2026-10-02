@@ -39,6 +39,7 @@ function fake() {
     getEventMapper: () => (e: unknown) => e,
     createMessagesRequest: vi.fn().mockResolvedValue({ chunk: [], end: undefined }),
     http: { authedRequest: vi.fn().mockResolvedValue({ start: 'cursor' }) },
+    sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
   });
@@ -149,9 +150,13 @@ describe('C11 Node Matrix session', () => {
     for (const content of [{}, { displayname: '' }, undefined]) { memberContent = content; expect(session.displayName('@human:hs')).toBeUndefined(); }
     expect(client.http.authedRequest).not.toHaveBeenCalled(); expect(session.roomName('!r:hs')).toBe('Channel');
   });
-  it('sends text, leaves channel sending stubbed, stops idempotently and exports only C11', async () => {
+  it('sends text and channel events, stops idempotently and exports only C11', async () => {
     const s = await joined(); expect(await s.send('!r:hs', 'hello')).toEqual({ eventId: '$sent' });
-    await expect(s.sendChannelEvent('!r:hs', {})).rejects.toThrow('not_implemented');
+    const content = { v: 1, kind: 'ci.passed', summary: 'CI passed', body: 'CI passed' };
+    expect(await s.sendChannelEvent('!r:hs', content, 'khev-123')).toEqual({ eventId: '$event' });
+    expect(client.sendEvent).toHaveBeenCalledWith('!r:hs', 'com.khala.event.v1', content, 'khev-123');
+    await s.sendChannelEvent('!r:hs', content);
+    expect(client.sendEvent).toHaveBeenLastCalledWith('!r:hs', 'com.khala.event.v1', content, undefined);
     await s.stop(); await s.stop(); expect(client.stopClient).toHaveBeenCalledOnce(); expect(client.eventNames()).toEqual([]);
     expect(Object.keys(await import('./session'))).toEqual(['createAgentMatrixSession']);
   });

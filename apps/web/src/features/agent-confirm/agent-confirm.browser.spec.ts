@@ -52,7 +52,7 @@ test('owner signs in, confirms once, waits and opens the channel (AE1 browser le
       return route.fulfill({ json: {} });
     });
     await page.goto(origin + '?signedOut=1');
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    // Signed out, the page goes straight to sign-in and back; no button.
     await page.getByRole('button', { name: 'Confirm', exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname + new URL(page.url()).search, '/agent/confirm?joinId=j1');
     assert.match(await page.locator('body').innerText(), /Helper \(Claude Code\) wants to join Launch\./);

@@ -11,6 +11,7 @@ declare global { interface Window {
     switchAccount(): void;
     activationCount(): number;
     signOutCount(): number;
+    signInCount(): number;
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
@@ -84,11 +85,11 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     const button = page.getByRole('button', { name: 'Log out' });
     await button.waitFor();
     assert.equal(await button.isVisible(), true);
-    const brand = page.getByRole('link', { name: 'KHALA' });
+    const brand = page.getByRole('link', { name: 'Khala home' });
     assert.equal(await brand.getAttribute('href'), '/conversations');
-    assert.equal(await brand.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
-    assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
-    const shell = await page.locator('.aiur-shell').elementHandle();
+    assert.equal(await page.locator('.kh-brand .brand-logo').evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
+    assert.equal(await page.locator('nav').count(), 0);
+    const shell = await page.locator('.khala-app').elementHandle();
     assert.ok(shell);
     assert.equal(await page.locator('.conversation-list__item').count(), 2);
     const createButton = page.getByRole('button', { name: 'Create channel' });
@@ -114,28 +115,20 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
       await mkdir(screenshotDir, { recursive: true });
       await page.screenshot({ path: join(screenshotDir, 'desktop.png'), fullPage: true });
     }
+    // Phone: the thread view hides the list; going back shows the list with
+    // the brand row, its Log out and the create control.
     await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await button.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    const channelsButton = page.getByRole('button', { name: 'Channels', exact: true });
-    await channelsButton.click();
-    const channelsDialog = page.getByRole('dialog', { name: 'Channels' });
-    await channelsDialog.waitFor();
-    assert.equal(await channelsDialog.getAttribute('aria-modal'), 'true', 'the hosted mobile drawer is modal to assistive technology');
+    assert.equal(await page.locator('.conversation-list__item').first().isVisible(), false);
+    await page.getByRole('button', { name: 'All conversations' }).click();
+    await page.locator('.kh-card:not(.in-thread)').waitFor();
     assert.equal(await page.locator('.conversation-list__item').first().isVisible(), true);
+    assert.equal(await button.isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'Channels', exact: true }).count(), 0, 'no channel drawer');
     await createButton.click();
     await page.getByRole('dialog', { name: 'Create a channel' }).waitFor();
     await page.keyboard.press('Escape');
-    assert.equal(await channelsButton.evaluate(element => element === document.activeElement), true);
-    await channelsButton.click();
-    await page.keyboard.press('Shift+Tab');
-    assert.equal(await page.locator('.khala-sidebar').evaluate(element => element.contains(document.activeElement)), true);
-    for (let i = 0; i < 8; i += 1) {
-      await page.keyboard.press('Tab');
-      assert.equal(await page.locator('.khala-sidebar').evaluate(element => element.contains(document.activeElement)), true);
-    }
-    await page.keyboard.press('Escape');
-    assert.equal(await channelsButton.getAttribute('aria-expanded'), 'false');
+    assert.equal(await createButton.evaluate(element => element === document.activeElement), true);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'mobile.png'), fullPage: true });
 
     await button.click();
@@ -144,17 +137,25 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 1);
     await button.click();
-    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    // Signed out goes straight to sign-in; this harness refuses it, so the
+    // page offers Try again, which starts sign-in once more.
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Sign in' }).count(), 0);
+    assert.equal(await page.evaluate(() => window.__lossHarness.signInCount()), 1);
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await page.waitForFunction(() => window.__lossHarness.signInCount() === 2);
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 2);
     assert.equal(await page.evaluate(() => window.__lossHarness.stopCount()), 1);
     assert.equal(new URL(page.url()).pathname, '/new');
 
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&hosted');
     await page.getByRole('button', { name: 'Log out' }).waitFor();
     assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
-    assert.equal(await page.locator('.khala-content-actions').count(), 1);
+    assert.equal(await page.locator('.kh-brand-actions').getByRole('button', { name: 'Log out' }).count(), 1);
     if (screenshotDir) {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: join(screenshotDir, 'hosted-desktop.png'), fullPage: true });
@@ -168,7 +169,8 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await unavailableLogout.click();
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
     await unavailableLogout.click();
-    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Sign in' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
   } finally {
@@ -198,28 +200,20 @@ test('signed-in index remains visible while device initializes and fails', { tim
       const page = await browser.newPage({ viewport: { width, height: 700 } });
       await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&hold-device&fail-device&logout');
       await page.getByRole('region', { name: 'Channel status' }).getByText('Getting this device ready…').waitFor();
-      if (width <= 959) {
-        const channels = page.getByRole('button', { name: 'Channels', exact: true });
-        await channels.click();
-        assert.equal(await page.getByRole('button', { name: 'Close channels' }).evaluate(node => node === document.activeElement), true);
-        await page.keyboard.press('Escape');
-        assert.equal(await channels.evaluate(node => node === document.activeElement), true);
-        await channels.press('Enter');
-      }
+      // Every width shows the gated list and the status together; there is no drawer.
+      assert.equal(await page.getByRole('button', { name: 'Channels', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Create channel' }).isVisible(), true);
       assert.equal(await page.locator('.khala-owner-shell').count(), 1);
       assert.equal(await page.getByText('Account and device status').count(), 0);
       assert.equal(await page.getByRole('dialog', { name: 'Create a channel' }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
       assert.equal(await page.getByTestId('live-room').count(), 0);
-      if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-pending-${width}.png`) });
       await page.evaluate(() => window.__lossHarness.releaseDevice());
       await page.getByRole('region', { name: 'Channel status' }).getByText('device_unavailable').waitFor();
       assert.equal(await page.locator('.khala-owner-shell').count(), 1);
-      if (width <= 959) await page.getByRole('button', { name: 'Channels', exact: true }).click();
       assert.equal(await page.getByRole('button', { name: 'Create channel' }).isDisabled(), true);
       assert.equal(await page.getByTestId('live-room').count(), 0);
-      if (width <= 959) await page.getByRole('button', { name: 'Close channels' }).click();
       if (screenshotDir) await page.screenshot({ path: join(screenshotDir, `device-unavailable-${width}.png`) });
       const retry = page.getByRole('button', { name: 'Try again' });
       await retry.focus();
@@ -274,17 +268,19 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
     assert.equal(await page.locator('.conversation-detail').count(), 0);
     assert.equal(await page.locator('.channel-share__more').count(), 0);
-    const brand = await page.locator('.aiur-shell__brand').boundingBox();
+    const brand = await page.locator('.kh-brand .wm').boundingBox();
     const theme = await page.getByRole('button', { name: 'Toggle color theme' }).boundingBox();
     const logout = await page.getByRole('button', { name: 'Log out' }).boundingBox();
-    const topbar = await page.locator('.aiur-shell__topbar').boundingBox();
-    assert.ok(brand && theme && logout && topbar && brand.x < theme.x && theme.x < logout.x
-      && logout.x + logout.width <= topbar.x + topbar.width);
+    const list = await page.locator('.kh-list').boundingBox();
+    assert.ok(brand && theme && logout && list && brand.x < theme.x && theme.x < logout.x
+      && logout.x + logout.width <= list.x + list.width, 'the brand row holds the wordmark, theme toggle and Log out');
+    assert.deepEqual(await page.locator('.kh-card').boundingBox(), { x: 0, y: 0, width: 1440, height: 900 });
     assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopWidth), '0px');
     assert.equal(await page.locator('.conversation-layout').evaluate(node => getComputedStyle(node).borderTopLeftRadius), '0px');
-    const main = await page.locator('.aiur-shell__content').boundingBox();
+    const main = await page.locator('.kh-main').boundingBox();
     const chat = await page.locator('.conversation-layout').boundingBox();
-    assert.ok(main && chat && Math.abs(main.width - chat.width) < 1 && Math.abs(main.height - chat.height) < 1);
+    assert.ok(main && chat && Math.abs(main.width - chat.width) < 1 && Math.abs(main.height - chat.height) < 1,
+      JSON.stringify({ main, chat }));
     const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
     if (screenshotDir) {
       await mkdir(screenshotDir, { recursive: true });
@@ -292,27 +288,28 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     }
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
-    assert.equal(await page.locator('.aiur-shell').getAttribute('data-theme'), 'light');
+    assert.equal(await page.locator('.khala-app').getAttribute('data-theme'), 'light');
     await page.getByRole('button', { name: 'Toggle color theme' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    await page.locator('#khala-channel-toolbar .channel-roster').waitFor();
-    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'local phone uses the top navigation for channel details');
+    await page.locator('.conversation-thread__head .channel-roster').waitFor();
+    assert.equal(await page.locator('#khala-channel-toolbar').count(), 0, 'the channel header stays in the thread, not a portal');
+    assert.equal(await page.locator('.kh-list').isVisible(), false, 'the phone thread view hides the list');
     assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).count(), 1);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
-    await page.getByRole('button', { name: 'Channels' }).click();
-    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'All conversations' }).first().click();
+    await page.locator('.kh-card:not(.in-thread)').waitFor();
+    assert.equal(await page.locator('.kh-list').isVisible(), true);
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile-care.png') });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&visual&hosted');
-    const hostedToolbar = page.locator('#khala-channel-toolbar');
-    const roster = hostedToolbar.locator('details.channel-roster');
+    const roster = page.locator('.conversation-thread__head details.channel-roster');
     await roster.waitFor();
-    assert.equal(await page.locator('.conversation-thread__head').count(), 0, 'hosted channel has a single top bar');
-    const hostedMain = await page.locator('.khala-content-main').boundingBox();
+    assert.equal(await page.locator('#khala-channel-toolbar').count(), 0, 'hosted channel keeps its header in the thread');
+    const hostedMain = await page.locator('.kh-main').boundingBox();
     const hostedThread = await page.locator('.conversation-thread').boundingBox();
-    assert.ok(hostedMain && hostedThread && hostedThread.width >= hostedMain.width - 2, 'hosted thread fills the content column');
+    assert.ok(hostedMain && hostedThread && hostedThread.width >= hostedMain.width - 2, 'hosted thread fills the main column');
     await roster.locator('summary').focus();
     await page.keyboard.press('Enter');
     assert.equal(await roster.getAttribute('open'), '', 'keyboard opens the participant details');
@@ -334,10 +331,10 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     assert.equal(await roster.getAttribute('open'), null, 'share does not toggle participant details');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    assert.equal(await page.getByRole('button', { name: 'Channels' }).isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'All conversations' }).first().isVisible(), true);
     await page.setViewportSize({ width: 320, height: 740 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'top bar fits a 320px window');
-    assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'the thread fits a 320px window');
+    assert.equal(await page.getByRole('heading', { name: 'First channel', level: 2 }).isVisible(), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

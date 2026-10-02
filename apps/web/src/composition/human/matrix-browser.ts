@@ -59,6 +59,7 @@ import {
 import { createBrowserRoomJournal } from './room-journal';
 import type { BrowserParticipantSession } from './browser-api';
 import { sortConversations, type ConversationIndexPort } from './conversations';
+import type { SyncStatusPort } from './sync-status';
 import type { ConversationSummary } from '../../ui/conversation';
 
 const CREATE_EVENT = 'com.aiur.khala.create.v1';
@@ -203,6 +204,11 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         unreadCount: Number.isSafeInteger(unread) && unread > 0 ? unread : null,
       };
     }));
+}
+
+/** The homeserver sync is live once the initial sync lands, until it errors, reconnects or stops. */
+export function isLiveSync(state: SyncState | null): boolean {
+  return state === SyncState.Prepared || state === SyncState.Syncing;
 }
 
 /** Rebinds decrypt listeners as sync adds or removes events; all callbacks share the session fence. */
@@ -701,6 +707,7 @@ export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
+  syncStatus: SyncStatusPort;
   inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
   participant(): ParticipantView | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
@@ -793,10 +800,26 @@ export function createMatrixBrowserPorts(input: Readonly<{
     },
   };
 
+  const syncStatus: SyncStatusPort = {
+    live(ownerId, generation) {
+      const active = runtime.active;
+      const view = device.current();
+      if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready' || view.generation !== generation || active.generation !== generation) return false;
+      return isLiveSync(active.client.getSyncState());
+    },
+    subscribe(ownerId, generation, listener) {
+      const active = runtime.active;
+      if (!active || active.principal.ownerId !== ownerId || active.generation !== generation) return () => undefined;
+      const publish = () => { if (runtime.active === active) listener(); };
+      active.client.on(ClientEvent.Sync, publish);
+      return () => { active.client.off(ClientEvent.Sync, publish); };
+    },
+  };
+
   return {
     inviteAgent: (roomId, userId) => runtime.active
       ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
-    device, room, conversations, participant: () => runtime.active?.actor ?? null,
+    device, room, conversations, syncStatus, participant: () => runtime.active?.actor ?? null,
     async roomParticipants(roomId, signal) {
       const active = runtime.active;
       if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;
