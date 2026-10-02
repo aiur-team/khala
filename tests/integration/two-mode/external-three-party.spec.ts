@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from '../human/fixtures.js';
-import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds } from './external-browser-driver.js';
+import { ExternalNativeDriver, assertWitnessMatches, encryptedEventIds, type NativeSession } from './external-browser-driver.js';
 import { verifyExternalConversation, type Actor, type BrowserFact } from './external-witness.js';
 
 const environment = readLiveHumanEnvironment();
@@ -39,7 +39,7 @@ async function approveExactRequest(owner: Page, fingerprint: string, channelTitl
   await owner.goto(`${environment.appOrigin}/channel-requests`);
   const pending = owner.getByRole('list', { name: 'Requests waiting for you' });
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
-  await expect(row).toHaveCount(1, { timeout: 30_000 });
+  await expect(row).toHaveCount(1, { timeout: 60_000 });
   await expect(row).toContainText('Channel access request');
   // The owner projection exposes a channel title but no room ID. The private
   // run title plus measured signer JKT are the strongest available match.
@@ -56,6 +56,22 @@ async function approveExactRequest(owner: Page, fingerprint: string, channelTitl
   await expect(recent).toContainText('Approved', { timeout: 30_000 });
   await expect(recent).toContainText('Connected', { timeout: 60_000 });
   await owner.goto(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
+}
+
+async function approveProofCandidate(owner: Page, actor: Actor, session: NativeSession, invite: string): Promise<void> {
+  if (!session.candidate || !session.sessionFingerprint) throw new Error(`external_browser_${actor}_candidate_missing`);
+  const url = new URL('/api/human/channel-discovery/authority/approve', environment.appOrigin);
+  url.searchParams.set('candidate', session.candidate.candidateId);
+  await owner.goto(url.href);
+  await expect(owner.getByRole('heading', { name: 'Approve this proof key?' })).toBeVisible();
+  const details = owner.locator('dl');
+  await expect(details).toContainText(session.sessionFingerprint);
+  await expect(details).toContainText(session.sessionId);
+  await expect(details).toContainText(invite);
+  await expect(details).toContainText(actor);
+  await owner.getByRole('button', { name: 'Approve key' }).click();
+  const response = JSON.parse(await owner.locator('body').innerText()) as { kind?: unknown };
+  if (response.kind !== 'approved') throw new Error(`external_browser_${actor}_candidate_approval_failed`);
 }
 
 async function sendChallenge(owner: Page, actor: Actor, roomId: string, accessToken: string): Promise<{ eventId: string; text: string }> {
@@ -124,12 +140,20 @@ async function requireOwnerAck(owner: Page, release: Release): Promise<void> {
   }, release), { timeout: 60_000, intervals: [1_000, 2_000] }).toBe(true);
 }
 
-async function waitForNative(driver: ExternalNativeDriver, predicate: (snapshot: ReturnType<ExternalNativeDriver['inspect']>) => boolean): Promise<ReturnType<ExternalNativeDriver['inspect']>> {
+async function waitForNative(driver: ExternalNativeDriver, predicate: (snapshot: ReturnType<ExternalNativeDriver['inspect']>) => boolean,
+  timeout = 90_000): Promise<ReturnType<ExternalNativeDriver['inspect']>> {
   let current: ReturnType<ExternalNativeDriver['inspect']> | null = null;
-  await expect.poll(() => {
-    try { current = driver.inspect(); return predicate(current); }
-    catch { return false; }
-  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBe(true);
+  let lastStage = 'predicate_false';
+  try {
+    await expect.poll(() => {
+      try { current = driver.inspect(); lastStage = 'predicate_false'; return predicate(current); }
+      catch (error) {
+        const detail = String((error as { stderr?: Buffer })?.stderr ?? error);
+        lastStage = /external_(?:native|browser)_[a-z_]+/u.exec(detail)?.[0] ?? 'unknown';
+        return false;
+      }
+    }, { timeout, intervals: [500, 1_000, 2_000] }).toBe(true);
+  } catch { throw new Error(`external_browser_native_wait_${lastStage}`); }
   return current!;
 }
 
@@ -142,7 +166,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
   try {
     // Preflight precedes channel creation: unsupported or stale native routes leave no false conversation artifact.
     native.launch();
-    for (const actor of actors) native.prompt(actor, 'Please identify yourself and your current native session. Do not join a Khala channel yet.');
+    for (const actor of actors) native.prompt(actor, 'Reply with one short sentence confirming this fresh model session is responding. Do not call tools or join Khala yet.');
     await waitForNative(native, snapshot => snapshot.sessions.every(session => Boolean(session.sessionId && session.pid)));
     const owner = await freshPage(ownerContext, environment);
     const sessionResponse = owner.waitForResponse(response =>
@@ -164,10 +188,15 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     if (!invite.startsWith(`${environment.appOrigin}/join/`)) throw new Error('external_browser_invite_origin_invalid');
 
     for (const actor of actors) {
-      native.prompt(actor, `Use the installed Khala connector in this exact native session to request access to ${invite}. Do not report success until the owner approves your exact session.`);
-      const snapshot = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.sessionFingerprint));
+      const operationId = `e2e-${actor}-${environment.environmentId}`;
+      native.prompt(actor, `In this exact native session, invoke the installed Khala MCP tool khala_request_channel_access with operationId ${operationId} and target ${invite}. The tool is available through your MCP tools. Do not use a shell, delegate, or report success before owner approval.`);
+      const snapshot = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.sessionFingerprint
+        && current.sessions.find(item => item.actor === actor)?.candidate), 180_000);
       const session = snapshot.sessions.find(item => item.actor === actor)!;
-      if (!session.sessionFingerprint) throw new Error(`external_browser_${actor}_proof_key_unobserved`);
+      if (!session.sessionFingerprint || session.candidate?.operationId !== operationId)
+        throw new Error(`external_browser_${actor}_proof_key_unobserved`);
+      await approveProofCandidate(owner, actor, session, invite);
+      native.prompt(actor, `Using the installed Khala connector in this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite}. The owner approved your proof key. Do not create a new operation ID.`);
       await approveExactRequest(owner, session.sessionFingerprint, channelTitle, roomId);
     }
 

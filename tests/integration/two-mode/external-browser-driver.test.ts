@@ -13,10 +13,19 @@ const sessions = [
 ];
 
 test('external browser accepts a pending native session but cannot invent its proof key', () => {
-  const snapshot = decodeNativeSnapshot({ sessions });
+  const snapshot = decodeNativeSnapshot({ sessions: [sessions[0], { ...sessions[1], cliVersion: '2.1.287 (Claude Code)' }] });
   assert.equal(snapshot.sessions[0]?.sessionFingerprint, 'codex_jkt');
   assert.equal(snapshot.sessions[1]?.sessionFingerprint, undefined);
   assert.equal(snapshot.sessions[0]?.bindingId, 'binding_codex');
+  assert.equal(snapshot.sessions[1]?.cliVersion, '2.1.287 (Claude Code)');
+});
+
+test('external browser accepts only a well-formed native proof-key candidate', () => {
+  const candidate = { candidateId: 'A'.repeat(43), operationId: 'e2e-codex-run' };
+  assert.deepEqual(decodeNativeSnapshot({ sessions: [{ ...sessions[0], candidate }, sessions[1]] }).sessions[0]?.candidate,
+    candidate);
+  assert.throws(() => decodeNativeSnapshot({ sessions: [{ ...sessions[0], candidate: {
+    ...candidate, candidateId: 'wrong' } }, sessions[1]] }), /candidate_invalid/);
 });
 
 test('external browser refuses a reused native identity or proof key', () => {

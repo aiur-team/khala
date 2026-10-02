@@ -12,6 +12,7 @@ export type NativeSession = Readonly<{
   pid: number;
   processStartTicks: string;
   cliVersion: string;
+  candidate?: Readonly<{ candidateId: string; operationId: string }>;
   bindingId?: string;
   generation?: number;
   agentParticipantId?: string;
@@ -30,7 +31,7 @@ export type ObservedPeer = Readonly<{
 }>;
 
 const identifier = /^[A-Za-z0-9_$.:/+!=~-]{4,256}$/u;
-const version = /^[A-Za-z0-9._+ -]{3,80}$/u;
+const version = /^[A-Za-z0-9._+ ()-]{3,80}$/u;
 
 function requireIdentifier(value: unknown, name: string): string {
   if (typeof value !== 'string' || !identifier.test(value)) throw new Error(`external_browser_${name}_invalid`);
@@ -49,6 +50,14 @@ function session(value: unknown, actor: Actor): NativeSession {
     cliVersion: typeof row.cliVersion === 'string' && version.test(row.cliVersion)
       ? row.cliVersion : requireIdentifier(row.cliVersion, 'cli_version'),
     ...(row.sessionFingerprint === undefined ? {} : { sessionFingerprint: requireIdentifier(row.sessionFingerprint, 'session_fingerprint') }),
+    ...(row.candidate === undefined ? {} : { candidate: (() => {
+      if (!row.candidate || typeof row.candidate !== 'object' || Array.isArray(row.candidate))
+        throw new Error(`external_browser_${actor}_candidate_invalid`);
+      const candidate = row.candidate as Record<string, unknown>;
+      const candidateId = requireIdentifier(candidate.candidateId, 'candidate_id');
+      if (!/^[A-Za-z0-9_-]{43}$/u.test(candidateId)) throw new Error(`external_browser_${actor}_candidate_invalid`);
+      return { candidateId, operationId: requireIdentifier(candidate.operationId, 'candidate_operation_id') };
+    })() }),
     ...(row.bindingId === undefined ? {} : { bindingId: requireIdentifier(row.bindingId, 'binding_id') }),
     ...(row.generation === undefined ? {} : { generation: Number(row.generation) }),
     ...(row.agentParticipantId === undefined ? {} : { agentParticipantId: requireIdentifier(row.agentParticipantId, 'agent_participant_id') }),
