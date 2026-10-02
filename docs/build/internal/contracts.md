@@ -1,12 +1,12 @@
 # Internal mode build — shared contracts (authoritative)
 
-Every ticket in the `aiur-team/khala:internal-mode` build order quotes the shapes below verbatim. A ticket that needs a different shape stops and asks the Executor; it never invents a second version. Code is TypeScript (Node ≥ 22.23.2, ESM, run through `tsx`). Researched at `origin/main` `5ad41c8b` (2026-10-02). Plan: [`docs/plans/2026-10-02-001-feat-internal-mode-plan.md`](../../plans/2026-10-02-001-feat-internal-mode-plan.md). plan_version 1.
+Every ticket in the `aiur-team/khala:internal-mode` build order quotes the shapes below verbatim. A ticket that needs a different shape stops and asks the Executor; it never invents a second version. Code is TypeScript (Node ≥ 22.23.2, ESM, run through `tsx`). Researched at `origin/main` `5ad41c8b` (2026-10-02). Plan: [`docs/plans/2026-10-02-001-feat-internal-mode-plan.md`](../../plans/2026-10-02-001-feat-internal-mode-plan.md). plan_version 1, amended by [`reconciliation.md`](reconciliation.md) R1–R18 (marked ✎ there; those rulings win over any text below).
 
 Names in this file are **pinned**: a consumer may start against a pinned name before its producer merges, and plan-versus-landed name drift is a review-blocking defect, not a scheduling edge.
 
 ## L1. Package map and file ownership
 
-No new package, no new runtime dependency, no database, no SQLite. All helper and agent code lives in `@khala/agent` (`packages/agent`), all shared wire types in `@khala/contracts` under the existing `./m1/*` export wildcard (`packages/contracts/package.json:6`), and all browser code in `@khala/web` (`apps/web`).
+No new package, no new runtime dependency, no database, no SQLite. All helper and agent code lives in `@khala/agent` (`packages/agent`), all shared wire types in `@khala/contracts` under the existing `./m1/*` export wildcard (`packages/contracts/package.json:7`), and all browser code in `@khala/web` (`apps/web`).
 
 | File | Owner ticket | Purpose |
 |---|---|---|
@@ -24,7 +24,7 @@ No new package, no new runtime dependency, no database, no SQLite. All helper an
 | `packages/agent/src/local/routes/profile.ts` | KI-135 | `profileRoutes` (L6, L7) |
 | `packages/agent/src/local/lifecycle.ts` | KI-136 | `ensureHelper`, `readHelperFile` (L11) |
 | `packages/agent/src/local/cli.ts`, `packages/agent/src/local/serve.ts`, `packages/agent/bin/khala.mjs` (edit) | KI-137 | `khala local …` commands and helper composition (L12) |
-| `apps/web/src/composition/local/{http,session,profile,agent-names}.ts` | KI-140 | Helper client, identity/device/participant, profile and rename ports (L13) |
+| `apps/web/src/composition/local/{http,types,session,profile,agent-names}.ts` | KI-140 | Helper client, identity/device/participant, profile and rename ports (L13) |
 | `apps/web/src/composition/local/{substrate,channel-service}.ts`, `apps/web/src/composition/human/message-wire.ts` | KI-141 | `LocalSubstrate` and the shared Matrix-content projection (L13) |
 | `apps/web/src/composition/local/{conversations,members,links}.ts` | KI-142 | Channel list, members cache, listening modes, share links, admission stub (L13) |
 | `apps/web/src/composition/local/ports.ts`, `apps/web/src/local-main.tsx`, `apps/web/local.html`, `apps/web/vite.local.config.mjs`, `apps/web/package.json` (scripts) | KI-143 | Local entry and `build:local` (L13) |
@@ -32,7 +32,7 @@ No new package, no new runtime dependency, no database, no SQLite. All helper an
 
 ## L2. On-disk layout (single writer: the helper)
 
-`stateRoot` is the existing `stateRoot(env)` from `packages/agent/src/state.ts:22-26` (`$XDG_STATE_HOME/khala` when absolute, else `~/.local/state/khala`). Every directory is created with the existing `ensureStateDir` (`state.ts:37-52`, 0700, rejects symlinks, group/other bits and foreign uids); every JSON file is written with the existing `writeJsonAtomic` (`state.ts:58-77`, 0600).
+`stateRoot` is the existing `stateRoot(env)` from `packages/agent/src/state.ts:22-26` (`$XDG_STATE_HOME/khala` when absolute, else `~/.local/state/khala`). Directories are created with the existing `ensureStateDir` (`state.ts:37-52`, 0700, rejects symlinks, group/other bits and foreign uids) — called only on `<stateRoot>/local/channels` and deeper, because it also checks two parent levels (R3); opening the store writes nothing until the server has bound its port (R4); every JSON file is written with the existing `writeJsonAtomic` (`state.ts:58-77`, 0600).
 
 ```text
 <stateRoot>/
@@ -63,10 +63,13 @@ export const LOCAL_LONG_POLL_MAX_S = 25;
 export const LOCAL_IDLE_EXIT_MS = 600_000;                               // helper exits after 10 min with no request and no open long-poll (D2)
 export const LOCAL_TOKEN_BYTES = 32;                                     // 43 base64url chars
 
-export const newLocalRoomId = (random16: Uint8Array): string => `!${Buffer.from(random16).toString('base64url')}:local`;   // 22 chars + suffix
-export const localRoomKey = (roomId: string): string => roomId.slice(1, -':local'.length);
-export const newLocalAgentUserId = (random4: Uint8Array): string => `@agent-${Buffer.from(random4).toString('hex')}:local`;
-export const newLocalEventId = (random16: Uint8Array): string => `$${Buffer.from(random16).toString('base64url')}`;
+export function base64url(bytes: Uint8Array): string;   // pure, no Buffer/btoa: this module runs in the browser too (R1)
+export function hex(bytes: Uint8Array): string;
+export const newLocalRoomId = (random16: Uint8Array): string => `!${base64url(random16)}:local`;   // 22 chars + suffix; RangeError unless 16 bytes
+export const localRoomKey = (roomId: string): string => { if (!isLocalRoomId(roomId)) throw new RangeError('not_local_room'); return roomId.slice(1, -':local'.length); };
+export const newLocalAgentUserId = (random4: Uint8Array): string => `@agent-${hex(random4)}:local`;
+export const newLocalEventId = (random16: Uint8Array): string => `$${base64url(random16)}`;
+export const localAgentDeviceId = (userId: string): string => `KH_LOCAL_${userId.slice(7, 15)}`;   // R5: derived, never stored (optional helper; tickets may inline the rule)
 export const isLocalRoomId = (value: string): boolean => /^![A-Za-z0-9_-]{22}:local$/u.test(value);
 
 export type LocalEventType = 'm.room.create' | 'm.room.name' | 'm.room.member' | 'm.room.message'
@@ -84,7 +87,7 @@ export type LocalEvent = {
 };
 
 // content by type
-export type LocalCreateContent = { name: string; createdBy: string };                       // m.room.create (seq 1)
+export type LocalCreateContent = { name: string; createdBy: string; operationId?: string };                       // m.room.create (seq 1)
 export type LocalNameContent = { name: string };                                            // m.room.name
 export type LocalMemberContent = {                                                          // m.room.member
   user: string; membership: 'invite' | 'join' | 'leave';
@@ -141,7 +144,7 @@ Local behaviour:
 - **Share link:** `http://127.0.0.1:<port>/join/<43-char base64url token>`. It passes the shipped `parseChannelLink` (`packages/agent/src/join.ts:5-13`) unchanged.
 - `POST /api/agent/join {link, harness, label}` → `201 {joinId, pollSecret, confirmUrl: "<origin>/agent/confirm?joinId=<joinId>", expiresAt, autoConfirmed: true}`.
   - The link token is **consumed atomically here** (single use, D5): `secrets.links[sha256].consumedAt` is set before the response. Unknown, consumed or expired token → `404 {"error":"link_unavailable"}`. Malformed link → `400 invalid_link`.
-  - The agent is named by the helper (the `label` is ignored, as hosted, `packages/agent/src/mcp/tools.ts:47`): `defaultAgentName(owner.username, harness, n)` from `packages/contracts/src/m1/names.ts:74-76`, with the smallest `n ≥ 1` whose name is not a present member's display name in that channel (case-insensitive), validated with `checkName(name, 'agent')`.
+  - The agent is named by the helper (the `label` is ignored, as hosted, `packages/agent/src/mcp/tools.ts:47`): `defaultAgentName(owner.username, harness, n)` from `packages/contracts/src/m1/names.ts:30-32`, with the smallest `n ≥ 1` whose name is not a present member's display name in that channel (case-insensitive), validated with `checkName(name, 'agent')`.
   - The helper mints the agent's user id, access token and device id (`KH_LOCAL_<8 hex>`), appends the `invite` member event (`invitedBy: LOCAL_OWNER_USER_ID`), and marks the join `confirmed` immediately: the join is announced in the channel by that member event (D5). There is no confirm page and no click.
   - `joinId` = 16 random bytes base64url; `pollSecret` = 32 random bytes base64url, stored only as sha256 in memory. Pending joins live in memory; a helper restart turns a pending poll into `404` (`join_expired` on the agent), which is acceptable inside the 10-minute window.
 - `GET /api/agent/join/poll?joinId=` (Bearer pollSecret) → first call `{state:'confirmed', credentials:{homeserver:<origin>, userId, accessToken, deviceId, roomId, transport:'local'}}`, later calls `{state:'claimed'}`; wrong secret or unknown join → `404 not_found`.
@@ -155,7 +158,7 @@ All routes are under the helper origin, JSON bodies, errors `{ "error": <code> }
 
 ```ts
 // GET  /api/local/rooms/:roomId/me
-export type LocalMe = { userId: string; roomId: string; roomName: string; membership: 'invite' | 'join' | 'leave'; invitedBy?: string; displayName: string };
+export type LocalMe = { userId: string; roomId: string; roomName: string; membership: 'invite' | 'join' | 'leave'; invitedBy?: string; displayName: string };   // agents always get invitedBy, also after joining (R6)
 // POST /api/local/rooms/:roomId/join                 body {} → LocalJoined   (invite → join; appends the join member event; idempotent when already joined)
 export type LocalJoined = { seq: number; ts: number };   // seq of the caller's own join event = the live cutoff
 // GET  /api/local/rooms/:roomId/events?after=<seq>&wait=<0..25>
@@ -226,13 +229,14 @@ export type LocalChannelCreated = { roomId: string; name: string; selfLink: stri
 // POST   /api/local/channels/:roomId/mode   body {agent, mode, txnId} → { eventId: string }   appends com.khala.listening_mode.v1 {v:1, agent, mode} from the owner (txnId dedup); 404 for a non-agent
 // POST   /api/local/agents/:userId/name     body {name}        → AgentRenameResult {matrixUserId, name}   (`packages/contracts/src/m1/agent-names.ts:5-6`, same shape as hosted /api/human/agents/rename)
 //          checkName(name,'agent') else 400 {"error":"invalid_name"}; unique (case-insensitive) among present members of that agent's channel else 409 {"error":"name_taken"}; appends a member event with the new displayname
-// DELETE /api/local/channels/:roomId/members/:userId          → 204   appends a leave member event + a "<name> left" channel event and revokes the token (that agent's next call gets 403)
+// DELETE /api/local/channels/:roomId/members/:userId          → 204   appends a leave member event + a "<name> left" channel event; membership `leave` is the revocation and the token stays resolvable, so that agent's next call gets 403 not_member (R7)
+// Any owner route called with an agent token → 401 {"error":"unauthorized"} (R8)
 // GET    /api/local/profile                                   → OwnerProfileView   (also the browser's session check: 401 without the cookie)
 // POST   /api/local/profile/username  body {username}         → { username }   400 {"error":"invalid_username","reason":NameError}; renames agents still on a default name (isDefaultAgentName) in every channel, like hosted renameDefaultAgents
 // POST   /api/local/profile/color     body {color}            → { color }      400 {"error":"invalid_color"}
 // POST   /api/local/profile/initials  body {initials|null}    → { initials }   follows the hosted initials contract once PR #986 merges; until then 1–2 letters [A-Za-z] or null
 // POST   /api/local/open            body {roomId?}             → { openUrl: string; expiresAt: string }   (admin bearer only)
-// GET    /open/<43-char token>                                → 302 to /channels/<encodeURIComponent(roomId)> or /channels; sets the owner cookie; single use
+// GET    /open/<43-char token>                                → 302 to /channels/<encodeURIComponent(roomId)> or /conversations (R9); sets the owner cookie; single use
 // GET    /join/<token>                                        → the web app (SPA); the token is NOT consumed by a browser GET
 // GET    /healthz                                             → { ok: true, version: string, pid: number }   (no auth, no data)
 // POST   /api/local/shutdown                                  → 204   (admin bearer only)
@@ -241,13 +245,13 @@ export type LocalChannelCreated = { roomId: string; name: string; selfLink: stri
 ## L7. Local owner profile (D4, D8)
 
 ```ts
-export type OwnerProfile = { v: 1; username: string; color: HumanColorId; initials?: string; updatedAt: string };   // <stateRoot>/local/owner.json
-export type OwnerProfileView = { userId: typeof LOCAL_OWNER_USER_ID; ownerId: typeof LOCAL_OWNER_ID; username: string; suggestion: string; color: HumanColorId; initials?: string };
+export type OwnerProfile = { v: 1; username: string; color: HumanColorId; initials: string | null; updatedAt: string };   // initials per R10   // <stateRoot>/local/owner.json
+export type OwnerProfileView = { userId: typeof LOCAL_OWNER_USER_ID; ownerId: typeof LOCAL_OWNER_ID; username: string; suggestion: string; color: HumanColorId; initials: string | null };
 // The web's ProfilePort.get() maps it to ProfileView {username, suggestion, color} (`packages/contracts/src/m1/profile.ts:6`); username is never null locally, so the first-run username gate never shows.
 ```
 
-- First helper start with no `owner.json`: `username = resolveLocalOwnerName(env)` (L10); `color = defaultHumanColor(LOCAL_OWNER_USER_ID)` (`packages/contracts/src/m1/colors.ts:139-141`).
-- `username` obeys `checkName(name,'username')` (`packages/contracts/src/m1/names.ts:62-70`). `initials` (when present) obeys the same rule as the hosted initials work in flight (PR #986); until that merges, 1–2 letters `[A-Za-z]`.
+- First helper start with no `owner.json`: `username = resolveLocalOwnerName(env)` (L10); `color = defaultHumanColor(LOCAL_OWNER_USER_ID)` (`packages/contracts/src/m1/colors.ts:19-21`).
+- `username` obeys `checkName(name,'username')` (`packages/contracts/src/m1/names.ts:18-26`). `initials` (when present) obeys the same rule as the hosted initials work in flight (PR #986); until that merges, 1–2 letters `[A-Za-z]`.
 - Local identity is never fetched from or written to khala.aiur.team (D8).
 
 ## L8. Helper-internal interfaces (`packages/agent/src/local/types.ts`, KI-110)
@@ -286,7 +290,7 @@ export interface LocalStore {
   waitForEvent(roomId: string, after: number, timeoutMs: number, signal: AbortSignal): Promise<void>;   // resolves when lastSeq > after, on timeout, or on abort
   history(roomId: string, before: string | undefined, limit: number): LocalHistoryPage;
   members(roomId: string): LocalMember[];
-  member(roomId: string, userId: string): (LocalMember & { membership: 'invite' | 'join' | 'leave' }) | undefined;
+  member(roomId: string, userId: string): (Omit<LocalMember, 'membership'> & { membership: 'invite' | 'join' | 'leave' }) | undefined;   // R12
   channelName(roomId: string): string;
   mintLink(roomId: string, kind: 'join'): Promise<{ token: string; expiresAt: string }>;   // returns plaintext once; stores sha256
   consumeLink(token: string): Promise<{ roomId: string } | null>;                           // atomic single use; null if unknown/used/expired
@@ -297,6 +301,8 @@ export interface LocalStore {
 }
 export type HelperContext = { store: LocalStore; origin: string; now(): number; random(bytes: number): Uint8Array; version: string;
   mintOpenToken(roomId?: string): { token: string; expiresAt: string }; consumeOpenToken(token: string): { roomId?: string } | null;   // in memory
+  createOwnerSession(): string;   // R12: 43-char id accepted as the khala_local_owner cookie
+  shutdown(): void;               // R12: exit 0 after the current response flushes
   joins: Map<string, PendingJoin> };
 export type PendingJoin = { joinId: string; pollSecretSha256: string; roomId: string; credentials: AgentCredentials; state: 'confirmed' | 'claimed' | 'ready'; expiresAt: number };
 ```
@@ -337,10 +343,10 @@ export async function saveHostedUsername(username: string, env?: NodeJS.ProcessE
 export async function resolveLocalOwnerName(env?: NodeJS.ProcessEnv): Promise<string>;
 //   1. hosted-profile.json username, when checkName(username,'username') accepts it
 //   2. env.USER (or os.userInfo().username), when checkName accepts it after trimming
-//   3. 'owner'
+//   3. LOCAL_OWNER_FALLBACK_NAME = 'User'   ('owner' is reserved, R11)
 ```
 
-The hosted agent client calls `saveHostedUsername` once per hosted connect with the owner's username, derived from its own hosted display name by stripping the `-Claude`/`-Codex[-n]` suffix (`isDefaultAgentName`, `packages/contracts/src/m1/names.ts:77-80`); a renamed agent (no default suffix) saves nothing. Never a network call for this.
+The hosted agent client calls `saveHostedUsername` once per hosted connect with the owner's username, derived from its own hosted display name by stripping the `-Claude`/`-Codex[-n]` suffix (`isDefaultAgentName`, `packages/contracts/src/m1/names.ts:33-36`); a renamed agent (no default suffix) saves nothing. Never a network call for this.
 
 ## L11. Helper process (`helper.json`, guards, lifecycle)
 
@@ -354,7 +360,7 @@ export type HelperFile = { v: 1; pid: number; port: number; origin: string; admi
 - **Owner cookie:** `khala_local_owner=<43-char random>`; `HttpOnly; SameSite=Strict; Path=/`; no `Secure` (plain loopback). Session ids live in memory; a helper restart signs the browser out until `khala local open` mints a new open link. `/open/<token>` is the only way to obtain the cookie.
 - **Idle exit (D2):** the helper exits 0 after `KHALA_LOCAL_IDLE_MS` (default `LOCAL_IDLE_EXIT_MS`) with no request and no open long-poll. It is never installed as a service.
 - **Static web app:** `GET` of any non-`/api/`, non-`/open/`, non-`/healthz` path serves `apps/web/dist-local/` (env override `KHALA_LOCAL_WEB_DIR`), with SPA fallback to `index.html`; assets get `cache-control: no-cache`. A missing build answers `503 {"error":"web_not_built"}` and the CLI tells the user to run `pnpm --filter @khala/web build:local`.
-- `ensureHelper(env)` (KI-136): read `helper.json`; `GET /healthz` with a 500 ms timeout; on success return `{ origin, adminToken }`; otherwise spawn `process.execPath <repo>/packages/agent/bin/khala.mjs local serve` detached (`stdio` to `helper.log`, `unref()`), then poll `/healthz` every 100 ms for up to 5 s; failure → `KhalaClientError('internal_error','helper_unavailable')`. Tokens never appear in argv or env (`/proc/*/cmdline` is world-readable).
+- `ensureHelper(env)` (KI-136): read `helper.json`; `GET /healthz` with a 500 ms timeout; on success return `{ origin, adminToken }`; otherwise spawn `process.execPath <repo>/packages/agent/bin/khala.mjs local serve` detached (`stdio` to `helper.log`, `unref()`), then poll `/healthz` every 100 ms for up to 5 s; failure → `KhalaClientError('internal_error','helper_unavailable')`. Tokens never appear in argv or env (`/proc/*/cmdline` is world-readable). The child gets an allow-listed copy of the caller's env (`HOME`, `PATH`, `XDG_STATE_HOME`, `KHALA_LOCAL_*`, `NODE_OPTIONS`, …) so the no-egress guard follows it (R13).
 
 ## L12. CLI (`khala local …`, KI-137)
 
@@ -371,7 +377,7 @@ Every command prints exactly one JSON object on stdout and exits 0, or prints `{
 | `khala local stop` | `{ stopped: boolean }` |
 | `khala local serve` | runs the helper in the foreground (used by `ensureHelper`; prints nothing on success) |
 
-A name argument matches a channel by exact name; an ambiguous name → `{"error":"ambiguous_channel"}`.
+A name argument matches a channel by exact name; an ambiguous name → `{"error":"ambiguous_channel"}`. Other codes (R14): `invalid_arguments`, `not_found`, `helper_unavailable`, `unsafe_state_dir`, `storage_failed`, `port_in_use` (serve, stderr). Hints such as `web_not_built` go to stderr.
 
 ## L13. Web transport seam (KI-140..KI-145)
 
@@ -397,7 +403,7 @@ export function createLocalSession(http: LocalHttp): Readonly<{
 export function createLocalProfilePort(http: LocalHttp): ProfilePort;        // apps/web/src/features/profile/ports.ts
 export function createLocalAgentNamesPort(http: LocalHttp): AgentNamesPort;  // apps/web/src/features/channel/ports.ts; POST /api/local/agents/:userId/name
 
-// apps/web/src/composition/human/message-wire.ts (KI-141; extracted from matrix-browser.ts:466-512, no matrix-js-sdk import)
+// apps/web/src/composition/human/message-wire.ts (KI-141; extracted from matrix-browser.ts:466-504 and :506-526, no matrix-js-sdk import; unrelated to the contracts `encodeMessageContent`, R16)
 export function encodeMessageContent(content: MessageContent): Record<string, unknown>;   // m.text / m.notice payload exactly as sendRoomMessage builds it
 export function projectWireEvent(input: { type: string; content: Record<string, unknown>; eventId: EventId; participant: ParticipantView;
   authorDeviceId: DeviceId | null; clientTxnId: string | null; receivedAt: string }, limits: ContentLimits): SubstrateEvent | null;
@@ -405,7 +411,7 @@ export function projectWireEvent(input: { type: string; content: Record<string, 
 export function createLocalSubstrate(input: { http: LocalHttp; limits: ContentLimits; members: LocalMembersCache; generation: () => number }): ChannelSubstrate;
 // apps/web/src/composition/local/channel-service.ts (KI-141): createChannelService over the substrate, built after device ready (mirrors matrix-browser.ts:802-836)
 
-// apps/web/src/composition/local/members.ts (KI-142)
+// apps/web/src/composition/local/types.ts (KI-140) declares it; members.ts (KI-142) implements it as createLocalMembers(http, limits) (R16)
 export interface LocalMembersCache {
   members(roomId: RoomId): readonly LocalMember[] | undefined;      // undefined until the first load
   describe(participantId: string): Participant | undefined;         // Participant from '@khala/contracts/m1/participants' with matrixUserId = userId
@@ -428,3 +434,7 @@ export type HumanAccountMode = 'oauth' | 'local_owner';
 ```
 
 Build (KI-143): `apps/web/vite.local.config.mjs` → `apps/web/dist-local/` (`base: '/'`, input `local.html`, no `netlifyHeaders`, no Google Fonts; `brand/fonts.css` bundles the UI fonts). Script `"build:local": "vite build --config vite.local.config.mjs"`. A guard test fails if any `dist-local/assets/*.js` contains `matrix-js-sdk`, `initRustCrypto`, `.wasm`, `/api/human/` or `khala.aiur.team`. `/` canonicalizes to `/conversations`.
+
+## L14. No-egress log (KI-151)
+
+The `EgressRecord` log line written by the KI-151 guard and read by KI-160/KI-161 is pinned in `docs/build/internal/tickets/KI-151.md` (R18).

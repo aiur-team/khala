@@ -175,7 +175,7 @@ LocalSession mapping (contracts L5/L9):
 
 ### Implementation Units
 
-Units are grouped by lane; the scheduling graph, wave table and critical path are in `docs/build/internal/roster.md`. Each unit is one ticket; the ticket file is the authoritative deep plan.
+Units are grouped by lane; post-research rulings are in `docs/build/internal/reconciliation.md` (R1–R18, G1–G4); the scheduling graph, wave table and critical path are in `docs/build/internal/roster.md`. Each unit is one ticket; the ticket file is the authoritative deep plan.
 
 **Platform**
 - **U1 / KI-101 Delete `apps/internal` (D7).** Remove the directory, the workspace exclusion (`pnpm-workspace.yaml:4`), the ESLint ignore (`eslint.config.mjs:4`) and the frozen-app branch of `scripts/check-boundaries.mjs:13` with its test (`scripts/check-boundaries.test.mjs:110-113`). Keep `experiments/`.
@@ -200,12 +200,12 @@ Units are grouped by lane; the scheduling graph, wave table and critical path ar
 - **U14 / KI-137 `khala local` CLI and helper composition** (`cli.ts`, `serve.ts`, bin dispatcher, L12).
 
 **Web** (seam detail in `docs/build/internal/research/web-seam.md`)
-- **U15 / KI-140 Local helper client and simple ports** (identity, device, profile, agent names).
-- **U16 / KI-141 Local room, conversations and participants ports** (timeline, send, observe, list, sync status).
-- **U17 / KI-142 Local admission, share links and listener-mode ports.**
-- **U18 / KI-143 Local entry and build** (`main.local.tsx`, `local.html`, `vite.local.config.mjs`, `build:local`).
-- **U19 / KI-144 Local owner chrome (UI)**: settings menu without Log out, a Local marker, sign-in screens unreachable.
-- **U20 / KI-145 Membership lines in the timeline (UI)**: "kevin-Codex joined/left".
+- **U15 / KI-140 Local helper client and simple ports** (`http`, `types`, identity/device session, profile, agent names).
+- **U16 / KI-141 LocalSubstrate and shared message projection** (`ChannelSubstrate` over the helper, `createChannelService` wiring, `message-wire.ts` extracted from `matrix-browser.ts`).
+- **U17 / KI-142 Channel list, members cache, listener modes, share links and admission stub.**
+- **U18 / KI-143 Local entry and build** (`local-main.tsx`, `local.html`, `vite.local.config.mjs`, `build:local`, bundle guard).
+- **U19 / KI-144 Local owner account mode (UI)**: settings menu without Log out, sign-in screens unreachable, one "Not connected · `khala local open`" panel; no Local badge (minimal labeling, R17).
+- **U20 / KI-145 Local full-app browser spec and visual check (UI)**: the built local app against a faked helper; join/leave lines already render as channel-event pills (no new UI).
 
 **Acceptance and docs**
 - **U21 / KI-150 Agent skill and install docs for local channels.**
@@ -223,7 +223,7 @@ Units are grouped by lane; the scheduling graph, wave table and critical path ar
 | LocalSession respawn ↔ `ensureHelper` (KI-136) | KI-121 imports the pinned name; KI-160 kills the helper (AE8) |
 | Web local ports (KI-140..142) ↔ helper routes (KI-133..135) | KI-143 composes; KI-160 drives the browser |
 | Owner name (KI-122) ↔ helper first start (KI-137) | KI-137 |
-| UI chrome (KI-144, KI-145) ↔ local entry (KI-143) | KI-160 screenshots; KI-161 live |
+| Owner chrome (KI-144) ↔ local entry (KI-143) | KI-145 browser spec; KI-161 live |
 
 ---
 

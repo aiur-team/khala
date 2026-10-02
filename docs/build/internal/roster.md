@@ -1,7 +1,7 @@
 # Internal mode build — ticket roster (plan_version 1)
 
 - Build order: `aiur-team/khala:internal-mode`. Logical prefix `KI-`; IDs are opaque and do not encode phase.
-- Plan: [`docs/plans/2026-10-02-001-feat-internal-mode-plan.md`](../../plans/2026-10-02-001-feat-internal-mode-plan.md). Shapes: [`contracts.md`](contracts.md) (every ticket quotes it verbatim). Deferred: [`deferred-findings.md`](deferred-findings.md). Questions: [`questions-or-commands.md`](questions-or-commands.md). Research: [`research/`](research/).
+- Plan: [`docs/plans/2026-10-02-001-feat-internal-mode-plan.md`](../../plans/2026-10-02-001-feat-internal-mode-plan.md). Shapes: [`contracts.md`](contracts.md) as amended by [`reconciliation.md`](reconciliation.md) (every ticket quotes it verbatim). Deferred: [`deferred-findings.md`](deferred-findings.md). Questions: [`questions-or-commands.md`](questions-or-commands.md). Research: [`research/`](research/).
 - Researched at `origin/main` `5ad41c8b` (2026-10-02). Implementation pointers in each ticket are refreshable at pickup; contract names are pinned.
 - Validate with `python3 docs/build/internal/build_pack.py <out_dir>` (writes `build-order.json`, prints waves, critical path and lane starts; exits non-zero on any error).
 
@@ -45,7 +45,7 @@ Contract-layer ticket KI-110 is the spine: every helper route, the agent seam an
 | KI-143 | Web: local entry and build | web | codex | 2 | 140, 141, 142, 144 | — | `local-main.tsx`, `local.html`, `vite.local.config.mjs`, `build:local`, `composition/local/ports.ts`, bundle guard (L13) |
 | KI-144 | Web: local owner account mode | web | opus | 2 | 101 | — | `mount.tsx` `account: 'local_owner'` hides Log out and sign-in redirect, helper-down panel; neutral "Encrypted" copy via the mode (L13) |
 | KI-145 | Web: local full-app browser spec and visual check | web | opus | 2 | 143 | — | Playwright harness on the built local app with a faked `/api/local/**`; flows and screenshots at 1280/390, dark/light |
-| KI-150 | Agent skill and install docs for local channels | platform | codex | 1 | 137 | — | `claude-plugin/khala/skills/khala/SKILL.md`, `packages/agent/README.md`, `docs/install-*.md` (build:local step) |
+| KI-150 | Agent skill and install docs for local channels | platform | codex | 1 | 137, 143 | — | `claude-plugin/khala/skills/khala/SKILL.md`, `packages/agent/README.md`, `docs/install-*.md` (build:local step) |
 | KI-151 | No-egress guard and test (D3) | acceptance | codex | 2 | 121, 137 | — | `packages/agent/test/no-egress/*`: `--import` preload that fails on non-loopback sockets; a test running the helper and two local sessions under it; `matrix-js-sdk` not loaded |
 | KI-160 | Scripted local acceptance AE1–AE12 | acceptance | codex | 3 | 120, 121, 137, 143, 151 | — | One command: helper + two `khala mcp` processes with fake hook drivers + headless Chromium on `dist-local`, under the egress guard |
 | KI-161 | Live acceptance on one machine (Executor-owned, `human:todo`) | acceptance | — | 3 | 145, 150, 160 | — | Real Claude Code + Codex panes + the operator's Firefox via `AGENT-MESSAGES.md`; evidence `docs/evidence/internal-mode-acceptance.md` |
@@ -60,12 +60,12 @@ Contract-layer ticket KI-110 is the spine: every helper route, the agent seam an
 | 2 | KI-102, KI-110, KI-144 | contract spine; KI-144 needs only `mount.tsx` |
 | 3 | KI-120, KI-122, KI-130, KI-131, KI-132, KI-133, KI-134, KI-135, KI-136, KI-140 | widest wave (10); KI-120 ~ KI-122 serialize on `client-impl.ts` |
 | 4 | KI-121, KI-137, KI-141, KI-142 | |
-| 5 | KI-143, KI-150, KI-151 | |
-| 6 | KI-145, KI-160 | |
+| 5 | KI-143, KI-151 | |
+| 6 | KI-145, KI-150, KI-160 | KI-150 needs `build:local` (G1) |
 | 7 | KI-161 | Executor capstone |
 | 8 | KI-170, KI-171 | ship docs once live acceptance passes |
 
-**Critical path (8):** KI-101 → KI-110 → KI-140 → KI-141 → KI-143 → KI-160 → KI-161 → KI-170. Parallel equal-length spine through the helper: KI-110 → KI-130/KI-133 → KI-137 → KI-151 → KI-160.
+**Critical path (8 waves):** KI-101 → KI-110 → KI-140 → KI-141 → KI-143 → KI-160 (or KI-145 / KI-150) → KI-161 → KI-170. Parallel equal-length spine through the helper: KI-110 → KI-130/KI-133 → KI-137 → KI-151 → KI-160.
 
 **Spine for first-slot staffing:** KI-110 (fans out to 17 tickets), then KI-140 and KI-130/KI-133 (largest complexity on the path), then KI-137 and KI-143 (composition points).
 

@@ -20,3 +20,4 @@ Discovery policy (finite feature boundary):
 | ID10 | OpenCode, desktop apps, other harnesses in local channels | P3 | spec | Later |
 | ID11 | Browser owner session survives a helper restart (persisted owner sessions) | P3 | L11 | Later; `khala local open` mints a fresh open link |
 | ID12 | Configurable or auto-moving helper port | P3 | L11 | Later; fixed 47830 with `port_in_use` |
+| ID13 | After an agent is removed or its channel deleted, `khala_status` stays `connected` until the next read/send fails (same as a kicked hosted agent) | P3 | KI-121 research | Later; would change the pinned L9 interface |

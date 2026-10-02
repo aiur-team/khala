@@ -119,7 +119,7 @@ def is_dir_at(path):
 POINTER = re.compile(r'`((?:apps|packages|docs|scripts|experiments|infra|tests)/[A-Za-z0-9_.@/\-\[\]{},*]+?)(?::(\d+)(?:-(\d+))?(?:,[\d,\- ]+)?)?`')
 contracts = open(os.path.join(HERE, 'contracts.md')).read()
 declared_new = set(re.findall(r'`((?:apps|packages)/[^`\s]+)`', contracts.split('## L2.')[0]))
-sources = [os.path.join(HERE, 'contracts.md'), os.path.join(REPO, 'docs/plans/2026-10-02-001-feat-internal-mode-plan.md')] + \
+sources = [os.path.join(HERE, 'contracts.md'), os.path.join(HERE, 'reconciliation.md'),os.path.join(REPO, 'docs/plans/2026-10-02-001-feat-internal-mode-plan.md')] + \
     [os.path.join(TICKETS, f) for f in sorted(os.listdir(TICKETS)) if f.endswith('.md')]
 checked = 0
 for src in sources:
