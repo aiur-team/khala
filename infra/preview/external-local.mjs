@@ -406,6 +406,17 @@ async function main() {
             ? { stage: report.stage } : {}),
           ...(Number.isInteger(report.exitCode) && report.exitCode >= -1 && report.exitCode <= 255
             ? { exitCode: report.exitCode } : {}),
+          ...(typeof report.hasStructuredContent === 'boolean'
+            ? { hasStructuredContent: report.hasStructuredContent } : {}),
+          ...(Number.isInteger(report.rpcErrorCode) && report.rpcErrorCode >= -32768 && report.rpcErrorCode <= 32767
+            ? { rpcErrorCode: report.rpcErrorCode } : {}),
+          ...(typeof report.isError === 'boolean' ? { isError: report.isError } : {}),
+          ...(typeof report.ok === 'boolean' ? { ok: report.ok } : {}),
+          ...(['refused', 'unavailable', 'pending', 'connected', 'other'].includes(report.kind)
+            ? { kind: report.kind } : {}),
+          ...(['not_connected', 'invalid_link', 'untrusted_origin', 'ownership_required',
+            'discovery_required', 'proof_key_unavailable', 'other'].includes(report.code)
+            ? { code: report.code } : {}),
           ...(['pending_owner', 'connecting', 'other'].includes(report.outcome)
             ? { outcome: report.outcome } : {}),
           ...(['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required', 'other']

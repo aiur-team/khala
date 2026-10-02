@@ -55,6 +55,13 @@ async function main() {
   catch { throw new Error('installed_connector_response_invalid'); }
   const result = reply?.result?.structuredContent;
   diagnose('candidate_result', {
+    hasStructuredContent: Boolean(result),
+    rpcErrorCode: Number.isInteger(reply?.error?.code) ? reply.error.code : 0,
+    isError: reply?.result?.isError === true,
+    ok: result?.ok === true,
+    kind: ['refused', 'unavailable', 'pending', 'connected'].includes(result?.kind) ? result.kind : 'other',
+    code: ['not_connected', 'invalid_link', 'untrusted_origin', 'ownership_required',
+      'discovery_required', 'proof_key_unavailable'].includes(result?.code) ? result.code : 'other',
     outcome: result?.outcome === 'pending_owner' || result?.outcome === 'connecting' ? result.outcome : 'other',
     error: ['unavailable', 'invalid_link', 'not_connected', 'untrusted_origin', 'ownership_required']
       .includes(result?.error) ? result.error : 'other',
