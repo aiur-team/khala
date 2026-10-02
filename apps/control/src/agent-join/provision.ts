@@ -1,6 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
-import { ownerFirstName } from '@khala/contracts/m1/participants';
 import type { OwnerId } from '@khala/contracts/messaging/index';
 
 export type AgentProvisionerOptions = Readonly<{
@@ -8,7 +7,8 @@ export type AgentProvisionerOptions = Readonly<{
   passwordDerivationSecret: string; joinSecret: string; fetch?: typeof globalThis.fetch; timeoutMs?: number;
 }>;
 export type AgentProvisioner = {
-  provision(input: Readonly<{ joinId: string; ownerId: OwnerId; ownerEmail: string; label: string; roomId: string }>):
+  agentUserId(joinId: string, ownerId: OwnerId): string;
+  provision(input: Readonly<{ joinId: string; ownerId: OwnerId; label: string; roomId: string }>):
     Promise<{ kind: 'ok'; credentials: AgentCredentials } | { kind: 'unavailable' }>;
 };
 export function agentIdentity(joinId: string, ownerId: OwnerId, serverName: string, joinSecret: string): { username: string; userId: string; deviceId: string } {
@@ -24,7 +24,9 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
   const request = (path: string, init: RequestInit) => fetch(`${options.homeserverOrigin}${path}`, {
     ...init, signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
   });
-  return { async provision(input) {
+  return {
+    agentUserId: (joinId, ownerId) => agentIdentity(joinId, ownerId, options.serverName, options.joinSecret).userId,
+    async provision(input) {
     try {
       const { username, userId, deviceId } = agentIdentity(input.joinId, input.ownerId, options.serverName, options.joinSecret);
       const password = createHmac('sha256', options.passwordDerivationSecret).update(`khala-agent-password-v1\0${userId}`).digest('base64url');
@@ -36,7 +38,7 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
       const nonce = nonceBody.nonce;
       const mac = createHmac('sha1', options.registrationSharedSecret).update(`${nonce}\0${username}\0${password}\0notadmin`).digest('hex');
       const registration = await request('/_synapse/admin/v1/register', { method: 'POST', headers,
-        body: JSON.stringify({ nonce, username, password, admin: false, mac, displayname: `${input.label} · ${ownerFirstName(input.ownerEmail)}` }),
+        body: JSON.stringify({ nonce, username, password, admin: false, mac, displayname: input.label }),
       });
       const registered = await registration.json() as { user_id?: unknown; errcode?: unknown } | null;
       if (!(registration.status === 200 && registered?.user_id === userId)
@@ -47,6 +49,11 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
       if (login.status !== 200) return { kind: 'unavailable' };
       const loggedIn = await login.json() as { user_id?: unknown; device_id?: unknown; access_token?: unknown } | null;
       if (loggedIn?.user_id !== userId || loggedIn.device_id !== deviceId || typeof loggedIn.access_token !== 'string') return { kind: 'unavailable' };
+      try {
+        await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, { method: 'PUT',
+          headers: { authorization: `Bearer ${loggedIn.access_token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ displayname: input.label }) });
+      } catch { /* Display names are best effort, including repairs on registration retries. */ }
       return { kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId, deviceId, accessToken: loggedIn.access_token, roomId: input.roomId } };
     } catch { return { kind: 'unavailable' }; }
   } };

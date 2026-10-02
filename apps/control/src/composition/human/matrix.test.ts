@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, ParticipantId } from '@khala/contracts/messaging/index';
+import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey, humanEmailRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
@@ -628,7 +629,7 @@ describe('owner-map room participants', () => {
       if (path.endsWith('/joined_members')) return json(200, { joined });
       throw new Error('unexpected participant request');
     });
-    return { matrix: services(fetch, store), identity, joined, deny: () => { denied = true; } };
+    return { store, matrix: services(fetch, store), identity, joined, deny: () => { denied = true; } };
   }
   it('resolves an agent from its owner map only for a joined human', async () => {
     const f = await fixture();
@@ -648,6 +649,37 @@ describe('owner-map room participants', () => {
     f.deny();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toEqual({ kind: 'forbidden' });
+  });
+  it('reads current owner usernames once per owner per resolution and falls back on profile failures', async () => {
+    const f = await fixture();
+    const peer = '@second:matrix.example.test';
+    await f.store.compareAndSet({ key: agentOwnerRecordKey(peer), expectedRevision: null, operationId: 'second-agent',
+      next: { expiresAt: null, value: { matrixUserId: peer, ownerId: principal.ownerId, ownerLabel: 'Alice', harness: 'claude', label: 'Alice-Claude', createdAt: '2026-10-01T00:00:00Z' } } });
+    const key = profileRecordKey(principal.ownerId);
+    const profile = await f.store.compareAndSet({ key, expectedRevision: null, operationId: 'profile',
+      next: { expiresAt: null, value: { v: 1, ownerId: principal.ownerId, username: 'Kev', updatedAt: '2026-10-01T00:00:00Z' } } });
+    if (profile.kind !== 'applied') throw Error();
+    const read = f.store.read;
+    const spy = vi.spyOn(f.store, 'read');
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId, peer]))
+      .toMatchObject({ kind: 'ok', participants: [{ ownerLabel: 'Kev' }, { ownerLabel: 'Kev' }] });
+    expect(spy.mock.calls.filter(([readKey]) => readKey === key)).toHaveLength(1);
+    await f.store.compareAndSet({ key, expectedRevision: profile.record.revision, operationId: 'rename',
+      next: { expiresAt: null, value: { v: 1, ownerId: principal.ownerId, username: 'Kevin', updatedAt: '2026-10-01T00:00:01Z' } } });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ ownerLabel: 'Kevin' }] });
+    for (const failure of ['unavailable', 'throw', 'invalid', 'foreign'] as const) {
+      spy.mockImplementation(async <T extends JsonValue>(readKey: string) => {
+        if (readKey !== key) return read<T>(readKey);
+        if (failure === 'throw') throw Error('offline');
+        if (failure === 'unavailable') return { kind: 'unavailable' };
+        const stored = await read<T>(readKey);
+        if (stored.kind !== 'record') throw Error();
+        return { ...stored, record: { ...stored.record, value: (failure === 'invalid' ? {} : { v: 1, ownerId: 'other', username: 'Other', updatedAt: '2026-10-01T00:00:00Z' }) as T } };
+      });
+      expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+        .toMatchObject({ kind: 'ok', participants: [{ ownerLabel: 'Alice' }] });
+    }
   });
   it('ignores target ids and preserves departed agent attribution', async () => {
     const f = await fixture();

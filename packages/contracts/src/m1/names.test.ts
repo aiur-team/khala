@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { checkName, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
+import { checkName, decodeOwnerAgents, ownerAgentsKey, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
 
 it('accepts mention-safe usernames and trims the display form', () => {
   for (const name of ['Kevin', 'kw', 'kevin.weaver', 'K-9', 'a'.repeat(24)]) {
@@ -33,4 +33,18 @@ it('suggests valid base usernames from verified email', () => {
   expect(suggestUsername('é@x')).toBe('User');
   expect(suggestUsername('admin@x')).toBe('User');
   expect(checkName(suggestUsername('a'.repeat(30) + '@x'), 'username').ok).toBe(true);
+});
+
+it('decodes a bounded owner agent index and escapes its key', () => {
+  expect(ownerAgentsKey('owner/a b')).toBe('owner-agents/owner%2Fa%20b');
+  const record = { v: 1, ownerId: 'owner', agents: ['@agent:matrix.test'] };
+  expect(decodeOwnerAgents(record)).toEqual({ ok: true, value: record });
+  expect(decodeOwnerAgents({ ...record, agents: [] }).ok).toBe(true);
+  expect(decodeOwnerAgents({ ...record, agents: Array.from({ length: 200 }, (_, n) => `@agent${n}:matrix.test`) }).ok).toBe(true);
+  for (const invalid of [null, { ...record, v: 2 }, { ...record, ownerId: '' }, { ...record, extra: true },
+    { ...record, agents: ['not-matrix'] }, { ...record, agents: 'wrong' }, { ...record, agents: Array(201).fill('@agent:matrix.test') }]) {
+    expect(decodeOwnerAgents(invalid).ok).toBe(false);
+  }
+  expect(decodeOwnerAgents({ ...record, agents: ['@agent:matrix.test', '@agent:matrix.test'] }))
+    .toEqual({ ok: false, error: { path: 'agents[1]', code: 'duplicate' } });
 });
