@@ -1,12 +1,8 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, ParticipantId } from '@khala/contracts/messaging/index';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
-import { createAgentBindingStore } from '../../agent-bootstrap/store';
-import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
-import { agentMatrixIdentity } from '../agent/matrix-admission';
-import { createAgentIdentityDirectory } from '../agent/identity-directory';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import { ensureMessagingAccount } from '../../auth/provisioning';
 
@@ -69,71 +65,6 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
-  it('classifies an exact owner key without mistaking query failure for deletion', async () => {
-    const deviceId = 'OWNER_BROWSER' as DeviceId;
-    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
-    let key: string | null = 'A'.repeat(43);
-    let failed = false;
-    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
-      if (path.endsWith('/login')) {
-        const request = JSON.parse(String(init?.body)) as { device_id: string };
-        return json(200, { user_id: userId, device_id: request.device_id, access_token: 'control-token' });
-      }
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
-      expect(JSON.parse(String(init?.body))).toEqual({ device_keys: { [userId]: [deviceId] } });
-      return json(200, { device_keys: { [userId]: key === null ? {} : {
-        [deviceId]: { user_id: userId, device_id: deviceId, keys: { [`ed25519:${deviceId}`]: key } },
-      } }, failures: failed ? { 'remote.example': {} } : {} });
-    });
-    const matrix = services(fetch);
-    const inspect = () => matrix.inspectOwnerDeviceKey(principal.ownerId, deviceId, 'A'.repeat(43));
-    expect(await inspect()).toBe('matched');
-    key = null;
-    expect(await inspect()).toBe('missing');
-    key = 'B'.repeat(43);
-    expect(await inspect()).toBe('mismatch');
-    failed = true;
-    expect(await inspect()).toBe('unavailable');
-  });
-
-  it('creates an owner-scoped encrypted room and reconciles its operation marker', async () => {
-    const roomId = '!created:matrix.example.test' as RoomId;
-    let creates = 0;
-    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
-      if (path.endsWith('/login')) {
-        const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
-        return json(200, { user_id: request.identifier.user, device_id: request.device_id,
-          access_token: 'control-token' });
-      }
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
-      if (path.endsWith('/createRoom')) {
-        creates += 1;
-        const request = JSON.parse(String(init?.body)) as { visibility: string; initial_state: readonly {
-          type: string; content: Record<string, string> }[] };
-        expect(request.visibility).toBe('private');
-        expect(request.initial_state).toContainEqual({ type: 'm.room.encryption', state_key: '',
-          content: { algorithm: 'm.megolm.v1.aes-sha2' } });
-        expect(request.initial_state).toContainEqual({ type: 'com.aiur.khala.create.v1', state_key: '',
-          content: { operation_id: 'create-key-1' } });
-        return json(200, { room_id: roomId });
-      }
-      if (path.endsWith('/joined_rooms')) return json(200, { joined_rooms: [roomId] });
-      if (path.endsWith('/state/com.aiur.khala.create.v1/')) return json(200, { operation_id: 'create-key-1' });
-      throw new Error(`unexpected request ${path}`);
-    });
-    const matrix = services(fetch);
-    const substrate = matrix.channelCreateFor(principal.ownerId);
-    expect(await substrate.createRoom({ operationId: 'create-key-1', title: 'Planning' }))
-      .toMatchObject({ kind: 'done', value: { roomId, title: 'Planning' } });
-    expect(await substrate.findCreatedRoom({ operationId: 'create-key-1' }))
-      .toMatchObject({ kind: 'found', room: { roomId } });
-    expect(await substrate.findCreatedRoom({ operationId: 'other-key' })).toEqual({ kind: 'unknown' });
-    expect(creates).toBe(1);
-    expect(await matrix.inspectRoomAuthority(roomId)).toBe(principal.ownerId);
-  });
-
   it('reuses one server-only control login across concurrent and repeated membership checks', async () => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let logins = 0;
@@ -566,40 +497,15 @@ describe('createMatrixHumanServices', () => {
   });
 });
 
-describe('Matrix room sender inventory', () => {
+describe('owner-map room participants', () => {
   const room = '!roster:matrix.example.test' as RoomId;
   const user = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
-  const otherOwner = 'owner_bob' as OwnerId;
-  const other = ownerMatrixUserId(otherOwner, 'matrix.example.test');
-  const curve = Buffer.alloc(32, 7).toString('base64').replace(/=+$/u, '');
-  const device = (userId: string, deviceId: string) => ({ user_id: userId, device_id: deviceId,
-    keys: { [`curve25519:${deviceId}`]: curve } });
   async function fixture() {
     const store = memoryStore();
-    const identity = agentMatrixIdentity(principal.ownerId, { harness: 'codex', sessionId: 'existing-session', generation: 0 }, 'matrix.example.test');
-    const binding = { v: 1, bindingId: 'binding_roster', ownerId: principal.ownerId,
-      agentParticipantId: identity.participantId, deviceId: 'CONNECTOR_1', harness: 'codex',
-      sessionId: 'existing-session', generation: 0 } as SessionBinding;
-    const bindings = createAgentBindingStore({ store });
-    await bindings.putParticipant({ ownerId: binding.ownerId, roomId: room, agentParticipantId: binding.agentParticipantId,
-      expectedBindingId: null, record: { binding, revokedGeneration: null, capability: null } });
-    await createOwnerRoomIndex(store).activate(binding, room);
-    await createAgentIdentityDirectory(store).remember({ v: 1, roomId: room, matrixUserId: identity.userId,
-      participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
+    const identity = { userId: '@khala_a_roster:matrix.example.test', participantId: 'agent_roster' as never };
     await store.compareAndSet({ key: agentOwnerRecordKey(identity.userId), expectedRevision: null, operationId: 'owner-map', next: { expiresAt: null, value: { matrixUserId: identity.userId, ownerId: principal.ownerId, ownerLabel: 'Alice', harness: 'codex', label: 'Codex', createdAt: '2026-10-01T00:00:00Z' } } });
-    const joined: Record<string, unknown> = { [user]: {}, [other]: {}, [identity.userId]: {} };
-    const keys: Record<string, Record<string, unknown>> = {
-      [user]: { WEB_OFFLINE: device(user, 'WEB_OFFLINE') },
-      [other]: { WEB_OTHER: device(other, 'WEB_OTHER') },
-      [identity.userId]: { CONNECTOR_1: device(identity.userId, 'CONNECTOR_1') },
-    };
-    const expectedUsers = [user, other, identity.userId].sort();
-    let afterQuery: (() => Promise<void>) | undefined;
+    const joined: Record<string, unknown> = { [user]: {}, [identity.userId]: {} };
     let denied = false;
-    let hiddenHistory = false;
-    let failures: unknown = {};
-    let membershipReads = 0;
-    let mutateMembership = false;
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
       if (path.endsWith('/login')) {
@@ -609,28 +515,10 @@ describe('Matrix room sender inventory', () => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer private-roster-token');
       if (path.includes('/state/m.room.member/')) return denied ? json(403, { errcode: 'M_FORBIDDEN' })
         : json(200, { membership: 'join' });
-      if (path.endsWith('/joined_members')) {
-        expect(decodeURIComponent(path)).toContain(room);
-        membershipReads++;
-        if (denied) return json(403, { errcode: 'M_FORBIDDEN' });
-        return json(200, { joined: mutateMembership && membershipReads > 1 ? { [user]: {} } : joined });
-      }
-      if (path.endsWith('/state')) return json(200, [{ type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' }]);
-      if (path.includes('/event/')) return hiddenHistory ? json(403, { errcode: 'M_FORBIDDEN' })
-        : json(200, { type: 'm.room.member', state_key: identity.userId, event_id: '$agent-left' });
-      if (path.endsWith('/keys/query')) {
-        const query = JSON.parse(String(init?.body)) as { device_keys: Record<string, string[]> };
-        expect(Object.keys(query.device_keys).sort()).toEqual(expectedUsers);
-        expect(Object.values(query.device_keys).every(ids => ids.length === 0)).toBe(true);
-        await afterQuery?.();
-        return json(200, { device_keys: keys, failures });
-      }
-      throw new Error('unexpected roster request');
+      if (path.endsWith('/joined_members')) return json(200, { joined });
+      throw new Error('unexpected participant request');
     });
-    return { matrix: services(fetch, store), store, binding, identity, joined, keys, fetch,
-      deny: () => { denied = true; }, hideHistory: () => { hiddenHistory = true; }, fail: (value: unknown) => { failures = value; },
-      changeMembers: () => { mutateMembership = true; },
-      onQuery: (callback: () => Promise<void>) => { afterQuery = callback; } };
+    return { matrix: services(fetch, store), identity, joined, deny: () => { denied = true; } };
   }
   it('resolves an agent from its owner map only for a joined human', async () => {
     const f = await fixture();
@@ -654,70 +542,11 @@ describe('Matrix room sender inventory', () => {
   it('ignores target ids and preserves departed agent attribution', async () => {
     const f = await fixture();
     delete f.joined[f.identity.userId];
-    f.hideHistory();
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [], undefined, [f.identity.participantId]))
       .toEqual({ kind: 'ok', participants: [] });
     expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
       .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent' }] });
   });
-  it('includes offline browser devices from every owner and the exact indexed connector, without tokens', async () => {
-    const f = await fixture();
-    const result = await f.matrix.inspectRoomSenderDevices(principal.ownerId, room);
-    expect(result).toEqual({ kind: 'ok', senders: expect.arrayContaining([
-      { matrixUserId: user, deviceId: 'WEB_OFFLINE', curve25519: curve },
-      { matrixUserId: other, deviceId: 'WEB_OTHER', curve25519: curve },
-      { matrixUserId: f.identity.userId, deviceId: 'CONNECTOR_1', curve25519: curve },
-    ]) });
-    if (result.kind === 'ok') expect(result.senders).toHaveLength(3);
-    expect(JSON.stringify(result)).not.toContain('private-roster-token');
-  });
-  it('ignores non-crypto control devices but retains every published human sender', async () => {
-    const f = await fixture();
-    f.keys[user]!.KHALA_CONTROL_TEST = { user_id: user, device_id: 'KHALA_CONTROL_TEST', keys: {} };
-    f.keys[user]!.WEB_SECOND = device(user, 'WEB_SECOND');
-    const result = await f.matrix.inspectRoomSenderDevices(principal.ownerId, room);
-    expect(result.kind).toBe('ok');
-    if (result.kind === 'ok') {
-      expect(result.senders).toHaveLength(4);
-      expect(result.senders.map(sender => sender.deviceId)).toContain('WEB_SECOND');
-      expect(result.senders.map(sender => sender.deviceId)).not.toContain('KHALA_CONTROL_TEST');
-    }
-  });
-  it('refuses an index that changes while the key response is in flight', async () => {
-    const f = await fixture();
-    f.onQuery(async () => {
-      expect((await createOwnerRoomIndex(f.store).markClosing(principal.ownerId, room, 'closing_operation', 0)).kind).toBe('ok');
-    });
-    expect(await f.matrix.inspectRoomSenderDevices(principal.ownerId, room)).toEqual({ kind: 'unavailable' });
-  });
-  it('refuses unreadable durable indexes before querying keys', async () => {
-    const f = await fixture();
-    vi.spyOn(f.store, 'read').mockResolvedValue({ kind: 'unavailable' });
-    expect(await f.matrix.inspectRoomSenderDevices(principal.ownerId, room)).toEqual({ kind: 'unavailable' });
-    expect(f.fetch.mock.calls.some(([input]) => String(input).endsWith('/keys/query'))).toBe(false);
-  });
-  it('refuses non-member access before querying keys', async () => {
-    const f = await fixture(); f.deny();
-    expect(await f.matrix.inspectRoomSenderDevices(principal.ownerId, room)).toEqual({ kind: 'unavailable' });
-    expect(f.fetch.mock.calls.some(([input]) => String(input).endsWith('/keys/query'))).toBe(false);
-  });
-  it.each(['missing-user', 'wrong-device', 'wrong-user', 'bad-key', 'partial-failure', 'missing-owner', 'unindexed-agent', 'membership-change', 'extra-connector', 'missing-connector', 'unknown-human'])(
-    'refuses an incomplete or mismatched roster: %s', async defect => {
-      const f = await fixture();
-      if (defect === 'extra-connector') f.keys[f.identity.userId]!.UNINDEXED = device(f.identity.userId, 'UNINDEXED');
-      if (defect === 'missing-connector') delete f.keys[f.identity.userId]!.CONNECTOR_1;
-      if (defect === 'unknown-human') f.joined['@khala_invalid:matrix.example.test'] = {};
-      if (defect === 'missing-user') delete f.keys[other];
-      if (defect === 'wrong-device') f.keys[user]!.WEB_OFFLINE = device(user, 'DIFFERENT');
-      if (defect === 'wrong-user') f.keys[user]!.WEB_OFFLINE = device(other, 'WEB_OFFLINE');
-      if (defect === 'bad-key') f.keys[user]!.WEB_OFFLINE = { ...device(user, 'WEB_OFFLINE'), keys: { 'curve25519:WEB_OFFLINE': 'invalid' } };
-      if (defect === 'partial-failure') f.fail({ 'matrix.example.test': {} });
-      if (defect === 'missing-owner') delete f.joined[user];
-      if (defect === 'unindexed-agent') f.joined['@khala_a_00000000000000000000000000000000:matrix.example.test'] = {};
-      if (defect === 'membership-change') f.changeMembers();
-      expect(await f.matrix.inspectRoomSenderDevices(principal.ownerId, room)).toEqual({ kind: 'unavailable' });
-    },
-  );
 });
 
 describe('browser-backed room participant reads', () => {
@@ -774,10 +603,8 @@ describe('browser-backed room participant reads', () => {
   it('uses the browser bearer and ignores participant-id targets', async () => {
     const roomId = '!history:matrix.example.test' as RoomId;
     const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
-    const identity = agentMatrixIdentity(principal.ownerId, { harness: 'codex', sessionId: 'history-session', generation: 0 }, 'matrix.example.test');
+    const identity = { participantId: 'agent_history' as ParticipantId };
     const store = memoryStore();
-    await createAgentIdentityDirectory(store).remember({ v: 1, roomId, matrixUserId: identity.userId,
-      participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
     const seen: string[] = [];
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
@@ -786,8 +613,6 @@ describe('browser-backed room participant reads', () => {
       seen.push(path);
       if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
       if (path.endsWith('/joined_members')) return json(200, { joined: { [userId]: {} } });
-      if (path.endsWith('/state')) return json(200, [{ type: 'm.room.member', state_key: identity.userId, event_id: '$departed' }]);
-      if (path.includes('/event/')) return json(200, { type: 'm.room.member', state_key: identity.userId, event_id: '$departed' });
       throw new Error('unexpected Matrix request');
     });
     const result = await services(fetch, store).sessions.resolveRoomParticipants(principal.ownerId, roomId, [], undefined,

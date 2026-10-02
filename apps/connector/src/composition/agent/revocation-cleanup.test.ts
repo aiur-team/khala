@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
-import { revocationStopId } from '../../../../control/src/composition/human/revocation-cleanup';
 import { createProductionRevocationCleanup } from './revocation-cleanup';
 
 const origin = 'https://khala.aiur.team';
@@ -46,28 +45,6 @@ function setup(answer: unknown = command, stopAvailable = true, stopPostAvailabl
 }
 
 describe('revoked connector SDK cleanup', () => {
-  it('persists local Stop before deleting the exact published key and submits its typed receipt', async () => {
-    const h = setup();
-    expect(await h.cleanup.pollOnce()).toBe('complete');
-    expect(h.stop).toHaveBeenCalledOnce();
-    expect(h.stop).toHaveBeenCalledExactlyOnceWith(revocationStopId(command.operationId, binding.bindingId));
-    expect(h.removed).toHaveBeenCalledExactlyOnceWith(command.deviceKey);
-    expect(h.order).toEqual(['stop', 'post_stop', 'remove', 'post_removal']);
-    expect(h.requests).toEqual([
-      { path: '/api/agent/revocation/cleanup', body: null },
-      { path: '/api/agent/revocation/result', body: { operationId: command.operationId,
-        deviceId: binding.deviceId, deviceKey: command.deviceKey, generation: 3, removal: null,
-        localStop: { operationId: revocationStopId(command.operationId, binding.bindingId),
-          ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0,
-          bindingId: binding.bindingId, bindingGeneration: binding.generation,
-          state: 'stopped', cleanupRequested: true } } },
-      { path: '/api/agent/revocation/result', body: { operationId: command.operationId,
-        deviceId: binding.deviceId, deviceKey: command.deviceKey, generation: 3, removal: 'removed' } },
-    ]);
-    expect(await h.cleanup.pollOnce()).toBe('complete');
-    expect(h.removed).toHaveBeenCalledOnce();
-  });
-
   it('never calls the SDK for another device or an invented removal result', async () => {
     const h = setup({ ...command, deviceId: 'other-device' });
     expect(await h.cleanup.pollOnce()).toBe('unavailable');

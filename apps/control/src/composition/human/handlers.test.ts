@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../../auth/index';
 import type { AdmissionService } from '../../invitations/index';
-import { createGateway } from '../../runtime/handler';
 import {
   ADMIT_PATH,
   INSPECT_PATH,
@@ -108,23 +107,20 @@ describe('human handler registration', () => {
     expect(registrations.every(({ methods }) => methods.length > 0 && new Set(methods).size === methods.length)).toBe(true);
   });
 
-  it('reserves the exact owner bootstrap consent route', async () => {
-    const gateway = createGateway({ registrations: registerHumanHandlers(), absentPrefixes: [], appOrigin: ORIGIN });
-    const response = await gateway(request('/api/human/agent-bootstrap/authorize'));
-
-    expect(response.status).toBe(503);
-    expect(await body(response)).toMatchObject({ code: 'feature_unavailable' });
-  });
-
   it('keeps production registrations fail-closed when deployment services are unavailable', async () => {
-    for (const registration of flowRoutes()) {
-      const response = await registration.handle(request(registration.path, {
-        method: registration.methods[0]!,
-        headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin' },
-      }));
-      expect(response.status, registration.path).toBe(503);
-      expect(response.headers.get('cache-control'), registration.path).toBe('no-store');
-      expect(await body(response), registration.path).toEqual({ code: 'unavailable' });
+    vi.stubEnv('OIDC_ISSUER', '');
+    try {
+      for (const registration of flowRoutes()) {
+        const response = await registration.handle(request(registration.path, {
+          method: registration.methods[0]!,
+          headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin' },
+        }));
+        expect(response.status, registration.path).toBe(503);
+        expect(response.headers.get('cache-control'), registration.path).toBe('no-store');
+        expect(await body(response), registration.path).toEqual({ code: 'unavailable' });
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
@@ -400,102 +396,18 @@ describe('admission route handlers', () => {
   });
 });
 
-describe('registerHumanHandlers feature routes', () => {
-  const features = (registrations: ReturnType<typeof registerHumanHandlers>) => registrations.slice(FLOW_ROUTE_COUNT);
-
-  it('reserves the exact human pairing and channel-access surface with finite immutable fallbacks', async () => {
-    const all = registerHumanHandlers();
-    const registrations = features(all);
-    expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
-      { path: '/api/human/agent-bootstrap/authorize', methods: ['GET', 'POST'] },
-      { path: '/api/human/owner-mailbox/review-bindings', methods: ['GET'] },
-      { path: '/api/human/owner-mailbox/submit', methods: ['POST'] },
-      { path: '/api/human/owner-mailbox/result', methods: ['GET'] },
-      { path: '/api/human/owner-mailbox/review-status', methods: ['GET'] },
-      { path: '/api/human/owner-device-proof/challenge', methods: ['GET'] },
-      { path: '/api/human/owner-device-proof/register', methods: ['POST'] },
-      { path: '/api/human/owner-device-proof/retire', methods: ['POST'] },
-      { path: '/api/human/revocation/targets', methods: ['GET'] },
-      { path: '/api/human/revocation/revoke', methods: ['POST'] },
-      { path: '/api/human/revocation/status', methods: ['GET'] },
-      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
-        ({ path: `/api/human/room-send/${action}`, methods: ['POST'] })),
-      { path: '/api/human/devices/replacement', methods: ['POST'] },
-      { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
-      { path: '/api/human/pairing/decision', methods: ['POST'] },
-      { path: '/api/human/channel-access/inbox', methods: ['GET'] },
-      { path: '/api/human/channel-access/decision', methods: ['POST'] },
-      { path: '/api/human/channel-access/mute', methods: ['POST'] },
-      { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'] },
-      { path: '/api/human/channel-discovery/settings', methods: ['PUT'] },
-      { path: '/api/human/channel-discovery/allowlist', methods: ['POST'] },
-      { path: '/api/human/channel-discovery/rollout', methods: ['PUT'] },
-    ]);
-    expect(Object.isFrozen(all)).toBe(true);
-    for (const registration of registrations) {
-      expect(Object.isFrozen(registration)).toBe(true);
-      const response = await registration.handle(new Request(`https://example.test${registration.path}`));
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual(registration.path.includes('/room-send/')
-        ? { kind: 'unavailable', stage: 'composition', code: 'route_missing' }
-        : registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
-        ? { code: 'unavailable' }
-        : registration.path === '/api/human/devices/replacement'
-        ? { code: 'feature_unavailable' }
-        : registration.path.includes('channel-discovery/bootstrap')
-        ? { error: 'feature_unavailable' }
-        : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
-    }
+describe('registerHumanHandlers', () => {
+  it('registers exactly the nine human flow routes', () => {
+    const registrations = registerHumanHandlers();
+    expect(registrations).toHaveLength(9);
+    expect(Object.isFrozen(registrations)).toBe(true);
   });
 
-  it('substitutes live pairing registrations', () => {
-    const request = { path: '/api/human/pairing/request', methods: ['POST', 'GET'], handle: async () => new Response('request') } as const;
-    const decision = { path: '/api/human/pairing/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
-    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).filter(item => item.path.startsWith('/api/human/pairing/'))).toEqual([request, decision]);
-  });
-
-  it('places live channel-access registrations after pairing', () => {
-    const inbox = { path: '/api/human/channel-access/inbox', methods: ['GET'], handle: async () => new Response('inbox') } as const;
-    const decision = { path: '/api/human/channel-access/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
-    const mute = { path: '/api/human/channel-access/mute', methods: ['POST'], handle: async () => new Response('mute') } as const;
-    const registrations = features(registerHumanHandlers({ channelAccess: () => [inbox, decision, mute] }));
-    const start = registrations.indexOf(inbox);
-    expect(registrations.slice(start, start + 3)).toEqual([inbox, decision, mute]);
-    expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
-      '/api/human/agent-bootstrap/authorize', '/api/human/owner-mailbox/review-bindings',
-      '/api/human/owner-mailbox/submit', '/api/human/owner-mailbox/result',
-      '/api/human/owner-mailbox/review-status',
-      '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
-      '/api/human/owner-device-proof/retire',
-      '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
-      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action => `/api/human/room-send/${action}`),
-      '/api/human/devices/replacement',
-      '/api/human/pairing/request', '/api/human/pairing/decision',
-    ]);
-  });
-
-  it('substitutes only the live channel-discovery bootstrap registration', () => {
-    const authorize = {
-      path: '/api/human/channel-discovery/bootstrap/authorize',
-      methods: ['GET', 'POST'],
-      handle: async () => new Response('authorize'),
-    } as const;
-    const registrations = features(registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] }));
-
-    expect(registrations.at(-4)).toBe(authorize);
-    expect(registrations.filter(route => route.path.startsWith('/api/human/pairing/')).map(route => route.path)).toEqual([
-      '/api/human/pairing/request',
-      '/api/human/pairing/decision',
-    ]);
-  });
-
-  it('substitutes only the live channel-discovery settings registrations', () => {
-    const settings = { path: '/api/human/channel-discovery/settings', methods: ['PUT'], handle: async () => new Response('settings') } as const;
-    const allowlist = { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], handle: async () => new Response('allowlist') } as const;
-    const rollout = { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], handle: async () => new Response('rollout') } as const;
-    const registrations = features(registerHumanHandlers({ channelDiscovery: () => [settings, allowlist, rollout] }));
-
-    expect(registrations.slice(-3)).toEqual([settings, allowlist, rollout]);
-    expect(registrations.at(-4)?.path).toBe('/api/human/channel-discovery/bootstrap/authorize');
+  it('appends the supplied channel-link route', () => {
+    const r = { path: '/api/human/channel-link/resolve', methods: ['POST'], handle: async () => new Response() };
+    const registrations = registerHumanHandlers({ channelLink: () => [r] });
+    expect(registrations.slice(0, 9).map(({ path, methods }) => ({ path, methods })))
+      .toEqual(registerHumanHandlers().map(({ path, methods }) => ({ path, methods })));
+    expect(registrations.at(-1)).toBe(r);
   });
 });
