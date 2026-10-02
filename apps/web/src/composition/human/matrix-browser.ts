@@ -131,16 +131,39 @@ function roomSummary(room: Room, limits: ContentLimits): RoomSummary {
 export async function ensureCrossSigning(
   crypto: Pick<CryptoApi, 'getCrossSigningStatus' | 'userHasCrossSigningKeys' | 'bootstrapCrossSigning'>,
   userId: string,
+  signal?: AbortSignal,
 ): Promise<'present' | 'foreign' | 'bootstrapped' | 'failed'> {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), 10_000);
+  const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
+  let onAbort: () => void = () => {};
   try {
-    const status = await crypto.getCrossSigningStatus();
-    const cached = status.privateKeysCachedLocally;
-    if (cached.masterKey && cached.selfSigningKey && cached.userSigningKey) return 'present';
-    if (await crypto.userHasCrossSigningKeys(userId, true)) return 'foreign';
-    await crypto.bootstrapCrossSigning({ authUploadDeviceSigningKeys: async (f) => f(null) });
-    return 'bootstrapped';
+    bounded.throwIfAborted();
+    const aborted = new Promise<'failed'>(resolve => {
+      onAbort = () => resolve('failed');
+      bounded.addEventListener('abort', onAbort, { once: true });
+    });
+    const bootstrap = async (): Promise<'present' | 'foreign' | 'bootstrapped'> => {
+      const status = await crypto.getCrossSigningStatus();
+      bounded.throwIfAborted();
+      const cached = status.privateKeysCachedLocally;
+      if (cached.masterKey && cached.selfSigningKey && cached.userSigningKey) return 'present';
+      const serverHasKeys = await crypto.userHasCrossSigningKeys(userId, true);
+      bounded.throwIfAborted();
+      if (serverHasKeys) return 'foreign';
+      await crypto.bootstrapCrossSigning({ authUploadDeviceSigningKeys: async (f) => {
+        bounded.throwIfAborted();
+        await f(null);
+      } });
+      bounded.throwIfAborted();
+      return 'bootstrapped';
+    };
+    return await Promise.race([bootstrap(), aborted]);
   } catch {
     return 'failed';
+  } finally {
+    clearTimeout(timer);
+    bounded.removeEventListener('abort', onAbort);
   }
 }
 
@@ -343,9 +366,10 @@ class MatrixRuntime {
         await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: input.store.name });
         const crypto = client.getCrypto();
         if (!crypto) throw new Error('Matrix crypto unavailable');
-        await ensureCrossSigning(crypto, session.userId);
         let startInvoked = false;
         let stopped = false;
+        let crossSigningStarted = false;
+        const crossSigningAbort = new AbortController();
         return {
           async identity() {
             const keys = await crypto.getOwnDeviceKeys();
@@ -374,6 +398,12 @@ class MatrixRuntime {
                 actor: { ...mapping, displayName: principal.verifiedEmail, deviceIds: [input.session.deviceId] },
                 generation,
               });
+              if (!crossSigningStarted) {
+                crossSigningStarted = true;
+                // Cross-signing is optional maintenance, after sync and activation.
+                void ensureCrossSigning(crypto, session.userId,
+                  AbortSignal.any([signal, crossSigningAbort.signal]));
+              }
             } catch (error) {
               stopped = true;
               client.stopClient();
@@ -381,6 +411,7 @@ class MatrixRuntime {
             }
           },
           async close() {
+            crossSigningAbort.abort();
             if (activeClient()?.client === client) setActive(null);
             if (startInvoked && !stopped) {
               stopped = true;
