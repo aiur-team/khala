@@ -143,7 +143,7 @@ export class ExternalNativeDriver {
 
   private call(action: string, ...args: string[]): void {
     execFileSync(process.execPath, [this.script, action, this.directory, ...args], {
-      env: process.env, stdio: 'pipe', timeout: 90_000,
+      env: process.env, stdio: 'pipe', timeout: action === 'prompt' ? 150_000 : 90_000,
     });
   }
 
