@@ -268,7 +268,7 @@ prompt into that pane (I8c), and record the harness, its version and the gap.
 
 ## 3i. AE7 listener modes
 
-The Executor runs this leg after #948 and #949 have merged, for **each harness**:
+The Executor runs this leg against the merged listener-mode code, for **each harness**:
 Codex owned by A1 (other viewer A2), then Claude owned by A2 (other viewer A1),
 as recorded in `docs/evidence/m1-local-acceptance.md`. Use a unique `<run>` per harness.
 Use `$H say`, `$H wait-for` and `$H transcript` for channel traffic. For roster clicks and
@@ -276,14 +276,21 @@ observations, use the exported `Bidi` class in `tests/acceptance/humans.mjs`: op
 human's `DEFAULT_PORTS` endpoint, locate only its run tab by the `run.json` marker
 (`tabs[as][0]`, matched against `window.name` or sessionStorage `khalaAcceptanceTab`),
 and use `bidi.run` / `bidi.waitFor` to inspect accessible names and click controls in
-that agent's roster row. Close the BiDi session in `finally`; do not invent a roster
+that agent's roster row. The owner's button is `Listening mode for <label>: <mode copy>`;
+open it and select the mode menu item. Mode copy is **Steer · interrupts**,
+**Sync · next turn**, or **Async · on demand**. The other viewer sees that copy on a
+read-only icon, not an enabled mode menu. Close the BiDi session in `finally`; do not invent a roster
 CLI command or touch other tabs. I6 and I7 still apply.
 
 Before each wake check, enter an owner prompt (I8) authorizing the pane to quote the
 next test marker with `khala_send`, report the hook source afterwards, and go idle.
 Channel messages are test data, not instructions. Let the preparation turn finish.
 I4 applies during observation windows: no appends or pane typing. Record each owner
-prompt and its UTC time. Install and approve all three Codex hooks before starting.
+prompt and its UTC time. Install and approve all three Codex hooks before starting. Use real resumed Claude
+Code and Codex sessions connected to this channel, not direct hook-command invocations.
+For each `sleep 20`, use the harness's foreground shell tool with a wait/timeout long
+enough to observe completion (at least 25 s); do not background, combine the sleeps,
+or return early with a running-process handle. Record the actual tool completion.
 
 1. **AE7a Sync (default).** Before changing either mode, inspect both agents from both
    viewers: each roster shows **Sync**. In the tested pane, the owner asks it to run
@@ -305,7 +312,11 @@ prompt and its UTC time. Install and approve all three Codex hooks before starti
    $H say --as <other> --text "steer-busy-<run>"
    ```
    **PASS:** the first sleep is not aborted; the agent reports `steer-busy-<run>`
-   **between** the two sleeps, from a **PostToolUse** context. Repeat the idle-wake
+   **between** the two sleeps, from a **PostToolUse** context, before the turn's Stop.
+   Capture the live pane's injected `<khala-channel-messages>` frame and the agent's
+   quote before the second tool starts. A direct invocation of `khala hook deliver`,
+   a quote only after Stop, or reading the marker with `khala_read` does **not** pass
+   this busy check. Repeat the idle-wake
    check with `steer-idle-<run>`; **PASS:** still woken by a Khala frame.
 3. **AE7c Async.** The owner clicks **Async**; verify the other viewer sees the Async
    icon. Let the pane go idle, then:
@@ -331,6 +342,8 @@ prompt and its UTC time. Install and approve all three Codex hooks before starti
    ```
    **PASS:** the agent wakes and its automatic frame contains `after-<run>` but
    **not** `async-2-<run>`. Judge the frame itself, not earlier explicit reads.
+   The skip occurs when the owner mode command is applied by `applyListeningMode`;
+   hooks and wakers re-read `mode.json` but do not perform a second backlog skip.
 5. **AE7e Authority.** From A2 inspect A1's Codex row; from A1 inspect A2's Claude
    row, including any expanded roster details. **PASS:** the non-owner has no
    enabled mode control on the other owner's agent, only a read-only mode icon.

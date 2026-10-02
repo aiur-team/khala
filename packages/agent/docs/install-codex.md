@@ -43,7 +43,7 @@
    `khala hook deliver --harness codex` (UserPromptSubmit, PostToolUse and Stop).
    After updating, re-run `node packages/agent/codex/install-hooks.mjs install`,
    then approve the new `PostToolUse` hook in **Hooks need review**. Without that
-   approval, Steer works like Sync.
+   approval, Steer works like Sync: delivery waits for the next prompt or Stop.
 
 7. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
    the confirmation link it returns.
@@ -51,8 +51,7 @@
 8. Known limits: untrusted hooks prevent delivery; queued notices cannot deliver
    messages until the hooks are trusted, and the waker caps attempts at two per
    cursor position. Sync delivers at the turn's Stop; Steer delivers at the next
-   tool boundary
-   without aborting the tool. Both modes wake idle sessions; Async delivers
+   tool boundary without aborting the tool. Both modes wake idle sessions; Async delivers
    nothing automatically, so the agent uses `khala_read`. The waker acts only
    while the Khala MCP server runs.
 
