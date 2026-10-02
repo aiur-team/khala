@@ -1147,13 +1147,26 @@ describe('Claude delivery through the internal launcher', () => {
     expect(await postToolUse()).toEqual({ stdout: '', stderr: '', exitCode: 0 });
   });
 
-  it('keeps a Claude whose version cannot be inspected unproven: nothing is pulled or read', async () => {
-    const session = await bound('session-uninspected', async () => null);
+  it.each([null, '2.1.287'])('keeps automatic delivery unproven but permits explicit bound read on version %s', async version => {
+    const session = await bound('session-uninspected', async () => version);
     expect(JSON.parse(await session.run('mode'))).toMatchObject({
       ok: true, acknowledgement: 'unknown', support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
     });
-    await session.post('never delivered');
+    await session.post('manual read after approval');
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
-    expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'another-session')))
+      .toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
+    expect(await session.run('read')).toContain('manual read after approval');
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    const [sent] = await serve(session.report.descriptorPath, 'session-uninspected', [['khala_send', { message: 'manual reply' }]]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const facts = await session.facts();
+    expect(facts.some(fact => fact.receipt.kind === 'agent_acknowledged')).toBe(true);
+    const stopped = await call(session.report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`,
+      headers: session.owner, body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
   });
 });

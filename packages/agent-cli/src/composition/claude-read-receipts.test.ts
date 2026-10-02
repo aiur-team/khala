@@ -43,7 +43,7 @@ function delivery(releaseId: string, generation: number): InboxDelivery {
   };
 }
 
-function route() {
+function route(manual = false) {
   const parent = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-claude-receipts-'));
   roots.push(parent);
   const stateDirectory = path.join(parent, 'state');
@@ -64,6 +64,9 @@ function route() {
   const services = (bound: SessionBinding): ClaudeBindingServices => ({
     ...base.services(bound),
     read: read(bound),
+    capabilities: async () => capabilities(manual ? 'unknown' : 'batch_token_next_call'),
+    manualHandoff: async () => manual && current.bindingId === bound.bindingId
+      && current.generation === bound.generation && current.sessionId === bound.sessionId,
     async send(input) {
       const result = await read(bound).read({
         bindingId: bound.bindingId, maxBytes: 4096,
@@ -101,6 +104,17 @@ function route() {
 const released = (receipts: readonly BatchAcknowledgement[]) => receipts.map(receipt => receipt.releaseIds);
 
 describe('Claude read-receipt conformance against the real inbox', () => {
+  it('explicit read acknowledges under a live manual grant while hook pull and another session stay closed', async () => {
+    const { claude, enqueue, receipts, replace } = route(true);
+    await enqueue('release-1');
+    await expect(claude.pull(CALL, { maxBytes: 4096 })).resolves.toEqual({ kind: 'refused', code: 'unproven' });
+    await expect(claude.read(CALL, { maxBytes: 4096 })).resolves.toMatchObject({ kind: 'batch' });
+    expect(receipts).toEqual([]);
+    await expect(claude.status(CALL)).resolves.toEqual({ kind: 'status', acknowledged: 1 });
+    expect(released(receipts)).toEqual([['release-1']]);
+    replace(binding('s-2', 'binding-1', 2));
+    await expect(claude.read(CALL, { maxBytes: 4096 })).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
   it.each(['read', 'send', 'status', 'mode'] as const)('acknowledges only on the agent’s next %s call', async next => {
     const { claude, enqueue, receipts, cursor, reoffers } = route();
     await enqueue('release-1');
