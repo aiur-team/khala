@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import {
-  DriverError, createBidiMatcher, isLoopbackOrigin, isMarkerCandidate, newTabToken, parseArgs, parseChannelLine,
+  DriverError, createBidiMatcher, findMatchingRow, isLoopbackOrigin, isMarkerCandidate, newTabToken, parseArgs, parseChannelLine,
   planSignin, resolveOrigin, selectDexUser,
 } from './humans.mjs';
 
@@ -150,5 +150,32 @@ describe('helpers', () => {
     assert.equal(isMarkerCandidate('https://accounts.google.com/o/oauth2', 'https://khala.example'), true);
     assert.equal(isMarkerCandidate('https://127.0.0.1:9999/', 'https://127.0.0.1:8443'), false);
     assert.equal(isMarkerCandidate('about:blank', 'https://127.0.0.1:8443'), false);
+  });
+});
+
+describe('wait-for sender matching', () => {
+  const prompt = { sender: 'Bob', text: 'Codex: reply with ack-codex-1' };
+  const reply = { sender: 'Codex', text: 'ack-codex-1' };
+  const H = { describeRows: () => [prompt, reply] };
+
+  it('parses an optional sender and rejects a missing value', () => {
+    assert.equal(parseArgs(['wait-for', '--as', 'a1', '--text', 'ack', '--sender', 'Codex']).sender, 'Codex');
+    assert.equal(parseArgs(['wait-for', '--as', 'a1', '--text', 'ack']).sender, undefined);
+    assert.equal(codeOf(() => parseArgs(['wait-for', '--as', 'a1', '--text', 'ack', '--sender'])), 'missing_value');
+  });
+
+  it('skips the human prompt and matches the agent reply', () => {
+    assert.equal(findMatchingRow(H, { text: 'ack-codex-1', sender: 'Codex' }), reply);
+  });
+
+  it('keeps text-only matching when sender is omitted', () => {
+    assert.equal(findMatchingRow(H, { text: 'ack-codex-1' }), prompt);
+  });
+
+  it('requires an exact sender and matching text', () => {
+    assert.equal(findMatchingRow(H, { text: 'ack-codex-1', sender: 'Claude' }), null);
+    assert.equal(findMatchingRow(H, { text: 'ack-codex-1', sender: 'codex' }), null);
+    assert.equal(findMatchingRow(H, { text: 'absent', sender: 'Codex' }), null);
+    assert.equal(findMatchingRow({ describeRows: () => [prompt] }, { text: 'ack-codex-1', sender: 'Codex' }), null);
   });
 });
