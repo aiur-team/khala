@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser } from '@playwright/test';
+import { chromium, type Browser, type Page } from '@playwright/test';
 
 declare global { interface Window {
   __lossHarness: {
@@ -19,6 +19,18 @@ declare global { interface Window {
     navigate(path: string): void;
   };
 } }
+
+/** The brand row's settings cog. */
+const settingsCog = (page: Page) => page.locator('.kh-brand-actions').getByRole('button', { name: 'Settings' });
+
+/** Opens the settings menu if it is closed and returns its item named `name`. */
+async function settingsItem(page: Page, name: string) {
+  const menu = page.getByRole('menu', { name: 'Settings' });
+  if (!(await menu.isVisible())) await settingsCog(page).click();
+  const item = menu.getByRole('menuitem', { name });
+  await item.waitFor();
+  return item;
+}
 
 test('mounted owner screen fences lost keys and resets on account switch', { timeout: 90_000 }, async () => {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-device-loss-'));
@@ -44,7 +56,9 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     }
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Check retained keys again' }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 1);
+    assert.equal(await settingsCog(page).count(), 1);
+    assert.equal(await (await settingsItem(page, 'Log out')).isEnabled(), true);
+    await page.keyboard.press('Escape');
 
     // A retained profile is a fresh application lifecycle, not a retry of the
     // sticky lost service instance above.
@@ -82,9 +96,11 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
       headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout');
-    const button = page.getByRole('button', { name: 'Log out' });
+    const button = settingsCog(page);
     await button.waitFor();
     assert.equal(await button.isVisible(), true);
+    assert.equal(await (await settingsItem(page, 'Log out')).isVisible(), true, 'Log out is reachable from the cog on desktop');
+    await page.keyboard.press('Escape');
     const brand = page.getByRole('link', { name: 'Khala home' });
     assert.equal(await brand.getAttribute('href'), '/conversations');
     // Wait for the load to settle: under a busy runner the logo can still be decoding here.
@@ -119,7 +135,7 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
       await page.screenshot({ path: join(screenshotDir, 'desktop.png'), fullPage: true });
     }
     // Phone: the thread view hides the list; going back shows the list with
-    // the brand row, its Log out and the create control.
+    // the brand row, its settings cog (holding Log out) and the create control.
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     assert.equal(await page.locator('.kh-cv').first().isVisible(), false);
@@ -134,12 +150,16 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     assert.equal(await createButton.evaluate(element => element === document.activeElement), true);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'mobile.png'), fullPage: true });
 
-    await button.click();
+    const logout = await settingsItem(page, 'Log out');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'the open menu fits a phone');
+    await logout.click();
     await page.getByRole('status').getByText('Logging out…').waitFor();
-    assert.equal(await button.isDisabled(), true);
+    await settingsCog(page).click();
+    assert.equal(await page.getByRole('menu', { name: 'Settings' }).getByRole('menuitem', { name: 'Log out' }).isDisabled(), true);
+    await page.keyboard.press('Escape');
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 1);
-    await button.click();
+    await (await settingsItem(page, 'Log out')).click();
     // Signed out goes straight to sign-in; this harness refuses it, so the
     // page offers Try again, which starts sign-in once more.
     await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
@@ -149,6 +169,7 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.waitForFunction(() => window.__lossHarness.signInCount() === 2);
     await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Settings' }).count(), 0);
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 2);
     assert.equal(await page.evaluate(() => window.__lossHarness.stopCount()), 1);
@@ -156,9 +177,11 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&hosted');
-    await page.getByRole('button', { name: 'Log out' }).waitFor();
+    await settingsCog(page).waitFor();
     assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
-    assert.equal(await page.locator('.kh-brand-actions').getByRole('button', { name: 'Log out' }).count(), 1);
+    assert.equal(await settingsCog(page).count(), 1);
+    assert.equal(await (await settingsItem(page, 'Log out')).isVisible(), true);
+    await page.keyboard.press('Escape');
     if (screenshotDir) {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: join(screenshotDir, 'hosted-desktop.png'), fullPage: true });
@@ -168,13 +191,13 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
 
     await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=lost&logout');
     await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor();
-    const unavailableLogout = page.getByRole('button', { name: 'Log out' });
-    await unavailableLogout.click();
+    await (await settingsItem(page, 'Log out')).click();
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
-    await unavailableLogout.click();
+    await (await settingsItem(page, 'Log out')).click();
     await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Sign in' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Settings' }).count(), 0);
     assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
   } finally {
     await browser?.close();
@@ -278,11 +301,12 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     assert.equal(await page.locator('.kh-card.has-detail').count(), 0);
     assert.equal(await page.locator('.channel-share__more').count(), 0);
     const brand = await page.locator('.kh-brand .wm').boundingBox();
-    const theme = await page.getByRole('button', { name: 'Toggle color theme' }).boundingBox();
-    const logout = await page.getByRole('button', { name: 'Log out' }).boundingBox();
+    const cog = await settingsCog(page).boundingBox();
     const list = await page.locator('.kh-list').boundingBox();
-    assert.ok(brand && theme && logout && list && brand.x < theme.x && theme.x < logout.x
-      && logout.x + logout.width <= list.x + list.width, 'the brand row holds the wordmark, theme toggle and Log out');
+    assert.ok(brand && cog && list && brand.x < cog.x && cog.x + cog.width <= list.x + list.width,
+      'the brand row holds the wordmark, then the settings cog');
+    assert.equal(await page.getByRole('button', { name: 'Toggle color theme' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.deepEqual(await page.locator('.kh-card').boundingBox(), { x: 0, y: 0, width: 1440, height: 900 });
     const main = await page.locator('.kh-main').boundingBox();
     const chat = await page.locator('.kh-channel').boundingBox();
@@ -294,9 +318,10 @@ test('owner conversation shell fills desktop and phone with channel creation', {
       await page.screenshot({ path: join(screenshotDir, 'human-desktop.png') });
     }
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
-    await page.getByRole('button', { name: 'Toggle color theme' }).click();
+    await (await settingsItem(page, 'Light mode')).click();
     assert.equal(await page.locator('.khala-app').getAttribute('data-theme'), 'light');
-    await page.getByRole('button', { name: 'Toggle color theme' }).click();
+    await (await settingsItem(page, 'Dark mode')).click();
+    assert.equal(await page.locator('.khala-app').getAttribute('data-theme'), 'dark');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     assert.equal(await page.locator('.kh-list').isVisible(), false, 'the phone thread view hides the list');
