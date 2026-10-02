@@ -11,6 +11,7 @@ declare global { interface Window {
     switchAccount(): void;
     activationCount(): number;
     signOutCount(): number;
+    signInCount(): number;
     stopCount(): number;
     holdNavigation(): void;
     releaseNavigation(): void;
@@ -136,7 +137,14 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 1);
     await button.click();
-    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    // Signed out goes straight to sign-in; this harness refuses it, so the
+    // page offers Try again, which starts sign-in once more.
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Sign in' }).count(), 0);
+    assert.equal(await page.evaluate(() => window.__lossHarness.signInCount()), 1);
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await page.waitForFunction(() => window.__lossHarness.signInCount() === 2);
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 2);
@@ -161,7 +169,8 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await unavailableLogout.click();
     await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
     await unavailableLogout.click();
-    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    await page.getByRole('alert').getByText('Sign-in is unavailable right now.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Sign in' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
     assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
   } finally {

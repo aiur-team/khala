@@ -23,6 +23,14 @@
 .kh-detail { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; min-width: 0; }
 .kh-state { flex: 1; display: grid; place-items: center; background: var(--bg-2); padding: 1.5rem; }
 .kh-state[hidden] { display: none; }
+/* §13.2 state card and spinner (source:4455-4460) */
+.kh-state-c { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 1.4rem 1.8rem; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); text-align: center; }
+.kh-state-c > svg { width: 24px; height: 24px; color: var(--faint); }
+.kh-state-c b { font-size: .98rem; }
+.kh-spin { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; border: 2.5px solid var(--line-strong); border-top-color: var(--accent); animation: khSpin .8s linear infinite; }
+@keyframes khSpin { to { transform: rotate(360deg); } }
+/* A state section rendered inside the main pane's own state area. */
+.kh-state > .kh-state { padding: 0; }
 
 /* §14 responsive (source:447-459, 745-747) */
 @media (max-width: 1100px) {

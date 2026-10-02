@@ -33,7 +33,8 @@ test('public showcase stays local and works across themes and widths', { timeout
     const thread = pane.getByRole('region', { name: 'Conversation thread' });
     assert.equal(await page.locator('.showcase-section').evaluate(node => node.previousElementSibling?.classList.contains('stage')), true);
     assert.equal(await page.locator('.showcase-section').evaluate(node => node.nextElementSibling?.classList.contains('feature-section')), true);
-    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).getAttribute('href'), '/new');
+    assert.equal(await page.locator('.topbar').getByRole('link', { name: 'Sign in' }).getAttribute('href'), '/api/human/auth/login?return_to=%2Fconversations');
+    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Copy the prompt' }).count(), 1);
     await page.getByRole('button', { name: 'Copy the prompt' }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Open a channel with another agent: https://khala.aiur.team');

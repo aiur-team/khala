@@ -11,9 +11,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 // The production splash build config, with only the output directory redirected.
 const configFile = join(here, '../../vite.landing.config.mjs');
 const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
-const LIGHT_ACTION = 'rgb(31, 87, 196)';
-const DARK_ACTION = 'rgb(0, 112, 240)';
-const WHITE = 'rgb(255, 255, 255)';
+const SIGN_IN_HREF = '/api/human/auth/login?return_to=%2Fconversations';
+// RECREATION-SPEC §2.2 --accent-ink, --accent-line and --accent-soft.
+const SIGN_IN = {
+  light: { color: 'rgb(26, 74, 168)', border: 'rgba(31, 87, 196, 0.3)', hover: 'rgba(31, 87, 196, 0.11)' },
+  dark: { color: 'rgb(143, 188, 255)', border: 'rgba(47, 134, 255, 0.34)', hover: 'rgba(47, 134, 255, 0.15)' },
+} as const;
 const FEATURE_TITLES = [
   'Multiplayer',
   'Hosted encryption',
@@ -23,6 +26,20 @@ const FEATURE_TITLES = [
   'Aiur Support',
 ];
 const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
+
+async function assertSignInColors(page: Page, theme: keyof typeof SIGN_IN): Promise<void> {
+  const signIn = page.locator('.topbar').getByRole('link', { name: 'Sign in' });
+  // Colours ease over 0.2s after a theme switch.
+  await page.waitForFunction(expected => getComputedStyle(document.querySelector('.signin')!).color === expected,
+    SIGN_IN[theme].color, { timeout: 2000 }).catch(() => undefined);
+  assert.equal(await signIn.evaluate(node => getComputedStyle(node).color), SIGN_IN[theme].color, `${theme}: Sign in text`);
+  assert.equal(await signIn.evaluate(node => getComputedStyle(node).borderTopColor), SIGN_IN[theme].border, `${theme}: Sign in border`);
+  await signIn.hover();
+  await page.waitForFunction(expected => getComputedStyle(document.querySelector('.signin')!).backgroundColor === expected,
+    SIGN_IN[theme].hover, { timeout: 2000 });
+  assert.equal(await signIn.evaluate(node => getComputedStyle(node).color), SIGN_IN[theme].color, `${theme}: Sign in hover text`);
+  await page.mouse.move(0, 0);
+}
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
   return page.locator('button:not(.banner-close), .button').evaluateAll(nodes => nodes.map(node => {
@@ -116,7 +133,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     // The prompt is copyable and the hosted app is reachable from the hero.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
     assert.equal(await copy.isEnabled(), true);
-    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).getAttribute('href'), '/new');
+    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).count(), 0);
     assert.equal(await page.locator('#prompt-soon').count(), 0);
 
     // Top-right controls exist and the Docs link points at the quick start.
@@ -124,13 +141,27 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     const toggle = page.getByRole('button', { name: 'Dark mode' });
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false', 'light system preference: dark mode off');
 
-    // The primary action follows Aiur's dashboard fill. The topbar and copy
-    // controls follow the quiet controls on aiur.team.
+    // Sign in is the last top-right control: the app's accent tool-btn pill,
+    // in the UI mono font and exactly as tall as the theme toggle.
+    const signIn = page.locator('.topbar').getByRole('link', { name: 'Sign in' });
+    assert.equal(await signIn.getAttribute('href'), SIGN_IN_HREF);
+    assert.equal(await page.locator('.topbar > :last-child').evaluate(node => node.textContent?.trim()), 'Sign in');
+    const signInStyle = await signIn.evaluate(node => {
+      const style = getComputedStyle(node);
+      return { radius: style.borderRadius, size: style.fontSize, family: style.fontFamily, height: node.getBoundingClientRect().height };
+    });
+    assert.equal(signInStyle.radius, '999px');
+    assert.equal(signInStyle.size, '12.16px');
+    assert.match(signInStyle.family, /^"JetBrains Mono"/);
+    assert.doesNotMatch(signInStyle.family, /Bungee/);
+    assert.equal(signInStyle.height, await toggle.evaluate(node => node.getBoundingClientRect().height));
+
+    // Sign in is the accent pill; the other topbar and copy controls follow
+    // the quiet controls on aiur.team.
     await page.mouse.move(0, 0);
     const lightButtons = await buttonColors(page);
-    assert.ok(lightButtons.length >= 3, 'Docs, theme toggle, Copy and the call to action');
-    assert.equal(lightButtons.find(button => button.label === 'Open Khala app')?.background, LIGHT_ACTION);
-    assert.equal(lightButtons.find(button => button.label === 'Open Khala app')?.color, WHITE);
+    assert.ok(lightButtons.length >= 4, 'Docs, theme toggle, Sign in and Copy');
+    await assertSignInColors(page, 'light');
     assert.equal(lightButtons.find(button => button.label === 'Docs')?.background, 'rgba(0, 0, 0, 0)');
     assert.equal(lightButtons.find(button => button.label === 'Copy the prompt')?.background, 'rgba(0, 0, 0, 0)');
     assert.equal(await toggle.evaluate(node => getComputedStyle(node).borderRadius), '50%');
@@ -145,8 +176,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.equal(darkBackground, 'rgb(26, 27, 30)');
     await page.mouse.move(0, 0);
     const darkButtons = await buttonColors(page);
-    assert.equal(darkButtons.find(button => button.label === 'Open Khala app')?.background, DARK_ACTION);
-    assert.equal(darkButtons.find(button => button.label === 'Open Khala app')?.color, WHITE);
+    await assertSignInColors(page, 'dark');
     assert.equal(darkButtons.find(button => button.label === 'Docs')?.background, 'rgba(0, 0, 0, 0)');
     assert.equal(darkButtons.find(button => button.label === 'Copy the prompt')?.background, 'rgba(0, 0, 0, 0)');
     await page.reload();
@@ -227,8 +257,23 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     await copy.click();
     await page.waitForFunction(() => document.querySelector('#copyBtn [data-copy-label]')?.textContent === 'Copied');
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), EXACT_PROMPT);
-    await page.getByRole('link', { name: 'Open Khala app' }).click();
-    assert.equal(new URL(page.url()).pathname, '/new', 'the hero link opens the canonical create route');
+
+    // A cancelled or failed sign-in returns here: the outcome shows once under
+    // the topbar and the parameter leaves the address bar.
+    for (const [outcome, message] of [['cancelled', 'Sign-in was cancelled.'], ['error', 'Sign-in could not be completed.']] as const) {
+      await page.goto(`${url}?sign_in=${outcome}`);
+      const status = page.locator('.signin-status');
+      await status.waitFor();
+      assert.equal(await status.getAttribute('role'), 'status');
+      assert.equal((await status.innerText()).trim(), message);
+      assert.equal(await status.evaluate(node => node.previousElementSibling?.classList.contains('topbar')), true);
+      assert.equal(await status.evaluate(node => getComputedStyle(node).textAlign), 'right');
+      assert.equal(new URL(page.url()).search, '', `${outcome}: sign_in leaves the URL`);
+    }
+    await page.goto(`${url}?sign_in=%3Cb%3Eforged%3C%2Fb%3E`);
+    assert.equal(await page.locator('.signin-status').count(), 0, 'unknown outcomes show nothing');
+    assert.equal(new URL(page.url()).search, '');
+    assert.deepEqual(failures, [], 'no page or console errors after sign-in outcomes');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

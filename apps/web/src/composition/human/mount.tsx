@@ -7,7 +7,7 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
 import { createJoinController } from '../../features/join/controller';
-import { AgentJoinGuidance, JoinScreen } from '../../features/join/JoinScreen';
+import { JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
 import type { HumanApplicationHandle, HumanRouteContext } from './application';
 import type { HumanRoute, HumanRouteCodec } from './routes';
@@ -88,32 +88,54 @@ function AgentConfirmRoute({ context, joinId, routes, navigateRoute }: {
     onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />;
 }
 
-function SignInPanel({ identity, path, isJoin, navigateExternal }: {
+/** Starts sign-in that returns to `path` and leaves the page; false when sign-in cannot start. */
+export async function redirectToSignIn(identity: IdentityPort, path: string,
+  navigateExternal: (url: string) => void): Promise<boolean> {
+  try {
+    const result = await identity.beginSignIn(path);
+    if (result.kind !== 'ok') return false;
+    navigateExternal(result.value.url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every signed-out route goes straight to sign-in and back to the same path.
+ * Cancelled and failed sign-ins return to the landing page, which reports them.
+ */
+function SignInRedirect({ identity, path, navigateExternal }: {
   identity: IdentityPort;
   path: string;
-  isJoin: boolean;
   navigateExternal: (url: string) => void;
 }) {
-  const [signInFailed, setSignInFailed] = useState(false);
-  const signInOutcome = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('sign_in');
+  const [failed, setFailed] = useState(false);
+  const started = useRef(false);
+  const signIn = useCallback(() => {
+    setFailed(false);
+    void redirectToSignIn(identity, path, navigateExternal).then(ok => { if (!ok) setFailed(true); });
+  }, [identity, navigateExternal, path]);
 
-  async function signIn() {
-    setSignInFailed(false);
-    const result = await identity.beginSignIn(path);
-    if (result.kind === 'ok') navigateExternal(result.value.url);
-    else setSignInFailed(true);
+  useEffect(() => {
+    // StrictMode replays effects; one mount starts one sign-in.
+    if (started.current) return;
+    started.current = true;
+    signIn();
+  }, [signIn]);
+
+  if (failed) {
+    return (
+      <div className="kh-state-c" role="alert">
+        <b>Sign-in is unavailable right now.</b>
+        <button type="button" className="kh-btn" onClick={signIn}>Try again</button>
+      </div>
+    );
   }
-
   return (
-    <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
-      <Panel>
-        {signInOutcome === 'cancelled' ? <p role="status">Sign-in was cancelled. Choose Sign in to try again.</p> : null}
-        {signInOutcome === 'error' ? <p role="alert">Sign-in could not be completed. Choose Sign in to try again.</p> : null}
-        <button type="button" className="aiur-action" onClick={() => void signIn()}>Sign in</button>
-        {isJoin ? <><p>Humans: sign in to accept this invitation.</p><AgentJoinGuidance /></> : null}
-        {signInFailed ? <p role="alert">Sign-in is unavailable right now.</p> : null}
-      </Panel>
-    </KhalaPageFrame>
+    <section className="kh-state" aria-label="Signing in">
+      <div className="kh-state-c"><span className="kh-spin" aria-hidden="true"></span><b>Signing in…</b></div>
+    </section>
   );
 }
 
@@ -256,7 +278,7 @@ export function HumanApplicationScreen({
       routes={routes}
       mode={mode}
       renderRoute={renderRoute}
-      renderSignedOut={path => <SignInPanel identity={identity} path={path} isJoin={routes.parse(path).kind === 'join'} navigateExternal={navigateExternal} />}
+      renderSignedOut={path => <SignInRedirect key={path} identity={identity} path={path} navigateExternal={navigateExternal} />}
       renderDeviceLoss={() => <LostDevicePanel />}
       renderReadyShell={renderReadyShell}
       renderPendingShell={(chrome, phase, children) => <PendingOwnerShell application={application} routes={routes}

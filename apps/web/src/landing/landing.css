@@ -22,6 +22,16 @@
   --font-display: var(--aiur-font-display);
   --font-body: var(--aiur-font-body);
   --font-mono: var(--aiur-font-mono);
+  /* Khala app accent set (RECREATION-SPEC §2.2) for the Sign in pill. */
+  --accent-ink: #8fbcff;
+  --accent-soft: rgba(47, 134, 255, 0.15);
+  --accent-line: rgba(47, 134, 255, 0.34);
+}
+
+:root[data-theme='light'] {
+  --accent-ink: #1a4aa8;
+  --accent-soft: rgba(31, 87, 196, 0.11);
+  --accent-line: rgba(31, 87, 196, 0.30);
 }
 
 :root[data-theme='light'] { color-scheme: light; }
@@ -149,6 +159,45 @@ a {
   gap: 10px;
   height: 50px;
   padding: 0.75rem clamp(0.9rem, 3vw, 1.25rem) 0;
+}
+
+/* The app dashboard's accent `.tool-btn` pill (RECREATION-SPEC §19.2). */
+.signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  box-sizing: border-box;
+  min-height: 42px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  padding: 0.44rem 0.82rem;
+  background: var(--pill-bg);
+  color: var(--accent-ink);
+  font-family: "JetBrains Mono", var(--font-mono), monospace;
+  font-size: 0.76rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.signin:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.signin:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.signin-status {
+  position: relative;
+  z-index: 2;
+  text-align: right;
+  padding: 0.25rem clamp(0.9rem, 3vw, 1.25rem) 0;
+  font-size: 0.76rem;
+  color: var(--muted);
 }
 
 /* ---- Hero ---- */
@@ -523,8 +572,4 @@ a {
 
 .prompt-frame .install-box {
   margin-top: 0;
-}
-
-.app-cta {
-  margin-top: 14px;
 }

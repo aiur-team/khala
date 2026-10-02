@@ -47,8 +47,17 @@ describe('splash page prompt', () => {
     expect(await copyText(AGENT_PROMPT, null)).toBe('unavailable');
   });
 
-  test('links the hero to the hosted app with an enabled prompt', () => {
-    expect(html).toContain('<a class="button cta app-cta aiur-action" href="/new">Open Khala app</a>');
+  test('signs in from the top right and keeps an enabled hero prompt', () => {
+    const topbar = html.match(/<header class="topbar">([\s\S]*?)<\/header>/)?.[1] ?? '';
+    expect(topbar.trim().endsWith('<a class="button signin" href="/api/human/auth/login?return_to=%2Fconversations">Sign in</a>')).toBe(true);
+    expect(html).not.toContain('Open Khala app');
+    expect(html).not.toContain('app-cta');
+    expect(css).not.toContain('.app-cta');
+    const signin = css.match(/\.signin\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(signin).toMatch(/font-family:\s*"JetBrains Mono", var\(--font-mono\), monospace;/);
+    expect(signin).not.toMatch(/Bungee|--font-display/);
+    // Signed-in visitors can still open /new directly; nothing here links to it.
+    expect(html).not.toContain('href="/new"');
     expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('conversations');
     expect(html).toMatch(/<button class="button copy aiur-copy-control" id="copyBtn"[^>]*>/);
     expect(html).not.toContain('Coming soon.');
@@ -133,7 +142,7 @@ describe('splash page constraints', () => {
       if (tag.includes('banner-close')) continue;
       expect(tag).toMatch(/class="button\b/);
     }
-    for (const [tag] of html.matchAll(/<a\b[^>]*class="[^"]*\b(?:cta|docs)\b[^"]*"[^>]*>/g)) expect(tag).toMatch(/class="button\b/);
+    for (const [tag] of html.matchAll(/<a\b[^>]*class="[^"]*\b(?:cta|docs|signin)\b[^"]*"[^>]*>/g)) expect(tag).toMatch(/class="button\b/);
   });
 
   test('shared Aiur package owns action, marketing, theme, and font styles', () => {
@@ -145,7 +154,6 @@ describe('splash page constraints', () => {
     expect(html).toContain('aiur-lockup-logo');
     expect(html).toContain('aiur-wordmark');
     expect(html).toContain('aiur-copy-control');
-    expect(html).toContain('aiur-action');
     expect(contrast('#ffffff', '#1f57c4')).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#ffffff', '#0070f0')).toBeGreaterThanOrEqual(4.5);
   });
