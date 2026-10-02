@@ -22,6 +22,7 @@ Live tests: `*.live.test.ts` files are excluded from each package's default `tes
 
 All bodies are JSON. Errors are `{ "error": <code> }` with the HTTP status shown.
 
+- **Two error shapes.** Errors raised by the gateway itself (403 `forbidden_origin`, 404 for an unknown path, 405) use the body `{ "code": <code>, "requestId": <id> }`, not `{ "error": <code> }`. Clients (KM-142, KM-134) must accept both shapes.
 - **Exact paths only.** The control gateway matches exact paths (`apps/control/src/runtime/handler.ts:9-14`), so `joinId` always travels as a query parameter, never as a path segment.
 - **Origin header.** Every agent-client POST sends `Origin: <app origin>`, the origin of the channel link. The gateway rejects a POST whose Origin is foreign (`apps/control/src/auth/csrf.ts:14-20`).
 - **Confirm URL.** The `confirmUrl` is `<app origin>/agent/confirm?joinId=<joinId>`.
@@ -256,3 +257,10 @@ export default async function run(stdin: string, argv: readonly string[]): Promi
   - A module that throws, or resolves to a non-number → stderr `{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}` for `hook` (`khala: internal_error` for `mcp`), exit **1**.
   - **The bin itself never exits 2.** An `asyncRewake` hook that exits 2 wakes Claude, so only a module's own return value may be 2.
 - **Output.** The bin writes nothing to stdout. Modules own stdout (JSON-RPC lines for `mcp`, the C6 envelope for `deliver`).
+
+## C13. History-sharing device rule
+
+Cross-signing bootstrap without an interactive-auth (UIA) prompt succeeds only once per Matrix user. Only a human's **first** browser device can therefore hand MSC4268 history to agents. Consequences:
+- Live tests (KM-150, KM-151) run `pnpm stack:down --wipe && pnpm stack:up` before each run, so every run starts with fresh users.
+- KM-152 makes the operator's Firefox profiles the first production devices after the reset: `:9222` for the owner and `:9223` for the coworker. No other production sign-in may happen first.
+- A recovery-key prompt for later devices is M2 (deferred).

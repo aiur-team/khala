@@ -47,10 +47,10 @@ Deletion PRs: `deletion-guard` needs admin approval on the head SHA for any PR t
 | KM-123 | Control cut: shrink to the M1 route surface | app | 3 | 120, 122 | 130 | U6 | `hosted-production.ts` registers only kept human routes; delete agent-bootstrap, channel-access, channel-discovery, pairing, closure, owner-mailbox, revocation, room-send and device-admission code |
 | KM-124 | Delete old agent stacks, suites, scripts and preview runner | platform | 2 | 101, 102, 103, 123 | — | U7 | Delete `apps/connector`, `packages/{connector,policy,agent-skill,agent-cli,harnesses,claude-plugin}`, `tests/{conformance,e2e}`, agent-only integration suites, old scripts, `infra/preview`, the release workflow; fix CI and boundaries |
 | KM-125 | Prune dead contracts and messaging modules | platform | 2 | 124 | — | U8 | Remove unimported modules in `packages/contracts` and `packages/messaging`; keep the list in the U8 approach |
-| KM-130 | Shared history visibility + browser cross-signing | app | 2 | 120 | 122, 123, 134, 135, 172 | U9 | `history_visibility: shared` at both creation sites; silent `bootstrapCrossSigning`; drop the `history:'full'` refusals; update the human browser spec (AE7) |
+| KM-130 | Shared history visibility + browser cross-signing | app | 2 | 120 | 122, 123, 133, 134, 135, 172 | U9 | `history_visibility: shared` at both creation sites; silent `bootstrapCrossSigning`; drop the `history:'full'` refusals; update the human browser spec (AE7) |
 | KM-131 | Control: agent-join store and agent routes | app | 2 | 104 | — | U10 part | `apps/control/src/agent-join/{store,agent-routes}.ts`: request, poll, ready (C2), Blobs compare-and-set, 10-minute TTL, hashed poll secret. Unregistered handlers plus tests |
 | KM-132 | Control: agent provisioning and human confirm routes | app | 3 | 104, 131 | — | U10 part | `apps/control/src/agent-join/{provision,human-routes}.ts`: view, confirm, status (C2); register the agent account (C4), mint token, seal credentials, write owner map (C3). Unregistered handlers plus tests |
-| KM-133 | Control: register agent-join routes | app | 2 | 123, 131, 132 | — | U10 wiring | Add KM-131/132 handlers to `hosted-production.ts`; route smoke tests |
+| KM-133 | Control: register agent-join routes | app | 2 | 123, 131, 132 | 130 | U10 wiring | Add KM-131/132 handlers to `hosted-production.ts`; route smoke tests |
 | KM-134 | Web: agent confirmation page | app | 2 | 104, 120 | 130, 135, 172 | U11 | `apps/web/src/features/agent-confirm/`: signed-out redirect, confirm, poll status, `client.invite(roomId, agentUserId)`; states connecting, done, error |
 | KM-135 | Web: agent attribution in the timeline | app | 2 | 104, 120, 122 | 130, 134, 172 | U15 | Render C3 participants: agent label, owner and harness badge; `unknown` fallback |
 | KM-141 | Agent state dir, inbox and cursor library | agent | 2 | 103, 104 | — | U12 part | `packages/agent/src/{state,inbox}.ts`: C5 layout and permissions, append with eventId dedup, atomic cursor, unread count |
@@ -63,14 +63,14 @@ Deletion PRs: `deletion-guard` needs admin approval on the head SHA for any PR t
 | KM-150 | Integration: agent joins and chats on the local stack | acceptance | 3 | 130, 133, 134, 135, 143, 144, 147 | — | U12/U13 wiring | Wire `src/mcp/main.ts` to the real client and the Codex waker (`src/mcp/wiring.ts`; no bin edit); live test: headless owner confirms, agent reads history, agent sends, browser sees it with attribution |
 | KM-151 | Local four-party acceptance (Executor-owned, `human:todo`) | acceptance | 3 | 135, 146, 147, 150 | 111, 112 | U16 | Runbook, headless human driver, and the run with the operator's Claude and Codex panes; verifies KM-150's Codex waker wiring (no `packages/agent` edits); evidence doc |
 | KM-152 | Production reset, deploy and acceptance (Executor-owned, `human:todo`) | acceptance | 3 | 151 | — | U17 | Back up and wipe prod Synapse + Blobs, deploy the KM-151 SHA, prove the deploy SHA three ways (deploy id, deploy title, served `index.html` hash), repeat AE6 on `khala.aiur.team` |
-| KM-153 | Docs: M1 user guide and README | platform | 1 | — (after 151) | — | DoD | Rewrite `README.md` and `docs/user-guide.md` for the M1 flow only; delete stale operations docs |
+| KM-153 | Docs: M1 user guide and README | platform | 1 | 124, 146, 147, 151 | — | DoD | Rewrite `README.md` and `docs/user-guide.md` for the M1 flow only; delete stale operations docs |
 | KM-160 | CI repair pass 1 (after deletions) | platform | 2 | 124 | — | KTD11 | Make `main` CI green after the cut; this ticket waits for CI |
 | KM-161 | CI repair pass 2 (before acceptance) | platform | 2 | 150 | — | KTD11 | Make `main` CI green after integration; waits for CI |
 | KM-170 | Channel event contract and formatter | events | 2 | 104 | — | E-U1 | `packages/contracts/src/m1/channel-event.ts` |
 | KM-171 | Aiur → Khala event mapper | events | 2 | 170 | — | E-U2 | `packages/contracts/src/m1/from-aiur.ts`, pure function with fixtures |
 | KM-172 | Browser channel-event pill | events | 3 | 170, 120 | 130, 134, 135, 182 | E-U3 | Decode `com.khala.event.v1` in `matrix-browser.ts`; `ChannelEventPill` component |
-| KM-173 | Agent `khala_event` tool | events | 2 | 143, 144, 170, 171 | — | E-U4 | `khala_event` MCP tool + `sendChannelEvent` (C7, C11); emit with a key-derived txn id. No CLI |
-| KM-174 | Agent reads events as framed data | events | 2 | 143, 145, 170 | — | E-U5 | Events in the inbox as `kind:'event'`; never wake |
+| KM-173 | Agent `khala_event` tool | events | 2 | 143, 144, 170, 171 | 174 | E-U4 | `khala_event` MCP tool + `sendChannelEvent` (C7, C11); emit with a key-derived txn id. No CLI |
+| KM-174 | Agent reads events as framed data | events | 2 | 143, 145, 170 | 173 | E-U5 | Events in the inbox as `kind:'event'`; never wake |
 | KM-175 | Aiur adapter integration doc | events | 1 | 170, 171, 173 | — | E-U6 | `docs/integrations/aiur-channel-events.md` |
 | KM-180 | Design: edge-to-edge Khala shell and tokens | design | 3 | — (gate G-DESIGN) | — | design | Recreate the design's tokens and the three-pane layout full-bleed; owns `apps/web/src/ui/conversation/tokens.css` and `ConversationLayout` |
 | KM-181 | Design: conversation list pane | design | 2 | 180 | — | design | `ConversationList` per design |
@@ -84,4 +84,11 @@ Deletion PRs: `deletion-guard` needs admin approval on the head SHA for any PR t
 
 - **G-DESIGN:** the Claude Design project is imported to `docs/design/khala-chat/` with a diff/recreation spec. Owner: Executor. It gates KM-180..186.
 - **G-PANES:** the operator's live Claude Code and Codex test panes are listening on `AGENT-MESSAGES.md`. It gates the manual legs of KM-111, KM-112 and KM-151 (all coordinated by the Executor).
-- **G-PROD:** gates KM-152. It covers operator approval of the production wipe, naming two real Google accounts, and the operator doing a one-time headed login (`humans.mjs login`). Precondition D8: the production identity provider (Google OIDC configuration) is confirmed before KM-152.
+- **G-PROD:** gates KM-152. It covers operator approval of the production wipe, naming two real Google accounts, and the operator doing a one-time headed login (`humans.mjs login`). Precondition D8: the production identity provider (Google OIDC configuration) is confirmed before KM-152. The humans are the operator\'s real Firefox instances driven over WebDriver BiDi: `:9222` owner (kevinweaver2@gmail.com) and `:9223` coworker (its.applekid@gmail.com). Both are already signed in to Google; there is no headed login step.
+
+## Notes (plan_version 4)
+
+- **Acceptance humans.** KM-151 (local, Dex users) and KM-152 (production, Google) drive the two real Firefox instances over WebDriver BiDi, not headless browsers.
+- **Ordering.** KM-151 is suggested-after KM-161.
+- **README ownership.** `packages/agent/README.md` is owned by KM-144. KM-146 owns `docs/install-claude.md` and KM-147 owns `docs/install-codex.md`.
+- **Lockfile.** Any ticket that changes dependencies (for example KM-102, KM-103, KM-110) regenerates `pnpm-lock.yaml` on rebase with `pnpm install` and never hand-merges it.

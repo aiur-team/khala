@@ -97,6 +97,15 @@ These are Executor decisions made after the first ticket-writing pass. They over
 - C12 hook entry point is `run(stdin, argv)`, and a module's return value becomes the process exit code. Accepted.
 - KM-147 drops its hard dependency on KM-112. It builds from the existing 0.160 evidence (`docs/evidence/codex-0160-native-boundary.md`), and KM-112's findings are suggested-after input. Now KM-150 no longer waits on a manual pane leg. If KM-112 contradicts KM-147's behaviour, the finding returns to KM-147 as rework.
 
+## Round 4 (adversarial review)
+
+- KM-133 serializes with KM-130: both edit control `matrix.ts`.
+- KM-153 depends on KM-124, KM-146, KM-147 and KM-151.
+- KM-151 is suggested-after KM-161, so acceptance starts from a green `main`.
+- `packages/agent/README.md` is owned by KM-144. KM-146 writes `docs/install-claude.md` and KM-147 writes `docs/install-codex.md`.
+- C2 now documents the gateway error shape, and C13 the history-sharing device rule.
+- Live runs: `pnpm stack:down && pnpm stack:up`, then source `.khala-local/e2e.env`.
+
 ## Deferred additions
 
 - D7: npm publishing of `@khala/agent` under a public name, with a bundled contracts dependency.
