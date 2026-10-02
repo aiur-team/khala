@@ -1,3 +1,4 @@
+import { decodeParticipant, type Participant } from '@khala/contracts/m1/participants';
 import { decodeAgentJoinView, humanAgentJoinPath, humanAgentJoinConfirmPath, humanAgentJoinStatusPath } from '@khala/contracts/m1/agent-join';
 import type { AgentJoinPort, AgentJoinResult, AgentJoinError } from '../../features/agent-confirm/ports';
 import {
@@ -62,6 +63,7 @@ export type HumanBrowserApi = Readonly<{
   channelLinks: HumanChannelLinks;
   credentials: CredentialSource;
   participants: Readonly<{
+    describe(participantId: string): Participant | undefined;
     resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
 }>;
@@ -304,7 +306,9 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     },
   };
 
+  const details = new Map<string, Participant>();
   const participants = {
+    describe: (participantId: string): Participant | undefined => details.get(participantId),
     async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null> {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
       if (roomId && (!session?.deviceId || !session.matrixAccessToken)) return null;
@@ -313,22 +317,26 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
       const envelope = await jsonObject(response);
       if (envelope === null || !hasExactKeys(envelope, ['participants']) || !Array.isArray(envelope.participants)) return null;
       const resolved = new Map<string, ParticipantView>();
+      const pendingDetails = new Map<string, Participant>();
       for (const value of envelope.participants) {
-        if (!isObject(value) || !(hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName'])
-          || hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName', 'kind']))
-          || typeof value.matrixUserId !== 'string') return null;
+        const decoded = decodeParticipant(value);
+        if (!decoded.ok) return null;
+        const entry = decoded.value;
         const participant = decodeParticipantView({
-          participantId: value.participantId,
-          kind: value.kind ?? 'human',
-          ownerId: value.ownerId,
-          displayName: value.displayName,
+          participantId: entry.kind === 'unknown' ? `unknown:${entry.matrixUserId}` : entry.participantId,
+          kind: entry.kind === 'unknown' ? 'human' : entry.kind,
+          ownerId: entry.kind === 'unknown' ? `unknown:${entry.matrixUserId}` : entry.ownerId,
+          displayName: entry.kind === 'unknown' ? 'Unknown' : entry.displayName,
           deviceIds: [],
         }, options.limits);
-        if (!participant.ok || resolved.has(value.matrixUserId)) return null;
-        resolved.set(value.matrixUserId, participant.value);
+        if (!participant.ok || resolved.has(entry.matrixUserId)) return null;
+        resolved.set(entry.matrixUserId, participant.value);
+        pendingDetails.set(participant.value.participantId, entry);
       }
-      return userIds.every(userId => resolved.has(userId))
-        && [...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId)) ? resolved : null;
+      if (!userIds.every(userId => resolved.has(userId))
+        || ![...resolved.entries()].every(([userId, participant]) => userIds.includes(userId) || targetParticipantIds?.includes(participant.participantId))) return null;
+      for (const [participantId, entry] of pendingDetails) details.set(participantId, entry);
+      return resolved;
     },
   };
 
