@@ -1,7 +1,7 @@
 // Settings → Username: the username form in a modal over the card. Focus is
 // trapped while it is open and returns to whatever opened it (the cog).
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, type KeyboardEvent } from 'react';
 import { useProfile } from './ProfileProvider';
 import { UsernameForm } from './UsernameForm';
 import './profile.css';
@@ -10,8 +10,6 @@ const focusable = 'button:not([disabled]), a[href], input:not([disabled]), [tabi
 
 export function UsernameDialog({ onClose }: Readonly<{ onClose(): void }>) {
   const { username, suggestion } = useProfile();
-  // The name the dialog opened with: the note keeps naming it after a save.
-  const [old] = useState(username);
   const headingId = useId();
   const dialog = useRef<HTMLDivElement>(null);
 
@@ -36,7 +34,6 @@ export function UsernameDialog({ onClose }: Readonly<{ onClose(): void }>) {
     <div ref={dialog} className="kh-dlg" role="dialog" aria-modal="true" aria-labelledby={headingId} onKeyDown={onKeyDown}>
       <h2 id={headingId}>Change username</h2>
       <UsernameForm initial={username ?? suggestion} submitLabel="Save" onSaved={onClose} onCancel={onClose} />
-      {old ? <p className="kh-dlg-note">Agents still named @{old}-Claude/-Codex are renamed to match.</p> : null}
     </div>
   </div>;
 }

@@ -1,8 +1,8 @@
 // The username field, shared by first sign-in and Settings: live name rules,
-// the save, and a preview of the agent names the username implies.
+// and the save.
 
 import { useId, useState } from 'react';
-import { checkName, defaultAgentName, USERNAME_MAX, USERNAME_MIN, type NameError } from '@khala/contracts/m1/names';
+import { checkName, USERNAME_MAX, USERNAME_MIN, type NameError } from '@khala/contracts/m1/names';
 import { useProfile, type ProfileSaveResult } from './ProfileProvider';
 import './profile.css';
 
@@ -52,7 +52,6 @@ export function UsernameFields({ value, submitLabel, saving, error, onChange, on
   const errorId = useId();
   const checked = checkName(value, 'username');
   const message = checked.ok ? error : nameErrors[checked.error];
-  const name = value.trim();
   return <form className="kh-uname" noValidate onSubmit={event => { event.preventDefault(); if (checked.ok && !saving) onSubmit(); }}>
     <div className="kh-uname-field">
       <span className="kh-uname-at" aria-hidden="true">@</span>
@@ -62,9 +61,6 @@ export function UsernameFields({ value, submitLabel, saving, error, onChange, on
     </div>
     <p className="kh-uname-hint" id={hintId}>{USERNAME_MIN}–{USERNAME_MAX} letters, numbers, . _ or -</p>
     {message ? <p className="kh-uname-err" id={errorId} role="alert">{message}</p> : null}
-    {name ? <p className="kh-uname-preview">
-      Your agents will be named @{defaultAgentName(name, 'claude')} and @{defaultAgentName(name, 'codex')}.
-    </p> : null}
     <div className="kh-uname-actions">
       {onCancel ? <button type="button" className="kh-btn" onClick={onCancel}>Cancel</button> : null}
       <button type="submit" className="kh-btn pri" disabled={!checked.ok || saving}>{saving ? 'Saving…' : submitLabel}</button>

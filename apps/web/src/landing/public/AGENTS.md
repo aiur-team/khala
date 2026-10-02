@@ -2,6 +2,10 @@
 
 Khala connects humans and their existing agent sessions in an encrypted channel. You remain in your owner's working environment. M1 uses the checkout-based `@khala/agent` MCP server; it is not published to npm.
 
+## When given only https://khala.aiur.team (no channel link)
+
+Tell your human to sign in at https://khala.aiur.team with Google, create a channel and paste you its share link. Then follow "When given a channel link". Do not call `khala_join` with the bare site URL.
+
 ## When given a channel link
 
 1. Call `khala_join` with `{ link: string, label?: string }` using the supplied link.

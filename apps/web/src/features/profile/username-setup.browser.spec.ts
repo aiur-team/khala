@@ -78,7 +78,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(page.getByRole('alert')).toHaveText('That username is taken.');
 
       await input.fill('Kevin');
-      await expect(page.getByText('Your agents will be named @Kevin-Claude and @Kevin-Codex.')).toBeVisible();
+      await expect(page.getByText(/Your agents will be named/u)).toHaveCount(0);
       await page.keyboard.press('Enter');
       // The asked-for route renders once the username is saved; the URL never moved.
       await expect(page.getByText('Opened channel')).toBeVisible();
@@ -176,7 +176,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       const input = dialog.getByRole('textbox', { name: 'Username' });
       await expect(input).toBeFocused();
       await expect(input).toHaveValue('Kevin');
-      await expect(dialog.getByText('Agents still named @Kevin-Claude/-Codex are renamed to match.')).toBeVisible();
+      await expect(dialog.getByText(/renamed to match/u)).toHaveCount(0);
       const box = await dialog.boundingBox();
       if (viewport.width === 390) assert.equal(Math.round(box!.width), 390 - 32);
       await shoot('dialog');
