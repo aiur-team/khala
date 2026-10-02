@@ -45,13 +45,13 @@ line `humans.mjs <command>: <step> failed: <code>`. Set `HUMANS_DEBUG=1` for a s
 | `$H say --as a1\|a2 --text <t>` | Sends `<t>` in the run tab and waits (30 s) for its delivered (non-pending) row. |
 | `$H confirm --as a1\|a2 --url <u>` | Opens `<u>` in a new tab, clicks **Confirm**, waits (180 s) for `<label> joined <channel>.`; the tab stays open. |
 | `$H wait-for --as a1\|a2 --text <t> [--sender <label>] [--timeout 300]` | Waits until a timeline row in the run tab contains `<t>` and, when supplied, has exactly the parsed `sender` `<label>`; prints that row. |
-| `$H transcript --as a1\|a2 [--reload]` | Prints JSON `[{sender, kind, owner?, text}]` for every delivered row. |
+| `$H transcript --as a1\|a2 [--reload]` | Prints JSON `[{sender, kind, text}]` for every delivered row. |
 | `$H cleanup --as a1\|a2` | Closes every tab recorded for that human. |
 
 `transcript` fields come from each row's accessible name line (`<label>, <ownership>, <time>`): `sender` is
 the label (`Claude`, `Codex`, a human's name, or `You` for the viewer's own rows, which have no name line),
-`kind` is the ownership (`Human`, `Your agent`, `Another person's agent`, or `You`), and `owner` is the
-visible machine tag on agent rows (for example `Kevin’s machine`). Rows later in a run inherit the run's
+`kind` is the ownership (`Human`, `Your agent`, `Another person's agent`, or `You`). Agent rows carry no
+visible owner tag (the avatar's owner badge and `kind` say whose agent it is). Rows later in a run inherit the run's
 sender. State lives in `<wt>/.khala-local/acceptance/run.json` (origin, channel link, room id, channel
 path, tab marker tokens); `stack:down --wipe` deletes it.
 
@@ -257,8 +257,8 @@ $H transcript --as a2 --reload
 
 **PASS (AE6):** both outputs contain every message from 3d–3f. A2 shows `m1`–`m3` because A2 joined before
 them. Every agent row is attributed: `sender` `Claude` or `Codex`, `kind` `Your agent` or
-`Another person's agent`, and an `owner` machine tag. Attribution is asserted unconditionally (KM-135):
-any agent row without its agent label, owner and kind is a **FAIL**. **Evidence:** both JSON outputs
+`Another person's agent`. Attribution is asserted unconditionally (KM-135):
+any agent row without its agent label and kind is a **FAIL**. **Evidence:** both JSON outputs
 (truncated ids).
 
 ## 3h. Fallback (AE5)

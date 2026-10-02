@@ -53,9 +53,10 @@ describe('TimelineScreen', () => {
       roomPort={noopSendPort} roomId={roomId} viewer={viewer}
       describeParticipant={id => id === bot.participantId ? { matrixUserId: '@bot:hs', participantId: 'bot', ownerId: bot.ownerId,
         displayName: 'Claude · Kevin', kind: 'agent', ownerLabel: 'Kevin', harness: 'claude' } : undefined} />);
-    // The C3 display name splits into the label and the owner's machine tag.
-    expect(html).toContain('<b dir="auto">Claude</b><span class="kh-otag" style="--oh:');
-    expect(html).toContain('Kevin’s machine</span>');
+    // The C3 display name keeps only the label; the avatar's owner badge says whose agent it is.
+    expect(html).toContain('<b dir="auto">Claude</b><time');
+    expect(html).not.toContain('machine');
+    expect(html).toContain('class="kh-row agent theirs first timeline__row"');
     expect(html).toMatch(/aria-label="Claude details"><img src="[^"]+" alt=""\/>/);
     expect(html).toContain('>KE</span>');
     expect(html).not.toContain('Your machine');
@@ -70,7 +71,7 @@ describe('TimelineScreen', () => {
       describeParticipant={() => ({ matrixUserId: '@stranger:hs', displayName: '@stranger:hs', kind: 'unknown' })} />);
     expect(html).toContain('<b dir="auto">Unknown</b>');
     expect(html).toContain('<span class="kh-ini">UN</span>');
-    expect(html).not.toMatch(/kh-otag|kh-htag/);
+    expect(html).not.toMatch(/kh-htag|kh-row agent/);
     expect(html).not.toContain('@stranger:hs');
   });
 
@@ -143,19 +144,21 @@ describe('TimelineScreen', () => {
     expect(html).toContain('class="kh-row human first timeline__row"');
     // The agent row is grey (no `.human`/`.me`) and named for its owner relation.
     expect(agentIndex).toBeGreaterThan(humanIndex);
-    expect(html).toContain('class="kh-row first timeline__row"');
+    expect(html).toContain('class="kh-row agent theirs first timeline__row"');
   });
 
-  it('R1: tags the viewer\'s agent "Your machine" without making it a `.me` row', () => {
+  it('R1: marks the viewer\'s agent `.yours` (no machine tag) without making it a `.me` row', () => {
     const ownAgent = { ...participant('own-agent', 'agent', 'Assistant'), ownerId: viewer.ownerId };
     const otherAgent = { ...participant('other-agent', 'agent', 'Assistant · Maya') };
     const data = { phase: 'ready' as const, items: [item('E1', ownAgent, 'mine'), item('E2', otherAgent, 'not mine')], nextCursor: null, newMessageCount: 0 };
     const html = renderToStaticMarkup(
       <TimelineScreen controller={fakeController(data)} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />,
     );
-    expect(html).toContain('Your machine</span>');
+    expect(html).not.toContain('machine');
     expect(html).toContain('aria-label="Assistant, your agent,');
-    expect(html).toContain('Maya’s machine</span>');
+    expect(html).toContain('aria-label="Assistant, another person&#x27;s agent,');
+    expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first/);
+    expect(html).toMatch(/<li data-event-id="E2" class="kh-row agent theirs first[^>]*style="--oh:\d+"/);
     expect(html).not.toMatch(/class="kh-row me/);
     // §3: the viewer's owner badge reads `YO`, as in the roster and chips.
     expect(html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1))).toEqual(['YO', 'MA']);
@@ -426,8 +429,8 @@ describe('thread design (KM-182)', () => {
     const ownAgent = { ...participant('own-agent', 'agent', 'Sonnet · Viewer'), ownerId: viewer.ownerId };
     const html = renderToStaticMarkup(<TimelineScreen controller={ready([item('E1', ownAgent, 'agent text'), item('E2', viewer, 'my text')])}
       roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
-    expect(html).toMatch(/<li data-event-id="E1" class="kh-row first timeline__row"/);
-    expect(html).toContain('Your machine');
+    expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first timeline__row"/);
+    expect(html).not.toContain('Your machine');
     expect(html).toMatch(/<li data-event-id="E2" class="kh-row me first timeline__row"[^>]*><div class="kh-col"><div class="kh-b">/);
   });
 

@@ -11,8 +11,8 @@ export type ThreadRowName = Readonly<{
   hue: number;
   /** Collision suffix such as `#395`; rendered only when set. */
   idBadge?: string;
-  /** `Your machine` / `Kevin’s machine` for agents, `Human` for other humans. */
-  tag: Readonly<{ kind: 'otag'; text: string; ownerHue: number }> | Readonly<{ kind: 'htag' }> | null;
+  /** `Human` for other humans; agents carry no tag (their avatar's owner badge says whose they are). */
+  tag: Readonly<{ kind: 'htag' }> | null;
   ariaLabel: string;
   onClick?: () => void;
 }>;
@@ -21,6 +21,11 @@ type ThreadRowProps = Readonly<{
   id: string;
   run: ThreadRun;
   sender: 'me' | 'human' | 'agent';
+  /**
+   * Agent rows: whose agent it is. The bubble takes a greyed tint of its owner's colour: the viewer's
+   * accent for `.yours`, the owner's identity hue (`--oh`, as on the avatar's owner badge) for `.theirs`.
+   */
+  agentOwner?: Readonly<{ yours: boolean; hue: number }>;
   /** ISO time: the row `title` and the name line's `dateTime`. */
   time?: string;
   /** Fixtures and tests pass UTC; the product uses the viewer's local time. */
@@ -55,20 +60,20 @@ export function ChatMessage(props: ThreadRowProps | LegacyProps) {
   return 'run' in props ? <ThreadRow {...props} /> : <LegacyMessage {...props} />;
 }
 
-function ThreadRow({ id, run, sender, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
+function ThreadRow({ id, run, sender, agentOwner, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
   retry, after, className = '', children }: ThreadRowProps) {
   const position = run.first ? 'first' : run.mid ? 'mid' : 'last-of';
-  const classes = ['kh-row', sender === 'me' ? 'me' : sender === 'human' ? 'human' : '', position,
+  const classes = ['kh-row', sender === 'me' ? 'me' : sender === 'human' ? 'human' : '',
+    sender === 'agent' && agentOwner ? `agent ${agentOwner.yours ? 'yours' : 'theirs'}` : '', position,
     pop ? 'pop' : '', pending ? 'pending' : '', failed ? 'failed' : '', className].filter(Boolean).join(' ');
   return <li data-event-id={id} aria-live={live ? 'polite' : undefined} className={classes} title={time}
-    onAnimationEnd={pop ? onPopEnd : undefined}>
+    style={sender === 'agent' && agentOwner ? { '--oh': agentOwner.hue } as CSSProperties : undefined} onAnimationEnd={pop ? onPopEnd : undefined}>
     {run.showAvatar ? avatar : null}
     <div className="kh-col">
       {run.showName && name ? <button type="button" className="kh-name" style={{ '--h': name.hue } as CSSProperties}
         aria-label={name.ariaLabel} onClick={name.onClick}>
         <b dir="auto">{name.label}</b>
         {name.idBadge ? <span className="kh-id">{name.idBadge}</span> : null}
-        {name.tag?.kind === 'otag' ? <span className="kh-otag" style={{ '--oh': name.tag.ownerHue } as CSSProperties}>{name.tag.text}</span> : null}
         {name.tag?.kind === 'htag' ? <span className="kh-htag">Human</span> : null}
         {time ? <time dateTime={time} title={time}>{clockLabel(new Date(time), timeOptions)}</time> : null}
       </button> : null}
