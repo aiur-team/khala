@@ -42,7 +42,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
     };
   }
   return [
-    tool('khala_join', 'Join a Khala channel from its link. Returns a link your human must open and confirm.',
+    tool('khala_join', 'Join a Khala channel from its link. Joining a different channel link leaves the current channel. Returns a link your human must open and confirm.',
       { link: { type: 'string' }, label: { type: 'string', minLength: 1, maxLength: 40 } }, ['link'],
       args => typeof args.link === 'string' && (!Object.hasOwn(args, 'label')
         || typeof args.label === 'string' && args.label.trim().length > 0 && [...args.label].length <= 40),

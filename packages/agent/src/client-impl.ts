@@ -39,7 +39,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let joins: Promise<unknown> = Promise.resolve();
   let appends: Promise<void> = Promise.resolve();
   let statusWrites: Promise<void> = Promise.resolve();
-  const acceptEventKey = createEventKeyFilter();
+  let acceptEventKey = createEventKeyFilter();
 
   function inboxEntry(message: SessionMessage, session: AgentMatrixSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
     const entry = toInboxEntry(message, session.displayName(message.sender));
@@ -156,9 +156,16 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const task = joins.catch(() => {}).then(async () => {
         await initialize();
         if (closed) throw new KhalaClientError('not_connected');
-        if (active?.joined) return { state: 'connected' as const, channelName: status.channelName! };
+        if (active?.joined && active.link === link) return { state: 'connected' as const, channelName: status.channelName! };
         if (active?.link === link) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl };
+        const wasJoined = active?.joined;
         await cancel();
+        if (wasJoined) {
+          await removeStateFile(dir, 'inbox.jsonl');
+          await removeStateFile(dir, 'cursor.json');
+          acceptEventKey = createEventKeyFilter();
+          delete status.channelName;
+        }
         const saved = await readStateFile<JoinFile>(dir, 'join.json');
         if (saved?.link === link && Date.parse(saved.expiresAt) <= now().getTime()) {
           await removeStateFile(dir, 'join.json');

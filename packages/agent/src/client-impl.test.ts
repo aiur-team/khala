@@ -86,7 +86,41 @@ it('runs the handshake in order and exposes a connected client', async () => {
   expect(await readStateFile(dir, 'session.json')).toEqual(credentials);
   expect((await fs.stat(path.join(dir, 'session.json'))).mode & 0o777).toBe(0o600);
   expect(await readStateFile(dir, 'join.json')).toBeNull();
-  expect(await client.join('another', 'Other')).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect(await client.join(link, 'Other')).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect(joinApi.requestJoin).toHaveBeenCalledTimes(1);
+  expect(session.stop).not.toHaveBeenCalled();
+});
+it('leaves the connected channel and clears delivery state when joining a different link', async () => {
+  await connected();
+  handler!(message('$old'));
+  handler!(channelEvent('$old-event'));
+  await entries();
+  await writeStateFile(dir, 'cursor.json', { lastDeliveredEventId: '$old', deliveredCount: 1 });
+  const oldHandler = handler!;
+  const nextLink = 'https://khala.example/join/ijklmnop';
+  const nextCreated = { ...created, joinId: 'next', confirmUrl: 'https://khala.example/agent/confirm/next' };
+  joinApi.requestJoin.mockResolvedValueOnce(nextCreated);
+  poll = deferred<AgentCredentials>();
+
+  expect(await client.join(nextLink, 'Other')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
+  expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
+  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Other' }, {});
+  expect(session.stop).toHaveBeenCalledTimes(1);
+  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  expect(await readStateFile(dir, 'session.json')).toBeNull();
+  await expect(fs.stat(path.join(dir, 'inbox.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(fs.stat(path.join(dir, 'cursor.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await client.status()).toEqual({ state: 'joining', unread: 0 });
+  oldHandler(message('$stale'));
+  expect(await entries()).toEqual([]);
+
+  vi.mocked(session.roomName).mockReturnValue('Next room');
+  poll.resolve(credentials);
+  await vi.waitFor(async () => expect((await client.status()).channelName).toBe('Next room'));
+  handler!(channelEvent('$next-event'));
+  handler!(message('$next'));
+  expect((await entries()).map(entry => entry.eventId)).toEqual(['$next-event', '$next']);
+  expect((await client.status()).unread).toBe(2);
 });
 it('filters own sender, other rooms and events; dedups and appends in order with labels', async () => {
   await connected();
@@ -180,7 +214,12 @@ it('counts all unread kinds', async () => {
 it('replaces a pending link without stale failure overwriting the new attempt', async () => {
   await client.join(link, 'Codex'); const oldPoll = poll;
   poll = deferred<AgentCredentials>();
-  await client.join('https://khala.example/join/ijklmnop', 'Codex');
+  const nextLink = 'https://khala.example/join/ijklmnop';
+  const nextCreated = { ...created, confirmUrl: 'https://khala.example/agent/confirm/next' };
+  joinApi.requestJoin.mockResolvedValueOnce(nextCreated);
+  expect(await client.join(nextLink, 'Codex')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
+  expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
+  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex' }, {});
   expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   oldPoll.reject(new KhalaClientError('join_expired')); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));

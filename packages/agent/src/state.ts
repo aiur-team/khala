@@ -102,7 +102,7 @@ export function readStateFile<T>(dir: string, name: string): Promise<T | null> {
   return readJson(path.join(dir, name));
 }
 export async function removeStateFile(dir: string, name: string): Promise<void> {
-  if (!/^[a-z]+\.json$/.test(name)) throw new StateError('storage_failed');
+  if (!/^[a-z]+\.json$/.test(name) && name !== 'inbox.jsonl') throw new StateError('storage_failed');
   try { await fs.unlink(path.join(dir, name)); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StateError('storage_failed');
   }
