@@ -1,3 +1,5 @@
+import { ChannelProjection } from '@khala/messaging/channels/timeline';
+import { createTimelineController, type TimelineEntriesView } from './controller';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
@@ -298,4 +300,59 @@ it('disambiguates unavailable agent names across owners using the displayed fall
   expect(html).toContain('Agent name unavailable (#5678)');
   expect(html).not.toContain('First initial name');
   expect(html).not.toContain('Second initial name');
+});
+
+describe('channel event rows', () => {
+  it('keeps the first keyed pill in timeline order and breaks message grouping', () => {
+    const alice = participant('alice', 'human', 'Alice');
+    const first = item('A', alice, 'first');
+    const second = item('B', alice, 'second');
+    const event = { kind: 'channel_event' as const, eventId: '$event' as EventId, participant: alice,
+      content: { v: 1 as const, body: 'first event', kind: 'deploy.finished', summary: 'first event', key: 'k',
+        occurred_at: '2020-01-01T00:00:00Z' }, receivedAt: first.receivedAt };
+    const rows = [{ kind: 'message' as const, item: first }, event,
+      { ...event, eventId: '$duplicate' as EventId, content: { ...event.content, summary: 'duplicate event' } },
+      { kind: 'message' as const, item: second }];
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready', items: [first, second],
+      rows, nextCursor: null, newMessageCount: 0 })} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(html.match(/class="channel-event-pill"/g)).toHaveLength(1);
+    expect(html).toContain('first event');
+    expect(html).not.toContain('duplicate event');
+    expect(html).not.toContain('conversation-message--grouped');
+    expect(html.indexOf('data-event-id="A"')).toBeLessThan(html.indexOf('data-event-id="$event"'));
+    expect(html.indexOf('data-event-id="$event"')).toBeLessThan(html.indexOf('data-event-id="B"'));
+  });
+  it('groups adjacent messages when malformed events were dropped at decode', () => {
+    const alice = participant('alice', 'human', 'Alice');
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready',
+      items: [item('A', alice, 'first'), item('B', alice, 'second')], nextCursor: null, newMessageCount: 0 })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(html).toContain('conversation-message--grouped');
+    expect(html).not.toContain('class="channel-event-pill"');
+  });
+});
+
+
+it('selects the earlier keyed event after history expands the live projection', () => {
+  const alice = participant('alice', 'human', 'Alice');
+  const projection = new ChannelProjection(roomId, alice, () => '2026-10-01T00:00:00Z');
+  const room = { roomId, title: null, membership: 'joined' as const, revision: '1' };
+  projection.applyRoom(room);
+  let publish!: (view: TimelineEntriesView) => void;
+  const port = { ...noopSendPort, observe: () => () => {},
+    timeline: async () => ({ kind: 'ok' as const, value: { items: [], nextCursor: null, snapshotRevision: '1' } }),
+    observeEntries: (_id: RoomId, listener: typeof publish) => { publish = listener; return () => {}; } } as unknown as ChannelPort
+      & { observeEntries: (_id: RoomId, listener: typeof publish) => () => void };
+  const controller = createTimelineController(port, roomId, { generation: 1 });
+  const event = (id: string) => ({ kind: 'channel_event' as const, eventId: id as EventId, participant: alice,
+    content: { v: 1 as const, body: id, kind: 'deploy.finished', summary: id, key: 'same' }, receivedAt: '2026-10-01T00:00:00Z' });
+  projection.applyRemote([event('$newer')]);
+  publish(projection.entries(1));
+  projection.applyRemote([event('$older'), event('$newer')]);
+  publish(projection.entries(1));
+  const html = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+  expect(html.match(/class="channel-event-pill"/g)).toHaveLength(1);
+  expect(html).toContain('data-event-id="$older"');
+  expect(html).not.toContain('data-event-id="$newer"');
+  controller.dispose();
 });

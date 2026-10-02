@@ -466,3 +466,48 @@ it('does not count historical ciphertext published after the history promise res
   expect(controller.getSnapshot().newMessageCount).toBe(2);
   controller.dispose();
 });
+
+it('does not count channel events as messages and clears recovered name placeholders', async () => {
+  const fake = fakeChannelPort();
+  let emit!: (view: ChannelEntriesView) => void;
+  const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+    emit = listener; return () => {};
+  } }, roomId, { generation: 1 });
+  const event = { kind: 'channel_event' as const, eventId: '$event' as EventId, participant: participant('alice', 'Alice'),
+    content: { v: 1 as const, body: 'deployed', kind: 'deploy.finished', summary: 'deployed' }, receivedAt: '2026-10-01T10:09:30Z' };
+  const missing = { kind: 'unavailable' as const, eventId: event.eventId, authorParticipantId: event.participant.participantId,
+    reason: 'missing_key' as const, receivedAt: event.receivedAt };
+  emit({ roomId, room, entries: [missing], generation: 1, snapshotRevision: '1' });
+  await controller.loadOlder();
+  await controller.scanNameHistory?.();
+  expect(controller.getSnapshot().namesReady).toBe(false);
+  controller.setReaderAtLatest(false);
+  emit({ roomId, room, entries: [missing, event, missing, { ...event, eventId: '$new' as EventId }], generation: 1, snapshotRevision: '2' });
+  expect(controller.getSnapshot().rows?.map(row => row.kind)).toEqual(['channel_event', 'channel_event']);
+  expect(controller.getSnapshot().items).toEqual([]);
+  expect(controller.getSnapshot().newMessageCount).toBe(0);
+  expect(controller.getSnapshot().namesReady).toBe(true);
+  emit({ roomId, room, entries: [event, { kind: 'message', item: item('$message', 'alice', 'hello') }], generation: 1, snapshotRevision: '3' });
+  expect(controller.getSnapshot().newMessageCount).toBe(1);
+  controller.dispose();
+});
+
+it('undoes provisional unread counts when ciphertext becomes an event or is ignored', () => {
+  const fake = fakeChannelPort();
+  let emit!: (view: ChannelEntriesView) => void;
+  const controller = createTimelineController({ ...fake.port, observeEntries: (_roomId, listener) => {
+    emit = listener; return () => {};
+  } }, roomId, { generation: 1 });
+  controller.setReaderAtLatest(false);
+  const missing = (id: string) => ({ kind: 'unavailable' as const, eventId: id as EventId,
+    authorParticipantId: 'alice' as ParticipantId, reason: 'missing_key' as const, receivedAt: '2026-10-01T10:09:30Z' });
+  emit({ roomId, room, entries: [missing('$valid'), missing('$invalid')], generation: 1, snapshotRevision: '1' });
+  expect(controller.getSnapshot().newMessageCount).toBe(2);
+  const event = { kind: 'channel_event' as const, eventId: '$valid' as EventId, participant: participant('alice', 'Alice'),
+    content: { v: 1 as const, body: 'deployed', kind: 'deploy.finished', summary: 'deployed' }, receivedAt: '2026-10-01T10:09:30Z' };
+  emit({ roomId, room, entries: [event], ignoredEventIds: ['$invalid' as EventId], generation: 1, snapshotRevision: '2' });
+  expect(controller.getSnapshot().newMessageCount).toBe(0);
+  emit({ roomId, room, entries: [event], ignoredEventIds: ['$invalid' as EventId], generation: 1, snapshotRevision: '3' });
+  expect(controller.getSnapshot().newMessageCount).toBe(0);
+  controller.dispose();
+});

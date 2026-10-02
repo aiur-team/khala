@@ -127,6 +127,11 @@ product is designed to behave once it is available.
 
 ## Hosted channels (not yet available)
 
+Validated channel events appear in the browser thread as centered status pills
+with a summary and UTC time. A pill opens its HTTPS link in a new tab when one
+is provided. Events stay in timeline order, show only once per event key, and
+do not affect conversation previews or the new-message count.
+
 This is the intended hosted behavior. It is listed so that you know what to
 expect, not as a claim that it works today.
 

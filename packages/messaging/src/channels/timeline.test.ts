@@ -1,3 +1,4 @@
+import { ChannelProjection, toEntry } from './timeline';
 import { createHash } from 'node:crypto'; // Channel projection fixtures use stable wire IDs.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type EventId, type EventRef, type MessageContent, type ChannelSnapshot, digestMessageContent } from '@khala/contracts/messaging/index';
@@ -228,4 +229,65 @@ it('identifies paginated ciphertext in entries even when its publication follows
   t.emit([message('$new-generation', 'fresh')], 2);
   await settle();
   expect(t.lastView()?.historicalEventIds).toEqual([]);
+});
+
+
+describe('channel events in entries', () => {
+  const event = { kind: 'channel_event' as const, eventId: '$channel-event' as EventId, participant: human,
+    content: { v: 1 as const, body: 'deployed', kind: 'deploy.finished', summary: 'deployed' }, receivedAt: '2026-10-01T10:09:30Z' };
+  it('passes through without a message digest and excludes events from pages and snapshots', async () => {
+    const t = observed();
+    expect(await toEntry(t.room.roomId, event)).toEqual(event);
+    t.emit([event, message('$message', 'hello')]);
+    await settle();
+    expect(t.lastView()?.entries.map(entry => entry.kind)).toEqual(['channel_event', 'message']);
+    expect(t.last()?.items.map(item => item.ref.eventId)).toEqual(['$message']);
+    t.substrate.page = { kind: 'done', value: { events: [event, message('$message', 'hello')], nextCursor: null, revision: 'events' } };
+    const page = await t.service.timeline({ roomId: t.room.roomId, cursor: null, limit: 50 });
+    expect(page.kind).toBe('ok');
+    if (page.kind === 'ok') expect(page.value.items.every(item => item.ref.eventId !== event.eventId)).toBe(true);
+  });
+  it('replaces unavailable entries after decryption and never regresses to ciphertext', () => {
+    const projection = new ChannelProjection('room_event' as never, human, () => event.receivedAt);
+    const unavailable = { kind: 'unavailable' as const, eventId: event.eventId,
+      authorParticipantId: human.participantId, reason: 'missing_key' as const, receivedAt: event.receivedAt };
+    projection.applyRemote([unavailable]);
+    projection.applyRemote([event]);
+    expect(projection.entries(1).entries).toEqual([event]);
+    projection.applyRemote([unavailable]);
+    expect(projection.entries(1).entries).toEqual([event]);
+  });
+});
+
+it('inserts newly paginated events before the known following timeline event', () => {
+  const projection = new ChannelProjection('room_events' as never, human, () => '2026-10-01T00:00:00Z');
+  const event = (id: string) => ({ kind: 'channel_event' as const, eventId: id as EventId, participant: human,
+    content: { v: 1 as const, body: id, kind: 'deploy.finished', summary: id, key: 'same' }, receivedAt: '2026-10-01T00:00:00Z' });
+  projection.applyRemote([event('$newer')]);
+  projection.applyRemote([event('$older'), event('$newer')]);
+  expect(projection.entries(1).entries.map(entry => entry.kind === 'message' ? entry.item.ref.eventId : entry.kind === 'local' ? null : entry.eventId))
+    .toEqual(['$older', '$newer']);
+});
+
+it('removes unavailable rows when decrypted channel events are ignored', () => {
+  const projection = new ChannelProjection('room_events' as never, human, () => '2026-10-01T00:00:00Z');
+  const eventId = '$invalid' as EventId;
+  projection.applyRemote([{ kind: 'unavailable', eventId, authorParticipantId: human.participantId,
+    reason: 'missing_key', receivedAt: '2026-10-01T00:00:00Z' }]);
+  projection.applyRemote([], [eventId]);
+  expect(projection.entries(1).entries).toEqual([]);
+  expect(projection.entries(1).ignoredEventIds).toEqual([eventId]);
+});
+
+it('propagates ignored decrypted IDs through the service entries observer', async () => {
+  const t = observed();
+  const eventId = '$malformed' as EventId;
+  t.emit([{ kind: 'undecryptable', eventId, authorParticipantId: human.participantId,
+    reason: 'missing_key', receivedAt: '2026-10-01T00:00:00Z' }]);
+  await settle();
+  expect(t.lastView()?.entries.map(entry => entry.kind)).toEqual(['unavailable']);
+  t.substrate.emit(t.room.roomId, { generation: 1, room: t.room, events: [], ignoredEventIds: [eventId] });
+  await settle();
+  expect(t.lastView()?.entries).toEqual([]);
+  expect(t.lastView()?.ignoredEventIds).toEqual([eventId]);
 });
