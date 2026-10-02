@@ -43,19 +43,18 @@ async function approveExactRequest(owner: Page, actor: Actor, channelTitle: stri
   const pending = owner.getByRole('list', { name: 'Requests waiting for you' });
   let fingerprint: string | null = null;
   await expect.poll(async () => {
-    await owner.reload({ waitUntil: 'domcontentloaded' });
     const body = await owner.evaluate(async () => {
       const response = await fetch('/api/human/channel-access/inbox', { credentials: 'same-origin' });
       if (response.status !== 200) throw new Error('external_browser_owner_inbox_unavailable');
       return response.json() as Promise<unknown>;
     });
     fingerprint = exactOwnerAccessFingerprint(body, actor, channelTitle);
-    if (!fingerprint) return false;
-    await pending.waitFor({ state: 'visible' });
-    return pending.locator('.channel-requests__row', { hasText: fingerprint }).count().then(count => count === 1);
+    return Boolean(fingerprint);
   }, { timeout: 90_000, intervals: [1_000, 2_000] }).toBe(true);
+  await owner.reload({ waitUntil: 'domcontentloaded' });
   if (!fingerprint) throw new Error('external_browser_owner_fingerprint_unobserved');
   const row = pending.locator('.channel-requests__row', { hasText: fingerprint });
+  await expect(row).toHaveCount(1, { timeout: 30_000 });
   await expect(row).toContainText('Channel access request');
   // This digest attests the approved context; signer JKT was checked separately
   // on the proof-key and discovery-consent pages.
