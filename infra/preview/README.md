@@ -65,10 +65,11 @@ human browser suite with real Dex authorization-code/PKCE sign-in, session
 cookies, channel sharing, encrypted Matrix events, and a read-only outsider.
 It then checks a persisted auth-session record in local Blobs emulation from a
 fresh browser after a function restart. It runs the locally installed hosted
-CLI's `status` and `channels open` commands, then starts the installed hosted
-connector through a prejoin MCP call using the same origin and private profile.
-This checks connector packaging/startup; owner approval and native read/write
-belong to #811. It reports only
+CLI's `status` and `channels open` commands, then probes installed hosted
+connector startup through a prejoin MCP call using the same origin and private
+profile. The result is reported separately as `connectorStartup`; an unproven
+candidate does not prevent the verified topology or downstream `--exec` from
+running. Owner approval and native read/write belong to #811. It reports only
 a stage, correlation ID, artifact digests, versions and scope names. Raw child
 and browser output stays private and the runner removes only its own project,
 volumes and private files. `KHALA_LOCAL_AUTH=enabled`, fixture credentials and

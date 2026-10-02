@@ -25,6 +25,7 @@ const correlation = `external-${runId}`;
 let stage = 'preflight';
 let browserDiagnostic;
 let connectorDiagnostic;
+let connectorStartup = 'unproven';
 const owned = [];
 const abort = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => abort.abort());
@@ -398,7 +399,8 @@ async function main() {
     try {
       await command('node', ['infra/preview/installed-connector-start.mjs', installedCli],
         { env: connectorEnv, timeout: 60_000 });
-    } catch (error) {
+      connectorStartup = 'pending_owner';
+    } catch {
       try {
         const report = JSON.parse(await readFile(smokeEnv.KHALA_E2E_CONNECTOR_DIAGNOSTIC, 'utf8'));
         connectorDiagnostic = {
@@ -428,7 +430,8 @@ async function main() {
             .includes(report.error) ? { error: report.error } : {}),
         };
       } catch { /* diagnostics are optional; never expose raw child output */ }
-      throw error;
+      // A valid native session is the separate #811 gate. Keep the verified
+      // browser/Control/Blobs topology available to its downstream --exec.
     }
     if (extraCommand) {
       stage = 'external-consumer';
@@ -454,7 +457,8 @@ async function main() {
     stage = 'report';
     const source = await command('git', ['rev-parse', 'HEAD']);
     const versions = await Promise.all([command('docker', ['version', '--format', '{{.Server.Version}}']), command('netlify', ['--version'], { env })]);
-    process.stdout.write(JSON.stringify({ correlation, result: 'passed', sourceCommit: source.stdout.trim(),
+    process.stdout.write(JSON.stringify({ correlation, result: 'topology_passed', connectorStartup,
+      ...(connectorDiagnostic ? { connectorDiagnostic } : {}), sourceCommit: source.stdout.trim(),
       lockfileSha256: await hash(path.join(root, 'pnpm-lock.yaml')),
       artifacts: { functionSha256: await hash(path.join(root, 'infra/netlify/functions-generated/khala-control.mjs')),
         webSha256: await hash(path.join(root, 'apps/web/dist/index.html')),
