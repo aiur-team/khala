@@ -85,9 +85,6 @@ export type ClaudeBindingServices = Readonly<{
   setMode(input: ModeSetInput): Promise<PiggybackStep<ListeningModeResult>>;
   readMode(): Promise<AgentListeningModeReadResult>;
   capabilities(): Promise<HarnessCapabilities>;
-  /** Explicit local calls may hand off a batch after rechecking this exact live grant.
-   * This does not authorize hook pulls or claim a listening mode. */
-  manualHandoff?(): Promise<boolean>;
   /**
    * `local-automation-fence`'s notification-only pending signal. It carries no
    * release bytes or token and never pulls, moves a cursor, or acknowledges.
@@ -302,10 +299,9 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     }
   }
 
-  async function handoff(resolved: Resolved, explicit = false): Promise<boolean> {
+  async function handoff(resolved: Resolved): Promise<boolean> {
     const capabilities = await resolved.services.capabilities();
-    if (capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call') return true;
-    return explicit && await resolved.services.manualHandoff?.() === true;
+    return capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call';
   }
 
   /** One `readBatch` call that carries `token`; any batch it selects stays outstanding and replays. */
@@ -373,7 +369,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        if (!await handoff(resolved, true)) return refused('unproven');
+        if (!await handoff(resolved)) return refused('unproven');
         const { value } = await agentCall<ClaudeReadOutcome>(resolved, async current => {
           const read = await resolved.services.read.read({
             bindingId: resolved.binding.bindingId,
@@ -405,7 +401,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        if (!await handoff(resolved, true)) return { kind: 'status', acknowledged: 0 };
+        if (!await handoff(resolved)) return { kind: 'status', acknowledged: 0 };
         const { acknowledged } = await agentCall(resolved, acknowledgeCurrent(resolved));
         return { kind: 'status', acknowledged };
       });
@@ -418,7 +414,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         const [view, capabilities] = await Promise.all([resolved.services.readMode(), resolved.services.capabilities()]);
         if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
         // A mode read is agent-initiated too, so it acknowledges what hooks delivered.
-        if (await handoff(resolved, true)) {
+        if (await handoff(resolved)) {
           await agentCall(resolved, acknowledgeCurrent(resolved));
         }
         // Effective support comes from HarnessCapabilities; anything unevidenced stays unproven.
@@ -562,9 +558,9 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     call: (current: string | undefined) => Promise<PiggybackStep<T>>,
     committedBy: (value: T) => boolean,
   ): Promise<Readonly<{ value: T; batch: string | null }>> {
-    // A proven route or an explicitly rechecked manual grant permits retained-token
-    // handoff. Otherwise the call runs bare and any piggyback batch replays.
-    if (!await handoff(resolved, true)) return { value: (await call(undefined)).value, batch: null };
+    // Only `batch_token_next_call` permits retained-token handoff; otherwise the call
+    // runs bare and its piggyback batch is neither shown nor retained, so it replays.
+    if (!await handoff(resolved)) return { value: (await call(undefined)).value, batch: null };
     const { value } = await agentCall(resolved, async current => {
       const step = await call(current);
       const text = step.batch === null ? null : renderOrNull(step.batch);

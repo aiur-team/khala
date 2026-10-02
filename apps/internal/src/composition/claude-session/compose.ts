@@ -57,11 +57,12 @@ import { ensureClaudeWakeSignal, pulseClaudeWakeSignal } from './signal';
 // approval activates the session's binding at its next boundary without the agent retrying
 // the request.
 //
-// Automatic route capabilities come from the locally installed Claude Code, inspected
-// as setup inspects it. An unproven route can still make an explicit manual read after
-// this session's active grant is checked. That manual path does not enable hook pulls or
-// listening modes. A bound read pulls only its generation's releases into its own inbox;
-// the adapter retains the batch token until this session's next Khala call acknowledges it.
+// The route's capabilities come from the locally installed Claude Code, inspected as
+// setup inspects it: an exactly proven version is tested, any other inspected version
+// is experimental, and one that cannot be inspected stays unproven. A bound session
+// reads by pulling its binding generation's releases from the server's release feed
+// into that generation's own inbox, and the batch token the adapter retains is
+// acknowledged by the session's next Khala call.
 
 export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
@@ -444,17 +445,10 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
      */
     const acknowledge = async (token: string | undefined): Promise<void> => {
       if (token === undefined) return;
-      await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token }).catch(() => undefined);
+      await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token });
     };
     return {
       read,
-      manualHandoff: async () => {
-        // Explicit read/send is limited to the grant held by this session in this
-        // launch. A replaced generation, revoked grant, or moved session closes it.
-        const live = bound(binding.sessionId);
-        return live !== null && live.bindingId === binding.bindingId
-          && live.generation === binding.generation;
-      },
       async send(input) {
         await acknowledge(input.acknowledgeToken);
         return { value: await new SendService(client).send(input.body, binding.bindingId), batch: null };

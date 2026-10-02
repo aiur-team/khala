@@ -1147,29 +1147,28 @@ describe('Claude delivery through the internal launcher', () => {
     expect(await postToolUse()).toEqual({ stdout: '', stderr: '', exitCode: 0 });
   });
 
-  it.each([null, '2.1.287'])('keeps automatic delivery unproven but permits explicit bound read on version %s', async version => {
+  it.each([null, '2.1.287'])('keeps unproven version %s closed even when another bound session ID is claimed', async version => {
     const session = await bound('session-uninspected', async () => version);
+    const [requested] = await serve(session.report.descriptorPath, 'session-second', [
+      ['khala_request_channel_access', { target: session.channelUrl }],
+    ]);
+    await approvePending(session.report.origin, session.owner);
+    const [connected] = await serve(session.report.descriptorPath, 'session-second', [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected' });
     expect(JSON.parse(await session.run('mode'))).toMatchObject({
       ok: true, acknowledgement: 'unknown', support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
     });
-    const eventId = await session.post('manual read after approval');
+    await session.post('must stay behind unproven route');
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
     expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'another-session')))
       .toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
-    const [read] = await serve(session.report.descriptorPath, 'session-uninspected', [['khala_read']]);
-    expect(read).toEqual({ kind: 'batch', batch: expect.stringContaining('manual read after approval') });
+    expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    // The same installation credential can claim the second bound ID; it must
+    // still be unable to read that session without a proven route/caller identity.
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'session-second')))
+      .toEqual({ ok: false, kind: 'refused', code: 'unproven' });
     expect(await session.facts()).toEqual([]);
-    const [sent] = await serve(session.report.descriptorPath, 'session-uninspected', [['khala_send', { message: 'manual reply' }]]);
-    expect(sent).toMatchObject({ kind: 'accepted' });
-    const facts = await session.facts();
-    expect(facts.some(fact => fact.receipt.kind === 'agent_acknowledged'
-      && fact.events.some(event => event.eventId === eventId))).toBe(true);
-    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 0 });
-    const stopped = await call(session.report.origin, {
-      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`,
-      headers: session.owner, body: { v: 1, targets: null },
-    });
-    expect(stopped.status).toBe(200);
-    expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
   });
 });
