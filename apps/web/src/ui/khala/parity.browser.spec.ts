@@ -80,7 +80,7 @@ const SCREEN_CAUSES: Readonly<Partial<Record<State, string>>> = {
   roster: 'KM-183 (§22 Live): roster rows read “Owner of N agents” and the harness where the design shows role · host and the task',
   'pop-add-agent': 'KM-183 (§22 Live): roster rows read “Owner of N agents” and the harness where the design shows role · host and the task',
   'detail-agent': 'KM-183 (§22 Live): the hero names the harness and the pane shows the Harness/Owner table and a full-width @ Mention',
-  'detail-human': 'KM-183: “Recent in Khala” shows mentions as plain text (open defect); agent rows read label · owner and the harness',
+  'detail-human': 'KM-183: agent rows read label · owner and the harness',
 };
 const screenCause = (c: ScreenCase) => SCREEN_MEASURED[screenName(c)] === undefined ? null
   : [ID_BADGES, c.state === 'list' || c.width <= 900 ? null : `${UNSENT_PREVIEW} (list column)`, SCREEN_CAUSES[c.state]].filter(Boolean).join('; ');
@@ -763,6 +763,13 @@ describe('behaviour', { concurrency: 1 }, () => {
       }));
       assert.ok(boxes.length >= 1);
       for (const box of boxes) assert.deepEqual(box, [32, 32]);
+    });
+  });
+
+  it('D6: “Recent in Khala” draws @mentions as the thread’s mention chips', { timeout: 60_000 }, async () => {
+    await withFixture(at1440('detail-human'), async page => {
+      // Kai's “@Sonnet ship the contrast fixes” (fixture-data.ts).
+      assert.ok((await page.locator('.kh-d-log .kh-mention').allTextContents()).includes('@Sonnet'));
     });
   });
 

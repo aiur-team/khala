@@ -21,6 +21,10 @@ import { memberCountLabel, ownerOfLabel } from './roster-model';
 
 /** One loaded message for the detail pane's "Recent in Khala". */
 export type RecentEntry = Readonly<{ id: string; at: string; body: ReactNode }>;
+/** The thread's `@mention` roster: the timeline's `MentionCandidate`s. */
+export type MentionRoster = readonly Readonly<{ label: string; participantId: string; kind: 'human' | 'agent'; hue: number }>[];
+/** How a Recent in Khala body renders, as the timeline's `RenderOptions`. */
+export type RecentRender = Readonly<{ mentions: MentionRoster; onOpenParticipant: (participantId: string) => void }>;
 
 export interface ChannelScreenProps {
   title: string;
@@ -40,15 +44,20 @@ export interface ChannelScreenProps {
   renameScope?: string;
   /** C3 participant details: an agent's harness and owner label. */
   describeParticipant?: (participantId: string) => Participant | undefined;
-  /** A participant's last loaded messages, newest first. */
-  recentActivity?: (participantId: string) => readonly RecentEntry[];
+  /**
+   * A participant's last loaded messages, newest first. Render each body with
+   * `render`, so its `@mentions` are the timeline's chips and open their detail.
+   */
+  recentActivity?: (participantId: string, render: RecentRender) => readonly RecentEntry[];
   /** When an agent joined, if known (RFC 3339). */
   agentJoinedAt?: (participantId: string) => string | undefined;
   /**
    * The thread; `openParticipant` opens (or, if open, closes) a participant's detail.
    * `openInvite` opens the Invite popover, and is absent when Invite is hidden.
+   * Pass `onMentionRoster` to the timeline so Recent in Khala matches its `@mentions`.
    */
-  renderTimeline: (openParticipant: (participantId: string) => void, openInvite: (() => void) | undefined) => ReactNode;
+  renderTimeline: (openParticipant: (participantId: string) => void, openInvite: (() => void) | undefined,
+    onMentionRoster: (roster: MentionRoster) => void) => ReactNode;
   /** The Invite popover body. Invite shows only when this is supplied (the admin path, R2). */
   renderShare?: () => ReactNode;
   /** The Add agent popover body on the viewer's roster row. */
@@ -73,7 +82,8 @@ function timeLabel(at: string): string {
   return dayLabel(date, now) === 'Today' ? clockLabel(date) : dayLabel(date, now);
 }
 
-function Recent({ entries, timeOptions }: Readonly<{ entries: readonly RecentEntry[]; timeOptions: TimeOptions }>) {
+/** The detail pane's "Recent in Khala" list. */
+export function Recent({ entries, timeOptions }: Readonly<{ entries: readonly RecentEntry[]; timeOptions: TimeOptions }>) {
   return <div className="kh-d-sec"><span className="kh-d-lbl">Recent in Khala</span>
     {entries.length > 0 ? <div className="kh-d-log">{entries.map(entry => <div key={entry.id}>
       <time dateTime={entry.at}>{clockLabel(new Date(entry.at), timeOptions)}</time><span>{entry.body}</span>
@@ -153,6 +163,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   const [more, setMore] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [mentionRoster, setMentionRoster] = useState<MentionRoster>([]);
 
   const closeRoster = useCallback((returnFocus: boolean) => {
     setRosterOpen(false);
@@ -198,13 +209,14 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   const detailHost = useDetailHost(selectedMember !== undefined);
   const closeDetail = () => setSelected(null);
   let detail: ReactNode = null;
+  const recent = (participantId: string) => recentActivity?.(participantId, { mentions: mentionRoster, onOpenParticipant: setSelected }) ?? [];
   if (selectedMember?.kind === 'human') {
     detail = <HumanDetail key={selectedMember.participantId} human={selectedMember} members={members}
-      recent={recentActivity?.(selectedMember.participantId) ?? []} onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
+      recent={recent(selectedMember.participantId)} onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   } else if (selectedMember?.kind === 'agent') {
     const canRename = selectedMember.isViewerOwned && renameAgent && viewerOwnerId && renameScope && !namesPending;
     detail = <AgentDetail key={selectedMember.participantId} agent={selectedMember} members={members}
-      recent={recentActivity?.(selectedMember.participantId) ?? []} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
+      recent={recent(selectedMember.participantId)} joinedAt={agentJoinedAt?.(selectedMember.participantId)}
       rename={canRename ? <RenameAgent participantId={selectedMember.participantId}
         name={currentNames?.get(selectedMember.participantId) ?? selectedMember.agent.displayName} renameAgent={renameAgent}
         storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, selectedMember.participantId])}`} /> : null}
@@ -252,7 +264,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       </div>
     </div>
     <div className="kh-channel-thread" onPointerDown={() => { if (rosterOpen) closeRoster(false); }}>
-      {renderTimeline(toggleParticipant, renderShare ? () => setInviteOpen(true) : undefined)}
+      {renderTimeline(toggleParticipant, renderShare ? () => setInviteOpen(true) : undefined, setMentionRoster)}
     </div>
     {detail && detailHost ? createPortal(detail, detailHost) : null}
   </div>;

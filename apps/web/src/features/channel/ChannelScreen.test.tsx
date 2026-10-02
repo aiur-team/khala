@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
-import { ChannelScreen, type ChannelScreenProps } from './ChannelScreen';
+import { renderMessageContent } from '../timeline/message-renderer';
+import { ChannelScreen, Recent, type ChannelScreenProps } from './ChannelScreen';
 import type { ChannelAgentView, ChannelController, ChannelView } from './controller';
 
 const mira = 'owner_mira' as OwnerId;
@@ -123,5 +124,25 @@ describe('ChannelScreen roster', () => {
 
   it('omits every M2 roster element', () => {
     for (const absent of ['kh-keb', 'Requests', 'kh-crw', 'kh-confirm', 'class="kh-st ', 'kh-rai-p', 'kh-badge']) expect(html).not.toContain(absent);
+  });
+});
+
+describe('ChannelScreen Recent in Khala', () => {
+  const roster = [{ label: 'Theo', participantId: 'p_theo', kind: 'human' as const, hue: 210 },
+    { label: 'Scout', participantId: 'agent_scout', kind: 'agent' as const, hue: 30 }];
+
+  it('draws @mentions as the timeline\u2019s mention chips', () => {
+    const body = renderMessageContent({ v: 1, kind: 'text', body: 'Ready for @Theo, ping @Scout or @nobody' }, { mentions: roster });
+    const html = renderToStaticMarkup(<Recent entries={[{ id: 'e1', at: '2026-10-01T16:52:00Z', body }]} timeOptions={{ timeZone: 'UTC' }} />);
+    const log = html.slice(html.indexOf('class="kh-d-log"'));
+    expect(log).toContain('<span class="kh-mention kh-hm" style="--mh:210" role="button" tabindex="0">@Theo</span>');
+    expect(log).toContain('<span class="kh-mention" style="--mh:30" role="button" tabindex="0">@Scout</span>');
+    expect(log).toContain(' or @nobody');
+  });
+
+  it('hands the thread a mention roster callback', () => {
+    let received: unknown;
+    render({ phase: 'ready', agents: [] }, { renderTimeline: (_open, _invite, onMentionRoster) => { received = onMentionRoster; return null; } });
+    expect(typeof received).toBe('function');
   });
 });
