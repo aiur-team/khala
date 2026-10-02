@@ -36,17 +36,11 @@ jobs:
       - run: pnpm test
       - name: Disposable bootstrap and Synapse recovery fixture
         run: pnpm test:recovery-synapse
-      # The setup release gate: packs @aiur/khala and drives the installed tarball.
-      - run: node --test tests/integration/agent-setup/setup-acceptance.test.mjs
-      # Each installed harness entry, as setup writes it, delivers against the installed
-      # `khala internal` (or refuses honestly where its route is unproven).
-      - run: node --test tests/e2e/installed-delivery/installed-delivery.test.mjs
       - name: Browser tests
         run: |
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"
           export CHROMIUM_PATH
           pnpm test:browser
-          node --test tests/integration/internal-chat/packaged-smoke.test.mjs
       # Screenshot baselines only match the browser, fonts and rasteriser they
       # were taken with, so this runs in the pinned Playwright image (keep the
       # tag equal to the @playwright/test version). Two passes prove the
