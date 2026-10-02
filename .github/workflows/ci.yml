@@ -31,11 +31,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      - name: Install Chromium for connector and browser tests
+      - name: Install Chromium for browser tests
         run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
-      - name: Disposable bootstrap and Synapse recovery fixture
-        run: pnpm test:recovery-synapse
       - name: Browser tests
         run: |
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"

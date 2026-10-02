@@ -102,9 +102,7 @@ export function checkBoundaries(root) {
   for (const [origin, edges] of graph) {
     if (testPattern.test(origin)) continue;
     const owner = packageOf(origin);
-    // The connector's Matrix substrate adapters implement several package ports
-    // together; they are endpoint composition, despite their dedicated directory.
-    const composition = origin.includes('/composition/') || /^apps\/connector\/src\/substrate\//.test(origin);
+    const composition = origin.includes('/composition/');
     for (const edge of edges) {
       if (!edge.target) continue;
       const destination = packageOf(edge.target);
@@ -115,20 +113,15 @@ export function checkBoundaries(root) {
         const toDomain = edge.target.split('/')[3];
         if (['messaging', 'delivery'].includes(fromDomain) && ['messaging', 'delivery'].includes(toDomain) && fromDomain !== toDomain) errors.add(`${origin}: contract domains cannot import each other (${edge.specifier})`);
       }
-      // The published CLI is the installed entry point for the connector app.
-      // Admit exactly that composition import, never arbitrary app internals.
-      const installedConnectorEntry = origin === 'packages/agent-cli/src/cli/main.ts'
-        && edge.target === 'apps/connector/src/composition/production.ts';
-      if (owner !== destination && destination.startsWith('apps/') && !installedConnectorEntry) errors.add(`${origin}: cannot import an app (${edge.specifier})`);
+      if (owner !== destination && destination.startsWith('apps/')) errors.add(`${origin}: cannot import an app (${edge.specifier})`);
       if (!composition && owner !== destination && destination.startsWith('packages/') && destination !== 'packages/contracts') errors.add(`${origin}: cross-component implementation requires a composition root (${edge.specifier})`);
       const fromFeature = origin.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       const toFeature = edge.target.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       if (fromFeature && toFeature && fromFeature !== toFeature && !sharedFeatures.has(toFeature)) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
-    const policy = origin.startsWith('packages/policy/');
-    // Browser, policy and contracts graphs must stay pure.
-    const pure = browser || policy || owner === 'packages/contracts';
+    // Browser and contracts graphs must stay pure.
+    const pure = browser || owner === 'packages/contracts';
     if (!pure) continue;
     const seen = new Set();
     function walk(current, chain) {
@@ -142,10 +135,9 @@ export function checkBoundaries(root) {
           // Local modules outside the scanned roots cannot silently end traversal.
           // Third-party internals remain dependency-review scope, not this graph.
           if (pure && !graph.has(edge.target) && !edge.target.split('/').includes('node_modules')) errors.add(`${origin}: local module outside the checked graph (${trace})`);
-          if (browser && /^(?:apps\/(?:control|connector)|packages\/(?:connector|harnesses))\//.test(edge.target)) errors.add(`${origin}: browser reaches owner/server code (${trace})`);
-          if (policy && !edge.target.startsWith('packages/policy/') && !edge.target.startsWith('packages/contracts/')) errors.add(`${origin}: policy reaches I/O or implementation (${trace})`);
+          if (browser && /^(?:apps\/control|packages\/agent)\//.test(edge.target)) errors.add(`${origin}: browser reaches owner/server code (${trace})`);
           walk(edge.target, [...chain, edge.specifier]);
-        } else if (policy && !edge.computed) errors.add(`${origin}: policy external dependency is not a contract (${trace})`);
+        }
       }
     }
     walk(origin, []);

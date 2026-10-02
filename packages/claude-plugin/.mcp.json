@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "khala": {
-      "command": "khala",
-      "args": ["mcp-serve"],
-      "env": { "KHALA_MCP_HARNESS": "claude" }
-    }
-  }
-}
