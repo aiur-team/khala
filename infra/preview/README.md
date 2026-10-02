@@ -67,9 +67,14 @@ It then checks a persisted auth-session record in local Blobs emulation from a
 fresh browser after a function restart. It runs the locally installed hosted
 CLI's `status` and `channels open` commands, then probes installed hosted
 connector startup through a prejoin MCP call using the same origin and private
-profile. The result is reported separately as `connectorStartup`; an unproven
-candidate does not prevent the verified topology or downstream `--exec` from
-running. Owner approval and native read/write belong to #811. It reports only
+profile. The probe requires an MCP initialization reply, an exact pending-owner
+approval result, and the new session's private hosted state directory. The
+result is reported separately as `connectorStartup`; an unproven candidate
+does not prevent the verified topology or downstream `--exec` from running.
+When startup is unproven, `connectorDiagnostic` includes only fixed protocol
+and hosted-opening stage codes, so an `internal_error` can be investigated
+without copying raw child output or secrets. Owner approval and native
+read/write belong to #811. It reports only
 a stage, correlation ID, artifact digests, versions and scope names. Raw child
 and browser output stays private and the runner removes only its own project,
 volumes and private files. `KHALA_LOCAL_AUTH=enabled`, fixture credentials and

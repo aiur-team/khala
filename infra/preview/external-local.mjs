@@ -410,6 +410,12 @@ async function main() {
             ? { exitCode: report.exitCode } : {}),
           ...(typeof report.hasStructuredContent === 'boolean'
             ? { hasStructuredContent: report.hasStructuredContent } : {}),
+          ...(['browser_preflight', 'state_storage', 'trust_storage', 'bootstrap_persistence',
+            'binding_recovery', 'device_resume', 'intake_start', 'subscription_start',
+            'review_resume', 'connector_bootstrap', 'matrix_writer_active',
+            'matrix_startup_retry', 'matrix_startup_blocked', 'matrix_writer_recovered',
+            'harness_route_inspect'].includes(report.hostedOpenStage)
+            ? { hostedOpenStage: report.hostedOpenStage } : {}),
           ...(Number.isInteger(report.rpcErrorCode) && report.rpcErrorCode >= -32768 && report.rpcErrorCode <= 32767
             ? { rpcErrorCode: report.rpcErrorCode } : {}),
           ...(typeof report.isError === 'boolean' ? { isError: report.isError } : {}),
