@@ -1,11 +1,9 @@
 import { createRoot } from 'react-dom/client';
-import { AgentConfirm } from '../AgentConfirm';
-import { createAgentConfirmController } from '../controller';
 import { createHumanBrowserApi } from '../../../composition/human/browser-api';
 import { createHumanRouteCodec } from '../../../composition/human/routes';
 import { HumanApplicationScreen } from '../../../composition/human/mount';
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
-import type { HumanApplicationHandle, HumanApplicationSnapshot } from '../../../composition/human/application';
+import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from '../../../composition/human/application';
 
 const limits = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 128, maxRoomTitleBytes: 256 });
 if (!limits.ok) throw new Error('invalid fixture limits');
@@ -22,13 +20,36 @@ if (location.search.includes('signedOut')) {
   root.render(<HumanApplicationScreen application={application} identity={api.identity} routes={routes}
     renderRoom={() => null} navigateExternal={url => { location.href = url; }} />);
 } else {
-  const controller = createAgentConfirmController({ joinId: 'j1', port: api.agentJoin,
-    invite: async (roomId, userId) => {
+  const listeners = new Set<() => void>();
+  const disposers = new Set<() => void>();
+  const context = {
+    path, principal: { ownerId: 'owner_alice' }, agentJoin: api.agentJoin,
+    inviteAgent: async (roomId: string, userId: string) => {
       await fetch('/fixture/invite', { method: 'POST', body: JSON.stringify({ roomId, userId }) });
       return true;
-    } });
-  root.render(<AgentConfirm controller={controller} roomHref={routes.roomPath}
-    onOpenRoom={roomId => { history.pushState(null, '', routes.roomPath(roomId)); }} />);
-  controller.start();
-  addEventListener('pagehide', () => controller.dispose(), { once: true });
+    },
+    registerDisposer(dispose: () => void) {
+      disposers.add(dispose);
+      return () => { if (disposers.delete(dispose)) dispose(); };
+    },
+  } as HumanRouteContext;
+  let snapshot: HumanApplicationSnapshot = { phase: 'ready', path, context };
+  const application: HumanApplicationHandle = {
+    getSnapshot: () => snapshot,
+    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    navigate(nextPath) {
+      for (const dispose of disposers) dispose();
+      disposers.clear();
+      snapshot = { phase: 'ready', path: nextPath, context: { ...context, path: nextPath } };
+      for (const listener of listeners) listener();
+    },
+    retryDevice: () => undefined, dispose: () => { for (const dispose of disposers) dispose(); },
+    signOut: async () => ({ kind: 'unavailable', retryable: true }),
+  };
+  root.render(<HumanApplicationScreen application={application} identity={api.identity} routes={routes}
+    renderRoom={() => <p>Opened channel</p>} navigateRoute={nextPath => {
+      history.pushState(null, '', nextPath);
+      application.navigate(nextPath);
+    }} />);
+  addEventListener('pagehide', () => application.dispose(), { once: true });
 }

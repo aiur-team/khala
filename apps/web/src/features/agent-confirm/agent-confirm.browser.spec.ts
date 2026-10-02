@@ -65,6 +65,7 @@ test('owner signs in, confirms once, waits and opens the channel (AE1 browser le
     assert.equal(await page.getByText('Keep this tab open.', { exact: false }).count(), 0);
     await page.getByRole('link', { name: 'Open channel' }).click();
     assert.equal(new URL(page.url()).pathname, '/channels/!r1%3Akhala.local');
+    await page.getByText('Opened channel', { exact: true }).waitFor();
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();
