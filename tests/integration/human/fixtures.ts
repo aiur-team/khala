@@ -118,7 +118,7 @@ export function readLiveHumanEnvironment(): LiveHumanEnvironment {
 }
 
 export async function signIn(page: Page, environment: LiveHumanEnvironment, user: LiveUser): Promise<void> {
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  // A signed-out app route redirects straight to the provider; there is no Sign in page.
   const username = environment.oauth.usernamePlaceholder
     ? page.getByPlaceholder(environment.oauth.usernamePlaceholder)
     : page.getByLabel(environment.oauth.usernameLabel);
