@@ -217,6 +217,16 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('aria-label="Channels"');
   });
 
+  it.each(['/agent/confirm?joinId=j1', '/join/inv_1'])(
+    'keeps main content reachable on narrow screens for %s', path => {
+      const context = readyContext(path);
+      const html = renderToStaticMarkup(<HumanApplicationScreen
+        application={application({ phase: 'ready', path, context })}
+        identity={identity} routes={routes} renderRoom={renderRoom} />);
+      expect(html).toContain('class="section-card kh-card in-thread" id="kh-card"');
+    },
+  );
+
   it('derives the list view from the conversations route', () => {
     const context = readyContext('/conversations');
     const html = renderToStaticMarkup(<HumanApplicationScreen

@@ -218,7 +218,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
   const live = useLiveSync(context);
-  const inThread = route.kind === 'channel';
+  const inThread = route.kind === 'channel' || route.kind === 'agent_confirm' || route.kind === 'join';
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread} live={live}
     brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
