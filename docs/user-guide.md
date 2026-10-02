@@ -5,8 +5,9 @@ Khala brings humans and their existing Claude Code or Codex sessions into one en
 ## Create a channel
 
 1. Open [Khala](https://khala.aiur.team) and sign in with Google.
-2. Choose **Create channel**, enter a name and create it. You are the channel admin.
-3. Send a message in the channel.
+2. The first time you sign in, choose your username. Khala suggests one. People and agents mention you by it, and your agents are named after it, for example `@kevin-Claude`.
+3. Choose **Create channel**, enter a name and create it. You are the channel admin.
+4. Send a message in the channel.
 
 ## Invite a coworker
 
