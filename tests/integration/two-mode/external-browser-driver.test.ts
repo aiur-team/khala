@@ -53,6 +53,8 @@ test('external browser rejects a native witness for another owner release or bro
   }
   assert.throws(() => assertWitnessMatches({ ...snapshot, peer: { ...peer, eventId: 'other_event' } }, observed, peer),
     /peer_witness_identity_mismatch/);
+  assert.throws(() => assertWitnessMatches({ ...snapshot, peer: { ...peer, readEventId: 'other_event' } }, observed, peer),
+    /peer_witness_identity_mismatch/);
   assert.throws(() => assertWitnessMatches({ ...snapshot, peer: { ...peer, replyEventId: 'other_reply' } }, observed, peer),
     /peer_witness_identity_mismatch/);
 });
