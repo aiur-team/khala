@@ -8,7 +8,6 @@ import {
   Preset,
   Room,
   RoomEvent,
-  RoomMemberEvent,
   SyncState,
   Visibility,
   createClient,
@@ -33,8 +32,6 @@ import {
   type RoomRejection,
   type RoomSummary,
 } from '@khala/contracts/messaging/index';
-import type { NameTimelineEvent } from '@khala/contracts/messaging/agent-names';
-import { publishAgentNameSnapshots } from './name-snapshots';
 import { attachNameTargets } from './name-targets';
 import {
   createBrowserDeviceService,
@@ -57,7 +54,7 @@ import {
   type SubstrateUpdate,
 } from '@khala/messaging/rooms/index';
 import { createBrowserRoomJournal } from './room-journal';
-import type { BrowserParticipantSession, BrowserSendFence, BrowserSendProof } from './browser-api';
+import type { BrowserParticipantSession } from './browser-api';
 import { sortConversations, type ConversationIndexPort } from './conversations';
 import type { ConversationSummary } from '../../ui/conversation';
 
@@ -400,54 +397,34 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
   };
 }
 
+export async function sendRoomMessage(
+  client: Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'getDeviceId'>,
+  input: { roomId: RoomId; clientTxnId: string; content: MessageContent },
+): Promise<SubstrateEffect<{ eventId: EventId; authorDeviceId: DeviceId }>> {
+  try {
+    if (!client.getRoom(input.roomId)?.hasEncryptionStateEvent()) return { kind: 'unavailable' };
+    const payload = input.content.kind === 'agent_rename' || input.content.kind === 'agent_name_snapshot'
+      ? { msgtype: MsgType.Notice, body: input.content.body,
+          'com.khala.agent_participant_id': input.content.agentParticipantId,
+          ...(input.content.kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': input.content.sourceEventId } : {}) }
+      : { msgtype: MsgType.Text, body: input.content.body };
+    const response = await client.sendEvent(input.roomId, EventType.RoomMessage,
+      payload as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
+    return {
+      kind: 'done',
+      value: { eventId: response.event_id as EventId, authorDeviceId: client.getDeviceId() as DeviceId },
+    };
+  } catch (error) {
+    return effectFailure(error);
+  }
+}
+
 class MatrixSubstrate implements RoomSubstrate {
-  private readonly readyRooms = new Set<string>();
-  private readonly rotationReceipts = new Set<string>();
-  private pollCursor = 0;
-  private polling = false;
   constructor(
     private readonly runtime: MatrixRuntime,
     private readonly limits: ContentLimits,
     private readonly participants: ParticipantResolver,
-    private readonly sendFence: BrowserSendFence | undefined,
-  ) {
-    if (sendFence) globalThis.setInterval(() => { void this.pollRotations(); }, 5_000);
-  }
-
-  private async pollRotations(): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
-    try { await this.pollRotationsOnce(); } finally { this.polling = false; }
-  }
-
-  private async pollRotationsOnce(): Promise<void> {
-    const active = this.runtime.active;
-    if (!active || !this.sendFence) return;
-    const client = active.client;
-    const crypto = client.getCrypto();
-    const deviceId = client.getDeviceId();
-    const matrixAccessToken = client.getAccessToken();
-    if (!crypto || !deviceId || !matrixAccessToken) return;
-    const rooms = client.getRooms().filter(room => room.getMyMembership() === 'join' && room.hasEncryptionStateEvent());
-    if (rooms.length === 0) return;
-    const count = Math.min(rooms.length, 4);
-    for (let offset = 0; offset < count; offset++) {
-      if (this.runtime.active?.client !== client) break;
-      const room = rooms[(this.pollCursor + offset) % rooms.length]!;
-      const proof: BrowserSendProof = { roomId: room.roomId as RoomId, deviceId, matrixAccessToken };
-      const hold = await this.sendFence.inspect(proof);
-      if (this.runtime.active?.client !== client) break;
-      if (!hold) continue;
-      const receipt = `${room.roomId}:${hold.operationId}:${hold.epoch}:${deviceId}`;
-      if (this.rotationReceipts.has(receipt)) continue;
-      try {
-        await crypto.forceDiscardSession(room.roomId);
-        if (this.runtime.active?.client !== client) break;
-        if (await this.sendFence.rotation(proof, hold.operationId, hold.epoch)) this.rotationReceipts.add(receipt);
-      } catch { /* An offline SDK remains pending until the next poll. */ }
-    }
-    this.pollCursor = (this.pollCursor + count) % rooms.length;
-  }
+  ) {}
 
   private active(): ActiveClient {
     if (this.runtime.active === null) throw new Error('Matrix client unavailable');
@@ -495,58 +472,7 @@ class MatrixSubstrate implements RoomSubstrate {
 
   async sendEvent(input: Readonly<{ roomId: RoomId; clientTxnId: string; content: MessageContent }>): Promise<SubstrateEffect<{ eventId: EventId; authorDeviceId: DeviceId }>> {
     try {
-      const active = this.active();
-      const { client } = active;
-      const room = client.getRoom(input.roomId);
-      if (!room?.hasEncryptionStateEvent()) return { kind: 'unavailable' };
-      if (!this.sendFence) return { kind: 'unavailable' };
-      const crypto = client.getCrypto();
-      const deviceId = client.getDeviceId();
-      const matrixAccessToken = client.getAccessToken();
-      if (!crypto || !deviceId || !matrixAccessToken) return { kind: 'unavailable' };
-      const proof: BrowserSendProof = { roomId: input.roomId, deviceId, matrixAccessToken };
-      const readyKey = `${client.getUserId()}:${deviceId}:${active.generation}:${input.roomId}`;
-      if (!this.readyRooms.has(readyKey)) {
-        await crypto.forceDiscardSession(input.roomId);
-        if (await this.sendFence.ready(proof)) this.readyRooms.add(readyKey);
-      }
-      const acquired = await this.sendFence.acquire(proof, input.clientTxnId);
-      if (acquired?.kind === 'complete') {
-        return { kind: 'done', value: { eventId: acquired.eventId as EventId, authorDeviceId: deviceId as DeviceId } };
-      }
-      if (acquired?.kind === 'held') {
-        if (acquired.operationId !== 'rotation_required') {
-          await crypto.forceDiscardSession(input.roomId);
-          await this.sendFence.rotation(proof, acquired.operationId, acquired.epoch);
-        }
-        return { kind: 'unavailable' };
-      }
-      if (acquired?.kind !== 'granted') return { kind: 'unavailable' };
-      this.readyRooms.add(readyKey);
-      if (this.runtime.active?.client !== client || !client.getRoom(input.roomId)?.hasEncryptionStateEvent()) {
-        await this.sendFence.finish(proof, acquired.permitId, { kind: 'cancelled' });
-        return { kind: 'unavailable' };
-      }
-      let response: Awaited<ReturnType<typeof client.sendEvent>>;
-      try {
-        const payload = input.content.kind === 'agent_rename' || input.content.kind === 'agent_name_snapshot'
-            ? { msgtype: MsgType.Notice, body: input.content.body,
-                'com.khala.agent_participant_id': input.content.agentParticipantId,
-                ...(input.content.kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': input.content.sourceEventId } : {}) }
-            : { msgtype: MsgType.Text, body: input.content.body };
-        response = await client.sendEvent(input.roomId, EventType.RoomMessage,
-          payload as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
-      } catch (error) {
-        await this.sendFence.finish(proof, acquired.permitId, { kind: 'unknown' });
-        return effectFailure(error);
-      }
-      if (!await this.sendFence.finish(proof, acquired.permitId, { kind: 'complete', eventId: response.event_id })) {
-        return { kind: 'unknown' };
-      }
-      return {
-        kind: 'done',
-        value: { eventId: response.event_id as EventId, authorDeviceId: client.getDeviceId() as DeviceId },
-      };
+      return sendRoomMessage(this.active().client, input);
     } catch (error) {
       return effectFailure(error);
     }
@@ -650,40 +576,6 @@ class MatrixSubstrate implements RoomSubstrate {
     }
   }
 
-  private async publishNameSnapshots(roomId: RoomId, membershipEventId: string): Promise<void> {
-    const active = this.active();
-    const room = active.client.getRoom(roomId);
-    if (!room || room.getMyMembership() !== 'join' || !room.hasEncryptionStateEvent()) return;
-    const timeline = room.getLiveTimeline();
-    // Only this owner's existing history keys are used. New members receive fresh
-    // encrypted metadata; no historical keys or old chat bodies are redistributed.
-    while (timeline.getPaginationToken(Direction.Backward) !== null) {
-      const before = timeline.getPaginationToken(Direction.Backward);
-      if (!await active.client.paginateEventTimeline(timeline, { backwards: true, limit: 100 })) break;
-      if (before === timeline.getPaginationToken(Direction.Backward)) throw new Error('name_history_stalled');
-    }
-    await Promise.all(timeline.getEvents().filter(event => event.isEncrypted()).map(event => active.client.decryptEventIfNeeded(event)));
-    const events = await this.events(timeline.getEvents(), roomId);
-    if (events.some(event => event.kind === 'undecryptable')) throw new Error('name_history_unavailable');
-    const session = participantSession(active);
-    if (!session) throw new Error('name_roster_unavailable');
-    const roster = await this.participants.resolve(room.getJoinedMembers().map(member => member.userId), undefined, roomId, undefined, session);
-    if (!roster) throw new Error('name_roster_unavailable');
-    if (this.runtime.active !== active) return;
-    await publishAgentNameSnapshots({ roomId, membershipEventId, ownerId: active.principal.ownerId,
-      isCurrent: () => this.runtime.active === active, send: value => this.sendEvent(value),
-      participants: [...roster.values()].map(participant => ({
-        participantId: participant.participantId, ownerId: participant.ownerId,
-        kind: participant.kind, initialName: participant.displayName,
-      })), events: events.flatMap((event): NameTimelineEvent[] => event.kind === 'message'
-      ? [event.content.kind === 'text'
-        ? { kind: 'message' as const, eventId: event.eventId, authorParticipantId: event.participant.participantId }
-        : { kind: event.content.kind, eventId: event.eventId, actorParticipantId: event.participant.participantId,
-            targetParticipantId: event.content.agentParticipantId, name: event.content.body,
-            sourceEventId: event.content.kind === 'agent_name_snapshot' ? event.content.sourceEventId : null }]
-      : []) });
-  }
-
   subscribe(roomId: RoomId, listener: (update: SubstrateUpdate) => void): () => void {
     let disposed = false;
     const active = this.runtime.active;
@@ -702,43 +594,13 @@ class MatrixSubstrate implements RoomSubstrate {
     const receive = (_event: MatrixEvent, eventRoom: Room | undefined) => {
       if (eventRoom?.roomId === roomId) publish();
     };
-    let snapshotRetry: ReturnType<typeof setTimeout> | null = null;
-    let snapshotInFlight = false;
-    let membershipEpoch: string | null = null;
-    let publishedEpoch: string | null = null;
-    const bootstrap = () => {
-      if (disposed || this.runtime.active !== active || !membershipEpoch || publishedEpoch === membershipEpoch || snapshotInFlight) return;
-      snapshotInFlight = true;
-      const epoch = membershipEpoch;
-      void this.publishNameSnapshots(roomId, epoch).then(() => { publishedEpoch = epoch; }).catch(() => {
-        if (!disposed && snapshotRetry === null) snapshotRetry = setTimeout(() => {
-          snapshotRetry = null;
-          bootstrap();
-        }, 5_000);
-      }).finally(() => {
-        snapshotInFlight = false;
-        if (membershipEpoch !== epoch) bootstrap();
-      });
-    };
-    const membership = (event: MatrixEvent) => {
-      if (event.getRoomId() !== roomId || event.getContent().membership !== 'join' || !event.getId()) return;
-      membershipEpoch = event.getId()!;
-      bootstrap();
-    };
-    active.client.on(RoomMemberEvent.Membership, membership);
     active.client.on(RoomEvent.Timeline, receive);
-    // Recovery after an offline owner/reload: bootstrap the current membership epoch.
-    const joined = room.getJoinedMembers().map(member => member.events.member?.getId()).filter((id): id is string => !!id).sort();
-    membershipEpoch = JSON.stringify(joined);
-    bootstrap();
     const disposeDecryption = subscribeRoomDecryption(active.client, roomId,
       () => !disposed && this.runtime.active === active, publish);
     publish();
     return () => {
       disposed = true;
-      if (snapshotRetry !== null) clearTimeout(snapshotRetry);
       active.client.off(RoomEvent.Timeline, receive);
-      active.client.off(RoomMemberEvent.Membership, membership);
       disposeDecryption();
     };
   }
@@ -750,16 +612,6 @@ export type MatrixBrowserPorts = Readonly<{
   conversations: ConversationIndexPort;
   participant(): ParticipantView | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
-  /** Requests SDK cleanup of this owner's local room state after protected closure. */
-  cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
-  /** Detect a sync race that restored a room after local cleanup resolved. */
-  roomPresent(ownerId: OwnerId, roomId: RoomId): boolean;
-  /** Trusted owner endpoint discards its outbound Megolm session before a new device can receive sends. */
-  discardOutboundSession(roomId: RoomId): Promise<boolean>;
-  /** Trusts one server-attested agent Matrix device only after exact SDK fingerprint comparison. */
-  trustAgentDevice(roomId: RoomId, userId: string, deviceId: string, fingerprint: string): Promise<boolean>;
-  /** Transient proof material for the protected owner-device registration request. */
-  ownerDeviceProof(): Promise<Readonly<{ deviceId: string; fingerprint: string; matrixAccessToken: string }> | null>;
 }>;
 
 /** Binds the selected Matrix SDK to KHA-111/112 without exposing it to UI controllers. */
@@ -768,7 +620,6 @@ export function createMatrixBrowserPorts(input: Readonly<{
   credentials: CredentialSource;
   limits: ContentLimits;
   participants: ParticipantResolver;
-  sendFence?: BrowserSendFence;
 }>): MatrixBrowserPorts {
   const runtime = new MatrixRuntime(() => device, input.participants);
   const credentialSource: CredentialSource = {
@@ -785,7 +636,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     locks: createWebLockProvider(),
     engines: runtime.engineFactory(),
   });
-  const substrate = new MatrixSubstrate(runtime, input.limits, input.participants, input.sendFence);
+  const substrate = new MatrixSubstrate(runtime, input.limits, input.participants);
   const journals = new Map<OwnerId, RoomJournal>();
   let current: { ownerId: OwnerId; generation: number; service: ReturnType<typeof createRoomService> } | null = null;
   const device: DevicePort = {
@@ -865,65 +716,6 @@ export function createMatrixBrowserPorts(input: Readonly<{
         if (!mapping || !userIds.every(userId => mapping.has(userId)) || signal?.aborted || runtime.active !== active) return null;
         return userIds.map(userId => mapping.get(userId)!).filter(Boolean);
       } catch { return null; }
-    },
-    roomPresent(ownerId, roomId) {
-      const active = runtime.active;
-      return active?.principal.ownerId === ownerId && active.client.getRoom(roomId) !== null;
-    },
-    async cleanupRoom(ownerId, roomId) {
-      const active = runtime.active;
-      if (active?.principal.ownerId !== ownerId) return false;
-      try {
-        await active.client.forget(roomId, true);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async discardOutboundSession(roomId) {
-      const active = runtime.active;
-      if (!active?.client.getRoom(roomId)?.hasEncryptionStateEvent()) return false;
-      const crypto = active.client.getCrypto();
-      if (!crypto) return false;
-      try {
-        await crypto.forceDiscardSession(roomId);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async trustAgentDevice(roomId, userId, deviceId, fingerprint) {
-      const active = runtime.active;
-      if (!active?.client.getRoom(roomId)?.hasEncryptionStateEvent()
-        || !userId.startsWith('@') || !deviceId || !/^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)) return false;
-      const crypto = active.client.getCrypto();
-      if (!crypto) return false;
-      try {
-        const device = (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId);
-        if (!device || device.getFingerprint() !== fingerprint) return false;
-        await crypto.setDeviceVerified(userId, deviceId, true);
-        if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) return false;
-        await crypto.forceDiscardSession(roomId);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async ownerDeviceProof() {
-      const active = runtime.active;
-      const view = device.current();
-      if (!active || view.state !== 'ready' || active.generation !== view.generation) return null;
-      const crypto = active.client.getCrypto();
-      const deviceId = active.client.getDeviceId();
-      const matrixAccessToken = active.client.getAccessToken();
-      if (!crypto || !deviceId || !matrixAccessToken) return null;
-      try {
-        const fingerprint = (await crypto.getOwnDeviceKeys()).ed25519;
-        return /^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)
-          ? { deviceId, fingerprint, matrixAccessToken } : null;
-      } catch {
-        return null;
-      }
     },
   };
 }
