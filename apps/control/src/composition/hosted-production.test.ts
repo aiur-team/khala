@@ -65,6 +65,8 @@ const keptRoutes = [
   ['/api/human/agent-join', ['GET']],
   ['/api/human/agent-join/confirm', ['POST']],
   ['/api/human/agent-join/status', ['GET']],
+  ['/api/human/profile', ['GET']],
+  ['/api/human/profile/username', ['POST']],
 ];
 const deletedPaths = [
   '/api/human/room-send/ready', '/api/human/agent-bootstrap/authorize',
@@ -107,6 +109,10 @@ describe('generated hosted production composition', () => {
         }
       }
       expect((await handle(new Request(`${appOrigin}/api/human/me`))).status).toBe(401);
+      expect((await handle(new Request(`${appOrigin}/api/human/profile`))).status).toBe(401);
+      expect((await handle(new Request(`${appOrigin}/api/human/profile/username`, {
+        method: 'POST', headers: { origin: appOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'Kevin' }),
+      }))).status).toBe(401);
       expect((await handle(new Request(`${appOrigin}/api/health`))).status).toBe(200);
     }
   });

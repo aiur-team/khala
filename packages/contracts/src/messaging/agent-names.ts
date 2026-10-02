@@ -6,7 +6,7 @@ export type AgentNameError = 'blank' | 'too_long' | 'invalid_characters' | 'rese
 export type AgentNameResult = Readonly<{ ok: true; name: string }> | Readonly<{ ok: false; error: AgentNameError }>;
 
 const unsafe = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
-const reserved = /\b(?:admin(?:istrator)?|system|khala|moderator|owner|human|security|support|official)\b/iu;
+export const reserved = /\b(?:admin(?:istrator)?|system|khala|moderator|owner|human|security|support|official)\b/iu;
 
 /** Normalise once before encryption so every reader sees the exact same label. */
 export function validateAgentName(input: unknown): AgentNameResult {

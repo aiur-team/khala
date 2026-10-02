@@ -1,3 +1,6 @@
+import { checkName, type NameError } from '@khala/contracts/m1/names';
+import { decodeProfileView, PROFILE_PATH, PROFILE_USERNAME_PATH } from '@khala/contracts/m1/profile';
+import type { ProfilePort } from '../../features/profile/ports';
 import { decodeParticipant, type Participant } from '@khala/contracts/m1/participants';
 import { decodeAgentJoinView, humanAgentJoinPath, humanAgentJoinConfirmPath, humanAgentJoinStatusPath } from '@khala/contracts/m1/agent-join';
 import type { AgentJoinPort, AgentJoinResult, AgentJoinError } from '../../features/agent-confirm/ports';
@@ -58,6 +61,7 @@ export type HumanBrowserApiOptions = Readonly<{
 
 export type HumanBrowserApi = Readonly<{
   agentJoin: AgentJoinPort;
+  profile: ProfilePort;
   identity: IdentityPort;
   admission: AdmissionPort;
   channelLinks: HumanChannelLinks;
@@ -379,5 +383,38 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     confirm: (joinId, signal) => agentJoinRequest(humanAgentJoinConfirmPath(joinId), true, signal),
     status: (joinId, signal) => agentJoinRequest(humanAgentJoinStatusPath(joinId), false, signal),
   };
-  return { agentJoin, identity, admission, channelLinks, credentials, participants };
+  const profile: ProfilePort = {
+    async get(signal) {
+      try {
+        const response = await request(`${origin}${PROFILE_PATH}`, {
+          method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(signal),
+        });
+        if (response.status !== 200) return { kind: 'error', code: response.status === 401 ? 'signed_out' : 'unavailable' };
+        const decoded = decodeProfileView(await jsonObject(response));
+        return decoded.ok ? { kind: 'ok', ...decoded.value } : { kind: 'error', code: 'unavailable' };
+      } catch { return { kind: 'error', code: 'unavailable' }; }
+    },
+    async setUsername(username, signal) {
+      // Keep a failed authentication preflight distinct from a failed mutation.
+      if (csrfToken === null) {
+        const state = await readCurrent(signal);
+        if (state.kind !== 'signed_in') return { kind: 'error', code: state.kind === 'signed_out' ? 'signed_out' : 'unavailable' };
+      }
+      const response = await mutation(PROFILE_USERNAME_PATH, { username }, signal);
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      if (response.status === 401) return { kind: 'error', code: 'signed_out' };
+      if (response.status === 409) return { kind: 'error', code: 'username_taken' };
+      const body = await jsonObject(response);
+      if (response.status === 400) {
+        const reasons: readonly NameError[] = ['too_short', 'too_long', 'invalid_characters', 'reserved'];
+        const reason = reasons.find(value => value === body?.reason);
+        return { kind: 'error', code: 'invalid_username', ...(reason ? { reason } : {}) };
+      }
+      if (response.status !== 200 || body === null || !hasExactKeys(body, ['username'])) return { kind: 'error', code: 'unavailable' };
+      const checked = checkName(body.username, 'username');
+      return checked.ok && checked.name === body.username
+        ? { kind: 'ok', username: checked.name } : { kind: 'error', code: 'unavailable' };
+    },
+  };
+  return { agentJoin, profile, identity, admission, channelLinks, credentials, participants };
 }
