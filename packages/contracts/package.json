@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./m1/*": "./src/m1/*.ts",
     "./messaging/*": "./src/messaging/*.ts",
     "./delivery/*": "./src/delivery/*.ts",
     "./internal/*": "./src/internal/*.ts"
