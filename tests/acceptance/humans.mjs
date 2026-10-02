@@ -40,7 +40,7 @@ export class DriverError extends Error {
 
 const FLAGS = new Map([
   ['--as', 'as'], ['--port', 'port'], ['--origin', 'origin'], ['--account', 'account'], ['--state-dir', 'stateDir'],
-  ['--text', 'text'], ['--url', 'url'], ['--timeout', 'timeout'], ['--account-a1', 'accountA1'], ['--account-a2', 'accountA2'],
+  ['--text', 'text'], ['--sender', 'sender'], ['--url', 'url'], ['--timeout', 'timeout'], ['--account-a1', 'accountA1'], ['--account-a2', 'accountA2'],
 ]);
 const BOOLEAN_FLAGS = new Map([['--reload', 'reload']]);
 
@@ -81,6 +81,11 @@ export function parseArgs(argv) {
   if (options.origin !== undefined) options.origin = normalizeOrigin(options.origin);
   options.stateDir = path.resolve(repoRoot, options.stateDir ?? '.khala-local/acceptance');
   return options;
+}
+
+// Self-contained callback: BiDi serializes it into the page realm.
+export function findMatchingRow(H, { text, sender }) {
+  return H.describeRows().find(entry => entry.text.includes(text) && (sender === undefined || entry.sender === sender)) ?? null;
 }
 
 export function normalizeOrigin(value) {
@@ -1000,25 +1005,32 @@ async function cmdConfirm(options) {
     const runToken = state.tabs[options.as][0];
     const runContext = runToken ? (await findDriverTabs(bidi, [runToken], origin)).get(runToken) : undefined;
     if (runContext) await setTabFocus(bidi, runContext, false);
-    // A NEW tab; it stays open afterwards because it performed the invite.
-    const token = newTabToken(options.as);
-    state.tabs[options.as].push(token);
-    writeRunState(options.stateDir, state);
-    const context = await openDriverTab(bidi, options.url, token);
-    const ready = H => !!H.find('Confirm') || / joined .+\./u.test(H.bodyText());
-    const plan = isLoopbackOrigin(origin) || options.account ? planFor(origin, options.as, options.account) : null;
-    if (plan) await completeSignIn(bidi, context, { origin, plan, isDone: ready, timeoutMs: 120_000 });
-    else await bidi.waitFor(context, ready, null, { timeoutMs: 120_000, step: 'confirm', code: 'confirm_not_shown' });
-    await bidi.waitFor(context, H => {
-      if (/ joined .+\./u.test(H.bodyText())) return true;
-      const button = H.find('Confirm');
-      return H.enabled(button) ? H.click(button) : false;
-    }, null, { timeoutMs: 30_000, step: 'confirm', code: 'confirm_not_clickable' });
-    const done = await bidi.waitFor(context, H => / joined .+\./u.exec(H.bodyText())?.[0] ?? null, null,
-      { timeoutMs: 180_000, step: 'confirm', code: 'confirm_timeout' });
+    let context;
+    let done;
+    try {
+      // A NEW tab; it stays open afterwards because it performed the invite.
+      const token = newTabToken(options.as);
+      state.tabs[options.as].push(token);
+      writeRunState(options.stateDir, state);
+      context = await openDriverTab(bidi, options.url, token);
+      const ready = H => !!H.find('Confirm') || / joined .+\./u.test(H.bodyText());
+      const plan = isLoopbackOrigin(origin) || options.account ? planFor(origin, options.as, options.account) : null;
+      if (plan) await completeSignIn(bidi, context, { origin, plan, isDone: ready, timeoutMs: 120_000 });
+      else await bidi.waitFor(context, ready, null, { timeoutMs: 120_000, step: 'confirm', code: 'confirm_not_shown' });
+      await bidi.waitFor(context, H => {
+        if (/ joined .+\./u.test(H.bodyText())) return true;
+        const button = H.find('Confirm');
+        return H.enabled(button) ? H.click(button) : false;
+      }, null, { timeoutMs: 30_000, step: 'confirm', code: 'confirm_not_clickable' });
+      done = await bidi.waitFor(context, H => / joined .+\./u.exec(H.bodyText())?.[0] ?? null, null,
+        { timeoutMs: 180_000, step: 'confirm', code: 'confirm_timeout' });
+    } finally {
+      if (runContext) {
+        if (context) await setTabFocus(bidi, context, false).catch(() => {});
+        await setTabFocus(bidi, runContext, true);
+      }
+    }
     if (runContext) {
-      await setTabFocus(bidi, context, false);
-      await setTabFocus(bidi, runContext, true);
       await bidi.waitFor(runContext, H => !!H.messageList() && H.enabled(H.find('Message')), null,
         { timeoutMs: 60_000, step: 'confirm', code: 'run_tab_not_resumed' });
     }
@@ -1033,10 +1045,8 @@ async function cmdWaitFor(options) {
     const context = await runTab(bidi, state, options.as, `${state.origin}${state.channelPath}`);
     writeRunState(options.stateDir, state);
     await ensureOnChannel(bidi, context, state);
-    const row = await bidi.waitFor(context, (H, text) => {
-      const match = H.describeRows().find(entry => entry.text.includes(text));
-      return match ?? null;
-    }, options.text, { timeoutMs: (options.timeout ?? 300) * 1_000, step: 'wait-for', code: 'wait_timeout' });
+    const row = await bidi.waitFor(context, findMatchingRow,
+      { text: options.text, sender: options.sender }, { timeoutMs: (options.timeout ?? 300) * 1_000, step: 'wait-for', code: 'wait_timeout' });
     process.stdout.write(`${JSON.stringify({ sender: row.sender, kind: row.kind, ...(row.owner ? { owner: row.owner } : {}), text: row.text })}\n`);
   });
 }

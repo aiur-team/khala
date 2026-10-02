@@ -44,7 +44,7 @@ line `humans.mjs <command>: <step> failed: <code>`. Set `HUMANS_DEBUG=1` for a s
 | `$H setup` | A1 creates channel `M1 acceptance <UTC date>` and copies its link; A2 opens it, sees "You're in.", opens the channel. Prints the link. |
 | `$H say --as a1\|a2 --text <t>` | Sends `<t>` in the run tab and waits (30 s) for its delivered (non-pending) row. |
 | `$H confirm --as a1\|a2 --url <u>` | Opens `<u>` in a new tab, clicks **Confirm**, waits (180 s) for `<label> joined <channel>.`; the tab stays open. |
-| `$H wait-for --as a1\|a2 --text <t> [--timeout 300]` | Waits until a timeline row in the run tab contains `<t>`; prints that row. |
+| `$H wait-for --as a1\|a2 --text <t> [--sender <label>] [--timeout 300]` | Waits until a timeline row in the run tab contains `<t>` and, when supplied, has exactly the parsed `sender` `<label>`; prints that row. |
 | `$H transcript --as a1\|a2 [--reload]` | Prints JSON `[{sender, kind, owner?, text}]` for every delivered row. |
 | `$H cleanup --as a1\|a2` | Closes every tab recorded for that human. |
 
@@ -215,13 +215,13 @@ Wake tests start in about 2 minutes. Finish this turn and stay idle. When a Khal
 1. **AE2 (Codex idle).**
    ```sh
    $H say --as a2 --text "Codex: reply with ack-codex-<id>"
-   $H wait-for --as a1 --text ack-codex-<id> --timeout 300
+   $H wait-for --as a1 --text ack-codex-<id> --sender Codex --timeout 300
    ```
    **PASS:** `wait-for` prints a row with `sender` `Codex`. Record message → reply latency.
 2. **Claude idle.**
    ```sh
    $H say --as a1 --text "Claude: reply with ack-claude-<id>"
-   $H wait-for --as a2 --text ack-claude-<id> --timeout 300
+   $H wait-for --as a2 --text ack-claude-<id> --sender Claude --timeout 300
    ```
    **PASS:** a row with `sender` `Claude`. Record latency.
 3. **AE3 (Claude busy).**
