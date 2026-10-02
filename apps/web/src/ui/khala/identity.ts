@@ -2,6 +2,7 @@
 // logos for avatars, owner badges and chips.
 
 import { createContext, createElement, useCallback, useContext, type ReactNode } from 'react';
+import { fnv1a } from '@khala/contracts/m1/colors';
 import claudeSymbol from './assets/claude-symbol.svg';
 import codexColor from './assets/codex-color.svg';
 
@@ -15,15 +16,7 @@ export type HueSubject =
   | Readonly<{ kind: 'human'; ownerId: string; participantId?: string; isViewer?: boolean }>
   | Readonly<{ kind: 'agent'; participantId: string }>;
 
-/** 32-bit FNV-1a over the UTF-8 bytes of `value`. */
-export function fnv1a(value: string): number {
-  let hash = 0x811c9dc5;
-  for (const byte of new TextEncoder().encode(value)) {
-    hash ^= byte;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
+export { fnv1a } from '@khala/contracts/m1/colors';
 
 /**
  * The avatar hue for a participant. An entry in `overrides`, keyed by

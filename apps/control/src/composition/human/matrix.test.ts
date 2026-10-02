@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId, ParticipantId } from '@khala/contracts/messaging/index';
 import { profileRecordKey } from '@khala/contracts/m1/profile';
+import { defaultHumanColor, humanColorRecordKey } from '@khala/contracts/m1/colors';
 import { agentOwnerRecordKey, humanEmailRecordKey } from '@khala/contracts/m1/participants';
 import { createMatrixHumanServices } from './matrix';
 import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
@@ -631,6 +632,47 @@ describe('owner-map room participants', () => {
     });
     return { store, matrix: services(fetch, store), identity, joined, deny: () => { denied = true; } };
   }
+  it('shares stored colours across humans and agents and defaults unconfigured humans', async () => {
+    const f = await fixture();
+    const key = humanColorRecordKey(principal.ownerId);
+    await f.store.compareAndSet({ key, expectedRevision: null, operationId: 'color',
+      next: { expiresAt: null, value: { v: 1, ownerId: principal.ownerId, color: 'pink' } } });
+    const otherOwner = 'owner_bob' as OwnerId;
+    const otherUser = ownerMatrixUserId(otherOwner, 'matrix.example.test');
+    f.joined[otherUser] = {};
+    const spy = vi.spyOn(f.store, 'read');
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId, otherUser]))
+      .toMatchObject({ kind: 'ok', participants: [
+        { kind: 'human', color: 'pink' }, { kind: 'agent', ownerColor: 'pink' },
+        { kind: 'human', color: defaultHumanColor(otherOwner) },
+      ] });
+    expect(spy.mock.calls.filter(([readKey]) => readKey === key)).toHaveLength(1);
+    // An owner's agent still receives the colour when the owner is not in this channel.
+    delete f.joined[user];
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [{ kind: 'agent', ownerColor: 'pink' }] });
+    spy.mockClear();
+    expect(await f.matrix.sessions.resolveParticipants([user]))
+      .toEqual({ kind: 'ok', participants: [expect.not.objectContaining({ color: expect.anything() })] });
+    expect(spy.mock.calls.filter(([readKey]) => readKey === key)).toHaveLength(0);
+  });
+  it.each(['absent', 'invalid', 'foreign', 'unavailable', 'throw'] as const)('defaults human and agent colours on %s records', async failure => {
+    const f = await fixture();
+    const key = humanColorRecordKey(principal.ownerId);
+    const read = f.store.read;
+    vi.spyOn(f.store, 'read').mockImplementation(async <T extends JsonValue>(readKey: string) => {
+      if (readKey !== key) return read<T>(readKey);
+      if (failure === 'throw') throw Error('offline');
+      if (failure === 'unavailable' || failure === 'absent') return { kind: failure };
+      return { kind: 'record', record: { key, revision: 'color-r1', operationId: 'color', expiresAt: null,
+        value: { v: 1, ownerId: failure === 'foreign' ? 'owner_other' : principal.ownerId,
+          color: failure === 'invalid' ? 'chartreuse' : 'pink' } as unknown as T } };
+    });
+    expect(await f.matrix.sessions.resolveRoomParticipants(principal.ownerId, room, [user, f.identity.userId]))
+      .toMatchObject({ kind: 'ok', participants: [
+        { color: defaultHumanColor(principal.ownerId) }, { ownerColor: defaultHumanColor(principal.ownerId) },
+      ] });
+  });
   it('resolves an agent from its owner map only for a joined human', async () => {
     const f = await fixture();
     f.joined[user] = { display_name: 'Alice' };

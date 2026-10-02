@@ -1,3 +1,4 @@
+import { PROFILE_COLOR_PATH } from '@khala/contracts/m1/colors';
 import { randomBytes } from 'node:crypto';
 import { PROFILE_PATH, PROFILE_USERNAME_PATH } from '@khala/contracts/m1/profile';
 import type { ProductionHumanRuntime } from '../composition/human/production';
@@ -26,5 +27,6 @@ export function createProfileRoutes(loadRuntime: () => ProductionHumanRuntime, f
   return Object.freeze([
     route(PROFILE_PATH, 'GET', active => active.get),
     route(PROFILE_USERNAME_PATH, 'POST', active => active.setUsername),
+    route(PROFILE_COLOR_PATH, 'POST', active => active.setColor),
   ]);
 }

@@ -1,3 +1,4 @@
+import { decodeHumanColorRecord, defaultHumanColor, humanColorRecordKey, isHumanColorId, type HumanColorId } from '@khala/contracts/m1/colors';
 import { checkName, nameKey, suggestUsername, USERNAME_MAX } from '@khala/contracts/m1/names';
 import { decodeNameReservation, decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
@@ -33,9 +34,22 @@ export function createProfileHandlers(deps: ProfileDeps) {
     if (!decoded.ok || decoded.value.ownerId !== ownerId) return { kind: 'unavailable' as const };
     return { kind: 'ok' as const, record: decoded.value, revision: read.record.revision };
   }
+  async function readColor(ownerId: OwnerId): Promise<
+    { kind: 'ok'; color: HumanColorId; revision: string | null; chosen: boolean } | { kind: 'unavailable' }
+  > {
+    const read = await safeRead(deps.store, humanColorRecordKey(ownerId));
+    if (read.kind === 'unavailable') return { kind: 'unavailable' };
+    if (read.kind === 'absent') return { kind: 'ok', color: defaultHumanColor(ownerId), revision: null, chosen: false };
+    const decoded = decodeHumanColorRecord(read.record.value);
+    const chosen = decoded.ok && decoded.value.ownerId === ownerId;
+    return { kind: 'ok', color: chosen ? decoded.value.color : defaultHumanColor(ownerId),
+      revision: read.record.revision, chosen };
+  }
   async function getProfile(principal: AuthPrincipal): Promise<Response> {
     const profile = await readProfile(principal.ownerId);
     if (profile.kind !== 'ok') return unavailable();
+    const color = await readColor(principal.ownerId);
+    if (color.kind !== 'ok') return unavailable();
     const base = suggestUsername(principal.verifiedEmail);
     for (let n = 1; n <= 99; n++) {
       const suffix = n === 1 ? '' : String(n);
@@ -44,7 +58,7 @@ export function createProfileHandlers(deps: ProfileDeps) {
       const reservation = await safeRead(deps.store, nameKey(suggestion));
       if (reservation.kind === 'unavailable') return unavailable();
       if (reservation.kind === 'absent' || ownReservation(reservation.record.value, principal.ownerId)) {
-        return json(200, { username: profile.record?.username ?? null, suggestion });
+        return json(200, { username: profile.record?.username ?? null, suggestion, color: color.color });
       }
     }
     return unavailable();
@@ -125,7 +139,29 @@ export function createProfileHandlers(deps: ProfileDeps) {
     }
     return unavailable();
   }
-  const handler = (mutation: boolean) => async (request: Request): Promise<Response> => {
+  async function setColor(request: Request, principal: AuthPrincipal): Promise<Response> {
+    let input: unknown;
+    try { input = await request.json(); } catch { return error(400, 'invalid_request'); }
+    const parsed = decodeWith(() => object(input, '', ['color']).field('color'));
+    if (!parsed.ok) return error(400, 'invalid_request');
+    if (!isHumanColorId(parsed.value)) return error(400, 'invalid_color');
+    const color = parsed.value;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = await readColor(principal.ownerId);
+      if (current.kind !== 'ok') return unavailable();
+      // A fallback is display data, not a stored choice: repair corrupt records
+      // even when the requested colour happens to equal the default.
+      if (current.chosen && current.color === color) return json(200, { color });
+      const written = await writeAndResolve(deps.store, { key: humanColorRecordKey(principal.ownerId),
+        expectedRevision: current.revision, operationId: operationId(),
+        next: { value: { v: 1, ownerId: principal.ownerId, color }, expiresAt: null } });
+      if (written.kind === 'applied') return json(200, { color });
+      if (written.kind !== 'conflict') return unavailable();
+    }
+    return unavailable();
+  }
+  const handler = (kind: 'get' | 'username' | 'color') => async (request: Request): Promise<Response> => {
+    const mutation = kind !== 'get';
     try {
       if (request.method !== (mutation ? 'POST' : 'GET')) return error(405, 'method_not_allowed');
       let principal: AuthPrincipal;
@@ -143,8 +179,10 @@ export function createProfileHandlers(deps: ProfileDeps) {
         if (auth.kind !== 'authenticated') return auth.kind === 'signed_out' ? error(401, 'signed_out') : unavailable();
         principal = auth.context.principal;
       }
-      return await (mutation ? setUsername(request, principal) : getProfile(principal));
+      if (kind === 'color') return await setColor(request, principal);
+      if (kind === 'username') return await setUsername(request, principal);
+      return await getProfile(principal);
     } catch { return unavailable(); }
   };
-  return { get: handler(false), setUsername: handler(true) };
+  return { get: handler('get'), setUsername: handler('username'), setColor: handler('color') };
 }

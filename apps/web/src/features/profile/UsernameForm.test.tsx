@@ -68,7 +68,7 @@ describe('submitUsername', () => {
 
   it('calls onSaved with the saved name', async () => {
     const onSaved = vi.fn();
-    const store = createProfileStore({ get: vi.fn(), setUsername: async username => ({ kind: 'ok', username }) });
+    const store = createProfileStore({ get: vi.fn(), setColor: async color => ({ kind: 'ok', color }), setUsername: async username => ({ kind: 'ok', username }) });
     const result = await submitUsername('Kevin', store.save);
     if (result.kind === 'saved') onSaved(result.username);
     expect(onSaved).toHaveBeenCalledWith('Kevin');
