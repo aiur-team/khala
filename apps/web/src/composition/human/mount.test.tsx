@@ -221,3 +221,30 @@ describe('HumanApplicationScreen', () => {
     expect(renderRoom).not.toHaveBeenCalled();
   });
 });
+
+
+describe('agent confirmation mount', () => {
+  it('shows existing sign-in for a signed-out confirmation visitor', () => {
+    const path = '/agent/confirm?joinId=j1';
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'signed_out', path, context: null })}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('Sign in');
+    expect(html).not.toContain('Agent confirmation unavailable');
+  });
+  it('requires both confirmation capabilities', () => {
+    const path = '/agent/confirm?joinId=j1';
+    const context = readyContext(path);
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'ready', path, context })}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('Agent confirmation unavailable');
+  });
+  it('mounts the confirmation screen when both ports are supplied', () => {
+    const path = '/agent/confirm?joinId=j1';
+    const context = { ...readyContext(path), agentJoin: { view: vi.fn(), confirm: vi.fn(), status: vi.fn() }, inviteAgent: vi.fn() };
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'ready', path, context })}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('Confirm agent');
+    expect(html).toContain('Loading agent request');
+    expect(context.agentJoin.view).not.toHaveBeenCalled();
+  });
+});

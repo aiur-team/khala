@@ -1,0 +1,11 @@
+{
+  "event": "alert",
+  "name": "ticket.395.pr.parked_ready",
+  "topic": "ticket.395.pr.parked_ready",
+  "message": "PR is parked ready",
+  "reason": "checks passed",
+  "severity": "info",
+  "needs_attention": true,
+  "source_ticket_id": "395",
+  "sound": null
+}
