@@ -4,89 +4,88 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
-import { validateAgentName } from '@khala/contracts/messaging/agent-names';
+import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/names';
 import { Avatar } from '../../ui/khala/Avatar';
 import { harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, AsyncIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
+import { AgentIcon, AsyncIcon, PencilIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
 import { HARNESS_NAMES, ownerOfLabel } from './roster-model';
 
-type PendingRename = { name: string; clientTxnId: string };
+export type RenameAgentResult = { kind: 'ok'; name: string } | {
+  kind: 'error';
+  code: 'invalid_name' | 'name_taken' | 'not_owner' | 'not_found' | 'signed_out' | 'unavailable';
+  reason?: NameError;
+};
+export type RenameAgentHandler = (participantId: ParticipantId, name: string) => Promise<RenameAgentResult>;
 
-function readPending(key: string): PendingRename | null {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-    if (!value || typeof value !== 'object' || !('name' in value) || !('clientTxnId' in value)
-      || typeof value.name !== 'string' || typeof value.clientTxnId !== 'string'
-      || !/^txn_[0-9a-f-]{36}$/u.test(value.clientTxnId)) return null;
-    const checked = validateAgentName(value.name);
-    return checked.ok && checked.name === value.name ? { name: value.name, clientTxnId: value.clientTxnId } : null;
-  } catch { return null; }
+const NAME_ERRORS: Record<NameError, string> = {
+  too_short: 'At least 2 characters.',
+  too_long: 'At most 40 characters.',
+  invalid_characters: 'Use letters, numbers, . _ or -, starting and ending with a letter or number.',
+  reserved: 'Choose a name that does not imply an official role.',
+};
+
+function renameError(result: Extract<RenameAgentResult, { kind: 'error' }>): string {
+  if (result.code === 'invalid_name' && result.reason) return NAME_ERRORS[result.reason];
+  if (result.code === 'name_taken') return 'That name is taken.';
+  if (result.code === 'not_owner') return 'You can only rename your own agents.';
+  return 'Couldn’t rename. Try again.';
 }
-
-function writePending(key: string, value: PendingRename | null): boolean {
-  try {
-    if (value) localStorage.setItem(key, JSON.stringify(value));
-    else localStorage.removeItem(key);
-    return true;
-  } catch { return false; }
-}
-
-export type RenameAgentHandler = (participantId: ParticipantId, name: string, clientTxnId: string) => Promise<'accepted' | 'unknown' | 'rejected'>;
 
 /**
- * Renames one of the viewer's agents. An unconfirmed request survives a
- * reload under `storageKey` and is retried with the same `clientTxnId`.
+ * Checks `draft` with the shared handle rules and, if it is a new valid name,
+ * renames. Returns the name the server stored, or the message to show.
  */
-export function RenameAgent({ participantId, name, renameAgent, storageKey }: Readonly<{
+export async function submitRename(participantId: ParticipantId, currentName: string, draft: string,
+  renameAgent: RenameAgentHandler): Promise<{ kind: 'ok'; name: string } | { kind: 'error'; message: string }> {
+  const checked = checkName(draft, 'agent');
+  if (!checked.ok) return { kind: 'error', message: NAME_ERRORS[checked.error] };
+  if (checked.name === currentName) return { kind: 'error', message: 'This agent already has that name.' };
+  try {
+    const result = await renameAgent(participantId, checked.name);
+    return result.kind === 'ok' ? result : { kind: 'error', message: renameError(result) };
+  } catch {
+    return { kind: 'error', message: 'Couldn’t rename. Try again.' };
+  }
+}
+
+/** Renames one of the viewer's agents everywhere, through the global rename API. */
+export function RenameAgent({ participantId, name, renameAgent, autoFocus = false }: Readonly<{
   participantId: ParticipantId;
   name: string;
   renameAgent: RenameAgentHandler;
-  storageKey: string;
+  autoFocus?: boolean;
 }>) {
-  const [pending, setPending] = useState<PendingRename | null>(() => readPending(storageKey));
-  const [draft, setDraft] = useState(pending?.name ?? name);
+  const input = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState(name);
+  // The pane is laid out a render after it mounts, so focus on the next frame rather than with `autoFocus`.
+  useEffect(() => {
+    if (!autoFocus) return undefined;
+    const frame = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [autoFocus]);
   const [status, setStatus] = useState('');
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    if (!pending || name !== pending.name) return;
-    setStatus('');
-    setPending(null);
-    writePending(storageKey, null);
-  }, [name, pending, storageKey]);
-
   async function submit(): Promise<void> {
-    const checked = validateAgentName(draft);
-    if (!checked.ok) {
-      setStatus(checked.error === 'blank' ? 'Enter a name.' : checked.error === 'too_long' ? 'Name is too long.'
-        : checked.error === 'reserved' ? 'Choose a name that does not imply an official role.' : 'Remove invisible or control characters.');
-      return;
-    }
-    if (checked.name === name && pending === null) { setStatus('This agent already has that name.'); return; }
-    const request = pending ?? { name: checked.name, clientTxnId: `txn_${crypto.randomUUID()}` };
-    if (pending && pending.name !== checked.name) { setStatus('Check the previous rename before choosing another name.'); return; }
-    if (!writePending(storageKey, request)) { setStatus('This browser cannot safely keep the retry request. Check browser storage.'); return; }
-    setPending(request);
     setSending(true);
-    setStatus('Waiting for the channel to confirm the name…');
-    try {
-      const result = await renameAgent(participantId, request.name, request.clientTxnId);
-      if (result === 'rejected') { writePending(storageKey, null); setPending(null); setStatus('Name change was refused. Check your channel access and try again.'); }
-      else if (result === 'unknown') setStatus('Delivery is unknown. Check delivery using the same request.');
-    } catch {
-      setStatus('Delivery is unknown. Check delivery using the same request.');
-    } finally {
-      setSending(false);
-    }
+    setStatus('');
+    const result = await submitRename(participantId, name, draft, renameAgent);
+    setSending(false);
+    // The server's name wins over what was typed.
+    if (result.kind === 'ok') setDraft(result.name);
+    else setStatus(result.message);
   }
   return <form className="kh-d-rename" onSubmit={event => { event.preventDefault(); void submit(); }}>
     <div className="kh-row2">
-      <input className="kh-txt" aria-label={`Name for ${name}`} value={draft} onChange={event => setDraft(event.target.value)} maxLength={80} />
-      <button type="submit" className="kh-btn pri" disabled={sending}>{pending ? 'Check delivery' : 'Rename'}</button>
+      <input className="kh-txt" aria-label={`Name for ${name}`} aria-describedby={`kh-rename-help-${participantId}`} value={draft}
+        onChange={event => setDraft(event.target.value)} maxLength={AGENT_NAME_MAX} autoCapitalize="none" autoComplete="off"
+        spellCheck={false} ref={input} />
+      <button type="submit" className="kh-btn pri" disabled={sending}>{sending ? 'Renaming…' : 'Rename'}</button>
     </div>
+    <p id={`kh-rename-help-${participantId}`}>2–40 letters, numbers, . _ or -</p>
     {status ? <p role="alert">{status}</p> : null}
   </form>;
 }
@@ -139,10 +138,12 @@ function ModeIcon({ mode }: Readonly<{ mode: ListeningMode }>) {
  * selected until the agent's member state reports it, or reverts after
  * `MODE_CONFIRM_MS`.
  */
-function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
+function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
   agent: AgentMember;
   mode: ListeningMode;
   onSetMode: SetModeHandler;
+  /** The row's Rename button, placed before the mode control. */
+  rename: ReactNode;
   /** The row's opener button. */
   children: ReactNode;
 }>) {
@@ -196,6 +197,7 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
 
   return <>
     <div className="kh-rrow">{children}<span className="kh-racts">
+      {rename}
       <Segmented icon label={`Listening mode for ${label}`} value={shown} options={MODES} onChange={value => void choose(value)} />
       <button ref={anchor} type="button" className="kh-ib sm kh-mode-btn" data-tip={modeTip(shown)} aria-haspopup="menu"
         aria-expanded={menuOpen} aria-label={`Listening mode for ${label}: ${modeTip(shown)}`}
@@ -212,20 +214,26 @@ function ModeControl({ agent, mode, onSetMode, children }: Readonly<{
   </>;
 }
 
-function AgentRow({ agent, mode, onOpen, onSetMode }: Readonly<{
+function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   agent: AgentMember;
   mode: ListeningMode;
   onOpen(participantId: string): void;
+  onRename?: ((participantId: string) => void) | undefined;
   onSetMode?: SetModeHandler | undefined;
 }>) {
   const label = agentLabel(agent);
   const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
     <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
   </button>;
-  if (agent.isViewerOwned && onSetMode) return <ModeControl agent={agent} mode={mode} onSetMode={onSetMode}>{opener}</ModeControl>;
+  const rename = agent.isViewerOwned && onRename ? <button type="button" className="kh-ib sm kh-rename-btn" aria-label={`Rename ${label}`}
+    data-tip="Rename" onClick={() => onRename(agent.participantId)}><PencilIcon /></button> : null;
+  if (agent.isViewerOwned && onSetMode) {
+    return <ModeControl agent={agent} mode={mode} onSetMode={onSetMode} rename={rename}>{opener}</ModeControl>;
+  }
   return <div className="kh-rrow">
     {opener}
     <span className="kh-racts">{agent.isViewerOwned ? <>
+      {rename}
       {/* No mode port (fixtures, harnesses): the reported mode, locked. */}
       <Segmented icon locked label={`Listening mode for ${label}`} value={mode} options={MODES} />
       <button type="button" className="kh-ib sm kh-mode-btn" disabled data-tip={modeTip(mode)}
@@ -248,6 +256,8 @@ export type ChannelRosterProps = Readonly<{
   members: ChannelMembers;
   phase: 'loading' | 'ready' | 'unavailable';
   onOpen(participantId: string): void;
+  /** Opens the rename field for one of the viewer's agents; no Rename buttons without it. */
+  onRename?: ((participantId: string) => void) | undefined;
   /** The Add agent popover body on the viewer's row. */
   renderAddAgent?: (() => ReactNode) | undefined;
   /** An agent's reported listening mode; `sync` when absent. */
@@ -257,7 +267,7 @@ export type ChannelRosterProps = Readonly<{
 }>;
 
 /** The roster tree: one group per human, each with the agents it owns. */
-export function ChannelRoster({ members, phase, onOpen, renderAddAgent, modeFor, onSetMode }: ChannelRosterProps) {
+export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, modeFor, onSetMode }: ChannelRosterProps) {
   const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
   const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
   return <>
@@ -279,7 +289,7 @@ export function ChannelRoster({ members, phase, onOpen, renderAddAgent, modeFor,
           {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
         </div>
         {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent}
-          mode={modeFor?.(agent.participantId) ?? 'sync'} onOpen={onOpen} onSetMode={onSetMode} />)}</div> : null}
+          mode={modeFor?.(agent.participantId) ?? 'sync'} onOpen={onOpen} onRename={onRename} onSetMode={onSetMode} />)}</div> : null}
       </div>;
     })}
   </>;

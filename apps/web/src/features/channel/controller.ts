@@ -22,6 +22,8 @@ export interface ChannelController {
   /** Cached, `useSyncExternalStore`-safe snapshot. */
   getSnapshot(): ChannelView;
   subscribe(listener: () => void): () => void;
+  /** Re-reads presence now instead of at the next live update, e.g. after a rename. */
+  refresh?(): void;
   dispose(): void;
 }
 
@@ -139,6 +141,11 @@ export function createChannelController(port: ChannelUiPort, config: ChannelCont
     return () => listeners.delete(listener);
   }
 
+  function refresh(): void {
+    if (disposed) return;
+    void port.agents(config.roomId, abortController.signal).then(snapshot => { applySnapshot(snapshot); }, () => {});
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
@@ -147,7 +154,7 @@ export function createChannelController(port: ChannelUiPort, config: ChannelCont
     listeners.clear();
   }
 
-  return { getSnapshot, subscribe, dispose };
+  return { getSnapshot, subscribe, refresh, dispose };
 }
 
 /** @deprecated Use `createChannelController`. Kept through the first tagged release containing #163. */
