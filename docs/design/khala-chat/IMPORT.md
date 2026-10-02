@@ -33,7 +33,7 @@ Check every file with `sha256sum -c SHA256SUMS`, run from `docs/design/khala-cha
 ## Generated reference (`reference/`)
 
 - `design-khala.css` is a verbatim line-range extract of the full HTML: tokens and base (16–153), tool-btn and toggle (226–244), cards and status badge (246–271), section-card (1189–1190), all of Khala (413–771) and the shared 480px card rule (1763). Regenerate it with `python3 reference/extract_css.py "source/Aiur Dashboard.html" reference/design-khala.css`.
-- `fullbleed-inject.css` is the edge-to-edge adaptation from RECREATION-SPEC §1.3/§1.4, plus the D1–D5 fixes. The capture script injects it into the **real** design page.
+- `fullbleed-inject.css` is the edge-to-edge adaptation from RECREATION-SPEC §1.3/§1.4, plus the D1–D5 fixes. The capture script injects it into the **real** design page. It also resets the dashboard's `html { scrollbar-gutter: stable }` (`source:157`) to `auto`, so full-bleed captures fill the viewport rather than leaving a 15px strip on the right (KM-186).
 - `capture.mjs` drives the real design with its own JS in headless Chromium (Playwright 1.63, chromium-1243, DPR 1) and writes `screens/*.png`, `screens/index.json` and `computed-styles.json`:
   - It produces 66 captures with 0 page errors.
   - `design-*` shots show the dashboard as authored. `fullbleed-*` shots show the target.

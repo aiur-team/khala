@@ -11,8 +11,9 @@
 // - The rest are the behaviour and structure checks of §25.5–11.
 //
 // Every run writes diff images and `results.json` to apps/web/test-results/parity,
-// the input to docs/design/khala-chat/PARITY-REPORT.md. A check listed in
-// KNOWN_BLOCKED runs as `todo`: it reports, but the owning ticket fixes it.
+// the input to docs/design/khala-chat/PARITY-REPORT.md. A known
+// deviation ratchets at its measured value (SCREEN_MEASURED,
+// COMPUTED_DEVIATIONS) until its owner fixes it, so new drift still fails.
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,10 +67,10 @@ const FIXTURE_READY: Readonly<Partial<Record<State, string>>> = {
 };
 
 /**
- * Known blocking failures, by test name, each with its owner: a ticket or an
- * Executor decision. They run as `todo`, so the suite reports them without
- * failing; the owner removes the entry with the fix or the decision.
- * PARITY-REPORT.md lists each one with its measured diff.
+ * Known deviations, each with its owner: a ticket or an Executor decision.
+ * They ratchet rather than skip, so new drift still fails; the owner tightens
+ * or removes the entry with the fix or the decision. PARITY-REPORT.md lists
+ * each one with its measured diff.
  */
 const ID_BADGES = 'Executor decision dec_f83838efca089ad3: M1 omits the #id badges, so agent names, mentions and list previews are '
   + 'shorter and lines rewrap, and agent rows are 1px shorter without the badge in the name line';
@@ -81,15 +82,46 @@ const SCREEN_CAUSES: Readonly<Partial<Record<State, string>>> = {
   'detail-agent': 'KM-183 (§22 Live): the hero names the harness and the pane shows the Harness/Owner table and a full-width @ Mention',
   'detail-human': 'KM-183: “Recent in Khala” shows mentions as plain text (open defect); agent rows read label · owner and the harness',
 };
-/** Screens within the threshold on the capture machine. */
-const SCREENS_PASSING = new Set(['1440-dark-empty-channel', '1440-light-empty-channel', '900-dark-list', '900-light-list']);
-const KNOWN_BLOCKED: Readonly<Record<string, string>> = {
-  ...Object.fromEntries(SCREEN_CASES.filter(c => !SCREENS_PASSING.has(screenName(c))).map(c => [`screens: ${screenName(c)}`,
-    [ID_BADGES, c.state === 'list' || c.width <= 900 ? null : `${UNSENT_PREVIEW} (list column)`, SCREEN_CAUSES[c.state]].filter(Boolean).join('; ')])),
-  ...Object.fromEntries((['1440-dark', '1440-light', '390-dark'] as const).map(viewport => [`computed: ${viewport}: .kh-ev i`,
-    'operator decision: KM-172 colours the event dot by status (pending is --accent); the design dot is always --good (§8)'])),
+const screenCause = (c: ScreenCase) => SCREEN_MEASURED[screenName(c)] === undefined ? null
+  : [ID_BADGES, c.state === 'list' || c.width <= 900 ? null : `${UNSENT_PREVIEW} (list column)`, SCREEN_CAUSES[c.state]].filter(Boolean).join('; ');
+/** Headroom over a measured ratio for capture timing: animated states move by about 1,100 px between captures. */
+const SCREEN_SLACK = 0.005;
+/**
+ * The measured ratio of every screen over THRESHOLD on the capture machine,
+ * while decision dec_4e1280cb3a29b228 is open. Its ceiling is this plus
+ * SCREEN_SLACK and its cause is `screenCause`; an unlisted screen gates at THRESHOLD.
+ */
+const SCREEN_MEASURED: Readonly<Record<string, number>> = {
+  '1440-dark-thread': 0.0778, '1440-dark-roster': 0.0239, '1440-dark-chips': 0.0669, '1440-dark-detail-agent': 0.1270,
+  '1440-dark-detail-human': 0.1398, '1440-dark-pop-new': 0.0701, '1440-dark-pop-invite': 0.0839, '1440-dark-pop-add-agent': 0.0315,
+  '1440-dark-failed-send': 0.0778, '1440-dark-draft': 0.0631, '1100-dark-thread': 0.1345, '900-dark-thread': 0.1749,
+  '760-dark-thread': 0.0967, '760-dark-list': 0.0201, '390-dark-thread': 0.1059, '390-dark-list': 0.0855, '390-dark-roster': 0.0721,
+  '390-dark-chips': 0.0692, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1287,
+  '1440-light-thread': 0.0811, '1440-light-roster': 0.0261, '1440-light-chips': 0.0688, '1440-light-detail-agent': 0.1336,
+  '1440-light-detail-human': 0.1432, '1440-light-pop-new': 0.0820, '1440-light-pop-invite': 0.0981, '1440-light-pop-add-agent': 0.0343,
+  '1440-light-failed-send': 0.0811, '1440-light-draft': 0.0654, '1100-light-thread': 0.1376, '900-light-thread': 0.1837,
+  '760-light-thread': 0.0998, '760-light-list': 0.0205, '390-light-thread': 0.1143, '390-light-list': 0.0862, '390-light-roster': 0.0731,
+  '390-light-chips': 0.0759, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1708,
 };
-const todo = (name: string) => KNOWN_BLOCKED[name] ? { todo: KNOWN_BLOCKED[name] } : {};
+const screenCeiling = (c: ScreenCase) => {
+  const measured = SCREEN_MEASURED[screenName(c)];
+  return measured === undefined ? THRESHOLD : measured + SCREEN_SLACK;
+};
+/**
+ * Computed values that knowingly differ from the design, by selector, viewport
+ * and property. The test expects the current value instead, so any other
+ * change still fails.
+ */
+const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; values: Readonly<Record<string, Readonly<Record<string, string>>>> }>>> = {
+  '.kh-ev i': {
+    reason: 'operator decision: KM-172 colours the event dot by status (pending is --accent); the design dot is always --good (§8)',
+    values: {
+      '1440-dark': { 'background-color': 'rgb(47, 134, 255)' },
+      '1440-light': { 'background-color': 'rgb(31, 87, 196)' },
+      '390-dark': { 'background-color': 'rgb(47, 134, 255)' },
+    },
+  },
+};
 
 // --- The design page, for mask boxes: the same page and steps as reference/capture.mjs. ---
 
@@ -327,7 +359,7 @@ after(async () => {
 describe('screens', { concurrency: 1 }, () => {
   for (const c of SCREEN_CASES) {
     const name = `screens: ${screenName(c)}`;
-    it(name, { timeout: 120_000, skip: SCREENS_SKIP, ...todo(name) }, async () => {
+    it(name, { timeout: 120_000, skip: SCREENS_SKIP }, async () => {
       const reference = await readFile(join(SCREENS, `fullbleed-${screenName(c)}.png`));
       const inject = await readFile(join(DESIGN, 'reference/fullbleed-inject.css'), 'utf8');
       const { masks, reserves } = await designLayout(browser!, c, inject);
@@ -338,10 +370,12 @@ describe('screens', { concurrency: 1 }, () => {
       if (result.png) await writeFile(diffPath, Buffer.from(result.png.split(',')[1]!, 'base64'));
       await writeFile(join(OUT, `${screenName(c)}.fixture.png`), shot);
       const ratio = result.diff / result.total;
-      results.push({ check: 'screen', ...c, ratio: Number(ratio.toFixed(4)), size: result.size, reserves,
+      const ceiling = screenCeiling(c);
+      results.push({ check: 'screen', ...c, ratio: Number(ratio.toFixed(4)), ceiling: Number(ceiling.toFixed(4)), cause: screenCause(c),
+        size: result.size, reserves,
         masks: Object.entries(masks).filter(([, list]) => list.length).map(([id]) => id), maskedPixels: boxes.reduce((sum, box) => sum + box[2] * box[3], 0) });
       assert.ok(result.diff >= 0, `screenshot size ${result.size}`);
-      assert.ok(ratio <= THRESHOLD, `${screenName(c)}: ${ratio.toFixed(4)} of pixels differ (> ${THRESHOLD}); diff at ${diffPath}`);
+      assert.ok(ratio <= ceiling, `${screenName(c)}: ${ratio.toFixed(4)} of pixels differ (> ${ceiling.toFixed(4)}); diff at ${diffPath}`);
     });
   }
 });
@@ -356,13 +390,16 @@ const EXACT = ['color', 'background-color', 'font-size', 'font-weight', 'font-fa
 const COMPUTED_SKIP: Readonly<Record<string, string>> = {
   '.kh-id': 'Executor decision (dec_f83838efca089ad3): #id badges are Aiur ticket numbers and M1 omits them; `.kh-id` renders only for colliding names',
 };
+const SIZE_ONLY = 'position follows text length or thread scroll; size compared';
 /** Boxes that follow dataset text, thread scroll or an omitted neighbour; their styles are still compared. */
 const BOX_SKIP: Readonly<Record<string, string>> = Object.fromEntries([
   ...['.kh-list-head span', '.kh-cv-t b', '.kh-cv-t time', '.kh-cv-pv', '.kh-head-t > b', '.kh-head-t > span', '.kh-head-t .on',
-    '.kh-name', '.kh-name b', '.kh-otag', '.kh-htag', '.kh-mention', '.kh-mention.kh-hm', '.kh-b code', '.kh-ev', '.kh-ev i',
-    '.kh-rcpt', '.kh-retry', '.kh-chip-a', '.kh-chip-h', '.kh-to-tog', '.kh-day', '.kh-av', '.kh-own',
+    '.kh-name', '.kh-name b', '.kh-otag', '.kh-htag', '.kh-mention', '.kh-mention.kh-hm', '.kh-b code', '.kh-ev',
+    '.kh-rcpt', '.kh-chip-a', '.kh-chip-h', '.kh-day',
     '.kh-row:not(.me):not(.human) .kh-b', '.kh-row.human .kh-b', '.kh-row.me .kh-b', '.kh-row.failed .kh-b']
     .map(selector => [selector, 'text length or thread scroll position']),
+  // CSS fixes these sizes, but their position follows dataset text or thread scroll: compare width and height only.
+  ...['.kh-av', '.kh-own', '.kh-ev i', '.kh-retry', '.kh-to-tog'].map(selector => [selector, SIZE_ONLY]),
   ['.kh-hacts .kh-ib', 'the omitted settings gear leaves the Invite button in its slot (operator decision in the report)'],
 ]);
 /** Design selectors whose product element carries another class: KM-172's channel-event pill is the §8 `.kh-ev`. */
@@ -414,7 +451,7 @@ describe('computed', { concurrency: 1 }, () => {
     const load = () => fixtureComputed(width, theme, selectors, props, tokens);
 
     const tokenName = `tokens: ${viewport}`;
-    it(tokenName, { timeout: 60_000, ...todo(tokenName) }, async () => {
+    it(tokenName, { timeout: 60_000 }, async () => {
       // Custom properties keep their authored text: `.2` in the product is `0.20` in the design file.
       const normalize = (values: Readonly<Record<string, string>>) => Object.fromEntries(Object.entries(values)
         .map(([token, value]) => [token, value.replace(/\d*\.?\d+/gu, number => String(Number(number))).replace(/\s+/gu, ' ')]));
@@ -427,14 +464,19 @@ describe('computed', { concurrency: 1 }, () => {
     for (const selector of selectors) {
       const name = `computed: ${viewport}: ${selector}`;
       const skip = COMPUTED_SKIP[selector] ?? (expected[selector] === null ? 'absent from the design at this viewport' : false);
-      it(name, { timeout: 60_000, skip, ...todo(name) }, async () => {
-        const want = expected[selector]!;
+      it(name, { timeout: 60_000, skip }, async () => {
+        const deviation = COMPUTED_DEVIATIONS[selector];
+        const want = { ...expected[selector]!, ...deviation?.values[viewport] };
         const got = (await load())[selector];
         assert.ok(got, `${selector} is rendered`);
         const mismatches = EXACT.filter(prop => got[prop] !== want[prop]).map(prop => `${prop}: ${got[prop]} ≠ ${want[prop]}`);
-        const boxOff = BOX_SKIP[selector] ? null : want.box.some((value, index) => Math.abs(value - got.box[index]!) > 2);
-        if (boxOff) mismatches.push(`box: [${got.box.join(', ')}] ≠ [${want.box.join(', ')}]`);
-        results.push({ check: 'computed', viewport, selector, mismatches, box: BOX_SKIP[selector] ? `skipped: ${BOX_SKIP[selector]}` : got.box });
+        const boxSkip = BOX_SKIP[selector];
+        const compared = boxSkip === SIZE_ONLY ? [2, 3] : boxSkip ? [] : [0, 1, 2, 3];
+        if (compared.some(index => Math.abs(want.box[index]! - got.box[index]!) > 2)) {
+          mismatches.push(`box: [${got.box.join(', ')}] ≠ [${want.box.join(', ')}]${boxSkip ? ' (size)' : ''}`);
+        }
+        results.push({ check: 'computed', viewport, selector, mismatches, deviation: deviation?.reason ?? null,
+          box: boxSkip && boxSkip !== SIZE_ONLY ? `skipped: ${boxSkip}` : got.box, boxCompared: compared.length === 2 ? 'size' : compared.length ? 'full' : 'none' });
         assert.deepEqual(mismatches, []);
       });
     }
@@ -455,7 +497,7 @@ function assertFonts(page: string, walk: FontWalk, options: Readonly<{ wordmark:
 describe('fonts', { concurrency: 1 }, () => {
   for (const c of SCREEN_CASES) {
     const name = `fonts: fixture ${screenName(c)}`;
-    it(name, { timeout: 60_000, ...todo(name) }, async () => {
+    it(name, { timeout: 60_000 }, async () => {
       assertFonts(`fixture ${screenName(c)}`, (await captureFixture(c)).fonts, { wordmark: c.width > 760 || c.state === 'list', googleLink: true });
     });
   }
@@ -473,7 +515,7 @@ describe('fonts', { concurrency: 1 }, () => {
     });
     for (const route of ['/channels/room_1', '/conversations']) {
       const name = `fonts: app ${route}`;
-      it(name, { timeout: 60_000, ...todo(name) }, async () => {
+      it(name, { timeout: 60_000 }, async () => {
         const context = await newContext(browser!, 1440, 900, 'dark');
         try {
           const page = await context.newPage();
@@ -498,7 +540,7 @@ describe('fonts', { concurrency: 1 }, () => {
       url = await serve({ root: join(WEB, 'src/features/agent-confirm/browser-harness') }, join(scratch, 'confirm'));
     });
 
-    it('fonts: sign-in redirect card', { timeout: 60_000, ...todo('fonts: sign-in redirect card') }, async () => {
+    it('fonts: sign-in redirect card', { timeout: 60_000 }, async () => {
       const context = await newContext(browser!, 1440, 900, 'dark');
       try {
         const page = await context.newPage();
@@ -512,7 +554,7 @@ describe('fonts', { concurrency: 1 }, () => {
       }
     });
 
-    it('fonts: agent confirm page', { timeout: 60_000, ...todo('fonts: agent confirm page') }, async () => {
+    it('fonts: agent confirm page', { timeout: 60_000 }, async () => {
       const context = await newContext(browser!, 1440, 900, 'dark');
       try {
         const page = await context.newPage();
@@ -525,7 +567,7 @@ describe('fonts', { concurrency: 1 }, () => {
       }
     });
 
-    it('sign-in: a signed-out /conversations goes straight to the login URL, with no sign-in page', { timeout: 60_000, ...todo('sign-in') }, async () => {
+    it('sign-in: a signed-out /conversations goes straight to the login URL, with no sign-in page', { timeout: 60_000 }, async () => {
       const context = await newContext(browser!, 1440, 900, 'dark');
       try {
         const page = await context.newPage();
@@ -571,7 +613,7 @@ const CHANNELS = ['release', 'pagination', 'docs-launch', 'nav-auth', 'theming',
 const at1440 = (state: State, theme: Theme = 'dark'): ScreenCase => ({ width: 1440, theme, state });
 
 describe('behaviour', { concurrency: 1 }, () => {
-  it('runs: rows group into first / mid / last-of runs, with the name on the first and ghosts on all but the last', { timeout: 60_000, ...todo('runs') }, async () => {
+  it('runs: rows group into first / mid / last-of runs, with the name on the first and ghosts on all but the last', { timeout: 60_000 }, async () => {
     const runs = await withFixture(at1440('thread'), async page => {
       const found: { channel: string; classes: string[]; names: boolean[]; ghosts: boolean[] }[] = [];
       for (const channel of CHANNELS) {
@@ -608,7 +650,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     assert.ok(longest >= 2, 'the fixture has a multi-row run');
   });
 
-  it('ownership: the viewer is .me with no avatar; the viewer’s agents are left rows tagged “Your machine”; other humans are .human', { timeout: 60_000, ...todo('ownership') }, async () => {
+  it('ownership: the viewer is .me with no avatar; the viewer’s agents are left rows tagged “Your machine”; other humans are .human', { timeout: 60_000 }, async () => {
     await withFixture(at1440('thread'), async page => {
       const rows = await page.locator('.kh-thread .kh-row').evaluateAll(list => list.map(row => ({
         me: row.classList.contains('me'), human: row.classList.contains('human'), avatar: row.querySelector('.kh-av') !== null,
@@ -627,7 +669,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     });
   });
 
-  it('receipt: exactly one, after the viewer’s last message, never “Read”', { timeout: 60_000, ...todo('receipt') }, async () => {
+  it('receipt: exactly one, after the viewer’s last message, never “Read”', { timeout: 60_000 }, async () => {
     const seen = await withFixture(at1440('thread'), async page => {
       const out: { channel: string; texts: string[]; afterLastMine: boolean; retry: number }[] = [];
       for (const channel of CHANNELS) {
@@ -658,7 +700,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     }
   });
 
-  it('chips: the viewer’s agents first, then each human and their agents; a toggle only past 3; the grid drops an agentless viewer', { timeout: 60_000, ...todo('chips') }, async () => {
+  it('chips: the viewer’s agents first, then each human and their agents; a toggle only past 3; the grid drops an agentless viewer', { timeout: 60_000 }, async () => {
     await withFixture(at1440('thread'), async page => {
       const chips = () => page.evaluate(() => ({
         flat: [...document.querySelectorAll('.kh-to-flat .kh-chip')].map(chip => chip.textContent),
@@ -689,7 +731,7 @@ describe('behaviour', { concurrency: 1 }, () => {
   });
 
   for (const theme of ['dark', 'light'] as const) {
-    it(`D1: ${theme} human chips are hsl(oh ${theme === 'dark' ? '70% 72%' : '60% 36%'})`, { timeout: 60_000, ...todo('D1') }, async () => {
+    it(`D1: ${theme} human chips are hsl(oh ${theme === 'dark' ? '70% 72%' : '60% 36%'})`, { timeout: 60_000 }, async () => {
       await withFixture(at1440('chips', theme), async page => {
         const chips = await page.locator('.kh-chip-h:not(.kh-chip-me)').evaluateAll((list, lightness) => list.map(chip => {
           const oh = getComputedStyle(chip).getPropertyValue('--oh').trim();
@@ -707,14 +749,14 @@ describe('behaviour', { concurrency: 1 }, () => {
     });
   }
 
-  it('D2: a closed detail sheet leaves no strip at 390px', { timeout: 60_000, ...todo('D2') }, async () => {
+  it('D2: a closed detail sheet leaves no strip at 390px', { timeout: 60_000 }, async () => {
     await withFixture({ width: 390, theme: 'dark', state: 'thread' }, async page => {
       assert.equal(await page.locator('.kh-detail').evaluate(element => getComputedStyle(element).visibility), 'hidden');
       assert.equal(await page.locator('.kh-detail').isVisible(), false);
     });
   });
 
-  it('D3: the owner pill text is .78rem', { timeout: 60_000, ...todo('D3') }, async () => {
+  it('D3: the owner pill text is .78rem', { timeout: 60_000 }, async () => {
     // Another owner's agent: its pill names the owner in a <b> and a <span>.
     await withFixture(at1440('detail-agent'), async page => {
       for (const part of ['.kh-d-owner b', '.kh-d-owner > span']) {
@@ -723,7 +765,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     }, 'failed=1&detail=AIUR-620');
   });
 
-  it('D5: a human detail’s agent avatars are 32×32', { timeout: 60_000, ...todo('D5') }, async () => {
+  it('D5: a human detail’s agent avatars are 32×32', { timeout: 60_000 }, async () => {
     await withFixture(at1440('detail-human'), async page => {
       const boxes = await page.locator('.kh-d-agent > .kh-av').evaluateAll(list => list.map(element => {
         const rect = element.getBoundingClientRect();
@@ -734,7 +776,7 @@ describe('behaviour', { concurrency: 1 }, () => {
     });
   });
 
-  it('m1-matrix: every §22 Omit element is absent; every Disabled control is disabled with “Coming soon”', { timeout: 120_000, ...todo('m1-matrix') }, async () => {
+  it('m1-matrix: every §22 Omit element is absent; every Disabled control is disabled with “Coming soon”', { timeout: 120_000 }, async () => {
     const OMIT = ['.kh-ask', '.kh-badge', '.kh-req', '.kh-crw', '.kh-rai-p', '.kh-d-bar', '.kh-d-kv dt:nth-of-type(5)', '#kh-d-open',
       '.kh-keb', '.kh-confirm', '.kh-react', '.kh-typing', '[data-kh-act="settings"]', '.kh-list-foot', '.kh-cv.dead', '.kh-fin',
       '.kh-st', '.kh-d-agent > i', '.kh-rcpt.read'];
@@ -763,7 +805,7 @@ describe('behaviour', { concurrency: 1 }, () => {
 // --- §25.11 Sign In on the landing page. ---
 
 describe('sign-in', { concurrency: 1 }, () => {
-  it('sign-in: the landing page has one top-right Sign in link with the .tool-btn metrics and no “Open Khala app”', { timeout: 90_000, ...todo('sign-in landing') }, async () => {
+  it('sign-in: the landing page has one top-right Sign in link with the .tool-btn metrics and no “Open Khala app”', { timeout: 90_000 }, async () => {
     const configFile = join(WEB, 'vite.landing.config.mjs');
     const url = await serve({ configFile }, join(scratch, 'landing'));
     const context = await newContext(browser!, 1440, 900, 'dark');
