@@ -48,6 +48,9 @@ export type MatrixBrowserSession = Readonly<{
   publishedFingerprint: string | null;
 }>;
 
+/** Ephemeral bearer accepted only after the browser sender verifier succeeds. */
+export type VerifiedBrowserReadSession = Readonly<{ accessToken: string; matrixUserId: string }>;
+
 export interface MatrixSessionIssuer {
   issue(principal: AuthPrincipal, deviceId: DeviceId, options?: CallOptions): Promise<
     Readonly<{ kind: 'ok'; session: MatrixBrowserSession }>
@@ -57,7 +60,7 @@ export interface MatrixSessionIssuer {
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions, targetParticipantIds?: readonly ParticipantId[]): Promise<
+  resolveRoomParticipants(ownerId: OwnerId, roomId: RoomId, userIds: readonly string[], options?: CallOptions, targetParticipantIds?: readonly ParticipantId[], browserSession?: VerifiedBrowserReadSession): Promise<
     Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
     | Readonly<{ kind: 'forbidden' | 'unavailable'; localDiagnostic?: Readonly<{ stage: 'membership' | 'control_login' | 'joined_members'; status: number }> }>
   >;
@@ -381,16 +384,17 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         ? { kind: 'ok', participants }
         : { kind: 'unavailable' };
     },
-    async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = []) {
+    async resolveRoomParticipants(ownerId, roomId, userIds, call, targetParticipantIds = [], browserSession) {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
+      if (browserSession && browserSession.matrixUserId !== accountId(ownerId)) return { kind: 'forbidden' };
       const localDiagnostic: LocalParticipantDiagnostic = { stage: 'membership', status: 0 };
-      const membership = await membershipForOwner(ownerId, roomId, call, localDiagnostic);
+      const membership = await membershipForOwner(ownerId, roomId, call, localDiagnostic, browserSession?.accessToken);
       if (membership.kind === 'absent') return { kind: 'forbidden' };
       if (membership.kind !== 'joined') return { kind: 'unavailable', localDiagnostic };
-      const session = await controlLogin(ownerId, call, localDiagnostic);
-      if (!session) return { kind: 'unavailable', localDiagnostic };
+      const accessToken = browserSession?.accessToken ?? (await controlLogin(ownerId, call, localDiagnostic))?.accessToken;
+      if (!accessToken) return { kind: 'unavailable', localDiagnostic };
       const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`,
-        { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+        { headers: { authorization: `Bearer ${accessToken}` } }, call);
       localDiagnostic.stage = 'joined_members';
       localDiagnostic.status = response.status;
       const joined = response.status === 200 ? safeObject((await body(response))?.joined) : null;
@@ -401,7 +405,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         if (Object.hasOwn(joined, matrixUserId)) return true;
         if (historicalState === undefined) {
           const state = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state`,
-            { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+            { headers: { authorization: `Bearer ${accessToken}` } }, call);
           if (state.status !== 200) return null;
           const value: unknown = state.status === 200 ? await state.json().catch(() => null) : null;
           historicalState = Array.isArray(value) ? value.flatMap(event => { const object = safeObject(event); return object ? [object] : []; }) : null;
@@ -410,7 +414,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         const member = historicalState?.find(event => event.type === 'm.room.member' && event.state_key === matrixUserId);
         if (typeof member?.event_id !== 'string') return false;
         const visible = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(member.event_id)}`,
-          { headers: { authorization: `Bearer ${session.accessToken}` } }, call);
+          { headers: { authorization: `Bearer ${accessToken}` } }, call);
         if (visible.status === 403 || visible.status === 404) return false;
         if (visible.status !== 200) return null;
         const event = await body(visible);
@@ -524,13 +528,13 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
-  async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions, diagnostic?: LocalParticipantDiagnostic): Promise<GatewayInspection> {
-    const session = await controlLogin(ownerId, call, diagnostic);
-    if (session === null) return { kind: 'unavailable' };
+  async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions, diagnostic?: LocalParticipantDiagnostic, browserAccessToken?: string): Promise<GatewayInspection> {
+    const accessToken = browserAccessToken ?? (await controlLogin(ownerId, call, diagnostic))?.accessToken;
+    if (!accessToken) return { kind: 'unavailable' };
     try {
       const response = await request(
-        `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(session.userId)}`,
-        { headers: { authorization: `Bearer ${session.accessToken}` } },
+        `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(accountId(ownerId))}`,
+        { headers: { authorization: `Bearer ${accessToken}` } },
         call,
       );
       if (diagnostic) { diagnostic.stage = 'membership'; diagnostic.status = response.status; }

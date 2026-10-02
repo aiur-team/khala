@@ -57,7 +57,7 @@ import {
   type SubstrateUpdate,
 } from '@khala/messaging/rooms/index';
 import { createBrowserRoomJournal } from './room-journal';
-import type { BrowserSendFence, BrowserSendProof } from './browser-api';
+import type { BrowserParticipantSession, BrowserSendFence, BrowserSendProof } from './browser-api';
 import { sortConversations, type ConversationIndexPort } from './conversations';
 import type { ConversationSummary } from '../../ui/conversation';
 
@@ -77,8 +77,14 @@ type ActiveClient = Readonly<{
   generation: number;
 }>;
 type ParticipantResolver = Readonly<{
-  resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null>;
+  resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null>;
 }>;
+
+function participantSession(active: ActiveClient): BrowserParticipantSession | null {
+  const deviceId = active.client.getDeviceId();
+  const matrixAccessToken = active.client.getAccessToken();
+  return deviceId && matrixAccessToken ? { deviceId, matrixAccessToken } : null;
+}
 
 function credentials(value: unknown): MatrixCredentials | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -551,7 +557,12 @@ class MatrixSubstrate implements RoomSubstrate {
     await decryptTimelineEvents(active.client, events);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
     const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
-    const mappings = await this.participants.resolve(senders, undefined, roomId).catch(error => {
+    const session = participantSession(active);
+    if (!session) {
+      historyDiagnostic('history_participants');
+      throw new Error('Matrix participant session unavailable');
+    }
+    const mappings = await this.participants.resolve(senders, undefined, roomId, undefined, session).catch(error => {
       historyDiagnostic('history_participants');
       throw error;
     });
@@ -598,7 +609,7 @@ class MatrixSubstrate implements RoomSubstrate {
       return projected ? [projected] : [];
     });
     return attachNameTargets(projectedEvents,
-      targetId => this.participants.resolve([], undefined, roomId, [targetId]),
+      targetId => this.participants.resolve([], undefined, roomId, [targetId], session),
       () => this.runtime.active === active).catch(error => {
       historyDiagnostic('history_participants');
       throw error;
@@ -654,7 +665,9 @@ class MatrixSubstrate implements RoomSubstrate {
     await Promise.all(timeline.getEvents().filter(event => event.isEncrypted()).map(event => active.client.decryptEventIfNeeded(event)));
     const events = await this.events(timeline.getEvents(), roomId);
     if (events.some(event => event.kind === 'undecryptable')) throw new Error('name_history_unavailable');
-    const roster = await this.participants.resolve(room.getJoinedMembers().map(member => member.userId), undefined, roomId);
+    const session = participantSession(active);
+    if (!session) throw new Error('name_roster_unavailable');
+    const roster = await this.participants.resolve(room.getJoinedMembers().map(member => member.userId), undefined, roomId, undefined, session);
     if (!roster) throw new Error('name_roster_unavailable');
     if (this.runtime.active !== active) return;
     await publishAgentNameSnapshots({ roomId, membershipEventId, ownerId: active.principal.ownerId,
@@ -846,7 +859,9 @@ export function createMatrixBrowserPorts(input: Readonly<{
         const joined = await active.client.getJoinedRoomMembers(roomId);
         if (signal?.aborted || runtime.active !== active) return null;
         const userIds = Object.keys(joined.joined);
-        const mapping = await input.participants.resolve(userIds, signal, roomId);
+        const session = participantSession(active);
+        if (!session) return null;
+        const mapping = await input.participants.resolve(userIds, signal, roomId, undefined, session);
         if (!mapping || !userIds.every(userId => mapping.has(userId)) || signal?.aborted || runtime.active !== active) return null;
         return userIds.map(userId => mapping.get(userId)!).filter(Boolean);
       } catch { return null; }

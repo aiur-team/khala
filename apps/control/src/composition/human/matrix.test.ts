@@ -636,3 +636,80 @@ describe('Matrix room sender inventory', () => {
     },
   );
 });
+
+describe('browser-backed room participant reads', () => {
+  it('uses the verified browser bearer across fresh Control instances without consuming the 20-login burst', async () => {
+    const roomId = '!history:matrix.example.test' as RoomId;
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const peer = ownerMatrixUserId('owner_bob' as OwnerId, 'matrix.example.test');
+    let logins = 0;
+    let reads = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path.endsWith('/login')) {
+        logins++;
+        return json(logins > 20 ? 429 : 200, {});
+      }
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer browser-token-123456789');
+      reads++;
+      if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
+      if (path.endsWith('/joined_members')) return json(200, { joined: { [userId]: {}, [peer]: {} } });
+      throw new Error('unexpected Matrix request');
+    });
+    for (let i = 0; i < 25; i++) {
+      const matrix = services(fetch);
+      expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, roomId, [userId, peer], undefined, [],
+        { matrixUserId: userId, accessToken: 'browser-token-123456789' }))
+        .toMatchObject({ kind: 'ok', participants: [{ matrixUserId: userId }, { matrixUserId: peer }] });
+    }
+    expect(reads).toBe(50);
+    expect(logins).toBe(0);
+    expect(await services(fetch).sessions.resolveRoomParticipants(principal.ownerId, roomId, [peer], undefined, [],
+      { matrixUserId: peer, accessToken: 'browser-token-123456789' })).toEqual({ kind: 'forbidden' });
+  });
+
+  it('denies a nonmember and fails closed when Matrix rejects the browser bearer', async () => {
+    const roomId = '!history:matrix.example.test' as RoomId;
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    let membershipStatus = 403;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      expect(path).not.toContain('/login');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer browser-token-123456789');
+      return json(membershipStatus, { errcode: membershipStatus === 401 ? 'M_UNKNOWN_TOKEN' : 'M_FORBIDDEN' });
+    });
+    const matrix = services(fetch);
+    const session = { matrixUserId: userId, accessToken: 'browser-token-123456789' };
+    expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, roomId, [userId], undefined, [], session))
+      .toEqual({ kind: 'forbidden' });
+    membershipStatus = 401;
+    expect(await matrix.sessions.resolveRoomParticipants(principal.ownerId, roomId, [userId], undefined, [], session))
+      .toEqual({ kind: 'unavailable' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the browser bearer when checking departed agent history visibility', async () => {
+    const roomId = '!history:matrix.example.test' as RoomId;
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+    const identity = agentMatrixIdentity(principal.ownerId, { harness: 'codex', sessionId: 'history-session', generation: 0 }, 'matrix.example.test');
+    const store = memoryStore();
+    await createAgentIdentityDirectory(store).remember({ v: 1, roomId, matrixUserId: identity.userId,
+      participantId: identity.participantId, ownerId: principal.ownerId, harness: 'codex' });
+    const seen: string[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      expect(path).not.toContain('/login');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer browser-token-123456789');
+      seen.push(path);
+      if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
+      if (path.endsWith('/joined_members')) return json(200, { joined: { [userId]: {} } });
+      if (path.endsWith('/state')) return json(200, [{ type: 'm.room.member', state_key: identity.userId, event_id: '$departed' }]);
+      if (path.includes('/event/')) return json(200, { type: 'm.room.member', state_key: identity.userId, event_id: '$departed' });
+      throw new Error('unexpected Matrix request');
+    });
+    const result = await services(fetch, store).sessions.resolveRoomParticipants(principal.ownerId, roomId, [], undefined,
+      [identity.participantId], { matrixUserId: userId, accessToken: 'browser-token-123456789' });
+    expect(result).toMatchObject({ kind: 'ok', participants: [{ matrixUserId: identity.userId }] });
+    expect(seen).toHaveLength(4);
+  });
+});
