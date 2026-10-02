@@ -8,6 +8,7 @@ import type { Participant } from '@khala/contracts/m1/participants';
 
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
+import { buildIdBadgeResolver } from '../../ui/khala/identity';
 
 export type Attribution = Readonly<{
   participantId: ParticipantId;
@@ -53,16 +54,10 @@ export function ownershipLabel(attribution: Pick<Attribution, 'kind' | 'isViewer
  * reader can tell same-named actors apart without changing message bytes.
  */
 export function buildDisplayNameResolver(participants: readonly ParticipantView[]): (participant: ParticipantView) => string {
-  const ownersByName = new Map<string, Set<OwnerId>>();
-  for (const participant of participants) {
-    const owners = ownersByName.get(participant.displayName) ?? new Set<OwnerId>();
-    owners.add(participant.ownerId);
-    ownersByName.set(participant.displayName, owners);
-  }
+  const badgeFor = buildIdBadgeResolver(participants);
   return participant => {
-    const owners = ownersByName.get(participant.displayName);
-    if (!owners || owners.size <= 1) return participant.displayName;
-    return `${participant.displayName} (#${participant.ownerId.slice(-4)})`;
+    const badge = badgeFor(participant);
+    return badge ? `${participant.displayName} (${badge})` : participant.displayName;
   };
 }
 

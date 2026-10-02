@@ -65,6 +65,23 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase('en-US');
 }
 
+type BadgeSubject = Readonly<{ ownerId: string; displayName: string }>;
+
+/**
+ * The `.kh-id` badge convention shared by the thread, roster and detail pane.
+ * Given every participant on screen, returns a resolver that yields a short,
+ * stable owner suffix (`#a1b2`) only for names that collide across owners.
+ */
+export function buildIdBadgeResolver(participants: readonly BadgeSubject[]): (participant: BadgeSubject) => string | undefined {
+  const ownersByName = new Map<string, Set<string>>();
+  for (const participant of participants) {
+    const owners = ownersByName.get(participant.displayName) ?? new Set<string>();
+    owners.add(participant.ownerId);
+    ownersByName.set(participant.displayName, owners);
+  }
+  return participant => (ownersByName.get(participant.displayName)?.size ?? 0) > 1 ? `#${participant.ownerId.slice(-4)}` : undefined;
+}
+
 /** The bundled logo URL for a harness, or `null` for one Khala has no logo for. */
 export function harnessLogo(harness: string): string | null {
   if (harness === 'claude') return claudeSymbol;

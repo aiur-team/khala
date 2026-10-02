@@ -4,7 +4,7 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
-import { initials, participantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, initials, participantHue } from '../../ui/khala/identity';
 import type { ChannelAgentView } from './controller';
 import { participantRosterName } from './participant-name';
 import { groupRoster, type RosterGroup } from './roster-model';
@@ -26,8 +26,8 @@ export type AgentMember = Readonly<{
   participantId: ParticipantId;
   ownerId: string | null;
   name: string;
-  /** Ordinal among same-named agents (`.kh-id`), else `null`. */
-  idBadge: number | null;
+  /** The `.kh-id` owner suffix (`#a1b2`) when the name collides across owners, else `null`. */
+  idBadge: string | null;
   hue: number;
   ownerHue: number;
   ownerName: string;
@@ -72,18 +72,20 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     return { kind: 'human', participantId: human.participantId, ownerId, name, short: firstName(name),
       hue: participantHue({ kind: 'human', ownerId }), initials: initials(name), isViewer: false };
   });
+  // The name the thread resolves for an agent, so both apply the badge rule to the same string.
+  const threadName = (agent: ChannelAgentView) => {
+    const detail = describeParticipant?.(agent.participantId);
+    return detail?.kind === 'agent' ? detail.displayName : currentNames?.get(agent.participantId) ?? agent.displayName;
+  };
   const ownerById = new Map<string, HumanMember>([[viewerOwnerId, viewerMember], ...humanMembers.map(human => [human.ownerId, human] as const)]);
 
   const baseNames = agents.map(agent => participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent'));
-  const nameCounts = new Map<string, number>();
-  for (const name of baseNames) nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
-  const ordinals = new Map<ParticipantId, number>();
-  const nextOrdinal = new Map<string, number>();
-  for (const [index, agent] of [...agents.entries()].sort(([, left], [, right]) => left.participantId.localeCompare(right.participantId))) {
-    const ordinal = (nextOrdinal.get(baseNames[index]!) ?? 0) + 1;
-    nextOrdinal.set(baseNames[index]!, ordinal);
-    ordinals.set(agent.participantId, ordinal);
-  }
+  // The thread's `.kh-id` rule: only names that collide across owners get the owner suffix.
+  const badgeFor = buildIdBadgeResolver([
+    { ownerId: viewerOwnerId, displayName: viewer.name ?? '' },
+    ...humans.map(human => ({ ownerId: human.ownerId ?? human.participantId, displayName: human.displayName })),
+    ...agents.map(agent => ({ ownerId: agent.ownerId ?? agent.participantId, displayName: threadName(agent) })),
+  ]);
 
   const agentMembers = agents.map((agent, index): AgentMember => {
     const detail = describeParticipant?.(agent.participantId);
@@ -95,7 +97,7 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     const name = baseNames[index]!;
     return {
       kind: 'agent', participantId: agent.participantId, ownerId, name,
-      idBadge: (nameCounts.get(name) ?? 0) > 1 ? ordinals.get(agent.participantId) ?? null : null,
+      idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
       hue: participantHue({ kind: 'agent', participantId: agent.participantId }),
       ownerHue: owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId }),
       // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster.

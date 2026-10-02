@@ -6,14 +6,8 @@
 .channel-page .khala-page-frame__header{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .channel-page .khala-page-frame__body{min-width:0}
 .channel-page .conversation-layout{height:100%;min-height:0}
-
-/* Interim timeline placement inside the channel until KM-182's thread rows. */
+/* The thread fills the channel pane; KM-182's thread.css styles the rows. */
 .kh-channel-thread .timeline{height:100%;gap:0;min-height:0}
-.kh-channel-thread .timeline__list{flex:1;max-height:none;min-height:0;padding:1.1rem;gap:.25rem;background:var(--khala-fill)}
-.kh-channel-thread .timeline__row.conversation-message{align-self:flex-start;max-width:82%;border:0;border-radius:0;background:none;padding:0}
-.kh-channel-thread .timeline__row.conversation-message--mine{align-self:flex-end}
-.kh-channel-thread .timeline__body{margin-top:.2rem}
-@media(max-width:760px){.kh-channel-thread .timeline__row.conversation-message{max-width:88%}}
 
 /* `ChannelSharePanel`, the standalone copy-link control. */
 .channel-share{position:relative;display:flex;align-items:center;flex:none}

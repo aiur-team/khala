@@ -15,13 +15,28 @@ const members = (agents: readonly ChannelAgentView[]) => resolveMembers({ viewer
   humans: [], agents });
 
 describe('ChannelRoster', () => {
-  it('tells same-named agents apart with an ordinal badge', () => {
+  it('badges names that collide across owners with the thread owner suffix', () => {
+    const theosScout = { ...scout, participantId: 'agent_other' as ParticipantId, ownerId: 'owner_theo' as OwnerId };
+    const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout, theosScout])} />);
+    expect(html).toContain('Scout<span class="kh-id" style="--h:');
+    expect(html).toContain('>#mira</span>');
+    expect(html).toContain('>#theo</span>');
+    expect(html).toContain('aria-label="Listening mode for Scout #mira"');
+  });
+
+  it('does not badge same-named agents of one owner, as the thread does not', () => {
     const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}}
       members={members([scout, { ...scout, participantId: 'agent_other' as ParticipantId }])} />);
-    expect(html).toContain('Scout<span class="kh-id" style="--h:');
-    expect(html).toContain('>#1</span>');
-    expect(html).toContain('>#2</span>');
-    expect(html).toContain('aria-label="Listening mode for Scout #2"');
+    expect(html).not.toContain('kh-id');
+  });
+
+  it('counts the agents on each human row', () => {
+    const one = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout])} />);
+    expect(one).toContain('</span><i>1 agent</i></button>');
+    const two = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}}
+      members={members([scout, { ...scout, participantId: 'agent_other' as ParticipantId }])} />);
+    expect(two).toContain('<i>2 agents</i>');
+    expect(renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([])} />)).not.toContain('<i>');
   });
 
   it('announces loading and failed presence reads distinctly', () => {

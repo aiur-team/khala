@@ -104,15 +104,15 @@ export function MemberAvatar({ member, interactive = false, onClick }: Readonly<
     initials={initials(member.name)} {...shared} />;
 }
 
-/** `Claude`, or `Claude #2` when another agent has the same name. */
+/** `Claude`, or `Claude #a1b2` when another owner has an agent with the same name. */
 export function agentLabel(agent: AgentMember): string {
-  return agent.idBadge === null ? agent.name : `${agent.name} #${agent.idBadge}`;
+  return agent.idBadge === null ? agent.name : `${agent.name} ${agent.idBadge}`;
 }
 
 /** `<b>{label}{.kh-id}</b>` */
 export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
   return <b>{agent.name}{agent.idBadge === null ? null
-    : <span className="kh-id" style={{ '--h': agent.hue } as CSSProperties}>#{agent.idBadge}</span>}</b>;
+    : <span className="kh-id" style={{ '--h': agent.hue } as CSSProperties}>{agent.idBadge}</span>}</b>;
 }
 
 export const harnessName = (agent: AgentMember) => agent.harness ? HARNESS_NAMES[agent.harness] : 'Agent';
@@ -166,13 +166,14 @@ export function ChannelRoster({ members, phase, onOpen, renderAddAgent }: Channe
     {members.groups.map(group => {
       const human = 'notInChannel' in group ? null : humansById.get(group.human.ownerId) ?? null;
       const agents = group.agents.flatMap(agent => agentsById.get(agent.participantId) ?? []);
+      const agentCount = agents.length > 0 ? <i>{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</i> : null;
       return <div key={`${group.human.ownerId}:${'notInChannel' in group ? 'absent' : 'member'}`} className="kh-rg">
         <div className="kh-rrow">
           {human ? <button type="button" className="kh-rh" data-kh-human={human.participantId} onClick={() => onOpen(human.participantId)}>
-            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b><em>{ownerOfLabel(agents.length)}</em></span>
+            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b><em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
           </button> : <div className="kh-rh">
             <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'} />
-            <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>
+            <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
           </div>}
           {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
         </div>

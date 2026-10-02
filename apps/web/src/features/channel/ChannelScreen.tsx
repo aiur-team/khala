@@ -44,8 +44,11 @@ export interface ChannelScreenProps {
   recentActivity?: (participantId: string) => readonly RecentEntry[];
   /** When an agent joined, if known (RFC 3339). */
   agentJoinedAt?: (participantId: string) => string | undefined;
-  /** The thread; `openParticipant` opens (or, if open, closes) a participant's detail. */
-  renderTimeline: (openParticipant: (participantId: string) => void) => ReactNode;
+  /**
+   * The thread; `openParticipant` opens (or, if open, closes) a participant's detail.
+   * `openInvite` opens the Invite popover, and is absent when Invite is hidden.
+   */
+  renderTimeline: (openParticipant: (participantId: string) => void, openInvite: (() => void) | undefined) => ReactNode;
   /** The Invite popover body. Invite shows only when this is supplied (the admin path, R2). */
   renderShare?: () => ReactNode;
   /** The Add agent popover body on the viewer's roster row. */
@@ -247,7 +250,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       </div>
     </div>
     <div className="kh-channel-thread" onPointerDown={() => { if (rosterOpen) closeRoster(false); }}>
-      {renderTimeline(toggleParticipant)}
+      {renderTimeline(toggleParticipant, renderShare ? () => setInviteOpen(true) : undefined)}
     </div>
     {detail && detailHost ? createPortal(detail, detailHost) : null}
   </div>;

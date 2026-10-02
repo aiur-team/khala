@@ -144,10 +144,11 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         renderShare: () => <ChannelInvite key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
         renderAddAgent: () => <ChannelAddAgent key={`${context.principal.ownerId}:${context.generation}:${roomId}`} {...linkSource} />,
       } : {})}
-      renderTimeline={() => (
+      renderTimeline={(openParticipant, openInvite) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
           controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} composerRef={composer}
-          extraParticipants={extraParticipants}
+          extraParticipants={extraParticipants} onOpenParticipant={openParticipant}
+          {...(openInvite ? { onInvite: openInvite } : {})}
           {...(context.describeParticipant ? { describeParticipant: context.describeParticipant } : {})}
           {...(pendingStore ? { pendingStore } : {})}
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />

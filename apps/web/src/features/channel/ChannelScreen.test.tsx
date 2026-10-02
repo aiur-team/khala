@@ -56,6 +56,14 @@ describe('ChannelScreen header', () => {
     expect(html).not.toMatch(/Settings|Channel settings/);
   });
 
+  it('hands the thread an Invite opener only when Invite is shown', () => {
+    const openers: unknown[] = [];
+    const renderTimeline = (_open: unknown, openInvite: unknown) => { openers.push(openInvite); return null; };
+    render({ phase: 'ready', agents: [] }, { renderTimeline });
+    render({ phase: 'ready', agents: [] }, { renderTimeline, renderShare: () => 'share' });
+    expect(openers.map(opener => typeof opener)).toEqual(['undefined', 'function']);
+  });
+
   it('offers back only when the route can navigate', () => {
     expect(render({ phase: 'ready', agents: [] })).not.toContain('kh-back');
     expect(render({ phase: 'ready', agents: [] }, { onBack: () => {} })).toContain('class="kh-back" aria-label="All conversations"');
