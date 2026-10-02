@@ -17,8 +17,31 @@
 .kh-uname-actions { display: flex; justify-content: flex-end; gap: .4rem; margin-top: .3rem; }
 .kh-uname-page .kh-uname-actions .kh-btn.pri { flex: 1; height: 44px; }
 
-/* Settings → Username: the form in a modal over the card. */
+/* A settings modal over the card. */
 .kh-dlg-scrim { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / .4); }
 .kh-dlg { animation: khPopIn .14s ease-out; width: min(400px, 100%); box-sizing: border-box; display: flex; flex-direction: column; gap: .75rem; padding: 1.2rem 1.1rem; border-radius: 14px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-lg); }
 .kh-dlg h2 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; }
 @media (max-width: 480px) { .kh-dlg-scrim { place-items: start stretch; } .kh-dlg { width: 100%; } }
+
+/* Settings → Profile: the avatar preview leads; the dialog's name is for screen readers only. */
+.kh-prof { position: relative; gap: 1.25rem; padding: 1.6rem 1.3rem 1.2rem; }
+.kh-prof-h { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.kh-prof-av { align-self: center; display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; color: #fff; font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 4px var(--surface), 0 0 0 5px var(--line); transition: background-color .18s ease; }
+.kh-prof-form { display: flex; flex-direction: column; gap: 1.1rem; }
+.kh-prof-sec { display: flex; flex-direction: column; gap: .45rem; }
+.kh-prof-lbl { font-size: .72rem; font-weight: 600; color: var(--muted); }
+.kh-prof .kh-uname-actions { margin-top: .2rem; }
+
+/* Ten swatches: one row on a wide screen and 2×5 on a phone or touch. */
+.kh-swatches { display: grid; grid-template-columns: repeat(10, 1fr); justify-items: center; gap: .3rem 0; }
+.kh-swatch { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.kh-swatch > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: #fff; transition: transform .12s ease; }
+.kh-swatch:hover > span { transform: scale(1.08); }
+.kh-swatch[aria-checked="true"] > span { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg); }
+.kh-swatch svg { width: 16px; height: 16px; }
+.kh-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 480px), (pointer: coarse) {
+  .kh-swatches { grid-template-columns: repeat(5, 1fr); gap: .35rem 0; }
+  .kh-swatch { width: 44px; height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .kh-prof-av, .kh-swatch > span { transition: none; } }

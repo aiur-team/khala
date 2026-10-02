@@ -6,7 +6,7 @@ import { checkName, USERNAME_MAX, USERNAME_MIN, type NameError } from '@khala/co
 import { useProfile, type ProfileSaveResult } from './ProfileProvider';
 import './profile.css';
 
-const nameErrors: Record<NameError, string> = {
+export const nameErrors: Record<NameError, string> = {
   too_short: `At least ${USERNAME_MIN} characters.`,
   too_long: `At most ${USERNAME_MAX} characters.`,
   invalid_characters: 'Use letters, numbers, . _ or -, starting and ending with a letter or number.',
