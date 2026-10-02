@@ -1,4 +1,4 @@
-import { AgentConfirm } from '../../features/agent-confirm/AgentConfirm';
+import { AgentConfirm, AgentConfirmFrame } from '../../features/agent-confirm/AgentConfirm';
 import { createAgentConfirmController } from '../../features/agent-confirm/controller';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -68,8 +68,15 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   );
 }
 
-function AgentConfirmRoute({ context, joinId, routes, navigateRoute }: {
+/** The confirm page draws its own full-viewport frame (§20), with the shell's theme. */
+function ConfirmFrame({ chrome, routes, children }: { chrome: HumanShellChrome; routes: HumanRouteCodec; children: ReactNode }) {
+  return <AgentConfirmFrame theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+    homeHref={routes.conversationsPath()}>{children}</AgentConfirmFrame>;
+}
+
+function AgentConfirmRoute({ context, chrome, joinId, routes, navigateRoute }: {
   context: HumanRouteContext;
+  chrome: HumanShellChrome;
   joinId: string;
   routes: HumanRouteCodec;
   navigateRoute: (path: string) => void;
@@ -83,8 +90,14 @@ function AgentConfirmRoute({ context, joinId, routes, navigateRoute }: {
     controller.start();
     return dispose;
   }, [context, controller]);
-  if (!controller) return <Panel heading="Agent confirmation unavailable">Khala is unavailable right now.</Panel>;
+  if (!controller) {
+    return <ConfirmFrame chrome={chrome} routes={routes}>
+      <h1 className="kh-fin-n">Agent confirmation unavailable</h1>
+      <p className="kh-fin-p kh-fin-err" role="alert">Khala is unavailable right now.</p>
+    </ConfirmFrame>;
+  }
   return <AgentConfirm controller={controller} roomHref={routes.roomPath}
+    theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange} homeHref={routes.conversationsPath()}
     onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />;
 }
 
@@ -227,7 +240,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
   const live = useLiveSync(context);
-  const inThread = route.kind === 'channel' || route.kind === 'agent_confirm' || route.kind === 'join';
+  const inThread = route.kind === 'channel' || route.kind === 'join';
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread} live={live}
     brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
@@ -253,14 +266,14 @@ export function HumanApplicationScreen({
   navigateRoute = path => application.navigate(path),
   renderRoom,
 }: HumanApplicationScreenProps) {
-  const renderRoute = (context: HumanRouteContext, route: HumanRoute): ReactNode => {
+  const renderRoute = (context: HumanRouteContext, route: HumanRoute, chrome: HumanShellChrome): ReactNode => {
     switch (route.kind) {
       case 'conversations':
         return <ConversationIndexRoute />;
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'agent_confirm':
-        return <AgentConfirmRoute context={context} joinId={route.joinId} routes={routes} navigateRoute={navigateRoute} />;
+        return <AgentConfirmRoute context={context} chrome={chrome} joinId={route.joinId} routes={routes} navigateRoute={navigateRoute} />;
       case 'channel':
         return renderRoom(context, route, navigateRoute, routes);
       case 'not_found':
@@ -271,11 +284,19 @@ export function HumanApplicationScreen({
         );
     }
   };
-  const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => (
-    <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
+  // The agent confirm page is a standalone page (§20): no owner shell, while it
+  // loads or waits for the device either.
+  const isConfirm = (chrome: HumanShellChrome) => routes.parse(chrome.path).kind === 'agent_confirm';
+  const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => {
+    if (isConfirm(chrome)) return phase === 'ready' ? children : <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>;
+    return <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
       {children}
-    </OwnerShell>
-  );
+    </OwnerShell>;
+  };
+  const renderPendingShell = (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable',
+    children: ReactNode) => isConfirm(chrome)
+    ? <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>
+    : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase={phase}>{children}</PendingOwnerShell>;
 
   return (
     <HumanScreen
@@ -286,8 +307,7 @@ export function HumanApplicationScreen({
       renderSignedOut={path => <SignInRedirect key={path} identity={identity} path={path} navigateExternal={navigateExternal} />}
       renderDeviceLoss={() => <LostDevicePanel />}
       renderReadyShell={renderReadyShell}
-      renderPendingShell={(chrome, phase, children) => <PendingOwnerShell application={application} routes={routes}
-        chrome={chrome} phase={phase}>{children}</PendingOwnerShell>}
+      renderPendingShell={renderPendingShell}
       renderSignedInAction={shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
     />
   );

@@ -217,15 +217,27 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('aria-label="Channels"');
   });
 
-  it.each(['/agent/confirm?joinId=j1', '/join/inv_1'])(
-    'keeps main content reachable on narrow screens for %s', path => {
-      const context = readyContext(path);
-      const html = renderToStaticMarkup(<HumanApplicationScreen
-        application={application({ phase: 'ready', path, context })}
-        identity={identity} routes={routes} renderRoom={renderRoom} />);
-      expect(html).toContain('class="section-card kh-card in-thread" id="kh-card"');
-    },
-  );
+  it('keeps main content reachable on narrow screens for a join', () => {
+    const context = readyContext('/join/inv_1');
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'ready', path: context.path, context })}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('class="section-card kh-card in-thread" id="kh-card"');
+  });
+
+  it.each([
+    { phase: 'ready', path: '/agent/confirm?joinId=j1', context: readyContext('/agent/confirm?joinId=j1') },
+    { phase: 'navigating', path: '/agent/confirm?joinId=j1', context: readyContext('/channels/room_1') },
+    { phase: 'initializing_device', path: '/agent/confirm?joinId=j1', context: null },
+    { phase: 'inactive', path: '/agent/confirm?joinId=j1', context: null },
+  ] as HumanApplicationSnapshot[])('renders the agent confirm page standalone while $phase', snapshot => {
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toMatch(/^(<link [^>]*>)*<div class="khala-app kh-agent-confirm" data-theme="dark">/u);
+    expect(html).toContain('<section class="kh-fin kh-fin--page" aria-label="Confirm agent">');
+    expect(html).not.toContain('kh-card');
+    expect(html).not.toContain('aria-label="Conversations"');
+  });
 
   it('derives the list view from the conversations route', () => {
     const context = readyContext('/conversations');
