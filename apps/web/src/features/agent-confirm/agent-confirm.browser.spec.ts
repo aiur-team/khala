@@ -59,7 +59,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       assert.match(await page.locator('body').innerText(), /Helper \(Claude Code\) wants to join Launch\./);
       // A standalone page (§20): the card, with no owner shell or conversation list.
       await expect(page.locator('.kh-fin-c')).toBeVisible();
-      assert.equal(await page.getByRole('complementary', { name: 'Conversations' }).count(), 0);
+      assert.equal(await page.getByRole('complementary', { name: 'Channels' }).count(), 0);
       assert.equal(await page.locator('.kh-list, [aria-label="Channels"]').count(), 0);
       assert.equal(await page.locator('.khala-owner-shell').count(), 0);
       // The page's theme toggle is remembered, like the app's.

@@ -67,7 +67,7 @@ describe('ChannelScreen header', () => {
 
   it('offers back only when the route can navigate', () => {
     expect(render({ phase: 'ready', agents: [] })).not.toContain('kh-back');
-    expect(render({ phase: 'ready', agents: [] }, { onBack: () => {} })).toContain('class="kh-back" aria-label="All conversations"');
+    expect(render({ phase: 'ready', agents: [] }, { onBack: () => {} })).toContain('class="kh-back" aria-label="All channels"');
   });
 
   it('keeps Matrix routing IDs and proof-key labels out of names', () => {

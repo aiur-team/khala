@@ -46,10 +46,9 @@ describe('UsernameForm', () => {
     expect(html).toContain('Saving…');
   });
 
-  it('previews the agent names as the value changes', () => {
-    expect(fields('Kevin')).toContain('Your agents will be named @Kevin-Claude and @Kevin-Codex.');
-    expect(fields('Ana')).toContain('Your agents will be named @Ana-Claude and @Ana-Codex.');
-    expect(fields('')).not.toContain('Your agents will be named');
+  it('shows no agent-name preview', () => {
+    expect(fields('Kevin')).not.toContain('Your agents will be named');
+    expect(fields('Kevin')).not.toContain('Kevin-Claude');
   });
 
   it('shows a save error until the value changes', () => {

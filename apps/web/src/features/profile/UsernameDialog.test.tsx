@@ -29,14 +29,13 @@ describe('UsernameDialog', () => {
     expect(html).toContain(`<h2 id="${labelledBy}">Change username</h2>`);
     expect(html).toContain('value="Kevin"');
     expect(html).toMatch(/<button type="button" class="kh-btn">Cancel<\/button><button type="submit" class="kh-btn pri">Save<\/button>/u);
-    expect(html).toContain('Agents still named @Kevin-Claude/-Codex are renamed to match.');
+    expect(html).not.toContain('renamed to match');
   });
 
-  it('starts from the suggestion, with no rename note, when no username is set', async () => {
+  it('starts from the suggestion, when no username is set', async () => {
     const { store } = await readyStore(null);
     const html = dialog(store);
     expect(html).toContain('value="alice"');
-    expect(html).not.toContain('are renamed to match');
   });
 
   it('saves through the profile port, so the cog reads the new name', async () => {

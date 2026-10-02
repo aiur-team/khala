@@ -154,7 +154,7 @@ describe('HumanApplicationScreen', () => {
       const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)} identity={identity}
         routes={routes} renderRoom={renderRoom} mode="standalone" />);
       expect(html).toContain('khala-owner-shell');
-      expect(html).toContain('aria-label="Conversations"');
+      expect(html).toContain('aria-label="Channels"');
       expect(html).toContain('aria-label="New channel" disabled');
       expect(html).toContain('aria-label="Settings"');
       expect(html).not.toContain('Account and device status');
@@ -218,7 +218,8 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('khala-mobile-bar');
     expect(html).not.toContain('khala-sidebar');
     expect(html).not.toContain('aiur-shell__topbar');
-    expect(html).not.toContain('aria-label="Channels"');
+    // The list pane is the only "Channels" landmark; the retired sidebar nav used the same label.
+    expect(html.split('aria-label="Channels"').length - 1).toBe(1);
   });
 
   it('keeps main content reachable on narrow screens for a join', () => {
@@ -233,8 +234,8 @@ describe('HumanApplicationScreen', () => {
     const html = renderToStaticMarkup(<HumanApplicationScreen
       application={application({ phase: 'navigating', path: '/channels/room_2', context: readyContext('/channels/room_1') })}
       identity={identity} routes={routes} renderRoom={renderRoom} />);
-    expect(html).toContain('<div class="kh-loading" role="status" aria-label="Loading conversation">'
-      + '<span class="kh-spin" aria-hidden="true"></span><span class="sr-only">Loading conversation</span></div>');
+    expect(html).toContain('<div class="kh-loading" role="status" aria-label="Loading channel">'
+      + '<span class="kh-spin" aria-hidden="true"></span><span class="sr-only">Loading channel</span></div>');
     expect(html).not.toContain('khala-route-loading');
   });
 
@@ -249,7 +250,7 @@ describe('HumanApplicationScreen', () => {
     expect(html).toMatch(/^(<link [^>]*>)*<div class="khala-app kh-agent-confirm" data-theme="dark">/u);
     expect(html).toContain('<section class="kh-fin kh-fin--page" aria-label="Confirm agent">');
     expect(html).not.toContain('kh-card');
-    expect(html).not.toContain('aria-label="Conversations"');
+    expect(html).not.toContain('aria-label="Channels"');
   });
 
   it('derives the list view from the conversations route', () => {
@@ -258,7 +259,7 @@ describe('HumanApplicationScreen', () => {
       application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
       identity={identity} routes={routes} renderRoom={renderRoom} />);
     expect(html).toContain('class="section-card kh-card" id="kh-card"');
-    expect(html).not.toContain('aria-label="All conversations"');
+    expect(html).not.toContain('aria-label="All channels"');
   });
 
   it('never shows a Live badge in the brand, even while the homeserver sync is live', () => {
