@@ -115,6 +115,8 @@ test('public showcase stays local and works across themes and widths', { timeout
     assert.equal(await list.isVisible(), true);
     await pane.getByRole('button', { name: 'Handoff' }).click();
     assert.equal(await thread.getByText('I’ve outlined the next steps for both owners.').isVisible(), true);
+    // Let conversation selection finish moving focus before the Space keyup.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await participantButton.press('Space');
     assert.equal(await participantButton.getAttribute('aria-expanded'), 'true');
     assert.equal(await pane.locator('.showcase-app__participants').getByText('Priya’s agent').isVisible(), true);

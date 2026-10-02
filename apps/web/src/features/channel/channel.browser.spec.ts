@@ -51,10 +51,14 @@ test('channel chat keeps messaging reachable without a details pane at desktop a
     assert.equal(await page.getByRole('button', { name: 'Send message' }).isVisible(), true, 'injected composer stub remains reachable');
     assert.equal(await page.getByText('Can you check the deployment?').isVisible(), true, 'injected timeline stub remains visible');
     await page.getByLabel('Message').fill('Please verify the release.');
+    await page.clock.install();
+    await page.clock.pauseAt(new Date());
     await page.getByRole('button', { name: 'Send message' }).click();
     await page.getByText('Please verify the release.').waitFor();
     await page.getByText('Sending…').waitFor();
+    await page.clock.runFor(50);
     await page.getByText('Sending…').waitFor({ state: 'detached' });
+    await page.clock.resume();
     await page.getByText('Deployment is healthy.').waitFor();
     await page.reload();
     assert.equal(await page.getByRole('button', { name: 'Channel details' }).count(), 0);
