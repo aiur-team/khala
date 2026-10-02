@@ -99,7 +99,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
       new URL(response.url()).pathname === '/api/human/messaging/session' && response.status() === 200,
     );
     await signIn(alice, environment, environment.users[0]);
-    const creatorSession = await (await creatorSessionResponse).json() as { session?: { accessToken?: unknown } };
+    const creatorSession = await (await creatorSessionResponse).json() as { session?: { accessToken?: unknown; userId?: unknown } };
     const creatorAccessToken = creatorSession.session?.accessToken;
     expect(typeof creatorAccessToken).toBe('string');
 
@@ -139,9 +139,10 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
 
     await bob.getByRole('button', { name: 'Open channel' }).click();
     await expect(bob).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    // The current product default is link admission with no earlier history.
+    // M1 (R4, AE7): a link joiner reads from their join onward; earlier messages are hidden, not shown as broken.
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText('No messages yet.')).toBeVisible();
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
+    await expect(bob.locator('.message-content__unavailable')).toHaveCount(0);
     recordStage('bob-send');
     const reply = syntheticCanary('reply');
     await bob.getByLabel('Message', { exact: true }).fill(reply);
@@ -154,6 +155,19 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(rawEvents.filter(event => event.type === 'm.room.encrypted').length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(rawEvents)).not.toContain(intro);
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
+    const visibility = await fetch(`${environment.homeserverOrigin}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.history_visibility/`, {
+      headers: { authorization: `Bearer ${creatorAccessToken}` },
+    });
+    expect(visibility.status).toBe(200);
+    expect(await visibility.json()).toEqual({ history_visibility: 'shared' });
+    const aliceUserId = creatorSession.session?.userId;
+    expect(typeof aliceUserId).toBe('string');
+    const keys = await fetch(`${environment.homeserverOrigin}/_matrix/client/v3/keys/query`, {
+      method: 'POST', headers: { authorization: `Bearer ${creatorAccessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ device_keys: { [aliceUserId as string]: [] } }),
+    });
+    expect(keys.status).toBe(200);
+    expect((await keys.json() as { master_keys?: Record<string, unknown> }).master_keys?.[aliceUserId as string]).toBeDefined();
 
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     await requireAutomaticHistoryAfterReload(alice, reply, 'alice-history');
@@ -162,6 +176,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
 
     await requireAutomaticHistoryAfterReload(bob, reply, 'bob-history');
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
+    await expect(bob.locator('.message-content__unavailable')).toHaveCount(0);
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);
   }
