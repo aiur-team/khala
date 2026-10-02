@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { ConversationSummary } from '../ui/conversation';
 import '../ui/conversation/conversation.css';
 
-export function ShowcaseConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No conversations yet.', action, showSearch = true }: Readonly<{
+export function ShowcaseConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No channels yet.', action, showSearch = true }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
@@ -17,16 +17,16 @@ export function ShowcaseConversationList({ conversations, selectedId, query, onQ
 }>) {
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const unread = conversations.reduce((count, item) => count + (item.unreadCount ?? 0), 0);
-  return <aside className="conversation-list" aria-label="Conversations">
-    <header className="conversation-list__head"><strong>Conversations</strong>{unread > 0 ? <span>{unread} unread</span> : null}{action ? <div className="conversation-list__head-actions">{action}</div> : null}</header>
+  return <aside className="conversation-list" aria-label="Channels">
+    <header className="conversation-list__head"><strong>Channels</strong>{unread > 0 ? <span>{unread} unread</span> : null}{action ? <div className="conversation-list__head-actions">{action}</div> : null}</header>
     {showSearch ? <label className="conversation-list__search"><span className="sr-only">Search channels</span>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search" />
     </label> : null}
     <div className="conversation-list__items">
-      {status === 'loading' ? <p role="status">Loading conversations…</p> : null}
-      {status === 'error' ? <p role="alert">Conversations are unavailable. Try reloading.</p> : null}
-      {status === 'ready' && visible.length === 0 ? <p role="status">{query ? 'No matching conversations.' : emptyLabel}</p> : null}
+      {status === 'loading' ? <p role="status">Loading channels…</p> : null}
+      {status === 'error' ? <p role="alert">Channels are unavailable. Try reloading.</p> : null}
+      {status === 'ready' && visible.length === 0 ? <p role="status">{query ? 'No matching channels.' : emptyLabel}</p> : null}
       {visible.map(item => <button key={item.id} type="button" className={`conversation-list__item${selectedId === item.id ? ' is-active' : ''}`}
         aria-current={selectedId === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
         <span className="conversation-list__avatar" style={{ '--avatar-hue': `${[...item.id].reduce((value, char) => value + char.charCodeAt(0), 0) % 360}` } as CSSProperties} aria-hidden="true">{item.title.trim().slice(0, 1).toLocaleUpperCase()}</span>

@@ -87,7 +87,7 @@ export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', br
     <ToastProvider>
       <PopoverHostProvider host={pop} card={card}><DetailHostContext.Provider value={detailContext}>
         <section ref={card} className={classes} id="kh-card">
-          {solo ? null : <aside className="kh-list" aria-label="Conversations">{brand}{list}</aside>}
+          {solo ? null : <aside className="kh-list" aria-label="Channels">{brand}{list}</aside>}
           <main className="kh-main">{solo ? brand : null}{main}<Toast /></main>
           {/* The pane's content (ParticipantDetail) carries its own landmark or dialog role. */}
           <div ref={setDetailHost} className="kh-detail">{detail}</div>

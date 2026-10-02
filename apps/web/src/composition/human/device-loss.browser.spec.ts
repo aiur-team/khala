@@ -124,7 +124,7 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.locator('.kh-pop:not([hidden])').waitFor({ state: 'detached' });
     await page.evaluate(() => window.__lossHarness.holdNavigation());
     await page.locator('.kh-cv', { hasText: 'Second channel' }).click();
-    await page.getByRole('status', { name: 'Loading conversation' }).waitFor();
+    await page.getByRole('status', { name: 'Loading channel' }).waitFor();
     assert.equal(await shell.evaluate(node => node.isConnected), true, 'the signed-in shell remains mounted');
     assert.equal(await page.locator('.kh-cv').count(), 2, 'the channel list remains live during navigation');
     await page.evaluate(() => window.__lossHarness.releaseNavigation());
@@ -139,7 +139,7 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     assert.equal(await page.locator('.kh-cv').first().isVisible(), false);
-    await page.getByRole('button', { name: 'All conversations' }).click();
+    await page.getByRole('button', { name: 'All channels' }).click();
     await page.locator('.kh-card:not(.in-thread)').waitFor();
     assert.equal(await page.locator('.kh-cv').first().isVisible(), true);
     assert.equal(await button.isVisible(), true);
@@ -327,7 +327,7 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     assert.equal(await page.locator('.kh-list').isVisible(), false, 'the phone thread view hides the list');
     assert.equal(await page.getByRole('heading', { name: 'First channel', level: 1 }).count(), 1);
     if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'human-mobile.png') });
-    await page.getByRole('button', { name: 'All conversations' }).first().click();
+    await page.getByRole('button', { name: 'All channels' }).first().click();
     await page.locator('.kh-card:not(.in-thread)').waitFor();
     assert.equal(await page.locator('.kh-list').isVisible(), true);
     assert.equal(await page.getByRole('link', { name: 'Channel care' }).count(), 0);
@@ -362,7 +362,7 @@ test('owner conversation shell fills desktop and phone with channel creation', {
     await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 320, height: 740 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'the thread fits a 320px window');
-    assert.equal(await page.getByRole('button', { name: 'All conversations' }).isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'All channels' }).isVisible(), true);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

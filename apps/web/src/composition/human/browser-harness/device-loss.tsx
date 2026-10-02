@@ -84,7 +84,7 @@ createRoot(document.getElementById('app')!).render(
     renderRoom={(context, route, navigate, codec) => {
       const onBack = navigate && codec ? () => navigate(codec.conversationsPath()) : undefined;
       return visualHarness ? <VisualRoom {...(onBack ? { onBack } : {})} /> : <div>
-        {onBack ? <button type="button" className="kh-back" aria-label="All conversations" onClick={onBack}>‹</button> : null}
+        {onBack ? <button type="button" className="kh-back" aria-label="All channels" onClick={onBack}>‹</button> : null}
         <p data-testid="live-room">Channel for {context.principal.ownerId}: {route.roomId}</p>
       </div>;
     }}

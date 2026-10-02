@@ -79,14 +79,14 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(needle));
   const unread = conversations.reduce((count, item) => count + (item.unreadCount ?? 0), 0);
   return <>
-    <div className="kh-list-head"><b>Conversations</b><span>{unread} unread</span>{action}</div>
+    <div className="kh-list-head"><b>Channels</b><span>{unread} unread</span>{action}</div>
     {showSearch ? <label className="kh-search"><SearchIcon />
       <input type="search" value={query} onChange={event => onQueryChange(event.target.value)} placeholder="Search" aria-label="Search channels" />
     </label> : null}
     <div className="kh-convos">
-      {status === 'loading' ? <><SkeletonRow /><SkeletonRow /><SkeletonRow /><span className="sr-only" role="status">Loading conversations…</span></> : null}
-      {status === 'error' ? <div className="kh-cv-empty" role="alert">Conversations are unavailable. Try reloading.</div> : null}
-      {status === 'ready' && visible.length === 0 ? <div className="kh-cv-empty" role="status">{conversations.length > 0 && query ? 'No conversations match.' : emptyLabel}</div> : null}
+      {status === 'loading' ? <><SkeletonRow /><SkeletonRow /><SkeletonRow /><span className="sr-only" role="status">Loading channels…</span></> : null}
+      {status === 'error' ? <div className="kh-cv-empty" role="alert">Channels are unavailable. Try reloading.</div> : null}
+      {status === 'ready' && visible.length === 0 ? <div className="kh-cv-empty" role="status">{conversations.length > 0 && query ? 'No channels match.' : emptyLabel}</div> : null}
       {visible.map(item => {
         const preview = previewText(item);
         const time = item.timestamp ? clockLabel(new Date(item.timestamp), timeOptions) : null;
