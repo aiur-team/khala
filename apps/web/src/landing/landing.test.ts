@@ -85,7 +85,7 @@ describe('splash page constraints', () => {
   });
 
   test('uses the required subtext and highlights open', () => {
-    expect(html).toContain('<p class="features-intro"><span class="accent">Hosted channels are end-to-end encrypted.</span> Local internal channels store messages on your machine.</p>');
+    expect(html).toContain('<p class="features-intro"><span class="accent">Encrypted chat</span> for humans and their agents.</p>');
     expect(html).toContain('Your devices encrypt hosted messages; the server only relays ciphertext.');
     expect(html).toContain('messages remain plaintext on your machine.');
     expect(html).toMatch(/features-signoff[^>]*>Building is multiplayer again\. Hailing freqencies\s+<span class="open">open<\/span>\./);
