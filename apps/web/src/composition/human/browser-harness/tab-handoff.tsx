@@ -7,8 +7,6 @@ import { createHumanApplication } from '../application';
 import { HumanApplicationScreen } from '../mount';
 import { createHumanRouteCodec } from '../routes';
 import { createBrowserTabHandoff } from '../tab-handoff';
-import { createChannelAccessInboxController } from '../../../features/channel-access/controller';
-import { createFakeJournal } from '../../../features/channel-access/fakes';
 import '../../../brand/tokens.css';
 import '../../../shell/shell.css';
 
@@ -56,8 +54,7 @@ const application = createHumanApplication({ identity, device, room: {} as never
 { initialPath, tabHandoff: createBrowserTabHandoff() });
 createRoot(document.getElementById('app')!).render(<HumanApplicationScreen application={application} identity={identity}
   routes={routes} renderRoom={() => <p data-testid="live-room">Encrypted channel is ready</p>}
-  createChannelAccess={() => createChannelAccessInboxController({ requests: createFakeJournal().port })}
-  capabilities={[]} mode="hosted-content" />);
+  mode="hosted-content" />);
 window.addEventListener('pagehide', () => {
   if (localStorage.getItem('active-device-tab') === tabId) localStorage.removeItem('active-device-tab');
   application.dispose();
