@@ -106,6 +106,13 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     const channelText = await page.locator('body').innerText();
     assert.match(channelText, /channel/i);
     assert.doesNotMatch(channelText, /\broom\b/i, 'the UI says channel, never room');
+    await page.getByRole('button', { name: 'Approve Claude process' }).click();
+    const processDialog = page.getByRole('dialog', { name: 'Approve Claude process' });
+    await processDialog.waitFor();
+    await processDialog.getByLabel('Code from Claude').waitFor();
+    assert.equal(await processDialog.getByLabel('Code from Claude').inputValue(), '');
+    await processDialog.getByRole('button', { name: 'Close' }).click();
+    await processDialog.waitFor({ state: 'detached' });
 
     // Two externally started agent sessions ask for access through the channel URL.
     const channelUrl = `${origin}/channels/${channelId}`;
