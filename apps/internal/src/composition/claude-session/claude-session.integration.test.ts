@@ -1147,13 +1147,28 @@ describe('Claude delivery through the internal launcher', () => {
     expect(await postToolUse()).toEqual({ stdout: '', stderr: '', exitCode: 0 });
   });
 
-  it('keeps a Claude whose version cannot be inspected unproven: nothing is pulled or read', async () => {
-    const session = await bound('session-uninspected', async () => null);
+  it.each([null, '2.1.287'])('keeps unproven version %s closed even when another bound session ID is claimed', async version => {
+    const session = await bound('session-uninspected', async () => version);
+    const [requested] = await serve(session.report.descriptorPath, 'session-second', [
+      ['khala_request_channel_access', { target: session.channelUrl }],
+    ]);
+    await approvePending(session.report.origin, session.owner);
+    const [connected] = await serve(session.report.descriptorPath, 'session-second', [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected' });
     expect(JSON.parse(await session.run('mode'))).toMatchObject({
       ok: true, acknowledgement: 'unknown', support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
     });
-    await session.post('never delivered');
+    await session.post('must stay behind unproven route');
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'another-session')))
+      .toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
     expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    // The same installation credential can claim the second bound ID; it must
+    // still be unable to read that session without a proven route/caller identity.
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'session-second')))
+      .toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    expect(await session.facts()).toEqual([]);
   });
 });

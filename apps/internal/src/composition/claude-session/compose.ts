@@ -438,14 +438,11 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       },
       currentBinding: current,
     });
-    /**
-     * A token carried by a send or mode change acknowledges its batch before the call runs. The
-     * inbox never stands in the way of the call itself: an acknowledgement that fails leaves the
-     * batch outstanding, and it replays until a later Khala call acknowledges it.
-     */
+    /** A token carried by a send or mode change must be recorded before the call runs.
+     * A failed receipt leaves the batch and its token outstanding for retry. */
     const acknowledge = async (token: string | undefined): Promise<void> => {
       if (token === undefined) return;
-      await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token }).catch(() => undefined);
+      await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token });
     };
     return {
       read,
