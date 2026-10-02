@@ -11,7 +11,7 @@ import { ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/mess
 import type { AdmissionRuntime } from './index';
 import { type AdmissionBinding, type JournalEntry, createAdmissionJournal } from './journal';
 import { currentPrincipal, safeRead, writeAndResolve } from './internal';
-import { policyAllows, readInviteRecord, type AdmissionHistory, type InviteRecord } from './policy';
+import { policyAllows, readInviteRecord, type InviteRecord } from './policy';
 
 type AdmitInput = Readonly<{ operationId: string; inviteRef: string; deviceId: DeviceId }>;
 
@@ -122,7 +122,7 @@ async function resumeAdmission(
   };
   if (reconcileFirst) {
     const reconciled = await callGateway(() => runtime.gateway.lookup(request, options));
-    if (reconciled.kind === 'joined' && disclosureReady(entry.record.history, reconciled.historyReady)) {
+    if (reconciled.kind === 'joined') {
       return complete(journal, operationId, entry, reconciled.room, options);
     }
     if (reconciled.kind === 'unavailable') {
@@ -131,10 +131,6 @@ async function resumeAdmission(
     if (reconciled.kind === 'outcome_unknown') return outcomeUnknown(operationId);
     const eligible = await readEligibleInvite(runtime, input, principal, options);
     if ('kind' in eligible) {
-      if (reconciled.kind === 'joined') {
-        await journal.setState(operationId, entry, 'outcome_unknown', reconciled.room, options);
-        return outcomeUnknown(operationId);
-      }
       return eligible.result;
     }
     if (eligible.invite.roomId !== entry.record.roomId
@@ -145,13 +141,12 @@ async function resumeAdmission(
   if (admitted.kind === 'threw') return reconcileAmbiguous(runtime, journal, request, entry, options);
   if (admitted.kind === 'forbidden') return rejected('forbidden');
   if (admitted.kind === 'unavailable') return unavailable();
-  if (admitted.kind === 'joined' && disclosureReady(entry.record.history, admitted.historyReady)) {
+  if (admitted.kind === 'joined') {
     return complete(journal, operationId, entry, admitted.room, options);
   }
   if (admitted.kind === 'outcome_unknown') {
     return reconcileAmbiguous(runtime, journal, request, entry, options);
   }
-  await journal.setState(operationId, entry, 'outcome_unknown', admitted.room, options);
   return outcomeUnknown(operationId);
 }
 
@@ -163,14 +158,14 @@ async function reconcileAmbiguous(
   options?: CallOptions,
 ): Promise<OperationResult<Admission, AdmissionRejection>> {
   const reconciled = await callGateway(() => runtime.gateway.lookup(request, options));
-  if (reconciled.kind === 'joined' && disclosureReady(request.history, reconciled.historyReady)) {
+  if (reconciled.kind === 'joined') {
     return complete(journal, request.operationId, entry, reconciled.room, options);
   }
   await journal.setState(
     request.operationId,
     entry,
     'outcome_unknown',
-    reconciled.kind === 'joined' ? reconciled.room : null,
+    null,
     options,
   );
   return outcomeUnknown(request.operationId);
@@ -201,8 +196,4 @@ async function callEffectfulGateway<T>(call: () => Promise<T>): Promise<T | { ki
 function sameRequest(entry: JournalEntry, input: AdmitInput, ownerId: AuthPrincipal['ownerId'], runtime: AdmissionRuntime): boolean {
   return entry.record.inviteRefDigest === runtime.digests.inviteRef(input.inviteRef)
     && entry.record.ownerId === ownerId && entry.record.deviceId === input.deviceId;
-}
-
-function disclosureReady(history: AdmissionHistory, historyReady: boolean): boolean {
-  return history === 'none' || historyReady;
 }
