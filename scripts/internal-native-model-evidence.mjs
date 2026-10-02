@@ -32,10 +32,13 @@ const acceptedEvent = value => {
   if (typeof value === 'string') {
     try { return acceptedEvent(JSON.parse(value)); } catch { return null; }
   }
-  if (Array.isArray(value)) return value.map(acceptedEvent).find(Boolean) ?? null;
+  if (Array.isArray(value)) return acceptedEvent(value[0]?.text ?? value[0]);
   if (value && typeof value === 'object') {
-    if (value.kind === 'accepted' && typeof value.eventId === 'string') return value.eventId;
-    return Object.values(value).map(acceptedEvent).find(Boolean) ?? null;
+    if (value.isError === true || value.is_error === true) return null;
+    if (Object.hasOwn(value, 'structuredContent')) return acceptedEvent(value.structuredContent);
+    if (Object.hasOwn(value, 'kind')) return value.kind === 'accepted' && typeof value.eventId === 'string'
+      ? value.eventId : null;
+    if (Array.isArray(value.content)) return acceptedEvent(value.content[0]?.text ?? value.content[0]);
   }
   return null;
 };

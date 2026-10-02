@@ -38,6 +38,11 @@ test('Codex evidence requires challenge in completed read result before send', (
   assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'token-1' },
     '{"kind":"accepted","eventId":"other"}')], 'codex', 'challenge', 'reply', 'event-1'),
   { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'token-1' }, {
+    structuredContent: { kind: 'refused', code: 'not_connected' },
+    content: [{ type: 'text', text: '{"kind":"refused"}' },
+      { type: 'text', text: '{"kind":"accepted","eventId":"event-1"}' }],
+  })], 'codex', 'challenge', 'reply', 'event-1'), { readCall: true, visible: true, sendCall: false });
 });
 
 test('Claude evidence correlates read result by tool_use_id before send', () => {
@@ -56,6 +61,10 @@ test('Claude evidence correlates read result by tool_use_id before send', () => 
   assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('send-1',
     '{"kind":"refused","code":"not_connected"}')], 'claude', 'challenge', 'reply', 'event-2'),
   { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('send-1', [
+    { type: 'text', text: '{"kind":"outcome_unknown"}' },
+    { type: 'text', text: '{"kind":"accepted","eventId":"event-2"}' },
+  ])], 'claude', 'challenge', 'reply', 'event-2'), { readCall: true, visible: true, sendCall: false });
   assert.deepEqual(modelEvidence([send, read, result('read-1', 'challenge')], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: false });
 });
