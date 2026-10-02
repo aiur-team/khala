@@ -137,14 +137,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(cog).toHaveAttribute('aria-expanded', 'true');
       const menu = page.getByRole('menu', { name: 'Settings' });
       const items = menu.getByRole('menuitem');
-      assert.deepEqual(await items.allInnerTexts(), ['Light mode', 'Username\n@Kevin', 'Color\nTeal', 'Log out']);
+      assert.deepEqual(await items.allInnerTexts(), ['Light mode', 'Profile\n@Kevin', 'Log out']);
       await expect(items.nth(0)).toBeFocused();
       await page.keyboard.press('ArrowUp');
-      await expect(items.nth(3)).toBeFocused();
+      await expect(items.nth(2)).toBeFocused();
       await page.keyboard.press('ArrowDown');
       await expect(items.nth(0)).toBeFocused();
       await page.keyboard.press('End');
-      await expect(items.nth(3)).toBeFocused();
+      await expect(items.nth(2)).toBeFocused();
       await page.keyboard.press('Home');
       await expect(items.nth(0)).toBeFocused();
       // The menu fits inside the card, a phone included.
@@ -159,7 +159,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
 
       // ArrowUp opens at the last item; Tab closes the menu.
       await page.keyboard.press('ArrowUp');
-      await expect(items.nth(3)).toBeFocused();
+      await expect(items.nth(2)).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(menu).toHaveCount(0);
 
@@ -176,15 +176,15 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await shoot('open');
       await page.keyboard.press('Escape');
 
-      // Username opens the dialog with focus in it; Esc closes back to the cog.
+      // Profile opens the dialog with focus in the username; Esc closes back to the cog.
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('Enter');
-      const dialog = page.getByRole('dialog', { name: 'Change username' });
+      const dialog = page.getByRole('dialog', { name: 'Profile' });
       const input = dialog.getByRole('textbox', { name: 'Username' });
       await expect(input).toBeFocused();
       await expect(input).toHaveValue('Kevin');
-      await expect(dialog.getByText(/renamed to match/u)).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
       const box = await dialog.boundingBox();
       if (viewport.width === 390) assert.equal(Math.round(box!.width), 390 - 32);
       await shoot('dialog');
@@ -196,11 +196,11 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await cog.click();
       await press(items.nth(1));
       await expect(input).toBeFocused();
+      await input.fill('Kev');
       await page.keyboard.press('Shift+Tab');
       await expect(dialog.getByRole('button', { name: 'Save' })).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(input).toBeFocused();
-      await input.fill('Kev');
       await page.keyboard.press('Enter');
       await expect(dialog).toHaveCount(0);
       await expect(cog).toBeFocused();
@@ -212,7 +212,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
 
       // Log out keeps its brand-row messages; the fixture's sign-out fails.
       await cog.click();
-      await press(items.nth(3));
+      await press(items.nth(2));
       await expect(brand.getByRole('alert')).toHaveText('Log out failed. Try again.');
       await expect(cog).toBeFocused();
       // The message fits the brand row without scrolling the card sideways.
@@ -232,18 +232,20 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
 }
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
-  test(`the brand cog chooses a colour by keyboard and pointer at ${viewport.width}px`, { timeout: 60_000 }, async () => {
-    await withFixture(viewport, 'Kevin', async (page, _saved, colors) => {
+  test(`the Profile dialog saves the username and colour with one Save at ${viewport.width}px`, { timeout: 60_000 }, async () => {
+    await withFixture(viewport, 'Kevin', async (page, saved, colors) => {
       await page.goto(`${page.url()}?list`);
       const shell = page.locator('.khala-owner-shell');
       const cog = shell.locator('.kh-brand').getByRole('button', { name: 'Settings' });
       const menu = page.getByRole('menu', { name: 'Settings' });
-      const colorItem = menu.getByRole('menuitem', { name: /^Color/u });
-      const dialog = page.getByRole('dialog', { name: 'Choose your color' });
+      const profileItem = menu.getByRole('menuitem', { name: /^Profile/u });
+      const dialog = page.getByRole('dialog', { name: 'Profile' });
+      const input = dialog.getByRole('textbox', { name: 'Username' });
       const group = dialog.getByRole('radiogroup', { name: 'Color' });
       const radio = (name: string) => group.getByRole('radio', { name });
       const save = dialog.getByRole('button', { name: 'Save' });
-      const bubble = dialog.locator('.kh-row.me .kh-b');
+      const avatar = dialog.locator('.kh-prof-av');
+      const avatarColor = () => avatar.evaluate(node => getComputedStyle(node).backgroundColor);
       // A pointer press where the item is, as in the cog test above.
       const press = async (item: Locator) => {
         const box = (await item.boundingBox())!;
@@ -253,25 +255,30 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         if (!process.env.KHALA_SHOTS) return;
         await page.waitForTimeout(300);
         const theme = await shell.getAttribute('data-theme');
-        await page.screenshot({ path: join(process.env.KHALA_SHOTS, `color-${name}-${viewport.width}-${theme}.png`) });
+        await page.screenshot({ path: join(process.env.KHALA_SHOTS, `profile-${name}-${viewport.width}-${theme}.png`) });
       };
 
-      // Color sits between Username and Log out and names the saved colour.
+      // Profile sits between Mode and Log out, with the saved colour's dot and the username.
       await cog.focus();
       await page.keyboard.press('ArrowUp');
       await page.keyboard.press('ArrowUp');
-      await expect(colorItem).toBeFocused();
-      await expect(colorItem).toHaveText(/Teal$/u);
+      await expect(profileItem).toBeFocused();
+      await expect(profileItem).toHaveText(/@Kevin$/u);
+      await expect(profileItem.locator('.kh-swatch-dot')).toHaveAttribute('style', 'background: rgb(24, 123, 126);');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(Username|Color)/u }).count(), 0);
       await shoot('menu');
 
-      // Enter opens the dialog with focus on the checked swatch.
+      // Enter opens the dialog with focus in the username; Tab reaches the checked swatch.
       await page.keyboard.press('Enter');
+      await expect(input).toBeFocused();
+      await expect(avatar).toHaveText('KE');
       await expect(group.getByRole('radio')).toHaveCount(10);
       assert.deepEqual(await group.getByRole('radio').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))),
         ['Red', 'Orange', 'Amber', 'Lime', 'Green', 'Teal', 'Blue', 'Indigo', 'Purple', 'Pink']);
-      await expect(radio('Teal')).toBeFocused();
       await expect(radio('Teal')).toHaveAttribute('aria-checked', 'true');
       await expect(save).toBeDisabled();
+      await page.keyboard.press('Tab');
+      await expect(radio('Teal')).toBeFocused();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const box = (await dialog.boundingBox())!;
       if (viewport.width === 390) assert.equal(Math.round(box.width), 390 - 32);
@@ -283,7 +290,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(radio('Blue')).toHaveAttribute('aria-checked', 'true');
       await expect(radio('Teal')).toHaveAttribute('aria-checked', 'false');
       await expect(save).toBeEnabled();
-      await expect(bubble).toHaveAttribute('style', '--hs: #276ecb;');
+      // The avatar preview takes the selection at once (transitions are off in the check).
+      await avatar.evaluate(node => { node.style.transition = 'none'; });
+      assert.equal(await avatarColor(), 'rgb(39, 110, 203)');
       await page.keyboard.press('End');
       await expect(radio('Pink')).toBeFocused();
       await page.keyboard.press('ArrowRight');
@@ -303,48 +312,77 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await page.keyboard.press('Tab');
       await expect(save).toBeFocused();
       await page.keyboard.press('Tab');
+      await expect(input).toBeFocused();
+      await page.keyboard.press('Tab');
       await expect(radio('Pink')).toBeFocused();
       await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Shift+Tab');
       await expect(save).toBeFocused();
-      await expect(bubble).toHaveAttribute('style', '--hs: #ce277a;');
+      assert.equal(await avatarColor(), 'rgb(206, 39, 122)');
+      // The avatar previews the draft name's initials.
+      await input.fill('Ada.Lovelace');
+      await expect(avatar).toHaveText('AL');
       await shoot('dialog');
 
       // Esc closes without saving and returns focus to the cog.
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
       await expect(cog).toBeFocused();
+      assert.deepEqual(saved, []);
       assert.deepEqual(colors, []);
 
-      // A failed save keeps the dialog open with an alert.
+      // A rule error shows inline only once the name is edited, and blocks Save.
       await cog.click();
-      await press(colorItem);
+      await press(profileItem);
+      await expect(dialog.getByRole('alert')).toHaveCount(0);
+      await input.fill('a');
+      await expect(dialog.getByRole('alert')).toHaveText('At least 2 characters.');
+      await expect(input).toHaveAttribute('aria-invalid', 'true');
+      await expect(save).toBeDisabled();
+
+      // One Save sends both changed fields; each failure shows under its own field.
+      await input.fill('taken');
       await press(radio('Amber'));
       await expect(radio('Amber')).toHaveAttribute('aria-checked', 'true');
       await press(save);
-      await expect(dialog.getByRole('alert')).toHaveText('Could not save your color. Try again.');
+      await expect(dialog.getByRole('alert')).toHaveText(['That username is taken.', 'Couldn\'t save your color. Try again.']);
       await expect(dialog).toBeVisible();
+      assert.deepEqual(saved, ['taken']);
+      assert.deepEqual(colors, ['amber']);
 
-      // Space selects; Save saves and closes, and the menu names the new colour.
+      // Space selects; Save saves both and closes, and the menu reads the new name and colour.
       await radio('Amber').focus();
       await page.keyboard.press('ArrowLeft');
       await page.keyboard.press('Space');
       await expect(radio('Orange')).toHaveAttribute('aria-checked', 'true');
+      await expect(dialog.getByRole('alert')).toHaveText(['That username is taken.']);
+      await input.fill('Kev');
       await expect(dialog.getByRole('alert')).toHaveCount(0);
-      await press(save);
+      await page.keyboard.press('Enter');
       await expect(dialog).toHaveCount(0);
       await expect(cog).toBeFocused();
+      assert.deepEqual(saved, ['taken', 'Kev']);
       assert.deepEqual(colors, ['amber', 'orange']);
       await cog.click();
-      await expect(colorItem).toHaveText(/Orange$/u);
-      await expect(colorItem.locator('.kh-swatch-dot')).toHaveAttribute('style', 'background: rgb(171, 88, 33);');
+      await expect(profileItem).toHaveText(/@Kev$/u);
+      await expect(profileItem.locator('.kh-swatch-dot')).toHaveAttribute('style', 'background: rgb(171, 88, 33);');
+
+      // Only the colour changed: Save sends the colour alone.
+      await press(profileItem);
+      await press(radio('Green'));
+      await press(save);
+      await expect(dialog).toHaveCount(0);
+      assert.deepEqual(saved, ['taken', 'Kev']);
+      assert.deepEqual(colors, ['amber', 'orange', 'green']);
 
       if (process.env.KHALA_SHOTS) {
         // The light theme, for the screenshot set.
+        await cog.click();
         await press(menu.getByRole('menuitem', { name: 'Light mode' }));
         await page.waitForTimeout(600);
         await cog.click();
         await shoot('menu');
-        await press(colorItem);
+        await press(profileItem);
         await press(radio('Indigo'));
         await shoot('dialog');
         await page.keyboard.press('Escape');
@@ -353,7 +391,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await press(menu.getByRole('menuitem', { name: 'Dark mode' }));
         await page.waitForTimeout(600);
         await cog.click();
-        await press(colorItem);
+        await press(profileItem);
         await press(radio('Indigo'));
         await shoot('dialog');
       }

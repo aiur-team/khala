@@ -1,10 +1,10 @@
 // The brand row's settings cog: a menu button (WAI-ARIA menu-button pattern)
-// holding Mode, Username, Color and Log out.
+// holding Mode, Profile and Log out.
 
 import type { HumanColorId } from '@khala/contracts/m1/colors';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ThemeChoice } from '../../shell/types';
-import { DropletIcon, GearIcon, LogOutIcon, MoonIcon, SunIcon, UserIcon } from './icons';
+import { GearIcon, LogOutIcon, MoonIcon, SunIcon, UserIcon } from './icons';
 import { HUMAN_PALETTE } from './human-colors';
 import { Popover } from './Popover';
 
@@ -12,11 +12,9 @@ export type SettingsMenuProps = Readonly<{
   theme: ThemeChoice;
   onThemeChange?(theme: ThemeChoice): void;
   username: string | null;
-  /** Opens the username dialog; without it the menu has no Username item. */
-  onEditUsername?(): void;
   color?: HumanColorId | null;
-  /** Opens the colour dialog; without it the menu has no Color item. */
-  onEditColor?(): void;
+  /** Opens the profile dialog; without it the menu has no Profile item. */
+  onEditProfile?(): void;
   /** Without it the menu has no Log out item, e.g. while identity is checked. */
   onSignOut?(): void;
   signingOut?: boolean;
@@ -114,16 +112,15 @@ export type SettingsItem = Readonly<{
  * The menu's items in order. A new item is one more entry here; the keyboard
  * navigation works over however many items there are.
  */
-export function settingsItems({ theme, onThemeChange, username, onEditUsername, color = null, onEditColor, onSignOut, signingOut = false }: SettingsMenuProps): SettingsItem[] {
+export function settingsItems({ theme, onThemeChange, username, color = null, onEditProfile, onSignOut, signingOut = false }: SettingsMenuProps): SettingsItem[] {
   const next: ThemeChoice = theme === 'dark' ? 'light' : 'dark';
   const items: SettingsItem[] = [{
     id: 'mode', icon: next === 'light' ? <SunIcon /> : <MoonIcon />, label: next === 'light' ? 'Light mode' : 'Dark mode',
     run: () => onThemeChange?.(next),
   }];
-  if (onEditUsername) items.push({ id: 'username', icon: <UserIcon />, label: 'Username', detail: username ? `@${username}` : 'Not set', run: onEditUsername });
-  if (onEditColor) items.push({ id: 'color', icon: <DropletIcon />, label: 'Color', detail: color ? <>
-    <span className="kh-swatch-dot" style={{ background: HUMAN_PALETTE[color].solid }} />{HUMAN_PALETTE[color].label}
-  </> : 'Not set', run: onEditColor });
+  if (onEditProfile) items.push({ id: 'profile', icon: <UserIcon />, label: 'Profile', detail: <>
+    {color ? <span className="kh-swatch-dot" style={{ background: HUMAN_PALETTE[color].solid }} /> : null}{username ? `@${username}` : 'Not set'}
+  </>, run: onEditProfile });
   if (onSignOut) items.push({ id: 'log-out', icon: <LogOutIcon />, label: 'Log out', disabled: signingOut, run: onSignOut });
   return items;
 }
