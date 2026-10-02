@@ -432,7 +432,8 @@ export function TimelineScreen({
   // The KM-184 chips and the renderer's `@mention` matching share one roster.
   const mentionTargets: MentionTarget[] = [...rosterParticipants.values()].flatMap(participant => {
     const identity = identityFor(participant, fullNameFor(participant, null));
-    if (identity.kind === 'unknown') return [];
+    // A placeholder name is not something anyone can be mentioned by.
+    if (identity.kind === 'unknown' || (namesUnavailable && identity.kind === 'agent')) return [];
     const isViewer = participant.participantId === viewer.participantId;
     const label = identity.kind === 'agent' ? identity.label : firstName(identity.label);
     return [{
