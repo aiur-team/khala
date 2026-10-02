@@ -49,3 +49,20 @@ describe('createHumanRouteCodec', () => {
     expect(() => createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '//evil.example' })).toThrow(/base path/);
   });
 });
+
+describe('agent confirmation routes', () => {
+  const codec = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
+  test('preserves the confirmation path and join identifier', () => {
+    expect(codec.parse('/agent/confirm?joinId=j_7Qx2')).toEqual({ kind: 'agent_confirm', path: '/agent/confirm?joinId=j_7Qx2', joinId: 'j_7Qx2' });
+    expect(codec.parse('/agent/confirm?joinId=%6A1')).toEqual({ kind: 'agent_confirm', path: '/agent/confirm?joinId=%6A1', joinId: 'j1' });
+    const based = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/khala' });
+    expect(based.agentConfirmPath('j1')).toBe('/khala/agent/confirm?joinId=j1');
+    expect(based.parse(based.agentConfirmPath('j1')).kind).toBe('agent_confirm');
+  });
+  test.each(['/agent/confirm', '/agent/confirm/j_7Qx2', '/agent/confirm?joinId=a&joinId=b',
+    '/agent/confirm?joinId=x&y=1', '/agent/confirm?joinId=%2F', '/agent/confirm?joinId=',
+    `/agent/confirm?joinId=${'x'.repeat(129)}`, '/agent/confirm?joinId=a%20b',
+    'https://other.example/agent/confirm?joinId=j1'])('rejects invalid confirmation link %s', path => {
+    expect(codec.parse(path).kind).toBe('not_found');
+  });
+});

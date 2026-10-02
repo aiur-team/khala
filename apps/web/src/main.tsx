@@ -1,4 +1,4 @@
-import { decodeContentLimits } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, type RoomId } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from './composition/human/application';
 import { createBrowserTabHandoff } from './composition/human/tab-handoff';
 import { createHumanBrowserApi } from './composition/human/browser-api';
@@ -50,6 +50,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     conversations: matrix.conversations,
     admission: api.admission,
     channelLinks: api.channelLinks,
+    agentJoin: api.agentJoin,
+    inviteAgent: (roomId, userId) => matrix.inviteAgent(roomId as RoomId, userId),
     participant: matrix.participant,
     roomParticipants: matrix.roomParticipants,
     limits: decodedLimits.value,
