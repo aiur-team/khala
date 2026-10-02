@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
+import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId } from '@khala/contracts/messaging/index';
-import { createMatrixRoomRequest, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
+import { inviteWithHistory, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('attempts all initial ciphertext and keeps a failed event available for later key recovery', async () => {
@@ -61,6 +62,7 @@ describe('Matrix browser safety boundaries', () => {
   it('creates encrypted invite-only rooms', () => {
     const request = createMatrixRoomRequest({ operationId: 'create_1', title: 'Private room' });
 
+    expect(request.initial_state).toContainEqual({ type: EventType.RoomHistoryVisibility, state_key: '', content: { history_visibility: 'shared' } });
     expect(request.visibility).toBe(Visibility.Private);
     expect(request.preset).toBe(Preset.PrivateChat);
     expect(request.initial_state).toContainEqual({
@@ -98,13 +100,16 @@ describe('Matrix browser safety boundaries', () => {
     };
     const candidate = (id: string, membership: string, encrypted: boolean) => ({
       roomId: id, name: `Title ${id}`,
+      getMember: () => null,
       getMyMembership: () => membership,
       hasEncryptionStateEvent: () => encrypted,
       getLastLiveEvent: () => event,
       getUnreadNotificationCount: () => 0,
-      getLiveTimeline: () => ({ getEvents: () => [event] }),
+      getLiveTimeline: () => ({ getEvents: () => [event, new MatrixEvent({ event_id: '$channel-event', sender: '@agent:test',
+        type: 'com.khala.event.v1', content: { v: 1, kind: 'deploy.finished', summary: 'deployed', body: 'deployed' },
+        origin_server_ts: Date.parse('2026-10-01T00:00:00Z') })] }),
     }) as unknown as Room;
-    const client = { getRooms: () => [candidate('room_1', 'join', true), candidate('room_2', 'invite', true), candidate('room_3', 'join', false)] } as Pick<MatrixClient, 'getRooms'>;
+    const client = { getUserId: () => '@me:example.test', getRooms: () => [candidate('room_1', 'join', true), candidate('room_2', 'invite', true), candidate('room_3', 'join', false)] } as Pick<MatrixClient, 'getRooms' | 'getUserId'>;
     expect(projectJoinedEncryptedRooms(client, limits.value)).toEqual([{
       id: 'room_1', title: 'Title room_1', preview: 'Verified plaintext', timestamp: '2026-09-28T12:00:00.000Z', unreadCount: null,
     }]);
@@ -128,12 +133,12 @@ describe('Matrix browser safety boundaries', () => {
     };
     const room = {
       roomId: 'room_1', name: 'Recovered channel',
-      getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getMember: () => null, getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
       getLastLiveEvent: () => event, getUnreadNotificationCount: () => 1,
       getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
     const client = {
-      getRooms: () => [room], on: vi.fn(), off: vi.fn(),
+      getUserId: () => '@me:example.test', getRooms: () => [room], on: vi.fn(), off: vi.fn(),
     } as unknown as MatrixClient;
     const notify = vi.fn();
     const dispose = subscribeConversationIndex(client, () => current, notify);
@@ -284,5 +289,111 @@ describe('plain encrypted channel send', () => {
       msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': 'agent_one',
       ...(kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': '$prior' } : {}),
     }, 'txn_1');
+  });
+});
+
+describe('inviteWithHistory', () => {
+  function client(encrypted = true, membership?: string) {
+    return { getRoom: vi.fn(() => ({ hasEncryptionStateEvent: () => encrypted,
+      getMember: () => membership ? { membership } : null } as unknown as Room)), invite: vi.fn().mockResolvedValue({}) };
+  }
+  it('uses the browser SDK invite for an encrypted channel', async () => {
+    const sdk = client();
+    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(true);
+    expect(sdk.invite).toHaveBeenCalledExactlyOnceWith('!r', '@agent-x:hs');
+  });
+  it.each(['invite', 'join'])('skips a member already in state %s', async membership => {
+    const sdk = client(true, membership);
+    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(true);
+    expect(sdk.invite).not.toHaveBeenCalled();
+  });
+  it('fails closed on unencrypted or missing channels and malformed identities', async () => {
+    const sdk = client(false);
+    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
+    const encrypted = client();
+    for (const id of ['agent', '@:hs', '@a b:hs', '@a:']) expect(await inviteWithHistory(encrypted, '!r', id)).toBe(false);
+    encrypted.getRoom.mockReturnValue(null as unknown as Room);
+    expect(await inviteWithHistory(encrypted, '!r', '@agent-x:hs')).toBe(false);
+    expect(sdk.invite).not.toHaveBeenCalled();
+    expect(encrypted.invite).not.toHaveBeenCalled();
+  });
+  it('returns false when the invite fails', async () => {
+    const sdk = client(); sdk.invite.mockRejectedValue(new Error('offline'));
+    expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
+  });
+});
+
+describe('channel event decoding', () => {
+  const participant: ParticipantView = { participantId: 'agent_1' as never, ownerId: 'owner_1' as never,
+    kind: 'agent', displayName: 'Claude · Kevin', deviceIds: [] };
+  const limits = decodeContentLimits({ maxBodyBytes: 32768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+  if (!limits.ok) throw new Error('invalid limits');
+  const content = { v: 1, body: 'review requested', kind: 'pr.ready_for_review', summary: 'review requested' };
+  function event(raw: object) {
+    return new MatrixEvent({ event_id: '$event', sender: '@agent:test', room_id: '!room:test',
+      origin_server_ts: Date.parse('2026-10-01T10:09:30Z'), type: 'com.khala.event.v1', content: raw });
+  }
+  it('decodes without message device attribution', () => {
+    expect(projectMatrixTimelineEvent(event(content), participant, null, limits.value)).toEqual({
+      kind: 'channel_event', eventId: '$event', participant, content, receivedAt: '2026-10-01T10:09:30.000Z',
+    });
+  });
+  it.each([{ ...content, url: 'javascript:alert(1)' }, { ...content, summary: '' }, {}])('drops malformed content %j', raw => {
+    expect(projectMatrixTimelineEvent(event(raw), participant, null, limits.value)).toBeNull();
+  });
+});
+
+describe('browser cross-signing and shared history', () => {
+  const cryptoMock = (cached = false, server = false) => ({
+    getCrossSigningStatus: vi.fn(async () => ({ privateKeysCachedLocally: { masterKey: cached, selfSigningKey: cached, userSigningKey: cached } })),
+    userHasCrossSigningKeys: vi.fn(async () => server),
+    bootstrapCrossSigning: vi.fn<CryptoApi['bootstrapCrossSigning']>(async () => {}),
+  });
+  it('keeps locally cached signing keys', async () => {
+    const crypto = cryptoMock(true);
+    expect(await ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test')).toBe('present');
+    expect(crypto.userHasCrossSigningKeys).not.toHaveBeenCalled();
+    expect(crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+  });
+  it('never resets an identity held by another device', async () => {
+    const crypto = cryptoMock(false, true);
+    expect(await ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test')).toBe('foreign');
+    expect(crypto.userHasCrossSigningKeys).toHaveBeenCalledWith('@me:test', true);
+    expect(crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+  });
+  it('bootstraps the first identity with no UIA', async () => {
+    const crypto = cryptoMock();
+    expect(await ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test')).toBe('bootstrapped');
+    expect(crypto.bootstrapCrossSigning).toHaveBeenCalledOnce();
+    const upload = vi.fn(async () => {});
+    await crypto.bootstrapCrossSigning.mock.calls[0]![0]!.authUploadDeviceSigningKeys!(upload);
+    expect(upload).toHaveBeenCalledWith(null);
+  });
+  it.each(['getCrossSigningStatus', 'userHasCrossSigningKeys', 'bootstrapCrossSigning'] as const)('swallows %s failures', async method => {
+    const crypto = cryptoMock();
+    crypto[method].mockRejectedValueOnce(new Error('offline'));
+    expect(await ensureCrossSigning(crypto as unknown as CryptoApi, '@me:test')).toBe('failed');
+  });
+  it.each([
+    [true, 'm.room.encrypted', 900, null, 1000, true],
+    [true, 'm.room.encrypted', 950, DecryptionFailureCode.HISTORICAL_MESSAGE_USER_NOT_JOINED, null, true],
+    [true, 'm.room.encrypted', 1100, null, 1000, false],
+    [true, 'm.room.encrypted', 1000, null, 1000, false],
+    [false, EventType.RoomMessage, 900, null, 1000, false],
+    [false, 'm.room.encrypted', 900, null, null, false],
+  ])('filters only pre-join undecryptable events (%s, %s, %s)', (failed, type, ts, reason, joinTs, expected) => {
+    const event = { isDecryptionFailure: () => failed, getType: () => type, getTs: () => ts, decryptionFailureReason: reason } as unknown as MatrixEvent;
+    expect(isPreJoinUndecryptable(event, joinTs as number | null)).toBe(expected);
+  });
+  it('omits pre-join ciphertext from conversation previews', () => {
+    const limits = decodeContentLimits({ maxBodyBytes: 32768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+    if (!limits.ok) throw new Error('invalid limits');
+    const event = new MatrixEvent({ event_id: '$old', type: 'm.room.encrypted', content: {}, origin_server_ts: 900 });
+    const room = { roomId: '!room:test', name: 'Room', getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
+      getMember: () => ({ membership: 'join', events: { member: { getTs: () => 1000 } } }),
+      getLastLiveEvent: () => event, getUnreadNotificationCount: () => 0, getLiveTimeline: () => ({ getEvents: () => [event] }),
+    } as unknown as Room;
+    expect(projectJoinedEncryptedRooms({ getRooms: () => [room], getUserId: () => '@me:test' }, limits.value)[0])
+      .toMatchObject({ preview: null, timestamp: null });
   });
 });

@@ -1,0 +1,12 @@
+{
+  "id": 88123,
+  "topic": "ticket.395.agent.blocked",
+  "source": "agent",
+  "message": "Waiting on contract",
+  "name": "blocked",
+  "issue": 395,
+  "blocking_issue": 394,
+  "ticket_observation": {
+    "occurred_at": null
+  }
+}

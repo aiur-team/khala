@@ -1,0 +1,13 @@
+{
+  "id": 88123,
+  "topic": "ticket.395.ci.passed",
+  "source": "github",
+  "head_sha": "3F9C2AB0D1",
+  "pr_number": 412,
+  "checks": [],
+  "failure_excerpt": null,
+  "message": "CI passed",
+  "ticket_observation": {
+    "occurred_at": null
+  }
+}

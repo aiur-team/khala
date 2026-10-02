@@ -1,0 +1,15 @@
+{
+  "id": 88123,
+  "topic": "ticket.395.agent.paused",
+  "reason": "dependency",
+  "ticket_observation": {
+    "occurred_at": null
+  },
+  "event": "alert",
+  "name": "ticket.395.agent.paused",
+  "message": "Ticket paused",
+  "severity": "info",
+  "needs_attention": true,
+  "source_ticket_id": "395",
+  "sound": null
+}

@@ -57,7 +57,7 @@ index; only the `+` action opens channel creation.
 
 The site root `/` belongs to the public landing page (`netlify.toml`), so the
 application routes live below it: `/new` opens the signed-in index, `/join?invite=…`
-admits a shared link, `/channels/<id>` opens a channel, and
+admits a shared link, `/agent/confirm?joinId=…` confirms an agent request, `/channels/<id>` opens a channel, and
 `/channels/<id>/tools` remains a direct link for recipient review. The SPA entry reads
 an optional `?mount=hosted-content` parameter to boot without standalone chrome,
 then strips it before routing; any other value boots standalone.
@@ -75,3 +75,18 @@ The settings disclosure mounts recovery and access actions from the existing
 owner-scoped controller. Agent controls stay inside that agent's participant
 detail, and Delete conversation stays in the title disclosure. The old tools
 route retains recipient review and legacy pause controls as a fallback without a sidebar entry.
+
+
+## Agent confirmation
+
+An owner opens the agent confirmation link and reviews its label, harness and
+channel before pressing **Confirm**. A signed-out visitor uses the existing
+**Sign in** button and returns to the same link. While connecting, keep the tab
+open: the browser polls status every second and uses its Matrix client to invite
+the ready agent with encrypted history. History sharing relies on shared history
+visibility and the browser's verified identity. Existing invited or joined members
+are treated as success. **Open channel** appears when the invite succeeds.
+
+If connecting times out, **Retry** resumes status checks without confirming again.
+If the invite fails, **Retry** attempts only the invite. Closing or navigating away
+stops the page's requests and timers; reopening a confirmed link resumes polling.

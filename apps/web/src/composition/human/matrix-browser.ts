@@ -1,3 +1,4 @@
+import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import {
   ClientEvent,
   Direction,
@@ -14,6 +15,7 @@ import {
   type MatrixClient,
   type EventTimeline,
 } from 'matrix-js-sdk';
+import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import {
   decodeMessageContent,
   decodeRoomSummary,
@@ -125,15 +127,47 @@ function roomSummary(room: Room, limits: ContentLimits): RoomSummary {
   throw new Error('Matrix room metadata is invalid');
 }
 
+/** Preserve an existing server identity; bootstrap failures never block device start. */
+export async function ensureCrossSigning(
+  crypto: Pick<CryptoApi, 'getCrossSigningStatus' | 'userHasCrossSigningKeys' | 'bootstrapCrossSigning'>,
+  userId: string,
+): Promise<'present' | 'foreign' | 'bootstrapped' | 'failed'> {
+  try {
+    const status = await crypto.getCrossSigningStatus();
+    const cached = status.privateKeysCachedLocally;
+    if (cached.masterKey && cached.selfSigningKey && cached.userSigningKey) return 'present';
+    if (await crypto.userHasCrossSigningKeys(userId, true)) return 'foreign';
+    await crypto.bootstrapCrossSigning({ authUploadDeviceSigningKeys: async (f) => f(null) });
+    return 'bootstrapped';
+  } catch {
+    return 'failed';
+  }
+}
+
+export function isPreJoinUndecryptable(event: MatrixEvent, joinTs: number | null): boolean {
+  return (event.isDecryptionFailure() || event.getType() === 'm.room.encrypted')
+    && (event.decryptionFailureReason === DecryptionFailureCode.HISTORICAL_MESSAGE_USER_NOT_JOINED
+      || (joinTs !== null && event.getTs() < joinTs));
+}
+
+function ownJoinTs(room: Room | null, userId: string | null): number | null {
+  const member = userId ? room?.getMember(userId) : null;
+  return member?.membership === 'join' ? member.events.member?.getTs() ?? null : null;
+}
+
 /** Only local, joined encrypted rooms enter the owner conversation index. */
-export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms'>, limits: ContentLimits): readonly ConversationSummary[] {
+export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms' | 'getUserId'>, limits: ContentLimits): readonly ConversationSummary[] {
   return sortConversations(client.getRooms()
     .filter(candidate => candidate.getMyMembership() === 'join' && candidate.hasEncryptionStateEvent())
     .map(candidate => {
       const summary = roomSummary(candidate, limits);
+      const joinTs = ownJoinTs(candidate, client.getUserId());
       const latest = [...candidate.getLiveTimeline().getEvents()].reverse().find(event =>
-        (event.getType() === EventType.RoomMessage && event.getContent().msgtype === MsgType.Text)
-        || event.getType() === 'm.room.encrypted' || event.isDecryptionFailure());
+        !isPreJoinUndecryptable(event, joinTs) && (
+          (event.getType() === EventType.RoomMessage && event.getContent().msgtype === MsgType.Text)
+          || event.getType() === 'm.room.encrypted'
+          || event.isDecryptionFailure()
+        ));
       const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
         ? latest.getClearContent()?.body : null;
       const unread = candidate.getUnreadNotificationCount();
@@ -258,7 +292,7 @@ export function createMatrixRoomRequest(input: Readonly<{ operationId: string; t
     ...(input.title ? { name: input.title } : {}),
     initial_state: [
       { type: EventType.RoomEncryption, state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } },
-      { type: EventType.RoomHistoryVisibility, state_key: '', content: { history_visibility: 'joined' } },
+      { type: EventType.RoomHistoryVisibility, state_key: '', content: { history_visibility: 'shared' } },
       { type: CREATE_EVENT, state_key: '', content: { operation_id: input.operationId } },
     ],
   };
@@ -309,6 +343,7 @@ class MatrixRuntime {
         await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: input.store.name });
         const crypto = client.getCrypto();
         if (!crypto) throw new Error('Matrix crypto unavailable');
+        await ensureCrossSigning(crypto, session.userId);
         let startInvoked = false;
         let stopped = false;
         return {
@@ -378,6 +413,10 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
   if (event.getType() === 'm.room.encrypted') {
     return { kind: 'undecryptable', eventId: eventId as EventId,
       authorParticipantId: participant.participantId, reason: 'decryption_failed', receivedAt };
+  }
+  if (event.getType() === CHANNEL_EVENT_TYPE) {
+    const decoded = decodeChannelEvent(event.getContent());
+    return decoded.ok ? { kind: 'channel_event', eventId: eventId as EventId, participant, content: decoded.value, receivedAt } : null;
   }
   if (event.getType() !== EventType.RoomMessage) return null;
   const rawContent = event.getContent();
@@ -482,7 +521,9 @@ class MatrixSubstrate implements RoomSubstrate {
     const active = this.active();
     await decryptTimelineEvents(active.client, events);
     if (this.runtime.active !== active) throw new Error('Matrix session changed during timeline decryption');
-    const senders = [...new Set(events.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
+    const joinTs = ownJoinTs(active.client.getRoom(roomId), active.client.getUserId());
+    const visibleEvents = events.filter(event => !isPreJoinUndecryptable(event, joinTs));
+    const senders = [...new Set(visibleEvents.flatMap(event => event.getSender() ? [event.getSender()!] : []))];
     const session = participantSession(active);
     if (!session) {
       historyDiagnostic('history_participants');
@@ -513,7 +554,7 @@ class MatrixSubstrate implements RoomSubstrate {
       historyDiagnostic('history_device_info');
       throw new Error('Matrix session changed during device attribution');
     }
-    const projectedEvents = events.flatMap(event => {
+    const projectedEvents = visibleEvents.flatMap(event => {
       const sender = event.getSender();
       const mapping = sender ? mappings.get(sender) : undefined;
       if (!sender || !mapping) return [];
@@ -585,9 +626,15 @@ class MatrixSubstrate implements RoomSubstrate {
     const publish = () => {
       if (disposed || this.runtime.active !== active) return;
       const epoch = ++publishEpoch;
-      void this.events(room.getLiveTimeline().getEvents(), roomId).then(events => {
+      const source = [...room.getLiveTimeline().getEvents()];
+      void this.events(source, roomId).then(events => {
+        const ignoredEventIds = source.flatMap(event => {
+          const id = event.getId();
+          return id && event.getType() === CHANNEL_EVENT_TYPE && !event.isDecryptionFailure() && !decodeChannelEvent(event.getContent()).ok
+            ? [id as EventId] : [];
+        });
         if (!disposed && this.runtime.active === active && epoch === publishEpoch) {
-          listener({ generation: active.generation, room: roomSummary(room, this.limits), events });
+          listener({ generation: active.generation, room: roomSummary(room, this.limits), events, ignoredEventIds });
         }
       }).catch(() => undefined);
     };
@@ -606,10 +653,23 @@ class MatrixSubstrate implements RoomSubstrate {
   }
 }
 
+/** Use the browser SDK invite so its verified identity can share encrypted history. */
+export async function inviteWithHistory(client: Pick<MatrixClient, 'getRoom' | 'invite'>, roomId: string, userId: string): Promise<boolean> {
+  try {
+    const room = client.getRoom(roomId);
+    if (!room?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return false;
+    const membership = room.getMember(userId)?.membership;
+    if (membership === 'invite' || membership === 'join') return true;
+    await client.invite(roomId, userId);
+    return true;
+  } catch { return false; }
+}
+
 export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
+  inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
   participant(): ParticipantView | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
@@ -702,6 +762,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
   };
 
   return {
+    inviteAgent: (roomId, userId) => runtime.active
+      ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
     device, room, conversations, participant: () => runtime.active?.actor ?? null,
     async roomParticipants(roomId, signal) {
       const active = runtime.active;

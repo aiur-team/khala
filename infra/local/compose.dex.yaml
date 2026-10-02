@@ -1,0 +1,11 @@
+# Local stack Dex: combine after infra/messaging/compose.yaml.
+# Bind only to loopback; configuration is owned by .khala-local/.
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.43.1@sha256:0881d3c9359b436d585b2061736ce271c100331e073be9178ef405ce5bf09557
+    command: [dex, serve, /etc/dex/config.yaml]
+    volumes:
+      - ${KHALA_PREVIEW_OIDC_CONFIG_DIR:?set KHALA_PREVIEW_OIDC_CONFIG_DIR}/dex.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - 127.0.0.1:${KHALA_PREVIEW_DEX_PORT:?set KHALA_PREVIEW_DEX_PORT}:5556
+    restart: 'no'
