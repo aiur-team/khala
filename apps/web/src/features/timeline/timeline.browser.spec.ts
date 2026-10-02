@@ -72,15 +72,17 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // Attribution: the review action slot is present per exact EventRef, and
     // each row is marked by its own author's kind and ownership. The harness
     // viewer *is* Alice, so her rows are `.me` bubbles with no name line; the
-    // release agent's row (owned by Alice) is an ordinary agent row tagged
-    // "Your machine", scoped to that row.
+    // release agent's row (owned by Alice) is an ordinary agent row marked
+    // `.agent.yours` with no machine tag, scoped to that row.
     await page.getByTestId('review-recent_1').waitFor();
     const welcomeRow = page.locator('[data-event-id="recent_1"]');
     assert.equal(await welcomeRow.evaluate(row => row.classList.contains('me')), true);
     assert.equal(await welcomeRow.locator('.kh-name, .kh-av').count(), 0);
     const agentRow = page.locator('[data-event-id="recent_2"]');
-    await agentRow.getByText('Your machine', { exact: true }).waitFor();
+    await agentRow.locator('.kh-name').waitFor();
     assert.equal(await agentRow.evaluate(row => row.classList.contains('me')), false);
+    assert.equal(await agentRow.evaluate(row => row.classList.contains('agent') && row.classList.contains('yours')), true);
+    assert.equal(await agentRow.getByText(/machine/u).count(), 0);
     assert.match(await agentRow.locator('.kh-name').getAttribute('aria-label') ?? '', /, your agent, /);
 
     // Send + reconcile: composing and sending a human message shows exactly
@@ -263,7 +265,7 @@ test('Thread rows match the 1440 dark design computed styles', { timeout: 90_000
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     await page.goto(server.resolvedUrls!.local[0]!);
     await page.locator('.kh-rcpt').waitFor();
-    for (const selector of ['.kh-row:not(.me):not(.human) .kh-b', '.kh-row.me .kh-b', '.kh-name b', '.kh-otag', '.kh-rcpt']) {
+    for (const selector of ['.kh-row:not(.me):not(.human) .kh-b', '.kh-row.me .kh-b', '.kh-name b', '.kh-rcpt']) {
       const want = reference['1440-dark']![selector]!;
       const got = await page.locator(selector).first().evaluate(node => {
         const style = getComputedStyle(node);
