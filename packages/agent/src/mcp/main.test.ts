@@ -1,4 +1,7 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import main, { createPlaceholderClient, runMcpCommand } from './main';
@@ -57,13 +60,109 @@ describe('MCP command lifecycle', () => {
     await expect(runMcpCommand([], { ...io, output, env: {}, createClient: () => client })).rejects.toThrow('write failed');
     expect(client.close).toHaveBeenCalledTimes(1);
   });
-  it('exports the C12 entry and serves the placeholder through the untouched bin', () => {
-    expect(typeof main).toBe('function');
-    const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
-      encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
+  it('exits on SIGTERM with stdin open after initializing a real session', async () => {
+    const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-signal-'));
+    const child = spawn(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+      env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'signal-session' },
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-    expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    try {
+      const reply = new Promise<string>((resolve, reject) => {
+        let output = '';
+        child.stdout.on('data', chunk => {
+          output += chunk.toString();
+          if (output.includes('\n')) resolve(output.trim());
+        });
+        child.once('error', reject);
+      });
+      const completed = (async () => {
+        child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+        expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
+        child.kill('SIGTERM');
+        expect(await closed).toEqual({ code: 0, signal: null });
+      })();
+      await Promise.race([completed, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('mcp_signal_timeout')), 4000);
+      })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await closed;
+      rmSync(stateHome, { recursive: true, force: true });
+    }
+  });
+  it('keeps SDK console diagnostics off protocol stdout', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-console-'));
+    const preload = path.join(dir, 'diagnostic.cjs');
+    writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
+        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event']);
+      expect(result.stderr).toBe('sdk-diagnostic\n');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('exits after successful cleanup despite lingering SDK timers', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-deadline-'));
+    const preload = path.join(dir, 'deadline.cjs');
+    writeFileSync(preload, "process.stdin.once('end', () => setInterval(() => {}, 60000));\n");
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'deadline' },
+        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 4000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+      expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it.each(['reject', 'timeout'])('exits nonzero when session cleanup fails: %s', mode => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-cleanup-'));
+    const preload = path.join(dir, 'cleanup.cjs');
+    writeFileSync(preload, `
+      const fs = require('node:fs/promises');
+      const unlink = fs.unlink;
+      let sessionRemovals = 0;
+      fs.unlink = file => {
+        if (String(file).endsWith('/session.json') && ++sessionRemovals === 2) {
+          return ${mode === 'reject' ? "Promise.reject(new Error('sensitive-private-error'))" : "new Promise(() => {})"};
+        }
+        return unlink(file);
+      };
+    `);
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'failure' },
+        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 8000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(`khala: cleanup_${mode === 'reject' ? 'failed' : 'timeout'}\n`);
+      expect(result.stderr).not.toContain('sensitive-private-error');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 10_000);
+  it('exports the C12 entry and serves the real client through the untouched bin', () => {
+    expect(typeof main).toBe('function');
+    const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-main-'));
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
+        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+    } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
