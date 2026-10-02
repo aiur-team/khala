@@ -427,17 +427,6 @@ export function TimelineScreen({
         </button>
       ) : null}
       <ChatComposer value={draft} onChange={setDraft} onSend={() => void handleSend()}
-        participants={<>
-          {[viewer, ...extraParticipants].slice(0, 5).map(participant => {
-            const name = namesUnavailable && participant.kind === 'agent' ? 'Agent name unavailable'
-              : names.currentNames.get(participant.participantId) ?? ('displayName' in participant ? participant.displayName : participant.initialName);
-            return <span className="conversation-participant" key={participant.participantId} title={`${name} · ${participant.kind}`}>
-              <span className="conversation-participant__avatar" aria-hidden="true">{name.trim().slice(0, 1).toLocaleUpperCase()}</span>
-              <span className="conversation-participant__name">{name}</span>
-            </span>;
-          })}
-          {extraParticipants.length > 4 ? <details className="conversation-participant-overflow"><summary>+{extraParticipants.length - 4} more</summary><ul>{extraParticipants.slice(4).map(participant => <li key={participant.participantId}>{namesUnavailable && participant.kind === 'agent' ? 'Agent name unavailable' : names.currentNames.get(participant.participantId) ?? participant.initialName}</li>)}</ul></details> : null}
-        </>}
         disabled={!canCompose} sendDisabled={anySendUnresolved || sendBlocked}
         {...(sendBlocked ? { sendDescriptionId: 'timeline-send-blocked' } : {})} />
       {sendBlocked ? <p id="timeline-send-blocked" className="timeline__status" role="status">{sendBlockedReason}</p> : null}
