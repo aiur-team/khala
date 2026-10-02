@@ -1,18 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import type { ChannelAccessRequestHandle, IdentityPort } from '@khala/contracts/messaging/index';
+import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { AiurShell, ThemeToggle } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
-import { ChannelRequestsInbox } from '../../features/channel-access/ChannelRequestsInbox';
-import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRequestsNavEntry';
-import type { ChannelAccessInboxController } from '../../features/channel-access/controller';
 import { createJoinController } from '../../features/join/controller';
 import { AgentJoinGuidance, JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
 import type { HumanApplicationHandle, HumanRouteContext } from './application';
-import { attachHumanCapabilities, registerHumanCapabilities, type HumanCapability } from './capabilities';
 import type { HumanRoute, HumanRouteCodec } from './routes';
 import { HumanScreen, type HumanShellChrome } from './screen';
 import { ConversationIndexRoute } from './ConversationIndexRoute';
@@ -31,10 +27,6 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
-  /** Legacy direct route for recipient review. Conversation settings live in the selected room. */
-  renderChannelTools?: HumanRoomRenderer;
-  createChannelAccess: () => ChannelAccessInboxController;
-  capabilities?: readonly HumanCapability[];
 }>;
 
 export type MountKhalaContentOptions = HumanApplicationScreenProps & Readonly<{ target: Element }>;
@@ -108,17 +100,6 @@ function LostDevicePanel() {
         <p>If you still have a device or browser profile with its original keys, open Khala there to read its history. This browser profile cannot regain keys by retrying this page.</p>
         <p>If every device's keys are gone, earlier history cannot be recovered. Access from a new device requires a fresh authorized admission; this screen cannot grant one.</p>
       </Panel>
-  );
-}
-
-const ChannelAccessContext = createContext<ChannelAccessInboxController | null>(null);
-
-function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: ChannelAccessRequestHandle | null }) {
-  const controller = useContext(ChannelAccessContext);
-  return (
-    <KhalaPageFrame model={{ title: 'Channel requests', labelledBy: 'khala-channel-requests-title' }}>
-      {controller === null ? null : <ChannelRequestsInbox controller={controller} selectedHandle={selectedHandle} embedded />}
-    </KhalaPageFrame>
   );
 }
 
@@ -205,22 +186,19 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
   </AiurShell>;
 }
 
-function OwnerShell({ application, createController, routes, chrome, context, navigateRoute, children }: {
+function OwnerShell({ application, routes, chrome, context, navigateRoute, children }: {
   application: HumanApplicationHandle;
-  createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
   context: HumanRouteContext;
   navigateRoute(path: string): void;
   children: ReactNode;
 }) {
-  const [controller] = useState(createController);
   const route = routes.parse(chrome.path);
   const conversations = useConversationIndex(context);
-  const selectedTitle = route.kind === 'channel' || route.kind === 'channel_tools'
+  const selectedTitle = route.kind === 'channel'
     ? conversations?.find(item => item.id === route.roomId)?.title ?? 'Encrypted conversation'
-    : route.kind === 'channel_requests' ? 'Channel requests' : 'Channels';
-  const channelTitle = route.kind === 'channel' ? selectedTitle : undefined;
+    : 'Channels';
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -233,26 +211,19 @@ function OwnerShell({ application, createController, routes, chrome, context, na
   }, []);
   useEffect(() => { setCreating(false); }, [chrome.path]);
   useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
-  useEffect(() => {
-    controller.start();
-    return () => controller.dispose();
-  }, [controller]);
   const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
   const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
   const sidebar = <>
-    <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' || route.kind === 'channel_tools' ? route.roomId : null}
+    <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
-      action={<><ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()} current={route.kind === 'channel_requests'}
-        onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
-        <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button></>}
+      action={<button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button>}
       onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
   </>;
   return (
     <AiurShell
       mode={chrome.mode}
       className="khala-owner-shell"
-      {...(channelTitle && route.kind !== 'channel' ? { title: channelTitle } : {})}
       {...(route.kind === 'channel' && chrome.mode !== 'hosted-content' ? { headerContent: <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> } : {})}
       navigation={[]}
       brandHref={routes.conversationsPath()}
@@ -275,9 +246,9 @@ function OwnerShell({ application, createController, routes, chrome, context, na
       collapsed={chrome.collapsed}
       onCollapsedChange={chrome.onCollapsedChange}
     >
-      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{route.kind === 'channel' ? <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> : channelTitle ? <h1 dir="auto">{channelTitle}</h1> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
-      {route.kind !== 'channel' ? <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button>{channelTitle ? <h1 dir="auto">{channelTitle}</h1> : <span>{selectedTitle}</span>}{chrome.mode === 'hosted-content' ? hostedActions : null}</div> : null}
-      <ChannelAccessContext.Provider value={controller}>{children}</ChannelAccessContext.Provider>
+      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{route.kind === 'channel' ? <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
+      {route.kind !== 'channel' ? <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><span>{selectedTitle}</span>{chrome.mode === 'hosted-content' ? hostedActions : null}</div> : null}
+      {children}
       {creating ? <CreateChannelDialog context={context}
         returnFocus={restoreCreateFocus}
         onClose={() => setCreating(false)}
@@ -295,9 +266,6 @@ export function HumanApplicationScreen({
   navigateExternal = url => globalThis.location?.assign(url),
   navigateRoute = path => application.navigate(path),
   renderRoom,
-  renderChannelTools,
-  createChannelAccess,
-  capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: HumanRoute): ReactNode => {
     switch (route.kind) {
@@ -307,12 +275,6 @@ export function HumanApplicationScreen({
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
       case 'channel':
         return renderRoom(context, route, navigateRoute, routes);
-      case 'channel_tools':
-        return renderChannelTools ? renderChannelTools(context,
-          { kind: 'channel', path: routes.roomPath(route.roomId), roomId: route.roomId }, navigateRoute, routes)
-          : <Panel heading="Channel care unavailable"><p>This channel care page is unavailable.</p></Panel>;
-      case 'channel_requests':
-        return <ChannelRequestsRoute selectedHandle={route.selectedHandle} />;
       case 'not_found':
         return (
           <KhalaPageFrame model={{ title: 'Page not found', labelledBy: 'khala-not-found' }}>
@@ -321,15 +283,8 @@ export function HumanApplicationScreen({
         );
     }
   };
-  const attachCapabilities = useCallback(
-    (context: HumanRouteContext) => attachHumanCapabilities(capabilities, context),
-    [capabilities],
-  );
-  // The human application's ready state is the credential guard: the owner
-  // shell renders only for a ready snapshot, so agent/discovery credential
-  // routes never see owner-only inbox chrome.
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => (
-    <OwnerShell key={context.principal.ownerId} application={application} createController={createChannelAccess} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
+    <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
       {children}
     </OwnerShell>
   );
@@ -342,7 +297,6 @@ export function HumanApplicationScreen({
       renderRoute={renderRoute}
       renderSignedOut={path => <SignInPanel identity={identity} path={path} isJoin={routes.parse(path).kind === 'join'} navigateExternal={navigateExternal} />}
       renderDeviceLoss={() => <LostDevicePanel />}
-      attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}
       renderPendingShell={(chrome, phase, children) => <PendingOwnerShell application={application} routes={routes}
         chrome={chrome} phase={phase}>{children}</PendingOwnerShell>}

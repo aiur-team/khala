@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
-import { decodeContentLimits, type ParticipantView } from '@khala/contracts/messaging/index';
-import { createMatrixRoomRequest, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
+import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId } from '@khala/contracts/messaging/index';
+import { createMatrixRoomRequest, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('attempts all initial ciphertext and keeps a failed event available for later key recovery', async () => {
@@ -229,4 +229,60 @@ describe('Matrix browser safety boundaries', () => {
     });
   });
 
+});
+
+describe('plain encrypted channel send', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const input = {
+    roomId: '!channel:example.test' as RoomId,
+    clientTxnId: 'txn_1',
+    content: { v: 1, kind: 'text', body: 'hello' } as MessageContent,
+  };
+  const clientFor = (room: Room | null = { hasEncryptionStateEvent: () => true } as Room) => ({
+    getRoom: vi.fn(() => room),
+    sendEvent: vi.fn(async () => ({ event_id: '$evt1' })),
+    getDeviceId: vi.fn(() => 'KH_WEB_ONE'),
+  }) as unknown as Pick<MatrixClient, 'getRoom' | 'sendEvent' | 'getDeviceId'>;
+
+  it('sends once with the transaction ID and performs no control request', async () => {
+    const fetch = vi.fn(() => { throw new Error('unexpected control request'); });
+    vi.stubGlobal('fetch', fetch);
+    const client = clientFor();
+    await expect(sendRoomMessage(client, input)).resolves.toEqual({
+      kind: 'done', value: { eventId: '$evt1', authorDeviceId: 'KH_WEB_ONE' },
+    });
+    expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith(
+      input.roomId, EventType.RoomMessage, { msgtype: 'm.text', body: 'hello' }, 'txn_1',
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { hasEncryptionStateEvent: () => false } as Room])('does not send without an encrypted channel (%s)', async room => {
+    const client = clientFor(room);
+    await expect(sendRoomMessage(client, input)).resolves.toEqual({ kind: 'unavailable' });
+    expect(client.sendEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ errcode: 'M_FORBIDDEN' }, { kind: 'rejected', code: 'forbidden' }],
+    [{ httpStatus: 404 }, { kind: 'rejected', code: 'not_found' }],
+    [new Error('network timeout'), { kind: 'unknown' }],
+  ])('preserves send failure classification (%s)', async (error, result) => {
+    const client = clientFor();
+    vi.mocked(client.sendEvent).mockRejectedValueOnce(error);
+    await expect(sendRoomMessage(client, input)).resolves.toEqual(result);
+    expect(client.sendEvent).toHaveBeenCalledOnce();
+  });
+
+  it.each(['agent_rename', 'agent_name_snapshot'] as const)('retains the %s payload mapping', async kind => {
+    const client = clientFor();
+    const content = { v: 1, kind, body: 'Dolan', agentParticipantId: 'agent_one',
+      ...(kind === 'agent_name_snapshot' ? { sourceEventId: '$prior' } : {}) } as MessageContent;
+    await sendRoomMessage(client, { ...input, content });
+    expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith(input.roomId, EventType.RoomMessage, {
+      msgtype: 'm.notice', body: 'Dolan', 'com.khala.agent_participant_id': 'agent_one',
+      ...(kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': '$prior' } : {}),
+    }, 'txn_1');
+  });
 });
