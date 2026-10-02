@@ -27,7 +27,7 @@ describe('agent participant directory', () => {
         status: active ? 'active' : 'revoked' }; } } as unknown as AdapterCapabilities;
     const resolveRoomParticipants = vi.fn(async () => ({ kind: 'ok' as const, participants: [{
       matrixUserId: '@khala_a_x:matrix.example.test', participantId: binding.agentParticipantId,
-      ownerId: binding.ownerId, displayName: 'Codex #mira', kind: 'agent' as const,
+      ownerId: binding.ownerId, displayName: 'Codex #mira', kind: 'agent' as const, ownerLabel: 'Owner', harness: 'codex' as const,
     }] }));
     let pinState: 'found' | 'absent' | 'unavailable' = 'found';
     const route = createAgentParticipantDirectoryRoute({ store: state.store, capabilities,
@@ -90,7 +90,7 @@ describe('agent participant directory', () => {
       } } as unknown as AdapterCapabilities,
       sessions: { resolveRoomParticipants: async () => ({ kind: 'ok', participants: [{
         matrixUserId: '@peer:matrix.example.test', participantId: peerBinding.agentParticipantId,
-        ownerId: peerBinding.ownerId, displayName: 'Peer', kind: 'agent' as const,
+        ownerId: peerBinding.ownerId, displayName: 'Peer', kind: 'agent' as const, ownerLabel: 'Owner', harness: 'codex' as const,
       }] }) }, lookupAgentDevice });
     const response = await route.handle(new Request('https://khala.example' + route.path, { method: 'POST',
       body: JSON.stringify({ roomId, userIds: ['@peer:matrix.example.test'], targetParticipantIds: [] }) }));
