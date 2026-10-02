@@ -130,6 +130,13 @@ function restored(entry: PendingSend): PendingSend {
 
 const NEAR_BOTTOM_PX = 24;
 
+/** Glides the list to its end; jumps when the reader prefers reduced motion. */
+function scrollToLatest(list: HTMLElement): void {
+  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (typeof list.scrollTo === 'function') list.scrollTo({ top: list.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
+  else list.scrollTop = list.scrollHeight;
+}
+
 function newClientTxnId(): string {
   return `txn_${crypto.randomUUID()}`;
 }
@@ -270,6 +277,9 @@ export function TimelineScreen({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<HTMLOListElement | null>(null);
   const anchorRef = useRef<ReaderAnchor>({ atLatest: true });
+  // The viewer's own send brings them to latest; follows it until it resolves
+  // or the reader scrolls away themselves. Others' arrivals never yank.
+  const followSendRef = useRef<string | null>(null);
 
   const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
   const sendBlocked = sendBlockedReason !== null;
@@ -322,6 +332,15 @@ export function TimelineScreen({
     if (atLatest && arrived.length > 0) setPopIds(current => new Set([...current, ...arrived.map(entry => entry.id)]));
   }, [rows, atLatest]);
 
+  useLayoutEffect(() => {
+    const txn = followSendRef.current;
+    const list = listRef.current;
+    if (!txn || !list) return;
+    if (!pendingList.some(entry => entry.clientTxnId === txn && (entry.phase === 'pending' || entry.phase === 'accepted'))) followSendRef.current = null;
+    scrollToLatest(list);
+    setAtLatest(true);
+  }, [pendingList, data.items]);
+
   useEffect(() => {
     const list = listRef.current;
     const anchor = anchorRef.current;
@@ -356,11 +375,16 @@ export function TimelineScreen({
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
     seenRef.current?.add(clientTxnId);
+    followSendRef.current = clientTxnId;
     setPopIds(current => new Set(current).add(clientTxnId));
     updatePending(list => [...list, { clientTxnId, content, phase: 'pending' as const }]);
     setDraft('');
     const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     updatePending(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
+  }
+
+  function stopFollowing(): void {
+    followSendRef.current = null;
   }
 
   async function handleRetry(entry: PendingSend): Promise<void> {
@@ -615,6 +639,7 @@ export function TimelineScreen({
         className="timeline__list kh-thread"
         ref={listRef}
         aria-label="Messages"
+        onWheel={stopFollowing} onTouchStart={stopFollowing} onKeyDown={stopFollowing}
         onScroll={event => {
           const el = event.currentTarget;
           setAtLatest(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
