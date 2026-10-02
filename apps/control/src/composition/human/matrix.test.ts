@@ -423,7 +423,7 @@ describe('createMatrixHumanServices', () => {
     });
   });
 
-  it('joins an admitted no-history participant without claiming historical keys', async () => {
+  it.each(['none', 'full'] as const)('joins an admitted %s-history participant', async (history) => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let joined = false;
     let sharing = true;
@@ -462,7 +462,7 @@ describe('createMatrixHumanServices', () => {
       roomId,
       principal,
       deviceId: 'KH_WEB_1' as DeviceId,
-      history: 'none' as const,
+      history,
       inviteRevision: 'r1',
     };
 
