@@ -30,7 +30,7 @@ Run the existing human browser spec against the running stack:
 ```sh
 pnpm exec playwright install chromium
 source .khala-local/e2e.env
-pnpm test:integration tests/integration/human
+pnpm test:integration tests/integration/human/create-share-chat.spec.ts
 pnpm stack:status
 ```
 
