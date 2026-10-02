@@ -1,0 +1,182 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { InboxEntry } from '@khala/contracts/m1/inbox';
+import { openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
+import { appendEntries, unreadCount } from '../inbox';
+import { writeActivity } from '../activity';
+import { unreadMessages, watch } from '../../hooks/claude-wake';
+
+const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
+const input = JSON.stringify({ session_id: 'session', hook_event_name: 'Stop', stop_hook_active: false });
+const notice = 'Khala: new channel messages. They arrive in the next hook context.\n';
+let root: string;
+let files: SessionFiles;
+let children: ChildProcess[];
+const entry = (id = 1, kind: InboxEntry['kind'] = 'message'): InboxEntry => ({ eventId: `$e${id}`, roomId: '!r:local', ts: '2026-10-01T12:00:00Z', sender: '@s:local', senderLabel: 'Sender', senderKind: 'human', kind, body: 'private body' });
+function observe(child: ChildProcess) {
+  children.push(child);
+  let stdout = '', stderr = '';
+  child.stdout!.on('data', chunk => { stdout += chunk; });
+  child.stderr!.on('data', chunk => { stderr += chunk; });
+  const result = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, stdout, stderr }));
+  });
+  return { child, result };
+}
+function start(stdin = input, deadline = 3000) {
+  const process = observe(spawn(globalThis.process.execPath, [bin, 'hook', 'claude-wake'], {
+    env: { ...globalThis.process.env, XDG_STATE_HOME: root, KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: String(deadline) },
+  }));
+  process.child.stdin!.end(stdin);
+  return process;
+}
+async function owner() {
+  try { return JSON.parse(await fs.readFile(path.join(files.dir, 'watcher.json'), 'utf8')).nonce as string; }
+  catch { return undefined; }
+}
+async function armed(previous?: string) {
+  await vi.waitFor(async () => { const nonce = await owner(); expect(nonce).toBeTruthy(); expect(nonce).not.toBe(previous); }, { timeout: 1500, interval: 10 });
+}
+async function seed(state: 'idle' | 'busy' = 'idle', entries: InboxEntry[] = []) {
+  files = await openSessionDir('claude', 'session', { XDG_STATE_HOME: root });
+  await appendEntries(files, entries);
+  await writeActivity(files, state);
+}
+beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-wake-')); children = []; });
+afterEach(async () => {
+  for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+  await Promise.all(children.map(child => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('close', resolve))));
+  vi.restoreAllMocks();
+  await fs.rm(root, { recursive: true, force: true });
+});
+it('ignores missing sessions without creating files within 500ms', async () => {
+  const started = Date.now();
+  expect(await start().result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(Date.now() - started).toBeLessThan(500);
+  expect(await fs.readdir(root)).toEqual([]);
+});
+it.each(['garbage', 'null', '{}', '{"session_id":"..","hook_event_name":"Stop"}', '{"session_id":"../x","hook_event_name":"Stop"}', '{"session_id":"session","hook_event_name":"UserPromptSubmit"}'])('silently ignores invalid input %s', async stdin => {
+  expect(await start(stdin).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await fs.readdir(root)).toEqual([]);
+});
+it('wakes within 1s after append, without claiming or changing inbox/cursor/activity', async () => {
+  await seed();
+  await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
+  const cursor = await fs.readFile(files.cursor);
+  const activity = await fs.readFile(path.join(files.dir, 'activity.json'));
+  const running = start();
+  await armed();
+  await sleep(300);
+  const appendedAt = Date.now();
+  await appendEntries(files, [entry()]);
+  const inbox = await fs.readFile(files.inbox);
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+  expect(Date.now() - appendedAt).toBeLessThan(1000);
+  expect(await fs.readFile(files.cursor)).toEqual(cursor);
+  expect(await fs.readFile(files.inbox)).toEqual(inbox);
+  expect(await fs.readFile(path.join(files.dir, 'activity.json'))).toEqual(activity);
+  expect((await fs.stat(path.join(files.dir, 'watcher.json'))).mode & 0o777).toBe(0o600);
+  expect((await fs.stat(files.dir)).mode & 0o777).toBe(0o700);
+});
+it('stays running while busy and wakes within 500ms of idle', async () => {
+  await seed('busy', [entry()]);
+  const running = start();
+  await armed();
+  await sleep(1000);
+  expect(running.child.exitCode).toBeNull();
+  const flippedAt = Date.now();
+  await writeActivity(files, 'idle');
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+  expect(Date.now() - flippedAt).toBeLessThan(500);
+});
+it.each(['missing', 'invalid'])('treats %s activity as busy', async variant => {
+  await seed('idle', [entry()]);
+  const activity = path.join(files.dir, 'activity.json');
+  if (variant === 'missing') await fs.unlink(activity); else await fs.writeFile(activity, '{"state":"idle"}');
+  expect(await start(input, 200).result).toEqual({ code: 0, stdout: '', stderr: '' });
+});
+it.each([{ entries: [] }, { entries: [entry(1, 'event')] }])('waits until the 3s deadline for no unread messages: %j', async ({ entries }) => {
+  await seed('idle', entries);
+  const running = start();
+  await armed();
+  const armedAt = Date.now();
+  await sleep(1000);
+  expect(running.child.exitCode).toBeNull();
+  expect(await running.result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(Date.now() - armedAt).toBeGreaterThan(2700);
+  expect(Date.now() - armedAt).toBeLessThan(3500);
+});
+it('supersedes the old watcher within 200ms; only the new watcher wakes', async () => {
+  await seed('busy', [entry()]);
+  const first = start();
+  await armed();
+  const firstNonce = await owner();
+  const second = start();
+  await armed(firstNonce);
+  const secondArmed = Date.now();
+  expect(await first.result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(Date.now() - secondArmed).toBeLessThan(200);
+  await writeActivity(files, 'idle');
+  expect(await second.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('exits silently within 500ms when the launching parent dies', async () => {
+  await seed();
+  const exitProbe = path.join(root, 'exit-probe.mjs');
+  const exitFile = path.join(root, 'child-exit');
+  await fs.writeFile(exitProbe, `import {writeFileSync} from 'node:fs'; if(process.argv[1]===${JSON.stringify(bin)}) process.on('exit',code=>writeFileSync(${JSON.stringify(exitFile)},String(code)));`);
+  const launcher = spawn(process.execPath, ['-e', `const {spawn}=require('node:child_process'); const c=spawn(process.execPath,[process.argv[1],'hook','claude-wake'],{stdio:['pipe',process.stdout,process.stderr]}); c.stdin.end(process.argv[2]); setInterval(()=>{},1000);`, bin, input], {
+    env: { ...process.env, NODE_OPTIONS: `--import=${exitProbe}`, XDG_STATE_HOME: root, KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: '3000' },
+  });
+  const running = observe(launcher);
+  await armed();
+  const killedAt = Date.now();
+  launcher.kill();
+  // The child holds the inherited pipes open until it notices parent loss.
+  const result = await running.result;
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('');
+  expect(await fs.readFile(exitFile, 'utf8')).toBe('0');
+  expect(Date.now() - killedAt).toBeLessThan(500);
+});
+it('handles corrupt cursor/lines and wakes only for valid unread messages', async () => {
+  await seed();
+  await fs.writeFile(files.cursor, '{broken');
+  await fs.writeFile(files.inbox, 'broken\n' + JSON.stringify(entry()) + '\n' + JSON.stringify(entry(2)));
+  expect(await start().result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it.each([0, 1, 2, 4, -1])('matches inbox unreadCount with cursor %s, corrupt records and a partial tail', async deliveredCount => {
+  await seed('idle', [entry(1), entry(2, 'event'), entry(3), entry(4, 'event')]);
+  await fs.writeFile(files.inbox, 'broken\nnull\n' + await fs.readFile(files.inbox, 'utf8') + JSON.stringify(entry(5)));
+  await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount });
+  expect(await unreadMessages(files.dir)).toBe((await unreadCount(files.dir)).messages);
+});
+it('silently contains storage and IO errors', async () => {
+  await seed('idle', [entry()]);
+  await fs.mkdir(files.cursor);
+  expect(await start().result).toEqual({ code: 0, stdout: '', stderr: '' });
+  await fs.rm(files.cursor, { recursive: true });
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(), stderr: { write: () => { throw Error('failed'); } } })).toBe(0);
+});
+it.each(['busy', 'claimed', 'superseded'])('rechecks %s after observing unread messages', async race => {
+  await seed('idle', [entry()]);
+  const realRead = fs.readFile;
+  let inboxReads = 0;
+  vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+    const result = await realRead(...args);
+    if (args[0] === files.inbox && ++inboxReads === 1) {
+      if (race === 'busy') await writeActivity(files, 'busy');
+      if (race === 'claimed') await writeJsonAtomic(files.cursor, { lastDeliveredEventId: '$e1', deliveredCount: 1 });
+      if (race === 'superseded') await writeJsonAtomic(path.join(files.dir, 'watcher.json'), { nonce: 'new-owner', armedAt: new Date().toISOString() });
+    }
+    return result;
+  });
+  const stderr = { write: vi.fn() };
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root, KHALA_WAKE_TEST_DEADLINE_MS: '100', KHALA_WAKE_TEST_POLL_MS: '10' }, now: () => new Date(), stderr })).toBe(0);
+  expect(stderr.write).not.toHaveBeenCalled();
+});
