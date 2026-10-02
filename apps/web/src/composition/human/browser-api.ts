@@ -1,3 +1,5 @@
+import { decodeAgentJoinView, humanAgentJoinPath, humanAgentJoinConfirmPath, humanAgentJoinStatusPath } from '@khala/contracts/m1/agent-join';
+import type { AgentJoinPort, AgentJoinResult, AgentJoinError } from '../../features/agent-confirm/ports';
 import {
   decodeAdmission,
   decodeAuthPrincipal,
@@ -54,6 +56,7 @@ export type HumanBrowserApiOptions = Readonly<{
 }>;
 
 export type HumanBrowserApi = Readonly<{
+  agentJoin: AgentJoinPort;
   identity: IdentityPort;
   admission: AdmissionPort;
   channelLinks: HumanChannelLinks;
@@ -342,5 +345,24 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         ? decoded.value : { v: 1, kind: 'unavailable' };
     },
   };
-  return { identity, admission, channelLinks, credentials, participants };
+  async function agentJoinRequest(path: string, post: boolean, signal?: AbortSignal): Promise<AgentJoinResult> {
+    try {
+      const response = post ? await mutation(path, {}, signal) : await request(`${origin}${path}`, {
+        method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(signal),
+      });
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      const codes: Partial<Record<number, AgentJoinError>> = {
+        401: 'signed_out', 403: 'not_member', 404: 'not_found', 409: 'already_confirmed_by_other',
+      };
+      if (response.status !== 200) return { kind: 'error', code: codes[response.status] ?? 'unavailable' };
+      const decoded = decodeAgentJoinView(await jsonObject(response));
+      return decoded.ok ? { kind: 'ok', view: decoded.value } : { kind: 'error', code: 'unavailable' };
+    } catch { return { kind: 'error', code: 'unavailable' }; }
+  }
+  const agentJoin: AgentJoinPort = {
+    view: (joinId, signal) => agentJoinRequest(humanAgentJoinPath(joinId), false, signal),
+    confirm: (joinId, signal) => agentJoinRequest(humanAgentJoinConfirmPath(joinId), true, signal),
+    status: (joinId, signal) => agentJoinRequest(humanAgentJoinStatusPath(joinId), false, signal),
+  };
+  return { agentJoin, identity, admission, channelLinks, credentials, participants };
 }
