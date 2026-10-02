@@ -7,7 +7,7 @@ import { chromium, expect, type Browser, type Locator, type Page } from '@playwr
 
 /** Serves the fixture with `/api/human/profile` answering `username`; `KHALA_SHOTS` keeps screenshots. */
 async function withFixture(viewport: { width: number; height: number }, username: string | null,
-  run: (page: Page, saved: string[], colors: string[]) => Promise<void>) {
+  run: (page: Page, saved: string[], colors: string[], initials: (string | null)[]) => Promise<void>) {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-username-setup-'));
   // Chromium's Unix socket needs a short path even in long issue workspaces.
   const profile = await mkdtemp('/tmp/khala-952-browser-');
@@ -43,8 +43,16 @@ async function withFixture(viewport: { width: number; height: number }, username
       colors.push(color);
       await route.fulfill(color === 'amber' ? { status: 503, json: { error: 'unavailable' } } : { json: { color } });
     });
+    // Initials saves: the server rejects `XX` (as if its rule had moved on); anything else saves.
+    const initials: (string | null)[] = [];
+    await page.route('**/api/human/profile/initials', async route => {
+      assert.equal(route.request().method(), 'POST');
+      const next = (route.request().postDataJSON() as { initials: string | null }).initials;
+      initials.push(next);
+      await route.fulfill(next === 'XX' ? { status: 400, json: { error: 'invalid_initials' } } : { json: { initials: next } });
+    });
     await page.goto(server.resolvedUrls!.local[0]!);
-    await run(page, saved, colors);
+    await run(page, saved, colors, initials);
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();
@@ -268,7 +276,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       assert.equal(await menu.getByRole('menuitem', { name: /^(Username|Color)/u }).count(), 0);
       await shoot('menu');
 
-      // Enter opens the dialog with focus in the username; Tab reaches the checked swatch.
+      // Enter opens the dialog with focus in the username; Tab reaches the initials, then the checked swatch.
       await page.keyboard.press('Enter');
       await expect(input).toBeFocused();
       await expect(avatar).toHaveText('KE');
@@ -277,6 +285,8 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         ['Red', 'Orange', 'Amber', 'Lime', 'Green', 'Teal', 'Blue', 'Indigo', 'Purple', 'Pink']);
       await expect(radio('Teal')).toHaveAttribute('aria-checked', 'true');
       await expect(save).toBeDisabled();
+      await page.keyboard.press('Tab');
+      await expect(dialog.getByRole('textbox', { name: 'Initials' })).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(radio('Teal')).toBeFocused();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -314,7 +324,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await page.keyboard.press('Tab');
       await expect(input).toBeFocused();
       await page.keyboard.press('Tab');
+      await page.keyboard.press('Tab');
       await expect(radio('Pink')).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
       await page.keyboard.press('Shift+Tab');
       await page.keyboard.press('Shift+Tab');
       await expect(save).toBeFocused();
@@ -394,6 +406,142 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await press(profileItem);
         await press(radio('Indigo'));
         await shoot('dialog');
+      }
+    });
+  });
+}
+
+for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+  test(`the Profile dialog chooses, rejects and clears initials beside a live preview at ${viewport.width}px`, { timeout: 60_000 }, async () => {
+    await withFixture(viewport, 'Kevin', async (page, saved, colors, initials) => {
+      await page.goto(`${page.url()}?list`);
+      const shell = page.locator('.khala-owner-shell');
+      const cog = shell.locator('.kh-brand').getByRole('button', { name: 'Settings' });
+      const menu = page.getByRole('menu', { name: 'Settings' });
+      const profileItem = menu.getByRole('menuitem', { name: /^Profile/u });
+      const dialog = page.getByRole('dialog', { name: 'Profile' });
+      const field = dialog.getByRole('textbox', { name: 'Initials' });
+      const save = dialog.getByRole('button', { name: 'Save' });
+      const avatar = dialog.locator('.kh-prof-av');
+      const alert = dialog.getByRole('alert');
+      const press = async (item: Locator) => {
+        const box = (await item.boundingBox())!;
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      };
+      const open = async () => {
+        await cog.click();
+        await press(profileItem);
+        await expect(dialog.getByRole('textbox', { name: 'Username' })).toBeFocused();
+      };
+      const shoot = async (name: string) => {
+        if (!process.env.KHALA_SHOTS) return;
+        await page.waitForTimeout(300);
+        const theme = await shell.getAttribute('data-theme');
+        await page.screenshot({ path: join(process.env.KHALA_SHOTS, `initials-${name}-${viewport.width}-${theme}.png`) });
+      };
+
+      await open();
+      // Empty: the derived initials preview quietly and fill the placeholder; nothing to save, no error.
+      await expect(field).toHaveValue('');
+      await expect(field).toHaveAttribute('placeholder', 'KE');
+      await expect(avatar).toHaveText('KE');
+      await expect(avatar).toHaveClass(/is-default/u);
+      await expect(field).toHaveAttribute('autocomplete', 'off');
+      await expect(field).toHaveAttribute('autocapitalize', 'characters');
+      await expect(field).toHaveAttribute('spellcheck', 'false');
+      await expect(save).toBeDisabled();
+      await expect(alert).toHaveCount(0);
+      // The avatar and the field share one row, a phone included.
+      const avatarBox = (await avatar.boundingBox())!;
+      const fieldBox = (await field.boundingBox())!;
+      assert.ok(fieldBox.x >= avatarBox.x + avatarBox.width, 'the field sits beside the avatar');
+      assert.ok(fieldBox.y < avatarBox.y + avatarBox.height && fieldBox.y + fieldBox.height > avatarBox.y, 'on the same row');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+      // Typing previews live, uppercased, at full emphasis; a valid value shows no error.
+      await field.fill('kw');
+      await expect(avatar).toHaveText('KW');
+      await expect(avatar).not.toHaveClass(/is-default/u);
+      await expect(alert).toHaveCount(0);
+      await expect(save).toBeEnabled();
+      // Picking a colour recolours the preview at once.
+      await avatar.evaluate(node => { node.style.transition = 'none'; });
+      await press(dialog.getByRole('radio', { name: 'Indigo' }));
+      assert.equal(await avatar.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(101, 92, 224)');
+      await press(dialog.getByRole('radio', { name: 'Teal' }));
+      await shoot('dialog');
+
+      // A third character is dropped: the limit counts code points.
+      await field.fill('');
+      await field.pressSequentially('kwz');
+      await expect(field).toHaveValue('kw');
+
+      // Invalid values show the rule only after blur, mark the field and block Save.
+      for (const invalid of ['k!', '😀', 'k']) {
+        await field.fill(invalid);
+        await expect(alert).toHaveCount(0);
+        await expect(field).not.toHaveAttribute('aria-invalid', 'true');
+        await expect(save).toBeDisabled();
+        await field.blur();
+        await expect(alert).toHaveText('2 letters or digits');
+        await expect(field).toHaveAttribute('aria-invalid', 'true');
+        await expect(field).toHaveAttribute('aria-describedby', (await alert.getAttribute('id'))!);
+        await expect(save).toBeDisabled();
+      }
+      await shoot('error');
+      // Enter is a Save attempt: it shows the rule without saving.
+      await field.fill('7');
+      await expect(alert).toHaveCount(0);
+      await page.keyboard.press('Enter');
+      await expect(alert).toHaveText('2 letters or digits');
+      await expect(dialog).toBeVisible();
+
+      // A server rejection shows the same rule.
+      await field.fill('xx');
+      await press(save);
+      await expect(alert).toHaveText('2 letters or digits');
+      await expect(field).toHaveAttribute('aria-invalid', 'true');
+      assert.deepEqual(initials, ['XX']);
+
+      // Save sends the initials alone, once, uppercased.
+      await field.fill('kw');
+      await expect(alert).toHaveCount(0);
+      await press(save);
+      await expect(dialog).toHaveCount(0);
+      assert.deepEqual(initials, ['XX', 'KW']);
+      assert.deepEqual(saved, []);
+      assert.deepEqual(colors, []);
+
+      // Reopening shows the saved value; unchanged initials are not sent again.
+      await open();
+      await expect(field).toHaveValue('KW');
+      await expect(avatar).toHaveText('KW');
+      await dialog.getByRole('textbox', { name: 'Username' }).fill('Kev');
+      await page.keyboard.press('Enter');
+      await expect(dialog).toHaveCount(0);
+      assert.deepEqual(saved, ['Kev']);
+      assert.deepEqual(initials, ['XX', 'KW']);
+
+      // Clearing them saves `null`, and the preview falls back to the derived initials.
+      await open();
+      await field.fill('');
+      await expect(avatar).toHaveText('KE');
+      await expect(avatar).toHaveClass(/is-default/u);
+      await press(save);
+      await expect(dialog).toHaveCount(0);
+      assert.deepEqual(initials, ['XX', 'KW', null]);
+
+      if (process.env.KHALA_SHOTS) {
+        // The other theme, for the screenshot set.
+        await cog.click();
+        await press(menu.getByRole('menuitem', { name: /mode$/u }));
+        await page.waitForTimeout(600);
+        await open();
+        await field.fill('kw');
+        await shoot('dialog');
+        await field.fill('k!');
+        await field.blur();
+        await shoot('error');
       }
     });
   });

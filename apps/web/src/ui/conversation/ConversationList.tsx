@@ -5,12 +5,16 @@ import type { ReactNode } from 'react';
 import { Avatar } from '../khala/Avatar';
 import { clockLabel, type TimeOptions } from '../khala/format-time';
 import { SearchIcon } from '../khala/icons';
-import { harnessLogo, initials, ownerInitials, useParticipantHue } from '../khala/identity';
+import { harnessLogo, humanInitials, initials, ownerInitials, useParticipantHue } from '../khala/identity';
 
 export type ConversationMember = Readonly<{
   id: string; kind: 'human' | 'agent'; displayName: string; ownerId?: string;
   /** An agent's harness, when known: the avatar shows its logo (§4.1). */
   harness?: string;
+  /** A human's chosen initials. */
+  initials?: string | null;
+  /** An agent's owner's chosen initials. */
+  ownerInitials?: string | null;
 }>;
 
 export type ConversationSummary = Readonly<{
@@ -27,23 +31,23 @@ export type ConversationSummary = Readonly<{
 
 const AGENT_OWNER_SEPARATOR = ' · ';
 
-function MemberAvatar({ member, members, viewerOwnerId }: Readonly<{
-  member: ConversationMember; members: readonly ConversationMember[]; viewerOwnerId: string | undefined;
+function MemberAvatar({ member, members, viewerOwnerId, viewerInitials }: Readonly<{
+  member: ConversationMember; members: readonly ConversationMember[]; viewerOwnerId: string | undefined; viewerInitials: string | null;
 }>) {
   const hue = useParticipantHue();
   if (member.kind === 'human') {
-    return <Avatar static kind="human" label={member.displayName} initials={initials(member.displayName)}
+    return <Avatar static kind="human" label={member.displayName} initials={humanInitials(member.displayName, member.initials)}
       hue={hue({ kind: 'human', ownerId: member.ownerId ?? member.id, participantId: member.id })} />;
   }
   // C4 display name: `<label> · <ownerFirstName>`.
   const [label = member.displayName, owner = ''] = member.displayName.split(AGENT_OWNER_SEPARATOR);
   const humans = members.filter(other => other.kind === 'human');
-  // The viewer's own agents carry `YO` on the viewer hue, as in the thread and roster (§3).
+  // The viewer's own agents carry `YO` (or their chosen initials) on the viewer hue, as in the thread and roster (§3).
   const viewerOwned = viewerOwnerId !== undefined && member.ownerId === viewerOwnerId;
   return <Avatar static kind="agent" label={label} initials={initials(label)} logo={member.harness ? harnessLogo(member.harness) : null}
     hue={hue({ kind: 'agent', participantId: member.id })}
     ownerHue={hue({ kind: 'human', ownerId: member.ownerId ?? owner, isViewer: viewerOwned })}
-    ownerInitials={viewerOwned ? 'YO' : ownerInitials({ ownerId: member.ownerId, label: owner }, humans)} />;
+    ownerInitials={viewerOwned ? viewerInitials ?? 'YO' : ownerInitials({ ownerId: member.ownerId, label: owner, chosen: member.ownerInitials }, humans)} />;
 }
 
 function previewText(item: ConversationSummary): string {
@@ -60,7 +64,7 @@ function SkeletonRow() {
   </div>;
 }
 
-export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No channels yet.', action, showSearch = true, timeOptions = {}, viewerOwnerId }: Readonly<{
+export function ConversationList({ conversations, selectedId, query, onQueryChange, onSelect, status, emptyLabel = 'No channels yet.', action, showSearch = true, timeOptions = {}, viewerOwnerId, viewerInitials = null }: Readonly<{
   conversations: readonly ConversationSummary[];
   selectedId?: string | null;
   query: string;
@@ -74,6 +78,8 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   timeOptions?: TimeOptions;
   /** Marks the viewer's own agents among the members. */
   viewerOwnerId?: string;
+  /** The viewer's chosen initials, on their own agents' owner badges; `YO` without them. */
+  viewerInitials?: string | null;
 }>) {
   const needle = query.toLocaleLowerCase();
   const visible = conversations.filter(item => `${item.title} ${item.preview ?? ''}`.toLocaleLowerCase().includes(needle));
@@ -95,7 +101,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
         return <button key={item.id} type="button" className={`kh-cv${selectedId === item.id ? ' is-active' : ''}${item.unreadCount ? ' unread' : ''}`}
           data-kh-convo={item.id} aria-label={label} aria-current={selectedId === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
           <span className="kh-cv-av" aria-hidden="true">
-            {members.length ? members.map(member => <MemberAvatar key={member.id} member={member} members={item.members ?? []} viewerOwnerId={viewerOwnerId} />) : <Avatar kind="generic" />}
+            {members.length ? members.map(member => <MemberAvatar key={member.id} member={member} members={item.members ?? []} viewerOwnerId={viewerOwnerId} viewerInitials={viewerInitials} />) : <Avatar kind="generic" />}
           </span>
           <span className="kh-cv-t">
             <span><b dir="auto">{item.title}</b>{item.timestamp ? <time dateTime={item.timestamp}>{time}</time> : null}</span>

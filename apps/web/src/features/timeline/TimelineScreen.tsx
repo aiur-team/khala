@@ -28,7 +28,7 @@ import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
 import { humanColorOf, ownerColorOf, useHumanColor, colorSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
-import { buildIdBadgeResolver, harnessLogo, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, harnessLogo, humanInitials, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
@@ -40,6 +40,8 @@ export interface TimelineScreenProps {
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
   viewer: ParticipantView;
+  /** The viewer's chosen initials; without them the viewer and their agents read `YO`. */
+  viewerInitials?: string | null;
   extraParticipants?: readonly NameParticipant[];
   /** The channel's members in member order: the mention chips follow it, and owner badges name them (§3, §9). */
   members?: readonly ParticipantView[];
@@ -195,6 +197,10 @@ type Identity = Readonly<{
   color: ResolvedHumanColor | null;
   harness: Extract<Participant, { kind: 'agent' }>['harness'] | undefined;
   isViewerOwned: boolean;
+  /** A human's chosen initials. */
+  chosenInitials: string | null;
+  /** An agent's owner's chosen initials, from the participant details. */
+  ownerChosenInitials: string | null;
 }>;
 
 type ThreadEntry =
@@ -214,7 +220,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  describeParticipant, controller, roomPort, roomId, viewer, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  describeParticipant, controller, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const hueFor = useParticipantHue();
@@ -455,18 +461,28 @@ export function TimelineScreen({
   ]);
 
   const ownerCandidates = [...rosterParticipants.values()].filter(participant => participant.kind === 'human')
-    .map(participant => ({ ownerId: participant.ownerId, displayName: fullNameFor(participant, null) }));
-  /** The `.kh-own` badge: `YO` for the viewer's agents, else the owner's full-name initials (§3). */
-  const ownerBadge = (identity: Identity) => identity.isViewerOwned ? 'YO'
-    : identity.kind === 'agent' ? ownerInitials({ ownerId: identity.ownerId, label: identity.ownerLabel ?? '?' }, ownerCandidates)
-    : initials(identity.label);
+    .map(participant => ({ ownerId: participant.ownerId, displayName: fullNameFor(participant, null), initials: chosenInitialsOf(participant) }));
+  /** The `.kh-own` badge: `YO` (or the viewer's chosen initials) for the viewer's agents, else the owner's initials (§3). */
+  const ownerBadge = (identity: Identity) => identity.isViewerOwned ? viewerInitials ?? 'YO'
+    : identity.kind === 'agent' ? ownerInitials({ ownerId: identity.ownerId, label: identity.ownerLabel ?? '?', chosen: identity.ownerChosenInitials },
+      ownerCandidates)
+    : humanInitials(identity.label, identity.chosenInitials);
+
+  /** A human's chosen initials: the viewer's from their profile, anyone else's from the participant details. */
+  function chosenInitialsOf(participant: Pick<ParticipantView, 'participantId'>): string | null {
+    if (participant.participantId === viewer.participantId) return viewerInitials;
+    const detail = describeParticipant?.(participant.participantId);
+    return detail?.kind === 'human' ? detail.initials ?? null : null;
+  }
 
   function identityFor(participant: ParticipantView, fullName: string): Identity {
     const detail = describeParticipant?.(participant.participantId);
     const isViewerOwned = participant.ownerId === viewer.ownerId;
     // The human's colour as this viewer sees it (operator request 2026-10-02: per-human colours); for an agent, its owner's.
     const color = colorFor(participant.ownerId, participant.kind === 'agent' ? ownerColorOf(detail) : humanColorOf(detail));
-    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: color.hue, isViewerOwned };
+    const shared = { participantId: participant.participantId, ownerId: participant.ownerId, fullName, ownerHue: color.hue, isViewerOwned,
+      chosenInitials: participant.kind === 'human' ? chosenInitialsOf(participant) : null,
+      ownerChosenInitials: detail?.kind === 'agent' ? detail.ownerInitials ?? null : null };
     if (detail?.kind === 'unknown') {
       return { ...shared, kind: 'unknown', label: 'Unknown', hue: 0, color: null, idBadge: undefined, ownerLabel: null, harness: undefined };
     }
@@ -501,7 +517,7 @@ export function TimelineScreen({
       </span>;
     }
     if (identity.kind === 'human') {
-      return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={initials(identity.label)} ghost={ghost}
+      return <Avatar kind="human" label={identity.label} hue={identity.hue} initials={humanInitials(identity.label, identity.chosenInitials)} ghost={ghost}
         swatch={colorSwatch(identity.color)} tier={identity.color?.tier} onClick={open(identity.participantId)} />;
     }
     return <Avatar kind="agent" label={`${identity.label} details`} hue={identity.hue} ownerHue={identity.ownerHue} ownerSwatch={colorSwatch(identity.color)}

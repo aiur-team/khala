@@ -40,6 +40,8 @@ export interface ChannelScreenProps {
   viewerName?: string;
   /** The viewer's verified sign-in email, shown beside their name in the roster and detail pane. */
   viewerEmail?: string;
+  /** The viewer's chosen initials; without them the viewer and their agents read `YO`. */
+  viewerInitials?: string | null;
   viewerParticipantId?: ParticipantId;
   /** The viewer's chosen colour; `null`/absent (profile loading or errored) uses their default colour. */
   viewerColor?: HumanColorId | null;
@@ -156,8 +158,8 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
   main.style.setProperty('--kh-roster-max', `${Math.max(160, Math.round((main.clientHeight - headHeight) * 0.7))}px`);
 }
 
-export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerParticipantId, viewerColor, humanParticipants, currentNames,
-  renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
+export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
+  humanParticipants, currentNames, renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
   renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
@@ -173,10 +175,11 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   }, [describeParticipant, humanParticipants, view.agents, viewerColor, viewerOwnerId]);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
-      ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}) },
+      ...(viewerName ? { name: viewerName } : {}), ...(viewerEmail ? { email: viewerEmail } : {}), initials: viewerInitials },
     humans: humanParticipants ?? [], agents: view.agents, currentNames, describeParticipant,
     colorFor: ownerId => humanColors.get(ownerId) ?? resolvedColor(defaultHumanColor(ownerId), 0),
-  }), [describeParticipant, currentNames, humanColors, humanParticipants, view.agents, viewerEmail, viewerName, viewerOwnerId, viewerParticipantId]);
+  }), [describeParticipant, currentNames, humanColors, humanParticipants, view.agents, viewerEmail, viewerInitials, viewerName, viewerOwnerId,
+    viewerParticipantId]);
 
   const room = useRef<HTMLDivElement>(null);
   const head = useRef<HTMLDivElement>(null);

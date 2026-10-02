@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
@@ -374,6 +374,47 @@ test('Thread rows match the 1440 dark design computed styles', { timeout: 90_000
     assert.equal(await page.getByRole('button', { name: 'Retry' }).count(), 1);
     assert.equal(await page.locator('.kh-thread').evaluate(node => getComputedStyle(node).backgroundColor),
       reference['1440-dark']!['.kh-thread']!['background-color']);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
+// Chosen initials replace the derived ones on a human's avatar and on their
+// agent's owner badge, and the viewer's own replace `YO`. `KHALA_SHOTS` keeps screenshots.
+test('Thread rows show chosen initials on avatars and owner badges', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-thread-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-thread-profile-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    const root = join(here, 'thread-harness');
+    await build({ root, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: ['--no-sandbox'],
+      env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+      for (const theme of ['dark', 'light']) {
+        const page: Page = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+        await page.goto(`${server.resolvedUrls!.local[0]!}?initials&theme=${theme}`);
+        await page.locator('.kh-rcpt').waitFor();
+        const row = (eventId: string): Locator => page.locator(`[data-event-id="${eventId}"]`);
+        // Maya's avatar and her agent's badge read her chosen `ZZ`; the viewer's agent reads the viewer's `KV`.
+        assert.equal(await row('E3').locator('.kh-hav').textContent(), 'ZZ');
+        assert.equal(await row('E5').locator('.kh-own').textContent(), 'ZZ');
+        assert.equal(await row('E1').locator('.kh-own').textContent(), 'KV');
+        if (process.env.KHALA_SHOTS) {
+          await page.screenshot({ path: join(process.env.KHALA_SHOTS, `initials-thread-${viewport.width}-${theme}.png`) });
+        }
+        await page.close();
+      }
+    }
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

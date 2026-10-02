@@ -14,6 +14,8 @@
 .kh-uname-field .kh-txt { padding-left: 1.55rem; }
 .kh-uname-hint, .kh-uname-err { margin: 0; font-size: .76rem; color: var(--faint); overflow-wrap: anywhere; }
 .kh-uname-err { color: var(--block-ink); }
+.kh-txt[aria-invalid="true"] { border-color: var(--block-line); }
+.kh-txt[aria-invalid="true"]:focus { border-color: var(--block); box-shadow: 0 0 0 3px var(--block-soft); }
 .kh-uname-actions { display: flex; justify-content: flex-end; gap: .4rem; margin-top: .3rem; }
 .kh-uname-page .kh-uname-actions .kh-btn.pri { flex: 1; height: 44px; }
 
@@ -23,10 +25,17 @@
 .kh-dlg h2 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; }
 @media (max-width: 480px) { .kh-dlg-scrim { place-items: start stretch; } .kh-dlg { width: 100%; } }
 
-/* Settings → Profile: the avatar preview leads; the dialog's name is for screen readers only. */
+/* Settings → Profile: the dialog's name is for screen readers only. */
 .kh-prof { position: relative; gap: 1.25rem; padding: 1.6rem 1.3rem 1.2rem; }
 .kh-prof-h { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.kh-prof-av { align-self: center; display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; color: #fff; font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 4px var(--surface), 0 0 0 5px var(--line); transition: background-color .18s ease; }
+/* Initials: the avatar preview, with the two-letter field beside it centred on the avatar. */
+.kh-prof-ini { display: flex; align-items: flex-start; gap: 1.1rem; }
+.kh-prof-ini > .kh-prof-sec { flex: 1; min-width: 0; padding-top: .6rem; }
+.kh-prof-av { flex: none; display: grid; place-items: center; width: 72px; height: 72px; margin: 5px 0 5px 5px; border-radius: 50%; color: #fff; font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 4px var(--surface), 0 0 0 5px var(--line); transition: background-color .18s ease; }
+/* Quieter, yet at least 3:1 on every palette colour (large text). */
+.kh-prof-av.is-default > span { opacity: .75; }
+.kh-prof-ini-in { width: 3.6rem; padding: 0 .5rem; text-align: center; text-transform: uppercase; font-weight: 600; letter-spacing: .06em; }
+.kh-prof-ini-in::placeholder { color: var(--faint); opacity: 1; }
 .kh-prof-form { display: flex; flex-direction: column; gap: 1.1rem; }
 .kh-prof-sec { display: flex; flex-direction: column; gap: .45rem; }
 .kh-prof-lbl { font-size: .72rem; font-weight: 600; color: var(--muted); }
@@ -35,7 +44,8 @@
 /* Ten swatches: one row on a wide screen and 2×5 on a phone or touch. */
 .kh-swatches { display: grid; grid-template-columns: repeat(10, 1fr); justify-items: center; gap: .3rem 0; }
 .kh-swatch { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
-.kh-swatch > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: #fff; transition: transform .12s ease; }
+/* 28px fills keep the selected ring clear of its neighbours in a 10-across row. */
+.kh-swatch > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: #fff; transition: transform .12s ease; }
 .kh-swatch:hover > span { transform: scale(1.08); }
 .kh-swatch[aria-checked="true"] > span { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg); }
 .kh-swatch svg { width: 16px; height: 16px; }
@@ -43,5 +53,6 @@
 @media (max-width: 480px), (pointer: coarse) {
   .kh-swatches { grid-template-columns: repeat(5, 1fr); gap: .35rem 0; }
   .kh-swatch { width: 44px; height: 44px; }
+  .kh-swatch > span { width: 32px; height: 32px; }
 }
 @media (prefers-reduced-motion: reduce) { .kh-prof-av, .kh-swatch > span { transition: none; } }

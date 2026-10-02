@@ -240,12 +240,18 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
     main={children} />;
 }
 
-/** Adds each agent member's harness and owner, once a room has resolved them: the list shows the logo and owner badge (§4.1). */
+/**
+ * Adds what a room has resolved about each member: an agent's harness, owner and owner's chosen initials, and a
+ * human's chosen initials. The list shows the logo, owner badge and initials (§4.1).
+ */
 function withHarnesses(conversations: readonly ConversationSummary[], describe: HumanRouteContext['describeMatrixUser']): readonly ConversationSummary[] {
   if (!describe) return conversations;
   return conversations.map(item => item.members ? { ...item, members: item.members.map(member => {
-    const detail = member.kind === 'agent' ? describe(member.id) : undefined;
-    return detail?.kind === 'agent' ? { ...member, harness: detail.harness, ownerId: detail.ownerId } : member;
+    const detail = describe(member.id);
+    if (member.kind === 'agent' && detail?.kind === 'agent') {
+      return { ...member, harness: detail.harness, ownerId: detail.ownerId, ...(detail.ownerInitials ? { ownerInitials: detail.ownerInitials } : {}) };
+    }
+    return member.kind === 'human' && detail?.kind === 'human' && detail.initials ? { ...member, initials: detail.initials } : member;
   }) } : item);
 }
 
@@ -265,7 +271,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const closeCreate = useCallback(() => setCreating(false), []);
   const openCreatedRoom = useCallback((roomId: string) => navigateRoute(routes.roomPath(roomId)), [navigateRoute, routes]);
   useEffect(() => { setCreating(false); }, [chrome.path]);
-  const { username, color } = useProfile();
+  const { username, color, initials: viewerInitials } = useProfile();
   const [editingProfile, setEditingProfile] = useState(false);
   const closeProfile = useCallback(() => setEditingProfile(false), []);
   const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
@@ -277,7 +283,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
       username={username} color={color} onEditProfile={() => setEditingProfile(true)} onSignOut={signOut} signingOut={signingOut} />}
     overlay={editingProfile ? <ProfileDialog ownerId={context.principal.ownerId} onClose={closeProfile} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
-      query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId}
+      query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId} viewerInitials={viewerInitials}
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
       action={<>
         <button ref={createButton} type="button" className="kh-ib sm" data-tip="New channel" aria-label="New channel" aria-expanded="false"
