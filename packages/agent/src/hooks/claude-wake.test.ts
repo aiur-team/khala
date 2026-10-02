@@ -183,3 +183,18 @@ it.each(['busy', 'claimed', 'superseded'])('rechecks %s after observing unread m
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root, KHALA_WAKE_TEST_DEADLINE_MS: '100', KHALA_WAKE_TEST_POLL_MS: '10' }, now: () => new Date(), stderr })).toBe(0);
   expect(stderr.write).not.toHaveBeenCalled();
 });
+
+it('exits silently at the deadline in async despite idle unread messages', async () => {
+  await seed('idle', [entry()]);
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  expect(await start(input, 250).result).toEqual({ code: 0, stdout: '', stderr: '' });
+});
+it('keeps polling in async and wakes after switching to sync', async () => {
+  await seed('idle', [entry()]);
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  const running = start();
+  await armed(); await sleep(250);
+  expect(running.child.exitCode).toBeNull();
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});

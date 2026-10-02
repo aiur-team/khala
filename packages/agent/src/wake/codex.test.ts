@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
+import * as activityState from '../activity';
 import { appendEntries } from '../inbox';
 import { openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
 import { createCodexWaker, type CodexWaker } from './codex';
@@ -36,7 +37,7 @@ beforeEach(async () => {
   outcome = { status: 'queued' };
   run.mockClear(); diagnostics.length = 0;
 });
-afterEach(async () => { await waker?.stop(); waker = undefined; await fs.rm(root, { recursive: true, force: true }); });
+afterEach(async () => { await waker?.stop(); waker = undefined; vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 
 it('queues the fixed notice once for a burst of five appends', async () => {
   await activity('idle'); start();
@@ -162,4 +163,41 @@ it('requires a strictly later hook timestamp and retries at exactly 60 seconds',
   expect(run).toHaveBeenCalledTimes(1);
   time += 1; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(2);
+});
+
+it('suppresses async wakes and resumes on sync without moving the cursor', async () => {
+  await append('1'); await activity('idle');
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  start(); await wait(150);
+  expect(run).not.toHaveBeenCalled();
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+});
+it('clears a pending wake when async is entered', async () => {
+  await append('1'); await activity('idle'); start(); await wait();
+  expect(run).toHaveBeenCalledTimes(1);
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  waker!.notify(); await wait();
+  await writeJsonAtomic(files.mode, { mode: 'steer' });
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+});
+
+
+it('does not queue when mode switches to async during evaluation', async () => {
+  await append('1'); await activity('idle');
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  const readActivity = activityState.readActivity;
+  const read = vi.spyOn(activityState, 'readActivity').mockImplementationOnce(async target => {
+    const current = await readActivity(target);
+    await writeJsonAtomic(files.mode, { mode: 'async' });
+    return current;
+  });
+  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run }, pollMs: 100_000,
+    now: () => time, stderr: line => diagnostics.push(line) });
+  waker.notify();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await wait();
+  expect(run).not.toHaveBeenCalled();
 });

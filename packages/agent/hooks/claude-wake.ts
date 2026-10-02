@@ -8,7 +8,7 @@ const NOTICE = 'Khala: new channel messages. They arrive in the next hook contex
 const DEADLINE_MS = 3000 * 1000;
 const POLL_MS = 500;
 type IO = { stderr: Pick<NodeJS.WriteStream, 'write'>; env: NodeJS.ProcessEnv; now: () => Date };
-async function readJson(file: string): Promise<{ nonce?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number } | null> {
+async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number } | null> {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (error) {
     if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -69,11 +69,12 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       const activity = await readJson(path.join(dir, 'activity.json'));
       return activity?.state === 'idle' && typeof activity.updatedAt === 'string' && Number.isFinite(Date.parse(activity.updatedAt));
     };
+    const listening = async () => (await readJson(path.join(dir, 'mode.json')))?.mode !== 'async';
     while (io.now().getTime() < deadline) {
       if (!await owns() || !parentAlive(parent)) return 0;
-      if (await idle() && await unreadMessages(dir) > 0) {
+      if (await listening() && await idle() && await unreadMessages(dir) > 0) {
         // Delivery or a new prompt may have raced the first observation.
-        if (await unreadMessages(dir) > 0 && await idle() && await owns()
+        if (await unreadMessages(dir) > 0 && await listening() && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
           return 2;

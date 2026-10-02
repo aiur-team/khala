@@ -13,6 +13,7 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   expect(await fs.readFile(path.join(plugin, 'hooks/hooks.json'), 'utf8')).toBe(canonical);
   const hooks = JSON.parse(canonical).hooks;
   expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: 'khala hook deliver --harness claude', timeout: 10 }] }]);
+  expect(hooks.PostToolUse).toEqual([{ hooks: [{ type: 'command', command: 'khala hook deliver --harness claude', timeout: 10 }] }]);
   expect(hooks.Stop).toEqual([{ hooks: [
     { type: 'command', command: 'khala hook deliver --harness claude', timeout: 10 },
     { type: 'command', command: 'khala hook claude-wake', asyncRewake: true, timeout: 3300 },
