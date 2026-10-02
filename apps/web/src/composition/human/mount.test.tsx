@@ -165,18 +165,14 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('aria-label="Log out"');
   });
 
-  it('keeps standalone chrome out of a host-content mount', async () => {
-    const snapshot = { phase: 'signed_out', path: '/', context: null } as const;
-    const hosted = renderToStaticMarkup(
-      <HumanApplicationScreen application={application(snapshot)} identity={identity} routes={routes} renderRoom={renderRoom} mode="hosted-content" />,
-    );
-    expect(hosted).toContain('khala-content-root');
-    expect(hosted).not.toContain('aiur-shell__topbar');
-
-    const standalone = renderToStaticMarkup(
-      <HumanApplicationScreen application={application(snapshot)} identity={identity} routes={routes} renderRoom={renderRoom} mode="standalone" />,
-    );
-    expect(standalone).toContain('class="aiur-shell__brand" href="/new"');
+  it.each(['hosted-content', 'standalone'] as const)('renders signed-out %s inside the Khala frame with no topbar', mode => {
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'signed_out', path: '/', context: null })}
+      identity={identity} routes={routes} renderRoom={renderRoom} mode={mode} />);
+    expect(html).toMatch(/<div class="khala-app" data-theme="dark"><section class="section-card kh-card kh-solo" id="kh-card">/u);
+    expect(html).toContain('<a class="wm" href="/new" aria-label="Khala home">khala</a>');
+    expect(html).toContain('<div class="kh-state">');
+    expect(html).not.toContain('aiur-shell__topbar');
+    expect(html).not.toContain('aria-label="Log out"');
   });
 
   it('delegates a ready room route to the required live room renderer', async () => {
@@ -193,21 +189,33 @@ describe('HumanApplicationScreen', () => {
     expect(room).not.toContain('channel-requests');
     expect(room).toContain('aria-label="Create channel"');
     expect(room).toContain('aria-label="Log out"');
-    expect(room).toContain('<div class="khala-content-actions"><button');
-    expect(room).toContain('id="khala-channel-toolbar"');
-    expect(room.indexOf('aria-label="Toggle color theme"')).toBeLessThan(room.indexOf('aria-label="Log out"'));
+    const actions = room.slice(room.indexOf('<span class="kh-brand-actions">'));
+    expect(actions.indexOf('aria-label="Toggle color theme"')).toBeGreaterThan(-1);
+    expect(actions.indexOf('aria-label="Toggle color theme"')).toBeLessThan(actions.indexOf('aria-label="Log out"'));
     expect(renderRoom).toHaveBeenCalledWith(context, { kind: 'channel', path: '/channels/room_1', roomId: 'room_1' }, expect.any(Function), routes);
   });
 
-  it('puts a standalone channel toolbar in the existing top navigation', async () => {
+  it.each(['hosted-content', 'standalone'] as const)('renders the %s owner shell edge to edge with no drawer or toolbar portal', mode => {
     const context = readyContext('/channels/room_1');
     const html = renderToStaticMarkup(<HumanApplicationScreen
       application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
-      identity={identity} routes={routes} renderRoom={renderRoom} mode="standalone" />);
-    expect(html).not.toContain('id="khala-channel-toolbar-mobile"');
-    expect(html).toContain('id="khala-channel-toolbar"');
-    expect(html).not.toContain('class="khala-mobile-bar"');
-    expect(html.indexOf('id="khala-channel-toolbar"')).toBeLessThan(html.indexOf('class="aiur-shell__content"'));
+      identity={identity} routes={routes} renderRoom={renderRoom} mode={mode} />);
+    expect(html).toMatch(/<div class="khala-app khala-owner-shell" data-theme="dark"><section class="section-card kh-card in-thread" id="kh-card">/u);
+    expect(html).toContain('<a class="wm" href="/conversations" aria-label="Khala home">khala</a>');
+    expect(html).not.toContain('khala-channel-toolbar');
+    expect(html).not.toContain('khala-mobile-bar');
+    expect(html).not.toContain('khala-sidebar');
+    expect(html).not.toContain('aiur-shell__topbar');
+    expect(html).not.toContain('aria-label="Channels"');
+  });
+
+  it('derives the list view from the conversations route', () => {
+    const context = readyContext('/conversations');
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('class="section-card kh-card" id="kh-card"');
+    expect(html).not.toContain('aria-label="All conversations"');
   });
 
   it.each(['/channels/room_1/tools', '/channel-requests', '/channel-requests/request_1'])('rejects the removed owner route %s', path => {

@@ -1,0 +1,145 @@
+/*
+ * The edge-to-edge Khala frame (RECREATION-SPEC §1, §3, §14-§16). Design
+ * rules are verbatim from source/Aiur Dashboard.html, with
+ * `html[data-theme="light"]` re-rooted to `.khala-app[data-theme="light"]`.
+ * Per-area visuals live in the files imported below.
+ */
+@import './controls.css';
+@import './list.css';
+@import './thread.css';
+@import './header.css';
+@import './composer.css';
+@import './detail.css';
+
+/* Card (source:244-248, 414-415) */
+.section-card { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.kh-card { padding: 0 !important; overflow: hidden; display: grid; grid-template-columns: 300px minmax(0,1fr) 0px; height: calc(100vh - 190px); min-height: 540px; transition: grid-template-columns .25s ease; }
+.kh-card.has-detail { grid-template-columns: 300px minmax(0,1fr) 320px; }
+.kh-list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+.kh-back { display: none; width: 34px; height: 34px; margin-left: -.4rem; border: 0; border-radius: 50%; background: none; color: var(--accent-ink); cursor: pointer; place-items: center; }
+.kh-back svg { width: 20px; height: 20px; }
+.kh-back:hover { background: var(--surface-2); }
+.kh-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.kh-detail { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; min-width: 0; }
+.kh-state { flex: 1; display: grid; place-items: center; background: var(--bg-2); padding: 1.5rem; }
+.kh-state[hidden] { display: none; }
+
+/* §14 responsive (source:447-459, 745-747) */
+@media (max-width: 1100px) {
+  .kh-card, .kh-card.has-detail { grid-template-columns: 260px minmax(0,1fr) 0px; }
+  .kh-card { position: relative; }
+  .kh-detail { position: absolute; top: 0; right: 0; bottom: 0; width: 320px; transform: translateX(100%); transition: transform .25s ease; z-index: 5; box-shadow: var(--shadow-lg); }
+  .kh-card.has-detail .kh-detail { transform: none; }
+}
+@media (max-width: 900px) {
+  .kh-card, .kh-card.has-detail { grid-template-columns: minmax(0,1fr); }
+  .kh-card:not(.in-thread) .kh-main { display: none; }
+  .kh-card.in-thread .kh-list { display: none; }
+  .kh-back { display: grid; }
+  .kh-list { border-right: 0; }
+}
+@media (max-width: 760px) {
+  .kh-card, .kh-card.has-detail { grid-template-columns: minmax(0,1fr); position: relative; height: calc(100vh - 210px); }
+  .kh-detail { position: absolute; inset: 0; transform: translateX(100%); transition: transform .25s ease; z-index: 5; border-left: 0; }
+  .kh-card.has-detail .kh-detail { transform: none; }
+  .kh-card, .kh-card.has-detail { height: calc(100dvh - 190px); min-height: 420px; border-radius: var(--radius); }
+}
+
+/* §1.3 full-bleed [ADAPT]: after the verbatim card rules. */
+.khala-app { height: 100vh; height: 100dvh; }
+.khala-app .kh-card,
+.khala-app .kh-card.has-detail { height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
+@media (max-width: 760px) {
+  .khala-app .kh-card,
+  .khala-app .kh-card.has-detail { height: 100%; min-height: 0; border-radius: 0; }
+  .khala-app .kh-comp { padding-bottom: calc(.65rem + env(safe-area-inset-bottom, 0px)); }
+  .khala-app .kh-detail { width: auto; }
+}
+.khala-app .kh-card:not(.has-detail) .kh-detail { visibility: hidden; transition: transform .25s ease, visibility 0s linear .25s; }
+.khala-app .kh-card.has-detail .kh-detail { visibility: visible; }
+
+/* A frame with no conversation list (signed-out and account states). */
+.khala-app .kh-card.kh-solo { grid-template-columns: minmax(0,1fr) 0px; }
+.khala-app .kh-card.kh-solo .kh-main { display: flex; }
+.khala-app .kh-solo .kh-brand { border-bottom: 1px solid var(--line); padding-bottom: .9rem; background: var(--surface); }
+
+/* §1.4 brand row [ADAPT]: the only element in the logo font is `.wm`. */
+.kh-brand { display: flex; align-items: center; gap: .55rem; padding: .9rem .8rem .35rem 1rem; }
+.kh-brand .brand-logo { height: 24px; width: auto; display: block; }
+.kh-brand .wm { font-family: "Bungee", sans-serif; font-size: 1.05rem; line-height: 1; letter-spacing: .01em; color: var(--fg); text-transform: uppercase; text-decoration: none; }
+.kh-brand .brand-live { margin-left: .15rem; font-size: .68rem; padding: .16rem .5rem; min-height: 0; }
+.kh-brand-actions { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+
+/* Tool buttons, theme glyphs and the live badge (source:226-271). */
+.tool-btn {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  border: 1px solid var(--pill-bd); background: var(--pill-bg); color: var(--muted);
+  border-radius: 999px; padding: 0.44rem 0.82rem;
+  font-family: "JetBrains Mono", monospace; font-size: 0.76rem; letter-spacing: 0.02em; font-weight: 500;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.tool-btn:hover { color: var(--fg); border-color: var(--line-strong); }
+.tool-btn svg { width: 15px; height: 15px; }
+.tool-btn.is-on { color: var(--fg); border-color: var(--accent-line); background: var(--accent-soft); }
+.tool-btn.icon-only { gap: 0; padding: 0; width: 2.05rem; height: 2.05rem; justify-content: center; border-radius: 50%; aspect-ratio: 1; flex: none; }
+.tool-btn:disabled { cursor: wait; opacity: .6; }
+.toggle-icon { display: inline-flex; align-items: center; justify-content: center; }
+.toggle-icon svg { display: block; }
+.toggle-icon .moon { display: none; }
+.khala-app[data-theme="light"] .toggle-icon .sun { display: none; }
+.khala-app[data-theme="light"] .toggle-icon .moon { display: inline; }
+.khala-app .status-badge {
+  display: inline-flex; align-items: center; gap: 0.42rem; min-height: 1.9rem;
+  padding: 0.3rem 0.72rem; border-radius: 999px; border: 1px solid var(--pill-bd);
+  background: var(--pill-bg); color: var(--muted);
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em;
+}
+.status-badge-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: currentColor; }
+.khala-app .status-badge-live { background: var(--good-soft); border-color: var(--good-line); color: var(--good-ink); }
+.status-badge-live .status-badge-dot { background: var(--good); box-shadow: 0 0 8px var(--good); animation: pulse 2s ease-in-out infinite; }
+.status-badge-offline { display: none; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.kh-brand-status { font-size: .72rem; color: var(--muted); }
+.kh-brand-status[role="alert"] { color: var(--block-ink); }
+
+/* §3 avatars (source:472, 508-511, 577-580, 687-688, 727) */
+.kh-av { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: hsl(var(--h) 45% 22%); border: 1px solid hsl(var(--h) 60% 50% / .5); cursor: pointer; padding: 0; }
+.khala-app[data-theme="light"] .kh-av { background: hsl(var(--h) 55% 88%); }
+.kh-av img { width: 17px; height: 17px; }
+.kh-av.ghost { visibility: hidden; cursor: default; }
+.kh-av { position: relative; }
+.kh-own { position: absolute; right: -4px; bottom: -4px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; font: 700 8px/16px "JetBrains Mono", monospace; letter-spacing: -.02em; color: #fff; background: hsl(var(--oh) 65% 48%); border: 2px solid var(--bg-2); box-sizing: content-box; }
+.kh-stack .kh-own, .kh-d-hero .kh-own { display: none; }
+.kh-hav { background: hsl(var(--oh) 65% 48%) !important; border-color: transparent; color: #fff; font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; }
+.kh-d-hero .kh-hav { font-size: 1.3rem; }
+.kh-more { font: 700 .66rem/1 "JetBrains Mono", monospace; color: var(--muted); background: var(--surface-3) !important; border-color: var(--line) !important; cursor: default; }
+.kh-gen { background: var(--surface-3) !important; border-color: var(--line) !important; color: var(--faint); font: 700 .9rem/1 "JetBrains Mono", monospace; }
+.kh-st { position: absolute; left: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--surface); background: var(--good); }
+.kh-st.off { background: var(--faint); } .kh-st.err { background: var(--block); }
+.kh-ini { font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; color: hsl(var(--h) 75% 72%); }
+.khala-app[data-theme="light"] .kh-ini { color: hsl(var(--h) 60% 35%); }
+.kh-d-hero .kh-ini { font-size: 1.3rem; }
+
+/* §15 reduced motion [ADAPT, required] */
+@media (prefers-reduced-motion: reduce) { .khala-app * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* §16 focus [ADAPT] */
+.khala-app :is(button, a, [role="button"], input[type="search"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.khala-app .kh-cv.is-active:focus-visible { outline-color: #fff; outline-offset: -3px; }
+.khala-app .kh-search:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
+.khala-app :is(.kh-input, .kh-txt):focus-visible { outline: none; }
+
+/*
+ * Interim placement for today's list, thread and route screens inside the
+ * frame. KM-181..184 replace these components with the design's own panes.
+ */
+.kh-list > .conversation-list { flex: 1; min-height: 0; border-right: 0; background: none; }
+.kh-main > :not(.kh-toast, .kh-brand, .kh-shell-back) { flex: 1 1 auto; min-height: 0; }
+.kh-shell-back { display: none; }
+@media (max-width: 900px) { .kh-shell-back { display: flex; flex: none; padding: .45rem .75rem 0; background: var(--surface); } }
+.kh-main > :is(.channel-page, .khala-page-frame, .khala-empty-conversation, .khala-route-loading, .khala-device-status, .khala-inactive-device, .panel) { overflow: auto; }
+.kh-main > .khala-page-frame, .kh-main > .khala-inactive-device { width: 100%; padding: clamp(1rem, 3vw, 2rem); }
+.kh-main > .channel-page, .kh-main > .channel-page > .khala-page-frame, .kh-main > .channel-page .khala-page-frame__body { display: flex; flex-direction: column; min-height: 0; max-width: none; margin: 0; }
+.kh-main > .channel-page > .khala-page-frame, .kh-main > .channel-page .khala-page-frame__body { flex: 1 1 auto; }
+.kh-main > .channel-page .conversation-layout { flex: 1 1 auto; height: auto; min-height: 0; border: 0; border-radius: 0; }
+.kh-state > .khala-page-frame { width: min(36rem, 100%); }
