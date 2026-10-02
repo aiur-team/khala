@@ -16,8 +16,8 @@ export function ConversationFixture() {
   const [inThread, setInThread] = useState(false);
   const current = conversations.find(item => item.id === selected)!;
   return <ConversationLayout inThread={inThread}
-    list={<ConversationList conversations={conversations} selectedId={selected} query={query} onQueryChange={setQuery}
-      onSelect={id => { setSelected(id); setInThread(true); }} status="ready" />}
+    list={<aside className="conversation-list" aria-label="Conversations"><ConversationList conversations={conversations} selectedId={selected} query={query} onQueryChange={setQuery}
+      onSelect={id => { setSelected(id); setInThread(true); }} status="ready" /></aside>}
     thread={<ChatThread title={current.title} onBack={() => setInThread(false)}
       headerDetail={<span className="conversation-fixture__subtitle">Alex, Mira · encrypted</span>}
       headerActions={<button type="button" className="conversation-fixture__details" onClick={() => setDetail(true)}>Conversation details</button>}>
