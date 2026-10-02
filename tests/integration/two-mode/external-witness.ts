@@ -32,7 +32,9 @@ export function verifyExternalConversation(native: readonly NativeFact[], browse
     const web = browser[index]!;
     for (const field of ['sessionId', 'bindingId', 'operationId', 'challengeEventId', 'releaseId',
       'modelReadEventId', 'readBindingId', 'ackReleaseId', 'ackBindingId', 'replyEventId'] as const) requireId(fact[field], field);
-    if (!Number.isSafeInteger(fact.generation) || fact.generation < 1) throw new Error('external_witness_generation_invalid');
+    // A newly admitted hosted binding starts at generation 0. Generation is a
+    // revision, not a count of completed reconnects.
+    if (!Number.isSafeInteger(fact.generation) || fact.generation < 0) throw new Error('external_witness_generation_invalid');
     if (fact.modelReadEventId !== fact.challengeEventId || fact.ackReleaseId !== fact.releaseId
       || fact.readBindingId !== fact.bindingId || fact.ackBindingId !== fact.bindingId
       || fact.readGeneration !== fact.generation || fact.ackGeneration !== fact.generation)
