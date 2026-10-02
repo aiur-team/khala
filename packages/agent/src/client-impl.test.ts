@@ -12,7 +12,7 @@ import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { KhalaAgentClient } from './client';
 import { KhalaClientError } from './client';
 import { createKhalaAgentClient } from './client-impl';
-import type { AgentMatrixSession, SessionMessage } from './matrix/session';
+import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './matrix/session';
 import { appendInbox } from './inbox';
 import { ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
 import { toInboxEntry } from './sender';
@@ -33,6 +33,7 @@ let dir: string;
 let client: KhalaAgentClient;
 let poll: ReturnType<typeof deferred<AgentCredentials>>;
 let handler: ((message: SessionMessage) => void) | undefined;
+let modeHandler: ((command: SessionModeCommand) => void) | undefined;
 let session: AgentMatrixSession;
 let joinApi: { requestJoin: Mock<typeof requestJoin>; pollJoin: Mock<typeof pollJoin>; reportReady: Mock<typeof reportReady> };
 let waker: Mock<(entry: InboxEntry) => void>;
@@ -53,8 +54,12 @@ beforeEach(async () => {
   dir = resolveStateDir('codex', 'test', { XDG_STATE_HOME: root });
   poll = deferred<AgentCredentials>();
   handler = undefined;
+  modeHandler = undefined;
   session = {
     userId: credentials.userId,
+    inviter: vi.fn(() => '@owner:s'),
+    onListeningModeCommand: vi.fn(callback => { modeHandler = callback; return () => { modeHandler = undefined; }; }),
+    publishListeningMode: vi.fn(async () => {}),
     onMessage: vi.fn(callback => { handler = callback; return () => { handler = undefined; }; }),
     waitForInvite: vi.fn(async () => {}), join: vi.fn(async () => {}),
     history: vi.fn(async () => ({ messages: [] })), send: vi.fn(async () => ({ eventId: '$sent' })),
@@ -79,7 +84,7 @@ it('returns promptly, persists private join state and coalesces simultaneous req
 });
 it('runs the handshake in order and exposes a connected client', async () => {
   await connected();
-  expect(await client.status()).toEqual({ state: 'connected', channelName: 'Release room', agentUserId: credentials.userId, unread: 0 });
+  expect(await client.status()).toEqual({ state: 'connected', channelName: 'Release room', agentUserId: credentials.userId, unread: 0, listeningMode: 'sync' });
   const calls = [joinApi.pollJoin, startSession, session.onMessage, joinApi.reportReady, session.waitForInvite, session.join].map(fn => vi.mocked(fn).mock.invocationCallOrder[0]!);
   expect(calls).toEqual([...calls].sort((a, b) => a - b));
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 120_000);
@@ -110,7 +115,7 @@ it('leaves the connected channel and clears delivery state when joining a differ
   expect(await readStateFile(dir, 'session.json')).toBeNull();
   await expect(fs.stat(path.join(dir, 'inbox.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(fs.stat(path.join(dir, 'cursor.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(await client.status()).toEqual({ state: 'joining', unread: 0 });
+  expect(await client.status()).toEqual({ state: 'joining', unread: 0, listeningMode: 'sync' });
   oldHandler(message('$stale'));
   expect(await entries()).toEqual([]);
 
@@ -202,7 +207,7 @@ it('stops a connected session once on close', async () => {
 it('never reuses stale credentials or saved confirmation on process start', async () => {
   await ensureStateDir(dir); await writeStateFile(dir, 'session.json', credentials);
   await writeStateFile(dir, 'join.json', { ...created, link });
-  expect(await client.status()).toEqual({ state: 'idle', unread: 0 });
+  expect(await client.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
   expect(await readStateFile(dir, 'session.json')).toBeNull();
   await client.join(link, 'Codex'); expect(joinApi.requestJoin).toHaveBeenCalledTimes(1); expect(startSession).not.toHaveBeenCalled();
 });
@@ -348,4 +353,53 @@ it('routes a real Aiur fixture from the tool through the client to the joined se
     expect.objectContaining({ v: 1, body: 'AIUR-395 review requested · feat/events-cursor', key: 'pr:aiur-team/aiur:ready_for_review:412:3f9c2ab0d1' }),
     'khev-' + createHash('sha256').update('pr:aiur-team/aiur:ready_for_review:412:3f9c2ab0d1').digest('hex').slice(0, 32));
   expect(waker).not.toHaveBeenCalled();
+});
+
+const modeCommand = (content: unknown = { v: 1, agent: credentials.userId, mode: 'async' }, sender = '@owner:s'): SessionModeCommand => ({ eventId: '$mode', roomId: credentials.roomId, sender, ts: now().getTime(), content });
+it('applies owner commands, echoes member state and keeps commands out of the inbox', async () => {
+  await connected(); modeHandler!(modeCommand());
+  expect((await client.status()).listeningMode).toBe('async');
+  expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', updatedAt: now().toISOString() });
+  expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async');
+  expect(await entries()).toEqual([]); expect(waker).not.toHaveBeenCalled();
+});
+it.each([
+  modeCommand(undefined, '@other:s'),
+  modeCommand({ v: 1, agent: '@other-agent:s', mode: 'async' }),
+  modeCommand({ v: 1, agent: credentials.userId, mode: 'loud' }),
+  modeCommand({ v: 1, agent: credentials.userId, mode: 'async', extra: true }),
+  { ...modeCommand(), roomId: '!other:s' },
+])('ignores unauthorized or malformed mode command %j', async command => {
+  await connected(); modeHandler!(command); await client.status();
+  expect(await readStateFile(dir, 'mode.json')).toBeNull();
+  expect(session.publishListeningMode).not.toHaveBeenCalled(); expect(await entries()).toEqual([]);
+});
+it('ignores all commands without an inviter', async () => {
+  vi.mocked(session.inviter).mockReturnValue(undefined); await connected(); modeHandler!(modeCommand());
+  expect((await client.status()).listeningMode).toBe('sync'); expect(session.publishListeningMode).not.toHaveBeenCalled();
+});
+it('keeps local mode and connected status when member publishing fails', async () => {
+  vi.mocked(session.publishListeningMode).mockRejectedValue(new Error('publish failed'));
+  await connected(); modeHandler!(modeCommand());
+  expect(await client.status()).toMatchObject({ state: 'connected', listeningMode: 'async' });
+});
+it('buffers commands delivered during join until inviter capture is complete', async () => {
+  vi.mocked(session.join).mockImplementation(async () => { modeHandler!(modeCommand()); });
+  await connected(); expect((await client.status()).listeningMode).toBe('async');
+});
+it('starts a fresh membership in sync', async () => {
+  await connected(); modeHandler!(modeCommand()); await client.status();
+  await client.join('https://khala.example/join/ijklmnop', 'Codex');
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await client.status()).listeningMode).toBe('sync');
+});
+
+it('preserves message and command arrival order while joining', async () => {
+  vi.mocked(session.join).mockImplementation(async () => {
+    modeHandler!(modeCommand()); handler!(message('$before'));
+    modeHandler!(modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }));
+    handler!(message('$after'));
+  });
+  await connected(); expect(await client.status()).toMatchObject({ listeningMode: 'sync', unread: 1 });
+  expect((await entries()).map(e => e.eventId)).toEqual(['$before', '$after']);
 });

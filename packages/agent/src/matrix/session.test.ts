@@ -7,6 +7,7 @@ vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
   MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING' },
+  EventType: { RoomMember: 'm.room.member' },
   Direction: { Backward: 'b' }, Method: { Get: 'GET' },
 }));
 import { createAgentMatrixSession } from './session';
@@ -28,7 +29,7 @@ function fake() {
     bootstrapCrossSigning: vi.fn(async (opts: { authUploadDeviceSigningKeys: (f: (auth: null) => Promise<void>) => Promise<void> }) => { await opts.authUploadDeviceSigningKeys(auth); crypto.isCrossSigningReady.mockResolvedValue(true); }),
   };
   const auth = vi.fn().mockResolvedValue(undefined);
-  const room = { roomId: '!r:hs', name: 'Channel', getMyMembership: () => membership, currentState: { getStateEvents: vi.fn((_type: string, user: string) => user === creds.userId ? event('$join', user, 100, 'm.room.member', { membership: 'join' }) : memberContent ? event('$member', user, 1, 'm.room.member', memberContent) : null) } };
+  const room = { roomId: '!r:hs', name: 'Channel', getMyMembership: () => membership, currentState: { getStateEvents: vi.fn((_type: string, user: string) => user === creds.userId ? event('$join', membership === 'invite' ? '@owner:hs' : user, 100, 'm.room.member', { membership, displayname: 'Agent', avatar_url: 'mxc://hs/avatar' }) : memberContent ? event('$member', user, 1, 'm.room.member', memberContent) : null) } };
   return Object.assign(bus, {
     crypto, auth, room, initRustCrypto: vi.fn().mockResolvedValue(undefined), getCrypto: () => crypto,
     getSyncState: () => sync,
@@ -39,6 +40,7 @@ function fake() {
     getEventMapper: () => (e: unknown) => e,
     createMessagesRequest: vi.fn().mockResolvedValue({ chunk: [], end: undefined }),
     http: { authedRequest: vi.fn().mockResolvedValue({ start: 'cursor' }) },
+    sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$state' }),
     sendEvent: vi.fn().mockResolvedValue({ event_id: '$event' }),
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: '$sent' }),
     prepare: () => { sync = 'PREPARED'; bus.emit('sync', sync); },
@@ -160,4 +162,29 @@ describe('C11 Node Matrix session', () => {
     await s.stop(); await s.stop(); expect(client.stopClient).toHaveBeenCalledOnce(); expect(client.eventNames()).toEqual([]);
     expect(Object.keys(await import('./session'))).toEqual(['createAgentMatrixSession']);
   });
+});
+
+it('captures the inviter before joining and preserves own member content when echoing mode', async () => {
+  const s = await joined(); expect(s.inviter('!r:hs')).toBe('@owner:hs');
+  await s.publishListeningMode('!r:hs', 'async');
+  expect(client.sendStateEvent).toHaveBeenCalledWith('!r:hs', 'm.room.member', {
+    membership: 'join', displayname: 'Agent', avatar_url: 'mxc://hs/avatar', 'com.khala.listening_mode': 'async',
+  }, creds.userId);
+});
+it('has no inviter for an already joined membership', async () => {
+  membership = 'join'; const s = await joined(); expect(s.inviter('!r:hs')).toBeUndefined();
+});
+it('routes live mode commands separately with cutoff, deduplication and decryption', async () => {
+  const s = await joined(); const commands = vi.fn(); const messages = vi.fn();
+  const unsubscribe = s.onListeningModeCommand(commands); s.onMessage(messages);
+  const content = { v: 1, agent: creds.userId, mode: 'async' };
+  timeline(event('$old', '@owner:hs', 99, 'com.khala.listening_mode.v1', content));
+  timeline(event('$history', '@owner:hs', 101, 'com.khala.listening_mode.v1', content), false);
+  let type = 'm.room.encrypted';
+  const encrypted = { ...event('$mode', '@owner:hs', 101, 'com.khala.listening_mode.v1', content), getType: () => type };
+  timeline(encrypted); await flush(); expect(commands).not.toHaveBeenCalled();
+  type = 'com.khala.listening_mode.v1'; client.emit('decrypted', encrypted); client.emit('decrypted', encrypted);
+  expect(commands).toHaveBeenCalledExactlyOnceWith({ eventId: '$mode', roomId: '!r:hs', sender: '@owner:hs', ts: 101, content });
+  expect(messages).not.toHaveBeenCalled();
+  unsubscribe(); timeline(event('$next', '@owner:hs', 102, type, content)); await flush(); expect(commands).toHaveBeenCalledTimes(1);
 });

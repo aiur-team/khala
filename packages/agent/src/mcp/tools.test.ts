@@ -11,7 +11,7 @@ const link = 'https://127.0.0.1:8443/join/abc12345';
 const confirmUrl = 'https://127.0.0.1:8443/agent/confirm?joinId=j_1';
 const fake = (): KhalaAgentClient => ({
   join: vi.fn(async () => ({ state: 'awaiting_confirmation' as const, confirmUrl })),
-  status: vi.fn(async () => ({ state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17 })),
+  status: vi.fn(async () => ({ state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17, listeningMode: 'sync' as const })),
   read: vi.fn(async () => ({ messages: [], nextBefore: '$next' })),
   send: vi.fn(async () => ({ eventId: '$sent' })),
   sendChannelEvent: vi.fn(async () => ({ eventId: '$event' })),
@@ -75,7 +75,7 @@ describe('five Khala tools through stdio', () => {
     expect(client.send).toHaveBeenCalledTimes(1);
     expect(responses.map(response => response.result.structuredContent)).toEqual([
       { messages: [], nextBefore: '$next' }, { messages: [], nextBefore: '$next' },
-      { state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17 }, { eventId: '$sent' },
+      { state: 'connected', channelName: 'Review', agentUserId: '@a:khala', unread: 17, listeningMode: 'sync' as const }, { eventId: '$sent' },
     ]);
     for (const response of responses) expect(response.result.content[0].text).toBe(JSON.stringify(response.result.structuredContent));
   });
