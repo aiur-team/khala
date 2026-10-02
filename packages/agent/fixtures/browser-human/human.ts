@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
 import { createClient, ClientEvent, SyncState, Preset } from 'matrix-js-sdk';
 import type { MatrixClient } from 'matrix-js-sdk';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
