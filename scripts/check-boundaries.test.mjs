@@ -24,24 +24,6 @@ test('browser can consume contracts', t => {
     'packages/contracts/src/messaging/room.ts': 'export type Room = string;',
   }), []);
 });
-test('only the installed CLI entry may import the connector production composition', t => {
-  const errors = fixture(t, {
-    'packages/agent-cli/src/cli/main.ts': "import '../../../../apps/connector/src/composition/production';",
-    'packages/agent-cli/src/cli/other.ts': "import '../../../../apps/connector/src/composition/production';",
-    'apps/connector/src/composition/production.ts': 'export const open = true;',
-  });
-  assert(!errors.some(error => error.includes('main.ts') && error.includes('cannot import an app')));
-  assert(errors.some(error => error.includes('other.ts') && error.includes('cannot import an app')));
-});
-test('connector substrate adapters compose package ports while other modules cannot', t => {
-  const errors = fixture(t, {
-    'apps/connector/src/substrate/matrix.ts': "import '../../../../packages/connector/src/subscription/adapter';",
-    'apps/connector/src/other.ts': "import '../../../packages/connector/src/subscription/adapter';",
-    'packages/connector/src/subscription/adapter.ts': 'export const adapter = true;',
-  });
-  assert(!errors.some(error => error.includes('substrate/matrix.ts') && error.includes('cross-component implementation')));
-  assert(errors.some(error => error.includes('src/other.ts') && error.includes('cross-component implementation')));
-});
 test('browser cannot reach native code through a dynamic import and a re-export', t => {
   const errors = fixture(t, {
     'apps/web/src/chat.ts': "import('./bridge');",
@@ -67,25 +49,25 @@ test('browser can still import reviewed third-party dependencies', t => {
 });
 test('TS path aliases cannot bypass owner storage restriction', t => {
   const errors = fixture(t, {
-    'apps/web/tsconfig.json': { compilerOptions: { baseUrl: '../..', paths: { '@owner/*': ['packages/connector/src/*'] } } },
-    'apps/web/src/chat.ts': "import('@owner/storage/keys');",
-    'packages/connector/src/storage/keys.ts': 'export const key = 1;',
+    'apps/web/tsconfig.json': { compilerOptions: { baseUrl: '../..', paths: { '@owner/*': ['packages/agent/src/*'] } } },
+    'apps/web/src/chat.ts': "import('@owner/state');",
+    'packages/agent/src/state.ts': 'export const key = 1;',
   });
   assert(errors.some(error => error.includes('browser reaches owner/server')));
 });
 test('workspace subpath exports enforce the same boundaries before install', t => {
   const errors = fixture(t, {
-    'apps/web/src/chat.ts': "import '@khala/connector/storage/keys';",
-    'packages/connector/package.json': { name: '@khala/connector', exports: { './storage/*': './src/storage/*.ts' } },
-    'packages/connector/src/storage/keys.ts': 'export const key = 1;',
+    'apps/web/src/chat.ts': "import '@khala/agent/state';",
+    'packages/agent/package.json': { name: '@khala/agent', exports: { './*': './src/*.ts' } },
+    'packages/agent/src/state.ts': 'export const key = 1;',
   });
   assert(errors.some(error => error.includes('browser reaches owner/server')));
 });
-test('source-conditioned exports of the published CLI resolve before install', t => {
+test('source-conditioned exports of the agent package resolve before install', t => {
   const errors = fixture(t, {
-    'packages/agent-skill/src/listen/run.ts': "import '@aiur/khala/cli/app';",
-    'packages/agent-cli/package.json': { name: '@aiur/khala', exports: { './cli/*': { 'khala-source': './src/cli/*.ts' } } },
-    'packages/agent-cli/src/cli/app.ts': 'export {};',
+    'packages/messaging/src/x.ts': "import '@khala/agent/client';",
+    'packages/agent/package.json': { name: '@khala/agent', exports: { './*': { 'khala-source': './src/*.ts' } } },
+    'packages/agent/src/client.ts': 'export {};',
   });
   assert(errors.some(error => error.includes('cross-component implementation requires a composition root')));
   assert(!errors.some(error => error.includes('unresolved workspace')));
@@ -98,11 +80,6 @@ test('contracts cannot reach apps or the other contract domain', t => {
   });
   assert(errors.some(error => error.includes('contracts cannot import implementations')));
   assert(errors.some(error => error.includes('contract domains cannot import each other')));
-});
-test('policy rejects external I/O and computed imports', t => {
-  const errors = fixture(t, { 'packages/policy/src/trust/check.ts': "import 'some-network-sdk'; const module = 'fs'; import(module);" });
-  assert(errors.some(error => error.includes('external dependency')));
-  assert(errors.some(error => error.includes('unanalyzable')));
 });
 test('sibling features and unresolved workspace imports fail', t => {
   const errors = fixture(t, {

@@ -1,5 +1,9 @@
+import { createHash } from 'node:crypto';
+import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import type { AgentCredentials, AgentJoinCreated, Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
+import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
+import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
@@ -35,6 +39,17 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let joins: Promise<unknown> = Promise.resolve();
   let appends: Promise<void> = Promise.resolve();
   let statusWrites: Promise<void> = Promise.resolve();
+  const acceptEventKey = createEventKeyFilter();
+
+  function inboxEntry(message: SessionMessage, session: AgentMatrixSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
+    const entry = toInboxEntry(message, session.displayName(message.sender));
+    if (message.type === 'm.room.message') return entry;
+    if (message.type !== CHANNEL_EVENT_TYPE) return null;
+    const { eventId, roomId, ts, sender, senderLabel, senderKind } = entry;
+    const base = { eventId, roomId, ts, sender, senderLabel, senderKind };
+    const event = toEventInboxEntry(base, message.content);
+    return event && acceptKey(event.key) ? event.entry : null;
+  }
 
   function setStatus(state: StatusFile['state'], detail?: string): Promise<void> {
     const next: StatusFile = { state, ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
@@ -98,12 +113,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const session = await wait(starting);
       const buffered: SessionMessage[] = [];
       const intake = (message: SessionMessage): void => {
-        if (!current(attempt) || message.type !== 'm.room.message' || message.roomId !== credentials.roomId || message.sender === session.userId) return;
+        if (!current(attempt) || message.roomId !== credentials.roomId || message.sender === session.userId) return;
         if (!attempt.joined) { buffered.push(message); return; }
         appends = appends.then(async () => {
           if (!current(attempt)) return;
-          const entry = toInboxEntry(message, session.displayName(message.sender));
-          if (await appendInbox(dir, entry) && current(attempt)) {
+          const entry = inboxEntry(message, session, acceptEventKey);
+          if (!entry) return;
+          if (await appendInbox(dir, entry) && current(attempt) && isWakeEntry(entry)) {
             try { options.onInboxAppend?.(entry); } catch { /* A waker cannot break intake. */ }
           }
         }).catch(async () => {
@@ -181,7 +197,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const { session, credentials } = requireSession();
       try {
         const page = await session.history(credentials.roomId, limit, before);
-        return { messages: page.messages.filter(m => m.type === 'm.room.message').map(m => toInboxEntry(m, session.displayName(m.sender))),
+        const acceptKey = createEventKeyFilter();
+        return { messages: page.messages.map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null),
           ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}) };
       } catch (error) { throw safeError(error); }
     },
@@ -190,6 +207,22 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const { session, credentials, attempt } = requireSession();
       try {
         const sent = await session.send(credentials.roomId, text);
+        if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
+        return sent;
+      } catch {
+        if (current(attempt)) await setStatus('send_failed', 'send_failed');
+        throw new KhalaClientError('send_failed');
+      }
+    },
+    async sendChannelEvent(content) {
+      await initialize();
+      const { session, credentials, attempt } = requireSession();
+      const encoded = encodeChannelEvent(content);
+      if (!encoded.ok) throw new KhalaClientError('internal_error', 'invalid_event');
+      const txnId = encoded.value.key === undefined ? undefined
+        : 'khev-' + createHash('sha256').update(encoded.value.key).digest('hex').slice(0, 32);
+      try {
+        const sent = await session.sendChannelEvent(credentials.roomId, encoded.value, txnId);
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
       } catch {
