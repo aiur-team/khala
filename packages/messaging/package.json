@@ -8,13 +8,7 @@
     "./channels/*": "./src/channels/*.ts",
     "./channels/fixtures/fakes": null,
     "./rooms/*": "./src/rooms/*.ts",
-    "./rooms/fixtures/fakes": null,
-    "./revocation/*": "./src/revocation/*.ts",
-    "./recovery/*": "./src/recovery/*.ts",
-    "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts",
-    "./local/http/*": "./src/local/http/*.ts",
-    "./channel-access/journal/*": "./src/channel-access/journal/*.ts",
-    "./channel-create/*": "./src/channel-create/*.ts"
+    "./rooms/fixtures/fakes": null
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
