@@ -48,7 +48,9 @@ function trustStartup(state, actor) {
   for (let attempt = 0; attempt < 60; attempt++) {
     const pane = tmux(state, ['capture-pane', '-p', '-t', actor]);
     if (expected.every(text => pane.includes(text))) {
-      tmux(state, ['send-keys', '-t', actor, 'Down', 'Enter']);
+      tmux(state, ['send-keys', '-t', actor, 'Down']);
+      pause(300);
+      tmux(state, ['send-keys', '-t', actor, 'Enter']);
       for (let settled = 0; settled < 60; settled++) {
         pause(500);
         const current = tmux(state, ['capture-pane', '-p', '-t', actor]);
