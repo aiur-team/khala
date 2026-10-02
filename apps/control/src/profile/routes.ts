@@ -1,7 +1,7 @@
 import { checkName, nameKey, suggestUsername, USERNAME_MAX } from '@khala/contracts/m1/names';
 import { decodeNameReservation, decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
-import type { AuthPrincipal, ControlStore, OwnerId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlRecord, ControlStore, OwnerId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
 
@@ -49,21 +49,36 @@ export function createProfileHandlers(deps: ProfileDeps) {
     }
     return unavailable();
   }
-  async function displayName(ownerId: OwnerId, username: string): Promise<void> {
+  async function displayName(ownerId: OwnerId): Promise<void> {
     try {
-      if (await deps.setDisplayName(ownerId, username)) return;
+      // Cleanup can be delayed behind a newer rename; reconcile to the latest
+      // committed profile rather than replaying this request's historical name.
+      const latest = await readProfile(ownerId);
+      if (latest.kind === 'ok' && latest.record && await deps.setDisplayName(ownerId, latest.record.username)) return;
     } catch { /* Log only the finite failure code, never upstream details. */ }
     console.warn('profile_display_name_unavailable');
   }
-  async function release(ownerId: OwnerId, username: string): Promise<void> {
+  async function release(record: ControlRecord | null): Promise<void> {
+    if (record === null) return;
     try {
-      const key = nameKey(username);
-      const read = await safeRead(deps.store, key);
-      if (read.kind === 'record' && ownReservation(read.record.value, ownerId)) {
-        await writeAndResolve(deps.store, { key, expectedRevision: read.record.revision, operationId: operationId(),
-          next: { value: read.record.value, expiresAt: new Date(deps.clock()).toISOString() } });
-      }
+      await writeAndResolve(deps.store, { key: record.key, expectedRevision: record.revision, operationId: operationId(),
+        next: { value: record.value, expiresAt: new Date(deps.clock()).toISOString() } });
     } catch { /* Releasing an old name is best effort. */ }
+  }
+  async function reserve(ownerId: OwnerId, username: string): Promise<'ok' | 'taken' | 'unavailable'> {
+    const input = { key: nameKey(username), expectedRevision: null, operationId: operationId(),
+      next: { value: { v: 1, kind: 'human', ownerId }, expiresAt: null } } as const;
+    const reserved = await writeAndResolve(deps.store, input);
+    if (reserved.kind === 'applied') return 'ok';
+    if (reserved.kind !== 'conflict') return 'unavailable';
+    if (!reserved.current || !ownReservation(reserved.current.value, ownerId)) return 'taken';
+    // Rotate even an own reservation: an earlier rename may still be releasing
+    // the revision it observed before committing its profile change.
+    const renewed = await writeAndResolve(deps.store, { ...input, expectedRevision: reserved.current.revision,
+      operationId: operationId() });
+    if (renewed.kind === 'applied') return 'ok';
+    if (renewed.kind === 'conflict' && renewed.current && !ownReservation(renewed.current.value, ownerId)) return 'taken';
+    return 'unavailable';
   }
   async function setUsername(request: Request, principal: AuthPrincipal): Promise<Response> {
     let input: unknown;
@@ -76,17 +91,21 @@ export function createProfileHandlers(deps: ProfileDeps) {
     let profile = await readProfile(principal.ownerId);
     if (profile.kind !== 'ok') return unavailable();
     if (profile.record?.username === username) {
-      await displayName(principal.ownerId, username);
+      await displayName(principal.ownerId);
       return json(200, { username });
     }
-    const reserved = await writeAndResolve(deps.store, { key: nameKey(username), expectedRevision: null,
-      operationId: operationId(), next: { value: { v: 1, kind: 'human', ownerId: principal.ownerId }, expiresAt: null } });
-    if (reserved.kind === 'conflict') {
-      if (!ownReservation(reserved.current?.value, principal.ownerId)) return error(409, 'username_taken');
-    } else if (reserved.kind !== 'applied') return unavailable();
-
     for (let attempt = 0; attempt < 2; attempt++) {
+      const reserved = await reserve(principal.ownerId, username);
+      if (reserved === 'taken') return error(409, 'username_taken');
+      if (reserved !== 'ok') return unavailable();
       const previous = profile.record?.username ?? null;
+      let previousReservation: ControlRecord | null = null;
+      if (previous !== null && nameKey(previous) !== nameKey(username)) {
+        const read = await safeRead(deps.store, nameKey(previous));
+        if (read.kind === 'record' && ownReservation(read.record.value, principal.ownerId)) previousReservation = read.record;
+      }
+      // Capture the old reservation before the profile CAS. A concurrent claim
+      // either rotates this revision or must retry after its profile CAS fails.
       const next: ProfileRecord = { v: 1, ownerId: principal.ownerId, username, updatedAt: new Date(deps.clock()).toISOString() };
       const written = await writeAndResolve(deps.store, { key: profileRecordKey(principal.ownerId), expectedRevision: profile.revision,
         operationId: operationId(), next: { value: next, expiresAt: null } });
@@ -98,8 +117,8 @@ export function createProfileHandlers(deps: ProfileDeps) {
         continue;
       }
       if (written.kind !== 'applied') return unavailable();
-      if (previous !== null && nameKey(previous) !== nameKey(username)) await release(principal.ownerId, previous);
-      await displayName(principal.ownerId, username);
+      await release(previousReservation);
+      await displayName(principal.ownerId);
       try { await deps.afterUsernameChange?.(principal.ownerId, previous, username); }
       catch { console.warn('profile_after_username_change_unavailable'); }
       return json(200, { username });

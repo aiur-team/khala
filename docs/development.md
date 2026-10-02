@@ -38,3 +38,9 @@ Live agent tests use the stack and are excluded from default unit tests. Follow 
 Tests live beside their owners. Run `pnpm --filter @khala/web test` or the corresponding package's test script for focused validation. `pnpm check:boundaries` checks imports; browser code must not reach Node builtins or server implementations. Experiments have isolated manifests and lockfiles and are excluded from workspace installation and production builds.
 
 The Executor owns shared manifests, the root lockfile, compiler/test configuration and CI. Propose dependency changes to that owner. Use isolated issue worktrees and review contract changes with producers and consumers.
+
+## Human profiles
+
+`GET /api/human/profile` returns `{ username: string | null, suggestion: string }` for the signed-in owner. Existing owners without a profile keep `username: null`. `POST /api/human/profile/username` accepts exactly `{ username }` with the session cookie, allowed Origin and `x-khala-csrf` token. Usernames contain 2–24 ASCII letters, digits or `.`, `_`, `-`, start/end with a letter or digit, and cannot contain adjacent separators, reserved words or an agent model suffix. Display casing is preserved; reservations in `names/v1/<lowercase name>` share one site-wide namespace with agents.
+
+Invalid names return `400 { error: 'invalid_username', reason }`; malformed request shapes return `400 invalid_request`, occupied names return `409 username_taken`, and storage failures return `503 unavailable`. A successful change stores `profiles/<encoded ownerId>`, releases the previous reservation, and updates the owner's Matrix display name best effort. Session minting reconciles that display name from the stored username; an unavailable profile read skips the update. The browser exposes this API through `context.profile`; username screens are separate work.

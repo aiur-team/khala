@@ -109,6 +109,10 @@ describe('generated hosted production composition', () => {
         }
       }
       expect((await handle(new Request(`${appOrigin}/api/human/me`))).status).toBe(401);
+      expect((await handle(new Request(`${appOrigin}/api/human/profile`))).status).toBe(401);
+      expect((await handle(new Request(`${appOrigin}/api/human/profile/username`, {
+        method: 'POST', headers: { origin: appOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'Kevin' }),
+      }))).status).toBe(401);
       expect((await handle(new Request(`${appOrigin}/api/health`))).status).toBe(200);
     }
   });
