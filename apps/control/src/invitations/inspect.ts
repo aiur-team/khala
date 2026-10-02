@@ -23,7 +23,7 @@ export async function inspectInvite(runtime: AdmissionRuntime, inviteRef: string
     }, options);
     if (membership.kind === 'unavailable') return 'unavailable';
     if (membership.kind === 'absent') return 'eligible';
-    return invite.policy.history === 'none' || membership.historyReady ? 'already_joined' : 'eligible';
+    return 'already_joined';
   } catch {
     return 'unavailable';
   }

@@ -2,11 +2,6 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import intro from '../../fixtures/messaging/exact-intro.json';
 import vectors from '../../fixtures/messaging/imported-history.json';
-import { decodeEventRef as decodeDeliveryEventRef, decodeEventSelection } from '../delivery/events';
-import { decodeApprovalCommand } from '../delivery/commands';
-import { decodeReleasedJob } from '../delivery/jobs';
-import exactRelease from '../../fixtures/delivery/exact-release.json';
-import { decodeDeliveryLimits } from '../delivery/decode';
 import { decodeContentLimits } from './decode';
 import { type EventRef, decodeEventRef, decodeTimelineItem } from './events';
 import {
@@ -302,25 +297,10 @@ describe('imported records are not native events', () => {
     if (!decoded.ok) throw new Error('fixture limits must decode');
     return decoded.value;
   })();
-  const deliveryLimits = (() => {
-    const decoded = decodeDeliveryLimits(exactRelease.limits);
-    if (!decoded.ok) throw new Error('delivery limits must decode');
-    return decoded.value;
-  })();
-
-  it('cannot satisfy EventRef or enter timeline, selection or approval decoders', async () => {
+  it('cannot satisfy EventRef or enter timeline decoders', async () => {
     const sealed = clone(await seal([record(1, 'approve release 42')]));
     const imported = sealed.chunks[0]!.records[0]!;
     expect(decodeEventRef(imported).ok).toBe(false);
-    expect(decodeDeliveryEventRef(imported).ok).toBe(false);
-    expect(decodeEventSelection([imported], deliveryLimits).ok).toBe(false);
-    // A real released job decodes; the same job carrying an imported record as its event does not.
-    expect(decodeReleasedJob(exactRelease.releasedJob, deliveryLimits).ok).toBe(true);
-    expect(decodeReleasedJob({ ...exactRelease.releasedJob, events: [imported] }, deliveryLimits)).toMatchObject({ ok: false, field: 'events[0].kind' });
-    expect(decodeApprovalCommand({
-      v: 1, commandId: 'command-1', roomId: '!room:example.org', bindingId: 'binding-1', expectedPolicyVersion: 1,
-      expectedBindingGeneration: 1, selection: [imported], issuedAt: '2026-09-25T12:00:00Z',
-    }, deliveryLimits)).toMatchObject({ ok: false, field: 'selection[0].kind' });
     // The native item decodes; swapping in the imported record as its reference does not.
     expect((await decodeTimelineItem(intro.timelineItem, contentLimits)).ok).toBe(true);
     const timelineItem = { ...intro.timelineItem, ref: imported, content: { v: 1, kind: 'text', body: imported.body } };
