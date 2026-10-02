@@ -1,0 +1,19 @@
+import type { InboxEntry } from '@khala/contracts/m1/inbox';
+
+export interface KhalaAgentClient {
+  join(link: string, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string } | { state: 'connected'; channelName: string }>;
+  status(): Promise<{ state: string; channelName?: string; agentUserId?: string; unread: number }>;
+  read(limit: number, before?: string): Promise<{ messages: InboxEntry[]; nextBefore?: string }>;
+  send(text: string): Promise<{ eventId: string }>;
+  close(): Promise<void>;
+}
+
+export type KhalaErrorCode = 'invalid_link' | 'link_unavailable' | 'join_expired' | 'not_connected' | 'send_failed' | 'session_unknown' | 'internal_error';
+export class KhalaClientError extends Error {
+  readonly code: KhalaErrorCode;
+  constructor(code: KhalaErrorCode, message?: string) {
+    super(message ?? code);
+    this.name = 'KhalaClientError';
+    this.code = code;
+  }
+}
