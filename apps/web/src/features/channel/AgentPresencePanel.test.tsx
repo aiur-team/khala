@@ -73,8 +73,21 @@ describe('RenameAgent', () => {
       renameAgent={async (_participantId, name) => ({ kind: 'ok', name })} />);
     expect(html).toContain('aria-label="Name for Scout"');
     expect(html).toContain('maxLength="40" autoCapitalize="none" autoComplete="off" spellCheck="false" value="Scout"');
-    expect(html).toContain('2–40 letters, numbers, . _ or -');
+    expect(html).not.toContain('letters, numbers');
+    expect(html).not.toContain('aria-describedby');
+    expect(html).not.toContain('aria-invalid');
+    expect(html).not.toContain('role="alert"');
     expect(html).toContain('class="kh-btn pri">Rename</button>');
+  });
+
+  it('links the rule to the field only while the name is invalid', () => {
+    const html = renderToStaticMarkup(<RenameAgent participantId={scout.participantId} name="a"
+      renameAgent={async (_participantId, name) => ({ kind: 'ok', name })} />);
+    const describedBy = /aria-describedby="([^"]+)"/.exec(html)?.[1];
+    expect(describedBy).toBeTruthy();
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain(`<p class="kh-d-rename-err" id="${describedBy}" role="alert">At least 2 characters.</p>`);
+    expect(html).toContain('disabled="">Rename</button>');
   });
 });
 
@@ -99,6 +112,16 @@ describe('submitRename', () => {
       message: 'Use letters, numbers, . _ or -, starting and ending with a letter or number.' });
     expect(await submitRename(agentX, 'Kevin-Claude', 'Kevin-Claude', handler)).toEqual({ kind: 'error', message: 'This agent already has that name.' });
     expect(calls).toEqual([]);
+  });
+
+  it('passes the abort signal to the rename handler', async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const { signal } = new AbortController();
+    await submitRename(agentX, 'Kevin-Claude', 'Reviewer', async (_participantId, name, received) => {
+      signals.push(received);
+      return { kind: 'ok', name };
+    }, signal);
+    expect(signals).toEqual([signal]);
   });
 
   it('renames with the checked name and returns the server’s name', async () => {

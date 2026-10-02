@@ -1,7 +1,7 @@
 // The roster disclosure (RECREATION-SPEC §6, M1 form per §22) and the
 // rename section the agent detail pane shows for the viewer's own agents.
 
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/names';
@@ -18,7 +18,7 @@ export type RenameAgentResult = { kind: 'ok'; name: string } | {
   code: 'invalid_name' | 'name_taken' | 'not_owner' | 'not_found' | 'signed_out' | 'unavailable';
   reason?: NameError;
 };
-export type RenameAgentHandler = (participantId: ParticipantId, name: string) => Promise<RenameAgentResult>;
+export type RenameAgentHandler = (participantId: ParticipantId, name: string, signal?: AbortSignal) => Promise<RenameAgentResult>;
 
 const NAME_ERRORS: Record<NameError, string> = {
   too_short: 'At least 2 characters.',
@@ -39,12 +39,12 @@ function renameError(result: Extract<RenameAgentResult, { kind: 'error' }>): str
  * renames. Returns the name the server stored, or the message to show.
  */
 export async function submitRename(participantId: ParticipantId, currentName: string, draft: string,
-  renameAgent: RenameAgentHandler): Promise<{ kind: 'ok'; name: string } | { kind: 'error'; message: string }> {
+  renameAgent: RenameAgentHandler, signal?: AbortSignal): Promise<{ kind: 'ok'; name: string } | { kind: 'error'; message: string }> {
   const checked = checkName(draft, 'agent');
   if (!checked.ok) return { kind: 'error', message: NAME_ERRORS[checked.error] };
   if (checked.name === currentName) return { kind: 'error', message: 'This agent already has that name.' };
   try {
-    const result = await renameAgent(participantId, checked.name);
+    const result = await renameAgent(participantId, checked.name, signal);
     return result.kind === 'ok' ? result : { kind: 'error', message: renameError(result) };
   } catch {
     return { kind: 'error', message: 'Couldn’t rename. Try again.' };
@@ -66,27 +66,37 @@ export function RenameAgent({ participantId, name, renameAgent, autoFocus = fals
     const frame = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [autoFocus]);
+  const errorId = useId();
   const [status, setStatus] = useState('');
   const [sending, setSending] = useState(false);
+  // Aborts an in-flight rename when the pane closes or switches participant.
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  const checked = checkName(draft, 'agent');
+  const message = checked.ok ? status : NAME_ERRORS[checked.error];
 
   async function submit(): Promise<void> {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setSending(true);
     setStatus('');
-    const result = await submitRename(participantId, name, draft, renameAgent);
+    const result = await submitRename(participantId, name, draft, renameAgent, controller.signal);
+    if (controller.signal.aborted) return;
     setSending(false);
     // The server's name wins over what was typed.
     if (result.kind === 'ok') setDraft(result.name);
     else setStatus(result.message);
   }
-  return <form className="kh-d-rename" onSubmit={event => { event.preventDefault(); void submit(); }}>
+  return <form className="kh-d-rename" noValidate onSubmit={event => { event.preventDefault(); if (checked.ok && !sending) void submit(); }}>
     <div className="kh-row2">
-      <input className="kh-txt" aria-label={`Name for ${name}`} aria-describedby={`kh-rename-help-${participantId}`} value={draft}
-        onChange={event => setDraft(event.target.value)} maxLength={AGENT_NAME_MAX} autoCapitalize="none" autoComplete="off"
+      <input className="kh-txt" aria-label={`Name for ${name}`} aria-describedby={message ? errorId : undefined}
+        aria-invalid={checked.ok ? undefined : true} value={draft}
+        onChange={event => { setDraft(event.target.value); setStatus(''); }} maxLength={AGENT_NAME_MAX} autoCapitalize="none" autoComplete="off"
         spellCheck={false} ref={input} />
-      <button type="submit" className="kh-btn pri" disabled={sending}>{sending ? 'Renaming…' : 'Rename'}</button>
+      <button type="submit" className="kh-btn pri" disabled={!checked.ok || sending}>{sending ? 'Renaming…' : 'Rename'}</button>
     </div>
-    <p id={`kh-rename-help-${participantId}`}>2–40 letters, numbers, . _ or -</p>
-    {status ? <p role="alert">{status}</p> : null}
+    {message ? <p className="kh-d-rename-err" id={errorId} role="alert">{message}</p> : null}
   </form>;
 }
 
