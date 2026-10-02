@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { runCli } from '@aiur/khala/cli/app';
 import { openInbox } from '@aiur/khala/cli/inbox';
 import { createClaudeSessionClient } from '@aiur/khala/composition/claude-session-http';
+import { claudeProcessBodyHash, claudeProcessProofMessage, type ClaudeProcessScope } from '@aiur/khala/composition/claude-process-proof';
 import { createInternalClient } from '@aiur/khala/composition/internal';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
@@ -1170,5 +1172,125 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'session-second')))
       .toEqual({ ok: false, kind: 'refused', code: 'unproven' });
     expect(await session.facts()).toEqual([]);
+  });
+
+  it('requires owner approval and the exact MCP key for either bound unproven session', async () => {
+    const first = await bound('session-process-a', async () => '2.1.287');
+    const [requested] = await serve(first.report.descriptorPath, 'session-process-b', [
+      ['khala_request_channel_access', { target: first.channelUrl }],
+    ]);
+    await approvePending(first.report.origin, first.owner);
+    const [connected] = await serve(first.report.descriptorPath, 'session-process-b', [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected' });
+    const client = createClaudeSessionClient({ descriptorPath: first.report.descriptorPath });
+    const process = (request: Parameters<NonNullable<typeof client.process>>[0]) => client.process!(request) as Promise<Record<string, unknown>>;
+    const a = generateKeyPairSync('ed25519');
+    const b = generateKeyPairSync('ed25519');
+    const begin = async (sessionId: string, key: typeof a) => process({ v: 1, op: 'process_begin', sessionId,
+      publicKey: key.publicKey.export({ format: 'jwk' }).x! });
+    const candidateA = await begin('session-process-a', a);
+    const candidateB = await begin('session-process-b', b);
+    expect(candidateA.kind).toBe('process_candidate');
+    expect(candidateB.kind).toBe('process_candidate');
+    const approval = (candidate: Record<string, unknown>, sessionId: string) => ({
+      v: 1, sessionId, bindingId: candidate.bindingId, candidateId: candidate.candidateId, code: candidate.code,
+    });
+    const path = `/api/v1/channels/${encodeURIComponent(first.report.channelId)}/claude-process/approve`;
+    const bare = await call(first.report.origin, { method: 'POST', path, headers: { origin: first.report.origin },
+      body: approval(candidateB, 'session-process-b') });
+    expect(bare.status).toBe(401);
+    const descriptor = JSON.parse(fs.readFileSync(first.report.descriptorPath, 'utf8')) as { transportCapability: string };
+    const sharedBearer = await call(first.report.origin, { method: 'POST', path,
+      headers: { authorization: `Bearer ${descriptor.transportCapability}` },
+      body: approval(candidateB, 'session-process-b') });
+    expect(sharedBearer.status).toBe(403);
+    const noSecret = await call(first.report.origin, { method: 'POST', path,
+      headers: { cookie: first.owner.cookie, origin: first.report.origin }, body: approval(candidateB, 'session-process-b') });
+    expect(noSecret.status).toBe(401);
+    const wrongSession = await call(first.report.origin, { method: 'POST', path, headers: first.owner,
+      body: approval(candidateB, 'session-process-a') });
+    expect(wrongSession.status).toBe(409);
+    for (const [candidate, sessionId] of [[candidateA, 'session-process-a'], [candidateB, 'session-process-b']] as const) {
+      const approved = await call(first.report.origin, { method: 'POST', path, headers: first.owner,
+        body: approval(candidate, sessionId) });
+      expect(approved.status).toBe(200);
+    }
+    expect(await client.read('session-process-b')).toEqual({ kind: 'refused', code: 'unproven' });
+    expect(await client.send('session-process-b', 'forged legacy send')).toEqual({ kind: 'refused', code: 'unproven' });
+    const challenge = await process({ v: 1, op: 'process_challenge', sessionId: 'session-process-b', keyId: candidateB.keyId as string });
+    expect(challenge.kind).toBe('process_challenge');
+    const scope = challenge.scope as ClaudeProcessScope;
+    const signFor = (key: typeof a, operation: 'read' | 'send', body?: string) => sign(null,
+      claudeProcessProofMessage({ scope, operation, bodyHash: claudeProcessBodyHash(operation, body),
+        challenge: challenge.challenge as string }), key.privateKey).toString('base64url');
+    const request = { v: 1 as const, op: 'process_send' as const, sessionId: 'session-process-b',
+      keyId: candidateB.keyId as string, challenge: challenge.challenge as string, message: 'safe body' };
+    expect(await process({ ...request, signature: signFor(a, 'send', 'safe body') }))
+      .toEqual({ kind: 'refused', code: 'unproven' });
+    expect(await process({ ...request, message: 'changed body', signature: signFor(b, 'send', 'safe body') }))
+      .toEqual({ kind: 'refused', code: 'unproven' });
+    expect(await process({ ...request, signature: signFor(b, 'send', 'safe body') }))
+      .toMatchObject({ kind: 'accepted' });
+    expect(await process({ ...request, signature: signFor(b, 'send', 'safe body') }))
+      .toEqual({ kind: 'refused', code: 'unproven' });
+  });
+
+  it('enrolls one live Claude MCP child, reads and sends, then revokes its key on exit', async () => {
+    const session = await bound('session-process-live', async () => '2.1.287');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let lines = '';
+    const waiting = new Map<number, (value: Record<string, unknown>) => void>();
+    output.on('data', chunk => {
+      lines += String(chunk);
+      while (lines.includes('\n')) {
+        const end = lines.indexOf('\n');
+        const line = lines.slice(0, end);
+        lines = lines.slice(end + 1);
+        if (!line) continue;
+        const response = JSON.parse(line) as ToolResponse;
+        waiting.get(response.id)?.(response.result!.structuredContent);
+        waiting.delete(response.id);
+      }
+    });
+    const running = runCli(['mcp-serve'], {
+      client: createUnavailableClient(),
+      inbox: vi.fn(async () => { throw new Error('MCP must not open inbox storage'); }),
+      claude: createClaudeSessionClient({ descriptorPath: session.report.descriptorPath }),
+      stdin: input, stdout: output, stderr: new PassThrough(),
+      env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: 'session-process-live' },
+    });
+    let id = 0;
+    const tool = (name: string, args: Record<string, unknown> = {}) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      const next = ++id;
+      const timer = setTimeout(() => { waiting.delete(next); reject(new Error(`MCP tool ${name} timed out`)); }, 5_000);
+      waiting.set(next, value => { clearTimeout(timer); resolve(value); });
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', id: next, method: 'tools/call', params: { name, arguments: args } })}\n`);
+    });
+    try {
+      const candidate = await tool('khala_prove_session');
+      expect(candidate.kind).toBe('process_candidate');
+      const approved = await call(session.report.origin, {
+        method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/claude-process/approve`,
+        headers: session.owner,
+        body: { v: 1, sessionId: candidate.sessionId, bindingId: candidate.bindingId,
+          candidateId: candidate.candidateId, code: candidate.code },
+      });
+      expect(approved.status).toBe(200);
+      await session.post('from owner to Claude');
+      expect(await tool('khala_read')).toMatchObject({ kind: 'batch' });
+      expect(await tool('khala_send', { message: 'from Claude to owner' })).toMatchObject({ kind: 'accepted' });
+      expect(await session.facts()).toHaveLength(1);
+      input.end();
+      expect(await running).toBe(0);
+      const client = createClaudeSessionClient({ descriptorPath: session.report.descriptorPath });
+      expect(await client.process!({ v: 1, op: 'process_challenge', sessionId: 'session-process-live',
+        keyId: candidate.keyId as string })).toEqual({ kind: 'refused', code: 'unproven' });
+    } finally {
+      input.end();
+      await running;
+    }
   });
 });

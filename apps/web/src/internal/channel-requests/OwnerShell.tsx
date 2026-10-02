@@ -13,6 +13,7 @@ import { useConversationIndex } from '../../composition/human/ConversationIndexR
 import type { LocalRouteCodec } from '../composition/routes';
 import aiurLogo from '../../landing/public/assets/aiur-logo.png';
 import { ThemeIcon } from '../../shell/icons';
+import { ClaudeProcessApproval } from '../controls/ClaudeProcessApproval';
 
 /** The loopback server has no notification stream, so the inbox is reread on this interval. */
 export const INBOX_POLL_MS = 5_000;
@@ -47,12 +48,14 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
   const listed = conversations ?? (roomId ? [{ id: roomId, title: 'Channel', preview: null, timestamp: null, unreadCount: null }] : []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [proofOpen, setProofOpen] = useState(false);
   const drawer = useRef<HTMLDivElement>(null);
   const drawerButton = useRef<HTMLButtonElement>(null);
   const drawerClose = useRef<HTMLButtonElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { setDrawerOpen(false); }, [chrome.path]);
   useEffect(() => { setCreateOpen(false); }, [chrome.path]);
+  useEffect(() => { setProofOpen(false); }, [chrome.path]);
   useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
   useEffect(() => {
     controller.start();
@@ -89,6 +92,8 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
         onSelect={id => { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); }}
         action={<><ChannelRequestsNavEntry controller={controller} href={routes.channelRequestsPath()}
           current={route.kind === 'channel_requests'} onNavigate={() => { setDrawerOpen(false); navigateRoute(routes.channelRequestsPath()); }} />
+          {roomId ? <button type="button" title="Approve Claude process" aria-label="Approve Claude process"
+            onClick={() => { setDrawerOpen(false); setProofOpen(true); }}>Claude key</button> : null}
           <button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel"
             onClick={() => { setDrawerOpen(false); setCreateOpen(true); }}>+</button></>} />
     </div>}>
@@ -98,5 +103,6 @@ export function OwnerShell({ createController, routes, chrome, context, navigate
     {createOpen ? <CreateChannelDialog context={context} mode="private" onClose={() => setCreateOpen(false)}
       onOpenRoom={id => { setCreateOpen(false); navigateRoute(routes.roomPath(id)); }}
       returnFocus={() => (window.matchMedia('(max-width: 959px)').matches ? drawerButton.current : createButton.current)?.focus()} /> : null}
+    {proofOpen && roomId ? <ClaudeProcessApproval channelId={roomId} onClose={() => setProofOpen(false)} /> : null}
   </AiurShell></main>;
 }

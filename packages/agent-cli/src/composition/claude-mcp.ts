@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
 import { ChannelAccessService, defaultOperationId, parseAccessTarget } from '../cli/channels/access.js';
 import { ChannelListingService, decodeRoster, validOriginArgument } from '../cli/channels/service.js';
@@ -20,6 +20,7 @@ import { failure, success, type McpTool } from '../mcp/tool.js';
 import { SEND_TOOL_NAME } from '../mcp/tools/send.js';
 import { createClaudeAgentEntry, type ClaudeAgentEntry } from './claude-agent.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
+import { claudeProcessBodyHash, claudeProcessProofMessage, type ClaudeProcessScope, type ClaudeProofOperation } from './claude-process-proof.js';
 import { LISTENING_MODES, parseSetRequest, type ListeningModeSetRequest } from './listening-mode.js';
 
 /**
@@ -59,6 +60,7 @@ export type ClaudeToolOptions = Readonly<{
     acknowledgeHookReceipt?(receipt: string): Promise<Outcome>;
   }>;
   channels?: ChannelToolsPort;
+  proveProcess?: () => Promise<Outcome>;
 }>;
 
 /**
@@ -125,6 +127,19 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
       const outcome = await guard(async () => await hostedActive() ? options.hosted!.read() : entry.read());
       if (outcome.kind === 'batch') return success(id, toolResult({ kind: 'batch', batch: outcome.text }));
       return success(id, toolResult(outcome));
+    },
+  };
+
+  const proveProcessTool: McpTool = {
+    name: 'khala_prove_session',
+    definition: () => ({ name: 'khala_prove_session',
+      description: 'Start owner verification for this exact Claude MCP process. Show the returned code to the owner in this Claude conversation. The owner must enter it in the Khala channel; this tool does not approve itself.',
+      inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }),
+    async call(args, { id, notification }) {
+      if (!onlyKeys(args, [])) return failure(id, -32602, 'Invalid params');
+      if (notification) return success(id, {});
+      return success(id, toolResult(await guard(async () => options.proveProcess
+        ? options.proveProcess() : { kind: 'refused', code: 'unavailable' })));
     },
   };
 
@@ -230,7 +245,8 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry, options: Claud
   };
 
   return createToolRegistry([
-    sendTool, readTool, statusTool, modeGetTool, modeSetTool, ...(options.hosted ? [hookReceiptTool] : []), listAgentsTool,
+    sendTool, readTool, statusTool, modeGetTool, modeSetTool, ...(options.proveProcess ? [proveProcessTool] : []),
+    ...(options.hosted ? [hookReceiptTool] : []), listAgentsTool,
     // A create retry under the same operation ID reads that request's current state, so the
     // plugin's frozen tool set needs no separate create-status tool.
     ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool, createChannelTool]
@@ -376,11 +392,54 @@ export type ClaudeMcpServerOptions = Readonly<{
  */
 export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promise<void> {
   if (options.claude === undefined && options.hosted === undefined) throw new CliError('transport_unavailable');
-  const tools = createClaudeToolRegistry(createClaudeAgentEntry(options.claude ?? {} as ClaudeSessionClient, options.env),
+  const processClient = options.claude?.process === undefined ? null : options.claude;
+  const pair = processClient === null ? null : generateKeyPairSync('ed25519');
+  let keyId: string | null = null;
+  const sessionId = options.env.CLAUDE_CODE_SESSION_ID;
+  const proveProcess = processClient === null || pair === null || typeof sessionId !== 'string' ? undefined : async (): Promise<Outcome> => {
+    const publicKey = pair.publicKey.export({ format: 'jwk' }).x;
+    if (typeof publicKey !== 'string') return { kind: 'refused', code: 'unavailable' };
+    const response = await processClient.process!({ v: 1, op: 'process_begin', sessionId, publicKey });
+    if (!plainObject(response) || response.kind !== 'process_candidate'
+      || typeof response.keyId !== 'string' || typeof response.code !== 'string'
+      || typeof response.candidateId !== 'string' || typeof response.bindingId !== 'string') {
+      return plainObject(response) && response.kind === 'refused' ? response as Outcome : { kind: 'refused', code: 'unavailable' };
+    }
+    keyId = response.keyId;
+    return { kind: 'process_candidate', sessionId, bindingId: response.bindingId, keyId,
+      candidateId: response.candidateId, code: response.code,
+      instruction: 'Show this code to the channel owner in this Claude conversation. The owner enters all fields in Khala to approve this MCP process.' };
+  };
+  async function signed(operation: ClaudeProofOperation, target: string, message?: string): Promise<Outcome> {
+    if (processClient === null || pair === null || keyId === null) return { kind: 'refused', code: 'unproven' };
+    const challenged = await processClient.process!({ v: 1, op: 'process_challenge', sessionId: target, keyId });
+    if (!plainObject(challenged) || challenged.kind !== 'process_challenge'
+      || typeof challenged.challenge !== 'string' || !validProcessScope(challenged.scope, target)) {
+      return plainObject(challenged) && challenged.kind === 'refused' ? challenged as Outcome : { kind: 'refused', code: 'unavailable' };
+    }
+    const signature = sign(null, claudeProcessProofMessage({ scope: challenged.scope,
+      operation, bodyHash: claudeProcessBodyHash(operation, message), challenge: challenged.challenge }),
+    pair.privateKey).toString('base64url');
+    const response = await processClient.process!(operation === 'read'
+      ? { v: 1, op: 'process_read', sessionId: target, keyId, challenge: challenged.challenge, signature }
+      : operation === 'end' ? { v: 1, op: 'process_end', sessionId: target, keyId, challenge: challenged.challenge, signature }
+      : { v: 1, op: 'process_send', sessionId: target, keyId, challenge: challenged.challenge, signature, message: message! });
+    return plainObject(response) && typeof response.kind === 'string' ? response as Outcome
+      : { kind: 'refused', code: 'unavailable' };
+  }
+  const claude = options.claude === undefined || processClient === null ? options.claude : {
+    ...options.claude,
+    read: async (target: string, signal?: AbortSignal) => keyId === null
+      ? options.claude!.read(target, signal) : signed('read', target) as ReturnType<ClaudeSessionClient['read']>,
+    send: async (target: string, body: string, signal?: AbortSignal) => keyId === null
+      ? options.claude!.send(target, body, signal) : signed('send', target, body) as ReturnType<ClaudeSessionClient['send']>,
+  } satisfies ClaudeSessionClient;
+  const tools = createClaudeToolRegistry(createClaudeAgentEntry(claude ?? {} as ClaudeSessionClient, options.env),
     { ...(options.hosted ? { hosted: options.hosted } : {}),
+      ...(proveProcess ? { proveProcess } : {}),
       ...(options.channels ? { channels: options.channels } : {}) });
   const unreachable = async (): Promise<never> => { throw new CliError('internal_error'); };
-  await runMcpServer({
+  try { await runMcpServer({
     input: options.input,
     output: options.output,
     tools,
@@ -392,7 +451,16 @@ export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promi
     postprocessResult: async input => input.primaryResult,
     postprocessReadResult: async input => ({ kind: 'composed', result: input.primaryResult }),
     signal: options.signal,
-  });
+  }); } finally {
+    if (keyId !== null && typeof sessionId === 'string') await signed('end', sessionId).catch(() => undefined);
+  }
+}
+
+function validProcessScope(value: unknown, sessionId: string): value is ClaudeProcessScope {
+  return plainObject(value) && value.harness === 'claude' && value.sessionId === sessionId
+    && typeof value.bindingId === 'string' && Number.isSafeInteger(value.generation)
+    && typeof value.ownerId === 'string' && typeof value.agentParticipantId === 'string'
+    && typeof value.deviceId === 'string';
 }
 
 /**

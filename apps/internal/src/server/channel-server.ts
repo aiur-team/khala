@@ -97,10 +97,15 @@ export type AgentAcknowledgementPort = Readonly<{
  */
 export type AgentSessionRoute = Readonly<{
   path: string;
+  approveProcess?(input: Readonly<{ sessionId: string; bindingId: string; candidateId: string; code: string }>): boolean;
   handle(input: Readonly<{ authorization: string; body: Record<string, unknown> }>): Promise<Readonly<{
     status: 200 | 400 | 401; body: Readonly<Record<string, unknown>>;
   }>>;
 }>;
+
+export const CLAUDE_PROCESS_APPROVE_ROUTE = {
+  method: 'POST', path: '/api/v1/channels/:channelId/claude-process/approve', admission: 'authenticated',
+} as const satisfies RouteSpec;
 
 /** Composition-supplied parts of the binding Stop control. */
 export type BindingStopOptions = Readonly<{
@@ -259,7 +264,8 @@ function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec 
   const role = discoveryRole(route) ?? bindingModeRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
-  if (route === ROUTES.listChannels || route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE || isMakeExternalRoute(route)) {
+  if (route === ROUTES.listChannels || route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE
+    || route === CLAUDE_PROCESS_APPROVE_ROUTE || isMakeExternalRoute(route)) {
     return principal.kind === 'human';
   }
   // Only a bound agent acknowledges, and only for its own binding.
@@ -308,6 +314,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   if (options.receipts) routes.push(ROUTES.receipts);
   if (options.acknowledgements) routes.push(ROUTES.acknowledgements, ROUTES.acknowledgementBatches);
   if (options.stop) routes.push(STOP_ROUTE);
+  if (options.agentSession?.approveProcess) routes.push(CLAUDE_PROCESS_APPROVE_ROUTE);
   if (options.bindingModes) routes.push(...BINDING_MODE_ROUTES);
   // Every binding effect commits through this barrier; Stop raises it before revoking durably.
   const barrier = createRevocationBarrier();
@@ -934,6 +941,25 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     sendJson(context.response, reply.status, reply.body);
   }
 
+  async function approveClaudeProcess(context: RouteContext<Principal>): Promise<void> {
+    const principal = context.principal;
+    if (principal?.kind !== 'human') { sendError(context.response, 403, 'forbidden'); return; }
+    const body = await readJsonObject(context, limits.maxBodyBytes);
+    if (Object.keys(body).sort().join(',') !== 'bindingId,candidateId,code,sessionId,v'
+      || body.v !== 1 || ![body.bindingId, body.candidateId, body.code, body.sessionId].every(
+        value => typeof value === 'string' && value.length > 0 && value.length <= 512)) {
+      sendError(context.response, 400, 'invalid_request'); return;
+    }
+    const target = ownerTarget(context.params.channelId!, body.bindingId as string, principal);
+    if (target.kind !== 'binding' || target.binding.ownerId !== principal.human.ownerId) {
+      sendError(context.response, 403, 'forbidden'); return;
+    }
+    const approved = options.agentSession?.approveProcess?.({ sessionId: body.sessionId as string,
+      bindingId: body.bindingId as string, candidateId: body.candidateId as string, code: body.code as string });
+    if (!approved) { sendError(context.response, 409, 'operation_mismatch'); return; }
+    sendJson(context.response, 200, { v: 1, outcome: 'approved' });
+  }
+
   function staticAsset({ route, response }: RouteContext<Principal>): void {
     const asset = APP_DOCUMENT_ROUTES.includes(route) || route === ROUTES.makeExternalDocument
       ? assets?.channelDocument
@@ -974,6 +1000,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.acknowledgements: return await acknowledgements(context);
           case ROUTES.acknowledgementBatches: return await acknowledgementBatches(context);
           case agentSession: return await agentSessionCall(context);
+          case CLAUDE_PROCESS_APPROVE_ROUTE: return await approveClaudeProcess(context);
           case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);

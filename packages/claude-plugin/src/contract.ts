@@ -49,6 +49,7 @@ export const DISPATCHED_VERBS = ['send', 'read', 'create', 'join', 'who'] as con
 export const FROZEN_MCP_TOOLS = [
   'khala_send',
   'khala_read',
+  'khala_prove_session',
   'khala_status',
   'khala_listening_mode',
   'khala_mode_get',

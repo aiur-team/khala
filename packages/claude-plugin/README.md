@@ -161,8 +161,10 @@ running, calls answer `descriptor_missing` and hooks stay silent. The server
 inspects the installed Claude Code at launch. An exactly proven version is tested,
 and any other inspected version is `experimental`. On either one, hook pulls and
 `khala_read` deliver with batch-token acknowledgement (see Read receipts). An
-uninspectable version stays `unproven`, and hook pulls and `khala_read` answer
-`unproven`. Hooks pull on their own only under an effective mode, and an
+uninspectable version stays `unproven`, and hook pulls answer `unproven`.
+An explicit `khala_read` or `khala_send` on an unproven route requires this
+MCP process's owner-approved key; without it, both answer `unproven`.
+Hooks pull on their own only under an effective mode, and an
 experimental mode needs the owner's experimental-route grant. The
 installed-version TTY acceptance still has to run.
 
@@ -187,7 +189,7 @@ is the source; `validatePlugin` enforces it.
 | Hook events | `SessionStart`, `FileChanged`, synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the `Stop` watcher and `FileChanged` notice use `asyncRewake` |
 | Hook commands | `hooks/session-start.mjs`, `hooks/file-changed.mjs`, `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
-| MCP entry | server `khala`, launched as `khala mcp-serve` (the staged launcher by absolute path once installed); tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_mode_get` and `khala_mode_set` (both carry tokens), `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
+| MCP entry | server `khala`, launched as `khala mcp-serve` (the staged launcher by absolute path once installed); tools `khala_send`, `khala_read`, `khala_prove_session`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_mode_get` and `khala_mode_set` (both carry tokens), `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
 
 The command and tool lists are the full planned set from decisions 24 and 30 and
 the claude-plugin, room-discovery and listening-modes contracts. Later tickets
@@ -197,6 +199,13 @@ marker (#333). So are `khala_mode_get` and `khala_mode_set` (#421): decision 42 
 the agent change its own mode, not only the owner.
 
 ## `/khala send` and `/khala read`
+
+On an installed Claude version whose content route is unproven, the owner can
+authorize explicit reads and sends for one MCP process. In the intended Claude
+conversation, call `khala_prove_session` and show its session ID, binding ID,
+candidate ID, and comparison code to the owner. The owner enters those fields
+in that channel's **Claude key** dialog in Khala. This does not enable hook
+delivery or listening modes. A restarted MCP process needs a new approval.
 
 `skills/khala/SKILL.md` is the bundled dispatcher. Its reusable source is
 `packages/agent-skill/SKILL.md`, and a test keeps their shared rules in sync.

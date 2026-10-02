@@ -8,8 +8,9 @@ import { validOperationArgument } from '@aiur/khala/cli/channels/access';
 import type { AccessRequestInput, AccessStatusInput, ChannelAccessResult, ChannelListInput } from '@aiur/khala/cli/channels/types';
 import type { CreateRequestInput } from '@aiur/khala/cli/channels/create/types';
 import {
-  type ClaudeAccessNotice, type ClaudeBindingServices, type ClaudeHookInput, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
+  CLAUDE_VERIFIED_PROCESS, type ClaudeAccessNotice, type ClaudeBindingServices, type ClaudeHookInput, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
 } from '@aiur/khala/composition/claude-session';
+import { claudeProcessBodyHash, type ClaudeProofOperation } from '@aiur/khala/composition/claude-process-proof';
 import { CLAUDE_SESSION_PATH, handleClaudeSessionRequest } from '@aiur/khala/composition/claude-session-http';
 import { openClaudeSessionState } from '@aiur/khala/composition/claude-session-state';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
@@ -39,6 +40,7 @@ import { discoveryPrincipal, sessionDigest } from '../channel-discovery/service'
 import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 import { createLocalAutomationProvider, localClaudeWatchWindow } from '../local-automation/provider';
 import { ensureClaudeWakeSignal, pulseClaudeWakeSignal } from './signal';
+import { createClaudeProcessProof } from './process-proof';
 
 // The Claude plugin's session route in the internal launcher's server. Hooks and the
 // plugin's `mcp-serve` present the launch's transport capability from `active.json`
@@ -128,6 +130,7 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
   const { root, store } = options;
   const automation = createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS);
   const expected = Buffer.from(options.transportCapability);
+  const processProof = createClaudeProcessProof(options.clock);
   const paths = (sessionId: string) => {
     const directory = path.join(root, INTERNAL_DISCOVERY_DIRECTORY, discoveryPrincipal(CLAUDE_HARNESS, sessionId));
     return {
@@ -549,12 +552,70 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     close() {
       for (const entry of signals.values()) entry.unsubscribe();
       signals.clear();
+      processProof.clear();
     },
     route: {
       path: CLAUDE_SESSION_PATH,
-      handle: input => handleClaudeSessionRequest(adapter, {
-        authorization: input.authorization, body: input.body, readBudgetBytes: MAX_SEND_BYTES,
-      }),
+      approveProcess(input) {
+        const binding = bound(input.sessionId);
+        return binding !== null && binding.bindingId === input.bindingId
+          && processProof.approve({ ...binding, sessionId: input.sessionId }, input.candidateId, input.code);
+      },
+      async handle(input) {
+        const body = input.body;
+        if (typeof body.op === 'string' && body.op.startsWith('process_')) {
+          const presented = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(input.authorization)?.[1];
+          const bytes = presented === undefined ? Buffer.alloc(0) : Buffer.from(presented);
+          if (bytes.length !== expected.length || !timingSafeEqual(bytes, expected)) {
+            return { status: 401, body: { kind: 'refused', code: 'unauthorized' } };
+          }
+          if (body.v !== 1 || typeof body.sessionId !== 'string') {
+            return { status: 400, body: { kind: 'refused', code: 'invalid_request' } };
+          }
+          const sessionId = body.sessionId;
+          const binding = bound(sessionId);
+          if (binding === null) return { status: 200, body: { kind: 'refused', code: 'session_not_bound' } };
+          const scope = { ...binding, sessionId };
+          if (body.op === 'process_begin' && typeof body.publicKey === 'string'
+            && Object.keys(body).length === 4) {
+            const candidate = processProof.begin(scope, body.publicKey);
+            return { status: 200, body: candidate === null
+              ? { kind: 'refused', code: 'invalid_request' } : { kind: 'process_candidate', ...candidate,
+                sessionId, bindingId: binding.bindingId } };
+          }
+          if (body.op === 'process_challenge' && typeof body.keyId === 'string'
+            && Object.keys(body).length === 4) {
+            const challenge = processProof.challenge(scope, body.keyId);
+            return { status: 200, body: challenge === null
+              ? { kind: 'refused', code: 'unproven' } : { kind: 'process_challenge', scope, challenge } };
+          }
+          if ((body.op === 'process_read' || body.op === 'process_send' || body.op === 'process_end')
+            && typeof body.keyId === 'string' && typeof body.challenge === 'string'
+            && typeof body.signature === 'string'
+            && (body.op === 'process_read' || body.op === 'process_end' ? Object.keys(body).length === 6
+              : Object.keys(body).length === 7 && typeof body.message === 'string')) {
+            const operation: ClaudeProofOperation = body.op === 'process_read' ? 'read'
+              : body.op === 'process_end' ? 'end' : 'send';
+            const message = body.op === 'process_send' ? body.message as string : undefined;
+            if (!processProof.authorize({ scope, keyId: body.keyId, operation,
+              bodyHash: claudeProcessBodyHash(operation, message), challenge: body.challenge,
+              signature: body.signature })) return { status: 200, body: { kind: 'refused', code: 'unproven' } };
+            if (operation === 'end') {
+              processProof.revoke(scope);
+              return { status: 200, body: { kind: 'process_ended' } };
+            }
+            const call = { credential: presented!, sessionId, [CLAUDE_VERIFIED_PROCESS]: scope };
+            const outcome = operation === 'read'
+              ? await adapter.read(call, { maxBytes: MAX_SEND_BYTES })
+              : await adapter.send(call, { body: message! });
+            return { status: 200, body: outcome };
+          }
+          return { status: 400, body: { kind: 'refused', code: 'invalid_request' } };
+        }
+        return handleClaudeSessionRequest(adapter, {
+          authorization: input.authorization, body, readBudgetBytes: MAX_SEND_BYTES,
+        });
+      },
     },
   };
 }

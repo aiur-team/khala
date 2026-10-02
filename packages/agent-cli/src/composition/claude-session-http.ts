@@ -35,6 +35,13 @@ export type ClaudeSessionRequest =
   | (Readonly<{ v: 1; op: 'access_status'; sessionId: string }> & AccessStatusInput)
   | (Readonly<{ v: 1; op: 'create_request'; sessionId: string }> & CreateRequestInput);
 
+export type ClaudeProcessRequest =
+  | Readonly<{ v: 1; op: 'process_begin'; sessionId: string; publicKey: string }>
+  | Readonly<{ v: 1; op: 'process_challenge'; sessionId: string; keyId: string }>
+  | Readonly<{ v: 1; op: 'process_read'; sessionId: string; keyId: string; challenge: string; signature: string }>
+  | Readonly<{ v: 1; op: 'process_end'; sessionId: string; keyId: string; challenge: string; signature: string }>
+  | Readonly<{ v: 1; op: 'process_send'; sessionId: string; keyId: string; challenge: string; signature: string; message: string }>;
+
 export type ClaudeSessionResponse = Readonly<{ status: 200 | 400 | 401; body: Readonly<Record<string, unknown>> }>;
 
 /**
@@ -148,6 +155,8 @@ type Result<T> = Exclude<T, ClaudeSessionRefusal> | ClaudeClientRefusal;
 export type ClaudeModeSetRequest = Omit<ModeSetInput, 'acknowledgeToken'>;
 
 export interface ClaudeSessionClient {
+  /** Raw process proof exchange; available only to an MCP child holding its private key. */
+  process?(request: ClaudeProcessRequest, signal?: AbortSignal): Promise<unknown>;
   /** Hook pull: delivers a batch and never acknowledges. */
   pull(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeReadOutcome>>;
   /** Agent-initiated: each of these acknowledges every retained token server-side. */
@@ -198,7 +207,7 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
   const transport = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS;
 
-  async function call(request: ClaudeSessionRequest, signal: AbortSignal | undefined): Promise<unknown> {
+  async function call(request: ClaudeSessionRequest | ClaudeProcessRequest, signal: AbortSignal | undefined): Promise<unknown> {
     const descriptor = await readRuntimeDescriptor(options.descriptorPath);
     if (!descriptor.ok) return { kind: 'refused', code: descriptor.code };
     // A hook must never hang on a server that accepts the connection and goes quiet.
@@ -237,6 +246,7 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
   }
 
   return {
+    process: call,
     pull: (sessionId, signal) => batchCall('pull', sessionId, signal),
     read: (sessionId, signal) => batchCall('read', sessionId, signal),
     async status(sessionId, signal) {

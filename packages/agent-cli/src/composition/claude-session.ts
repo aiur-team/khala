@@ -151,7 +151,10 @@ export const CLAUDE_SESSION_REFUSALS = [
 ] as const;
 export type ClaudeSessionRefusal = Readonly<{ kind: 'refused'; code: (typeof CLAUDE_SESSION_REFUSALS)[number] }>;
 
-export type ClaudeSessionCall = Readonly<{ credential: string; sessionId: string }>;
+/** Only the server composition may attach this after verifying a process signature. */
+export const CLAUDE_VERIFIED_PROCESS = Symbol('claude-verified-process');
+export type ClaudeSessionCall = Readonly<{ credential: string; sessionId: string;
+  [CLAUDE_VERIFIED_PROCESS]?: SessionBinding }>;
 
 export type ClaudeReadOutcome = Readonly<{ kind: 'batch'; text: string }> | Readonly<{ kind: 'empty' }> | ClaudeSessionRefusal;
 /** A piggyback batch, rendered without its token, delivered alongside a send or mode change. */
@@ -304,6 +307,15 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     return capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call';
   }
 
+  function verifiedProcess(call: ClaudeSessionCall, resolved: Resolved): boolean {
+    const proof = call[CLAUDE_VERIFIED_PROCESS];
+    const binding = resolved.binding;
+    return proof !== undefined && proof.harness === binding.harness && proof.sessionId === binding.sessionId
+      && proof.bindingId === binding.bindingId && proof.generation === binding.generation
+      && proof.ownerId === binding.ownerId && proof.agentParticipantId === binding.agentParticipantId
+      && proof.deviceId === binding.deviceId;
+  }
+
   /** One `readBatch` call that carries `token`; any batch it selects stays outstanding and replays. */
   async function acknowledgeOnly(services: ClaudeBindingServices, bindingId: BindingId, token: string): Promise<void> {
     await services.read.read({ bindingId, maxBytes: 0, acknowledgeToken: token });
@@ -369,7 +381,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        if (!await handoff(resolved)) return refused('unproven');
+        if (!verifiedProcess(call, resolved) && !await handoff(resolved)) return refused('unproven');
         const { value } = await agentCall<ClaudeReadOutcome>(resolved, async current => {
           const read = await resolved.services.read.read({
             bindingId: resolved.binding.bindingId,
@@ -387,7 +399,8 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const { value: result, batch } = await tokenBearing(resolved, current => resolved.services.send({
+        if (!verifiedProcess(call, resolved) && !await handoff(resolved)) return refused('unproven');
+        const { value: result, batch } = await tokenBearing(resolved, verifiedProcess(call, resolved), current => resolved.services.send({
           body: input.body, ...(current === undefined ? {} : { acknowledgeToken: current }),
         }), result => result.kind === 'accepted');
         const piggyback = batch === null ? {} : { batch };
@@ -437,7 +450,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const { value: result, batch } = await tokenBearing(resolved, current => resolved.services.setMode({
+        const { value: result, batch } = await tokenBearing(resolved, false, current => resolved.services.setMode({
           commandId: input.commandId,
           expectedVersion: input.expectedVersion,
           requested: input.requested,
@@ -555,12 +568,13 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
 
   async function tokenBearing<T>(
     resolved: Resolved,
+    processVerified: boolean,
     call: (current: string | undefined) => Promise<PiggybackStep<T>>,
     committedBy: (value: T) => boolean,
   ): Promise<Readonly<{ value: T; batch: string | null }>> {
     // Only `batch_token_next_call` permits retained-token handoff; otherwise the call
     // runs bare and its piggyback batch is neither shown nor retained, so it replays.
-    if (!await handoff(resolved)) return { value: (await call(undefined)).value, batch: null };
+    if (!processVerified && !await handoff(resolved)) return { value: (await call(undefined)).value, batch: null };
     const { value } = await agentCall(resolved, async current => {
       const step = await call(current);
       const text = step.batch === null ? null : renderOrNull(step.batch);

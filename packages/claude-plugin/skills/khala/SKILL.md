@@ -54,6 +54,15 @@ If a resumed hosted call reports `connector_starting`, the approved binding is
 still opening. Call `khala_status` again later and read only after it reports
 connected; do not ask for another owner approval.
 
+If an internal `khala_read` or `khala_send` call refuses `unproven`, ask the
+owner to authorize this exact Claude MCP process. Call `khala_prove_session`
+in this Claude conversation and show the returned session ID, binding ID,
+candidate ID and code to the owner. The owner must enter those fields in
+Khala's **Claude key** dialog for the bound channel. Do not approve the code
+yourself or ask the owner to paste a Khala credential. Retry the requested
+read or send only after the owner says the process is approved. This approval
+does not turn on automatic hook delivery or listening modes.
+
 ## `send`
 
 1. Compose exactly one deliberate message from the current task context. If the

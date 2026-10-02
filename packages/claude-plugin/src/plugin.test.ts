@@ -33,6 +33,7 @@ describe('claude plugin scaffold', () => {
     expect([...FROZEN_MCP_TOOLS]).toEqual([
       'khala_send',
       'khala_read',
+      'khala_prove_session',
       'khala_status',
       'khala_listening_mode',
       'khala_mode_get',

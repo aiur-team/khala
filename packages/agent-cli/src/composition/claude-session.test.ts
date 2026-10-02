@@ -483,9 +483,9 @@ describe('Claude session adapter', () => {
       await expect(claude.pull(A1, { maxBytes: 1 })).resolves.toEqual({ kind: 'refused', code: 'unproven' });
       await expect(claude.read(A1, { maxBytes: 1 })).resolves.toEqual({ kind: 'refused', code: 'unproven' });
       await expect(claude.status(A1)).resolves.toEqual({ kind: 'status', acknowledged: 0 });
-      await claude.send(A1, { body: 'hello' });
+      await expect(claude.send(A1, { body: 'hello' })).resolves.toEqual({ kind: 'refused', code: 'unproven' });
       expect(services.reads.get('binding-1')!.calls).toEqual([]);
-      expect(services.sends).toEqual([{ bindingId: 'binding-1' }]);
+      expect(services.sends).toEqual([]);
       expect(state.tokens.get(S1)).toEqual(retained('retained'));
       await expect(claude.mode(A1)).resolves.toMatchObject({
         kind: 'mode', requested: 'sync', acknowledgement,
