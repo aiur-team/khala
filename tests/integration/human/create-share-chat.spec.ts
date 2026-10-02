@@ -118,6 +118,9 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
     const shareUrl = await alice.evaluate(() => navigator.clipboard.readText());
     expect(shareUrl).toMatch(/\/join\/[^/?#]+$/u);
+    if (process.env.KHALA_E2E_SHARE_LINK_FILE) {
+      writeFileSync(process.env.KHALA_E2E_SHARE_LINK_FILE, shareUrl, { mode: 0o600 });
+    }
 
     recordStage('bob-join');
     const bob = await bobContext.newPage();

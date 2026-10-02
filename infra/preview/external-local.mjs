@@ -296,6 +296,7 @@ async function main() {
     const smokeEnv = { ...env, KHALA_E2E_LIVE: '1', KHALA_E2E_DISPOSABLE_ENV: descriptorPath,
       KHALA_E2E_STAGE_DIAGNOSTIC: path.join(scratch, 'browser-stage.json'),
       KHALA_E2E_RESTART_DIAGNOSTIC: path.join(scratch, 'restart-stage.json'),
+      KHALA_E2E_SHARE_LINK_FILE: path.join(scratch, 'connector-share-link'),
       KHALA_E2E_USER_A: env.KHALA_PREVIEW_OIDC_USER_A_EMAIL, KHALA_E2E_USER_A_PASSWORD: passwordA,
       KHALA_E2E_USER_B: env.KHALA_PREVIEW_OIDC_USER_B_EMAIL, KHALA_E2E_USER_B_PASSWORD: passwordB,
       KHALA_E2E_MATRIX_OBSERVER_TOKEN: observer.token, KHALA_E2E_CERT_SPKI: tls.spki,
