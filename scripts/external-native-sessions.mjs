@@ -305,6 +305,8 @@ function main() {
     const roots = Object.fromEntries(['state', 'data', 'config', 'tmp'].map(name => {
       const file = path.join(directory, name); fs.mkdirSync(file, { mode: 0o700 }); return [name, file];
     }));
+    const tmpAlias = path.join('/tmp', `k8-${randomBytes(12).toString('hex')}`);
+    fs.symlinkSync(roots.tmp, tmpAlias, 'dir');
     const bin = path.join(directory, 'bin');
     fs.mkdirSync(bin, { mode: 0o700 });
     for (const [name, target] of [['codex', codex], ['claude', claude], ['node', process.execPath]]) {
@@ -314,7 +316,7 @@ function main() {
     fs.writeFileSync(browserShim, `#!/bin/sh\numask 077\nexec ${safeWord(process.execPath)} ${safeWord(fileURLToPath(import.meta.url))} capture-open ${safeWord(directory)} "$@"\n`, { mode: 0o700 });
     const env = { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, LANG: 'C.UTF-8', TERM: 'xterm-256color',
       HOME: privateHome, CODEX_HOME: path.join(privateHome, '.codex'), XDG_STATE_HOME: roots.state,
-      XDG_DATA_HOME: roots.data, XDG_CONFIG_HOME: roots.config, TMPDIR: roots.tmp,
+      XDG_DATA_HOME: roots.data, XDG_CONFIG_HOME: roots.config, TMPDIR: tmpAlias,
       KHALA_APP_ORIGIN: origin, KHALA_EXTERNAL_ORIGIN: origin,
       NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS };
     // The installed setup owns Claude hooks/plugin. Codex 0.160 needs the
@@ -350,7 +352,7 @@ function main() {
     const claudeAuth = JSON.parse(checked(claude, ['auth', 'status'], env));
     if (claudeAuth.loggedIn !== true) fail('claude_provider_auth');
     const state = { v: 1, id: randomBytes(12).toString('hex'), directory, home: privateHome,
-      socket: path.join(directory, 'tmux.sock'), roots, cli, origin, codex, claude, versions, env,
+      socket: path.join(directory, 'tmux.sock'), roots, tmpAlias, cli, origin, codex, claude, versions, env,
       startedAt: Date.now(), actors: {} };
     save(directory, state);
     for (const [actor, bin, model] of [['codex', codex, 'gpt-6.1-sol'], ['claude', claude, 'sonnet']]) {
@@ -508,6 +510,12 @@ function main() {
   if (action === 'stop') {
     for (const actor of ['codex', 'claude']) {
       try { tmux(state, ['kill-session', '-t', actor]); } catch { /* already exited */ }
+    }
+    if (state.tmpAlias) {
+      if (!/^\/tmp\/k8-[0-9a-f]{24}$/u.test(state.tmpAlias)
+        || !fs.lstatSync(state.tmpAlias).isSymbolicLink()
+        || fs.readlinkSync(state.tmpAlias) !== state.roots.tmp) fail('temp_alias_mismatch');
+      fs.unlinkSync(state.tmpAlias);
     }
     process.stdout.write(JSON.stringify({ kind: 'native_stopped' }) + '\n');
     return;

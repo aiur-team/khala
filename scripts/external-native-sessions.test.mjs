@@ -1,11 +1,32 @@
 import assert from 'node:assert/strict';
-import { createHash, createPublicKey, generateKeyPairSync } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { nativeIdle, pendingMcpApproval, proofCandidate, proofFingerprint, validateDiscoveryOpen } from './external-native-sessions.mjs';
+
+test('native stop removes only its exact short private TMPDIR alias', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-external-alias-test-'));
+  fs.chmodSync(root, 0o700);
+  const target = path.join(root, 'tmp');
+  fs.mkdirSync(target, { mode: 0o700 });
+  const alias = path.join('/tmp', `k8-${randomBytes(12).toString('hex')}`);
+  fs.symlinkSync(target, alias, 'dir');
+  fs.writeFileSync(path.join(root, 'native-sessions.json'), JSON.stringify({ socket: path.join(root, 'missing.sock'),
+    env: { PATH: '/usr/bin:/bin' }, roots: { tmp: target }, tmpAlias: alias }) + '\n', { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, [path.resolve('scripts/external-native-sessions.mjs'), 'stop', root],
+      { encoding: 'utf8' });
+    assert.equal(result.status, 0);
+    assert.equal(fs.existsSync(alias), false);
+  } finally {
+    if (fs.existsSync(alias)) fs.unlinkSync(alias);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('native prompts wait until the previous model turn is idle', () => {
   assert.equal(nativeIdle('› Ask Codex to do anything\nGPT-6.1-Sol default', 'codex'), true);
