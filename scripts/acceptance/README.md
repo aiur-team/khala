@@ -146,9 +146,21 @@ mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs s
 mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs start-agents "$RUN" gpt-5.3-codex claude-sonnet-4-6 --external-pty
 ```
 
-`auth-handoff` copies only `~/.codex/auth.json` and `~/.claude/.credentials.json` into the mode-0700 run home as mode-0600 files. It never prints credentials or copies `~/.claude.json`. `auth` checks both providers' native login status before PTY launch. If either needs interactive sign-in, complete it under the printed private `HOME`/`CODEX_HOME` and rerun `auth`; do not import general account settings. The private profile and PTYs may contact model providers. Khala's Node transport is constrained to loopback and Chromium uses a loopback-only proxy bypass; outbound attempts are counted without logging destinations.
+`auth-handoff` copies `~/.codex/auth.json`, writes only `claudeAiOauth` from `~/.claude/.credentials.json`, and writes three reviewed nonsecret onboarding fields from `~/.claude.json` into the mode-0700 run home as mode-0600 files. It checks source ownership, mode, and schema, and never copies the full Claude settings file or unrelated OAuth grants. `auth` checks both providers' native login status and Claude's private TUI onboarding state before PTY launch. If either fails, resolve that typed prerequisite before starting agents. The private profile and PTYs may contact model providers. Khala's Node transport is constrained to loopback and Chromium uses a loopback-only proxy bypass; outbound attempts are counted without logging destinations.
 
 `--external-pty` prints two private launcher paths. Run each launcher in its own persistent terminal in the same Linux PID namespace as later runner commands; agent sandbox turns may use separate namespaces and cannot verify an Executor-owned TUI. Each launcher records its PID, process start time, and PID namespace. `open` requires both exact processes to be live, and `stop`/`destroy` refuse while either remains live or its namespace is unobservable; exit both TUIs in their terminals first. Without that flag, `start-agents` creates a private tmux socket and prints attach commands. In each fresh native TUI, complete one real model turn, review its native trust dialog, and copy its `/status` session ID. The exact IDs must appear in that run's private native session files. Then:
+
+For a headless shared namespace, start one private tmux server from a persistent owner terminal and run all subsequent runner commands inside its `control` shell. From that shell, create the two agent sessions; inspect their PID records with `status` before `open`. Do not launch the agents through separate tool PTYs, which may each have a different PID namespace.
+
+```sh
+tmux -S "$RUN/tmux.sock" new-session -s control
+# Inside the control shell:
+tmux -S "$RUN/tmux.sock" new-session -d -s codex "$RUN/codex-pty.sh"
+tmux -S "$RUN/tmux.sock" new-session -d -s claude "$RUN/claude-pty.sh"
+mise exec node@22.23.2 -- node --import tsx scripts/internal-native-canary.mjs status "$RUN"
+```
+
+After the run, exit both model TUIs. In the `control` shell, run `... stop "$RUN"` to verify their termination, seal the launchers, and stop the browser/server. Then kill the private tmux server with `tmux -S "$RUN/tmux.sock" kill-server`. `... destroy "$RUN"` can then remove the sealed private directory from another shell. A live agent, unobservable PID namespace, or still-running control server produces a typed refusal.
 
 ```sh
 mise exec node@22.23.2 -- pnpm --silent test:internal:native open "$RUN" '<codex-session-id>' '<claude-session-id>'

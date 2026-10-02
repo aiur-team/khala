@@ -28,8 +28,19 @@ const batchToken = value => {
   }
   return null;
 };
+const acceptedEvent = value => {
+  if (typeof value === 'string') {
+    try { return acceptedEvent(JSON.parse(value)); } catch { return null; }
+  }
+  if (Array.isArray(value)) return value.map(acceptedEvent).find(Boolean) ?? null;
+  if (value && typeof value === 'object') {
+    if (value.kind === 'accepted' && typeof value.eventId === 'string') return value.eventId;
+    return Object.values(value).map(acceptedEvent).find(Boolean) ?? null;
+  }
+  return null;
+};
 
-export function modelEvidence(rows, harness, received, sent) {
+export function modelEvidence(rows, harness, received, sent, expectedEventId = null) {
   const calls = [];
   const results = [];
   rows.forEach((row, index) => {
@@ -69,8 +80,11 @@ export function modelEvidence(rows, harness, received, sent) {
   });
   const sendCall = successful.some(read => calls.some(call => {
     const input = asObject(call.input);
+    const result = harness === 'codex' ? call.result
+      : results.find(item => item.id === call.id && item.index > call.index && !item.error)?.content;
     return call.index > read.index && isTool(call.name, 'khala_send') && !call.error
       && contains(input?.message, sent)
+      && typeof expectedEventId === 'string' && acceptedEvent(result) === expectedEventId
       && (harness === 'claude' || Boolean(read.token) && input?.ackBatchToken === read.token);
   }));
   return { readCall: reads.length > 0, visible: successful.length > 0, sendCall };

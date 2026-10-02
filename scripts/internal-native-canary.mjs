@@ -71,6 +71,15 @@ const ready = run => {
   return result;
 };
 const authenticated = run => {
+  const onboardingFile = path.join(run.home, '.claude.json');
+  let onboarding;
+  try {
+    const stat = fs.lstatSync(onboardingFile);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) stage('claude_tui_onboarding');
+    onboarding = JSON.parse(fs.readFileSync(onboardingFile, 'utf8'));
+  } catch { stage('claude_tui_onboarding'); }
+  if (onboarding.hasCompletedOnboarding !== true || onboarding.installMethod !== 'native'
+    || !/^\d+\.\d+\.\d+$/.test(onboarding.lastOnboardingVersion ?? '')) stage('claude_tui_onboarding');
   const env = environment(run);
   for (const [name, bin, argv] of [['codex', run.codex, ['login', 'status']], ['claude', run.claude, ['auth', 'status']]]) {
     const result = spawnSync(bin, argv, { env, encoding: 'utf8', timeout: 20_000 });
@@ -134,6 +143,7 @@ const agentLauncher = (run, name) => {
     ? ['-c', 'check_for_update_on_startup=false', '--no-daemon'] : [])];
   const pidFile = path.join(directory, `${name}-pty.pid`);
   const lines = ['#!/bin/sh', 'set -eu', 'umask 077', ...Object.entries(env).map(([key, value]) => `export ${key}=${shellWord(value)}`),
+    `[ ! -e ${shellWord(path.join(directory, 'external-closed'))} ] || exit 68`,
     `cd ${shellWord(directory)}`, 'pid=$$', 'start=$(awk \'{print $22}\' "/proc/$pid/stat")',
     'namespace=$(readlink /proc/self/ns/pid)',
     `printf '%s %s %s\\n' "$pid" "$start" "$namespace" > ${shellWord(pidFile)}`,
@@ -256,21 +266,43 @@ async function main() {
   if (action === 'auth-handoff') {
     if (run.agentsStartedAt || run.channelId) stage('auth_handoff_too_late');
     const sourceHome = process.env.KHALA_CANARY_AUTH_HOME || os.homedir();
-    const entries = [
-      [path.join(sourceHome, '.codex', 'auth.json'), path.join(run.home, '.codex', 'auth.json')],
-      [path.join(sourceHome, '.claude', '.credentials.json'), path.join(run.home, '.claude', '.credentials.json')],
-    ];
-    for (const [source, target] of entries) {
+    const safeSource = source => {
       let stat;
       try { stat = fs.lstatSync(source); } catch { stage('provider_auth_source_missing'); }
       if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid()
         || (stat.mode & 0o077) !== 0 || stat.size < 1 || stat.size > 1024 * 1024) stage('provider_auth_source_unsafe');
+      return source;
+    };
+    const writePrivate = (target, value) => {
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-      try { fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL); } catch { stage('provider_auth_target_exists'); }
-      fs.chmodSync(target, 0o600);
-    }
-    process.stdout.write(JSON.stringify({ kind: 'private_auth_copied', id: run.id, files: 2,
-      next: 'Run auth; no other account settings were imported.' }) + '\n');
+      try { fs.writeFileSync(target, value, { flag: 'wx', mode: 0o600 }); } catch { stage('provider_auth_target_exists'); }
+    };
+    const codexSource = safeSource(path.join(sourceHome, '.codex', 'auth.json'));
+    const claudeSource = safeSource(path.join(sourceHome, '.claude', '.credentials.json'));
+    const onboardingSource = safeSource(path.join(sourceHome, '.claude.json'));
+    let credentials;
+    let sourceOnboarding;
+    try {
+      credentials = JSON.parse(fs.readFileSync(claudeSource, 'utf8'));
+      sourceOnboarding = JSON.parse(fs.readFileSync(onboardingSource, 'utf8'));
+    } catch { stage('provider_auth_source_schema'); }
+    const provider = credentials?.claudeAiOauth;
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)
+      || typeof provider.accessToken !== 'string' || !provider.accessToken
+      || typeof provider.refreshToken !== 'string' || !provider.refreshToken) stage('claude_provider_schema');
+    if (sourceOnboarding?.hasCompletedOnboarding !== true || sourceOnboarding.installMethod !== 'native'
+      || !/^\d+\.\d+\.\d+$/.test(sourceOnboarding.lastOnboardingVersion ?? '')) stage('claude_tui_onboarding_source');
+    fs.mkdirSync(path.join(run.home, '.codex'), { recursive: true, mode: 0o700 });
+    try { fs.copyFileSync(codexSource, path.join(run.home, '.codex', 'auth.json'), fs.constants.COPYFILE_EXCL); }
+    catch { stage('provider_auth_target_exists'); }
+    fs.chmodSync(path.join(run.home, '.codex', 'auth.json'), 0o600);
+    writePrivate(path.join(run.home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: provider }) + '\n');
+    writePrivate(path.join(run.home, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, lastOnboardingVersion: sourceOnboarding.lastOnboardingVersion,
+      installMethod: 'native',
+    }) + '\n');
+    process.stdout.write(JSON.stringify({ kind: 'private_auth_copied', id: run.id, files: 3,
+      next: 'Run auth; only Claude provider credentials and three onboarding fields were imported.' }) + '\n');
     return;
   }
   if (action === 'auth') {
@@ -310,6 +342,7 @@ async function main() {
     const [codexId, claudeId] = args;
     if (!codexId || !claudeId || args.length !== 2) stage('session_arguments');
     if (run.channelId) stage('channel_already_open');
+    if (exists(path.join(directory, 'external-closed'))) stage('external_launch_closed');
     if (checked('/usr/bin/git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], process.env) !== run.packageCommit
       || fileDigest(path.join(repositoryRoot, 'pnpm-lock.yaml')) !== run.lockfileSha256) stage('candidate_drift');
     verifyArtifact(run.tarball, run.tarballSha256);
@@ -403,7 +436,7 @@ async function main() {
       replies[name] = events[0];
       if (acknowledged(facts, challenge[0].eventId, binding).length !== 1) stage(`${name}_human_message_ack`);
       if (!run.browserProofs?.includes(digest(expected))) stage(`${name}_browser_reload`);
-      const own = modelEvidence(nativeInterval(run, name), name, run.challenge.body, expected);
+      const own = modelEvidence(nativeInterval(run, name), name, run.challenge.body, expected, events[0].eventId);
       if (!own.readCall || !own.visible || !own.sendCall) stage(`${name}_model_read_ack_reply`);
     }
     const paths = [];
@@ -490,23 +523,38 @@ async function main() {
   }
   if (action === 'stop' || action === 'destroy') {
     if (run.ptyMode === 'external') {
-      const states = ['codex', 'claude'].map(name => externalProcess(run, name));
-      if (states.includes('untracked')) stage('external_process_untracked');
-      if (states.includes('unobservable')) stage('external_process_unobservable');
-      if (states.includes('live')) stage('external_agents_running');
+      const sealed = exists(path.join(directory, 'external-closed')) && run.externalTerminationVerifiedAt;
+      if (!sealed) {
+        const states = ['codex', 'claude'].map(name => externalProcess(run, name));
+        if (states.includes('untracked')) stage('external_process_untracked');
+        if (states.includes('unobservable')) stage('external_process_unobservable');
+        if (states.includes('live')) stage('external_agents_running');
+        if (action === 'destroy') stage('external_stop_required');
+        fs.writeFileSync(path.join(directory, 'external-closed'), '', { flag: 'wx', mode: 0o600 });
+        if (['codex', 'claude'].some(name => externalProcess(run, name) === 'live')) stage('external_agents_running');
+        run.externalTerminationVerifiedAt = Date.now();
+        save(run);
+      }
     }
     if (run.browserPid && childAlive(run.browserPid)) process.kill(-run.browserPid, 'SIGTERM');
     if (run.serverPid && childAlive(run.serverPid)) process.kill(-run.serverPid, 'SIGTERM');
-    for (const name of ['codex', 'claude']) { try { tmux(run, ['kill-session', '-t', name]); } catch { /* already stopped */ } }
-    try { tmux(run, ['kill-server']); } catch { /* already stopped */ }
+    if (run.ptyMode !== 'external') {
+      for (const name of ['codex', 'claude']) { try { tmux(run, ['kill-session', '-t', name]); } catch { /* already stopped */ } }
+      try { tmux(run, ['kill-server']); } catch { /* already stopped */ }
+    }
     const deadline = Date.now() + 5_000;
     while ((run.serverPid && childAlive(run.serverPid) || run.browserPid && childAlive(run.browserPid)) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (run.serverPid && childAlive(run.serverPid) || run.browserPid && childAlive(run.browserPid)) stage('cleanup_orphaned_process');
+    delete run.serverPid;
+    delete run.browserPid;
+    delete run.browserPort;
     delete run.ownerUrl;
     save(run);
     if (action === 'destroy') {
+      if (run.ptyMode === 'external' && spawnSync('/usr/bin/tmux', ['-S', run.socket, 'list-sessions'],
+        { env: environment(run), encoding: 'utf8' }).status === 0) stage('control_session_running');
       if (!fs.realpathSync(directory).startsWith('/tmp/khala-native-')) stage('destroy_path');
       fs.rmSync(directory, { recursive: true, force: false });
     }

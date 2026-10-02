@@ -25,15 +25,19 @@ test('native canary refuses an unproven session before opening a room', () => {
 test('Codex evidence requires challenge in completed read result before send', () => {
   const row = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
   const read = row('khala_read', {}, '{"events":["challenge"],"batchToken":"token-1"}');
-  const send = row('khala_send', { message: 'reply challenge', ackBatchToken: 'token-1' }, '{"ok":true}');
+  const send = row('khala_send', { message: 'reply challenge', ackBatchToken: 'token-1' }, '{"kind":"accepted","eventId":"event-1"}');
   assert.deepEqual(modelEvidence([row('khala_read', {}, '{"events":[]}'), send], 'codex', 'challenge', 'reply'),
     { readCall: true, visible: false, sendCall: false });
   assert.deepEqual(modelEvidence([send, read], 'codex', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: false });
-  assert.deepEqual(modelEvidence([read, send], 'codex', 'challenge', 'reply'),
+  assert.deepEqual(modelEvidence([read, send], 'codex', 'challenge', 'reply', 'event-1'),
     { readCall: true, visible: true, sendCall: true });
-  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'wrong' }, '{"ok":true}')],
-    'codex', 'challenge', 'reply'), { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'wrong' },
+    '{"kind":"accepted","eventId":"event-1"}')], 'codex', 'challenge', 'reply', 'event-1'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, row('khala_send', { message: 'reply', ackBatchToken: 'token-1' },
+    '{"kind":"accepted","eventId":"other"}')], 'codex', 'challenge', 'reply', 'event-1'),
+  { readCall: true, visible: true, sendCall: false });
 });
 
 test('Claude evidence correlates read result by tool_use_id before send', () => {
@@ -43,8 +47,15 @@ test('Claude evidence correlates read result by tool_use_id before send', () => 
   const send = call('send-1', 'khala_send', { message: 'reply' });
   assert.deepEqual(modelEvidence([read, result('unrelated', 'challenge'), send], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: false, sendCall: false });
-  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send], 'claude', 'challenge', 'reply'),
+  const accepted = result('send-1', '{"kind":"accepted","eventId":"event-2"}');
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, accepted], 'claude', 'challenge', 'reply', 'event-2'),
     { readCall: true, visible: true, sendCall: true });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('unrelated',
+    '{"kind":"accepted","eventId":"event-2"}')], 'claude', 'challenge', 'reply', 'event-2'),
+  { readCall: true, visible: true, sendCall: false });
+  assert.deepEqual(modelEvidence([read, result('read-1', 'challenge'), send, result('send-1',
+    '{"kind":"refused","code":"not_connected"}')], 'claude', 'challenge', 'reply', 'event-2'),
+  { readCall: true, visible: true, sendCall: false });
   assert.deepEqual(modelEvidence([send, read, result('read-1', 'challenge')], 'claude', 'challenge', 'reply'),
     { readCall: true, visible: true, sendCall: false });
 });
@@ -53,8 +64,8 @@ test('quoted challenge is visible only in the matching native read result', () =
   const challenge = 'Codex send exactly "18 nonce codex"; Claude send exactly "18 nonce claude".';
   const codexRow = (tool, args, result) => ({ type: 'response_item', payload: { type: 'mcp_tool_call', tool, arguments: args, result } });
   const read = codexRow('khala_read', {}, { content: [{ type: 'text', text: JSON.stringify({ events: [{ body: challenge }], batchToken: 'token-3' }) }] });
-  const send = codexRow('khala_send', { message: '18 nonce codex', ackBatchToken: 'token-3' }, { ok: true });
-  assert.deepEqual(modelEvidence([read, send], 'codex', challenge, '18 nonce codex'),
+  const send = codexRow('khala_send', { message: '18 nonce codex', ackBatchToken: 'token-3' }, { kind: 'accepted', eventId: 'event-3' });
+  assert.deepEqual(modelEvidence([read, send], 'codex', challenge, '18 nonce codex', 'event-3'),
     { readCall: true, visible: true, sendCall: true });
   assert.deepEqual(modelEvidence([codexRow('khala_read', {}, { events: [] }),
     codexRow('khala_send', { message: challenge }, { ok: true })], 'codex', challenge, challenge),
@@ -99,4 +110,49 @@ test('ack proof rejects a receipt for another event, binding, generation or sour
   assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, generation: 2 } }], 'challenge', binding), []);
   assert.deepEqual(acknowledged([{ ...fact, events: [{ eventId: 'other' }] }], 'challenge', binding), []);
   assert.deepEqual(acknowledged([{ ...fact, receipt: { ...fact.receipt, receiptId: null } }], 'challenge', binding), []);
+});
+
+test('private Claude handoff keeps provider auth and only reviewed onboarding fields', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-handoff-'));
+  const source = path.join(directory, 'source');
+  const home = path.join(directory, 'home');
+  for (const folder of [directory, source, home, path.join(source, '.codex'), path.join(source, '.claude')]) {
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+    fs.chmodSync(folder, 0o700);
+  }
+  const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+  write(path.join(source, '.codex', 'auth.json'), { access: 'synthetic' });
+  write(path.join(source, '.claude', '.credentials.json'), {
+    claudeAiOauth: { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' },
+    mcpOAuth: { unrelated: 'synthetic' }, designOauth: { unrelated: 'synthetic' },
+  });
+  write(path.join(source, '.claude.json'), {
+    hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.179', installMethod: 'native',
+    projects: { unrelated: 'synthetic' }, oauthAccount: { unrelated: 'synthetic' },
+  });
+  write(path.join(directory, 'run.json'), { id: 'test', home });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'auth-handoff', directory], {
+      encoding: 'utf8', env: { ...process.env, KHALA_CANARY_AUTH_HOME: source },
+    });
+    assert.equal(result.status, 0);
+    const credentials = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8'));
+    assert.deepEqual(Object.keys(credentials), ['claudeAiOauth']);
+    const onboarding = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+    assert.deepEqual(Object.keys(onboarding).sort(), ['hasCompletedOnboarding', 'installMethod', 'lastOnboardingVersion']);
+    assert.equal(fs.statSync(path.join(home, '.claude.json')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.join(home, '.claude', '.credentials.json')).mode & 0o777, 0o600);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('provider preflight refuses token-only Claude state before launching a TUI', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-native-auth-'));
+  fs.chmodSync(directory, 0o700);
+  const home = path.join(directory, 'home');
+  fs.mkdirSync(home, { mode: 0o700 });
+  fs.writeFileSync(path.join(directory, 'run.json'), JSON.stringify({ id: 'test', home }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', script, 'auth', directory], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(result.stderr), { ok: false, kind: 'unproven', stage: 'claude_tui_onboarding', directory });
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
