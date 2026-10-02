@@ -17,7 +17,7 @@ if (location.search.includes('signedOut')) {
   const snapshot: HumanApplicationSnapshot = { phase: 'signed_out', path, context: null };
   const application: HumanApplicationHandle = {
     getSnapshot: () => snapshot, subscribe: () => () => undefined, navigate: () => undefined,
-    retryDevice: () => undefined, dispose: () => undefined, signOut: async () => ({ kind: 'unavailable' }),
+    retryDevice: () => undefined, dispose: () => undefined, signOut: async () => ({ kind: 'unavailable', retryable: true }),
   };
   root.render(<HumanApplicationScreen application={application} identity={api.identity} routes={routes}
     renderRoom={() => null} navigateExternal={url => { location.href = url; }} />);
