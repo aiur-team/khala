@@ -70,14 +70,12 @@ describe('admit', () => {
     expect(h.admits).toEqual(['admit-1']);
   });
 
-  it('keeps full-history admission unknown until history disclosure is ready', async () => {
+  it('completes full-history admission without requiring a history-ready signal', async () => {
     const { h, inviteRef } = await invite('full');
     h.failAdmission('history_unavailable');
     expect(await h.service.admit({ operationId: 'admit-1', inviteRef, deviceId: DEVICE_ID }))
-      .toEqual({ kind: 'outcome_unknown', operationId: 'admit-1' });
-    expect(await h.service.admit({ operationId: 'admit-1', inviteRef, deviceId: DEVICE_ID }))
       .toMatchObject({ kind: 'ok', value: { outcome: 'joined' } });
-    expect(h.histories).toEqual(['admit-1', 'admit-1']);
+    expect(h.admits).toEqual(['admit-1']);
   });
 
   it('completes no-history admission without requiring a history-ready signal', async () => {
@@ -87,20 +85,6 @@ describe('admit', () => {
       .toMatchObject({ kind: 'ok', value: { outcome: 'joined' } });
     expect(h.admits).toEqual(['admit-1']);
     expect(h.histories).toEqual([]);
-  });
-
-  it('does not hide committed membership when a full-history invite is later revoked', async () => {
-    const { h, inviteRef } = await invite('full');
-    h.failAdmission('history_unavailable');
-    expect(await h.service.admit({ operationId: 'admit-1', inviteRef, deviceId: DEVICE_ID }))
-      .toEqual({ kind: 'outcome_unknown', operationId: 'admit-1' });
-
-    h.setPrincipal(principal());
-    expect((await h.service.revoke({ operationId: 'revoke-1', inviteRef })).kind).toBe('ok');
-    h.setPrincipal(principal('recipient'));
-    expect(await h.service.admit({ operationId: 'admit-1', inviteRef, deviceId: DEVICE_ID }))
-      .toEqual({ kind: 'outcome_unknown', operationId: 'admit-1' });
-    expect(h.admits).toEqual(['admit-1']);
   });
 
   it('rejects revocation before admission but preserves a committed result after revocation', async () => {

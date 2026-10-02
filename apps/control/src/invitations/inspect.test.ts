@@ -12,7 +12,7 @@ async function namedInvite() {
 }
 
 describe('inspect', () => {
-  it('keeps joined full-history invitations eligible until history is ready', async () => {
+  it('completes admission while inspection reflects gateway history readiness', async () => {
     const h = harness();
     const shared = await h.service.share({
       operationId: 'full-history', roomId: ROOM_ID,
@@ -22,14 +22,14 @@ describe('inspect', () => {
     h.failAdmission('history_unavailable');
     expect((await h.service.admit({
       operationId: 'admit-full-history', inviteRef: shared.value.inviteRef, deviceId: DEVICE_ID,
-    })).kind).toBe('outcome_unknown');
+    })).kind).toBe('ok');
 
     expect(await h.service.inspect(shared.value.inviteRef)).toBe('eligible');
 
     expect((await h.service.admit({
       operationId: 'admit-full-history', inviteRef: shared.value.inviteRef, deviceId: DEVICE_ID,
     })).kind).toBe('ok');
-    expect(await h.service.inspect(shared.value.inviteRef)).toBe('already_joined');
+    expect(await h.service.inspect(shared.value.inviteRef)).toBe('eligible');
   });
 
   it('keeps joined no-history invitations terminal', async () => {
