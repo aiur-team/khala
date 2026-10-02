@@ -28,8 +28,10 @@ export function ParticipantDetail({ name, kind, children, onClose }: Readonly<{
   useEffect(() => {
     if (!overlay) return undefined;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeRef.current?.focus();
-    return () => opener?.focus();
+    // A pane opened through `useDetailHost` stays `visibility: hidden` until the
+    // card's `.has-detail` commits, which refuses focus; focus on the next frame.
+    const frame = requestAnimationFrame(() => closeRef.current?.focus());
+    return () => { cancelAnimationFrame(frame); opener?.focus(); };
   }, [overlay]);
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (!overlay) return;

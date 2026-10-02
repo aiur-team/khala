@@ -10,7 +10,7 @@ import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ThemeChoice } from '../../shell/types';
 import { ParticipantDetail } from '../../ui/conversation/ParticipantDetail';
 import { Avatar } from '../../ui/khala/Avatar';
-import { clockLabel, dayLabel } from '../../ui/khala/format-time';
+import { clockLabel, dayLabel, type TimeOptions } from '../../ui/khala/format-time';
 import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icons';
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
@@ -58,6 +58,8 @@ export interface ChannelScreenProps {
   /** Opening the roster closes the composer's chips grid. */
   onRosterOpen?: () => void;
   onBack?: () => void;
+  /** Fixtures and tests pass UTC; the product uses the viewer's local time. */
+  timeOptions?: TimeOptions;
   /** @deprecated The screen always renders inside `KhalaApp`. */
   embedded?: boolean;
 }
@@ -71,17 +73,17 @@ function timeLabel(at: string): string {
   return dayLabel(date, now) === 'Today' ? clockLabel(date) : dayLabel(date, now);
 }
 
-function Recent({ entries }: Readonly<{ entries: readonly RecentEntry[] }>) {
+function Recent({ entries, timeOptions }: Readonly<{ entries: readonly RecentEntry[]; timeOptions: TimeOptions }>) {
   return <div className="kh-d-sec"><span className="kh-d-lbl">Recent in Khala</span>
     {entries.length > 0 ? <div className="kh-d-log">{entries.map(entry => <div key={entry.id}>
-      <time dateTime={entry.at}>{clockLabel(new Date(entry.at))}</time><span>{entry.body}</span>
+      <time dateTime={entry.at}>{clockLabel(new Date(entry.at), timeOptions)}</time><span>{entry.body}</span>
     </div>)}</div> : <p className="kh-d-none">No recent messages.</p>}
   </div>;
 }
 
-function HumanDetail({ human, members, recent, onOpen, onMention, onClose }: Readonly<{
+function HumanDetail({ human, members, recent, timeOptions, onOpen, onMention, onClose }: Readonly<{
   human: HumanMember; members: ChannelMembers; recent: readonly RecentEntry[];
-  onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void;
+  onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
 }>) {
   const agents = agentsOwnedBy(members, human.ownerId);
   const openAgent = (agent: AgentMember) => onOpen(agent.participantId);
@@ -94,16 +96,16 @@ function HumanDetail({ human, members, recent, onOpen, onMention, onClose }: Rea
         onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openAgent(agent); } }}>
         <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
       </div>)}</div></div> : null}
-    <Recent entries={recent} />
+    <Recent entries={recent} timeOptions={timeOptions} />
     {!human.isViewer && onMention ? <div className="kh-d-act">
       <button type="button" className="pri" onClick={() => onMention(human.short)}>@ Mention {human.short}</button>
     </div> : null}
   </ParticipantDetail>;
 }
 
-function AgentDetail({ agent, members, recent, joinedAt, rename, onOpen, onMention, onClose }: Readonly<{
+function AgentDetail({ agent, members, recent, timeOptions, joinedAt, rename, onOpen, onMention, onClose }: Readonly<{
   agent: AgentMember; members: ChannelMembers; recent: readonly RecentEntry[]; joinedAt: string | undefined;
-  rename: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void;
+  rename: ReactNode; onOpen(participantId: string): void; onMention: ((label: string) => void) | undefined; onClose(): void; timeOptions: TimeOptions;
 }>) {
   const owner = [members.viewer, ...members.humans].find(human => human.ownerId === agent.ownerId);
   const pill = <><i>{agent.ownerInitials}</i>
@@ -119,7 +121,7 @@ function AgentDetail({ agent, members, recent, joinedAt, rename, onOpen, onMenti
       <dt>Owner</dt><dd>{agent.isViewerOwned ? 'You' : agent.ownerName}</dd>
       {joinedAt ? <><dt>Joined</dt><dd>{timeLabel(joinedAt)}</dd></> : null}
     </dl></div>
-    <Recent entries={recent} />
+    <Recent entries={recent} timeOptions={timeOptions} />
     {onMention ? <div className="kh-d-act"><button type="button" className="pri" onClick={() => onMention(agent.name)}>@ Mention</button></div> : null}
     {rename ? <div className="kh-d-sec"><span className="kh-d-lbl">Rename</span>{rename}</div> : null}
   </ParticipantDetail>;
@@ -134,7 +136,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerParticipantId, humanParticipants, currentNames,
   namesPending = false, renameAgent, renameScope, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
-  renderAddAgent, onMention, onRosterOpen, onBack }: ChannelScreenProps) {
+  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const members = useMemo(() => resolveMembers({
     viewer: { ...(viewerParticipantId ? { participantId: viewerParticipantId } : {}), ...(viewerOwnerId ? { ownerId: viewerOwnerId } : {}),
@@ -198,7 +200,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   let detail: ReactNode = null;
   if (selectedMember?.kind === 'human') {
     detail = <HumanDetail key={selectedMember.participantId} human={selectedMember} members={members}
-      recent={recentActivity?.(selectedMember.participantId) ?? []} onOpen={setSelected} onMention={onMention} onClose={closeDetail} />;
+      recent={recentActivity?.(selectedMember.participantId) ?? []} onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   } else if (selectedMember?.kind === 'agent') {
     const canRename = selectedMember.isViewerOwned && renameAgent && viewerOwnerId && renameScope && !namesPending;
     detail = <AgentDetail key={selectedMember.participantId} agent={selectedMember} members={members}
@@ -206,7 +208,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
       rename={canRename ? <RenameAgent participantId={selectedMember.participantId}
         name={currentNames?.get(selectedMember.participantId) ?? selectedMember.agent.displayName} renameAgent={renameAgent}
         storageKey={`khala:pending-rename:${JSON.stringify([viewerOwnerId, renameScope, selectedMember.participantId])}`} /> : null}
-      onOpen={setSelected} onMention={onMention} onClose={closeDetail} />;
+      onOpen={setSelected} onMention={onMention} onClose={closeDetail} timeOptions={timeOptions} />;
   }
 
   const others = [...members.humans, ...members.agents];

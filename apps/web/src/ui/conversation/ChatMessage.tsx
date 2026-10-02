@@ -1,5 +1,5 @@
 import type { AnimationEventHandler, CSSProperties, ReactNode } from 'react';
-import { clockLabel } from '../khala/format-time';
+import { clockLabel, type TimeOptions } from '../khala/format-time';
 import './conversation.css';
 
 /** Where a row sits in its run (`features/timeline/runs.ts`, RECREATION-SPEC §7.1). */
@@ -23,6 +23,8 @@ type ThreadRowProps = Readonly<{
   sender: 'me' | 'human' | 'agent';
   /** ISO time: the row `title` and the name line's `dateTime`. */
   time?: string;
+  /** Fixtures and tests pass UTC; the product uses the viewer's local time. */
+  timeOptions?: TimeOptions;
   name?: ThreadRowName;
   /** The §3 avatar button (or its ghost); omitted for the viewer. */
   avatar?: ReactNode;
@@ -53,7 +55,7 @@ export function ChatMessage(props: ThreadRowProps | LegacyProps) {
   return 'run' in props ? <ThreadRow {...props} /> : <LegacyMessage {...props} />;
 }
 
-function ThreadRow({ id, run, sender, time, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
+function ThreadRow({ id, run, sender, time, timeOptions, name, avatar, live = false, pop = false, onPopEnd, pending = false, failed = false,
   retry, after, className = '', children }: ThreadRowProps) {
   const position = run.first ? 'first' : run.mid ? 'mid' : 'last-of';
   const classes = ['kh-row', sender === 'me' ? 'me' : sender === 'human' ? 'human' : '', position,
@@ -68,7 +70,7 @@ function ThreadRow({ id, run, sender, time, name, avatar, live = false, pop = fa
         {name.idBadge ? <span className="kh-id">{name.idBadge}</span> : null}
         {name.tag?.kind === 'otag' ? <span className="kh-otag" style={{ '--oh': name.tag.ownerHue } as CSSProperties}>{name.tag.text}</span> : null}
         {name.tag?.kind === 'htag' ? <span className="kh-htag">Human</span> : null}
-        {time ? <time dateTime={time} title={time}>{clockLabel(new Date(time))}</time> : null}
+        {time ? <time dateTime={time} title={time}>{clockLabel(new Date(time), timeOptions)}</time> : null}
       </button> : null}
       <div className="kh-b">{children}</div>
       {after}

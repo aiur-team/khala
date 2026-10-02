@@ -66,8 +66,6 @@
 .conversation-message__meta{margin-bottom:.25rem;font-size:.72rem;gap:.4rem}
 .conversation-message__meta time{color:var(--khala-ink-muted)}
 .conversation-message__content{font-size:.88rem;line-height:1.4}
-.conversation-fixture__subtitle{color:var(--khala-ink-muted);font-size:.72rem}
-.conversation-fixture__details{border:1px solid var(--khala-line);border-radius:999px;background:var(--khala-fill-control);color:var(--khala-ink);padding:.35rem .55rem;cursor:pointer;font:inherit;font-size:.72rem}
 @media(max-width:1100px){.conversation-layout,.conversation-layout--detail{grid-template-columns:240px minmax(0,1fr)}}
 @media(max-width:900px){.conversation-layout,.conversation-layout--detail{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:760px){.conversation-layout{height:100%;min-height:0}.conversation-message{max-width:calc(100% - .5rem)}.conversation-thread__head{padding:.55rem .7rem}.conversation-thread__header-actions{gap:.25rem}}
