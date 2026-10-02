@@ -229,7 +229,7 @@ Wake tests start in about 2 minutes. Finish this turn and stay idle. When a Khal
    $H say --as a2 --text "Claude: run sleep 20 in Bash now, then reply with busy-done-<id>"
    # once Claude's tool is running (about 5 s later):
    $H say --as a1 --text "busy-check-<id>"
-   $H wait-for --as a2 --text busy-done-<id> --timeout 300
+   $H wait-for --as a2 --text busy-done-<id> --sender Claude --timeout 300
    ```
    **PASS:** afterwards Claude reports that the `busy-check-<id>` frame arrived after `sleep 20` finished and
    that the tool was not aborted.
