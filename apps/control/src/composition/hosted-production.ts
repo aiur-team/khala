@@ -16,6 +16,6 @@ export function registerHostedProductionRoutes(options: HostedProductionOptions 
     ...registerHumanHandlers({ channelLink: () => createHostedHumanChannelLinkRoutes(options) }),
     ...registerAgentHandlers(),
     ...createAgentJoinRoutes(runtime, options.fetch),
-    ...createProfileRoutes(runtime),
+    ...createProfileRoutes(runtime, options.fetch),
   ]);
 }

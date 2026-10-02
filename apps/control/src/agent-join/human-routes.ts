@@ -7,7 +7,7 @@ import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contra
 import type { AuthService } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
-import { allocateAgentName, indexOwnerAgent } from './names';
+import { allocateAgentName, indexOwnerAgent, retainAgentName } from './names';
 import type { AgentProvisioner } from './provision';
 import { createJoinStore, effectiveState, isJoinId, sealCredentials, type JoinRecord } from './store';
 
@@ -55,7 +55,10 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const denied = await membership(principal, record);
       if (denied) return denied;
       if (record.ownerId && record.ownerId !== principal.ownerId) return error(409, 'already_confirmed_by_other');
-      if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') return json(200, viewOf(record));
+      if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') {
+        if (record.agentUserId) await retainAgentName(deps.store, record.label, principal.ownerId, record.agentUserId);
+        return json(200, viewOf(record));
+      }
       if (!record.ownerId) {
         const locked = { ...record, ownerId: principal.ownerId };
         const result = await deps.joins.replace(joinId, revision, locked, 'owner');
@@ -66,7 +69,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const username = await usernameOf(principal);
       if (!username) return unavailable();
       const userId = deps.provisioner.agentUserId(joinId, principal.ownerId);
-      const name = await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness });
+      const name = await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness, expiresAt: record.expiresAt });
       if (!name) return unavailable();
       const provisioned = await deps.provisioner.provision({ joinId, ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
@@ -79,15 +82,22 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         next: { value: owner, expiresAt: null },
       });
       if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId)) return unavailable();
-      await indexOwnerAgent(deps.store, principal.ownerId, userId);
       const next: JoinRecord = { ...record, label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
         sealedCredentials: sealCredentials(deps.sealSecret, joinId, credentials) };
       const result = await deps.joins.replace(joinId, revision, next, 'confirm');
-      if (result.kind === 'applied') return json(200, viewOf(next));
+      if (result.kind === 'applied') {
+        await retainAgentName(deps.store, name, principal.ownerId, userId);
+        await indexOwnerAgent(deps.store, principal.ownerId, userId);
+        return json(200, viewOf(next));
+      }
       if (result.kind === 'conflict') {
         const latest = await deps.joins.read(joinId);
         if (latest.kind === 'found' && latest.record.ownerId === principal.ownerId
-          && ['confirmed', 'claimed', 'ready'].includes(latest.record.state)) return json(200, viewOf(latest.record));
+          && ['confirmed', 'claimed', 'ready'].includes(latest.record.state)) {
+          await retainAgentName(deps.store, latest.record.label, principal.ownerId, userId);
+          await indexOwnerAgent(deps.store, principal.ownerId, userId);
+          return json(200, viewOf(latest.record));
+        }
       }
       return unavailable();
     }

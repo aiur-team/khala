@@ -1,3 +1,4 @@
+import type { AgentNamesPort } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
 // Browser composition lifecycle for the ordinary human flow. It exposes only
@@ -33,6 +34,7 @@ export interface HumanApplicationPorts {
   /** `describeParticipant` keyed by Matrix user id, for the conversation list's harness logos. */
   readonly describeMatrixUser?: (matrixUserId: string) => Participant | undefined;
   readonly agentJoin?: AgentJoinPort;
+  readonly agentNames?: AgentNamesPort;
   readonly profile?: ProfilePort;
   readonly inviteAgent?: AgentInvitePort;
   readonly identity: IdentityPort;

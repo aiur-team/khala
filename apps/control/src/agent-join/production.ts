@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { ProductionHumanRuntime } from '../composition/human/production';
 import type { RouteRegistration } from '../runtime/handler';
 import { createJoinStore } from './store';
-import { createAgentProvisioner } from './provision';
+import { createProductionAgentProvisioner } from './production-provisioner';
+import { createAgentRenameHandler, AGENT_RENAME_PATH } from './rename-routes';
 import { createAgentJoinAgentHandlers, AGENT_JOIN_PATH, AGENT_JOIN_POLL_PATH, AGENT_JOIN_READY_PATH } from './agent-routes';
 import { createAgentJoinHumanHandlers, AGENT_JOIN_HUMAN_VIEW_PATH, AGENT_JOIN_HUMAN_CONFIRM_PATH, AGENT_JOIN_HUMAN_STATUS_PATH } from './human-routes';
 
@@ -14,16 +15,11 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
     const joins = createJoinStore({ store: active.store, clock: active.clock, random });
     const agent = createAgentJoinAgentHandlers({ joins, store: active.store, clock: active.clock, random,
       origin: active.env.publicAppOrigin, secret: active.env.invitationHmacSecret, roomName: active.matrix.roomName });
-    const provisioner = createAgentProvisioner({
-      homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
-      registrationSharedSecret: active.env.matrixRegistrationSharedSecret,
-      registrationIngressToken: active.env.matrixRegistrationIngressToken,
-      passwordDerivationSecret: active.env.matrixPasswordDerivationSecret,
-      joinSecret: active.env.invitationHmacSecret, ...(fetch ? { fetch } : {}),
-    });
+    const provisioner = createProductionAgentProvisioner(active, fetch);
     const human = createAgentJoinHumanHandlers({ auth: active.auth, joins, store: active.store, clock: active.clock, random,
       sealSecret: active.env.invitationHmacSecret, inspectMembership: active.matrix.inspectOwnerMembership, provisioner });
-    return { agent, human };
+    const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner });
+    return { agent, human, rename };
   }
   function route(path: string, method: 'GET' | 'POST', select: (active: ReturnType<typeof handlers>) => (request: Request) => Promise<Response>): RouteRegistration {
     return { path, methods: [method], async handle(request) {
@@ -34,6 +30,7 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
     } };
   }
   return Object.freeze([
+    route(AGENT_RENAME_PATH, 'POST', active => active.rename),
     route(AGENT_JOIN_PATH, 'POST', active => active.agent.create),
     route(AGENT_JOIN_POLL_PATH, 'GET', active => active.agent.poll),
     route(AGENT_JOIN_READY_PATH, 'POST', active => active.agent.ready),

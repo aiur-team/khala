@@ -1,3 +1,5 @@
+import { AGENT_RENAME_PATH, decodeAgentRenameResult } from '@khala/contracts/m1/agent-names';
+import type { AgentNamesPort } from '../../features/channel/ports';
 import { checkName, type NameError } from '@khala/contracts/m1/names';
 import { decodeProfileView, PROFILE_PATH, PROFILE_USERNAME_PATH } from '@khala/contracts/m1/profile';
 import type { ProfilePort } from '../../features/profile/ports';
@@ -61,6 +63,7 @@ export type HumanBrowserApiOptions = Readonly<{
 
 export type HumanBrowserApi = Readonly<{
   agentJoin: AgentJoinPort;
+  agentNames: AgentNamesPort;
   profile: ProfilePort;
   identity: IdentityPort;
   admission: AdmissionPort;
@@ -416,5 +419,29 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         ? { kind: 'ok', username: checked.name } : { kind: 'error', code: 'unavailable' };
     },
   };
-  return { agentJoin, profile, identity, admission, channelLinks, credentials, participants };
+  const agentNames: AgentNamesPort = {
+    async rename(matrixUserId, name, signal) {
+      if (csrfToken === null) {
+        const state = await readCurrent(signal);
+        if (state.kind !== 'signed_in') return { kind: 'error', code: state.kind === 'signed_out' ? 'signed_out' : 'unavailable' };
+      }
+      const response = await mutation(AGENT_RENAME_PATH, { matrixUserId, name }, signal);
+      if (!response) return { kind: 'error', code: 'unavailable' };
+      if (response.status === 401) return { kind: 'error', code: 'signed_out' };
+      const body = await jsonObject(response);
+      if (response.status === 400 && body?.error === 'invalid_name') {
+        const reasons: readonly NameError[] = ['too_short', 'too_long', 'invalid_characters', 'reserved'];
+        const reason = reasons.find(value => value === body.reason);
+        return { kind: 'error', code: 'invalid_name', ...(reason ? { reason } : {}) };
+      }
+      if (response.status === 403 && body?.error === 'not_owner') return { kind: 'error', code: 'not_owner' };
+      if (response.status === 404 && body?.error === 'not_found') return { kind: 'error', code: 'not_found' };
+      if (response.status === 409 && body?.error === 'name_taken') return { kind: 'error', code: 'name_taken' };
+      if (response.status !== 200) return { kind: 'error', code: 'unavailable' };
+      const decoded = decodeAgentRenameResult(body);
+      return decoded.ok && decoded.value.matrixUserId === matrixUserId
+        ? { kind: 'ok', name: decoded.value.name } : { kind: 'error', code: 'unavailable' };
+    },
+  };
+  return { agentJoin, agentNames, profile, identity, admission, channelLinks, credentials, participants };
 }

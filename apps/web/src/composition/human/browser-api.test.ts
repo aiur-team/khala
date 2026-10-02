@@ -25,7 +25,7 @@ describe('createHumanBrowserApi', () => {
   it('exposes only the human admission and messaging adapters', () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'channelLinks', 'credentials', 'identity', 'participants', 'profile']);
+    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'agentNames', 'channelLinks', 'credentials', 'identity', 'participants', 'profile']);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -515,5 +515,70 @@ describe('human profile adapter', () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, { username: null, suggestion: 'Kevin', extra: true }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     expect(await api.profile.get()).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+});
+
+describe('agent name adapter', () => {
+  const matrixUserId = '@agent:matrix.test';
+
+  it('sends the rename mutation with the current CSRF token', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { matrixUserId, name: 'Reviewer' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual({ kind: 'ok', name: 'Reviewer' });
+    const [url, init] = fetch.mock.calls[1]!;
+    expect(url).toBe(`${origin}/api/human/agents/rename`);
+    expect(init?.method).toBe('POST');
+    expect(init?.credentials).toBe('same-origin');
+    expect(JSON.parse(init?.body as string)).toEqual({ matrixUserId, name: 'Reviewer' });
+    expect(new Headers(init?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it.each([
+    [400, { error: 'invalid_name', reason: 'invalid_characters' }, { kind: 'error', code: 'invalid_name', reason: 'invalid_characters' }],
+    [400, { error: 'invalid_name', reason: 'invented' }, { kind: 'error', code: 'invalid_name' }],
+    [400, { error: 'invalid_request' }, { kind: 'error', code: 'unavailable' }],
+    [403, { error: 'not_owner' }, { kind: 'error', code: 'not_owner' }],
+    [403, { error: 'csrf_mismatch' }, { kind: 'error', code: 'unavailable' }],
+    [403, { error: 'forbidden_origin' }, { kind: 'error', code: 'unavailable' }],
+    [404, { error: 'not_found' }, { kind: 'error', code: 'not_found' }],
+    [409, { error: 'name_taken' }, { kind: 'error', code: 'name_taken' }],
+    [401, { error: 'signed_out' }, { kind: 'error', code: 'signed_out' }],
+    [503, { error: 'unavailable' }, { kind: 'error', code: 'unavailable' }],
+  ])('maps rename status %s and body %j', async (status, body, expected) => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(status, body));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual(expected);
+  });
+
+  it.each([
+    { matrixUserId, name: 'Reviewer', extra: true },
+    { matrixUserId, name: ' Reviewer ' },
+    { matrixUserId, name: 'ab cd' },
+    { matrixUserId: '@other:matrix.test', name: 'Reviewer' },
+  ])('rejects malformed or mismatched rename success %j', async body => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, body));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+
+  it('preserves signed-out preflight without sending a rename', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(401, { error: 'signed_out' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual({ kind: 'error', code: 'signed_out' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns unavailable on transport failure', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockRejectedValueOnce(new Error('offline'));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual({ kind: 'error', code: 'unavailable' });
   });
 });

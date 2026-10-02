@@ -6,13 +6,13 @@ import type { ControlStore, OwnerId } from '@khala/contracts/messaging/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
 
 export async function allocateAgentName(store: ControlStore, input: {
-  ownerId: OwnerId; matrixUserId: string; username: string; harness: Harness;
+  ownerId: OwnerId; matrixUserId: string; username: string; harness: Harness; expiresAt?: string;
 }): Promise<string | null> {
   for (let n = 1; n <= 20; n++) {
     const candidate = defaultAgentName(input.username, input.harness, n);
     const reservation: NameReservation = { v: 1, kind: 'agent', ownerId: input.ownerId, matrixUserId: input.matrixUserId };
     const result = await writeAndResolve(store, { key: nameKey(candidate), expectedRevision: null,
-      operationId: `agent-name.${randomUUID()}`, next: { value: reservation, expiresAt: null } });
+      operationId: `agent-name.${randomUUID()}`, next: { value: reservation, expiresAt: input.expiresAt ?? null } });
     if (result.kind === 'applied') return candidate;
     if (result.kind !== 'conflict') return null;
     const current = decodeNameReservation(result.current?.value);
@@ -34,4 +34,21 @@ export async function indexOwnerAgent(store: ControlStore, ownerId: OwnerId, use
       operationId: `owner-agents.${randomUUID()}`, next: { value: { v: 1, ownerId, agents: [...agents, userId] }, expiresAt: null } });
     if (result.kind !== 'conflict') return;
   }
+}
+
+/** Promote only a confirmed join's own reservation; expired pending claims are never made permanent. */
+export async function retainAgentName(store: ControlStore, name: string, ownerId: string, matrixUserId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const read = await safeRead(store, nameKey(name));
+    if (read.kind !== 'record') return false;
+    const decoded = decodeNameReservation(read.record.value);
+    if (!decoded.ok || decoded.value.kind !== 'agent' || decoded.value.ownerId !== ownerId
+      || decoded.value.matrixUserId !== matrixUserId) return false;
+    if (read.record.expiresAt === null) return true;
+    const result = await writeAndResolve(store, { key: read.record.key, expectedRevision: read.record.revision,
+      operationId: `agent-name.${randomUUID()}`, next: { value: read.record.value, expiresAt: null } });
+    if (result.kind === 'applied') return true;
+    if (result.kind !== 'conflict') return false;
+  }
+  return false;
 }

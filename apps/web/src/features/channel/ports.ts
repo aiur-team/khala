@@ -1,3 +1,4 @@
+import type { NameError } from '@khala/contracts/m1/names';
 import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import type { OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 
@@ -40,3 +41,12 @@ export interface ChannelUiPort {
 
 /** @deprecated Use `ChannelUiPort`. Kept through the first tagged release containing #163. */
 export type RoomUiPort = ChannelUiPort;
+
+export interface AgentNamesPort {
+  rename(matrixUserId: string, name: string, signal?: AbortSignal):
+    Promise<{ kind: 'ok'; name: string } | {
+      kind: 'error';
+      code: 'invalid_name' | 'name_taken' | 'not_owner' | 'not_found' | 'signed_out' | 'unavailable';
+      reason?: NameError;
+    }>;
+}
