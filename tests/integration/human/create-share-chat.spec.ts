@@ -60,8 +60,7 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
         const timeline = document.querySelector('.timeline');
         const historyAlert = [...(timeline?.querySelectorAll('[role="alert"]') ?? [])]
           .some(node => node.textContent?.includes('Conversation history is unavailable right now.'));
-        const loading = [...(timeline?.querySelectorAll('[role="status"]') ?? [])]
-          .some(node => node.textContent?.includes('Loading conversation…'));
+        const loading = Boolean(timeline?.querySelector('.kh-loading'));
         const phase = historyAlert ? 'unavailable' : loading ? 'loading'
           : timeline?.querySelector('.timeline__empty') ? 'ready_empty'
             : timeline?.querySelector('.timeline__row') ? 'ready_or_partial' : 'absent';

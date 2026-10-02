@@ -42,11 +42,6 @@
 .khala-device-status{padding:clamp(1rem,3vw,2rem);color:var(--khala-ink-muted)}
 .khala-device-status [role='alert']{color:var(--khala-ink)}
 .khala-empty-conversation{display:grid;place-items:center;min-height:min(70dvh,600px);color:var(--khala-ink-muted)}
-.khala-route-loading{display:grid;align-content:center;gap:1rem;min-height:min(70dvh,600px);padding:2rem}
-.khala-route-loading span{display:block;height:2.5rem;width:min(80%,36rem);border-radius:12px;background:linear-gradient(100deg,var(--khala-fill-control) 30%,var(--khala-fill-raised) 50%,var(--khala-fill-control) 70%);background-size:200% 100%;animation:khala-shimmer 1.4s ease-in-out infinite}
-.khala-route-loading span:nth-child(2){width:min(60%,28rem)}
-@keyframes khala-shimmer{to{background-position-x:-200%}}
-@media(prefers-reduced-motion:reduce){.khala-route-loading span{animation:none}}
 
 .khala-page-frame {
   max-width: var(--khala-content-measure);
