@@ -78,6 +78,26 @@ describe('real MCP client wiring', () => {
     expect(waker.stop).toHaveBeenCalledOnce();
   });
 
+  it('stops the waker before rejecting a hung client close', async () => {
+    const env = await environment();
+    const client = createPlaceholderClient();
+    client.close = vi.fn(() => new Promise<void>(() => {}));
+    const waker = { notify: vi.fn(), stop: vi.fn(async () => {}) };
+    const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker: () => waker })({ harness: 'codex', sessionId: 'hung' });
+    await wrapped.status();
+    vi.useFakeTimers();
+    try {
+      const closing = wrapped.close();
+      const rejected = expect(closing).rejects.toThrow('cleanup_timeout');
+      await vi.advanceTimersByTimeAsync(3999);
+      expect(waker.stop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(client.close).toHaveBeenCalledOnce();
+      expect(waker.stop).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('aborts an idle stdio command and closes each session once', async () => {
     const env = await environment();
     const input = new PassThrough();

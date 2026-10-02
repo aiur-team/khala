@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -97,10 +97,10 @@ describe('MCP command lifecycle', () => {
       rmSync(stateHome, { recursive: true, force: true });
     }
   });
-  it('keeps late SDK console diagnostics off protocol stdout', () => {
+  it('keeps SDK console diagnostics off protocol stdout', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-console-'));
     const preload = path.join(dir, 'diagnostic.cjs');
-    writeFileSync(preload, "process.stdin.once('end', () => setTimeout(() => console.log('sdk-diagnostic'), 0));\n");
+    writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
         env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
@@ -112,6 +112,46 @@ describe('MCP command lifecycle', () => {
       expect(result.stderr).toBe('sdk-diagnostic\n');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it('exits after successful cleanup despite lingering SDK timers', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-deadline-'));
+    const preload = path.join(dir, 'deadline.cjs');
+    writeFileSync(preload, "process.stdin.once('end', () => setInterval(() => {}, 60000));\n");
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'deadline' },
+        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 4000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0 });
+      expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it.each(['reject', 'timeout'])('exits nonzero when session cleanup fails: %s', mode => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-cleanup-'));
+    const preload = path.join(dir, 'cleanup.cjs');
+    writeFileSync(preload, `
+      const fs = require('node:fs/promises');
+      const unlink = fs.unlink;
+      let sessionRemovals = 0;
+      fs.unlink = file => {
+        if (String(file).endsWith('/session.json') && ++sessionRemovals === 2) {
+          return ${mode === 'reject' ? "Promise.reject(new Error('sensitive-private-error'))" : "new Promise(() => {})"};
+        }
+        return unlink(file);
+      };
+    `);
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'failure' },
+        encoding: 'utf8', input: JSON.stringify(call('khala_status')) + '\n', timeout: 8000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(`khala: cleanup_${mode === 'reject' ? 'failed' : 'timeout'}\n`);
+      expect(result.stderr).not.toContain('sensitive-private-error');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 10_000);
   it('exports the C12 entry and serves the real client through the untouched bin', () => {
     expect(typeof main).toBe('function');
     const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-main-'));

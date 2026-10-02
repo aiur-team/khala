@@ -27,8 +27,19 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       async send(text) { await initialize(); return client.send(text); },
       async sendChannelEvent(content) { await initialize(); return client.sendChannelEvent(content); },
       async close() {
-        try { await initialize(); await client.close(); }
-        finally { await waker?.stop(); }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            (async () => { await initialize(); await client.close(); })(),
+            new Promise<never>((_resolve, reject) => {
+              // Reserve a second of the CLI deadline for waker child cleanup.
+              timer = setTimeout(() => reject(new Error('cleanup_timeout')), 4000);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+          await waker?.stop();
+        }
       },
     };
   };
