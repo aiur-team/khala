@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Response } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from '../human/fixtures.js';
@@ -197,11 +197,14 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
   const ownerContext = await browser.newContext();
   const native = new ExternalNativeDriver(mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'khala-external-native-')), helper);
   let failure: unknown = null;
+  let phase = 'launch';
   try {
     // Preflight precedes channel creation: unsupported or stale native routes leave no false conversation artifact.
     native.launch();
+    phase = 'preflight';
     for (const actor of actors) native.prompt(actor, 'Reply with one short sentence confirming this fresh model session is responding. Do not call tools or join Khala yet.');
     await waitForNative(native, snapshot => snapshot.sessions.every(session => Boolean(session.sessionId && session.pid)));
+    phase = 'owner_room';
     const owner = await freshPage(ownerContext, environment);
     const sessionResponse = owner.waitForResponse(response =>
       new URL(response.url()).pathname === '/api/human/messaging/session' && response.status() === 200);
@@ -222,6 +225,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     if (!invite.startsWith(`${environment.appOrigin}/join/`)) throw new Error('external_browser_invite_origin_invalid');
 
     for (const actor of actors) {
+      phase = `${actor}_candidate`;
       const operationId = `e2e-${actor}-${environment.environmentId}`;
       native.prompt(actor, `In this exact native session, invoke the installed Khala MCP tool khala_request_channel_access with operationId ${operationId} and target ${invite}. The tool is available through your MCP tools. Do not use a shell, delegate, or report success before owner approval.`);
       const snapshot = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.sessionFingerprint
@@ -230,6 +234,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       if (!session.sessionFingerprint || session.candidate?.operationId !== operationId)
         throw new Error(`external_browser_${actor}_proof_key_unobserved`);
       await approveProofCandidate(owner, actor, session, invite);
+      phase = `${actor}_access`;
       native.prompt(actor, `Using the installed Khala connector in this same native session, call khala_request_channel_access again with the exact same operationId ${operationId} and target ${invite}. The owner approved your proof key. Do not create a new operation ID.`);
       const discovery = await waitForNative(native, current => Boolean(current.sessions.find(item => item.actor === actor)?.discoveryConsentUrl), 120_000);
       await authorizeDiscovery(owner, actor, discovery.sessions.find(item => item.actor === actor)!);
@@ -237,6 +242,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
       await approveExactRequest(owner, actor, roomId);
     }
 
+    phase = 'bindings';
     const bindings = native.inspect().sessions;
     if (bindings.some(item => !item.bindingId || !Number.isSafeInteger(item.generation) || item.generation! < 0
       || !item.agentParticipantId))
@@ -244,6 +250,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     native.mark();
     const proof = [];
     for (const actor of actors) {
+      phase = `${actor}_challenge`;
       const session = bindings.find(item => item.actor === actor)!;
       if (!session.bindingId || !Number.isSafeInteger(session.generation) || session.generation! < 0
         || !session.agentParticipantId)
@@ -260,6 +267,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
         operationId: release.operationId, challengeEventId: challenge.eventId, releaseId: release.releaseId,
         replyEventId: reply.eventId, challengeText: challenge.text, replyText: reply.text, ackObserved: true });
     }
+    phase = 'peer_exchange';
     const beforePeer = await ciphertextIds(roomId, accessToken);
     native.prompt('codex', 'Send Claude a new, specific question in this Khala channel using your installed MCP route.');
     const peerMessage = await newEncryptedMessage(owner, native, roomId, accessToken, beforePeer);
@@ -272,6 +280,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     const peerReply = await newEncryptedMessage(owner, native, roomId, accessToken, beforePeerReply);
     await requireOwnerAck(owner, peerRelease);
 
+    phase = 'model_witness';
     const snapshot = native.witness({ actors: proof, peer: { from: 'codex', to: 'claude',
       eventId: peerMessage.eventId, readEventId: peerMessage.eventId, replyEventId: peerReply.eventId,
       messageText: peerMessage.text, replyText: peerReply.text } });
@@ -286,6 +295,7 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     await requireCiphertext(roomId, accessToken, observedPeer.replyEventId);
 
     // A reload must fetch and decrypt the committed events; no optimistic send row counts.
+    phase = 'reload';
     await owner.reload({ waitUntil: 'domcontentloaded' });
     const encrypted = await ciphertextIds(roomId, accessToken);
     const browserFacts: BrowserFact[] = [];
@@ -303,6 +313,13 @@ test('OAuth owner approves two exact native sessions and witnesses durable encry
     verifyExternalConversation(snapshot.native, browserFacts, snapshot.peer);
   } catch (error) {
     failure = error;
+    const diagnostic = process.env.KHALA_E2E_CONSUMER_DIAGNOSTIC;
+    if (diagnostic) {
+      const stage = /^external_browser_[a-z_]+$/u.test((error as Error)?.message ?? '')
+        ? (error as Error).message : `external_browser_${phase}`;
+      try { writeFileSync(diagnostic, JSON.stringify({ stage }) + '\n', { mode: 0o600 }); }
+      catch { /* The original failure remains authoritative. */ }
+    }
   } finally {
     const cleanup = await Promise.allSettled([ownerContext.close(), Promise.resolve().then(() => native.stop())]);
     if (failure === null && cleanup.some(result => result.status === 'rejected'))
