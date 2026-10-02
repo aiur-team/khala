@@ -25,6 +25,8 @@ export type KhalaAppProps = Readonly<{
   inThread?: boolean;
   /** Shows the "Live" badge while the homeserver sync is live. */
   live?: boolean;
+  /** A modal layer over the card (e.g. a dialog), visible in either phone pane. */
+  overlay?: ReactNode;
   className?: string;
 }>;
 
@@ -47,7 +49,7 @@ function Brand({ theme, onThemeChange, homeHref, live, actions }: Readonly<{
   </div>;
 }
 
-export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, list, main, detail, inThread = false, live = false, className = '' }: KhalaAppProps) {
+export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, list, main, detail, inThread = false, live = false, overlay, className = '' }: KhalaAppProps) {
   const card = useRef<HTMLElement>(null);
   const pop = useRef<HTMLDivElement>(null);
   const solo = list === undefined;
@@ -62,6 +64,7 @@ export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', br
           <div className="kh-main">{solo ? brand : null}{main}<Toast /></div>
           <aside className="kh-detail" aria-label="Participant details">{detail}</aside>
           <div ref={pop} className="kh-pop" hidden />
+          {overlay}
         </section>
       </PopoverHostProvider>
     </ToastProvider>

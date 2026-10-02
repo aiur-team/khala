@@ -49,6 +49,11 @@ describe('KhalaApp', () => {
     expect(html).toContain('<div class="kh-main"><div class="kh-brand">');
   });
 
+  it('renders an overlay at card level, outside both panes', () => {
+    expect(render({ overlay: <div role="dialog">create</div> }))
+      .toContain('<div class="kh-pop" hidden=""></div><div role="dialog">create</div></section>');
+  });
+
   it('carries the theme on the app root', () => {
     expect(render({ theme: 'light' })).toMatch(/<div class="khala-app" data-theme="light">/u);
   });

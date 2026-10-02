@@ -167,9 +167,10 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
 }) {
   const actions = phase === 'checking_identity' ? null
     : <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
-  return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+  // The device status and its retry stay reachable on a phone: the pending
+  // frame stacks the list above the status instead of hiding either.
+  return <KhalaApp className="khala-owner-shell khala-pending" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} brandActions={actions}
-    inThread={routes.parse(chrome.path).kind === 'channel'}
     list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
       showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
       emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
@@ -206,11 +207,11 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
       {inThread ? <div className="kh-shell-back"><button type="button" className="kh-back" aria-label="All conversations"
         onClick={() => navigateRoute(routes.conversationsPath())}><ChevronLeftIcon /></button></div> : null}
       {children}
-      {creating ? <CreateChannelDialog context={context}
-        returnFocus={restoreCreateFocus}
-        onClose={() => setCreating(false)}
-        onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null}
-    </>} />;
+    </>}
+    overlay={creating ? <CreateChannelDialog context={context}
+      returnFocus={restoreCreateFocus}
+      onClose={() => setCreating(false)}
+      onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null} />;
 }
 
 /** The hosted human application: create, join and channel routes behind OAuth sign-in. */
