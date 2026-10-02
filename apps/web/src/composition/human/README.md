@@ -81,8 +81,8 @@ route retains recipient review and legacy pause controls as a fallback without a
 ## Agent confirmation
 
 An owner opens the agent confirmation link and reviews its label, harness and
-channel before pressing **Confirm**. A signed-out visitor uses the existing
-**Sign in** button and returns to the same link. While connecting, keep the tab
+channel before pressing **Confirm**. A signed-out visitor goes straight to
+sign-in and returns to the same link. While connecting, keep the tab
 open: the browser polls status every second and uses its Matrix client to invite
 the ready agent with encrypted history. History sharing relies on shared history
 visibility and the browser's verified identity. Existing invited or joined members
