@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -96,6 +96,21 @@ describe('MCP command lifecycle', () => {
       await closed;
       rmSync(stateHome, { recursive: true, force: true });
     }
+  });
+  it('keeps late SDK console diagnostics off protocol stdout', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-console-'));
+    const preload = path.join(dir, 'diagnostic.cjs');
+    writeFileSync(preload, "process.stdin.once('end', () => setTimeout(() => console.log('sdk-diagnostic'), 0));\n");
+    try {
+      const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
+        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event']);
+      expect(result.stderr).toBe('sdk-diagnostic\n');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('exports the C12 entry and serves the real client through the untouched bin', () => {
     expect(typeof main).toBe('function');
