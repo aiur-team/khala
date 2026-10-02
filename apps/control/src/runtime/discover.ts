@@ -42,12 +42,6 @@ function domainsFor(repoRoot: string): readonly Domain[] {
       exportName: 'registerHumanHandlers',
     },
     {
-      key: 'closure',
-      prefix: '/api/human/',
-      modulePath: path.join(repoRoot, 'apps/control/src/channel-closure/production.ts'),
-      exportName: 'registerClosureHandlers',
-    },
-    {
       key: 'agent',
       prefix: '/api/agent/',
       modulePath: path.join(repoRoot, 'apps/control/src/composition/agent/handlers.ts'),

@@ -12,7 +12,7 @@ export type ServerEnv = Readonly<{
 
 /** Keys the human flow additionally needs. Checked lazily by the human service
  * loader, so a missing Matrix/OIDC setting yields 503 on human routes only and
- * never takes down health, agent, pairing, channel-access or discovery routes. */
+ * never takes down the health route. */
 export type HumanServerEnv = Readonly<{
   publicAppOrigin: string;
   publicHomeserverOrigin: string;

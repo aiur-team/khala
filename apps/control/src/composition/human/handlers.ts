@@ -16,11 +16,6 @@ import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from './matrix';
 import type { BrowserSenderVerifier } from './browser-sender';
 import { createProductionHumanServiceLoader } from './production';
-import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
-import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';
-import { REVOCATION_REVOKE_PATH, REVOCATION_STATUS_PATH, REVOCATION_TARGETS_PATH } from './revocation';
-import { createLazyRoomSendRoutes } from './room-send-routes';
-import { createLazyDeviceAdmissionRoutes } from './device-admission-routes';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
@@ -402,87 +397,13 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
 const loadProductionServices = createProductionHumanServiceLoader();
 
 export type HumanHandlerDependencies = Readonly<{
-  /** Signed-in owner consent for the exact existing session and invite. */
-  bootstrap?: () => readonly RouteRegistration[];
-  /** Same-origin authenticated owner command mailbox. */
-  ownerMailbox?: () => readonly RouteRegistration[];
-  /** Explicit signed-in browser Matrix device key pin. */
-  ownerDeviceProof?: () => readonly RouteRegistration[];
-  /** Authenticated owner binding revocation and durable operation status. */
-  revocation?: () => readonly RouteRegistration[];
-  roomSend?: () => readonly RouteRegistration[];
-  deviceAdmission?: () => readonly RouteRegistration[];
-  /** Request-lifetime live pairing registrations supplied by the composition root. */
-  pairing?: () => readonly RouteRegistration[];
-  /** Authenticated channel-access registrations supplied by the composition root. */
-  channelAccess?: () => readonly RouteRegistration[];
   /** Authenticated channel-link resolution and personal link issuance. */
   channelLink?: () => readonly RouteRegistration[];
-  /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
-  channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
-  /** Request-lifetime channel-discovery settings registrations supplied by the composition root. */
-  channelDiscovery?: () => readonly RouteRegistration[];
 }>;
-
-function unavailableRoute(path: string, methods: readonly string[]): RouteRegistration {
-  return Object.freeze({
-    path,
-    methods: Object.freeze(methods),
-    async handle() {
-      return json(503, { v: 1, kind: 'rejected', code: 'feature_unavailable' });
-    },
-  });
-}
-
-const unavailablePairingRoutes = Object.freeze([
-  unavailableRoute('/api/human/pairing/request', ['POST', 'GET']),
-  unavailableRoute('/api/human/pairing/decision', ['POST']),
-]);
-const unavailableRevocationRoutes = Object.freeze([
-  unavailableRoute(REVOCATION_TARGETS_PATH, ['GET']),
-  unavailableRoute(REVOCATION_REVOKE_PATH, ['POST']),
-  unavailableRoute(REVOCATION_STATUS_PATH, ['GET']),
-]);
-
-const unavailableBootstrapRoutes = Object.freeze([
-  unavailableRoute('/api/human/agent-bootstrap/authorize', ['GET', 'POST']),
-]);
-
-export const unavailableChannelAccessRoutes = Object.freeze([
-  unavailableRoute('/api/human/channel-access/inbox', ['GET']),
-  unavailableRoute('/api/human/channel-access/decision', ['POST']),
-  unavailableRoute('/api/human/channel-access/mute', ['POST']),
-]);
-
-const unavailableChannelDiscoveryRoutes = Object.freeze([
-  Object.freeze({
-    path: '/api/human/channel-discovery/bootstrap/authorize',
-    methods: Object.freeze(['GET', 'POST']),
-    async handle() {
-      return json(503, { error: 'feature_unavailable' });
-    },
-  }),
-]);
-
-const unavailableChannelSettingsRoutes = Object.freeze([
-  unavailableRoute('/api/human/channel-discovery/settings', ['PUT']),
-  unavailableRoute('/api/human/channel-discovery/allowlist', ['POST']),
-  unavailableRoute('/api/human/channel-discovery/rollout', ['PUT']),
-]);
 
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
     ...createHumanHandlers(loadProductionServices, stage => console.warn('Khala auth callback', JSON.stringify({ stage }))),
-    ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
-    ...(dependencies?.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().human),
-    ...(dependencies?.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().human),
-    ...(dependencies?.revocation?.() ?? unavailableRevocationRoutes),
-    ...(dependencies?.roomSend?.() ?? createLazyRoomSendRoutes(() => []).filter(route => route.path.startsWith('/api/human/'))),
-    ...(dependencies?.deviceAdmission?.() ?? createLazyDeviceAdmissionRoutes(() => [])),
-    ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
-    ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelLink?.() ?? []),
-    ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
-    ...(dependencies?.channelDiscovery?.() ?? unavailableChannelSettingsRoutes),
   ]);
 }
