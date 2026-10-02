@@ -23,6 +23,15 @@ test('candidate ID is taken only from a matching native tool result', () => {
   assert.equal(proofCandidate(codex.slice(0, 1), 'codex'), null);
   assert.deepEqual(proofCandidate(codex, 'codex'), { candidateId, operationId: outcome.operationId });
   assert.deepEqual(proofCandidate(claude, 'claude'), { candidateId, operationId: outcome.operationId });
+  const codeMode = [
+    { type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'call-1',
+      input: `const result = await tools.mcp__khala__khala_request_channel_access({operationId: '${outcome.operationId}'}); text(result);` } },
+    { type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'call-1',
+      output: `Tool result: ${JSON.stringify(outcome)}` } },
+  ];
+  assert.deepEqual(proofCandidate(codeMode, 'codex'), { candidateId, operationId: outcome.operationId });
+  assert.equal(proofCandidate([{ ...codeMode[0], payload: { ...codeMode[0].payload,
+    input: `text('khala_request_channel_access ${outcome.operationId}')` } }, codeMode[1]], 'codex'), null);
   assert.equal(proofCandidate([{ ...codex[1], payload: { ...codex[1].payload,
     arguments: JSON.stringify({ operationId: 'wrong' }) } }], 'codex'), null);
 });

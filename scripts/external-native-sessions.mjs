@@ -90,7 +90,8 @@ function sessions(root, since) {
 function observedSession(state, actor, expectedSessionId = null) {
   const root = actor === 'codex' ? path.join(state.home, '.codex', 'sessions') : path.join(state.home, '.claude', 'projects');
   const files = sessions(root, state.startedAt);
-  const candidates = files.flatMap(file => {
+  const matchingFiles = expectedSessionId ? files.filter(file => file.endsWith(`${expectedSessionId}.jsonl`)) : files;
+  const candidates = matchingFiles.flatMap(file => {
     const match = /([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/i.exec(file);
     if (!match) return [];
     const data = fs.readFileSync(file, 'utf8');
@@ -98,11 +99,11 @@ function observedSession(state, actor, expectedSessionId = null) {
     const authored = rows.some(row => actor === 'codex'
       ? row.type === 'response_item' && row.payload?.type === 'message' && row.payload?.role === 'assistant'
       : row.type === 'assistant' && row.message?.role === 'assistant');
-    return authored && (!expectedSessionId || match[1] === expectedSessionId)
-      ? [{ sessionId: match[1], transcript: file }] : [];
+    return authored ? [{ sessionId: match[1], transcript: file }] : [];
   });
   if (candidates.length !== 1) fail(`${actor}_${candidates.length ? 'exact_session_ambiguous'
-    : files.length ? 'assistant_turn_absent' : 'transcript_absent'}`);
+    : expectedSessionId && matchingFiles.length === 0 ? 'expected_session_missing'
+      : files.length ? 'assistant_turn_absent' : 'transcript_absent'}`);
   return candidates[0];
 }
 
@@ -121,6 +122,7 @@ const candidatesIn = value => {
 export function proofCandidate(rows, actor) {
   const calls = [];
   const results = new Map();
+  const codeCalls = new Map();
   for (const row of rows) {
     if (actor === 'codex' && row.type === 'response_item' && row.payload?.type === 'mcp_tool_call'
       && /(?:^|__)khala_request_channel_access$/u.test(String(row.payload.tool ?? row.payload.name ?? '')))
@@ -132,13 +134,33 @@ export function proofCandidate(rows, actor) {
     if (actor === 'claude' && row.type === 'user' && Array.isArray(row.message?.content)) for (const item of row.message.content) {
       if (item?.type === 'tool_result' && item.is_error !== true) results.set(item.tool_use_id, item.content);
     }
+    if (actor === 'codex' && row.type === 'response_item' && row.payload?.type === 'custom_tool_call'
+      && row.payload.name === 'exec' && typeof row.payload.call_id === 'string')
+      codeCalls.set(row.payload.call_id, row.payload.input);
+    if (actor === 'codex' && row.type === 'response_item' && row.payload?.type === 'custom_tool_call_output'
+      && typeof row.payload.call_id === 'string') {
+      const input = codeCalls.get(row.payload.call_id);
+      const source = JSON.stringify(input ?? '');
+      if (/mcp__khala__khala_request_channel_access/u.test(source)
+        && !/exec_command|child_process|spawn\(|bash|sh -c/u.test(source))
+        calls.push({ input, result: row.payload.output, wrapped: true });
+    }
   }
   const found = new Map();
   for (const call of calls) {
     const input = object(call.input);
     const result = actor === 'codex' ? call.result : results.get(call.id);
-    for (const candidate of candidatesIn(result)) {
-      if (candidate.operationId !== input?.operationId) continue;
+    const parsed = candidatesIn(result);
+    if (call.wrapped && parsed.length === 0) {
+      const flattened = JSON.stringify(result).replaceAll('\\', '');
+      const candidateId = /"candidateId"\s*:\s*"([A-Za-z0-9_-]{43})"/u.exec(flattened)?.[1];
+      const operationId = /"operationId"\s*:\s*"([A-Za-z0-9_$.:/+!=~-]{4,256})"/u.exec(flattened)?.[1];
+      if (flattened.includes('proof_key_candidate') && candidateId && operationId)
+        parsed.push({ candidateId, operationId });
+    }
+    for (const candidate of parsed) {
+      if (call.wrapped ? !JSON.stringify(call.input).includes(candidate.operationId)
+        : candidate.operationId !== input?.operationId) continue;
       found.set(candidate.candidateId, { candidateId: candidate.candidateId, operationId: candidate.operationId });
     }
   }
@@ -264,7 +286,7 @@ function main() {
     save(directory, state);
     for (const [actor, bin, model] of [['codex', codex, 'gpt-6.1-sol'], ['claude', claude, 'sonnet']]) {
       const launcher = path.join(directory, `${actor}-launch.sh`);
-      const flags = actor === 'codex' ? ' --no-daemon -c check_for_update_on_startup=false' : '';
+      const flags = actor === 'codex' ? ' --no-daemon --disable shell_tool -c check_for_update_on_startup=false' : '';
       fs.writeFileSync(launcher, `#!/bin/sh\numask 077\nexec ${safeWord(bin)} --model ${safeWord(model)}${flags}\n`, { mode: 0o700 });
       tmux(state, ['new-session', '-d', '-s', actor, '-c', directory, launcher]);
       trustStartup(state, actor);
