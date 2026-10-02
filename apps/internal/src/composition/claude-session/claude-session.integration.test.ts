@@ -1152,16 +1152,19 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await session.run('mode'))).toMatchObject({
       ok: true, acknowledgement: 'unknown', support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
     });
-    await session.post('manual read after approval');
+    const eventId = await session.post('manual read after approval');
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
     expect(JSON.parse(await claude(session.report.descriptorPath, 'read', 'another-session')))
       .toEqual({ ok: false, kind: 'refused', code: 'session_not_bound' });
-    expect(await session.run('read')).toContain('manual read after approval');
-    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    const [read] = await serve(session.report.descriptorPath, 'session-uninspected', [['khala_read']]);
+    expect(read).toEqual({ kind: 'batch', batch: expect.stringContaining('manual read after approval') });
+    expect(await session.facts()).toEqual([]);
     const [sent] = await serve(session.report.descriptorPath, 'session-uninspected', [['khala_send', { message: 'manual reply' }]]);
     expect(sent).toMatchObject({ kind: 'accepted' });
     const facts = await session.facts();
-    expect(facts.some(fact => fact.receipt.kind === 'agent_acknowledged')).toBe(true);
+    expect(facts.some(fact => fact.receipt.kind === 'agent_acknowledged'
+      && fact.events.some(event => event.eventId === eventId))).toBe(true);
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 0 });
     const stopped = await call(session.report.origin, {
       method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`,
       headers: session.owner, body: { v: 1, targets: null },
