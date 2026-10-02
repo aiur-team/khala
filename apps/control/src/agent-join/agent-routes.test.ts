@@ -126,3 +126,35 @@ it('limits creates before parsing their bodies', async () => {
   for (let i = 0; i < 10; i++) expect((await f.handlers.create(f.createRequest('{'))).status).toBe(400);
   const response = await f.handlers.create(f.createRequest()); expect(response.status).toBe(429); expect(await response.json()).toEqual({ error: 'rate_limited' });
 });
+it('uses the channel-name fallback and handles ready write failures', async () => {
+  const f = await fixture('claimed');
+  const fallback = createAgentJoinAgentHandlers({ ...f.deps, roomName: async () => null });
+  const created = await fallback.create(f.createRequest());
+  const body = await created.json() as AgentJoinCreated;
+  const read = await f.joins.read(body.joinId);
+  if (read.kind !== 'found') throw Error();
+  expect(read.record.channelName).toBe('Untitled channel');
+  for (const kind of ['unknown', 'unavailable', 'conflict'] as const) {
+    const handlers = createAgentJoinAgentHandlers({ ...f.deps, joins: { ...f.joins, replace: async () => ({ kind }) } });
+    const response = await handlers.ready(f.request('POST')); expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'unavailable' });
+  }
+});
+it('withholds credentials even when an ambiguous claim may have consumed them', async () => {
+  const f = await fixture('confirmed');
+  const handlers = createAgentJoinAgentHandlers({ ...f.deps, joins: { ...f.joins,
+    replace: async (...args) => { await f.joins.replace(...args); return { kind: 'unknown' }; },
+  } });
+  const first = await handlers.poll(f.request());
+  expect(first.status).toBe(503); expect(await first.json()).toEqual({ error: 'unavailable' });
+  expect(await (await f.handlers.poll(f.request())).json()).toEqual({ state: 'claimed' });
+  const read = await f.joins.read(f.joinId);
+  if (read.kind !== 'found') throw Error();
+  expect(read.record).not.toHaveProperty('sealedCredentials');
+});
+it('reports a live pending join before expiry', async () => {
+  const f = await fixture();
+  f.advance(599999);
+  const response = await f.handlers.poll(f.request());
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ state: 'pending' });
+});
