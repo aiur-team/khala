@@ -65,6 +65,12 @@ describe('contentSecurityPolicy', () => {
     expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
   });
 
+  it('admits Google Fonts stylesheets and font files and nothing broader', () => {
+    const csp = contentSecurityPolicy('https://matrix.example.com');
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;");
+    expect(csp).toContain("font-src 'self' https://fonts.gstatic.com;");
+  });
+
   it('stays same-origin when no homeserver is configured', () => {
     expect(contentSecurityPolicy(null)).toContain("connect-src 'self';");
   });

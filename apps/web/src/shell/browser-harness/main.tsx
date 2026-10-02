@@ -1,47 +1,42 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AiurShell } from '../AiurShell';
 import { KhalaPageFrame } from '../KhalaPageFrame';
-import { Panel } from '../Panel';
-import { StatusBadge } from '../StatusBadge';
-import type { NavigationItem, ThemeChoice } from '../types';
+import type { ThemeChoice } from '../types';
+import { ChatComposer, ChatMessage, ChatThread, ConversationLayout, ConversationList, type ConversationSummary } from '../../ui/conversation';
+import { Avatar } from '../../ui/khala/Avatar';
+import { KhalaApp } from '../../ui/khala/KhalaApp';
+import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 
-const navigation: NavigationItem[] = [
-  { id: 'conversations', label: 'Conversations', href: '#conversations', current: true, count: 2 },
-  { id: 'long', label: 'A rather long navigation destination name that could wrap', href: '#long', current: false },
+// Synthetic content only: no real channel, credential or person.
+const conversations: ConversationSummary[] = [
+  { id: 'launch', title: 'Release retro', preview: 'Claude: the build is green on every target.', timestamp: '2026-09-28T09:41:00Z', unreadCount: 2 },
+  { id: 'design', title: 'Design review', preview: 'Kai: the brand row lands at 300px.', timestamp: '2026-09-27T16:05:00Z', unreadCount: null },
+  { id: 'empty', title: 'A rather long channel name that has to truncate inside the list column', preview: null, timestamp: null, unreadCount: null },
 ];
 
-const hostedMode = new URLSearchParams(window.location.search).get('mode') === 'hosted';
+const params = new URLSearchParams(window.location.search);
 
 function Harness() {
-  const [theme, setTheme] = useState<ThemeChoice>('dark');
-  const [collapsed, setCollapsed] = useState(false);
-  return (
-    <AiurShell
-      mode={hostedMode ? 'hosted-content' : 'standalone'}
-      navigation={navigation}
-      theme={{ theme, onThemeChange: setTheme }}
-      collapsed={collapsed}
-      onCollapsedChange={setCollapsed}
-    >
-      <KhalaPageFrame model={{ title: 'Khala', description: 'One shared plan.', labelledBy: 'khala-heading' }}>
-        <Panel heading="Launch notes">
-          <p>{'A long wrapping synthetic message with no attachments and no real credentials. '.repeat(6)}</p>
-        </Panel>
-        <Panel
-          heading="Human review"
-          footer={
-            <button type="button" className="aiur-action" aria-describedby="review-hint">
-              Review selected batch
-            </button>
-          }
-        >
-          <p id="review-hint">Synthetic harness control; not a real approval surface.</p>
-          <StatusBadge tone="caution" label="Delivery unknown" />
-        </Panel>
-      </KhalaPageFrame>
-    </AiurShell>
-  );
+  const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
+  const [inThread, setInThread] = useState(params.get('view') === 'thread');
+  const [query, setQuery] = useState('');
+  return <KhalaApp theme={theme} onThemeChange={setTheme} homeHref="#conversations" inThread={inThread} live
+    // `?probe` adds an interactive avatar, so the browser spec can check that component fonts beat the base rules.
+    detail={params.has('probe') ? <Avatar kind="human" label="Maya Chen" hue={330} initials="MC" /> : null}
+    brandActions={<button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"><LogOutIcon /></button>}
+    list={<ConversationList conversations={conversations} selectedId={inThread ? 'launch' : null} query={query} onQueryChange={setQuery}
+      status="ready" onSelect={() => setInThread(true)}
+      action={<button type="button" className="kh-ib sm" aria-label="Create channel" title="Create channel"><PlusIcon /></button>} />}
+    main={<div className="channel-page"><KhalaPageFrame model={{ title: 'Release retro', labelledBy: 'harness-title' }}>
+      <ConversationLayout inThread thread={<ChatThread title="Release retro" onBack={() => setInThread(false)}>
+        <ul className="fixture-messages">
+          <ChatMessage id="m1" author="Maya Chen" time="2026-09-28T09:41:00Z">Kicking off the retro. What went well?</ChatMessage>
+          <ChatMessage id="m2" author="Claude" kindLabel="Agent" time="2026-09-28T09:42:00Z">The build is green on every target.</ChatMessage>
+          <ChatMessage id="m3" author="You" mine time="2026-09-28T09:43:00Z">{'A long wrapping synthetic message. '.repeat(6)}</ChatMessage>
+        </ul>
+        <ChatComposer value="" onChange={() => {}} onSend={() => {}} />
+      </ChatThread>} />
+    </KhalaPageFrame></div>} />;
 }
 
 createRoot(document.getElementById('root')!).render(<Harness />);

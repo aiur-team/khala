@@ -49,6 +49,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     device: matrix.device,
     room: matrix.room,
     conversations: matrix.conversations,
+    syncStatus: matrix.syncStatus,
     admission: api.admission,
     channelLinks: api.channelLinks,
     agentJoin: api.agentJoin,

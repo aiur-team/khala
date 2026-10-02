@@ -3,7 +3,6 @@ import { createAgentConfirmController } from '../../features/agent-confirm/contr
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
-import { AiurShell, ThemeToggle } from '../../shell/AiurShell';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import type { ShellMode } from '../../shell/types';
@@ -16,7 +15,10 @@ import { HumanScreen, type HumanShellChrome } from './screen';
 import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList } from '../../ui/conversation';
+import { KhalaApp } from '../../ui/khala/KhalaApp';
+import { ChevronLeftIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
 import { CreateChannelDialog } from './CreateChannelDialog';
+import { useLiveSync } from './sync-status';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
 
@@ -150,16 +152,10 @@ function LogoutAction({ application, routes, mode }: {
   }
 
   return <>
-    {signOutFailed ? <span role="alert">Log out failed. Try again.</span> : null}
-    {signingOut ? <span role="status">Logging out…</span> : null}
-    <button type="button" className="aiur-shell__icon-button" aria-label="Log out" title="Log out"
-      disabled={signingOut} onClick={() => void signOut()}>
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M10 17l5-5-5-5M15 12H3" />
-        <path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7" />
-      </svg>
-    </button>
+    {signOutFailed ? <span className="kh-brand-status" role="alert">Log out failed. Try again.</span> : null}
+    {signingOut ? <span className="kh-brand-status" role="status">Logging out…</span> : null}
+    <button type="button" className="tool-btn icon-only" aria-label="Log out" title="Log out"
+      disabled={signingOut} onClick={() => void signOut()}><LogOutIcon /></button>
   </>;
 }
 
@@ -170,42 +166,17 @@ function PendingOwnerShell({ application, routes, chrome, phase, children }: {
   phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable';
   children: ReactNode;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const drawerButton = useRef<HTMLButtonElement>(null);
-  const drawerClose = useRef<HTMLButtonElement>(null);
-  const drawer = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
-  const sidebar = <div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
-    role={drawerOpen ? 'dialog' : undefined} aria-modal={drawerOpen || undefined} aria-label={drawerOpen ? 'Channels' : undefined}
-    onKeyDown={event => {
-      if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
-      if (event.key !== 'Tab' || !drawerOpen) return;
-      const focusable = [...(drawer.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]') ?? [])]
-        .filter(element => element.getClientRects().length > 0);
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    }}>
-    <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels"
-      onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
-    <ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
-      showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
-      emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
-      action={<button type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" disabled>+</button>} />
-  </div>;
   const actions = phase === 'checking_identity' ? null
     : <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
-  const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
-  return <AiurShell mode={chrome.mode} className="khala-owner-shell" brandHref={routes.conversationsPath()}
-    navigation={[]} sidebar={sidebar} actions={actions} theme={chrome.theme}
-    collapsed={chrome.collapsed} onCollapsedChange={chrome.onCollapsedChange}>
-    {chrome.mode === 'hosted-content' ? <div className="khala-content-actions"><div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
-    <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels"
-      aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><span>Channels</span>
-      {chrome.mode === 'hosted-content' ? hostedActions : null}</div>
-    {children}
-  </AiurShell>;
+  // The device status and its retry stay reachable on a phone: the pending
+  // frame stacks the list above the status instead of hiding either.
+  return <KhalaApp className="khala-owner-shell khala-pending" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+    homeHref={routes.conversationsPath()} brandActions={actions}
+    list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
+      showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
+      emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
+      action={<button type="button" className="kh-ib sm" aria-label="Create channel" title="Create channel" disabled><PlusIcon /></button>} />}
+    main={children} />;
 }
 
 function OwnerShell({ application, routes, chrome, context, navigateRoute, children }: {
@@ -218,65 +189,31 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
 }) {
   const route = routes.parse(chrome.path);
   const conversations = useConversationIndex(context);
-  const selectedTitle = route.kind === 'channel'
-    ? conversations?.find(item => item.id === route.roomId)?.title ?? 'Encrypted conversation'
-    : 'Channels';
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const drawerButton = useRef<HTMLButtonElement>(null);
-  const drawerClose = useRef<HTMLButtonElement>(null);
-  const drawer = useRef<HTMLDivElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
-  const restoreCreateFocus = useCallback(() => {
-    (window.matchMedia('(max-width: 959px)').matches ? drawerButton.current : createButton.current)?.focus();
-  }, []);
+  const restoreCreateFocus = useCallback(() => { createButton.current?.focus(); }, []);
   useEffect(() => { setCreating(false); }, [chrome.path]);
-  useEffect(() => { if (drawerOpen) drawerClose.current?.focus(); }, [drawerOpen]);
-  const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
-  const hostedActions = <><ThemeToggle theme={chrome.theme} />{actions}</>;
-  const sidebar = <>
-    <ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
+  const live = useLiveSync(context);
+  const inThread = route.kind === 'channel';
+  return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+    homeHref={routes.conversationsPath()} inThread={inThread} live={live}
+    brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}
+    list={<ConversationList conversations={conversations ?? []} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} emptyLabel="No encrypted channels yet."
       status={!context.conversations || conversations === null ? 'error' : conversations === undefined ? 'loading' : 'ready'}
-      action={<button ref={createButton} type="button" className="aiur-shell__icon-button" aria-label="Create channel" title="Create channel" onClick={() => { setDrawerOpen(false); setCreating(true); }}>+</button>}
-      onSelect={id => { if (conversations?.some(item => item.id === id)) { setDrawerOpen(false); navigateRoute(routes.roomPath(id)); } }} />
-  </>;
-  return (
-    <AiurShell
-      mode={chrome.mode}
-      className="khala-owner-shell"
-      {...(route.kind === 'channel' && chrome.mode !== 'hosted-content' ? { headerContent: <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> } : {})}
-      navigation={[]}
-      brandHref={routes.conversationsPath()}
-      sidebar={<div ref={drawer} className={`khala-sidebar${drawerOpen ? ' khala-sidebar--open' : ''}`}
-        role={drawerOpen ? 'dialog' : undefined} aria-modal={drawerOpen || undefined} aria-label={drawerOpen ? 'Channels' : undefined}
-        onKeyDown={event => {
-          if (event.key === 'Escape') { setDrawerOpen(false); drawerButton.current?.focus(); return; }
-          if (event.key !== 'Tab' || !drawerOpen) return;
-          const focusable = [...(drawer.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') ?? [])]
-            .filter(element => element.getClientRects().length > 0);
-          const first = focusable[0];
-          const last = focusable[focusable.length - 1];
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-        }}>
-        <button ref={drawerClose} type="button" className="khala-sidebar__close aiur-shell__icon-button" aria-label="Close channels" onClick={() => { setDrawerOpen(false); drawerButton.current?.focus(); }}>×</button>
-        {sidebar}</div>}
-      actions={actions}
-      theme={chrome.theme}
-      collapsed={chrome.collapsed}
-      onCollapsedChange={chrome.onCollapsedChange}
-    >
-      {chrome.mode === 'hosted-content' ? <div className="khala-content-actions">{route.kind === 'channel' ? <><button ref={drawerButton} type="button" className="khala-channel-drawer aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><div id="khala-channel-toolbar" /></> : null}<div className="khala-content-actions__buttons">{hostedActions}</div></div> : null}
-      {route.kind !== 'channel' ? <div className="khala-mobile-bar"><button ref={drawerButton} type="button" className="aiur-shell__icon-button" aria-label="Channels" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(value => !value)}>☰</button><span>{selectedTitle}</span>{chrome.mode === 'hosted-content' ? hostedActions : null}</div> : null}
+      action={<button ref={createButton} type="button" className="kh-ib sm" aria-label="Create channel" title="Create channel" onClick={() => setCreating(true)}><PlusIcon /></button>}
+      onSelect={id => { if (conversations?.some(item => item.id === id)) navigateRoute(routes.roomPath(id)); }} />}
+    main={<>
+      {/* Phone-width thread view hides the list; the design's header back button (§5) replaces this. */}
+      {inThread ? <div className="kh-shell-back"><button type="button" className="kh-back" aria-label="All conversations"
+        onClick={() => navigateRoute(routes.conversationsPath())}><ChevronLeftIcon /></button></div> : null}
       {children}
-      {creating ? <CreateChannelDialog context={context}
-        returnFocus={restoreCreateFocus}
-        onClose={() => setCreating(false)}
-        onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null}
-    </AiurShell>
-  );
+    </>}
+    overlay={creating ? <CreateChannelDialog context={context}
+      returnFocus={restoreCreateFocus}
+      onClose={() => setCreating(false)}
+      onOpenRoom={roomId => { setCreating(false); navigateRoute(routes.roomPath(roomId)); }} /> : null} />;
 }
 
 /** The hosted human application: create, join and channel routes behind OAuth sign-in. */

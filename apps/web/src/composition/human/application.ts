@@ -21,6 +21,7 @@ import type {
 import type { ChannelService } from '@khala/messaging/channels/index';
 import type { AgentJoinPort, AgentInvitePort } from '../../features/agent-confirm/ports';
 import type { ConversationIndexPort } from './conversations';
+import type { SyncStatusPort } from './sync-status';
 
 import { createHumanDeviceSession } from './device-session';
 import type { TabHandoff } from './tab-handoff';
@@ -34,6 +35,8 @@ export interface HumanApplicationPorts {
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
   readonly conversations?: ConversationIndexPort;
+  /** Homeserver sync liveness for the brand row's Live badge. */
+  readonly syncStatus?: SyncStatusPort;
   readonly admission: AdmissionPort;
   readonly channelLinks?: HumanChannelLinks;
   readonly limits: ContentLimits;

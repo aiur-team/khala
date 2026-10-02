@@ -1,2 +1,27 @@
-/* Compatibility import for existing Khala harnesses and package consumers. */
-@import '@aiur/components/fonts.css';
+/*
+ * Offline stand-ins for the design font families, for browser harnesses and
+ * visual baselines only, so they render the same glyphs without network.
+ * The production app loads these families from Google Fonts in index.html
+ * (RECREATION-SPEC §2.1) and never imports this file.
+ */
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: block;
+}
+@font-face {
+  font-family: "Bungee";
+  src: url("./fonts/Bungee-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}

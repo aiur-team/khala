@@ -1,57 +1,150 @@
 /*
- * Khala-specific shell tokens. Shared palette, typography, and action styles
- * come from @aiur/components; keep this root scoped for embedded hosts.
+ * Khala design tokens (RECREATION-SPEC §2.2, verbatim from the Claude Design
+ * source). Scoped to the app roots so an embedding host keeps its own palette.
+ * The @aiur/components palette stays imported for shared `.aiur-action`
+ * controls on non-chat screens. Fonts load from index.html (§2.1).
  */
 @import '@aiur/components/theme.css';
-@import '@aiur/components/fonts.css';
 
-.aiur-shell,
+.khala-app,
 .khala-content-root {
-  --khala-font-heading: var(--aiur-font-display);
-  --khala-font-body: var(--aiur-font-body);
-  --khala-font-mono: var(--aiur-font-mono);
+  --bg: #16171a;
+  --bg-2: #1a1b1e;
+  --surface: #1e2025;
+  --surface-2: #23262c;
+  --surface-3: #292d34;
+  --fg: #edeef0;
+  --muted: #969aa4;
+  --faint: #676b74;
+  --line: rgba(221, 226, 235, 0.12);
+  --line-strong: rgba(221, 226, 235, 0.20);
+  --hairline: rgba(221, 226, 235, 0.08);
+  --pill-bd: rgba(221, 226, 235, 0.14);
+  --pill-bg: rgba(221, 226, 235, 0.04);
 
-  --khala-nav-width: 15rem;
-  --khala-nav-width-collapsed: 2.6rem;
+  --accent: #2f86ff;
+  --accent-ink: #8fbcff;
+  --accent-soft: rgba(47, 134, 255, 0.15);
+  --accent-line: rgba(47, 134, 255, 0.34);
+
+  --attn: #e3b341;
+  --attn-ink: #f1cf6f;
+  --attn-soft: rgba(227, 179, 65, 0.15);
+  --attn-line: rgba(227, 179, 65, 0.34);
+
+  --block: #ff7b72;
+  --block-ink: #ffa39c;
+  --block-soft: rgba(255, 123, 114, 0.14);
+  --block-line: rgba(255, 123, 114, 0.34);
+
+  --good: #3fb950;
+  --good-ink: #74d47f;
+  --good-soft: rgba(63, 185, 80, 0.14);
+  --good-line: rgba(63, 185, 80, 0.32);
+
+  --super: #c69bff;
+  --super-ink: #d8bcff;
+  --super-soft: rgba(198, 155, 255, 0.15);
+  --super-line: rgba(198, 155, 255, 0.34);
+
+  --ack: #4fd6c4;
+  --ack-soft: rgba(79, 214, 196, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 40px 90px -40px rgba(0, 0, 0, 0.7);
+  --radius: 16px;
+  --radius-lg: 24px;
+
+  color-scheme: dark;
+
+  /* Aliases for non-chat screens (§2.2). There is deliberately no heading
+     font token: the logo font is set directly on the wordmark only (§2.1). */
+  --khala-font-body: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --khala-font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --khala-content-measure: 75rem;
   --khala-panel-radius: 16px;
   --khala-dialog-radius: 24px;
-  --khala-breakpoint: 960px;
 
-  --khala-ink: var(--aiur-fg);
-  --khala-ink-muted: var(--aiur-muted);
-  --khala-fill: var(--aiur-bg-soft);
-  --khala-fill-raised: #1e2025;
-  --khala-fill-control: #23262c;
-  --khala-line: var(--aiur-line);
-  --khala-accent: var(--aiur-accent);
-  --khala-status-positive: #3fae5c;
-  --khala-status-caution: #c98a1f;
-  --khala-status-critical: #c9432f;
+  --khala-fill: var(--bg);
+  --khala-fill-raised: var(--surface);
+  --khala-fill-control: var(--surface-3);
+  --khala-ink: var(--fg);
+  --khala-ink-muted: var(--muted);
+  --khala-line: var(--line);
+  --khala-accent: var(--accent);
+  --khala-status-positive: var(--good);
+  --khala-status-caution: var(--attn);
+  --khala-status-critical: var(--block);
 
-  color: var(--khala-ink);
-  background: var(--khala-fill);
-  font-family: var(--khala-font-body);
+  color: var(--fg);
+  background: var(--bg);
+  font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.4s ease, color 0.4s ease;
 }
 
-.aiur-shell[data-theme='light'],
-.khala-content-root[data-theme='light'] {
+.khala-app[data-theme="light"],
+.khala-content-root[data-theme="light"] {
+  --bg: #e7d6b2;
+  --bg-2: #e2cfa6;
+  --surface: #f4ecd9;
+  --surface-2: #efe5cd;
+  --surface-3: #e9dcbf;
+  --fg: #2a2520;
+  --muted: #756a55;
+  --faint: #9a8e73;
+  --line: rgba(42, 37, 26, 0.16);
+  --line-strong: rgba(42, 37, 26, 0.28);
+  --hairline: rgba(42, 37, 26, 0.10);
+  --pill-bd: rgba(42, 37, 26, 0.18);
+  --pill-bg: rgba(42, 37, 26, 0.04);
+
+  --accent: #1f57c4;
+  --accent-ink: #1a4aa8;
+  --accent-soft: rgba(31, 87, 196, 0.11);
+  --accent-line: rgba(31, 87, 196, 0.30);
+
+  --attn: #b8821a;
+  --attn-ink: #8a6210;
+  --attn-soft: rgba(184, 130, 26, 0.13);
+  --attn-line: rgba(184, 130, 26, 0.32);
+
+  --block: #d23b32;
+  --block-ink: #a52a23;
+  --block-soft: rgba(210, 59, 50, 0.11);
+  --block-line: rgba(210, 59, 50, 0.30);
+
+  --good: #1f9d4d;
+  --good-ink: #167038;
+  --good-soft: rgba(31, 157, 77, 0.13);
+  --good-line: rgba(31, 157, 77, 0.30);
+
+  --super: #8a4fd0;
+  --super-ink: #6d3aa8;
+  --super-soft: rgba(138, 79, 208, 0.12);
+  --super-line: rgba(138, 79, 208, 0.30);
+
+  --ack: #0e9e8e;
+  --ack-soft: rgba(14, 158, 142, 0.13);
+
+  --shadow-sm: 0 1px 2px rgba(58, 44, 18, 0.10);
+  --shadow-lg: 0 44px 80px -40px rgba(58, 44, 18, 0.30);
+
   color-scheme: light;
-  --khala-fill: var(--aiur-bg);
-  --khala-fill-raised: #f4ecd9;
-  --khala-fill-control: #f4ecd9;
-  --khala-status-positive: #2f7d43;
-  --khala-status-caution: #966212;
-  --khala-status-critical: #a3301f;
 }
 
-.aiur-shell[data-theme='dark'],
-.khala-content-root[data-theme='dark'] {
-  color-scheme: dark;
-}
+/* Base rules (§2.2, source:129-153), scoped to the app roots. `:where` keeps
+   the design's (0,0,1) specificity, so component rules still win. */
+:where(.khala-app, .khala-content-root) *,
+:where(.khala-app, .khala-content-root) *::before,
+:where(.khala-app, .khala-content-root) *::after { box-sizing: border-box; }
+:where(.khala-app, .khala-content-root) a { color: var(--accent); text-decoration: none; transition: color 140ms ease; }
+:where(.khala-app, .khala-content-root) a:hover { color: var(--accent-ink); }
+:where(.khala-app, .khala-content-root) button { font: inherit; cursor: pointer; }
+:where(.khala-app, .khala-content-root) ::selection { background: var(--accent-soft); }
+:where(.khala-app, .khala-content-root) .mono { font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+:where(.khala-app, .khala-content-root) .num { font-variant-numeric: tabular-nums slashed-zero; font-feature-settings: "tnum" 1, "zero" 1; }
 
-.aiur-shell :focus-visible,
-.khala-content-root :focus-visible {
-  outline: 3px solid var(--khala-accent);
-  outline-offset: 3px;
-}
+/* Focus (§16 [ADAPT]; the design has no focus-visible styles). */
+:is(.khala-app, .khala-content-root) :is(button, a, [role="button"], input[type="search"]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
