@@ -57,7 +57,7 @@ export async function saveProfile(draft: Draft, saved: Profile, { save, saveColo
 }
 
 export function ProfileDialog({ ownerId, onClose }: Readonly<{ ownerId?: string; onClose(): void }>) {
-  const { username, suggestion, color, save, saveColor } = useProfile();
+  const { username, suggestion, color, initials: customInitials, save, saveColor } = useProfile();
   const [name, setName] = useState(username ?? suggestion);
   const [selected, setSelected] = useState(() => initialColor(color, ownerId));
   const [saving, setSaving] = useState(false);
@@ -124,7 +124,7 @@ export function ProfileDialog({ ownerId, onClose }: Readonly<{ ownerId?: string;
   return <div className="kh-dlg-scrim" onPointerDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={dialog} className="kh-dlg kh-prof" role="dialog" aria-modal="true" aria-labelledby={headingId} onKeyDown={onKeyDown}>
       <h2 id={headingId} className="kh-prof-h">Profile</h2>
-      <span className="kh-prof-av" style={{ background: solid }} aria-hidden="true">{initials(name.trim() || suggestion)}</span>
+      <span className="kh-prof-av" style={{ background: solid }} aria-hidden="true">{customInitials ?? initials(name.trim() || suggestion)}</span>
       <form className="kh-prof-form" noValidate onSubmit={event => { event.preventDefault(); if (canSave) void submit(); }}>
         <div className="kh-prof-sec">
           <label className="kh-prof-lbl" htmlFor={nameId}>Username</label>

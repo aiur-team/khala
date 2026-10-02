@@ -96,6 +96,22 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await pop.locator('.kh-hint').first().textContent(), 'paste into your agent');
     await page.keyboard.press('Escape');
 
+    // Rename from the roster: only the viewer's own agents, opening the pane with the field focused.
+    assert.equal(await page.getByRole('button', { name: 'Rename Builder' }).count(), 0, 'no roster rename for another person’s agent');
+    await page.getByRole('button', { name: 'Rename Scout' }).click();
+    const renaming = page.getByRole('complementary', { name: 'Scout details' });
+    await renaming.waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Name for Scout');
+    const nameField = renaming.getByLabel('Name for Scout');
+    assert.equal(await nameField.getAttribute('maxlength'), '40');
+    await nameField.fill('a');
+    await renaming.getByRole('button', { name: 'Rename' }).click();
+    assert.equal(await renaming.getByRole('alert').textContent(), 'At least 2 characters.');
+    await nameField.fill('Builder');
+    await renaming.getByRole('button', { name: 'Rename' }).click();
+    await renaming.getByRole('alert').filter({ hasText: 'That name is taken.' }).waitFor();
+    await renaming.getByRole('button', { name: 'Close details' }).click();
+
     // Detail (§11) from a roster row; rename for the viewer's own agent.
     await page.locator('.kh-rai[data-kh-agent="agent_scout"]').click();
     const detail = page.getByRole('complementary', { name: 'Scout details' });
@@ -217,6 +233,10 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
             await shot.screenshot({ path: join(shots, `mode-menu-${width}-${theme}.png`) });
             await shot.locator('.kh-mode-btn').first().click();
           }
+          await shot.getByRole('button', { name: 'Rename Scout' }).first().click();
+          await shot.waitForTimeout(300);
+          await shot.screenshot({ path: join(shots, `rename-${width}-${theme}.png`) });
+          await shot.getByRole('button', { name: 'Close details' }).click();
           await shot.locator('#kh-head-btn').click();
           await shot.getByRole('button', { name: '@Scout' }).click();
           await shot.waitForTimeout(300);

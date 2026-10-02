@@ -157,6 +157,21 @@ describe('ChannelScreen roster', () => {
   it('omits every M2 roster element', () => {
     for (const absent of ['kh-keb', 'Requests', 'kh-crw', 'kh-confirm', 'class="kh-st ', 'kh-rai-p', 'kh-badge']) expect(html).not.toContain(absent);
   });
+
+  it('offers Rename on the viewer’s own agent row only, when renaming is available', () => {
+    const renaming = render({ phase: 'ready', agents: [agent('agent_own', mira, 'Claude'), agent('agent_theo', theo, 'Codex')] },
+      { describeParticipant: describe_, renameAgent: async (_participantId, name) => ({ kind: 'ok', name }) });
+    const list = renaming.slice(renaming.indexOf('id="kh-roster"'), renaming.indexOf('class="kh-channel-thread"'));
+    expect(list.match(/aria-label="Rename [^"]*"/g)).toEqual(['aria-label="Rename Claude"']);
+    expect(roster).not.toContain('aria-label="Rename');
+  });
+
+  it('shows the agent’s Matrix display name over an older in-channel rename', () => {
+    const renamed = render({ phase: 'ready', agents: [agent('agent_own', mira, 'Claude')] },
+      { describeParticipant: describe_, currentNames: new Map([['agent_own' as ParticipantId, 'Old name']]) });
+    expect(renamed).toContain('<b>Claude</b><em>Claude Code</em>');
+    expect(renamed).not.toContain('Old name');
+  });
 });
 
 describe('ChannelScreen Recent in Khala', () => {

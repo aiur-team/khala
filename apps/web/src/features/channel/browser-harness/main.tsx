@@ -32,8 +32,10 @@ const ownerLabels: Record<string, string> = { [mira]: 'Mira', [theo]: 'Theo', ow
 
 let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
 let snapshot: AgentPresenceSnapshot = { generation: 1, agents: params.has('crowd') ? crowd : base };
+// Renames stick, like an agent's Matrix display name.
+const renamed = new Map<string, string>();
 function publish(agents: readonly AgentPresence[]): void {
-  snapshot = { generation: 1, agents };
+  snapshot = { generation: 1, agents: agents.map(agent => ({ ...agent, displayName: renamed.get(agent.participantId) ?? agent.displayName })) };
   for (const listener of listeners) listener(snapshot);
 }
 const port: ChannelUiPort = {
@@ -64,7 +66,6 @@ const onCopy = async (url: string) => {
 
 function Harness() {
   const [theme, setTheme] = useState<ThemeChoice>(params.get('theme') === 'light' ? 'light' : 'dark');
-  const [names, setNames] = useState<ReadonlyMap<ParticipantId, string>>(new Map());
   const [draft, setDraft] = useState('');
   const [chipsClosed, setChipsClosed] = useState(0);
   // Agents confirm a mode change 300 ms later; `?offline` agents never do.
@@ -77,17 +78,19 @@ function Harness() {
     list={<p className="kh-cv-empty">Release channel</p>}
     main={<ChannelScreen title="Release channel" controller={controller}
       viewerOwnerId={mira} viewerName="Mira" viewerEmail="mira@example.com" viewerParticipantId={'p_mira' as ParticipantId}
-      humanParticipants={humans} currentNames={names} describeParticipant={describeParticipant}
-      renameScope={roomId}
+      humanParticipants={humans} describeParticipant={describeParticipant}
       modeFor={participantId => modes[participantId] ?? 'sync'}
       onSetMode={async (participantId, mode) => {
         if (!params.has('offline')) setTimeout(() => setModes(current => ({ ...current, [participantId]: mode })), 300);
         return 'sent';
       }}
       renameAgent={async (participantId, name) => {
-        if (participantId !== 'agent_scout') return 'rejected';
-        setNames(new Map([[participantId, name]]));
-        return 'accepted';
+        // Like the rename API: the agent's display name changes everywhere; names are unique.
+        if (!snapshot.agents.some(agent => agent.participantId === participantId && agent.ownerId === mira)) return { kind: 'error', code: 'not_owner' };
+        if (snapshot.agents.some(agent => agent.displayName.toLowerCase() === name.toLowerCase())) return { kind: 'error', code: 'name_taken' };
+        renamed.set(participantId, name);
+        publish(snapshot.agents);
+        return { kind: 'ok', name };
       }}
       recentActivity={participantId => participantId === 'agent_scout'
         ? [{ id: 'e2', at: '2026-10-01T16:52:00Z', body: 'The release build is green.' }, { id: 'e1', at: '2026-10-01T16:40:00Z', body: 'Starting the build.' }]

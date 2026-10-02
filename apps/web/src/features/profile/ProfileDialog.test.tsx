@@ -9,9 +9,10 @@ import type { ProfilePort } from './ports';
 
 async function readyStore(color: HumanColorId, overrides: Partial<ProfilePort> = {}) {
   const port: ProfilePort = {
-    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color })),
+    get: vi.fn(async () => ({ kind: 'ok' as const, username: 'Kevin', suggestion: 'kevin', color, initials: null })),
     setUsername: vi.fn(async (name: string) => ({ kind: 'ok' as const, username: name })),
     setColor: vi.fn(async (next: HumanColorId) => ({ kind: 'ok' as const, color: next })),
+    setInitials: async initials => ({ kind: 'ok', initials }),
     ...overrides,
   };
   const store = createProfileStore(port);

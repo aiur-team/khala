@@ -85,7 +85,8 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
   };
   const ownerById = new Map<string, HumanMember>([[viewerOwnerId, viewerMember], ...humanMembers.map(human => [human.ownerId, human] as const)]);
 
-  const baseNames = agents.map(agent => participantRosterName(currentNames?.get(agent.participantId) ?? agent.displayName, 'Agent'));
+  // The thread's name too: an agent's Matrix display name (renamed globally) outranks old in-channel rename events.
+  const baseNames = agents.map(agent => participantRosterName(threadName(agent), 'Agent'));
   // The thread's `.kh-id` rule: only names that collide across owners get the owner suffix.
   const badgeFor = buildIdBadgeResolver([
     { ownerId: viewerOwnerId, displayName: viewer.name ?? '' },

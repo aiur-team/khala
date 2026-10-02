@@ -69,6 +69,7 @@ const keptRoutes = [
   ['/api/human/profile', ['GET']],
   ['/api/human/profile/username', ['POST']],
   ['/api/human/profile/color', ['POST']],
+  ['/api/human/profile/initials', ['POST']],
 ];
 const deletedPaths = [
   '/api/human/room-send/ready', '/api/human/agent-bootstrap/authorize',
@@ -117,6 +118,9 @@ describe('generated hosted production composition', () => {
       }))).status).toBe(401);
       expect((await handle(new Request(`${appOrigin}/api/human/profile/color`, {
         method: 'POST', headers: { origin: appOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ color: 'pink' }),
+      }))).status).toBe(401);
+      expect((await handle(new Request(`${appOrigin}/api/human/profile/initials`, {
+        method: 'POST', headers: { origin: appOrigin, 'content-type': 'application/json' }, body: JSON.stringify({ initials: 'KW' }),
       }))).status).toBe(401);
       expect((await handle(new Request(`${appOrigin}/api/health`))).status).toBe(200);
     }
