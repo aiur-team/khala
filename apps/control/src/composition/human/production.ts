@@ -10,6 +10,7 @@ import { localBlobStores } from '../../runtime/local-blob-store';
 import { readHumanServerEnv } from '../../runtime/env';
 import type { HumanHandlerServices, LoadHumanServices } from './handlers';
 import { createMatrixHumanServices } from './matrix';
+import { createMatrixBrowserSenderVerifier } from './room-send-routes';
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
 const LOGIN_TTL_MS = 10 * 60 * 1_000;
@@ -67,6 +68,12 @@ export function createProductionHumanServiceLoader(dependencies: ProductionHuman
           diagnostic: (stage: ShareDiagnosticStage) => productionDiagnostic('share', stage),
         }),
         messaging: active.matrix.sessions,
+        verifyBrowserSender: createMatrixBrowserSenderVerifier({
+          homeserverOrigin: active.env.publicHomeserverOrigin,
+          serverName: active.env.matrixServerName,
+          allowInsecureLoopback: localOidcEnabled(dependencies.env ?? process.env),
+          ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
+        }),
       };
     } catch {
       productionDiagnostic('runtime', 'admission_initialize_failed');

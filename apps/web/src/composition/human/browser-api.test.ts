@@ -366,9 +366,12 @@ describe('createHumanBrowserApi', () => {
       .mockResolvedValueOnce(json(200, { participants: [{ matrixUserId: userId,
         participantId: 'agent_420', ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' }] }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    const participants = await api.participants.resolve([userId], undefined, 'room_1' as RoomId);
+    const session = { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' };
+    const participants = await api.participants.resolve([userId], undefined, 'room_1' as RoomId, undefined, session);
     expect(participants?.get(userId)).toMatchObject({ kind: 'agent', participantId: 'agent_420', ownerId: 'owner_bob' });
-    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ userIds: [userId], roomId: 'room_1' }));
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ userIds: [userId], roomId: 'room_1', ...session }));
+    expect(await api.participants.resolve([userId], undefined, 'room_1' as RoomId)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('resolves a departed rename target by participant ID within the authorized room', async () => {
@@ -381,9 +384,10 @@ describe('createHumanBrowserApi', () => {
         { matrixUserId: '@departed:matrix.example.test', participantId: targetId, ownerId: 'owner_bob', displayName: 'Codex #420', kind: 'agent' },
       ] }));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    const resolved = await api.participants.resolve([userId], undefined, 'room_1' as RoomId, [targetId]);
+    const session = { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' };
+    const resolved = await api.participants.resolve([userId], undefined, 'room_1' as RoomId, [targetId], session);
     expect(resolved?.get('@departed:matrix.example.test')).toMatchObject({ participantId: targetId, kind: 'agent' });
-    expect(JSON.parse(String(fetch.mock.calls[1]![1]!.body))).toEqual({ userIds: [userId], roomId: 'room_1', targetParticipantIds: [targetId] });
+    expect(JSON.parse(String(fetch.mock.calls[1]![1]!.body))).toEqual({ userIds: [userId], roomId: 'room_1', targetParticipantIds: [targetId], ...session });
   });
 
   it('distinguishes an omitted target in a successful response from lookup failure', async () => {
@@ -392,8 +396,9 @@ describe('createHumanBrowserApi', () => {
       .mockResolvedValueOnce(json(200, { participants: [] }))
       .mockResolvedValueOnce(json(503, {}));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never])).toEqual(new Map());
-    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never])).toBeNull();
+    const session = { deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' };
+    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never], session)).toEqual(new Map());
+    expect(await api.participants.resolve([], undefined, 'room_1' as RoomId, ['agent_unknown' as never], session)).toBeNull();
   });
 
   it('binds the channel-request inbox and decisions to human-cookie routes', async () => {

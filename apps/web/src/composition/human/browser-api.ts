@@ -61,6 +61,7 @@ const REVOCATION_STATUS_PATH = '/api/human/revocation/status';
 // khala-terminology-allow: fixed machine route for the Matrix room send fence.
 const ROOM_SEND_PATH = '/api/human/room-send';
 export type BrowserSendProof = Readonly<{ roomId: RoomId; deviceId: string; matrixAccessToken: string }>;
+export type BrowserParticipantSession = Readonly<{ deviceId: string; matrixAccessToken: string }>;
 export type BrowserSendFence = Readonly<{
   ready(proof: BrowserSendProof): Promise<boolean>;
   acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }>
@@ -92,7 +93,7 @@ export type HumanBrowserApi = Readonly<{
   channelLinks: HumanChannelLinks;
   credentials: CredentialSource;
   participants: Readonly<{
-    resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null>;
+    resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
   channelAccess: ChannelAccessInboxPort;
   closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
@@ -342,9 +343,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   };
 
   const participants = {
-    async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][]): Promise<ReadonlyMap<string, ParticipantView> | null> {
+    async resolve(userIds: readonly string[], signal?: AbortSignal, roomId?: RoomId, targetParticipantIds?: readonly ParticipantView['participantId'][], session?: BrowserParticipantSession): Promise<ReadonlyMap<string, ParticipantView> | null> {
       if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
-      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds, ...(roomId ? { roomId } : {}), ...(targetParticipantIds?.length ? { targetParticipantIds } : {}) }, signal);
+      if (roomId && (!session?.deviceId || !session.matrixAccessToken)) return null;
+      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds, ...(roomId ? { roomId, ...session } : {}), ...(targetParticipantIds?.length ? { targetParticipantIds } : {}) }, signal);
       if (response === null || response.status !== 200) return null;
       const envelope = await jsonObject(response);
       if (envelope === null || !hasExactKeys(envelope, ['participants']) || !Array.isArray(envelope.participants)) return null;

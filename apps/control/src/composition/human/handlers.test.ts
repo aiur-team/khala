@@ -32,6 +32,7 @@ function services(overrides: {
   auth?: Partial<AuthService>;
   admission?: Partial<AdmissionService>;
   messaging?: HumanHandlerServices['messaging'];
+  verifyBrowserSender?: HumanHandlerServices['verifyBrowserSender'];
 } = {}): HumanHandlerServices {
   return {
     auth: {
@@ -61,6 +62,7 @@ function services(overrides: {
       ...overrides.admission,
     } as AdmissionService,
     ...(overrides.messaging ? { messaging: overrides.messaging } : {}),
+    ...(overrides.verifyBrowserSender ? { verifyBrowserSender: overrides.verifyBrowserSender } : {}),
   };
 }
 
@@ -325,13 +327,48 @@ describe('admission route handlers', () => {
   it('scopes agent participant lookup to the authenticated human and room', async () => {
     const resolveRoomParticipants = vi.fn(async () => ({ kind: 'forbidden' as const }));
     const state = services({ messaging: { issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
-      resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })), resolveRoomParticipants } });
+      resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })), resolveRoomParticipants },
+      verifyBrowserSender: vi.fn(async () => ({ matrixUserId: '@owner:matrix.example.test', deviceKey: 'A'.repeat(43) })) });
     const registrations = createHumanHandlers(async () => state);
     const response = await route(registrations, MATRIX_PARTICIPANTS_PATH).handle(request(MATRIX_PARTICIPANTS_PATH, {
-      method: 'POST', body: JSON.stringify({ userIds: ['@khala_a_x:matrix.example.test'], roomId: 'room_1' }),
+      method: 'POST', body: JSON.stringify({ userIds: ['@khala_a_x:matrix.example.test'], roomId: 'room_1',
+        deviceId: 'WEB_DEVICE', matrixAccessToken: 'browser-token-123456789' }),
     }));
     expect(response.status).toBe(403);
-    expect(resolveRoomParticipants).toHaveBeenCalledWith(principal.ownerId, 'room_1', ['@khala_a_x:matrix.example.test'], undefined, []);
+    expect(resolveRoomParticipants).toHaveBeenCalledWith(principal.ownerId, 'room_1', ['@khala_a_x:matrix.example.test'], undefined, [],
+      { matrixUserId: '@owner:matrix.example.test', accessToken: 'browser-token-123456789' });
+    expect(JSON.stringify(await body(response))).not.toContain('browser-token');
+  });
+
+  it('requires a verified browser device before any room participant read', async () => {
+    const resolveRoomParticipants = vi.fn(async () => ({ kind: 'ok' as const, participants: [] }));
+    const verifyBrowserSender = vi.fn(async () => null);
+    const state = services({ messaging: { issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
+      resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })), resolveRoomParticipants }, verifyBrowserSender });
+    const endpoint = route(createHumanHandlers(async () => state), MATRIX_PARTICIPANTS_PATH);
+    const base = { userIds: [], roomId: 'room_1' };
+    for (const payload of [base, { ...base, deviceId: 'WEB_DEVICE', matrixAccessToken: 'expired-token-123456789' }]) {
+      const response = await endpoint.handle(request(MATRIX_PARTICIPANTS_PATH, { method: 'POST', body: JSON.stringify(payload) }));
+      expect(response.status).toBe(payload === base ? 400 : 403);
+      expect(JSON.stringify(await body(response))).not.toContain('expired-token');
+    }
+    expect(resolveRoomParticipants).not.toHaveBeenCalled();
+    expect(verifyBrowserSender).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks the OIDC owner before inspecting the Matrix browser bearer', async () => {
+    const verifyBrowserSender = vi.fn(async () => ({ matrixUserId: '@owner:matrix.example.test', deviceKey: 'A'.repeat(43) }));
+    const resolveRoomParticipants = vi.fn(async () => ({ kind: 'ok' as const, participants: [] }));
+    const state = services({ auth: { requireHumanMutation: vi.fn(async () => ({ kind: 'rejected' as const, code: 'signed_out' as const })) },
+      messaging: { issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
+        resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })), resolveRoomParticipants }, verifyBrowserSender });
+    const response = await route(createHumanHandlers(async () => state), MATRIX_PARTICIPANTS_PATH).handle(request(MATRIX_PARTICIPANTS_PATH, {
+      method: 'POST', body: JSON.stringify({ userIds: [], roomId: 'room_1', deviceId: 'WEB_DEVICE',
+        matrixAccessToken: 'browser-token-123456789' }),
+    }));
+    expect(response.status).toBe(401);
+    expect(verifyBrowserSender).not.toHaveBeenCalled();
+    expect(resolveRoomParticipants).not.toHaveBeenCalled();
   });
 
   it('authenticates inspection and maps dependency failures to finite unavailable responses', async () => {

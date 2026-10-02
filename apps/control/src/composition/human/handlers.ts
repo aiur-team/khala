@@ -14,6 +14,7 @@ import {
 import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from './matrix';
+import type { BrowserSenderVerifier } from './room-send-routes';
 import { createProductionHumanServiceLoader } from './production';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';
@@ -36,6 +37,7 @@ export type HumanHandlerServices = Readonly<{
   admission: AdmissionService;
   /** Server-side Matrix login boundary. Tokens leave only through its authenticated route. */
   messaging?: MatrixSessionIssuer;
+  verifyBrowserSender?: BrowserSenderVerifier;
 }>;
 
 export type LoadHumanServices = (
@@ -351,22 +353,31 @@ export function createHumanHandlers(
       path: MATRIX_PARTICIPANTS_PATH,
       methods: post,
       handle: async request => {
-        const response = await withServices(request, async ({ auth, messaging }) => {
+        const response = await withServices(request, async ({ auth, messaging, verifyBrowserSender }) => {
         if (!messaging) return localParticipantStage(unavailable('feature_unavailable'), 'feature_unavailable');
         const authority = await authorized(auth, request);
         if (isResponse(authority)) return localParticipantStage(authority, 'authorization');
         const value = await readJsonObject(request);
-        if (value === null || !(hasExactKeys(value, ['userIds']) || hasExactKeys(value, ['userIds', 'roomId']) || hasExactKeys(value, ['userIds', 'roomId', 'targetParticipantIds'])) || !Array.isArray(value.userIds)
+        if (value === null || !(hasExactKeys(value, ['userIds'])
+          || hasExactKeys(value, ['userIds', 'roomId', 'deviceId', 'matrixAccessToken'])
+          || hasExactKeys(value, ['userIds', 'roomId', 'targetParticipantIds', 'deviceId', 'matrixAccessToken'])) || !Array.isArray(value.userIds)
           || value.userIds.length > 100 || value.userIds.some(userId => typeof userId !== 'string' || userId.length > 255)) {
           return json(400, { code: 'invalid_request' });
         }
         const roomId = value.roomId === undefined ? null : decodeRoomId(value.roomId);
         if (roomId !== null && !roomId.ok) return json(400, { code: 'invalid_request' });
+        const deviceId = roomId === null ? null : decodeDeviceId(value.deviceId);
+        if (deviceId !== null && (!deviceId.ok || typeof value.matrixAccessToken !== 'string'
+          || value.matrixAccessToken.length < 16 || value.matrixAccessToken.length > 4096)) return json(400, { code: 'invalid_request' });
         const targets = value.targetParticipantIds === undefined ? [] : Array.isArray(value.targetParticipantIds) ? value.targetParticipantIds.map(decodeParticipantId) : null;
         if (targets === null || targets.length > 100 || targets.some(target => !target.ok)) return json(400, { code: 'invalid_request' });
         const targetIds = targets.flatMap(target => target.ok ? [target.value] : []);
+        if (roomId !== null && (!verifyBrowserSender || deviceId === null || !deviceId.ok)) return unavailable();
+        const verified = roomId === null ? null : await verifyBrowserSender!(authority, deviceId!.value, value.matrixAccessToken as string);
+        if (roomId !== null && !verified) return json(403, { code: 'device_unverified' });
         const result = roomId === null ? await messaging.resolveParticipants(value.userIds as string[])
-          : await messaging.resolveRoomParticipants(authority.ownerId, roomId.value, value.userIds as string[], undefined, targetIds);
+          : await messaging.resolveRoomParticipants(authority.ownerId, roomId.value, value.userIds as string[], undefined, targetIds,
+            { matrixUserId: verified!.matrixUserId, accessToken: value.matrixAccessToken as string });
         if (result.kind === 'forbidden') return json(403, { code: 'forbidden' });
         return result.kind === 'ok' ? json(200, { participants: result.participants })
           : localParticipantStage(unavailable(), 'participant_unavailable',

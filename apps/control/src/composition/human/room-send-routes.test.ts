@@ -204,6 +204,17 @@ describe('authenticated room send fence routes', () => {
     expect(await verify(principal, human.deviceId, 'valid-browser-token-123456789'))
       .toEqual({ matrixUserId: userId, deviceKey: human.deviceKey });
     expect(await verify(principal, 'other_device', 'valid-browser-token-123456789')).toBeNull();
+    const rejected = (who: unknown, keys: unknown) => createMatrixBrowserSenderVerifier({
+      homeserverOrigin: 'https://matrix.example.test', serverName: 'example.test',
+      fetch: (async (url: string | URL | Request) => Response.json(String(url).endsWith('/account/whoami') ? who : keys)) as typeof globalThis.fetch,
+    });
+    const wrongOwner = rejected({ user_id: '@other:example.test', device_id: human.deviceId }, {});
+    expect(await wrongOwner(principal, human.deviceId, 'valid-browser-token-123456789')).toBeNull();
+    const unpublished = rejected({ user_id: userId, device_id: human.deviceId }, { device_keys: { [userId]: {} } });
+    expect(await unpublished(principal, human.deviceId, 'valid-browser-token-123456789')).toBeNull();
+    const expired = createMatrixBrowserSenderVerifier({ homeserverOrigin: 'https://matrix.example.test',
+      serverName: 'example.test', fetch: (async () => Response.json({ errcode: 'M_UNKNOWN_TOKEN' }, { status: 401 })) as typeof globalThis.fetch });
+    expect(await expired(principal, human.deviceId, 'expired-browser-token-123456789')).toBeNull();
   });
   it('binds permits and completions to exact owner/agent devices and serializes a hold', async () => {
     const h = setup();
