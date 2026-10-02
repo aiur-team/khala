@@ -4,15 +4,17 @@
 import type { HumanColorId } from '@khala/contracts/m1/colors';
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProfilePort } from './ports';
-import { createProfileStore, type ProfileColorSaveResult, type ProfileSaveResult, type ProfileStatus, type ProfileStore } from './store';
+import { createProfileStore, type ProfileInitialsSaveResult, type ProfileColorSaveResult, type ProfileSaveResult, type ProfileStatus, type ProfileStore } from './store';
 
-export type { ProfileColorSaveResult, ProfileSaveResult, ProfileStatus } from './store';
+export type { ProfileInitialsSaveResult, ProfileColorSaveResult, ProfileSaveResult, ProfileStatus } from './store';
 
 export type ProfileValue = Readonly<{
   status: ProfileStatus;
   username: string | null;
   suggestion: string;
   color: HumanColorId | null;
+  initials: string | null;
+  saveInitials(initials: string | null): Promise<ProfileInitialsSaveResult>;
   saveColor(color: HumanColorId): Promise<ProfileColorSaveResult>;
   save(username: string): Promise<ProfileSaveResult>;
   retry(): void;
@@ -40,5 +42,5 @@ export function ProfileProvider({ ports, children }: Readonly<{ ports: Readonly<
 export function useProfile(): ProfileValue {
   const store = useContext(ProfileContext) ?? missing;
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  return { ...snapshot, save: store.save, saveColor: store.saveColor, retry: store.retry };
+  return { ...snapshot, save: store.save, saveColor: store.saveColor, saveInitials: store.saveInitials, retry: store.retry };
 }
