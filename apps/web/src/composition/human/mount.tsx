@@ -1,3 +1,5 @@
+import { AgentConfirm } from '../../features/agent-confirm/AgentConfirm';
+import { createAgentConfirmController } from '../../features/agent-confirm/controller';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
@@ -62,6 +64,26 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
       onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))}
     />
   );
+}
+
+function AgentConfirmRoute({ context, joinId, routes, navigateRoute }: {
+  context: HumanRouteContext;
+  joinId: string;
+  routes: HumanRouteCodec;
+  navigateRoute: (path: string) => void;
+}) {
+  const controller = useMemo(() => context.agentJoin && context.inviteAgent
+    ? createAgentConfirmController({ joinId, port: context.agentJoin, invite: context.inviteAgent }) : null,
+  [context, joinId]);
+  useEffect(() => {
+    if (!controller) return;
+    const dispose = context.registerDisposer(() => controller.dispose());
+    controller.start();
+    return dispose;
+  }, [context, controller]);
+  if (!controller) return <Panel heading="Agent confirmation unavailable">Khala is unavailable right now.</Panel>;
+  return <AgentConfirm controller={controller} roomHref={routes.roomPath}
+    onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />;
 }
 
 function SignInPanel({ identity, path, isJoin, navigateExternal }: {
@@ -273,6 +295,8 @@ export function HumanApplicationScreen({
         return <ConversationIndexRoute />;
       case 'join':
         return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
+      case 'agent_confirm':
+        return <AgentConfirmRoute context={context} joinId={route.joinId} routes={routes} navigateRoute={navigateRoute} />;
       case 'channel':
         return renderRoom(context, route, navigateRoute, routes);
       case 'not_found':
