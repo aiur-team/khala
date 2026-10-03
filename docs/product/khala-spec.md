@@ -2,6 +2,7 @@
 
 **Version:** 0.1  
 **Scope baseline:** October 1, 2026  
+**Amended:** October 2, 2026 — local channels (internal mode) decided: §3.1, §4.4, §14, §15  
 **Purpose:** Guide simplification of the existing application and implementation of the agreed functionality.
 
 This specification distinguishes **confirmed scope** from **derived requirements** needed to make that scope work, and **open decisions** that still need design or feasibility work. It does not assume the existing codebase has been audited. Proposed implementation details and unresolved options are not additional product commitments.
@@ -41,17 +42,25 @@ An agent must never remain a channel member after its owner has been removed fro
 
 ### 3.1 Internal mode — confirmed scope
 
-Internal mode is a minimal, local protocol for **one human and their multiple local agents** to communicate.
+Internal mode is a minimal, local protocol for **one human and their multiple local agents on one computer** to communicate. Product copy calls it a **local channel**. The first release covers one human with Claude Code and Codex sessions on the same computer; cross-machine local channels are a later phase.
 
-It must not require third-party hosting, external services, servers, or additional dependencies. Channel communication and storage must remain on the computer. It must not depend on the Khala website, Gmail sign-in, or external channel infrastructure to operate.
+It must not require third-party hosting, external services, Khala servers, sign-in, a database or additional runtime dependencies. It must not depend on the Khala website, Gmail sign-in, or external channel infrastructure to operate.
 
-The goal is a lightweight local coordination mechanism, not a locally hosted copy of a complex cloud product. The concrete transport, storage format, and minimum runtime requirements remain implementation decisions; a mandatory local web server or database service must not be introduced by default.
+**Transport.** One on-demand helper, `khala local serve`, listens on 127.0.0.1 only. The `khala` CLI or agent starts it automatically when a local channel is created or used; it is never installed as a service, and it exits when idle. It is the single writer of an append-only log per channel in the Khala state directory. This satisfies "no mandatory server by default": nothing runs until a local channel is used, and nothing listens beyond loopback.
 
-Human-directed channel creation is in scope. Allowing agents to create internal channels autonomously is an **open candidate feature**. If adopted, it would be under the human’s control, potentially through an opt-in setting. Do not implement unrestricted agent-created channels as a settled requirement.
+**Human interface.** The human uses the full Khala web app, with the same screens and functions as khala.aiur.team, served locally by the helper. It is the existing app running against a local adapter, not a copy. Local owner mode skips Google sign-in and keeps a local profile: username, initials, colour, agent names and listener modes all work locally.
 
-**Important unresolved boundary:** “No chat leaving the computer” is stronger than “Khala uses a local transport.” If an agent forwards channel content to a remote model, that content has left the computer. The design must show how participating agents satisfy the stated no-egress requirement, or explicitly surface the conflict for a scope decision. It must not silently weaken this promise to “no Khala server.”
+**Joining.** An agent joins with a single-use link that expires after 10 minutes. On this computer the join completes without a confirmation click, the join is announced in the channel, and the human can remove the agent.
 
-The local human interface and the exact local encryption/key-handling design remain open. Neither uncertainty authorizes adding cloud dependencies.
+**Persistence.** Local channels stay on disk until the human deletes them. Nothing is pruned automatically.
+
+**Identity.** The local owner name is the cached hosted username when one exists, else the operating-system user name (`$USER`). Agents are named `<name>-Claude` and `<name>-Codex`, with `-2` on collision, using the shared name validator. Local identity is never fetched from or written to the hosted profile.
+
+**Channel creation.** Human-directed channel creation is in scope. The human creates a local channel in the web app, or asks one of their agents in their own turn to create it; the agent then returns the links. Agents do not create local channels on their own initiative, and there is no setting that lets them.
+
+**No-egress promise.** User-facing copy states exactly: "No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads." Khala's own processes (the helper, each agent's Khala integration and the local web app) open no non-loopback connection in local mode, and an automated test proves it. Content an agent reads goes to that agent's model provider; the copy discloses this instead of promising that no content leaves the computer.
+
+Encryption of local files beyond owner-only file permissions is not part of this scope. None of these decisions authorizes adding cloud dependencies.
 
 ### 3.2 External mode — confirmed scope
 
@@ -97,7 +106,7 @@ Providing read access to a tool while continuing to require the human to copy ev
 
 A human creates a local channel and attaches multiple existing local agents. The agents exchange messages and access the shared conversation according to their respective listener settings, without external channel infrastructure.
 
-How the human reads and writes local messages is still a design decision. A full duplicate of the external website is not required.
+The human reads and writes local messages in the Khala web app served by the local helper (§3.1). It reuses the external app's screens instead of duplicating them.
 
 ## 5. Invitations and admission
 
@@ -377,7 +386,7 @@ Large-channel behavior should be tested empirically. The absence of a product-im
 | Remove one agent | Only the selected agent loses channel access; its owner and sibling agents remain. |
 | Remove a human | The human and all their agents lose channel access, including active listeners and stale credentials. |
 | Delete a channel | Participation stops, invites no longer admit anyone, and clients report deletion. |
-| Internal operation | One human and multiple agents coordinate without external Khala services, Google login, or servers; the no-egress claim is explicitly validated. |
+| Internal operation | One human and their Claude Code and Codex agents on one computer create, join and use a local channel without Khala servers, Google sign-in or an installed service; the human uses the locally served web app. An automated test shows Khala's own processes open zero non-loopback connections in local mode, and user-facing copy uses the §3.1 no-egress wording. |
 | Privacy and recovery | Shared messages do not automatically publish private CLI history; delivery recovery avoids silent loss and duplicate reactions. |
 | Encryption and revocation | Delivery infrastructure cannot read message content; pending and removed participants do not obtain unauthorized message/key access. |
 
@@ -393,8 +402,8 @@ These items need answers or prototypes, but **must not be silently converted int
 | CLI presentation | Full message mirror, brief notices, context-only delivery, or another experience? Can presentation be controlled independently of listener mode? Keep this open even where one harness appears promising. |
 | Listener defaults and transitions | Initial mode; idle wake behavior; queued-message handling when modes change; catch-up after async; prevention of repeated delivery of a safety-triggering backlog. |
 | Safety restoration | What makes a self-downgrade semi-temporary beyond the owner’s guaranteed ability to override? Is there any automatic restoration? None is currently required. |
-| Local no-egress guarantee | How can the selected agents satisfy “no chat leaves the computer,” including their model calls? What local interface and minimum runtime are acceptable? |
-| Internal agent-created channels | Include the optional permission at all? If included, what human-controlled opt-in and creation behavior should it use? |
+| Local no-egress guarantee | **Decided (October 2, 2026), see §3.1.** Khala's own traffic stays on loopback and is tested; each agent's model provider sees what that agent reads, and the copy says so. The local interface is the full web app served by an on-demand loopback helper. Running agents only on local models is a possible later option, not a requirement. |
+| Internal agent-created channels | **Decided (October 2, 2026), see §3.1.** An agent creates a local channel only when its owner asks in that turn (human-directed). No autonomous creation and no opt-in setting. |
 | Agent identity and keys | Simplest authenticated owner-binding flow; stable agent identity across reconnects; separate agent revocation; key storage and recovery. |
 | History and retention | New-member history access, initial agent catch-up, retention, deletion cleanup, and context retrieval limits. |
 | Invite lifecycle and re-entry | Expiration, manual revocation, and whether/how removed participants may rejoin. No full ban-management system is assumed. |
