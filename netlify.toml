@@ -43,6 +43,18 @@
   status = 200
   force = true
 
+[[redirects]]
+  from = "/agents.md"
+  to = "/landing/AGENTS.md"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/.well-known/agents.md"
+  to = "/landing/AGENTS.md"
+  status = 200
+  force = true
+
 # The site root serves the public splash page, built separately into
 # apps/web/dist/landing by apps/web/vite.landing.config.mjs. It matches `/`
 # only, so /api/* above and every deep link below keep their routing. `force`
