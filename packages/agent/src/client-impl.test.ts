@@ -430,3 +430,63 @@ it('cancels a stalled member echo when closing without waiting for its deadline'
   await client.close();
   expect(vi.mocked(session.publishListeningMode).mock.calls[0]![2]?.aborted).toBe(true);
 });
+
+it('waits for auto-confirmed handshake and preserves local credentials', async () => {
+  joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+  poll.resolve({ ...credentials, transport: 'local' });
+  expect(await client.join(link, 'Codex')).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect((await client.status()).state).toBe('connected');
+  const calls = [joinApi.pollJoin, startSession, session.onMessage, joinApi.reportReady, session.waitForInvite, session.join].map(fn => vi.mocked(fn).mock.invocationCallOrder[0]!);
+  expect(calls).toEqual([...calls].sort((a, b) => a - b));
+  expect(await readStateFile(dir, 'session.json')).toEqual({ ...credentials, transport: 'local' });
+});
+it('returns an auto-confirmed fallback, coalesces pending joins and connects later', async () => {
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, autoConfirmWaitMs: 50 });
+  const invite = deferred<void>();
+  vi.mocked(session.waitForInvite).mockReturnValue(invite.promise);
+  joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+  poll.resolve(credentials);
+  const fallback = { state: 'awaiting_confirmation', confirmUrl: created.confirmUrl, autoConfirmed: true };
+  expect(await client.join(link, 'Codex')).toEqual(fallback);
+  expect((await client.status()).state).toBe('joining');
+  expect(await client.join(link, 'Codex')).toEqual(fallback);
+  invite.resolve();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+});
+it('fails auto-confirmed joins promptly without exposing secrets', async () => {
+  joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+  startSession.mockRejectedValueOnce(new Error('SECRET POLL'));
+  poll.resolve(credentials);
+  const error = await client.join(link, 'Codex').catch(error => error);
+  expect(error).toBeInstanceOf(KhalaClientError);
+  expect(error.code).toBe('internal_error');
+  expect(String(error)).not.toMatch(/SECRET|POLL/);
+  expect((await client.status()).state).toBe('disconnected');
+});
+it('preserves expiry status when an auto-confirmed attempt expires', async () => {
+  joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+  joinApi.pollJoin.mockRejectedValueOnce(new KhalaClientError('join_expired', 'expired'));
+  await expect(client.join(link, 'Codex')).rejects.toMatchObject({ code: 'join_expired' });
+  expect(await statusFile()).toMatchObject({ state: 'idle', detail: 'join_expired' });
+});
+it('closes during an auto-confirm wait without retaining timers', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
+    const pending = client.join(link, 'Codex');
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'not_connected' });
+    // Wait for real filesystem work without advancing the auto-confirm deadline.
+    while (vi.getTimerCount() === 0) await new Promise<void>(resolve => setImmediate(resolve));
+    expect(vi.getTimerCount()).toBe(1);
+    await client.close();
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it('keeps the hosted immediate return shape unchanged', async () => {
+  const result = await client.join(link, 'Codex');
+  expect(result).toEqual({ state: 'awaiting_confirmation', confirmUrl: created.confirmUrl });
+  expect(Object.keys(result)).toEqual(['state', 'confirmUrl']);
+  expect(startSession).not.toHaveBeenCalled();
+});

@@ -237,3 +237,14 @@ it('caller abort interrupts a stalled body read', async () => {
   await outcome;
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each([true, 'true', false, 1, undefined])('preserves only exact autoConfirmed true: %s', async autoConfirmed => {
+  const deps = fake(reply(201, { ...created, autoConfirmed }));
+  expect(await requestJoin(input, deps)).toEqual({ ...created, origin, ...(autoConfirmed === true ? { autoConfirmed: true } : {}) });
+});
+it.each(['local', 'matrix', 'LOCAL', 'tcp', 1, undefined])('preserves only local credential transport: %s', async transport => {
+  const deps = fake(reply(200, { state: 'confirmed', credentials: { ...credentials, transport } }));
+  const result = await pollJoin(session, deps);
+  expect(result).toEqual({ ...credentials, ...(transport === 'local' ? { transport: 'local' } : {}) });
+  expect(Object.keys(result)).toHaveLength(transport === 'local' ? 6 : 5);
+});
