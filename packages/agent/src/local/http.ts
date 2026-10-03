@@ -68,6 +68,7 @@ export function createHelperServer(options: HelperServerOptions): HelperServer {
   let inFlight = 0; let timer: ReturnType<typeof setTimeout> | undefined;
   let closing = false; let closePromise: Promise<void> | undefined;
   let listenPromise: Promise<{ port: number; origin: string }> | undefined;
+  let cancelListen: (() => void) | undefined;
   const controllers = new Set<AbortController>();
   const webDir = path.resolve(options.webDir);
   const log = options.log ?? (line => { process.stderr.write(line + '\n'); });
@@ -172,10 +173,11 @@ export function createHelperServer(options: HelperServerOptions): HelperServer {
     listen() {
       if (closing) return Promise.reject(new Error('server_closed'));
       return listenPromise ??= new Promise((resolve, reject) => {
-        const fail = (err: Error) => reject(err);
+        const fail = (err: Error) => { cancelListen = undefined; reject(err); };
+        cancelListen = () => { server.off('error', fail); reject(new Error('server_closed')); };
         server.once('error', fail);
         server.listen({ host: '127.0.0.1', port: options.port }, () => {
-          server.off('error', fail);
+          server.off('error', fail); cancelListen = undefined;
           const address = server.address();
           if (!address || typeof address === 'string') return reject(new Error('invalid_address'));
           port = address.port; origin = `http://127.0.0.1:${port}`;
@@ -186,7 +188,7 @@ export function createHelperServer(options: HelperServerOptions): HelperServer {
     },
     close() {
       if (closePromise) return closePromise;
-      closing = true; clearTimeout(timer);
+      closing = true; clearTimeout(timer); cancelListen?.(); cancelListen = undefined;
       for (const controller of controllers) controller.abort();
       closePromise = new Promise(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
       return closePromise;

@@ -60,7 +60,7 @@ test('cookie mutations and bearer precedence', async () => {
   expect((await raw(f.port, '/api/x', 'POST', headers)).status).toBe(403);
   for (const origin of ['https://evil.test', `http://localhost:${f.port}`]) expect((await raw(f.port, '/api/x', 'POST', { ...headers, 'x-khala-local': '1', origin })).status).toBe(403);
   for (const method of ['GET', 'POST']) {
-    const res = await raw(f.port, '/api/x', method, { ...headers, 'x-khala-local': '1' });
+    const res = await raw(f.port, '/api/x', method, method === 'GET' ? headers : { ...headers, 'x-khala-local': '1', origin: f.origin });
     expect(JSON.parse(res.body).auth).toEqual({ kind: 'owner', via: 'cookie' });
   }
   for (const [authorization, auth] of [[`Bearer ${admin}`, { kind: 'owner', via: 'admin' }], [`Bearer ${'G'.repeat(43)}`, { kind: 'agent', userId: 'agent', roomId: 'room' }], ['Bearer unknown', { kind: 'none' }], ['broken', { kind: 'none' }]] as const) {
@@ -127,4 +127,35 @@ test('long polls hold idle, disconnect and close abort signals', async () => {
   start = new Promise<void>(resolve => started = resolve); abort = new Promise<void>(resolve => aborted = resolve);
   const second = request(f.origin + '/api/poll'); second.on('error', () => {}); second.end(); await start;
   await f.server.close(); await abort; await delay(70); expect(idle).toBe(1);
+});
+test('close cancels pending startup and works before listen', async () => {
+  const server = createHelperServer({ port: 0, webDir: '/', idleMs: 1000, onIdle() {}, routes: [],
+    createContext: origin => ({ origin, version: 'test' } as HelperContext), authenticateCookie: () => false, authenticateBearer: () => ({ kind: 'none' }),
+  });
+  servers.push(server);
+  const listening = server.listen();
+  const rejected = expect(listening).rejects.toThrow('server_closed');
+  await server.close(); await rejected;
+});
+
+test('idle restarts after a successful long poll', async () => {
+  let idle = 0;
+  let finish!: () => void; let started!: () => void;
+  const start = new Promise<void>(resolve => started = resolve);
+  const f = await fixture([{ method: 'GET', pattern: /^\/api\/poll$/, handle: async () => {
+    started(); await new Promise<void>(resolve => finish = resolve); return { status: 204 };
+  } }], 30, () => idle++);
+  const response = raw(f.port, '/api/poll'); await start;
+  await delay(90); expect(idle).toBe(0); finish(); expect((await response).status).toBe(204);
+  await delay(70); expect(idle).toBe(1);
+});
+test('bind errors preserve the original Node error and closing unstarted servers is safe', async () => {
+  const occupied = await fixture();
+  const options = { port: occupied.port, webDir: occupied.webDir, idleMs: 1000, onIdle() {}, routes: [],
+    createContext: () => { throw new Error('must not create context'); }, authenticateCookie: () => false, authenticateBearer: () => ({ kind: 'none' as const }),
+  };
+  const competing = createHelperServer(options); servers.push(competing);
+  await expect(competing.listen()).rejects.toMatchObject({ code: 'EADDRINUSE' }); await competing.close();
+  const unstarted = createHelperServer(options); servers.push(unstarted); await unstarted.close(); await unstarted.close();
+  await expect(unstarted.listen()).rejects.toThrow('server_closed');
 });
