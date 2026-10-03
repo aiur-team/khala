@@ -44,6 +44,32 @@ const poll = (after: number) => localRoomPath(roomId, `/events?after=${after}&wa
 const error = (status: number): LocalHttpResult<never> => ({ kind: 'error', status, code: `http_${status}` });
 
 describe('local substrate', () => {
+  it.each([false, true])('resolves new-member attribution before publishing (dispose=%s)', async disposeEarly => {
+    const f = fixture(); f.init();
+    const allMembers = f.cache.members(roomId)!;
+    let refreshed = false;
+    f.cache.members = () => refreshed ? allMembers : allMembers.slice(0, 1);
+    let finishRefresh!: () => void;
+    f.cache.refresh = vi.fn(() => new Promise<void>(resolve => { finishRefresh = () => { refreshed = true; resolve(); }; }));
+    f.enqueue(poll(5), { kind: 'ok', value: { events: [
+      event(6, { type: 'm.room.member', sender: agent, content: { user: agent, membership: 'join', displayname: 'kevin-Codex', kind: 'agent' } }),
+      event(7, { sender: agent }),
+    ], next: 7 } });
+    const updates: SubstrateUpdate[] = [];
+    const stop = f.substrate.subscribe(roomId, update => updates.push(update)); await tick();
+    expect(f.cache.refresh).toHaveBeenCalledExactlyOnceWith(roomId);
+    expect(updates).toHaveLength(1);
+    if (disposeEarly) stop();
+    finishRefresh(); await tick();
+    if (disposeEarly) {
+      expect(updates).toHaveLength(1);
+      expect(f.calls.some(call => call.path === poll(7))).toBe(false);
+    } else {
+      expect(updates.at(-1)?.events).toMatchObject([{ participant: { displayName: 'kevin-Codex' }, authorDeviceId: 'KH_LOCAL_b2c3d4e5' }]);
+      expect(f.calls.at(-1)?.path).toBe(poll(7));
+      stop();
+    }
+  });
   it('returns transport ids for successful sends and channel creation', async () => {
     const f = fixture();
     f.enqueue(localRoomPath(roomId, '/send'), { kind: 'ok', value: { eventId: eventId(1) } });

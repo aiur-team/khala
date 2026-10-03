@@ -144,7 +144,10 @@ export function createLocalSubstrate(input: {
               }
               if (current) current = { ...current, revision: `local:${after}` };
               while (window.size > 200) window.delete(window.keys().next().value!);
-              if (membersChanged) void input.members.refresh(roomId).catch(() => undefined);
+              // The shared projection retains the first attribution for an event.
+              // Resolve this batch's new members before projecting their messages.
+              if (membersChanged) await input.members.refresh(roomId).catch(() => undefined);
+              if (disposed) return;
               if (result.value.events.length) publish();
               backoff = 1000;
             } else if (result.kind === 'error' && (result.status === 404 || result.status === 403)) {
