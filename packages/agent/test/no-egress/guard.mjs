@@ -35,7 +35,7 @@ const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
   // Node's net.connect passes its already-normalized arguments as an array.
   const values = Array.isArray(args[0]) ? args[0] : args;
-  const options = typeof values[0] === 'object' ? values[0] : typeof values[0] === 'string' && !/^\d+$/.test(values[0])
+  const options = typeof values[0] === 'object' ? values[0] : typeof values[0] === 'string'
     ? { path: values[0] } : { port: values[0], host: typeof values[1] === 'string' ? values[1] : undefined };
   if (typeof options.path === 'string') {
     record({ kind: 'ipc', path: String(options.path), allowed: true });
@@ -75,9 +75,9 @@ for (const name of ['send', 'connect']) {
       try { remote = this.remoteAddress(); } catch { /* Socket is unconnected. */ }
       if (remote) { port = remote.port; host = remote.address; }
       else {
-      const offsetForm = typeof args[1] === 'number' && typeof args[2] === 'number' && typeof args[3] === 'number';
-      port = args[offsetForm ? 3 : 1];
-      host = typeof args[offsetForm ? 4 : 2] === 'string' ? args[offsetForm ? 4 : 2] : 'localhost';
+        const offsetForm = typeof args[1] === 'number' && typeof args[2] === 'number' && typeof args[3] === 'number';
+        port = args[offsetForm ? 3 : 1];
+        host = typeof args[offsetForm ? 4 : 2] === 'string' ? args[offsetForm ? 4 : 2] : 'localhost';
       }
     }
     host ??= 'localhost';
@@ -98,11 +98,19 @@ function patchDns(target, prefix) {
       const host = args[0];
       const allowed = loopback(host);
       record({ kind: 'dns', fn: prefix + name, host: String(host ?? 'localhost'), allowed });
+      if (allowed && name === 'lookupService') {
+        // getnameinfo uses OS/NSS resolver configuration, not c-ares servers.
+        const result = { hostname: String(host), service: String(args[1]) };
+        if (prefix) return Promise.resolve(result);
+        const callback = args.at(-1);
+        process.nextTick(() => { if (typeof callback === 'function') callback(null, result.hostname, result.service); });
+        return undefined;
+      }
       let deniedHost = host;
       if (allowed && name !== 'lookup') {
         // c-ares bypasses JavaScript sockets. Check its actual resolver
         // destinations, even when the requested name/address is loopback.
-        const servers = typeof this.getServers === 'function' ? this.getServers() : dns.getServers();
+        const servers = typeof this?.getServers === 'function' ? this.getServers() : dns.getServers();
         const remote = servers.map(server => server.startsWith('[') ? server.slice(1, server.indexOf(']')) : server.replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1'))
           .find(server => !loopback(server));
         if (remote === undefined) return original.apply(this, args);

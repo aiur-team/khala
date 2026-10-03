@@ -66,6 +66,15 @@ if (process.argv[2] === 'matrix') {
       ? new Promise((resolve, reject) => resolver.resolve4('localhost', error => error ? reject(error) : resolve()))
       : resolver.resolve4('localhost'));
   }
+  const servers = dns.getServers();
+  try {
+    dns.setServers(['192.0.2.1']);
+    const { resolve4 } = dns;
+    await fails('detached-resolve4', () => new Promise((resolve, reject) => resolve4('localhost', error => error ? reject(error) : resolve())));
+    const promisesResolve4 = dns.promises.resolve4;
+    await fails('detached-promises-resolve4', () => promisesResolve4('localhost'));
+    assert.equal((await dns.promises.lookupService('127.0.0.2', 80)).hostname, '127.0.0.2');
+  } finally { dns.setServers(servers); }
   const server = http.createServer((_req, res) => res.end('loopback'));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
