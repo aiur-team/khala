@@ -19,7 +19,6 @@ import {
 } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import {
-  decodeMessageContent,
   decodeRoomSummary,
   unavailable,
   type AuthPrincipal,
@@ -37,6 +36,7 @@ import {
   type RoomSummary,
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
+import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
   DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
 } from '@khala/contracts/m1/listening-mode';
@@ -481,26 +481,9 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
     return { kind: 'undecryptable', eventId: eventId as EventId,
       authorParticipantId: participant.participantId, reason: 'decryption_failed', receivedAt };
   }
-  if (event.getType() === CHANNEL_EVENT_TYPE) {
-    const decoded = decodeChannelEvent(event.getContent());
-    return decoded.ok ? { kind: 'channel_event', eventId: eventId as EventId, participant, content: decoded.value, receivedAt } : null;
-  }
-  if (event.getType() !== EventType.RoomMessage) return null;
-  const rawContent = event.getContent();
-  if (rawContent.msgtype !== MsgType.Text && rawContent.msgtype !== MsgType.Notice) return null;
-  if (rawContent.msgtype === MsgType.Notice && typeof rawContent['com.khala.agent_participant_id'] !== 'string') return null;
-  const content = decodeMessageContent(rawContent.msgtype === MsgType.Notice
-    ? { v: 1, kind: rawContent['com.khala.name_snapshot'] === true ? 'agent_name_snapshot' : 'agent_rename', body: rawContent.body,
-        agentParticipantId: rawContent['com.khala.agent_participant_id'],
-        ...(rawContent['com.khala.name_snapshot'] === true ? { sourceEventId: rawContent['com.khala.name_source_event_id'] } : {}) }
-    : { v: 1, kind: 'text', body: rawContent.body }, limits);
-  if (!content.ok || authorDeviceId === null) return null;
   const transactionId = event.getUnsigned().transaction_id;
-  return {
-    kind: 'message', eventId: eventId as EventId, authorDeviceId, participant,
-    content: content.value, clientTxnId: typeof transactionId === 'string' ? transactionId : null,
-    receivedAt,
-  };
+  return projectWireEvent({ type: event.getType(), content: event.getContent(), eventId: eventId as EventId, participant, authorDeviceId,
+    clientTxnId: typeof transactionId === 'string' ? transactionId : null, receivedAt }, limits);
 }
 
 export async function sendRoomMessage(
@@ -509,11 +492,7 @@ export async function sendRoomMessage(
 ): Promise<SubstrateEffect<{ eventId: EventId; authorDeviceId: DeviceId }>> {
   try {
     if (!client.getRoom(input.roomId)?.hasEncryptionStateEvent()) return { kind: 'unavailable' };
-    const payload = input.content.kind === 'agent_rename' || input.content.kind === 'agent_name_snapshot'
-      ? { msgtype: MsgType.Notice, body: input.content.body,
-          'com.khala.agent_participant_id': input.content.agentParticipantId,
-          ...(input.content.kind === 'agent_name_snapshot' ? { 'com.khala.name_snapshot': true, 'com.khala.name_source_event_id': input.content.sourceEventId } : {}) }
-      : { msgtype: MsgType.Text, body: input.content.body };
+    const payload = encodeMessageContent(input.content);
     const response = await client.sendEvent(input.roomId, EventType.RoomMessage,
       payload as { msgtype: MsgType.Text | MsgType.Notice; body: string }, input.clientTxnId);
     return {
