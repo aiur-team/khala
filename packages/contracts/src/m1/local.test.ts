@@ -19,8 +19,8 @@ const ownerMember = { userId: owner, participantId: owner, ownerId: local.LOCAL_
 const agentMember = { ...ownerMember, userId: agent, participantId: agent, deviceId: 'KH_LOCAL_a1b2c3d4', displayName: 'kevin-Codex', kind: 'agent', harness: 'codex', ownerLabel: 'kevin', listeningMode: 'steer' };
 const summary = { roomId, name: 'refactor', createdAt: timestamp, lastSeq: 5, lastTs: 1759395700000, preview: null, members: [{ userId: owner, displayName: 'kevin', kind: 'human' }] };
 const created = { roomId, name: 'refactor', selfLink: link, shareLink: link, openUrl, expiresAt: timestamp };
-const profile = { v: 1, username: 'kevin', color: 'teal', updatedAt: timestamp };
-const profileView = { userId: owner, ownerId: local.LOCAL_OWNER_ID, username: 'kevin', suggestion: 'kevin', color: 'teal' };
+const profile = { v: 1, username: 'kevin', color: 'teal', initials: null, updatedAt: timestamp };
+const profileView = { userId: owner, ownerId: local.LOCAL_OWNER_ID, username: 'kevin', suggestion: 'kevin', color: 'teal', initials: null };
 const helper = { v: 1, pid: 4242, port: 47830, origin: 'http://127.0.0.1:47830', adminToken: token, version: '0.0.0', startedAt: timestamp };
 function rejected(result: Decoded<unknown>, path: string, code = 'invalid_value') {
   expect(result).toEqual({ ok: false, error: { path, code } });
@@ -62,7 +62,9 @@ describe('local ids and pure encoders', () => {
     expect(() => local.newLocalAgentUserId(new Uint8Array(5))).toThrow(RangeError);
     expect(() => local.newLocalEventId(new Uint8Array(17))).toThrow(RangeError);
     expect(local.localRoomKey(roomId)).toBe('c7Kq2vXbT1nP0aZ9yW3eQw');
-    for (const value of ['!../../etc:local', '!abc:local', '!c7Kq2vXbT1nP0aZ9yW3eQw:khala.local', '']) expect(() => local.localRoomKey(value)).toThrow(RangeError);
+    for (const value of ['!../../etc:local', '!abc:local', '!c7Kq2vXbT1nP0aZ9yW3eQw:khala.local', '']) expect(() => local.localRoomKey(value)).toThrow(new RangeError('not_local_room'));
+    expect(local.localAgentDeviceId(agent)).toBe('KH_LOCAL_a1b2c3d4');
+    for (const value of [owner, '@agent-short:local', '@agent-a1b2c3d4:remote', '']) expect(() => local.localAgentDeviceId(value)).toThrow(new RangeError('not_local_agent'));
     expect(local.localRoomPath(roomId, 'events')).toBe(`/api/local/rooms/${encodeURIComponent(roomId)}/events`);
   });
   it('has no browser-incompatible globals or imports', () => {
@@ -167,8 +169,8 @@ const cases: { decode: (input: unknown) => Decoded<unknown>; value: Record<strin
   { decode: local.decodeLocalRoomRef, value: { roomId } },
   { decode: local.decodeLocalHealth, value: { ok: true, version: '0.0.0', pid: 4242 } },
   { decode: local.decodeLocalErrorBody, value: { error: 'not_found' } },
-  { decode: local.decodeOwnerProfile, value: profile, optional: { initials: 'KV' } },
-  { decode: local.decodeOwnerProfileView, value: profileView, optional: { initials: 'KV' } },
+  { decode: local.decodeOwnerProfile, value: profile },
+  { decode: local.decodeOwnerProfileView, value: profileView },
   { decode: local.decodeOwnerUsernameResult, value: { username: 'kevin' } },
   { decode: local.decodeOwnerColorResult, value: { color: 'teal' } },
   { decode: local.decodeOwnerInitialsResult, value: { initials: null } },
@@ -204,7 +206,13 @@ describe('strict wire and record decoders', () => {
     rejected(local.decodeLocalChannelSummary({ ...summary, lastSender: { userId: owner, displayName: 'kevin', extra: true } }), 'lastSender.extra', 'unknown_field');
     rejected(local.decodeLocalChannelSummary({ ...summary, members: [{ ...summary.members[0], extra: true }] }), 'members[0].extra', 'unknown_field');
     rejected(local.decodeOwnerProfile({ ...profile, username: 'kevin-Claude' }), 'username');
-    for (const initials of ['K', 'kv', ' KV', undefined]) rejected(local.decodeOwnerProfile({ ...profile, initials }), 'initials');
+    for (const [decode, value] of [[local.decodeOwnerProfile, profile], [local.decodeOwnerProfileView, profileView]] as const) {
+      accepted<unknown>(decode, { ...value, initials: 'KV' });
+      const { initials: _initials, ...missing } = value;
+      expect(_initials).toBeNull();
+      rejected(decode(missing), 'initials', 'missing_field');
+      for (const initials of ['K', 'kv', ' KV', undefined]) rejected(decode({ ...value, initials }), 'initials');
+    }
     accepted(local.decodeOwnerInitialsResult, { initials: 'KV' });
     rejected(local.decodeOwnerProfileView({ ...profileView, userId: '@x:local' }), 'userId');
     rejected(local.decodeHelperFile({ ...helper, origin: 'http://localhost:47830' }), 'origin');

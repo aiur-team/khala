@@ -44,11 +44,15 @@ export const newLocalAgentUserId = (random4: Uint8Array): string => `@agent-${he
 export const newLocalEventId = (random16: Uint8Array): string => `$${base64url(exact(random16, 16))}`;
 export const isLocalRoomId = (value: string): boolean => /^![A-Za-z0-9_-]{22}:local$/u.test(value);
 export const isLocalAgentUserId = (value: string): boolean => /^@agent-[0-9a-f]{8}:local$/u.test(value);
+export const localAgentDeviceId = (userId: string): string => {
+  if (!isLocalAgentUserId(userId)) throw new RangeError('not_local_agent');
+  return `${LOCAL_AGENT_DEVICE_PREFIX}${userId.slice(7, 15)}`;
+};
 export const isLocalUserId = (value: string): boolean => value === LOCAL_OWNER_USER_ID || isLocalAgentUserId(value);
 export const isLocalEventId = (value: string): boolean => /^\$[A-Za-z0-9_-]{22}$/u.test(value);
 export const isLocalTxnId = (value: string): boolean => /^[A-Za-z0-9._-]{1,64}$/u.test(value);
 export const localRoomKey = (roomId: string): string => {
-  if (!isLocalRoomId(roomId)) throw new RangeError('not_a_local_room_id');
+  if (!isLocalRoomId(roomId)) throw new RangeError('not_local_room');
   return roomId.slice(1, -':local'.length);
 };
 export const localRoomPath = (roomId: string, tail: string): string => `/api/local/rooms/${encodeURIComponent(roomId)}/${tail}`;
@@ -125,8 +129,8 @@ export type LocalChannelSummary = {
 // POST   /api/local/channels           body {name, operationId?} → LocalChannelCreated   (name 1..64 chars, trimmed; appends create + owner join; operationId 1..64 [A-Za-z0-9._-] is stored in the create content and is idempotent)
 export type LocalChannelCreated = { roomId: string; name: string; selfLink: string; shareLink: string; openUrl: string; expiresAt: string };
 
-export type OwnerProfile = { v: 1; username: string; color: HumanColorId; initials?: string; updatedAt: string };   // <stateRoot>/local/owner.json
-export type OwnerProfileView = { userId: typeof LOCAL_OWNER_USER_ID; ownerId: typeof LOCAL_OWNER_ID; username: string; suggestion: string; color: HumanColorId; initials?: string };
+export type OwnerProfile = { v: 1; username: string; color: HumanColorId; initials: string | null; updatedAt: string };   // <stateRoot>/local/owner.json
+export type OwnerProfileView = { userId: typeof LOCAL_OWNER_USER_ID; ownerId: typeof LOCAL_OWNER_ID; username: string; suggestion: string; color: HumanColorId; initials: string | null };
 
 export type HelperFile = { v: 1; pid: number; port: number; origin: string; adminToken: string; version: string; startedAt: string };
 
@@ -405,26 +409,26 @@ function readLocalErrorBody(input: unknown, path: string): LocalErrorBody {
 export function decodeLocalErrorBody(input: unknown): Decoded<LocalErrorBody> { return decodeWith(() => readLocalErrorBody(input, '')); }
 
 function readOwnerProfile(input: unknown, path: string): OwnerProfile {
-  const r = record(input, path, ['v', 'username', 'color', 'updatedAt'], ['initials']);
+  const r = record(input, path, ['v', 'username', 'color', 'initials', 'updatedAt']);
   return {
     v: version(r.field('v'), r.at('v')),
     username: readLocalUsername(r.field('username'), r.at('username')),
     color: readHumanColorId(r.field('color'), r.at('color')),
-    ...(has(input, 'initials') ? { initials: readLocalInitials(r.field('initials'), r.at('initials')) } : {}),
+    initials: nullableInitials(r.field('initials'), r.at('initials')),
     updatedAt: utcTimestamp(r.field('updatedAt'), r.at('updatedAt')),
   };
 }
 export function decodeOwnerProfile(input: unknown): Decoded<OwnerProfile> { return decodeWith(() => readOwnerProfile(input, '')); }
 
 function readOwnerProfileView(input: unknown, path: string): OwnerProfileView {
-  const r = record(input, path, ['userId', 'ownerId', 'username', 'suggestion', 'color'], ['initials']);
+  const r = record(input, path, ['userId', 'ownerId', 'username', 'suggestion', 'color', 'initials']);
   return {
     userId: literal(r.field('userId'), r.at('userId'), [LOCAL_OWNER_USER_ID]),
     ownerId: literal(r.field('ownerId'), r.at('ownerId'), [LOCAL_OWNER_ID]),
     username: readLocalUsername(r.field('username'), r.at('username')),
     suggestion: readLocalUsername(r.field('suggestion'), r.at('suggestion')),
     color: readHumanColorId(r.field('color'), r.at('color')),
-    ...(has(input, 'initials') ? { initials: readLocalInitials(r.field('initials'), r.at('initials')) } : {}),
+    initials: nullableInitials(r.field('initials'), r.at('initials')),
   };
 }
 export function decodeOwnerProfileView(input: unknown): Decoded<OwnerProfileView> { return decodeWith(() => readOwnerProfileView(input, '')); }
