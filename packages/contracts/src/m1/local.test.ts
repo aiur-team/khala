@@ -197,6 +197,10 @@ describe('strict wire and record decoders', () => {
     rejected(local.decodeLocalChannelCreated({ ...created, openUrl: link }), 'openUrl');
     rejected(local.decodeLocalChannelCreated({ ...created, name: 'a'.repeat(65) }), 'name', 'too_long');
     rejected(local.decodeLocalChannelCreated({ ...created, name: ' padded' }), 'name');
+    accepted(local.decodeLocalChannelCreated, { ...created, name: '😀'.repeat(64) });
+    rejected(local.decodeLocalChannelCreated({ ...created, name: '😀'.repeat(65) }), 'name', 'too_long');
+    accepted(local.decodeLocalChannelSummary, { ...summary, members: [{ userId: agent, displayName: 'kevin-Codex', kind: 'agent', harness: 'codex' }] });
+    rejected(local.decodeLocalChannelSummary({ ...summary, members: [{ ...summary.members[0], harness: 'codex' }] }), 'members[0].harness');
     rejected(local.decodeLocalChannelSummary({ ...summary, lastSender: { userId: owner, displayName: 'kevin', extra: true } }), 'lastSender.extra', 'unknown_field');
     rejected(local.decodeLocalChannelSummary({ ...summary, members: [{ ...summary.members[0], extra: true }] }), 'members[0].extra', 'unknown_field');
     rejected(local.decodeOwnerProfile({ ...profile, username: 'kevin-Claude' }), 'username');
