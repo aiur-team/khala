@@ -376,6 +376,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     for (const headers of [{ cookie }, { cookie, 'x-khala-local': '1', origin: 'http://evil.example' }]) expect(await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers, body: {} }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden_origin' } });
     expect((await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers: { cookie, 'x-khala-local': '1', origin: world.origin }, body: {} })).status, context('AE11')).toBe(200);
     const credentials = (await readJson<AgentCredentials>(world.claude.files.session))!;
+    const codexCredentials = (await readJson<AgentCredentials>(world.codex.files.session))!;
     for (const [method, requestPath] of [['GET', '/api/local/channels'], ['POST', `${channelPath()}/links`]] as const) expect(await raw(world, { method, path: requestPath, headers: { authorization: `Bearer ${credentials.accessToken}` }, ...(method === 'POST' ? { body: {} } : {}) }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden' } });
     const probeCredentials = (await readJson<AgentCredentials>(probe.files.session))!;
     expect((await admin(world, 'DELETE', `${channelPath()}/members/${enc(probeCredentials.userId)}`)).status, context('AE11')).toBe(204);
@@ -385,7 +386,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect((await received(world.claude, 'kev-Claude-2 left')).kind, context('AE11')).toBe('event');
     const logs = [await readFile(path.join(world.state, 'khala/local/helper.log'), 'utf8'), world.claude.stderr, world.codex.stderr, probe.stderr].join('\n');
     const helper = (await helperFile(world))!;
-    for (const secret of [helper.adminToken, credentials.accessToken, probeCredentials.accessToken, cookie.split('=').slice(1).join('='), ...sentBodies]) expect(logs.includes(secret), context('AE11')).toBe(false);
+    for (const secret of [helper.adminToken, credentials.accessToken, codexCredentials.accessToken, probeCredentials.accessToken,
+      cookie.split('=').slice(1).join('='), ...[channel.selfLink, channel.shareLink, channel.openUrl, contentLink].map(link => new URL(link).pathname.split('/').at(-1)!),
+      ...sentBodies]) expect(logs.includes(secret), context('AE11')).toBe(false);
   });
   acceptance('AE8', 'agent reconnection restarts a killed helper without replay or cursor loss', async () => {
     await received(world.codex, await send(world.claude, 'ae8-before'));
