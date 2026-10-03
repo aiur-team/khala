@@ -1,5 +1,7 @@
 /api/* /.netlify/functions/khala-control/:splat 200!
 /llms.txt /landing/llms.txt 200!
 /AGENTS.md /landing/AGENTS.md 200!
+/agents.md /landing/AGENTS.md 200!
+/.well-known/agents.md /landing/AGENTS.md 200!
 / /landing/index.html 200!
 /* /index.html 200

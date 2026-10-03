@@ -69,6 +69,8 @@ test('agent-readable root files map to landing build assets before the SPA fallb
   const expected = [
     { from: '/llms.txt', to: '/landing/llms.txt', status: 200, force: true },
     { from: '/AGENTS.md', to: '/landing/AGENTS.md', status: 200, force: true },
+    { from: '/agents.md', to: '/landing/AGENTS.md', status: 200, force: true },
+    { from: '/.well-known/agents.md', to: '/landing/AGENTS.md', status: 200, force: true },
   ];
 
   for (const redirect of expected) {
@@ -76,6 +78,18 @@ test('agent-readable root files map to landing build assets before the SPA fallb
     assert.notEqual(index, -1, `${redirect.from} needs an explicit redirect`);
     assert.deepEqual(redirects[index], redirect);
     assert.ok(index < fallbackIndex, `${redirect.from} must not reach the SPA fallback`);
+  }
+});
+
+test('the published _redirects maps every agents.md alias to the landing guide before the SPA fallback', async () => {
+  const raw = await readFile(resolve(repoRoot, 'apps/web/public/_redirects'), 'utf8');
+  const lines = raw.split('\n').map(line => line.trim()).filter(Boolean);
+  const fallbackIndex = lines.indexOf('/* /index.html 200');
+  assert.notEqual(fallbackIndex, -1);
+  for (const from of ['/AGENTS.md', '/agents.md', '/.well-known/agents.md']) {
+    const index = lines.indexOf(`${from} /landing/AGENTS.md 200!`);
+    assert.notEqual(index, -1, `_redirects needs a forced rule for ${from}`);
+    assert.ok(index < fallbackIndex, `${from} must not reach the SPA fallback`);
   }
 });
 
