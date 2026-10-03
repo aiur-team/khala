@@ -13,7 +13,7 @@ import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession }
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
-import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, type JoinFile, type StatusFile } from './state';
+import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, type JoinFile, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
   harness: Harness; sessionId: string; env?: NodeJS.ProcessEnv;
@@ -24,10 +24,16 @@ export type KhalaAgentClientOptions = {
 type Attempt = {
   link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
-  unsubscribe?: () => void; unsubscribeMode?: () => void; joined: boolean;
+  unsubscribe?: () => void; unsubscribeMode?: () => void; unsubscribeEnded?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
-  return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error');
+  return error instanceof KhalaClientError ? error : new KhalaClientError('internal_error',
+    error instanceof StateError ? error.code : undefined);
+}
+
+function errorDetail(error: unknown, fallback: string): string {
+  const failure = safeError(error);
+  return ['unsafe_state_dir', 'storage_failed'].includes(failure.message) ? failure.message : fallback;
 }
 
 export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaAgentClient {
@@ -77,6 +83,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   async function cleanup(attempt: Attempt): Promise<void> {
     attempt.unsubscribe?.();
     attempt.unsubscribeMode?.();
+    attempt.unsubscribeEnded?.();
     const session = attempt.session;
     delete attempt.session;
     await session?.stop().catch(() => {});
@@ -92,7 +99,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     active = undefined;
   }
   function requireSession(): { session: ChannelSession; credentials: AgentCredentials; attempt: Attempt } {
-    if (closed || !active?.joined || !active.session || !active.credentials) throw new KhalaClientError('not_connected');
+    if (closed || !active?.joined || active.controller.signal.aborted || !active.session || !active.credentials) throw new KhalaClientError('not_connected');
     return { session: active.session, credentials: active.credentials, attempt: active };
   }
   async function publishMode(attempt: Attempt, session: ChannelSession, roomId: string, mode: ListeningMode): Promise<void> {
@@ -132,6 +139,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         return session;
       });
       const session = await wait(starting);
+      if (session.onEnded) attempt.unsubscribeEnded = session.onEnded(reason => {
+        if (!current(attempt)) return;
+        void setStatus('disconnected', reason).catch(() => {});
+        attempt.controller.abort();
+      });
       const buffered: (() => void)[] = [];
       const intake = (message: SessionMessage): void => {
         if (!current(attempt) || message.roomId !== credentials.roomId || message.sender === session.userId) return;
@@ -184,7 +196,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const inviteTimeout = error instanceof Error && error.message === 'invite_timeout';
         await cleanup(attempt);
         await setStatus(failure.code === 'join_expired' ? 'idle' : 'disconnected',
-          failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : failure.code);
+          failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(error, failure.code));
         active = undefined;
       }
     } finally {
@@ -196,7 +208,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, options.autoConfirmWaitMs ?? 15_000); });
     try { await Promise.race([attempt.task, timeout]); } finally { clearTimeout(timer); }
-    if (closed) return 'failed';
+    if (closed || attempt.controller.signal.aborted) return 'failed';
     if (active === attempt && attempt.joined) return 'connected';
     return active === attempt ? 'pending' : 'failed';
   }
@@ -206,8 +218,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const task = joins.catch(() => {}).then(async () => {
         await initialize();
         if (closed) throw new KhalaClientError('not_connected');
-        if (active?.joined && active.link === link) return { state: 'connected' as const, channelName: status.channelName! };
-        if (active?.link === link) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl, ...(active.created.autoConfirmed === true ? { autoConfirmed: true as const } : {}) };
+        if (active?.joined && !active.controller.signal.aborted && active.link === link) return { state: 'connected' as const, channelName: status.channelName! };
+        if (active?.link === link && !active.controller.signal.aborted) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl, ...(active.created.autoConfirmed === true ? { autoConfirmed: true as const } : {}) };
         const wasJoined = active?.joined;
         await cancel();
         if (wasJoined) {
@@ -256,8 +268,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await initialize();
       await appends;
       const unread = (await unreadCount(dir)).total;
-      return { state: status.state, ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
-        ...(active?.joined && active.session ? { agentUserId: active.session.userId } : {}), unread, listeningMode: await readListeningMode(filesForDir(dir)) };
+      return { state: status.state, ...(status.detail !== undefined ? { detail: status.detail } : {}), ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
+        ...(active?.joined && !active.controller.signal.aborted && active.session ? { agentUserId: active.session.userId } : {}), unread, listeningMode: await readListeningMode(filesForDir(dir)) };
     },
     async read(limit, before) {
       await initialize();
@@ -276,8 +288,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const sent = await session.send(credentials.roomId, text);
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
-      } catch {
-        if (current(attempt)) await setStatus('send_failed', 'send_failed');
+      } catch (error) {
+        if (current(attempt)) await setStatus('send_failed', errorDetail(error, 'send_failed'));
         throw new KhalaClientError('send_failed');
       }
     },
@@ -292,8 +304,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const sent = await session.sendChannelEvent(credentials.roomId, encoded.value, txnId);
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
-      } catch {
-        if (current(attempt)) await setStatus('send_failed', 'send_failed');
+      } catch (error) {
+        if (current(attempt)) await setStatus('send_failed', errorDetail(error, 'send_failed'));
         throw new KhalaClientError('send_failed');
       }
     },

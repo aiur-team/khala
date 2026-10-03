@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createKhalaAgentClient } from '../client-impl';
+import { createKhalaTools } from '../mcp/tools';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { LOCAL_OWNER_USER_ID as owner, type LocalEvent, type LocalMember } from '@khala/contracts/m1/local';
@@ -195,12 +200,14 @@ it('dispatches owner mode commands separately and caches names before delivery, 
 });
 it('stop aborts pending fetch, is idempotent, disables handlers and rejects every asynchronous operation', async () => {
   const { h, s } = await setup(); const received = vi.fn(); s.onMessage(received);
+  const ended = vi.fn(); s.onEnded!(ended);
   await s.join(room);
   const poll = h.calls.at(-1)!;
   await s.stop(); await s.stop();
   expect(poll.signal.aborted).toBe(true);
   const count = h.calls.length; append(h); await tick();
   expect(received).not.toHaveBeenCalled(); expect(h.calls).toHaveLength(count);
+  expect(ended).not.toHaveBeenCalled();
   for (const operation of [() => s.send(room, 'x'), () => s.sendChannelEvent(room, {}), () => s.history(room, 30),
     () => s.publishListeningMode(room, 'async'), () => s.waitForInvite(room, 10), () => s.join(room)]) {
     await expect(operation()).rejects.toThrow('session_stopped');
@@ -208,12 +215,16 @@ it('stop aborts pending fetch, is idempotent, disables handlers and rejects ever
 });
 it.each([401, 403, 404])('ends delivery on %s and rejects later calls with a safe terminal error', async status => {
   const { h, s, logs } = await setup(); h.eventsStatus = status;
+  const ended = vi.fn(); s.onEnded!(ended);
+  const unsubscribed = vi.fn(); s.onEnded!(unsubscribed)();
   await s.join(room); await tick();
   const count = h.calls.length;
   for (const op of [() => s.send(room, 'x'), () => s.history(room, 30), () => s.publishListeningMode(room, 'sync'), () => s.sendChannelEvent(room, {})]) {
     await expect(op()).rejects.toThrow(status === 404 ? 'not_found' : status === 401 ? 'unauthorized' : 'not_member');
   }
   expect(h.calls).toHaveLength(count);
+  expect(ended).toHaveBeenCalledExactlyOnceWith(status === 404 ? 'channel_deleted' : status === 403 ? 'removed' : 'unauthorized');
+  expect(unsubscribed).not.toHaveBeenCalled();
   expect(logs).toEqual([status === 404 ? 'local_channel_gone' : 'local_session_revoked']);
 });
 it('retries refused sends once with the same transaction ID', async () => {
@@ -357,4 +368,60 @@ it('does not echo the bearer even in an otherwise valid error body', async () =>
   const { h, s } = await setup();
   h.intercept = () => json({ error: token }, 400);
   await expect(s.send(room, 'hi')).rejects.toThrow(/^http_400$/u);
+});
+
+async function localClient(h: ReturnType<typeof fakeHelper>) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'khala-1049-status-'));
+  const client = createKhalaAgentClient({ harness: 'codex', sessionId: 'local', env: { XDG_STATE_HOME: root },
+    startSession: credentials => createLocalSession(credentials, { fetch: h.fetch, ensureHelper: h.ensure, sleep: h.sleep }),
+    joinApi: {
+      requestJoin: async () => ({ origin: 'http://127.0.0.1:47830', joinId: 'j', pollSecret: 'p',
+        confirmUrl: 'http://127.0.0.1:47830/agent/confirm', expiresAt: '2099-01-01T00:00:00Z', autoConfirmed: true }),
+      pollJoin: async () => creds, reportReady: async () => {},
+    },
+  });
+  const statusTool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(t => t.name === 'khala_status')!;
+  return { client, status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
+    await client.close(); await rm(root, { recursive: true, force: true });
+  } };
+}
+it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as const)(
+  'reports disconnected/%s through khala_status when polling ends', async (code, detail) => {
+    const h = fakeHelper(); const c = await localClient(h);
+    try {
+      expect(await c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).toMatchObject({ state: 'connected' });
+      h.eventsStatus = code; append(h);
+      await vi.waitFor(async () => expect(await c.status()).toMatchObject({ result: {
+        structuredContent: { state: 'disconnected', detail },
+      } }));
+      await expect(c.client.send('after removal')).rejects.toMatchObject({ code: 'not_connected' });
+      expect(await c.client.status()).not.toHaveProperty('agentUserId');
+      h.eventsStatus = 200;
+      expect(await c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).toMatchObject({ state: 'connected' });
+      expect(await c.client.status()).not.toHaveProperty('detail');
+    } finally { await c.cleanup(); }
+  });
+it('does not overwrite an early polling end with connected', async () => {
+  const h = fakeHelper(); h.eventsStatus = 403; const c = await localClient(h);
+  try {
+    await expect(c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).rejects.toThrow('removed');
+    expect(await c.client.status()).toMatchObject({ state: 'disconnected', detail: 'removed' });
+  } finally { await c.cleanup(); }
+});
+it.each(['unsafe_state_dir', 'storage_failed'] as const)('exposes helper %s during startup and sending', async detail => {
+  const h = fakeHelper(); const c = await localClient(h);
+  h.ensure.mockRejectedValue(Object.assign(new Error(token), { code: detail }));
+  try {
+    h.down = true;
+    await expect(c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).rejects.toThrow(detail);
+    expect(await c.status()).toMatchObject({ result: { structuredContent: { state: 'disconnected', detail } } });
+    h.down = false;
+    // A new link starts a fresh attempt after the failed handshake.
+    await c.client.join('http://127.0.0.1:47830/join/ijklmnop', 'Codex');
+    h.intercept = call => { if (call.url.endsWith('/send')) throw network('ECONNREFUSED'); };
+    await expect(c.client.send('retry')).rejects.toMatchObject({ code: 'send_failed' });
+    expect(await c.status()).toMatchObject({ result: { structuredContent: { state: 'send_failed', detail } } });
+    await expect(c.client.sendChannelEvent({ v: 1, kind: 'custom', summary: 'event', body: 'event' })).rejects.toMatchObject({ code: 'send_failed' });
+    expect(await c.client.status()).toMatchObject({ state: 'send_failed', detail });
+  } finally { await c.cleanup(); }
 });
