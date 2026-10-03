@@ -37,6 +37,39 @@ not an error — its routes are simply omitted and return `503
 feature_unavailable` at runtime, so this ticket can ship before KHA-132/133
 land their producers.
 
+## Deploy
+
+**`main` auto-deploys; the manual script is a fallback.** Every push to `main`
+(and a manual `workflow_dispatch`) runs `.github/workflows/deploy-prod.yml`,
+which builds exactly as above with
+`PUBLIC_APP_ORIGIN=https://khala.aiur.team PUBLIC_HOMESERVER_ORIGIN=https://matrix.khala.aiur.team`,
+then runs a pinned `netlify-cli` `deploy --prod --no-build --dir apps/web/dist
+--functions infra/netlify/functions-generated --message "main <sha8>"`. The job
+fails unless edge functions were bundled, the site's published deploy id equals
+the new deploy, `POST /api/agent/join {}` returns 400 and `curl /join/inv_EXAMPLE`
+returns agent markdown. Runs share the `deploy-prod` concurrency group and are
+never cancelled, so deploys land in push order. The job does not wait for the
+test suite; only the build must succeed. It authenticates with the
+`NETLIFY_AUTH_TOKEN` repository secret. Rotate it with
+`gh secret set NETLIFY_AUTH_TOKEN --repo aiur-team/khala`.
+
+Manual fallback, for example when Actions is down: build with the same
+commands and `PUBLIC_*` values, then run
+
+```sh
+cd / && NETLIFY_SITE_ID=e95155c4-1070-46f8-95eb-4ca86df16030 \
+  netlify deploy --cwd "$CHECKOUT" --prod --no-build \
+  --dir "$CHECKOUT/apps/web/dist" --functions "$CHECKOUT/infra/netlify/functions-generated" \
+  --message "main <sha8>; <note>"
+```
+
+and check the same four things. Run it from outside the checkout with `--cwd`
+for two reasons. At a monorepo root, `netlify-cli` otherwise asks which package
+to deploy, and under `CI` it fails. In a git worktree nested inside another
+repository, it otherwise resolves `edge_functions` against the parent repo and
+silently ships no edge functions. Look for "Finished bundling edge functions" in
+its output.
+
 ## Environment variables
 
 Two disjoint groups, enforced by `infra/netlify/env.schema.json`:
