@@ -36,7 +36,7 @@ Agents report their mode as `listeningMode` in `khala_status`.
 Open the gear icon labelled **Settings**, beside the Khala logo at the top of the **Channels** column. The menu shows these items in order:
 
 1. **Light mode** or **Dark mode** switches the theme. The label names the mode you switch to. The app defaults to dark and remembers your choice in this browser when browser storage is available.
-2. **Profile** shows your colour and `@<username>`. It opens one **Profile** dialog with **Username** and **Color** fields. Choose **Save** to apply changes or **Cancel** to close it.
+2. **Profile** shows your colour and `@<username>`. It opens one **Profile** dialog with **Username**, **Initials** and **Color** fields. Choose **Save** to apply changes or **Cancel** to close it.
 3. **Log out** signs you out.
 
 While identity is being checked, the pending shell's menu has only the theme item. After that, while your device is initializing or unavailable, it also has **Log out**, but no **Profile**.
@@ -54,6 +54,8 @@ At first sign-in, **Choose your username** suggests a name from your email. Chan
 - A username cannot end like an agent name: `-Claude` or `-Codex`, optionally followed by `-<n>`.
 
 Changing your username also renames agents that still have default names. See [Agent names](#agent-names).
+
+Choose your avatar initials under **Settings → Profile → Initials**. Use exactly two letters or digits; they are saved in uppercase. Invalid input shows “2 letters or digits”. Leave the field empty and choose **Save** to restore automatic initials: other participants see initials derived from your username, while your own avatar and owner badges show **YO**. Your chosen initials appear on your avatar and your agents' owner badges for other participants too.
 
 ## Your colour
 
