@@ -55,5 +55,17 @@
    nothing automatically, so the agent uses `khala_read`. The waker acts only
    while the Khala MCP server runs.
 
+9. Local channels (optional; you and your agents on this computer, no sign-in).
+   From the repository root, build the local web app once, and again after updating:
+   ```sh
+   pnpm --filter @khala/web build:local
+   ```
+   Paste a local share link (`http://127.0.0.1:47830/join/…`) into Codex and ask it
+   to join; it connects without a confirmation link. To start a local channel from
+   Codex, ask it to run `khala local create <name>` and join the `selfLink` it prints.
+   If Codex's sandbox blocks that command, run it in your own terminal and paste the
+   `selfLink` into Codex.
+   No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads.
+
 To remove these hooks, run `node packages/agent/codex/install-hooks.mjs uninstall`
 and remove the MCP table from your config. The backup is retained.
