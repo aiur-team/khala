@@ -10,7 +10,6 @@ const serverDependencies = /^(?:@matrix-org\/matrix-sdk-crypto-nodejs|better-sql
 const packageOf = name => name.split('/').slice(0, 2).join('/');
 const sourcePattern = /\.[cm]?[jt]sx?$/;
 const testPattern = /\.(test|spec)\.[cm]?[jt]sx?$/;
-const FROZEN = new Set(['apps/internal']); // Frozen during M1, outside the pnpm workspace (D5).
 // Shared web primitives other features may import. They may not import features themselves.
 // `channel-create` is the creation operation adapter the channel-request inbox renders.
 // `receipt-evidence` is the one truthful receipt vocabulary the timeline, review and panels share.
@@ -25,18 +24,16 @@ function filesBelow(directory) {
   });
 }
 
-/** The resolved import graph below apps/ and packages/, excluding frozen apps. */
+/** The resolved import graph below apps/ and packages/. */
 export function buildGraph(root) {
   root = path.resolve(root);
   const errors = new Set();
-  const sources = ['apps', 'packages'].flatMap(area => filesBelow(path.join(root, area)))
-    .filter(filename => !FROZEN.has(packageOf(normalize(path.relative(root, filename)))));
+  const sources = ['apps', 'packages'].flatMap(area => filesBelow(path.join(root, area)));
   const packages = new Map();
   for (const area of ['apps', 'packages']) {
     const directory = path.join(root, area);
     if (!fs.existsSync(directory)) continue;
     for (const entry of fs.readdirSync(directory)) {
-      if (FROZEN.has(`${area}/${entry}`)) continue;
       const filename = path.join(directory, entry, 'package.json');
       if (fs.existsSync(filename)) packages.set(JSON.parse(fs.readFileSync(filename, 'utf8')).name, path.dirname(filename));
     }

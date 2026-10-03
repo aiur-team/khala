@@ -107,12 +107,6 @@ test('the channel-request inbox may import the shared creation adapter', t => {
     'apps/web/src/features/approval-decision/model.ts': 'export {};',
   }), []);
 });
-test('frozen apps/internal is outside the checked graph', t => {
-  assert.deepEqual(fixture(t, {
-    'apps/internal/package.json': { name: '@khala/internal' },
-    'apps/internal/src/x.ts': "import 'node:fs'; import '@khala/connector/missing';",
-  }), []);
-});
 test('invalid browser import makes the command fail for CI', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-boundary-cli-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
