@@ -1,6 +1,6 @@
 import { AgentConfirm, AgentConfirmFrame } from '../../features/agent-confirm/AgentConfirm';
 import { createAgentConfirmController } from '../../features/agent-confirm/controller';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
@@ -16,12 +16,21 @@ import { ConversationIndexRoute } from './ConversationIndexRoute';
 import { useConversationIndex } from './ConversationIndexRoute';
 import { ConversationList, type ConversationSummary } from '../../ui/conversation';
 import { KhalaApp } from '../../ui/khala/KhalaApp';
-import { LogOutIcon, PlusIcon } from '../../ui/khala/icons';
+import { CopyIcon, LogOutIcon, PlusIcon } from '../../ui/khala/icons';
+import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { NewChannelPopover } from '../../ui/khala/NewChannelPopover';
 import { SettingsMenu } from '../../ui/khala/SettingsMenu';
+import { useToast } from '../../ui/khala/Toast';
+import { copyShareLink } from '../../ui/share-link';
 import { ProfileProvider, useProfile } from '../../features/profile/ProfileProvider';
 import { ProfileDialog } from '../../features/profile/ProfileDialog';
 import { UsernameGate } from '../../features/profile/UsernameGate';
+
+export type HumanAccountMode = 'oauth' | 'local_owner';
+export const HumanAccountContext = createContext<HumanAccountMode>('oauth');
+/** How the human signed in: hosted OAuth, or the one local owner served by `khala local serve`. */
+export function useHumanAccount(): HumanAccountMode { return useContext(HumanAccountContext); }
+const LOCAL_OPEN_COMMAND = 'khala local open';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>, navigate?: (path: string) => void, routes?: HumanRouteCodec) => ReactNode;
 
@@ -34,6 +43,8 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
+  /** `local_owner` (the local app) has no sign-in and no Log out. Default `oauth`. */
+  account?: HumanAccountMode;
 }>;
 
 export type MountKhalaContentOptions = HumanApplicationScreenProps & Readonly<{ target: Element }>;
@@ -159,6 +170,19 @@ function SigningIn() {
   return <div className="kh-state-c"><span className="kh-spin" aria-hidden="true"></span><b>Signing in…</b></div>;
 }
 
+/** The local owner has no session: the helper is down, or this browser has no owner cookie yet. */
+function LocalOwnerUnavailable() {
+  const toast = useToast();
+  return <div className="kh-state-c" role="alert">
+    <b>Not connected</b>
+    <div className="kh-oneliner">
+      <code>{LOCAL_OPEN_COMMAND}</code>
+      <button type="button" className="kh-ib sm" data-tip="Copy" aria-label="Copy command"
+        onClick={() => void copyShareLink(LOCAL_OPEN_COMMAND).then(result => { if (result.ok) toast('Copied'); })}><CopyIcon /></button>
+    </div>
+  </div>;
+}
+
 function LostDevicePanel() {
   return (
       <Panel heading="Device keys unavailable">
@@ -217,22 +241,24 @@ export function LogoutAction({ application, routes, mode }: {
   </>;
 }
 
-function PendingOwnerShell({ application, routes, chrome, phase, children }: {
+function PendingOwnerShell({ application, routes, chrome, phase, local, children }: {
   application: HumanApplicationHandle;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
   phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable';
+  local: boolean;
   children: ReactNode;
 }) {
   const { signOut, signingOut, failed } = useSignOut(application, routes, chrome.mode);
-  // No Log out while identity is still being checked; the theme stays switchable.
+  // No Log out while identity is still being checked, nor ever for the local owner; the theme stays switchable.
   const checking = phase === 'checking_identity';
+  const noSignOut = checking || local;
   // The device status and its retry stay reachable on a phone: the pending
   // frame stacks the list above the status instead of hiding either.
   return <KhalaApp className="khala-owner-shell khala-pending" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-    homeHref={routes.conversationsPath()} brandActions={checking ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
+    homeHref={routes.conversationsPath()} brandActions={noSignOut ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-      username={null} {...(checking ? {} : { onSignOut: signOut, signingOut })} />}
+      username={null} {...(noSignOut ? {} : { onSignOut: signOut, signingOut })} />}
     list={<ConversationList conversations={[]} selectedId={null} query="" onQueryChange={() => undefined} onSelect={() => undefined}
       showSearch={false} status={phase === 'unavailable' || phase === 'inactive' ? 'ready' : 'loading'}
       emptyLabel={phase === 'inactive' ? 'Channels are paused in this tab.' : 'Channels are unavailable on this device.'}
@@ -255,12 +281,13 @@ function withHarnesses(conversations: readonly ConversationSummary[], describe: 
   }) } : item);
 }
 
-function OwnerShell({ application, routes, chrome, context, navigateRoute, children }: {
+function OwnerShell({ application, routes, chrome, context, navigateRoute, local, children }: {
   application: HumanApplicationHandle;
   routes: HumanRouteCodec;
   chrome: HumanShellChrome;
   context: HumanRouteContext;
   navigateRoute(path: string): void;
+  local: boolean;
   children: ReactNode;
 }) {
   const route = routes.parse(chrome.path);
@@ -278,9 +305,9 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
   const inThread = route.kind === 'channel' || route.kind === 'join';
   return <KhalaApp className="khala-owner-shell" theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
     homeHref={routes.conversationsPath()} inThread={inThread}
-    brandActions={<SignOutStatus signingOut={signingOut} failed={failed} />}
+    brandActions={local ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
-      username={username} color={color} onEditProfile={() => setEditingProfile(true)} onSignOut={signOut} signingOut={signingOut} />}
+      username={username} color={color} onEditProfile={() => setEditingProfile(true)} {...(local ? {} : { onSignOut: signOut, signingOut })} />}
     overlay={editingProfile ? <ProfileDialog ownerId={context.principal.ownerId} onClose={closeProfile} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
       query={query} onQueryChange={setQuery} viewerOwnerId={context.principal.ownerId} viewerInitials={viewerInitials}
@@ -294,7 +321,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, child
     main={children} />;
 }
 
-/** The hosted human application: create, join and channel routes behind OAuth sign-in. */
+/** The human application: create, join and channel routes, behind OAuth sign-in or, for `local_owner`, the local helper's owner session. */
 export function HumanApplicationScreen({
   application,
   identity,
@@ -303,7 +330,9 @@ export function HumanApplicationScreen({
   navigateExternal = url => globalThis.location?.assign(url),
   navigateRoute = path => application.navigate(path),
   renderRoom,
+  account = 'oauth',
 }: HumanApplicationScreenProps) {
+  const local = account === 'local_owner';
   const renderRoute = (context: HumanRouteContext, route: HumanRoute, chrome: HumanShellChrome): ReactNode => {
     switch (route.kind) {
       case 'conversations':
@@ -327,7 +356,7 @@ export function HumanApplicationScreen({
   const isConfirm = (chrome: HumanShellChrome) => routes.parse(chrome.path).kind === 'agent_confirm';
   const renderAppShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => {
     if (isConfirm(chrome)) return phase === 'ready' ? children : <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>;
-    return <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute}>
+    return <OwnerShell key={context.principal.ownerId} application={application} routes={routes} chrome={chrome} context={context} navigateRoute={navigateRoute} local={local}>
       {children}
     </OwnerShell>;
   };
@@ -336,10 +365,12 @@ export function HumanApplicationScreen({
   const renderReadyShell = (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode, phase: 'ready' | 'navigating') => {
     const pending = isConfirm(chrome)
       ? <ConfirmFrame chrome={chrome} routes={routes}><SigningIn /></ConfirmFrame>
-      : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity"><SigningIn /></PendingOwnerShell>;
+      : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase="checking_identity" local={local}>
+        {local ? <LoadingSpinner label="Loading" /> : <SigningIn />}
+      </PendingOwnerShell>;
     return <ProfileProvider key={context.principal.ownerId} ports={context}>
       <UsernameGate pending={pending} theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange} homeHref={routes.conversationsPath()}
-        brandActions={<LogoutAction application={application} routes={routes} mode={chrome.mode} />}>
+        brandActions={local ? null : <LogoutAction application={application} routes={routes} mode={chrome.mode} />}>
         {renderAppShell(context, chrome, children, phase)}
       </UsernameGate>
     </ProfileProvider>;
@@ -347,20 +378,24 @@ export function HumanApplicationScreen({
   const renderPendingShell = (chrome: HumanShellChrome, phase: 'checking_identity' | 'initializing_device' | 'inactive' | 'unavailable',
     children: ReactNode) => isConfirm(chrome)
     ? <ConfirmFrame chrome={chrome} routes={routes}>{children}</ConfirmFrame>
-    : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase={phase}>{children}</PendingOwnerShell>;
+    : <PendingOwnerShell application={application} routes={routes} chrome={chrome} phase={phase} local={local}>{children}</PendingOwnerShell>;
 
   return (
-    <HumanScreen
-      application={application}
-      routes={routes}
-      mode={mode}
-      renderRoute={renderRoute}
-      renderSignedOut={path => <SignInRedirect key={path} identity={identity} path={path} navigateExternal={navigateExternal} />}
-      renderDeviceLoss={() => <LostDevicePanel />}
-      renderReadyShell={renderReadyShell}
-      renderPendingShell={renderPendingShell}
-      renderSignedInAction={shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
-    />
+    <HumanAccountContext.Provider value={account}>
+      <HumanScreen
+        application={application}
+        routes={routes}
+        mode={mode}
+        renderRoute={renderRoute}
+        renderSignedOut={local ? () => <LocalOwnerUnavailable />
+          : path => <SignInRedirect key={path} identity={identity} path={path} navigateExternal={navigateExternal} />}
+        renderDeviceLoss={() => <LostDevicePanel />}
+        renderReadyShell={renderReadyShell}
+        renderPendingShell={renderPendingShell}
+        renderSignedInAction={local ? () => null : shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
+        {...(local ? { renderIdentityUnavailable: () => <LocalOwnerUnavailable /> } : {})}
+      />
+    </HumanAccountContext.Provider>
   );
 }
 

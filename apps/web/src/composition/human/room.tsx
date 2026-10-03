@@ -13,7 +13,7 @@ import { projectTimelineNames } from '../../features/timeline/names';
 import type { ParticipantView } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
-import type { HumanRoomRenderer } from './mount';
+import { useHumanAccount, type HumanRoomRenderer } from './mount';
 import { ChannelAddAgent, ChannelInvite } from '../../features/channel/ChannelSharePanel';
 import { useConversationIndex } from './ConversationIndexRoute';
 import type { HumanRouteCodec } from './routes';
@@ -104,6 +104,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     timeline.dispose();
     room.dispose();
   }, [room, timeline]);
+  const account = useHumanAccount();
   const viewer = context.participant?.() ?? null;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
   const presence = useSyncExternalStore(room.subscribe, room.getSnapshot, room.getSnapshot);
@@ -148,7 +149,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     return <Panel heading="Conversation unavailable"><p role="alert">Channel access could not be checked. Try reloading.</p></Panel>;
   }
   if (context.conversations && conversations && !conversations.some(item => item.id === roomId)) {
-    return <Panel heading="Conversation unavailable"><p role="alert">You no longer have access to this encrypted conversation.</p></Panel>;
+    return <Panel heading="Conversation unavailable"><p role="alert">{account === 'local_owner' ? 'You no longer have access to this channel.' : 'You no longer have access to this encrypted conversation.'}</p></Panel>;
   }
   if (viewer === null) {
     return (
@@ -162,7 +163,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     ...(context.channelLinks ? { channelLinks: context.channelLinks } : {}) } : null;
   return (
     <ChannelScreen
-      title={selectedConversation?.title ?? 'Encrypted conversation'}
+      title={selectedConversation?.title ?? (account === 'local_owner' ? 'Channel' : 'Encrypted conversation')}
       controller={room}
       viewerOwnerId={viewer.ownerId}
       viewerName={viewer.displayName}
