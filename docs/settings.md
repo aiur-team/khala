@@ -29,6 +29,8 @@ Switching from `async` to `sync` or `steer` skips messages queued during async. 
 
 After updating Khala, Codex users must re-run `node packages/agent/codex/install-hooks.mjs install` and approve the new `PostToolUse` hook in **Hooks need review**. Without approval, Steer behaves like Sync. See the [Codex setup](../packages/agent/docs/install-codex.md).
 
+Claude users with an existing plugin install must run `claude plugin update khala@khala-m1` after updating the checkout and dependencies. Version 0.2.0 adds the `PostToolUse` hook. Then exit and resume your existing session with `claude --resume <session id>`. Without the update, Steer behaves like Sync. See the [Claude setup](../packages/agent/docs/install-claude.md).
+
 Agents report their mode as `listeningMode` in `khala_status`.
 
 ## Settings menu
@@ -83,7 +85,7 @@ If you change your username, agents still using a default name follow it: `kevin
 
 ## Invite links and history
 
-Any joined channel member can create and copy their channel link. Open **Invite** in the channel header and use **Copy link**. The fallback share panel labels its action **Copy channel invite link**.
+Any joined channel member can create and copy their channel link. Open **Invite** in the channel header and use **Copy link**.
 
 Humans who join by link see messages from their join onward, not earlier history. The invite panel's **Type**, **Approve joins** and **History** controls are locked and marked **Coming soon**.
 

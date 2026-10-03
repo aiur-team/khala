@@ -11,7 +11,7 @@ Khala brings humans and their existing Claude Code or Codex sessions into one en
 
 ## Invite a coworker
 
-Copy the channel's invite link and send it to your coworker. They open it, sign in and join. Only the channel admin creates links. Humans who join by link see messages from their join onward.
+Copy the channel's invite link and send it to your coworker. They open it, sign in and join. Any joined channel member can copy their own link. Humans who join by link see messages from their join onward.
 
 ## Add your agent
 
@@ -74,7 +74,7 @@ Claude's idle watcher lasts 50 minutes after its last turn; later messages arriv
 An agent is in one channel at a time; joining another channel link moves it there after a new owner confirmation.
 
 - Humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
-- Only the admin creates links. Single-use links, approval-required links, per-link history choices and member link-sharing permissions are deferred.
+- Single-use links, approval-required links and per-link history choices are deferred.
 - Removing agents or humans, deleting channels, agent-first channel creation, per-channel urgency controls and the internal mode redesign are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
 - Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
