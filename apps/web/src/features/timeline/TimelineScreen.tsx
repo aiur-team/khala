@@ -569,7 +569,8 @@ export function TimelineScreen({
   for (const row of rows) {
     if (row.kind === 'channel_event') {
       entries.push({ type: 'break', key: row.eventId, node: <ChannelEventPill id={row.eventId}
-        content={row.content} senderName={row.participant.displayName} receivedAt={row.receivedAt} /> });
+        content={row.content} senderName={row.participant.displayName} receivedAt={row.receivedAt}
+        timeOptions={timeOptions} /> });
       continue;
     }
     if (row.kind === 'unavailable') {
