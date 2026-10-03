@@ -1,6 +1,16 @@
+// This JavaScript guard covers public Node network APIs and permits only Node
+// subprocesses inheriting this exact preload/log. Workers are blocked entirely.
+// Known blind spots: native addons, process.binding('tcp_wrap') and other direct
+// native handles can bypass these hooks. This is regression instrumentation,
+// not an OS sandbox. Resolver instances are covered. Async denials emit errors;
+// synchronous child APIs preserve their native error-return/throw contract.
 import net from 'node:net';
 import dgram from 'node:dgram';
 import dns from 'node:dns';
+import childProcess from 'node:child_process';
+import workerThreads from 'node:worker_threads';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import * as module from 'node:module';
 import { appendFileSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -50,6 +60,7 @@ net.Socket.prototype.connect = function (...args) {
     return connect.apply(this, [checked, ...values.slice(1)]);
   }
   const error = blocked('tcp', host, port);
+  this.connecting = true;
   process.nextTick(() => this.destroy(error));
   return this;
 };
@@ -146,6 +157,71 @@ patchDns(dns.promises, 'promises.');
 // Resolver instances bypass the top-level DNS convenience functions.
 patchDns(dns.Resolver.prototype, '');
 patchDns(dns.promises.Resolver.prototype, 'promises.');
+workerThreads.Worker = class BlockedWorker extends EventEmitter {
+  constructor() {
+    super();
+    record({ kind: 'worker', allowed: false });
+    const error = blocked('worker', 'worker');
+    process.nextTick(() => this.emit('error', error));
+  }
+  ref() { return this; }
+  unref() { return this; }
+  async terminate() { return 0; }
+};
+function safeNodeArgs(args) {
+  // Permit startup forms whose entry/imports run after NODE_OPTIONS preloads.
+  // Reject other modes: native tasks/snapshots, inspectors and require/loader
+  // preloads can execute before this ESM guard. Node also accepts underscores.
+  for (let index = 0; index < args.length; index++) {
+    const arg = String(args[index]);
+    if (arg === '--' || !arg.startsWith('-')) return true;
+    const [flag, ...value] = arg.replaceAll('_', '-').split('=');
+    if (['--import', '--eval', '--input-type', '-e'].includes(flag)) {
+      if (!value.length && ++index >= args.length) return false;
+    } else return false;
+  }
+  return true;
+}
+function guardedExec(file, env, shell = false, args = []) {
+  const guarded = !shell && safeNodeArgs(args) && file === process.execPath
+    && env.NODE_OPTIONS === process.env.NODE_OPTIONS
+    && env.NODE_OPTIONS === `--import=${import.meta.url}`
+    && env.KHALA_EGRESS_LOG === process.env.KHALA_EGRESS_LOG;
+  record({ kind: 'exec', file: basename(String(file)), guarded, allowed: guarded });
+  return guarded;
+}
+const spawnChild = childProcess.ChildProcess.prototype.spawn;
+childProcess.ChildProcess.prototype.spawn = function (options) {
+  const env = Object.fromEntries((options.envPairs ?? []).map(pair => {
+    const separator = pair.indexOf('=');
+    return [pair.slice(0, separator), pair.slice(separator + 1)];
+  }));
+  const duplicateGuardEnv = ['NODE_OPTIONS', 'KHALA_EGRESS_LOG'].some(key =>
+    (options.envPairs ?? []).filter(pair => pair.startsWith(key + '=')).length !== 1);
+  if (guardedExec(options.file, env, duplicateGuardEnv, (options.args ?? []).slice(1))) return spawnChild.call(this, options);
+  const error = blocked('exec', basename(String(options.file)));
+  const streams = [new PassThrough(), new PassThrough(), new PassThrough()];
+  [this.stdin, this.stdout, this.stderr] = streams;
+  this.stdio = streams;
+  process.nextTick(() => {
+    this._handle?.close();
+    this._handle = null;
+    for (const stream of streams) stream.destroy();
+    this.emit('error', error);
+    this.emit('close', -1, null);
+  });
+  return undefined;
+};
+for (const name of ['spawnSync', 'execFileSync', 'execSync']) {
+  const original = childProcess[name];
+  childProcess[name] = function (file, args, options) {
+    const opts = (Array.isArray(args) || args == null ? options : args) ?? {};
+    if (guardedExec(name === 'execSync' ? 'shell' : file, opts.env ?? process.env, name === 'execSync' || opts.shell, Array.isArray(args) ? args : [])) return original.apply(this, arguments);
+    const error = blocked('exec', name === 'execSync' ? 'shell' : basename(String(file)));
+    if (name !== 'spawnSync') throw error;
+    return { error, pid: 0, status: null, signal: null, output: [null, null, null], stdout: null, stderr: null };
+  };
+}
 module.syncBuiltinESMExports();
 let seenMatrix = false;
 if (module.registerHooks) module.registerHooks({ resolve(specifier, context, nextResolve) {

@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import tls from 'node:tls';
 import dgram from 'node:dgram';
 import dns from 'node:dns';
+import http2 from 'node:http2';
+import { Worker } from 'node:worker_threads';
+import { spawn, spawnSync, exec, execFile, fork, execSync, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 
-if (process.argv[2] === 'matrix') {
+if (process.argv[2] === '--loopback-only') {
+  const server = http.createServer((_req, res) => res.end('loopback'));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try { assert.equal(await (await fetch(`http://127.0.0.1:${server.address().port}`)).text(), 'loopback'); }
+  finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+  console.log(JSON.stringify({ ok: true }));
+} else if (process.argv[2] === 'matrix') {
   await import('matrix-js-sdk');
   console.log(JSON.stringify({ ok: true }));
 } else {
@@ -47,6 +58,58 @@ if (process.argv[2] === 'matrix') {
     await fails('resolver:' + host, () => new dns.promises.Resolver().resolve4(host));
     await fails('reverse:' + host, () => dns.promises.reverse(host));
   }
+  const deniedTcpCount = () => readFileSync(process.env.KHALA_EGRESS_LOG, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    .filter(record => record.kind === 'tcp' && record.host === '192.0.2.1' && record.allowed === false).length;
+  const beforeWebSocket = deniedTcpCount();
+  // Node's WebSocket API masks the socket error code; the test also checks
+  // its denied TCP record. A successful connection still fails this assertion.
+  await new Promise((resolve, reject) => {
+    const socket = new WebSocket('ws://192.0.2.1:443');
+    socket.addEventListener('error', event => { assert.ok(event.error instanceof Error); resolve(); });
+    socket.addEventListener('open', () => { socket.close(); reject(new Error('websocket was not blocked')); });
+  });
+  assert.equal(deniedTcpCount(), beforeWebSocket + 1, 'WebSocket must produce its own blocked TCP record');
+  await fails('http2', () => new Promise((resolve, reject) => {
+    const session = http2.connect('http://192.0.2.1:443');
+    session.once('error', error => { session.destroy(); reject(error); });
+    const timeout = setTimeout(() => { session.destroy(); resolve(); }, 1000);
+    session.once('error', () => clearTimeout(timeout));
+  }));
+  await fails('callback-resolve', () => new Promise((resolve, reject) => dns.resolve('khala.invalid', error => error ? reject(error) : resolve())));
+  await fails('worker', () => new Promise((_resolve, reject) => {
+    const worker = new Worker("require('node:net').connect(80, '192.0.2.1')", { eval: true });
+    worker.once('error', reject);
+    worker.unref();
+  }));
+  const childFailure = (file, args, options) => new Promise((resolve, reject) => {
+    const child = spawn(file, args, options);
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve() : reject(new Error('unexpected child exit')));
+  });
+  await fails('shell-child', () => childFailure('/bin/sh', ['-c', 'true']));
+  await fails('scrubbed-node-child', () => childFailure(process.execPath, ['-e', 'process.exit(0)'], { env: {} }));
+  await fails('exec-child', () => new Promise((resolve, reject) => exec('true', error => error ? reject(error) : resolve())));
+  await fails('exec-file-child', () => new Promise((resolve, reject) => execFile('/bin/sh', ['-c', 'true'], error => error ? reject(error) : resolve())));
+  await fails('fork-scrubbed-child', () => new Promise((resolve, reject) => {
+    const child = fork(new URL('./probe.mjs', import.meta.url), ['--loopback-only'], { env: {} });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve() : reject(new Error('unexpected fork exit')));
+  }));
+  assert.equal(spawnSync(process.execPath, undefined, { env: {} }).error?.code, 'KHALA_EGRESS_BLOCKED');
+  assert.throws(() => execFileSync(process.execPath, undefined, { env: {} }), { code: 'KHALA_EGRESS_BLOCKED' });
+  assert.equal(spawnSync('/bin/sh', ['-c', 'true']).error?.code, 'KHALA_EGRESS_BLOCKED');
+  for (const call of [() => execSync('true'), () => execFileSync('/bin/sh', ['-c', 'true'])]) {
+    assert.throws(call, { code: 'KHALA_EGRESS_BLOCKED' });
+  }
+  await fails('preload-after-print', () => childFailure(process.execPath, ['--print', '--require=missing']));
+  await fails('preload-after-eval', () => childFailure(process.execPath, ['-e', 'process.exit(0)', '--require=missing']));
+  await fails('native-task-child', () => childFailure(process.execPath, ['--run=missing-egress-task']));
+  assert.equal(spawnSync(process.execPath, ['--run', 'missing-egress-task']).error?.code, 'KHALA_EGRESS_BLOCKED');
+  for (const flag of ['--build-snapshot', '--build-snapshot-config=missing', '--experimental-sea-config=missing', '--snapshot-blob=missing', '--inspect=khala.invalid:9229', '--build_snapshot', '--snapshot_blob=missing', '--require=missing', '--loader=missing', '-rmissing']) {
+    await fails('unsafe-startup:' + flag, () => childFailure(process.execPath, [flag]));
+    assert.equal(spawnSync(process.execPath, [flag]).error?.code, 'KHALA_EGRESS_BLOCKED');
+  }
+  await childFailure(process.execPath, ['-e', 'process.exit(0)']);
   for (const host of ['127.0.0.999', '127.0.0.1.evil', '::ffff:192.0.2.1']) {
     await fails('invalid-loopback:' + host, () => socketFailure(() => net.connect({ host, port: 443 })));
   }

@@ -10,7 +10,9 @@ export type EgressRecord =
   | { v: 1; pid: number; kind: 'udp'; host: string; port: number; allowed: boolean }
   | { v: 1; pid: number; kind: 'ipc'; path: string; allowed: true }
   | { v: 1; pid: number; kind: 'dns'; fn: string; host: string; allowed: boolean }
-  | { v: 1; pid: number; kind: 'module'; url: string };
+  | { v: 1; pid: number; kind: 'module'; url: string }
+  | { v: 1; pid: number; kind: 'worker'; allowed: false }
+  | { v: 1; pid: number; kind: 'exec'; file: string; guarded: boolean; allowed: boolean };
 export const guardUrl = new URL('../../../test/no-egress/guard.mjs', import.meta.url);
 export const probePath = fileURLToPath(new URL('../../../test/no-egress/probe.mjs', import.meta.url));
 export const driverPath = fileURLToPath(new URL('./no-egress-agents.ts', import.meta.url));

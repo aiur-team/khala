@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -23,6 +23,7 @@ it('positively proves TCP, TLS, UDP, DNS blocking and loopback access', async ()
   const result = await runNode([probePath], guardedEnv(log));
   expect(result.code, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok: true });
+  expect(result.stderr).toContain('khala-egress-guard: blocked tcp 192.0.2.1:');
   const records = await readEgressLog(log);
   installed(records, [result.pid]);
   for (const host of ['192.0.2.1', 'khala.invalid', '0.0.0.0']) {
@@ -31,7 +32,19 @@ it('positively proves TCP, TLS, UDP, DNS blocking and loopback access', async ()
     }
   }
   expect(records.some(record => record.kind === 'tcp' && record.host === '127.0.0.1' && record.allowed)).toBe(true);
+  expect(records.some(record => record.kind === 'worker' && !record.allowed)).toBe(true);
+  expect(records.some(record => record.kind === 'exec' && !record.allowed && !record.guarded)).toBe(true);
+  expect(records.some(record => record.kind === 'exec' && record.allowed && record.guarded)).toBe(true);
   expect(matrixModules(records)).toEqual([]);
+}, 40_000);
+it('does not install or log the guard in an unguarded loopback-only probe', async () => {
+  const log = join(dir, 'unguarded.jsonl');
+  const result = await runNode([probePath, '--loopback-only'], {
+    ...process.env, NODE_OPTIONS: '', KHALA_EGRESS_LOG: log,
+  });
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok: true });
+  await expect(access(log)).rejects.toMatchObject({ code: 'ENOENT' });
 }, 40_000);
 it('records Matrix resolution only when imported', async () => {
   for (const matrix of [false, true]) {
@@ -53,7 +66,8 @@ it('rejects non-loopback local credentials under the guard', async () => {
   expect(result.stdout).not.toContain(accessToken);
   expect(result.stderr).not.toContain(accessToken);
   expect(JSON.parse(result.stdout)).toEqual({ ok: true });
-  // Invalid local credentials must be rejected before any connection attempt.
+  // Invalid credentials must not even attempt an allowed loopback connection.
+  expect(records.filter(record => ['tcp', 'udp', 'dns'].includes(record.kind))).toEqual([]);
   expect(nonLoopbackAttempts(records)).toEqual([]);
   expect(matrixModules(records)).toEqual([]);
 }, 40_000);
@@ -61,7 +75,11 @@ it('runs helper, create, two real clients and stop without egress or Matrix', as
   const log = join(dir, 'local.jsonl');
   const state = join(dir, 'state');
   await mkdir(state, { mode: 0o700 });
-  const env = guardedEnv(log, { XDG_STATE_HOME: state, KHALA_LOCAL_PORT: String(await freePort()), KHALA_LOCAL_IDLE_MS: '600000', USER: 'egress' });
+  const webDir = join(dir, 'web');
+  await mkdir(join(webDir, 'assets'), { recursive: true });
+  await writeFile(join(webDir, 'index.html'), '<!doctype html><script src="/assets/egress.js"></script>');
+  await writeFile(join(webDir, 'assets', 'egress.js'), '/* no-egress static fixture */');
+  const env = guardedEnv(log, { KHALA_LOCAL_WEB_DIR: webDir, XDG_STATE_HOME: state, KHALA_LOCAL_PORT: String(await freePort()), KHALA_LOCAL_IDLE_MS: '600000', USER: 'egress' });
   const helper = await startHelper(env);
   const pids = [helper.child.pid!];
   let stopped = false;
@@ -69,12 +87,12 @@ it('runs helper, create, two real clients and stop without egress or Matrix', as
     const created = await runKhala(['create', 'no-egress'], env);
     pids.push(created.pid);
     expect(created.code, created.stderr).toBe(0);
-    const links = JSON.parse(created.stdout) as { selfLink: string; shareLink: string };
+    const links = JSON.parse(created.stdout) as { roomId: string; selfLink: string; shareLink: string };
     const nonce = randomUUID();
     const driver = await runNode(['--import', 'tsx', driverPath], env, JSON.stringify({ ...links, nonce }));
     pids.push(driver.pid);
     expect(driver.code, driver.stderr).toBe(0);
-    expect(JSON.parse(driver.stdout)).toMatchObject({ ok: true, codexSaw: `egress-ping-${nonce}`, claudeSaw: `egress-pong-${nonce}` });
+    expect(JSON.parse(driver.stdout)).toMatchObject({ ok: true, codexSaw: `egress-ping-${nonce}`, claudeSaw: `egress-pong-${nonce}`, liveReceipts: true, mode: 'steer', removed: true, web: true });
     const stop = await stopHelper(helper, env);
     stopped = true;
     pids.push(stop.pid);
@@ -86,6 +104,7 @@ it('runs helper, create, two real clients and stop without egress or Matrix', as
     installed(records, allPids);
     expect(nonLoopbackAttempts(records)).toEqual([]);
     expect(matrixModules(records)).toEqual([]);
+    for (const record of records) if (record.kind === 'exec') expect(record.guarded).toBe(true);
     for (const pid of pids.slice(1)) expect(records.some(record => record.pid === pid && record.kind === 'tcp' && record.allowed)).toBe(true);
   } finally { if (!stopped) await stopHelper(helper, env); }
 }, 60_000);

@@ -4,11 +4,13 @@ import { createKhalaAgentClient } from '../../client-impl';
 import { KhalaClientError } from '../../client';
 import { sessionFiles } from '../../state';
 import { createLocalSession } from '../session';
+import { helperPaths } from '../lifecycle';
+import { readEntries } from '../../inbox';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
-const { selfLink, shareLink, nonce, hostile, accessToken } = JSON.parse(input) as { selfLink: string; shareLink: string; nonce: string; hostile?: boolean; accessToken?: string };
+const { roomId, selfLink, shareLink, nonce, hostile, accessToken } = JSON.parse(input) as { roomId: string; selfLink: string; shareLink: string; nonce: string; hostile?: boolean; accessToken?: string };
 if (hostile) {
   assert.ok(accessToken);
   for (const homeserver of [
@@ -48,9 +50,38 @@ if (hostile) {
     const claudeId = (await claude.status()).agentUserId;
     const codexId = (await codex.status()).agentUserId;
     await claude.send(ping);
+    await wait(async () => (await codex.status()).unread >= 1
+      && (await readEntries(sessionFiles('codex', `egress-${nonce}`))).some(message => message.body === ping && message.sender === claudeId));
     await wait(async () => (await codex.read(100)).messages.some(message => message.body === ping && message.sender === claudeId));
     await codex.send(pong);
+    await wait(async () => (await claude.status()).unread >= 1
+      && (await readEntries(sessionFiles('claude', `egress-${nonce}`))).some(message => message.body === pong && message.sender === codexId));
     await wait(async () => (await claude.read(100)).messages.some(message => message.body === pong && message.sender === codexId));
-    console.log(JSON.stringify({ ok: true, claude: claudeId, codex: codexId, codexSaw: ping, claudeSaw: pong }));
+    const helper = JSON.parse(await readFile(helperPaths(process.env).helperFile, 'utf8')) as { origin: string; adminToken: string };
+    const channelPath = '/api/local/channels/' + encodeURIComponent(roomId);
+    const modeResponse = await fetch(helper.origin + channelPath + '/mode', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + helper.adminToken, 'content-type': 'application/json' },
+      body: JSON.stringify({ agent: codexId, mode: 'steer', txnId: 'egress_' + nonce }),
+    });
+    assert.equal(modeResponse.status, 200);
+    assert.equal(typeof ((await modeResponse.json()) as { eventId: string }).eventId, 'string');
+    await wait(async () => (await codex.status()).listeningMode === 'steer');
+    const index = await fetch(helper.origin + '/');
+    assert.equal(index.status, 200);
+    assert.ok((await index.text()).includes('/assets/egress.js'));
+    const asset = await fetch(helper.origin + '/assets/egress.js');
+    assert.equal(asset.status, 200);
+    assert.equal(await asset.text(), '/* no-egress static fixture */');
+    const removal = await fetch(helper.origin + channelPath + '/members/' + encodeURIComponent(codexId!), {
+      method: 'DELETE', headers: { authorization: 'Bearer ' + helper.adminToken },
+    });
+    assert.equal(removal.status, 204);
+    await wait(async () => {
+      const status = await codex.status();
+      return status.state === 'disconnected' && status.detail === 'removed';
+    });
+    console.log(JSON.stringify({ ok: true, claude: claudeId, codex: codexId, codexSaw: ping, claudeSaw: pong,
+      liveReceipts: true, mode: 'steer', removed: true, web: true }));
   } finally { await Promise.all([claude.close(), codex.close()]); }
 }
