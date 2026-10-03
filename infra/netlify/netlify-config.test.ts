@@ -195,3 +195,16 @@ test('every server-only key in netlify.toml\'s context environment blocks also a
     }
   }
 });
+
+test('the agent-markdown edge function is source-controlled and bound only to / and /join/*', async () => {
+  const config = (await readConfig()) as NetlifyConfig & {
+    build?: { edge_functions?: string };
+    edge_functions?: { function?: string; path?: string }[];
+  };
+  assert.equal(config.build?.edge_functions, 'infra/netlify/edge-functions');
+  assert.deepEqual(config.edge_functions, [
+    { function: 'agent-markdown', path: '/' },
+    { function: 'agent-markdown', path: '/join/*' },
+  ]);
+  await readFile(resolve(repoRoot, 'infra/netlify/edge-functions/agent-markdown/index.ts'), 'utf8');
+});
