@@ -31,6 +31,10 @@
    session-ID checks remain untested on 2.1.287; `/reload-plugins` is not the
    accepted setup route. KM-151 owns live acceptance.
    The plugin now also registers `PostToolUse` for Steer delivery.
+   For an existing `khala@khala-m1` install, after updating the checkout and
+   dependencies, run `claude plugin update khala@khala-m1` to refresh the cached
+   plugin to version 0.2.0 with the Steer hook. Then exit and resume the session
+   with `claude --resume <session id>`.
 
 6. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
    returns and confirm. Claude checks `khala_status` to finish joining.
