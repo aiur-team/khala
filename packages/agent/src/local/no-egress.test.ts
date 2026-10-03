@@ -45,10 +45,14 @@ it('records Matrix resolution only when imported', async () => {
 }, 60_000);
 it('rejects non-loopback local credentials under the guard', async () => {
   const log = join(dir, 'hostile.jsonl');
-  const result = await runNode(['--import', 'tsx', driverPath], guardedEnv(log), JSON.stringify({ hostile: true }));
+  const accessToken = `private-egress-token-${randomUUID()}`;
+  const result = await runNode(['--import', 'tsx', driverPath], guardedEnv(log), JSON.stringify({ hostile: true, accessToken }));
   expect(result.code, result.stderr).toBe(0);
   const records = await readEgressLog(log);
   installed(records, [result.pid]);
+  expect(result.stdout).not.toContain(accessToken);
+  expect(result.stderr).not.toContain(accessToken);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   // Invalid local credentials must be rejected before any connection attempt.
   expect(nonLoopbackAttempts(records)).toEqual([]);
   expect(matrixModules(records)).toEqual([]);

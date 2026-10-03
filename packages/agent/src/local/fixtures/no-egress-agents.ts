@@ -1,22 +1,30 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createKhalaAgentClient } from '../../client-impl';
+import { KhalaClientError } from '../../client';
 import { sessionFiles } from '../../state';
 import { createLocalSession } from '../session';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
-const { selfLink, shareLink, nonce, hostile } = JSON.parse(input) as { selfLink: string; shareLink: string; nonce: string; hostile?: boolean };
+const { selfLink, shareLink, nonce, hostile, accessToken } = JSON.parse(input) as { selfLink: string; shareLink: string; nonce: string; hostile?: boolean; accessToken?: string };
 if (hostile) {
+  assert.ok(accessToken);
   for (const homeserver of [
     'http://192.0.2.1:443', 'http://khala.invalid:443', 'http://0.0.0.0:443',
     'https://khala.invalid:443', 'https://127.0.0.1:443',
     'http://test-only@127.0.0.1:443', 'http://127.0.0.1:443/test-only',
     'http://127.0.0.1:443?token=test-only', 'http://127.0.0.1:443#test-only',
   ]) {
-    const creds: AgentCredentials = { transport: 'local', homeserver, roomId: '!c7Kq2vXbT1nP0aZ9yW3eQw:local', userId: '@agent-a1b2c3d4:local', deviceId: 'KH_LOCAL_a1b2c3d4', accessToken: 'test-only' };
-    await assert.rejects(createLocalSession(creds), { code: 'internal_error', message: 'invalid_local_origin' });
+    const creds: AgentCredentials = { transport: 'local', homeserver, roomId: '!c7Kq2vXbT1nP0aZ9yW3eQw:local', userId: '@agent-a1b2c3d4:local', deviceId: 'KH_LOCAL_a1b2c3d4', accessToken };
+    await assert.rejects(createLocalSession(creds), (error: unknown) => {
+      assert.ok(error instanceof KhalaClientError);
+      assert.equal(error.code, 'internal_error');
+      assert.equal(error.message, 'invalid_local_origin');
+      assert.ok(![String(error), error.stack ?? '', JSON.stringify(error)].some(value => value.includes(accessToken)));
+      return true;
+    });
   }
   console.log(JSON.stringify({ ok: true }));
 } else {
