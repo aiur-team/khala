@@ -490,3 +490,30 @@ it('keeps the hosted immediate return shape unchanged', async () => {
   expect(Object.keys(result)).toEqual(['state', 'confirmUrl']);
   expect(startSession).not.toHaveBeenCalled();
 });
+it('caches the own hosted default username after connecting', async () => {
+  vi.mocked(session.displayName).mockImplementation(id => id === credentials.userId ? 'kevin-Codex' : 'other-Claude');
+  await connected();
+  await client.status();
+  expect(JSON.parse(await fs.readFile(path.join(root, 'khala', 'hosted-profile.json'), 'utf8'))).toMatchObject({ v: 1, username: 'kevin' });
+});
+it('does not cache a renamed hosted agent', async () => {
+  vi.mocked(session.displayName).mockReturnValue('reviewer');
+  await connected();
+  await client.status();
+  await expect(fs.stat(path.join(root, 'khala', 'hosted-profile.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('does not cache a local transport username', async () => {
+  vi.mocked(session.displayName).mockReturnValue('kevin-Codex');
+  await client.join(link, 'Codex');
+  poll.resolve({ ...credentials, transport: 'local' });
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  await client.status();
+  await expect(fs.stat(path.join(root, 'khala', 'hosted-profile.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('contains hosted cache write failure through status and close', async () => {
+  await fs.mkdir(path.join(root, 'khala', 'hosted-profile.json'), { recursive: true, mode: 0o700 });
+  vi.mocked(session.displayName).mockReturnValue('kevin-Codex');
+  await connected();
+  expect((await client.status()).state).toBe('connected');
+  await expect(client.close()).resolves.toBeUndefined();
+});

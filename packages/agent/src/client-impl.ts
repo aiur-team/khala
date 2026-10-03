@@ -12,6 +12,7 @@ import { requestJoin, pollJoin, reportReady } from './join';
 import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
+import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, type JoinFile, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
@@ -169,6 +170,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       attempt.joined = true;
       status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       for (const deliver of buffered) deliver();
+      if (credentials.transport !== 'local') {
+        const own = session.displayName(session.userId);
+        const username = own === undefined ? null : hostedUsernameFromAgentName(own, options.harness);
+        if (username !== null) appends = appends.then(() => saveHostedUsername(username, options.env)).catch(() => {});
+      }
       await removeStateFile(dir, 'join.json');
       if (current(attempt)) await setStatus('connected');
     } catch (error) {
