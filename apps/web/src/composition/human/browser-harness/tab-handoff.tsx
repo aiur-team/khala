@@ -15,7 +15,6 @@ const principal: AuthPrincipal = { v: 1, ownerId: 'owner_alice' as OwnerId, prov
 const params = new URLSearchParams(location.search);
 const initialPath = params.get('path') ?? '/new';
 history.replaceState(null, '', initialPath);
-const tabId = crypto.randomUUID();
 let stopGate: Promise<void> | null = null;
 let releaseStop: (() => void) | null = null;
 let releaseSync: (() => void) | null = null;
@@ -35,15 +34,16 @@ const device = createBrowserDeviceService({
   locks: createWebLockProvider(),
   lockWaitMs: 350,
   engines: { async open() {
-    // The marker checks the production store/engine close order across tabs.
-    if (localStorage.getItem('active-device-tab')) localStorage.setItem('overlapping-generations', 'true');
-    localStorage.setItem('active-device-tab', tabId);
+    const engineId = crypto.randomUUID();
+    // Acknowledge lifecycle events in the shared test process. Web Lock release
+    // does not wait for another renderer to observe a localStorage mutation.
+    await window.__recordDeviceEngine('opened', engineId);
     return {
       async identity() { return { fingerprint: 'test-fingerprint', created: false }; },
-      async start() { await syncGate; await new Promise(resolve => setTimeout(resolve, 100)); }, // initial sync
+      async start() { await syncGate; },
       async close() {
         await stopGate;
-        if (localStorage.getItem('active-device-tab') === tabId) localStorage.removeItem('active-device-tab');
+        await window.__recordDeviceEngine('closed', engineId);
       },
     };
   } },
@@ -56,22 +56,34 @@ createRoot(document.getElementById('app')!).render(<HumanApplicationScreen appli
   routes={routes} renderRoom={() => <p data-testid="live-room">Encrypted channel is ready</p>}
   mode="hosted-content" />);
 window.addEventListener('pagehide', () => {
-  if (localStorage.getItem('active-device-tab') === tabId) localStorage.removeItem('active-device-tab');
   application.dispose();
 });
-declare global { interface Window { __tabHandoff: {
-  phase(): string;
-  generation(): number;
-  holdStop(): void;
-  releaseStop(): void;
-  releaseSync(): void;
-  overlap(): boolean;
-}; } }
+declare global { interface Window {
+  __recordDeviceEngine(event: 'opened' | 'closed', engineId: string): Promise<void>;
+  __tabHandoff: {
+    phase(): string;
+    whenPhase(phase: string): Promise<void>;
+    generation(): number;
+    holdStop(): void;
+    releaseStop(): void;
+    releaseSync(): void;
+  };
+} }
 window.__tabHandoff = {
   phase: () => application.getSnapshot().phase,
+  whenPhase(phase) {
+    return new Promise(resolve => {
+      const check = () => {
+        if (application.getSnapshot().phase !== phase) return;
+        unsubscribe();
+        resolve();
+      };
+      const unsubscribe = application.subscribe(check);
+      check();
+    });
+  },
   generation: () => device.current().generation,
   holdStop() { stopGate = new Promise(resolve => { releaseStop = resolve; }); },
   releaseStop() { releaseStop?.(); releaseStop = null; stopGate = null; },
   releaseSync() { releaseSync?.(); releaseSync = null; },
-  overlap: () => localStorage.getItem('overlapping-generations') === 'true',
 };
