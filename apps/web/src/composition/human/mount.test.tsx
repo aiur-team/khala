@@ -310,3 +310,63 @@ describe('agent confirmation mount', () => {
     expect(context.agentJoin.view).not.toHaveBeenCalled();
   });
 });
+
+describe('local owner account', () => {
+  const panel = '<div class="kh-state"><div class="kh-state-c" role="alert"><b>Not connected</b><div class="kh-oneliner">'
+    + '<code>khala local open</code><button type="button" class="kh-ib sm" data-tip="Copy" aria-label="Copy command"><svg';
+  const identityUnavailable = {
+    phase: 'unavailable', source: 'identity', reason: 'identity_unavailable', retryable: true, path: '/conversations', context: null,
+  } as const;
+
+  it.each(['/conversations', '/channels/room_1'])('offers no Log out in the ready shell on %s', path => {
+    const context = readyContext(path);
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'ready', path, context } as HumanApplicationSnapshot)}
+      identity={identity} routes={routes} renderRoom={renderRoom} account="local_owner" />);
+    expect(html).toContain('aria-label="Settings"');
+    expect(html).toContain('aria-label="New channel"');
+    expect(html).not.toContain('Log out');
+    expect(html).not.toContain('Logging out');
+  });
+
+  it('shows the Not connected panel for a signed-out snapshot and never starts sign-in', () => {
+    const beginSignIn = vi.fn();
+    const html = renderToStaticMarkup(<HumanApplicationScreen
+      application={application({ phase: 'signed_out', path: '/conversations', context: null })}
+      identity={{ ...identity, beginSignIn } as IdentityPort} routes={routes} renderRoom={renderRoom} account="local_owner" />);
+    expect(html).toContain(panel);
+    expect(html).not.toContain('Signing in…');
+    expect(html).not.toContain('Sign-in is unavailable');
+    expect(html).not.toContain('Log out');
+    expect(beginSignIn).not.toHaveBeenCalled();
+  });
+
+  it('shows the same panel when the identity is unavailable', () => {
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application(identityUnavailable)}
+      identity={identity} routes={routes} renderRoom={renderRoom} account="local_owner" />);
+    expect(html).toContain(panel);
+    expect(html).not.toContain('Account and device status');
+    expect(html).not.toContain('identity_unavailable');
+    expect(html).not.toContain('Log out');
+  });
+
+  it('keeps pending device states in the owner shell without Log out', () => {
+    for (const snapshot of [
+      { phase: 'initializing_device', path: '/conversations', context: null } as const,
+      { phase: 'unavailable', source: 'device', reason: 'device_unavailable', retryable: true, path: '/conversations', context: null } as const,
+    ]) {
+      const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)}
+        identity={identity} routes={routes} renderRoom={renderRoom} account="local_owner" />);
+      expect(html).toContain('khala-owner-shell');
+      expect(html).toContain('aria-label="Settings"');
+      expect(html).not.toContain('Log out');
+    }
+  });
+
+  it('leaves the OAuth identity-unavailable frame untouched', () => {
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application(identityUnavailable)}
+      identity={identity} routes={routes} renderRoom={renderRoom} />);
+    expect(html).toContain('Account and device status');
+    expect(html).not.toContain('Not connected');
+  });
+});
