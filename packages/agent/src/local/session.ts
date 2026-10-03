@@ -9,7 +9,7 @@ import {
   LOCAL_LONG_POLL_MAX_S, type LocalEvent, type LocalMe,
 } from '@khala/contracts/m1/local';
 import { KhalaClientError } from '../client';
-import type { ChannelSession, SessionMessage, SessionModeCommand } from '../transport';
+import type { ChannelSession, SessionEndReason, SessionMessage, SessionModeCommand } from '../transport';
 import { ensureHelper } from './lifecycle';
 
 export type LocalSessionOptions = { fetch?: typeof fetch; ensureHelper?: () => Promise<void>; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; log?: (line: string) => void };
@@ -58,6 +58,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   const names = new Map<string, string>();
   const messages = new Set<(m: SessionMessage) => void>();
   const modes = new Set<(c: SessionModeCommand) => void>();
+  const ended = new Set<(reason: SessionEndReason) => void>();
   let stopped = false;
   let terminal: LocalCallError | undefined;
   let joined = false;
@@ -165,6 +166,11 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
         if (error instanceof LocalCallError && [401, 403, 404].includes(error.status)) {
           terminal = error;
           log(error.status === 404 ? 'local_channel_gone' : 'local_session_revoked');
+          const reason = error.status === 404 ? 'channel_deleted' : error.status === 403 ? 'removed' : 'unauthorized';
+          for (const handler of ended) {
+            try { handler(reason); } catch { log('ended_handler_error'); }
+          }
+          ended.clear();
           return;
         }
         streak++;
@@ -186,6 +192,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   }
   return {
     userId: creds.userId,
+    onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     inviter: roomId => roomId === creds.roomId ? invitedBy ?? LOCAL_OWNER_USER_ID : undefined,
     roomName: roomId => roomId === creds.roomId ? name : undefined,
     displayName: userId => names.get(userId),
@@ -233,7 +240,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     async stop() {
       stopped = true;
       controller.abort();
-      messages.clear(); modes.clear();
+      messages.clear(); modes.clear(); ended.clear();
       await loop;
     },
   };

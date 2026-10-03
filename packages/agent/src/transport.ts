@@ -3,8 +3,10 @@ import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 
 export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1'; body: string; content: Record<string, unknown> };
 export type SessionModeCommand = { eventId: string; roomId: string; sender: string; ts: number; content: unknown };
+export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
   readonly userId: string;
+  onEnded?(handler: (reason: SessionEndReason) => void): () => void;
   inviter(roomId: string): string | undefined;
   onListeningModeCommand(handler: (c: SessionModeCommand) => void): () => void;
   publishListeningMode(roomId: string, mode: ListeningMode, signal?: AbortSignal): Promise<void>;
