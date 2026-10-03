@@ -3,7 +3,7 @@ import { decodeAgentRenameResult } from '@khala/contracts/m1/agent-names';
 import { LOCAL_OWNER_USER_ID as OWNER, type LocalEvent, type LocalMember } from '@khala/contracts/m1/local';
 import { parseChannelLink } from '../../join';
 import type { HelperContext, LocalAuth, LocalRequest, LocalStore } from '../types';
-import { ownerRoutes } from './owner';
+import { ownerRoutes, serial, type SerialQueue } from './owner';
 
 const ADMIN: LocalAuth = { kind: 'owner', via: 'admin' };
 const COOKIE: LocalAuth = { kind: 'owner', via: 'cookie' };
@@ -11,7 +11,7 @@ const A = '@agent-a1b2c3d4:local';
 const B = '@agent-b1b2c3d4:local';
 const EXPIRES = '2026-10-02T09:10:00.000Z';
 type Member = NonNullable<ReturnType<LocalStore['member']>>;
-function fixture(storeJoins = false) {
+function fixture(storeJoins = false, queue?: SerialQueue) {
   const logs = new Map<string, LocalEvent[]>();
   const operations = new Map<string, string>();
   let revision = 0;
@@ -76,7 +76,7 @@ function fixture(storeJoins = false) {
     consumeOpenToken: vi.fn(token => { const value = open.get(token); open.delete(token); return value ?? null; }),
     createOwnerSession: vi.fn(() => 'S'.repeat(43)), shutdown: vi.fn(),
   };
-  const routes = ownerRoutes();
+  const routes = ownerRoutes(queue ? { queue } : {});
   const call = async (method: LocalRequest['method'], url: string, body?: unknown, auth = ADMIN, signal = new AbortController().signal) => {
     const parsed = new URL(url, ctx.origin);
     const route = routes.find(r => r.method === method && r.pattern.test(parsed.pathname));
@@ -221,4 +221,24 @@ it('removes only the removed agent pending joins and refuses commands after leav
   expect([...f.ctx.joins.keys()]).toEqual(['other']);
   expect(await f.call('POST', `${base}/mode`, { agent: A, mode: 'async', txnId: 'txn_456' })).toEqual(error(404, 'not_found'));
   expect(await f.call('DELETE', `${base}/members/%ZZ`)).toEqual(error(400, 'invalid_request'));
+});
+
+it('waits for an injected shared queue before renaming an agent', async () => {
+  const queue = serial();
+  const f = fixture(false, queue);
+  const id = await f.create(); await f.add(id);
+  let release!: () => void;
+  const held = queue(() => new Promise<void>(resolve => { release = resolve; }));
+  await Promise.resolve();
+  const before = f.logs.get(id)!.length;
+  let completed = false;
+  const rename = f.call('POST', `/api/local/agents/${encodeURIComponent(A)}/name`, { name: 'reviewer' })
+    .then(response => { completed = true; return response; });
+  // Let an unqueued handler reach append; a correctly queued handler stays blocked.
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  expect(completed).toBe(false);
+  expect(f.logs.get(id)).toHaveLength(before);
+  release(); await held;
+  expect(await rename).toEqual({ status: 200, json: { matrixUserId: A, name: 'reviewer' } });
+  expect(f.logs.get(id)).toHaveLength(before + 1);
 });

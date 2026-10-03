@@ -12,7 +12,9 @@ const fail = (status: number, error: string): LocalResponse => ({ status, json: 
 type Member = NonNullable<ReturnType<LocalStore['member']>>;
 type Handler = LocalRoute['handle'];
 
-function serial() {
+export type SerialQueue = <T>(work: () => Promise<T>) => Promise<T>;
+
+export function serial(): SerialQueue {
   let tail = Promise.resolve();
   return <T>(work: () => Promise<T>): Promise<T> => {
     const result = tail.then(work);
@@ -47,8 +49,8 @@ async function announce(store: LocalStore, roomId: string, summary: string): Pro
   if (encoded.ok) await store.append(roomId, { type: CHANNEL_EVENT_TYPE, sender: LOCAL_OWNER_USER_ID, content: encoded.value });
 }
 
-export function ownerRoutes(): LocalRoute[] {
-  const queue = serial();
+export function ownerRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[] {
+  const queue = options.queue ?? serial();
   function route(method: LocalRequest['method'], pattern: RegExp, handler: Handler, options: { adminOnly?: boolean; public?: boolean; serial?: boolean } = {}): LocalRoute {
     return { method, pattern, async handle(req, params, ctx) {
       try {
