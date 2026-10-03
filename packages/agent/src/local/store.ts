@@ -42,6 +42,7 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
   const channels = new Map<string, Channel>();
   const operations = new Map<string, string>();
   const agentChannel = new Map<string, string>();
+  const deletedAgentTokens = new Map<string, { roomId: string; userId: string }>();
   const revisionWaiters = new Set<() => void>();
   let revision = 0;
   let queue: Promise<unknown> = Promise.resolve();
@@ -227,6 +228,11 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       await channel.handle?.close();
       delete channel.handle;
       await fs.rm(channel.dir, { recursive: true, force: true });
+      // Keep only hashed agent credentials so subsequent calls report channel deletion.
+      // Tombstones are process-local; deleting the directory still removes all persisted secrets.
+      for (const [userId, secret] of Object.entries(channel.secrets.members)) {
+        if (userId !== LOCAL_OWNER_USER_ID) deletedAgentTokens.set(secret.tokenSha256, { roomId, userId });
+      }
       channels.delete(roomId);
       if (channel.operationId !== undefined) operations.delete(channel.operationId);
       for (const [user, room] of agentChannel) if (room === roomId) agentChannel.delete(user);
@@ -302,6 +308,10 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     agentForToken: token => {
       const hash = Buffer.from(sha256(token), 'hex');
       let result: { roomId: string; userId: string } | null = null;
+      for (const [tokenSha256, agent] of deletedAgentTokens) {
+        const candidate = Buffer.from(tokenSha256, 'hex');
+        if (candidate.length === hash.length && timingSafeEqual(hash, candidate)) result = { ...agent };
+      }
       for (const channel of channels.values()) for (const [userId, secret] of Object.entries(channel.secrets.members)) {
         const candidate = Buffer.from(secret.tokenSha256, 'hex');
         if (candidate.length === hash.length && timingSafeEqual(hash, candidate) && userId !== LOCAL_OWNER_USER_ID) result = { roomId: channel.roomId, userId };
