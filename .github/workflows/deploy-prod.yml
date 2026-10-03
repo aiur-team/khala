@@ -1,0 +1,80 @@
+name: Deploy production
+# Every commit on `main` deploys to https://khala.aiur.team (Netlify site
+# khala-aiur). This reproduces the manual deploy exactly: local build with the
+# production PUBLIC_* values, then `netlify deploy --prod --no-build`, which
+# also bundles the edge functions in infra/netlify/edge-functions.
+#
+# Deliberately NOT gated on the test suite (the team merges without waiting
+# for CI); only a successful build is required. The manual script described in
+# infra/netlify/README.md remains the fallback.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Deploys run one at a time in push order and are never cancelled, so the
+# latest main is always the last one published.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NETLIFY_SITE_ID: e95155c4-1070-46f8-95eb-4ca86df16030
+  NETLIFY_CLI: netlify-cli@27.1.2
+  APP_ORIGIN: https://khala.aiur.team
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @khala/control build:functions
+      - run: pnpm --filter @khala/web build
+        env:
+          PUBLIC_APP_ORIGIN: https://khala.aiur.team
+          PUBLIC_HOMESERVER_ORIGIN: https://matrix.khala.aiur.team
+      # Run from outside the checkout with --cwd: at the workspace root
+      # netlify-cli detects the pnpm monorepo and, under CI, refuses to pick a
+      # package ("Projects detected"). --cwd skips that selection and keeps the
+      # repo root as the Netlify base, so netlify.toml and edge functions load.
+      - name: Deploy to Netlify production
+        working-directory: ${{ runner.temp }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          npx --yes "$NETLIFY_CLI" deploy --cwd "$GITHUB_WORKSPACE" --prod --no-build \
+            --dir "$GITHUB_WORKSPACE/apps/web/dist" \
+            --functions "$GITHUB_WORKSPACE/infra/netlify/functions-generated" \
+            --message "main ${GITHUB_SHA::8}" 2>&1 | tee deploy.log
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q 'Finished bundling edge functions' deploy.log || { echo '::error::edge functions were not bundled'; exit 1; }
+          deploy_id=$(sed -n 's#.*/deploys/\([0-9a-f]\{24\}\).*#\1#p' deploy.log | head -1)
+          test -n "$deploy_id" || { echo '::error::no deploy id in netlify output'; exit 1; }
+          echo "DEPLOY_ID=$deploy_id" >> "$GITHUB_ENV"
+      - name: Verify the deploy is published and serving
+        working-directory: ${{ runner.temp }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          published=$(npx --yes "$NETLIFY_CLI" api getSite --data "{\"site_id\":\"$NETLIFY_SITE_ID\"}" | jq -r .published_deploy.id)
+          join=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$APP_ORIGIN/api/agent/join" \
+            -H "origin: $APP_ORIGIN" -H 'content-type: application/json' -d '{}')
+          agent=$(curl -s "$APP_ORIGIN/join/inv_EXAMPLE" | head -1)
+          match=$([ "$DEPLOY_ID" = "$published" ] && echo yes || echo NO)
+          echo "main ${GITHUB_SHA::8} deploy=$DEPLOY_ID published=$published match=$match join=$join" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$match" = yes ] || { echo '::error::published deploy is not this deploy'; exit 1; }
+          [ "$join" = 400 ] || { echo "::error::POST /api/agent/join {} returned $join, expected 400"; exit 1; }
+          case "$agent" in
+            'You were given this Khala channel link: '*) ;;
+            *) echo '::error::/join/ did not serve agent markdown to curl'; exit 1 ;;
+          esac
