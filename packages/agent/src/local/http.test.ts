@@ -55,6 +55,23 @@ test('bind, health, Host and method guards precede auth', async () => {
   const preflight = await raw(f.port, '/api/x', 'OPTIONS', { origin: 'https://evil.test' });
   expect(preflight.status).toBe(405); noCors(preflight.headers);
 });
+test.each(['/api/x', '/channels'])('Host guard rejects foreign and wrong-port hosts on %s', async target => {
+  const f = await fixture();
+  expect((await raw(f.port, target)).status).toBe(200);
+  for (const host of ['evil.test:' + f.port, '127.0.0.1:' + (f.port + 1)]) {
+    const res = await raw(f.port, target, 'GET', { host });
+    expect(res.status).toBe(421);
+    expect(JSON.parse(res.body)).toEqual({ error: 'misdirected' });
+  }
+});
+test('chunked JSON body over 64 KiB without content-length is rejected', async () => {
+  const f = await fixture();
+  const body = '"' + 'x'.repeat(65535) + '"';
+  expect(Buffer.byteLength(body)).toBe(65537);
+  const res = await raw(f.port, '/api/x', 'POST', { 'transfer-encoding': 'chunked' }, body);
+  expect(res.status).toBe(413);
+  expect(JSON.parse(res.body)).toEqual({ error: 'payload_too_large' });
+});
 test('cookie mutations and bearer precedence', async () => {
   const f = await fixture(); const headers = { cookie: `khala_local_owner=${cookie}` };
   expect((await raw(f.port, '/api/x', 'POST', headers)).status).toBe(403);
