@@ -56,7 +56,7 @@ describe('helper metadata', () => {
   });
   it('inherits exactly the approved environment, including the guard preload', () => {
     const source = Object.fromEntries(HELPER_ENV_ALLOWLIST.map(key => [key, key]));
-    expect(HELPER_ENV_ALLOWLIST).toEqual(['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_STATE_HOME', 'NODE_OPTIONS', 'KHALA_LOCAL_PORT', 'KHALA_LOCAL_IDLE_MS', 'KHALA_LOCAL_WEB_DIR']);
+    expect(HELPER_ENV_ALLOWLIST).toEqual(['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_STATE_HOME', 'NODE_OPTIONS', 'KHALA_EGRESS_LOG', 'KHALA_LOCAL_PORT', 'KHALA_LOCAL_IDLE_MS', 'KHALA_LOCAL_WEB_DIR']);
     expect(helperChildEnv({ ...source, OPENAI_API_KEY: 'secret', KHALA_ADMIN_TOKEN: token, CODEX_HOME: '/secret' })).toEqual(source);
     expect(helperChildEnv({ HOME: '/home/me', PATH: undefined })).toEqual({ HOME: '/home/me' });
   });
