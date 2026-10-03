@@ -22,6 +22,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 export const COMMANDS = Object.freeze([
   'whoami', 'trust-local', 'reset-site', 'signin', 'setup', 'say', 'confirm', 'wait-for', 'transcript', 'cleanup',
+  // KI-161 (internal mode): the local helper's plain-http loopback app, entered through an owner open link.
+  'open-local', 'resources', 'screenshot',
 ]);
 const PER_HUMAN = new Set(COMMANDS.filter(command => command !== 'setup'));
 export const DEFAULT_PORTS = Object.freeze({ a1: 9222, a2: 9223 });
@@ -41,6 +43,7 @@ export class DriverError extends Error {
 const FLAGS = new Map([
   ['--as', 'as'], ['--port', 'port'], ['--origin', 'origin'], ['--account', 'account'], ['--state-dir', 'stateDir'],
   ['--text', 'text'], ['--sender', 'sender'], ['--url', 'url'], ['--timeout', 'timeout'], ['--account-a1', 'accountA1'], ['--account-a2', 'accountA2'],
+  ['--out', 'out'],
 ]);
 const BOOLEAN_FLAGS = new Map([['--reload', 'reload']]);
 
@@ -77,7 +80,12 @@ export function parseArgs(argv) {
     options.timeout = seconds;
   }
   if ((command === 'say' || command === 'wait-for') && !options.text) throw new DriverError('missing_text', 'args');
-  if (command === 'confirm' && !options.url) throw new DriverError('missing_url', 'args');
+  if ((command === 'confirm' || command === 'open-local') && !options.url) throw new DriverError('missing_url', 'args');
+  if (command === 'open-local') options.origin = openLinkOrigin(options.url);
+  if (command === 'screenshot') {
+    if (!options.out) throw new DriverError('missing_out', 'args');
+    options.out = screenshotPath(options.out);
+  }
   if (options.origin !== undefined) options.origin = normalizeOrigin(options.origin);
   options.stateDir = path.resolve(repoRoot, options.stateDir ?? '.khala-local/acceptance');
   return options;
@@ -88,11 +96,45 @@ export function findMatchingRow(H, { text, sender }) {
   return H.describeRows().find(entry => entry.text.includes(text) && (sender === undefined || entry.sender === sender)) ?? null;
 }
 
+/** `https:` anywhere; plain `http:` only on a loopback host (the local helper, KI-161). */
 export function normalizeOrigin(value) {
   let url;
   try { url = new URL(value); } catch { throw new DriverError('invalid_origin', 'args'); }
-  if (url.protocol !== 'https:') throw new DriverError('invalid_origin', 'args');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackOrigin(url.origin))) {
+    throw new DriverError('invalid_origin', 'args');
+  }
   return url.origin;
+}
+
+/** The origin of an owner open link; a non-loopback host is refused before any browser work. */
+export function openLinkOrigin(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new DriverError('invalid_origin', 'args'); }
+  if (!isLoopbackOrigin(url.origin)) throw new DriverError('not_loopback', 'args');
+  return normalizeOrigin(url.origin);
+}
+
+/** Screenshots are written only under docs/evidence/ or .khala-local/, as .png. */
+export function screenshotPath(value) {
+  const resolved = path.resolve(repoRoot, value);
+  const inside = root => {
+    const relative = path.relative(path.join(repoRoot, root), resolved);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  };
+  if (!resolved.endsWith('.png') || !(inside('docs/evidence') || inside('.khala-local'))) throw new DriverError('invalid_out', 'args');
+  return resolved;
+}
+
+/** Resource names that are neither on `origin` nor data:/blob: URLs (unparseable names count as foreign). */
+export function foreignUrls(names, origin) {
+  return names.filter(name => {
+    try {
+      const url = new URL(name);
+      return url.origin !== origin && url.protocol !== 'data:' && url.protocol !== 'blob:';
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function isLoopbackOrigin(origin) {
@@ -1097,9 +1139,84 @@ async function cmdCleanup(options) {
   process.stdout.write(`closed ${closed} tab(s) for ${options.as}\n`);
 }
 
+// KI-161: the local helper (http://127.0.0.1:<port>) has no sign-in; an owner open link
+// (`khala local open`) sets the owner cookie and lands on the app. The link is a credential:
+// it is navigated to, never printed and never written to run.json.
+async function cmdOpenLocal(options) {
+  const origin = options.origin;
+  const previous = readRunState(options.stateDir, origin);
+  const state = { ...emptyRunState(origin), tabs: previous.tabs };
+  const channelPath = await withBrowser(options.port, async bidi => {
+    const token = state.tabs[options.as][0];
+    let context = token ? (await findDriverTabs(bidi, [token], origin)).get(token) : undefined;
+    if (context) {
+      await setTabFocus(bidi, context, true);
+      await bidi.navigate(context, options.url);
+      await markTab(bidi, context, token);
+    } else {
+      const fresh = newTabToken(options.as);
+      state.tabs[options.as] = [fresh, ...state.tabs[options.as].filter(entry => entry !== token)];
+      writeRunState(options.stateDir, state);
+      context = await openDriverTab(bidi, options.url, fresh);
+    }
+    return bidi.waitFor(context, () => (location.pathname.startsWith('/channels/') || location.pathname === '/conversations'
+      ? location.pathname : null), null, { timeoutMs: 60_000, step: 'open-local', code: 'open_local_failed' });
+  });
+  state.channelPath = channelPath;
+  state.roomId = channelPath.startsWith('/channels/') ? decodeURIComponent(channelPath.slice('/channels/'.length)) : null;
+  writeRunState(options.stateDir, state);
+  process.stdout.write(`${channelPath}\n`);
+}
+
+function runStateWithOrigin(stateDir) {
+  const state = readRunState(stateDir);
+  if (!state.origin) throw new DriverError('no_run_state', 'run-state');
+  return state;
+}
+
+async function cmdResources(options) {
+  const state = runStateWithOrigin(options.stateDir);
+  const names = await withBrowser(options.port, async bidi => {
+    const context = await runTab(bidi, state, options.as, `${state.origin}${state.channelPath ?? '/conversations'}`);
+    writeRunState(options.stateDir, state);
+    if (options.reload) {
+      await bidi.reload(context);
+      await SLEEP(10_000);
+    }
+    return bidi.run(context, () => ['navigation', 'resource'].flatMap(type => performance.getEntriesByType(type).map(entry => entry.name)));
+  });
+  const origins = [...new Set(names.map(name => {
+    try { const url = new URL(name); return url.origin === 'null' ? url.protocol : url.origin; } catch { return 'invalid'; }
+  }))];
+  const foreign = foreignUrls(names, state.origin);
+  process.stdout.write(`${JSON.stringify({ origins, count: names.length, foreign })}\n`);
+  if (foreign.length) throw new DriverError('foreign_requests', 'resources');
+}
+
+async function cmdScreenshot(options) {
+  const state = runStateWithOrigin(options.stateDir);
+  const data = await withBrowser(options.port, async bidi => {
+    const context = await runTab(bidi, state, options.as, `${state.origin}${state.channelPath ?? '/conversations'}`);
+    writeRunState(options.stateDir, state);
+    const capture = () => bidi.send('browsingContext.captureScreenshot', { context }, 30_000);
+    try {
+      return (await capture()).data;
+    } catch (error) {
+      // A throttled background tab may not paint; activate it once and retry.
+      if (!(error instanceof DriverError && error.code === 'bidi_timeout')) throw new DriverError('screenshot_failed', 'screenshot');
+      await bidi.activate(context);
+      try { return (await capture()).data; } catch { throw new DriverError('screenshot_failed', 'screenshot'); }
+    }
+  });
+  mkdirSync(path.dirname(options.out), { recursive: true });
+  writeFileSync(options.out, Buffer.from(data, 'base64'));
+  process.stdout.write(`wrote ${path.relative(repoRoot, options.out)}\n`);
+}
+
 const HANDLERS = {
   whoami: cmdWhoami, 'trust-local': cmdTrustLocal, 'reset-site': cmdResetSite, signin: cmdSignin, setup: cmdSetup,
   say: cmdSay, confirm: cmdConfirm, 'wait-for': cmdWaitFor, transcript: cmdTranscript, cleanup: cmdCleanup,
+  'open-local': cmdOpenLocal, resources: cmdResources, screenshot: cmdScreenshot,
 };
 
 export async function main(argv) {

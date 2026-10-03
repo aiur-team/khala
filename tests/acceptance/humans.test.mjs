@@ -1,11 +1,14 @@
 // KM-151: pure-function tests for the acceptance browser driver (no browser).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import {
-  DriverError, createBidiMatcher, findMatchingRow, isLoopbackOrigin, isMarkerCandidate, newTabToken, parseArgs, parseChannelLine,
-  planSignin, resolveOrigin, selectDexUser,
+  DriverError, createBidiMatcher, findMatchingRow, foreignUrls, isLoopbackOrigin, isMarkerCandidate, newTabToken, normalizeOrigin,
+  parseArgs, parseChannelLine, planSignin, resolveOrigin, selectDexUser,
 } from './humans.mjs';
 
 const script = fileURLToPath(new URL('./humans.mjs', import.meta.url));
@@ -177,5 +180,65 @@ describe('wait-for sender matching', () => {
     assert.equal(findMatchingRow(H, { text: 'ack-codex-1', sender: 'codex' }), null);
     assert.equal(findMatchingRow(H, { text: 'absent', sender: 'Codex' }), null);
     assert.equal(findMatchingRow({ describeRows: () => [prompt] }, { text: 'ack-codex-1', sender: 'Codex' }), null);
+  });
+});
+
+describe('KI-161 local helper (plain-http loopback)', () => {
+  const OPEN = `http://127.0.0.1:47830/open/${'A'.repeat(43)}`;
+
+  it('accepts http: origins only on loopback hosts', () => {
+    assert.equal(normalizeOrigin('http://127.0.0.1:47830'), 'http://127.0.0.1:47830');
+    assert.equal(normalizeOrigin('http://localhost:47830/'), 'http://localhost:47830');
+    assert.equal(normalizeOrigin('http://[::1]:47830/x'), 'http://[::1]:47830');
+    assert.equal(codeOf(() => normalizeOrigin('http://khala.example')), 'invalid_origin');
+    assert.equal(codeOf(() => normalizeOrigin('http://127.0.0.1.example:47830')), 'invalid_origin');
+    assert.equal(codeOf(() => normalizeOrigin('ftp://127.0.0.1')), 'invalid_origin');
+    assert.equal(normalizeOrigin('https://khala.aiur.team/x'), 'https://khala.aiur.team');
+  });
+
+  it('parses open-local, resources and screenshot', () => {
+    assert.equal(codeOf(() => parseArgs(['open-local', '--as', 'a1'])), 'missing_url');
+    assert.equal(codeOf(() => parseArgs(['open-local', '--as', 'a1', '--url', 'https://x.test/open/abc'])), 'not_loopback');
+    assert.equal(codeOf(() => parseArgs(['open-local', '--as', 'a1', '--url', 'http://x.test/open/abc'])), 'not_loopback');
+    assert.equal(codeOf(() => parseArgs(['open-local', '--url', OPEN])), 'missing_human');
+    const open = parseArgs(['open-local', '--as', 'a1', '--url', OPEN]);
+    assert.equal(open.origin, 'http://127.0.0.1:47830');
+    assert.equal(open.port, 9222);
+    assert.equal(codeOf(() => parseArgs(['screenshot', '--as', 'a1'])), 'missing_out');
+    const { command, reload, port } = parseArgs(['resources', '--as', 'a1', '--reload']);
+    assert.deepEqual({ command, reload, port }, { command: 'resources', reload: true, port: 9222 });
+    assert.equal(parseArgs(['resources', '--as', 'a1']).reload, false);
+  });
+
+  it('writes screenshots only as .png under docs/evidence/ or .khala-local/', () => {
+    const shot = parseArgs(['screenshot', '--as', 'a1', '--out', 'docs/evidence/internal-mode-acceptance/1-channel.png']);
+    assert.match(shot.out, /docs[/\\]evidence[/\\]internal-mode-acceptance[/\\]1-channel\.png$/u);
+    assert.match(parseArgs(['screenshot', '--as', 'a1', '--out', '.khala-local/x/s.png']).out, /\.khala-local[/\\]x[/\\]s\.png$/u);
+    for (const out of ['docs/evidence/../../x.png', 'tests/acceptance/x.png', '/tmp/x.png', 'docs/evidence/x.jpg', 'docs/evidence-x/a.png']) {
+      assert.equal(codeOf(() => parseArgs(['screenshot', '--as', 'a1', '--out', out])), 'invalid_out', out);
+    }
+  });
+
+  it('lists only off-origin, non data:/blob: resources as foreign', () => {
+    assert.deepEqual(foreignUrls(['http://127.0.0.1:47830/a.js', 'data:x', 'https://fonts.gstatic.com/x.woff2'], 'http://127.0.0.1:47830'),
+      ['https://fonts.gstatic.com/x.woff2']);
+    assert.deepEqual(foreignUrls(['blob:http://127.0.0.1:47830/1', 'http://localhost:47830/b.css', 'not a url'], 'http://127.0.0.1:47830'),
+      ['http://localhost:47830/b.css', 'not a url']);
+    assert.deepEqual(foreignUrls([], 'http://127.0.0.1:47830'), []);
+  });
+
+  it('never prints the open link, even when the browser is unreachable', () => {
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'humans-open-local-'));
+    try {
+      const secret = `${'Zq9'.repeat(14)}x`;
+      const run = spawnSync(process.execPath, [script, 'open-local', '--as', 'a1', '--port', '1', '--state-dir', stateDir,
+        '--url', `http://127.0.0.1:47830/open/${secret}`], { encoding: 'utf8' });
+      assert.equal(run.status, 1);
+      assert.match(run.stderr, /open-local: connect failed: bidi_unreachable/u);
+      assert.equal(`${run.stdout}${run.stderr}`.includes(secret), false);
+      assert.equal(existsSync(path.join(stateDir, 'run.json')), false);
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
