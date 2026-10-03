@@ -5,7 +5,7 @@ export type Harness = 'claude' | 'codex';
 
 // POST /api/agent/join            (no auth; rate-limited per IP)
 export type AgentJoinRequest = { link: string; harness: Harness; label: string };   // label 1..40 chars, validateAgentName rules
-export type AgentJoinCreated = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string }; // 201
+export type AgentJoinCreated = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; autoConfirmed?: true }; // 201
 // errors: 400 invalid_link | invalid_label | invalid_harness ; 404 link_unavailable ; 429 rate_limited
 
 // GET /api/agent/join/poll?joinId=<joinId>      header: Authorization: Bearer <pollSecret>
@@ -22,6 +22,7 @@ export type AgentCredentials = {
   accessToken: string;
   deviceId: string;        // "KH_AGENT_<uuid8>"
   roomId: string;          // the channel's Matrix room id
+  transport?: 'matrix' | 'local'; // absent means matrix
 };
 
 // POST /api/agent/join/ready?joinId=<joinId>   header: Authorization: Bearer <pollSecret>
@@ -105,18 +106,21 @@ export function decodeAgentJoinRequest(input: unknown): Decoded<AgentJoinRequest
 
 export function decodeAgentJoinCreated(input: unknown): Decoded<AgentJoinCreated> {
   return decodeWith(() => {
-    const r = object(input, '', ['joinId', 'pollSecret', 'confirmUrl', 'expiresAt']);
+    const auto = typeof input === 'object' && input !== null && Object.hasOwn(input, 'autoConfirmed');
+    const r = object(input, '', ['joinId', 'pollSecret', 'confirmUrl', 'expiresAt', ...(auto ? ['autoConfirmed'] : [])]);
+    if (auto && r.field('autoConfirmed') !== true) fail(r.at('autoConfirmed'), 'invalid_value');
     const joinId = identifier(r.field('joinId'), r.at('joinId'));
     const confirmUrl = readHttpUrl(r.field('confirmUrl'), r.at('confirmUrl'));
     const url = new URL(confirmUrl);
     const keys = [...url.searchParams.keys()];
     if (url.pathname !== '/agent/confirm' || keys.length !== 1 || keys[0] !== 'joinId' || url.searchParams.get('joinId') !== joinId) fail(r.at('confirmUrl'), 'invalid_value');
-    return { joinId, pollSecret: identifier(r.field('pollSecret'), r.at('pollSecret')), confirmUrl, expiresAt: utcTimestamp(r.field('expiresAt'), r.at('expiresAt')) };
+    return { joinId, pollSecret: identifier(r.field('pollSecret'), r.at('pollSecret')), confirmUrl, expiresAt: utcTimestamp(r.field('expiresAt'), r.at('expiresAt')), ...(auto ? { autoConfirmed: true as const } : {}) };
   });
 }
 
 function readCredentials(input: unknown, path: string): AgentCredentials {
-  const r = object(input, path, ['homeserver', 'userId', 'accessToken', 'deviceId', 'roomId']);
+  const transport = typeof input === 'object' && input !== null && Object.hasOwn(input, 'transport');
+  const r = object(input, path, ['homeserver', 'userId', 'accessToken', 'deviceId', 'roomId', ...(transport ? ['transport'] : [])]);
   const homeserver = readHttpUrl(r.field('homeserver'), r.at('homeserver'));
   if (new URL(homeserver).origin !== homeserver) fail(r.at('homeserver'), 'invalid_value');
   return {
@@ -125,6 +129,7 @@ function readCredentials(input: unknown, path: string): AgentCredentials {
     accessToken: identifier(r.field('accessToken'), r.at('accessToken')),
     deviceId: identifier(r.field('deviceId'), r.at('deviceId')),
     roomId: readRoomId(r.field('roomId'), r.at('roomId')),
+    ...(transport ? { transport: literal(r.field('transport'), r.at('transport'), ['matrix', 'local']) } : {}),
   };
 }
 
