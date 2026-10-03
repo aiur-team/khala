@@ -294,6 +294,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect((await members()).map(member => member.userId).sort(), context('AE9')).toEqual(rosterBefore);
     expect(await deliver(world.claude, 'UserPromptSubmit'), context('AE6')).toBeNull();
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
+    expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
+    expect(await deliver(world.codex, 'Stop'), context('AE6')).toBeNull();
     expect(toolData<{ messages: InboxEntry[] }>(await world.claude.call('khala_read', {})).messages.some(entry => entry.body === message('ae6-async')), context('AE6')).toBe(true);
     await send(world.claude, 'ae6-async-reply');
     await setMode(world.claude, 'kevin-Claude', 'sync');

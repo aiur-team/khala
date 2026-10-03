@@ -215,6 +215,12 @@ export async function openBrowser(world: World): Promise<Page> {
     else { world.blocked.push(url); await route.abort(); }
   });
   context.on('request', request => world.requests.push(request.url()));
+  await context.routeWebSocket('**/*', socket => {
+    const address = new URL(socket.url());
+    world.requests.push(socket.url());
+    if (address.protocol === 'ws:' && address.host === new URL(world.origin).host) socket.connectToServer();
+    else { world.blocked.push(socket.url()); socket.close({ code: 1008, reason: 'foreign_origin' }); }
+  });
   world.page = await context.newPage(); world.page.setDefaultTimeout(10_000); world.page.setDefaultNavigationTimeout(15_000);
   return world.page;
 }
