@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { Participant } from '@khala/contracts/m1/participants';
 import type { ChannelPort, ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
 import { KhalaApp } from '../../../ui/khala/KhalaApp';
 import { HueOverrideProvider } from '../../../ui/khala/identity';
@@ -43,9 +44,26 @@ const failed = { load: () => [{ clientTxnId: 'txn_failed', content: { v: 1 as co
 
 const params = new URLSearchParams(window.location.search);
 
+// `?initials`: Maya has chosen `ZZ` and replies through her own agent; the viewer has chosen `KV`.
+// The design's example (no parameter) has no chosen initials.
+const chosen = params.has('initials');
+const codex = person('a-codex', 'agent', 'Codex · Maya', 'o-maya');
+const chosenData: TimelineData = { ...data, items: [...data.items, message('E5', codex, 'Tests are green on my side.', 9)] };
+const describeParticipant = (participantId: string): Participant | undefined => {
+  if (participantId === maya.participantId) return { matrixUserId: '@maya:khala.local', participantId, ownerId: maya.ownerId,
+    displayName: maya.displayName, kind: 'human', initials: 'ZZ' };
+  if (participantId === codex.participantId) return { matrixUserId: '@codex:khala.local', participantId, ownerId: maya.ownerId,
+    displayName: 'Codex', kind: 'agent', ownerLabel: 'Maya', harness: 'codex', ownerInitials: 'ZZ' };
+  return undefined;
+};
+const chosenController: TimelineController = { ...controller, getSnapshot: () => chosenData };
+
 createRoot(document.getElementById('root')!).render(
   <HueOverrideProvider hues={new Map([['a-sonnet', 150]])}>
     <KhalaApp theme={params.get('theme') === 'light' ? 'light' : 'dark'} inThread
-      main={<TimelineScreen controller={controller} roomPort={port} roomId={roomId} viewer={viewer} pendingStore={failed} />} />
+      main={chosen
+        ? <TimelineScreen controller={chosenController} roomPort={port} roomId={roomId} viewer={viewer} viewerInitials="KV"
+          describeParticipant={describeParticipant} pendingStore={failed} />
+        : <TimelineScreen controller={controller} roomPort={port} roomId={roomId} viewer={viewer} pendingStore={failed} />} />
   </HueOverrideProvider>,
 );

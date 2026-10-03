@@ -58,22 +58,31 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase('en-US');
 }
 
-type OwnerCandidate = Readonly<{ ownerId?: string | undefined; displayName: string }>;
+/** A human's shown initials: their chosen ones, else derived from the name. */
+export function humanInitials(name: string, chosen?: string | null): string {
+  return chosen ?? initials(name);
+}
+
+type OwnerCandidate = Readonly<{ ownerId?: string | undefined; displayName: string; initials?: string | null | undefined }>;
 
 /**
  * An agent's owner badge initials (`.kh-own`), by the design's rule: the
  * owner's full name, first and last initial (`Kai Watanabe` → `KW`). The
  * owner is found among `humans` by owner id, else by first name; an owner
- * who isn't among them falls back to the initials of `ownerLabel`.
+ * who isn't among them falls back to the initials of `ownerLabel`. Chosen
+ * initials win: `owner.chosen` outright, else the matched human's own.
  */
-export function ownerInitials(owner: Readonly<{ ownerId?: string | undefined; label: string }>, humans: Iterable<OwnerCandidate>): string {
+export function ownerInitials(
+  owner: Readonly<{ ownerId?: string | undefined; label: string; chosen?: string | null | undefined }>, humans: Iterable<OwnerCandidate>,
+): string {
+  if (owner.chosen) return owner.chosen;
   const first = (name: string) => name.trim().split(/\s+/u)[0]?.toLocaleLowerCase('en-US') ?? '';
   let byName: OwnerCandidate | undefined;
   for (const human of humans) {
-    if (owner.ownerId !== undefined && human.ownerId === owner.ownerId) return initials(human.displayName);
+    if (owner.ownerId !== undefined && human.ownerId === owner.ownerId) return humanInitials(human.displayName, human.initials);
     if (!byName && first(human.displayName) === first(owner.label)) byName = human;
   }
-  return initials(byName?.displayName ?? owner.label);
+  return byName ? humanInitials(byName.displayName, byName.initials) : initials(owner.label);
 }
 
 type BadgeSubject = Readonly<{ ownerId: string; displayName: string }>;

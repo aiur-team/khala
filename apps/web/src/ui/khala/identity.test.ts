@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import codexColor from './assets/codex-color.svg';
 import claudeSymbol from './assets/claude-symbol.svg';
-import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessLogo, initials, ownerInitials, participantHue } from './identity';
+import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessLogo, humanInitials, initials, ownerInitials, participantHue } from './identity';
 
 describe('participantHue', () => {
   it('gives the viewer 214', () => {
@@ -66,5 +66,21 @@ describe('ownerInitials', () => {
 
   it('falls back to the label for an owner not on screen', () => {
     expect(ownerInitials({ ownerId: 'owner_bob', label: 'Bob' }, humans)).toBe('BO');
+  });
+
+  it('prefers the chosen initials, then the matched owner\'s, then derivation', () => {
+    const chosen = [{ ownerId: 'owner_kai', displayName: 'Kai Watanabe', initials: 'ZZ' }, { displayName: 'Maya Chen', initials: null }];
+    expect(ownerInitials({ ownerId: 'owner_kai', label: 'Kai', chosen: 'QQ' }, chosen)).toBe('QQ');
+    expect(ownerInitials({ ownerId: 'owner_kai', label: 'Kai' }, chosen)).toBe('ZZ');
+    expect(ownerInitials({ label: 'Kai' }, chosen)).toBe('ZZ');
+    expect(ownerInitials({ label: 'Maya', chosen: null }, chosen)).toBe('MC');
+  });
+});
+
+describe('humanInitials', () => {
+  it('shows chosen initials, else derives them from the name', () => {
+    expect(humanInitials('Kai Watanabe', 'ZZ')).toBe('ZZ');
+    expect(humanInitials('Kai Watanabe', null)).toBe('KW');
+    expect(humanInitials('Kai Watanabe')).toBe('KW');
   });
 });

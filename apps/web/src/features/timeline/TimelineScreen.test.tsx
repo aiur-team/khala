@@ -195,6 +195,37 @@ describe('TimelineScreen', () => {
     expect(html).toMatch(new RegExp(`class="kh-av kh-hav" style="--oh:0;--hc:${colors.get(variant.ownerId)!.tint}"[^>]*data-kh-tier="1"`));
   });
 
+  it('shows chosen initials on a human\'s avatar and on their agent\'s owner badge, and the viewer\'s own in place of `YO`', () => {
+    const kai = participant('kai', 'human', 'Kai Watanabe');
+    const kaisAgent = { ...participant('kai-agent', 'agent', 'Scout'), ownerId: kai.ownerId };
+    const ownAgent = { ...participant('own-agent', 'agent', 'Assistant'), ownerId: viewer.ownerId };
+    const controller = fakeController({ phase: 'ready', items: [item('E1', kai, 'hi'), item('E2', kaisAgent, 'done'), item('E3', ownAgent, 'mine')],
+      nextCursor: null, newMessageCount: 0 });
+    const describeParticipant = (id: string) => id === kai.participantId
+      ? { matrixUserId: '@kai:hs', participantId: id, ownerId: kai.ownerId, displayName: 'Kai Watanabe', kind: 'human' as const, initials: 'ZZ' }
+      : id === kaisAgent.participantId
+        ? { matrixUserId: '@scout:hs', participantId: id, ownerId: kai.ownerId, displayName: 'Scout', kind: 'agent' as const,
+          ownerLabel: 'Kai', harness: 'claude' as const, ownerInitials: 'ZZ' }
+        : undefined;
+    const badges = (html: string) => html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1));
+    const humanAvatar = (html: string) => html.match(/<button type="button" class="kh-av kh-hav"[^>]*>(?:<[^>]+>)*([^<]+)</u)?.[1];
+
+    const chosen = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      describeParticipant={describeParticipant} />);
+    expect(humanAvatar(chosen)).toBe('ZZ');
+    expect(badges(chosen)).toEqual(['ZZ', 'YO']);
+    // The mention chips (and the autocomplete popup, from the same targets) carry them too.
+    expect(chosen).toMatch(/<button type="button" class="kh-chip kh-chip-h"[^>]*><i>ZZ<\/i>@Kai<\/button>/u);
+
+    const own = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
+      viewerInitials="MZ" describeParticipant={describeParticipant} />);
+    expect(badges(own)).toEqual(['ZZ', 'MZ']);
+
+    const derived = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
+    expect(humanAvatar(derived)).toBe('KW');
+    expect(badges(derived)).toEqual(['KW', 'YO']);
+  });
+
   it('R1: disambiguates two different owners sharing the same display name with an id badge', () => {
     const alice1 = participant('alice-1', 'human', 'Alex');
     const alice2 = participant('alice-2', 'human', 'Alex');
