@@ -8,7 +8,6 @@ import { defaultHumanColor } from '@khala/contracts/m1/colors';
 import { isLocalRoomId, localRoomKey, type HelperFile } from '@khala/contracts/m1/local';
 import { helperPaths, readHelperFile } from './lifecycle';
 import { runHelper } from './serve';
-import * as localStore from './store';
 import { runLocalCommand } from './cli';
 import { ownerRoutes } from './routes/owner';
 import { profileRoutes } from './routes/profile';
@@ -100,15 +99,13 @@ describe('real helper composition', () => {
   it('ends a pending agent poll and subsequent calls with 404 after CLI deletion', async () => {
     let entered!: () => void;
     const waiting = new Promise<void>(resolve => { entered = resolve; });
-    const open = localStore.openLocalStore;
-    const spy = vi.spyOn(localStore, 'openLocalStore').mockImplementation(async input => {
-      const store = await open(input);
-      const wait = store.waitForEvent;
-      store.waitForEvent = (...args) => { const pending = wait(...args); entered(); return pending; };
-      return store;
+    const helper = await start();
+    const store = await vi.mocked(openLocalStore).mock.results[0]!.value;
+    const wait = store.waitForEvent;
+    const spy = vi.spyOn(store, 'waitForEvent').mockImplementation((...args) => {
+      const pending = wait(...args); entered(); return pending;
     });
     try {
-      const helper = await start();
       const created = await command(['create', 'delete-me']);
       const joined = await fetch(helper.file.origin + '/api/agent/join', { method: 'POST',
         headers: { 'content-type': 'application/json' },
