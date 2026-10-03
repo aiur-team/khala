@@ -4,7 +4,10 @@
  * replaces reboot; content links remain unconsumed rather than testing model
  * reasoning; the production local bundle renders, while visual parity is KI-145.
  * Three quiet windows jointly cover self wake, async wake and content-link join.
- * No product code is mocked. Only the external codex queue executable is fake.
+ * AE4 records real Codex wake in an isolated unguarded process group, as
+ * authorized by the Executor (#1014 comment 5966908357). The main world stays
+ * guarded: its exact denied codex exec records are expected, with no other
+ * guard denials permitted. No product code or guard is mocked.
  */
 import { randomBytes, createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -32,6 +35,7 @@ let claudeId: string;
 let codexId: string;
 let probe: McpProcess;
 let failed = false;
+let suiteStarted = 0;
 let contentLink: string;
 const sentBodies: string[] = [];
 const message = (name: string) => `${name}-${nonce}`;
@@ -41,10 +45,13 @@ const channelPath = () => `/api/local/channels/${enc(channel.roomId)}`;
 const roomDir = () => path.join(world.state, 'khala/local/channels', channel.roomId.slice(1, -6));
 const toolData = <T>(result: { structuredContent?: unknown }): T => result.structuredContent as T;
 const frameText = (frame: unknown) => JSON.stringify(frame);
-async function members(): Promise<LocalMember[]> {
+const deniedCodex = (record: Awaited<ReturnType<typeof readEgressLog>>[number]) =>
+  record.kind === 'exec' && record.file === 'codex' && record.guarded === false && record.allowed === false;
+async function deniedCodexCount() { return (await readEgressLog(world.log)).filter(record => deniedCodex(record) && record.pid === world.codex.pid).length; }
+async function members(): Promise<LocalChannelSummary['members']> {
   const response = await admin(world, 'GET', channelPath());
   expect(response.status, 'owner channel route (KI-134)').toBe(200);
-  return (response.body as LocalChannelSummary & { members: LocalMember[] }).members;
+  return (response.body as LocalChannelSummary).members;
 }
 async function send(agent: McpProcess, name: string) {
   const text = message(name);
@@ -61,10 +68,21 @@ async function received(agent: McpProcess, body: string): Promise<InboxEntry> {
 }
 async function setMode(agent: McpProcess, label: string, next: 'steer' | 'sync' | 'async') {
   const page = world.page!;
-  await page.getByRole('button', { name: new RegExp(`^Listening mode for ${label}:`) }).click();
-  await page.getByRole('menuitemradio', { name: new RegExp(`^${next}`, 'i') }).click();
-  await eventually(async () => await mode(agent) === next && (await members()).find(member => member.userId === (agent === world.claude ? claudeId : codexId))?.listeningMode === next);
-  expect(await page.getByRole('button', { name: new RegExp(`^Listening mode for ${label}: ${next}`, 'i') }).count(), 'confirmed roster mode (KI-142)').toBe(1);
+  await openRoster();
+  const control = page.getByRole('radiogroup', { name: `Listening mode for ${label}`, exact: true });
+  await control.getByRole('radio', { name: new RegExp(`^${next}`, 'i') }).click();
+  await eventually(async () => {
+    const response = await admin(world, 'GET', `/api/local/rooms/${enc(channel.roomId)}/members`);
+    expect(response.status, 'AE6 confirmed member route (KI-133)').toBe(200);
+    const confirmed = (response.body as { members: LocalMember[] }).members;
+    return await mode(agent) === next && confirmed.find(member => member.userId ===
+      (agent === world.claude ? claudeId : codexId))?.listeningMode === next;
+  });
+  expect(await control.getByRole('radio', { name: new RegExp(`^${next}`, 'i') }).getAttribute('aria-checked'), 'confirmed roster mode (KI-142)').toBe('true');
+}
+async function openRoster() {
+  const toggle = world.page!.locator('button[aria-controls="kh-roster"]');
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
 }
 async function profileDialog() {
   const page = world.page!;
@@ -88,19 +106,26 @@ function acceptance(id: string, name: string, run: () => Promise<void>) {
       failed = true;
       // Do not forward assertion diffs: those can contain tokens or complete links.
       const knownFailure = error instanceof Error && /^(?:helper_unavailable|web_not_built|eventually_timeout|claude_wake_exited_before_armed|mcp_rpc_timeout)$/.test(error.message) ? `: ${error.message}` : '';
-      result.error = `${context(id)} failed${knownFailure}; inspect the failing assertion locally`;
+      const source = error instanceof Error ? error.stack?.match(/acceptance\.e2e\.test\.ts:\d+:\d+/)?.[0] : undefined;
+      result.error = `${context(id)} failed${knownFailure}${source ? ` at ${source}` : ''}; inspect the failing assertion locally`;
       throw new Error(result.error, { cause: error instanceof Error ? new Error(error.name) : undefined });
     } finally { result.durationMs = Date.now() - start; results.push(result); }
   }, 45_000);
 }
 
 describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance AE1–AE12', () => {
-  beforeAll(async () => { await mkdir(outputDir, { recursive: true }); world = await createWorld(); }, 120_000);
+  beforeAll(async () => {
+    suiteStarted = Date.now();
+    await mkdir(outputDir, { recursive: true });
+    try { world = await createWorld(); }
+    catch { failed = true; results.push({ id: 'AE1', owner: owners.AE1!, status: 'FAIL', durationMs: Date.now() - suiteStarted, error: 'AE1 setup failed' }); throw new Error('AE1 setup failed (KI-137/KI-143/KI-151)'); }
+  }, 120_000);
   afterAll(async () => {
     try { if (world) await cleanupWorld(world); }
     finally {
+      for (const id of ['AE1', 'AE2', 'AE3', 'AE4', 'AE5', 'AE6', 'AE7', 'AE9', 'AE11', 'AE8', 'AE12', 'AE10']) if (!results.some(row => row.id === id)) results.push({ id, owner: owners[id]!, status: 'BLOCKED', durationMs: 0 });
       await mkdir(outputDir, { recursive: true });
-      await writeFile(path.join(outputDir, 'results.json'), JSON.stringify({ version: 1, results, durationMs: results.reduce((sum, row) => sum + row.durationMs, 0) }, null, 2) + '\n');
+      await writeFile(path.join(outputDir, 'results.json'), JSON.stringify({ version: 1, results, durationMs: Date.now() - suiteStarted }, null, 2) + '\n');
       process.stdout.write('\nAE    Result    Duration  Owner\n' + results.map(row =>
         `${row.id.padEnd(6)}${row.status.padEnd(10)}${`${row.durationMs}ms`.padEnd(10)}${row.owner}`
       ).join('\n') + '\n');
@@ -174,19 +199,29 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await new Promise(resolve => setTimeout(resolve, 3000));
     expect(own.running, context('AE4')).toBe(true); own.kill();
     expect((await own.exited).code, context('AE4')).not.toBe(2);
-    await deliver(world.codex, 'UserPromptSubmit');
-    expect(await deliver(world.codex, 'Stop'), context('AE4')).toBeNull();
-    const before = (await codexCalls(world)).length;
-    const codexWake = await send(world.claude, 'ae4-wake-codex');
-    await eventually(async () => (await codexCalls(world)).length === before + 1);
-    expect((await codexCalls(world)).at(-1), context('AE4')).toBe('queue --thread e2e-codex --message Khala: channel messages are waiting. Continue.');
-    expect(frameText(await deliver(world.codex, 'UserPromptSubmit')), context('AE4')).toContain(`kevin-Claude (agent): ${codexWake}`);
-    expect(await deliver(world.codex, 'Stop'), context('AE4')).toBeNull();
-    const selfBefore = (await codexCalls(world)).length;
-    await send(world.codex, 'ae4-self-codex');
-    // Quiet window 2: own Codex message cannot queue Codex.
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    expect((await codexCalls(world)).length, context('AE4')).toBe(selfBefore);
+    // Codex executable recording is intentionally isolated from the guard's
+    // user-binary prohibition. No browser or owner traffic uses this world.
+    const wakeWorld = await createWorld({ guard: false });
+    try {
+      const created = (await cli(wakeWorld, 'create', 'wake-proof')).data as LocalChannelCreated;
+      expect(toolData(await wakeWorld.claude.call('khala_join', { link: created.selfLink })), context('AE4')).toMatchObject({ state: 'connected' });
+      expect(toolData(await wakeWorld.codex.call('khala_join', { link: created.shareLink })), context('AE4')).toMatchObject({ state: 'connected' });
+      await deliver(wakeWorld.codex, 'UserPromptSubmit');
+      expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
+      const before = (await codexCalls(wakeWorld)).length;
+      const codexWake = message('ae4-wake-codex');
+      expect(toolData(await wakeWorld.claude.call('khala_send', { text: codexWake })), context('AE4')).toHaveProperty('eventId');
+      await eventually(async () => (await codexCalls(wakeWorld)).length === before + 1);
+      expect((await codexCalls(wakeWorld)).at(-1), context('AE4')).toBe('queue --thread e2e-codex --message Khala: channel messages are waiting. Continue.');
+      expect(frameText(await deliver(wakeWorld.codex, 'UserPromptSubmit')), context('AE4')).toContain(`kevin-Claude (agent): ${codexWake}`);
+      expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
+      const selfBefore = (await codexCalls(wakeWorld)).length;
+      expect(toolData(await wakeWorld.codex.call('khala_send', { text: message('ae4-self-codex') })), context('AE4')).toHaveProperty('eventId');
+      // Quiet window 2: own Codex message cannot queue Codex.
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      expect((await codexCalls(wakeWorld)).length, context('AE4')).toBe(selfBefore);
+    } finally { await cleanupWorld(wakeWorld); }
+
   });
   acceptance('AE5', 'the owner uses the actual local browser app and wakes both agents', async () => {
     const page = await openBrowser(world);
@@ -198,7 +233,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await page.getByRole('heading', { level: 1, name: 'refactor', exact: true }).waitFor();
     for (const name of ['ae3-ping', 'ae3-pong']) await page.getByText(message(name), { exact: true }).waitFor();
     await page.getByText('kevin-Codex joined', { exact: true }).first().waitFor();
-    for (const name of ['kevin-Claude', 'kevin-Codex']) await page.getByRole('button', { name: new RegExp(`^Listening mode for ${name}:`) }).waitFor();
+    await openRoster();
+    for (const name of ['kevin-Claude', 'kevin-Codex']) await page.getByRole('radiogroup', { name: `Listening mode for ${name}`, exact: true }).waitFor();
     await page.goto(`${world.origin}/conversations`);
     await page.getByText('refactor', { exact: true }).first().waitFor();
     await page.goto(`${world.origin}/channels/${enc(channel.roomId)}`);
@@ -209,7 +245,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await deliver(world.claude, 'UserPromptSubmit'); await deliver(world.codex, 'UserPromptSubmit');
     expect(await deliver(world.claude, 'Stop'), context('AE5')).toBeNull();
     expect(await deliver(world.codex, 'Stop'), context('AE5')).toBeNull();
-    const wake = await armClaudeWake(world.claude); const queues = (await codexCalls(world)).length;
+    const wake = await armClaudeWake(world.claude); const queues = await deniedCodexCount();
     const composer = page.getByRole('combobox', { name: 'Message', exact: true });
     await composer.fill('@kevin-Co');
     await page.getByRole('listbox', { name: 'Mention suggestions' }).getByRole('option', { name: /kevin-Codex/ }).click();
@@ -217,7 +253,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     expect(await received(world.codex, message('ae5-human')), context('AE5')).toMatchObject({ senderKind: 'human', senderLabel: 'kevin' });
     expect((await wake.exited).code, context('AE5')).toBe(2);
-    await eventually(async () => (await codexCalls(world)).length > queues);
+    await eventually(async () => await deniedCodexCount() > queues);
+    expect((await codexCalls(world)).length, context('AE5')).toBe(0);
     await page.setViewportSize({ width: 1280, height: 900 }); await screenshot('ae5-channel-1280.png');
     await page.setViewportSize({ width: 390, height: 844 }); await screenshot('ae5-channel-390.png');
     await page.setViewportSize({ width: 1280, height: 900 });
@@ -240,7 +277,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await setMode(world.codex, 'kevin-Codex', 'async');
     expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
     expect(await deliver(world.codex, 'Stop'), context('AE6')).toBeNull();
-    const wake = await armClaudeWake(world.claude); const queues = (await codexCalls(world)).length;
+    const wake = await armClaudeWake(world.claude); const queues = await deniedCodexCount();
     await received(world.claude, await send(world.codex, 'ae6-async'));
     await received(world.codex, await send(world.claude, 'ae6-codex-async'));
     contentLink = ((await cli(world, 'link', 'refactor')).data as { shareLink: string }).shareLink;
@@ -251,7 +288,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await new Promise(resolve => setTimeout(resolve, 3000));
     expect(wake.running, context('AE6')).toBe(true); wake.kill();
     expect((await wake.exited).code, context('AE6')).not.toBe(2);
-    expect((await codexCalls(world)).length, context('AE6')).toBe(queues);
+    expect(await deniedCodexCount(), context('AE6')).toBe(queues);
+    expect((await codexCalls(world)).length, context('AE6')).toBe(0);
     expect((await members()).map(member => member.userId).sort(), context('AE9')).toEqual(rosterBefore);
     expect(await deliver(world.claude, 'UserPromptSubmit'), context('AE6')).toBeNull();
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
@@ -265,6 +303,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     let dialog = await profileDialog();
     await dialog.getByRole('textbox', { name: 'Username', exact: true }).fill('kev');
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     async function names() { return (await members()).map(member => member.displayName); }
     // Poll actual member state; profile updates cascade to default agent names.
     await eventually(async () => { const current = await names(); return ['kev', 'kev-Claude', 'kev-Codex'].every(name => current.includes(name)); });
@@ -278,16 +317,19 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await dialog.getByRole('textbox', { name: 'Initials', exact: true }).fill('KW');
     await screenshot('ae7-settings.png');
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     const profile = (await admin(world, 'GET', '/api/local/profile')).body as { color: string; initials: string };
     expect(profile.color !== before.color, context('AE7')).toBe(true); expect(profile.initials, context('AE7')).toBe('KW');
+    await openRoster();
     await world.page!.getByRole('button', { name: 'Rename kev-Codex', exact: true }).click();
     await world.page!.getByRole('textbox', { name: 'Name for kev-Codex', exact: true }).fill('reviewer');
     await world.page!.getByRole('button', { name: 'Rename', exact: true }).click();
     await eventually(async () => (await names()).includes('reviewer'));
     expect((await received(world.claude, await send(world.codex, 'ae7-renamed'))).senderLabel, context('AE7')).toBe('reviewer');
     await world.page!.reload();
-    await world.page!.getByRole('button', { name: /^Listening mode for reviewer:/ }).waitFor();
-    await world.page!.getByRole('button', { name: /^Listening mode for kev-Claude:/ }).waitFor();
+    await openRoster();
+    await world.page!.getByRole('radiogroup', { name: 'Listening mode for reviewer', exact: true }).waitFor();
+    await world.page!.getByRole('radiogroup', { name: 'Listening mode for kev-Claude', exact: true }).waitFor();
     expect((await cli(world, 'stop')).data, context('AE7')).toMatchObject({ stopped: true });
     expect((await cli(world, 'status')).data, context('AE7')).toMatchObject({ running: false });
     await ownerOpen(world, world.page!, 'refactor');
@@ -312,7 +354,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await ownerOpen(world, world.page!, 'refactor');
     const untouched = ((await cli(world, 'link', 'refactor')).data as { shareLink: string }).shareLink;
     expect((await world.page!.goto(untouched))?.status(), context('AE9')).toBe(200);
-    await eventually(async () => (await world.page!.locator('#root').textContent())!.length > 0);
+    await eventually(async () => (await world.page!.locator('#app').textContent())!.length > 0);
     await world.page!.goto(`${world.origin}/channels/${enc(channel.roomId)}`);
     expect(toolData(await probe.call('khala_join', { link: untouched })), context('AE9')).toMatchObject({ state: 'connected', channelName: 'refactor' });
     expect((await members()).some(member => member.displayName === 'kev-Claude-2'), context('AE9')).toBe(true);
@@ -331,7 +373,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     for (const headers of [{ cookie }, { cookie, 'x-khala-local': '1', origin: 'http://evil.example' }]) expect(await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers, body: {} }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden_origin' } });
     expect((await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers: { cookie, 'x-khala-local': '1', origin: world.origin }, body: {} })).status, context('AE11')).toBe(200);
     const credentials = (await readJson<AgentCredentials>(world.claude.files.session))!;
-    for (const [method, requestPath] of [['GET', '/api/local/channels'], ['POST', `${channelPath()}/links`]] as const) expect(await raw(world, { method, path: requestPath, headers: { authorization: `Bearer ${credentials.accessToken}` }, body: {} }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden' } });
+    for (const [method, requestPath] of [['GET', '/api/local/channels'], ['POST', `${channelPath()}/links`]] as const) expect(await raw(world, { method, path: requestPath, headers: { authorization: `Bearer ${credentials.accessToken}` }, ...(method === 'POST' ? { body: {} } : {}) }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden' } });
     const probeCredentials = (await readJson<AgentCredentials>(probe.files.session))!;
     expect((await admin(world, 'DELETE', `${channelPath()}/members/${enc(probeCredentials.userId)}`)).status, context('AE11')).toBe(204);
     expect(await raw(world, { method: 'GET', path: `/api/local/rooms/${enc(channel.roomId)}/members`, headers: { authorization: `Bearer ${probeCredentials.accessToken}` } }), context('AE11')).toMatchObject({ status: 403, body: { error: 'not_member' } });
@@ -377,7 +419,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
   });
   acceptance('AE10', 'all processes and the actual browser have zero non-loopback egress', async () => {
     const records = await readEgressLog(world.log);
-    expect(nonLoopbackAttempts(records).length, context('AE10')).toBe(0);
+    expect(nonLoopbackAttempts(records).filter(record => !deniedCodex(record)).length, context('AE10')).toBe(0);
+    expect(records.some(record => deniedCodex(record) && record.pid === world.codex.pid), context('AE10')).toBe(true);
     expect(matrixModules(records).length, context('AE10')).toBe(0);
     const installed = records.filter(record => record.kind === 'guard' && record.event === 'installed');
     for (const terms of [['mcp', 'claude'], ['mcp', 'codex'], ['hook', 'deliver'], ['hook', 'claude-wake'], ['local', 'create']]) expect(installed.some(record => record.kind === 'guard' && record.event === 'installed' && terms.every(term => record.argv.includes(term))), context('AE10')).toBe(true);

@@ -11,7 +11,7 @@ import { sessionFiles } from '../../state';
 import { readEntries } from '../../inbox';
 import { readListeningMode } from '../../mode';
 import { readHelperFile } from '../lifecycle';
-import { eventually, freePort, guardedEnv, readEgressLog, runKhala, runNode } from './egress';
+import { eventually, freePort, guardedEnv, readEgressLog, type ProcessResult } from './egress';
 
 const bin = fileURLToPath(new URL('../../../bin/khala.mjs', import.meta.url));
 const repo = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -19,9 +19,35 @@ export type ToolResult = { content: { type: string; text?: string }[]; structure
 export type HookFrame = { decision?: string; reason?: string; hookSpecificOutput?: { hookEventName: string; additionalContext: string } };
 export type World = {
   root: string; state: string; port: number; origin: string; log: string; env: NodeJS.ProcessEnv;
+  guard: boolean; processGroups: Set<number>;
   claude: McpProcess; codex: McpProcess; probe?: McpProcess; agents: McpProcess[]; watchers: WakeWatcher[];
-  browser?: Browser; page?: Page; requests: string[]; blocked: string[];
+  browser?: Browser; browserTemp?: string; page?: Page; requests: string[]; blocked: string[];
 };
+
+// The recording lane is explicitly outside AE10; never inherit the runner's guard into it.
+function runtimeEnv(world: World, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  if (world.guard) return guardedEnv(world.log, { ...world.env, ...extra });
+  const env = { ...world.env, ...extra };
+  delete env.NODE_OPTIONS; delete env.KHALA_EGRESS_LOG;
+  return env;
+}
+function trackGroup(world: World, child: ChildProcessWithoutNullStreams): void {
+  if (!world.guard && child.pid) world.processGroups.add(child.pid);
+}
+function runRuntime(world: World, args: string[], stdin = ''): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, { env: runtimeEnv(world), stdio: 'pipe', detached: !world.guard });
+    trackGroup(world, child);
+    let stdout = ''; let stderr = '';
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 30_000);
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.stdin.on('error', error => { if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(new Error('runtime_stdin_failed')); });
+    child.once('error', () => { clearTimeout(timeout); reject(new Error('runtime_spawn_failed')); });
+    child.once('close', code => { clearTimeout(timeout); resolve({ code, stdout, stderr, pid: child.pid! }); });
+    child.stdin.end(stdin);
+  });
+}
 
 export class McpProcess {
   readonly child: ChildProcessWithoutNullStreams;
@@ -33,8 +59,9 @@ export class McpProcess {
   private constructor(readonly world: World, readonly harness: Harness, readonly sessionId: string) {
     this.files = sessionFiles(harness, sessionId, world.env);
     this.child = spawn(process.execPath, [bin, 'mcp', '--harness', harness], {
-      env: guardedEnv(world.log, { ...world.env, CLAUDE_CODE_SESSION_ID: sessionId }), stdio: 'pipe',
+      env: runtimeEnv(world, { CLAUDE_CODE_SESSION_ID: sessionId }), stdio: 'pipe', detached: !world.guard,
     });
+    trackGroup(world, this.child);
     this.child.stderr.setEncoding('utf8').on('data', chunk => { this.stderr += chunk; });
     let buffer = '';
     this.child.stdout.setEncoding('utf8').on('data', chunk => {
@@ -89,7 +116,7 @@ export class McpProcess {
   }
 }
 
-export async function createWorld(): Promise<World> {
+export async function createWorld(options: { guard?: boolean } = {}): Promise<World> {
   const root = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-local-e2e-'));
   const state = path.join(root, 'state'); const fakeBin = path.join(root, 'bin');
   await mkdir(state, { mode: 0o700 }); await mkdir(fakeBin, { mode: 0o700 });
@@ -108,9 +135,11 @@ export async function createWorld(): Promise<World> {
     });
     if (build !== 0) { await rm(root, { recursive: true, force: true }); throw new Error('local_web_build_failed'); }
   }
+  const guard = options.guard !== false;
   const env = guardedEnv(log, { XDG_STATE_HOME: state, KHALA_LOCAL_PORT: String(port), KHALA_LOCAL_IDLE_MS: '600000',
     KHALA_LOCAL_WEB_DIR: webDir, USER: 'kevin', PATH: fakeBin + path.delimiter + process.env.PATH });
-  const world = { root, state, port, origin: `http://127.0.0.1:${port}`, log, env, agents: [], watchers: [], requests: [], blocked: [] } as unknown as World;
+  if (!guard) { delete env.NODE_OPTIONS; delete env.KHALA_EGRESS_LOG; }
+  const world = { guard, processGroups: new Set<number>(), root, state, port, origin: `http://127.0.0.1:${port}`, log, env, agents: [], watchers: [], requests: [], blocked: [] } as unknown as World;
   try {
     world.claude = await McpProcess.start(world, 'claude', 'e2e-claude');
     world.codex = await McpProcess.start(world, 'codex', 'e2e-codex');
@@ -118,7 +147,7 @@ export async function createWorld(): Promise<World> {
   } catch (error) { await cleanupWorld(world); throw error; }
 }
 export async function cli(world: World, ...args: string[]) {
-  const result = await runKhala(args, guardedEnv(world.log, world.env));
+  const result = await runRuntime(world, [bin, 'local', ...args]);
   let data: unknown;
   try { data = JSON.parse(result.stdout); } catch { data = undefined; }
   return { ...result, data };
@@ -130,7 +159,7 @@ export async function codexCalls(world: World): Promise<string[]> {
   return (await readFile(path.join(world.root, 'bin/codex-calls.log'), 'utf8')).split('\n').filter(Boolean);
 }
 export async function deliver(agent: McpProcess, event: 'PostToolUse' | 'UserPromptSubmit' | 'Stop'): Promise<HookFrame | null> {
-  const result = await runNode([bin, 'hook', 'deliver', '--harness', agent.harness], guardedEnv(agent.world.log, agent.world.env),
+  const result = await runRuntime(agent.world, [bin, 'hook', 'deliver', '--harness', agent.harness],
     JSON.stringify({ session_id: agent.sessionId, hook_event_name: event }));
   if (result.code !== 0) throw new Error('deliver_failed');
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
@@ -139,8 +168,9 @@ export type WakeWatcher = { child: ChildProcessWithoutNullStreams; exited: Promi
 export async function armClaudeWake(agent: McpProcess): Promise<WakeWatcher> {
   const watcherFile = path.join(agent.files.dir, 'watcher.json');
   const previous = await readFile(watcherFile, 'utf8').catch(() => '');
-  const child = spawn(process.execPath, [bin, 'hook', 'claude-wake'], { stdio: 'pipe', env: guardedEnv(agent.world.log,
-    { ...agent.world.env, KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: '15000' }) });
+  const child = spawn(process.execPath, [bin, 'hook', 'claude-wake'], { stdio: 'pipe', detached: !agent.world.guard, env: runtimeEnv(agent.world,
+    { KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: '15000' }) });
+  trackGroup(agent.world, child);
   let stderr = ''; child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; }); child.stdout.resume();
   child.stdin.on('error', () => {});
   const watcher: WakeWatcher = { child, running: true, kill: () => { child.kill('SIGTERM'); }, exited: Promise.resolve({ code: null, stderr: '' }) };
@@ -173,7 +203,10 @@ export async function admin(world: World, method: string, pathname: string, body
   return raw(world, { method, path: pathname, body, headers: { authorization: `Bearer ${file.adminToken}` } });
 }
 export async function openBrowser(world: World): Promise<Page> {
+  // Chromium's Unix socket path cannot fit the agent workspace's long TMPDIR.
+  world.browserTemp = await mkdtemp('/tmp/ki160-1014-chromium-');
   world.browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', headless: true,
+    env: { ...process.env, TMPDIR: world.browserTemp, XDG_CONFIG_HOME: world.browserTemp },
     args: ['--disable-background-networking', '--disable-component-update', '--disable-default-apps', '--no-first-run'] });
   const context = await world.browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   await context.route('**/*', async route => {
@@ -196,12 +229,18 @@ export async function cleanupWorld(world: World): Promise<void> {
   for (const watcher of world.watchers) watcher.kill();
   await Promise.allSettled(world.agents.map(agent => agent.close()));
   await Promise.allSettled(world.watchers.map(watcher => watcher.exited));
+  const helper = await helperFile(world).catch(() => null);
   await cli(world, 'stop').catch(() => undefined);
+  if (!world.guard) {
+    if (helper) { try { process.kill(helper.pid, 'SIGKILL'); } catch { /* Already stopped. */ } }
+    for (const group of world.processGroups) { try { process.kill(-group, 'SIGKILL'); } catch { /* Group exited. */ } }
+  }
   const records = await readEgressLog(world.log).catch(() => []);
   for (const record of records) if (record.kind === 'guard' && record.event === 'installed' && record.argv.includes('serve')) {
     try { process.kill(record.pid, 'SIGKILL'); } catch { /* Already stopped. */ }
   }
   await world.browser?.close().catch(() => undefined);
+  if (world.browserTemp) await rm(world.browserTemp, { recursive: true, force: true });
   if (process.env.KHALA_E2E_KEEP !== '1') await rm(world.root, { recursive: true, force: true });
 }
 
