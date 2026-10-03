@@ -31,7 +31,7 @@ export function helperBinPath(): string {
 }
 
 export const HELPER_ENV_ALLOWLIST: readonly string[] = [
-  'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_STATE_HOME', 'NODE_OPTIONS',
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_STATE_HOME', 'NODE_OPTIONS', 'KHALA_EGRESS_LOG',
   'KHALA_LOCAL_PORT', 'KHALA_LOCAL_IDLE_MS', 'KHALA_LOCAL_WEB_DIR',
 ];
 export function helperChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
