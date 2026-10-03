@@ -436,7 +436,11 @@ async function up() {
       await loggedCommand(service, 'pnpm', ['--filter', '@khala/control', 'build:functions'], { env, maxBuffer: 4 * 1024 * 1024 });
       await loggedCommand(service, 'pnpm', ['--filter', '@khala/web', 'build'], { env, maxBuffer: 4 * 1024 * 1024 });
       // Keep Netlify's config re-resolution in the persistent directory.
-      const config = (await readFile(path.join(root, 'netlify.toml'), 'utf8')).replace('base = "."', `base = ${JSON.stringify(await netlifyBase(root))}`);
+      const base = await netlifyBase(root);
+      const edgeFunctions = path.relative(path.join(localDir, 'netlify'), path.join(root, 'infra/netlify/edge-functions'));
+      const config = (await readFile(path.join(root, 'netlify.toml'), 'utf8'))
+        .replace('[build]\n', `[build]\n  base = ${JSON.stringify(base)}\n`)
+        .replace('edge_functions = "infra/netlify/edge-functions"', `edge_functions = ${JSON.stringify(edgeFunctions)}`);
       await writeFile(path.join(localDir, 'netlify/netlify.toml'), `${config}\n[dev.https]\n  keyFile = ${JSON.stringify(tls.key)}\n  certFile = ${JSON.stringify(tls.cert)}\n`, { mode: 0o600 });
       const executable = (await command('sh', ['-c', 'command -v netlify'])).stdout.trim();
       const bundledBlobs = path.join(path.resolve(path.dirname(realpathSync(executable)), '..'), 'node_modules/@netlify/blobs');

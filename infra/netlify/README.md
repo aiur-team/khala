@@ -130,6 +130,24 @@ Direct invocation of the Netlify function URL
 `/api/...` path inside the handler, so it cannot bypass route, method, or auth
 validation.
 
+### Agent markdown (edge function)
+
+`infra/netlify/edge-functions/agent-markdown/` (declared in `netlify.toml` via
+`build.edge_functions` and `[[edge_functions]]`) runs on `/` and `/join/*`
+only. When the request's `Accept` names no `text/html`, or ranks
+`text/markdown`/`text/plain` above it (bare `curl` sends `*/*`), it answers
+200 `text/markdown; charset=utf-8` with `/AGENTS.md`; for `/join/<token>` it
+prepends a header naming the exact requested link. Browsers fall through to the
+normal routing above. Every response on those paths carries `Vary: Accept`.
+The function never logs the URL (it carries the invitation token). The pure
+negotiation logic is unit-tested in `infra/netlify/agent-markdown.test.ts`.
+`netlify deploy --no-build` bundles the directory itself; check its output for
+"Finished bundling edge functions".
+
+`netlify.toml` deliberately sets no `build.base`: an explicit `base = "."`
+resolves against the nearest `.git` *directory*, which for a git worktree is
+the parent repository, so edge functions would be read from the wrong checkout.
+
 ## What the deployment boundary does not do
 
 - It does not implement `apps/control/src/composition/agent/handlers.ts`
