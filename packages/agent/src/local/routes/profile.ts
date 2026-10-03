@@ -4,20 +4,12 @@ import { DEFAULT_LISTENING_MODE, LISTENING_MODE_MEMBER_KEY } from '@khala/contra
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type OwnerProfileView } from '@khala/contracts/m1/local';
 import { checkName, defaultAgentName, isDefaultAgentName } from '@khala/contracts/m1/names';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
+import { serial, type SerialQueue } from './owner';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, LocalStore } from '../types';
 
 const fail = (status: number, error: string): LocalResponse => ({ status, json: { error } });
 const field = (body: unknown, key: string) => decodeWith(() => object(body, '', [key]).field(key));
 const iso = (ctx: HelperContext): string => new Date(ctx.now()).toISOString();
-
-function serial() {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(run: () => Promise<T>): Promise<T> => {
-    const result = tail.then(run);
-    tail = result.catch(() => undefined);
-    return result;
-  };
-}
 
 async function cascade(store: LocalStore, previous: string, next: string): Promise<void> {
   for (const { roomId } of store.listChannels()) {
@@ -64,8 +56,8 @@ async function cascade(store: LocalStore, previous: string, next: string): Promi
   }
 }
 
-export function profileRoutes(): LocalRoute[] {
-  const queue = serial();
+export function profileRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[] {
+  const queue = options.queue ?? serial();
   const route = (method: LocalRoute['method'], pattern: RegExp,
     run: (req: LocalRequest, ctx: HelperContext) => Promise<LocalResponse>): LocalRoute => ({
     method, pattern,
