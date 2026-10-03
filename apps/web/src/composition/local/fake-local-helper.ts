@@ -89,8 +89,10 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
     const target = channel(roomId);
     if (!target) throw new Error(`fake: unknown channel ${roomId}`);
     seq += 1;
-    clock = Math.max(clock + 1, options?.ts ?? Date.now());
-    const event: LocalEvent = { seq: target.events.length + 1, eventId: `$${String(seq).padStart(22, '0')}`, roomId, type, sender, ts: clock,
+    // Seeded events keep their worked-example time; live ones are monotonic wall-clock.
+    const ts = options?.ts ?? Math.max(clock + 1, Date.now());
+    clock = Math.max(clock, ts);
+    const event: LocalEvent = { seq: target.events.length + 1, eventId: `$${String(seq).padStart(22, '0')}`, roomId, type, sender, ts,
       ...(options?.txnId ? { txnId: options.txnId } : {}), content };
     target.events.push(event);
     bump();
