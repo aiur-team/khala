@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, decodeOwnerProfileView, type LocalMember, type OwnerProfile } from '@khala/contracts/m1/local';
 import { LISTENING_MODE_MEMBER_KEY } from '@khala/contracts/m1/listening-mode';
 import type { HelperContext, LocalAuth, LocalRequest, LocalStore } from '../types';
+import { serial, type SerialQueue } from './owner';
 import { profileRoutes } from './profile';
 
 const now = Date.parse('2026-10-02T09:00:00.000Z');
@@ -9,7 +10,7 @@ function member(userId: string, displayName: string, harness?: 'claude' | 'codex
   return { userId, participantId: userId, ownerId: LOCAL_OWNER_ID, deviceId: userId === LOCAL_OWNER_USER_ID ? 'KH_LOCAL_OWNER' : `KH_LOCAL_${userId.slice(7, 15)}`,
     displayName, kind: harness ? 'agent' : 'human', membership: 'join', ...(harness ? { harness } : {}) };
 }
-function setup(channels: Record<string, LocalMember[]> = {}) {
+function setup(channels: Record<string, LocalMember[]> = {}, queue?: SerialQueue) {
   let owner: OwnerProfile = { v: 1, username: 'kevin', color: 'blue', initials: null, updatedAt: '2026-10-01T00:00:00.000Z' };
   const writes: OwnerProfile[] = [];
   let seq = 0;
@@ -26,7 +27,7 @@ function setup(channels: Record<string, LocalMember[]> = {}) {
   };
   // The routes depend only on these store/context capabilities; no HTTP or disk store is imported.
   const ctx = { store, now: () => now } as unknown as HelperContext;
-  const routes = profileRoutes();
+  const routes = queue ? profileRoutes({ queue }) : profileRoutes();
   async function request(path = '', body?: unknown, auth: LocalAuth = { kind: 'owner', via: 'cookie' }) {
     const req: LocalRequest = { method: path ? 'POST' : 'GET', path: `/api/local/profile${path}`, query: new URLSearchParams(),
       headers: {}, body, auth, origin: 'http://127.0.0.1:47830', signal: new AbortController().signal };
@@ -207,6 +208,24 @@ describe('local owner profile routes', () => {
     s.store.setOwner.mockRejectedValueOnce(new Error('unavailable'));
     expect(await s.request('/username', { username: 'kev' })).toEqual({ status: 503, json: { error: 'unavailable' } });
     expect(await s.request('/color', { color: 'teal' })).toEqual({ status: 200, json: { color: 'teal' } });
+  });
+
+  it('waits for an injected queue before persisting or appending a username cascade', async () => {
+    const queue = serial();
+    let release!: () => void;
+    const held = queue(() => new Promise<void>(resolve => { release = resolve; }));
+    await Promise.resolve();
+    const s = setup({ a: [member(LOCAL_OWNER_USER_ID, 'kevin'), member('@agent-a1b2c3d4:local', 'kevin-Claude', 'claude')] }, queue);
+    const pending = s.request('/username', { username: 'kev' });
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(s.store.setOwner).not.toHaveBeenCalled();
+      expect(s.append).not.toHaveBeenCalled();
+    } finally { release(); }
+    await held;
+    expect(await pending).toEqual({ status: 200, json: { username: 'kev' } });
+    expect(s.owner().username).toBe('kev');
+    expect(s.append.mock.calls.map(([, event]) => event.content['displayname'])).toEqual(['kev', 'kev-Claude']);
   });
 
   it('serializes reads and all mutations through the entire username cascade', async () => {
