@@ -155,3 +155,14 @@ describe('channel event tool through stdio', () => {
     });
   });
 });
+
+it('renders an auto-confirmed fallback without a confirmation click', async () => {
+  const client = fake();
+  const result = { state: 'awaiting_confirmation' as const, confirmUrl, autoConfirmed: true as const };
+  client.join = vi.fn(async () => result);
+  const { responses } = await exchange([call('khala_join', { link })], client);
+  expect(responses[0].result).toEqual({
+    content: [{ type: 'text', text: 'Joining… call khala_status until state is "connected".' }],
+    structuredContent: result,
+  });
+});

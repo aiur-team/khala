@@ -9,20 +9,21 @@ import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/r
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
-import { createAgentMatrixSession, type AgentMatrixSession, type SessionModeCommand, type SessionMessage } from './matrix/session';
+import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
+import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, type JoinFile, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
   harness: Harness; sessionId: string; env?: NodeJS.ProcessEnv;
-  now?: () => Date; startSession?: typeof createAgentMatrixSession;
+  now?: () => Date; startSession?: StartSession;
   joinApi?: { requestJoin: typeof requestJoin; pollJoin: typeof pollJoin; reportReady: typeof reportReady };
-  fetch?: typeof fetch; inviteTimeoutMs?: number; onInboxAppend?: (entry: InboxEntry) => void;
+  fetch?: typeof fetch; inviteTimeoutMs?: number; autoConfirmWaitMs?: number; onInboxAppend?: (entry: InboxEntry) => void;
 };
 type Attempt = {
   link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
-  task: Promise<void>; session?: AgentMatrixSession; credentials?: AgentCredentials;
+  task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
   unsubscribe?: () => void; unsubscribeMode?: () => void; joined: boolean;
 };
 function safeError(error: unknown): KhalaClientError {
@@ -44,7 +45,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let statusWrites: Promise<void> = Promise.resolve();
   let acceptEventKey = createEventKeyFilter();
 
-  function inboxEntry(message: SessionMessage, session: AgentMatrixSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
+  function inboxEntry(message: SessionMessage, session: ChannelSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
     const entry = toInboxEntry(message, session.displayName(message.sender));
     if (message.type === 'm.room.message') return entry;
     if (message.type !== CHANNEL_EVENT_TYPE) return null;
@@ -90,11 +91,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     await cleanup(attempt);
     active = undefined;
   }
-  function requireSession(): { session: AgentMatrixSession; credentials: AgentCredentials; attempt: Attempt } {
+  function requireSession(): { session: ChannelSession; credentials: AgentCredentials; attempt: Attempt } {
     if (closed || !active?.joined || !active.session || !active.credentials) throw new KhalaClientError('not_connected');
     return { session: active.session, credentials: active.credentials, attempt: active };
   }
-  async function publishMode(attempt: Attempt, session: AgentMatrixSession, roomId: string, mode: ListeningMode): Promise<void> {
+  async function publishMode(attempt: Attempt, session: ChannelSession, roomId: string, mode: ListeningMode): Promise<void> {
     const controller = new AbortController();
     let release = () => {};
     const aborted = new Promise<void>(resolve => { release = resolve; });
@@ -125,7 +126,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       attempt.credentials = credentials;
       await writeStateFile(dir, 'session.json', credentials);
       if (!current(attempt)) return;
-      const starting = (options.startSession ?? createAgentMatrixSession)(credentials).then(async session => {
+      const starting = (options.startSession ?? startChannelSession)(credentials).then(async session => {
         if (!current(attempt)) { await session.stop(); throw new KhalaClientError('internal_error'); }
         attempt.session = session;
         return session;
@@ -191,13 +192,22 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     }
   }
 
+  async function settleAutoConfirmed(attempt: Attempt): Promise<'connected' | 'failed' | 'pending'> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, options.autoConfirmWaitMs ?? 15_000); });
+    try { await Promise.race([attempt.task, timeout]); } finally { clearTimeout(timer); }
+    if (closed) return 'failed';
+    if (active === attempt && attempt.joined) return 'connected';
+    return active === attempt ? 'pending' : 'failed';
+  }
+
   return {
     join(link, label) {
       const task = joins.catch(() => {}).then(async () => {
         await initialize();
         if (closed) throw new KhalaClientError('not_connected');
         if (active?.joined && active.link === link) return { state: 'connected' as const, channelName: status.channelName! };
-        if (active?.link === link) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl };
+        if (active?.link === link) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl, ...(active.created.autoConfirmed === true ? { autoConfirmed: true as const } : {}) };
         const wasJoined = active?.joined;
         await cancel();
         if (wasJoined) {
@@ -213,6 +223,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           await setStatus('idle', 'join_expired');
           throw new KhalaClientError('join_expired');
         }
+        let started: Attempt | undefined;
         try {
           const created = await api.requestJoin({ link, harness: options.harness, label }, fetchDeps);
           if (closed) throw new KhalaClientError('not_connected');
@@ -223,12 +234,20 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           active = attempt;
           // All failures, including storage cleanup failures, are contained here.
           attempt.task = background(attempt).catch(() => {});
-          return { state: 'awaiting_confirmation' as const, confirmUrl };
+          started = attempt;
+          if (created.autoConfirmed !== true) return { state: 'awaiting_confirmation' as const, confirmUrl };
         } catch (error) {
           const failure = safeError(error);
           if (!closed) await setStatus('idle', failure.message);
           throw failure;
         }
+        const outcome = await settleAutoConfirmed(started!);
+        if (outcome === 'connected') return { state: 'connected' as const, channelName: status.channelName ?? started!.credentials!.roomId };
+        if (outcome === 'failed') {
+          if (closed) throw new KhalaClientError('not_connected');
+          throw new KhalaClientError(status.detail === 'join_expired' ? 'join_expired' : 'internal_error', status.detail ?? 'internal_error');
+        }
+        return { state: 'awaiting_confirmation' as const, confirmUrl: started!.created.confirmUrl, autoConfirmed: true as const };
       });
       joins = task;
       return task;

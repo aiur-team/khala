@@ -1,5 +1,5 @@
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import type { SessionMessage } from './matrix/session';
+import type { SessionMessage } from './transport';
 
 function localpart(userId: string): string {
   return /^@([^:]+):/u.exec(userId)?.[1] ?? userId;
