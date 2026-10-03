@@ -86,7 +86,7 @@ for (const name of ['send', 'connect']) {
     if (allowed) return original.apply(this, args);
     const error = blocked('udp', host, port);
     const callback = typeof args.at(-1) === 'function' ? args.at(-1) : undefined;
-    process.nextTick(() => callback ? callback(error) : this.emit('error', error));
+    process.nextTick(() => name === 'send' && callback ? callback(error) : this.emit('error', error));
     return undefined;
   };
 }
