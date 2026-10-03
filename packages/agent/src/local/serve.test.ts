@@ -96,6 +96,44 @@ describe('real helper composition', () => {
     expect(await command(['delete', 'refactor'])).toEqual({ deleted: created.roomId });
     expect((await command(['list'])).channels).toHaveLength(0);
   });
+  it('ends a pending agent poll and subsequent calls with 404 after CLI deletion', async () => {
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const helper = await start();
+    const store = await vi.mocked(openLocalStore).mock.results[0]!.value;
+    const wait = store.waitForEvent;
+    const spy = vi.spyOn(store, 'waitForEvent').mockImplementation((...args) => {
+      const pending = wait(...args); entered(); return pending;
+    });
+    try {
+      const created = await command(['create', 'delete-me']);
+      const joined = await fetch(helper.file.origin + '/api/agent/join', { method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ link: created.selfLink, harness: 'claude', label: 'Claude' }) });
+      expect(joined.status).toBe(201);
+      const pending = await joined.json();
+      const poll = await fetch(helper.file.origin + `/api/agent/join/poll?joinId=${pending.joinId}`,
+        { headers: { authorization: `Bearer ${pending.pollSecret}` } });
+      const { accessToken } = (await poll.json()).credentials;
+      const headers = { authorization: `Bearer ${accessToken}` };
+      const roomUrl = helper.file.origin + `/api/local/rooms/${encodeURIComponent(created.roomId)}`;
+      expect((await fetch(roomUrl + '/join', { method: 'POST', headers })).status).toBe(200);
+      const events = await (await fetch(roomUrl + '/events', { headers })).json();
+      const longPoll = fetch(roomUrl + `/events?after=${events.next}&wait=20`, { headers });
+      await Promise.race([waiting, longPoll.then(async response => { throw new Error(`poll returned before waiting: ${response.status} ${await response.clone().text()}`); })]);
+      expect(await command(['delete', 'delete-me'])).toEqual({ deleted: created.roomId });
+      for (const response of [await longPoll, await fetch(roomUrl + '/events', { headers }),
+        await fetch(roomUrl + '/me', { headers })]) {
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: 'not_found' });
+      }
+      for (const options of [{}, { headers: { authorization: `Bearer ${'X'.repeat(43)}` } }]) {
+        const response = await fetch(roomUrl + '/events', options);
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'unauthorized' });
+      }
+    } finally { spy.mockRestore(); }
+  });
   it('a losing helper preserves the existing file byte for byte', async () => {
     const helper = await start(); const before = await readFile(helperPaths(env).helperFile, 'utf8');
     expect(await runHelper({ env, port: helper.file.port, webDir })).toBe(0);
