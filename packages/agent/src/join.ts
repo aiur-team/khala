@@ -79,7 +79,7 @@ export async function requestJoin(input: { link: string; harness: Harness; label
   if (!nonempty(joinId) || !nonempty(pollSecret) || !nonempty(confirmUrl)
     || !confirm || confirm.origin !== origin || confirm.pathname !== '/agent/confirm'
     || !nonempty(expiresAt) || !Number.isFinite(Date.parse(expiresAt))) fail('protocol');
-  return { joinId, pollSecret, confirmUrl, expiresAt, origin };
+  return { joinId, pollSecret, confirmUrl, expiresAt, origin, ...(body['autoConfirmed'] === true ? { autoConfirmed: true as const } : {}) };
 }
 
 function endpoint(input: JoinSession, path: string): URL {
@@ -98,10 +98,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 function credentials(value: unknown): AgentCredentials {
-  const { homeserver, userId, accessToken, deviceId, roomId } = record(value);
+  const { homeserver, userId, accessToken, deviceId, roomId, transport } = record(value);
   if (!nonempty(homeserver) || !parseUrl(homeserver) || !nonempty(userId)
     || !nonempty(accessToken) || !nonempty(deviceId) || !nonempty(roomId)) fail('protocol');
-  return { homeserver, userId, accessToken, deviceId, roomId };
+  return { homeserver, userId, accessToken, deviceId, roomId, ...(transport === 'local' ? { transport: 'local' as const } : {}) };
 }
 
 export async function pollJoin(input: JoinSession, options: PollOptions = {}): Promise<AgentCredentials> {
