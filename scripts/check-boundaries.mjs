@@ -18,7 +18,7 @@ const sharedFeatures = new Set(['approval-decision', 'channel-create', 'receipt-
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    if (['node_modules', 'dist', 'fixtures'].includes(entry.name)) return [];
+    if (['node_modules', 'dist', 'dist-local', 'fixtures'].includes(entry.name)) return [];
     const filename = path.join(directory, entry.name);
     return entry.isDirectory() ? filesBelow(filename) : sourcePattern.test(filename) ? [filename] : [];
   });

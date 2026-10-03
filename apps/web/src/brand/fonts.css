@@ -1,8 +1,7 @@
 /*
- * Offline stand-ins for the design font families, for browser harnesses and
- * visual baselines only, so they render the same glyphs without network.
- * The production app loads these families from Google Fonts in index.html
- * (RECREATION-SPEC §2.1) and never imports this file.
+ * Self-hosted copies of the design font families. Browser harnesses, visual
+ * baselines and the local app (src/local-main.tsx) import this file; the hosted
+ * app loads the same families from Google Fonts in index.html.
  */
 @font-face {
   font-family: "Space Grotesk";
