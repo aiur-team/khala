@@ -34,6 +34,16 @@ if (cmd === '--version') {
       exitWith(code);
     } catch { console.error('khala: internal_error'); exitWith(1); }
   }
+} else if (cmd === 'local') {
+  const url = new URL('../src/local/cli.ts', import.meta.url);
+  if (!existsSync(url)) { console.log('{"error":"internal_error"}'); exitWith(1); }
+  else {
+    try {
+      const code = await (await import(url.href)).default(rest);
+      if (typeof code !== 'number' || !Number.isInteger(code)) throw new Error('bad_exit');
+      exitWith(code);
+    } catch { console.log('{"error":"internal_error"}'); exitWith(1); }
+  }
 } else if (cmd === 'hook') {
   const [name = '', ...args] = rest;
   const url = new URL(`../hooks/${name}.ts`, import.meta.url);
@@ -46,6 +56,6 @@ if (cmd === '--version') {
     } catch { process.stderr.write('{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}\n'); exitWith(1); }
   }
 } else {
-  console.error('usage: khala mcp | khala hook <name> | khala --version');
+  console.error('usage: khala mcp | khala hook <name> | khala local <command> | khala --version');
   exitWith(1);
 }

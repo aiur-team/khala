@@ -10,6 +10,7 @@ beforeEach(async () => {
   fixture = await mkdtemp(join(tmpdir(), 'km103-bin-'));
   await mkdir(join(fixture, 'bin'));
   await mkdir(join(fixture, 'src/mcp'), { recursive: true });
+  await mkdir(join(fixture, 'src/local'), { recursive: true });
   await mkdir(join(fixture, 'hooks'));
   await copyFile(new URL('../bin/khala.mjs', import.meta.url), join(fixture, 'bin/khala.mjs'));
   await copyFile(new URL('./version.ts', import.meta.url), join(fixture, 'src/version.ts'));
@@ -40,12 +41,21 @@ const echo = `export default async function run(stdin: string, argv: readonly st
 describe('C12 source dispatcher', () => {
   it('prints the version and reports usage for unknown commands', async () => {
     expect(await run(['--version'])).toEqual({ code: 0, stdout: '0.0.0\n', stderr: '' });
-    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala hook <name> | khala --version\n' });
+    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala hook <name> | khala local <command> | khala --version\n' });
   });
   it('reports absent MCP modules and passes argv and the module exit code', async () => {
     expect(await run(['mcp'])).toEqual({ code: 1, stdout: '', stderr: 'khala: mcp not available\n' });
     await writeFile(join(fixture, 'src/mcp/main.ts'), 'export default async function main(argv: readonly string[]): Promise<number> { return argv.length; }');
     expect(await run(['mcp', 'a', 'b'])).toEqual({ code: 2, stdout: '', stderr: '' });
+  });
+  it('dispatches local arguments and suppresses missing or broken modules', async () => {
+    expect(await run(['local'])).toEqual({ code: 1, stdout: '{"error":"internal_error"}\n', stderr: '' });
+    await writeFile(join(fixture, 'src/local/cli.ts'), 'export default async (argv) => argv.length;');
+    expect(await run(['local', 'a', 'b'])).toEqual({ code: 2, stdout: '', stderr: '' });
+    for (const body of ['throw new Error("secret");', 'return "bad";', 'return NaN;']) {
+      await writeFile(join(fixture, 'src/local/cli.ts'), `export default async () => { ${body} };`);
+      expect(await run(['local'])).toEqual({ code: 1, stdout: '{"error":"internal_error"}\n', stderr: '' });
+    }
   });
   it('passes UTF-8 stdin and arguments to a dynamically discovered TypeScript hook', async () => {
     await hook('echo', echo);
