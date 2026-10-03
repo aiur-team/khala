@@ -1,0 +1,66 @@
+#!/bin/sh
+# Khala plugin launcher: the plugin's MCP server and hooks run this, and Claude's Bash tool
+# finds it on PATH as `khala`. It runs the published CLI at the exact version below.
+#
+#   1. $KHALA_BIN, when set: development override (a checkout's bin/khala.mjs or
+#      ~/.local/bin/khala).
+#   2. The pinned copy in the plugin data dir, which `--ensure-installed` (SessionStart)
+#      installs in the background. Hooks fire on every tool call; a direct start is ~30 ms
+#      where `npx` costs ~0.7 s each time.
+#   3. Another `khala` on PATH (the checkout flow), until the pinned copy exists.
+#   4. npx -y <package>@<version>.
+#
+# KHALA_PACKAGE and KHALA_VERSION are written by packages/agent/scripts/sync-release.mjs
+# from packages/agent/npm/package.json; do not edit them by hand.
+KHALA_PACKAGE=khala-cli
+KHALA_VERSION=0.3.0
+
+data="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/khala/claude-plugin}"
+dir="$data/npm-$KHALA_VERSION"
+
+if [ "${1:-}" = "--ensure-installed" ]; then
+  [ -n "${KHALA_BIN:-}" ] && exit 0
+  [ -x "$dir/bin/khala" ] && exit 0
+  command -v npm >/dev/null 2>&1 || exit 0
+  mkdir -p "$data" || exit 0
+  lock="$data/.install-$KHALA_VERSION.lock"
+  # A lock older than 10 minutes belongs to an install that died.
+  find "$lock" -maxdepth 0 -mmin +10 -exec rmdir {} \; 2>/dev/null
+  mkdir "$lock" 2>/dev/null || exit 0
+  # Install detached, so the session's first response does not wait for npm and the
+  # install outlives this hook.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$0" --install-locked </dev/null >"$data/install.log" 2>&1 &
+  else
+    nohup "$0" --install-locked </dev/null >"$data/install.log" 2>&1 &
+  fi
+  exit 0
+fi
+if [ "${1:-}" = "--install-locked" ]; then
+  tmp="$data/.tmp-$KHALA_VERSION-$$"
+  rm -rf "$tmp"
+  if npm install --global --prefix "$tmp" --no-audit --no-fund --loglevel=error \
+      "$KHALA_PACKAGE@$KHALA_VERSION" && "$tmp/bin/khala" --version; then
+    mv "$tmp" "$dir" || rm -rf "$tmp"
+  else
+    rm -rf "$tmp"
+  fi
+  # Old versions may still serve a long-running session; drop them after a week.
+  find "$data" -maxdepth 1 -name 'npm-*' ! -name "npm-$KHALA_VERSION" -mtime +7 -exec rm -rf {} + 2>/dev/null
+  rmdir "$data/.install-$KHALA_VERSION.lock"
+  exit 0
+fi
+
+if [ -n "${KHALA_BIN:-}" ]; then exec "$KHALA_BIN" "$@"; fi
+if [ -x "$dir/bin/khala" ]; then exec "$dir/bin/khala" "$@"; fi
+
+self=$(cd "$(dirname "$0")" && pwd -P)/khala
+IFS_SAVED=$IFS; IFS=:
+for entry in $PATH; do
+  [ -n "$entry" ] && [ -x "$entry/khala" ] && [ ! -d "$entry/khala" ] || continue
+  [ "$(cd "$entry" && pwd -P)/khala" = "$self" ] && continue
+  IFS=$IFS_SAVED; exec "$entry/khala" "$@"
+done
+IFS=$IFS_SAVED
+
+exec npx -y "$KHALA_PACKAGE@$KHALA_VERSION" "$@"

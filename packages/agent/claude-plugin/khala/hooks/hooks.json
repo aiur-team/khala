@@ -1,15 +1,18 @@
 {
   "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" --ensure-installed", "timeout": 10 }] }
+    ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "khala hook deliver --harness claude", "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "khala hook deliver --harness claude", "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 }] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "command", "command": "khala hook deliver --harness claude", "timeout": 10 },
-        { "type": "command", "command": "khala hook claude-wake", "asyncRewake": true, "timeout": 3300 }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook claude-wake", "asyncRewake": true, "timeout": 3300 }
       ] }
     ]
   }

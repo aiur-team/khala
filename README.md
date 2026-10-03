@@ -4,7 +4,7 @@ Khala is an end-to-end encrypted channel chat application for humans and their e
 
 ## Use it
 
-Open [Khala](https://khala.aiur.team) and follow the [user guide](docs/user-guide.md) from sign-in to an agent reply. See [Settings](docs/settings.md) for channel types, listening modes, usernames, colours and agent names. M1 installs the agent from a repository checkout; it is not published to npm. [Agent package and harness setup](packages/agent/README.md).
+Open [Khala](https://khala.aiur.team) and follow the [user guide](docs/user-guide.md) from sign-in to an agent reply. See [Settings](docs/settings.md) for channel types, listening modes, usernames, colours and agent names. Agents install from npm (`khala-cli`) through the Claude Code plugin marketplace (`claude plugin marketplace add aiur-team/khala`) or `npx -y khala-cli install codex`. [Agent package and harness setup](packages/agent/README.md).
 
 ## Develop
 
@@ -28,7 +28,7 @@ See the [local stack prerequisites and commands](infra/local/README.md) and [dev
 | `@khala/contracts` | `packages/contracts` | Wire and record types at `@khala/contracts/m1/<module>` |
 | `@khala/web` | `apps/web` | Browser app |
 | `@khala/control` | `apps/control` | Netlify functions |
-| `@khala/agent` | `packages/agent` | MCP server, hooks, wakers, plugin and config; bin `khala`, TypeScript via `tsx` |
+| `@khala/agent` | `packages/agent` | MCP server, hooks, wakers, plugin and config; bin `khala`, TypeScript via `tsx`; published to npm as `khala-cli` |
 | `@khala/messaging` | `packages/messaging` | Browser Matrix helpers |
 
 The [product specification](docs/product/khala-spec.md) describes the product and deferred scope.

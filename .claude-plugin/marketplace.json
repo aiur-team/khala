@@ -1,12 +1,13 @@
 {
-  "name": "khala-m1",
+  "name": "khala",
   "owner": {
     "name": "Khala"
   },
+  "description": "Khala: encrypted channels for humans and their Claude Code and Codex sessions",
   "plugins": [
     {
       "name": "khala",
-      "source": "./khala",
+      "source": "./packages/agent/claude-plugin/khala",
       "version": "0.3.0",
       "description": "Khala channels for Claude Code: MCP tools, delivery hooks, idle wake, skill"
     }
