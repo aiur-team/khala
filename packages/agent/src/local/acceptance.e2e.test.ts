@@ -29,6 +29,7 @@ const nonce = randomBytes(4).toString('hex');
 const outputDir = path.resolve('test-results/local-e2e');
 type Result = { id: string; owner: string; status: 'PASS' | 'FAIL' | 'BLOCKED'; durationMs: number; error?: string };
 const results: Result[] = [];
+const evidence: { deletedSessionDetail?: string } = {};
 let world: World;
 let channel: LocalChannelCreated;
 let claudeId: string;
@@ -125,7 +126,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     finally {
       for (const id of ['AE1', 'AE2', 'AE3', 'AE4', 'AE5', 'AE6', 'AE7', 'AE9', 'AE11', 'AE8', 'AE12', 'AE10']) if (!results.some(row => row.id === id)) results.push({ id, owner: owners[id]!, status: 'BLOCKED', durationMs: 0 });
       await mkdir(outputDir, { recursive: true });
-      await writeFile(path.join(outputDir, 'results.json'), JSON.stringify({ version: 1, results, durationMs: Date.now() - suiteStarted }, null, 2) + '\n');
+      await writeFile(path.join(outputDir, 'results.json'), JSON.stringify({ version: 1, results, evidence, durationMs: Date.now() - suiteStarted }, null, 2) + '\n');
       process.stdout.write('\nAE    Result    Duration  Owner\n' + results.map(row =>
         `${row.id.padEnd(6)}${row.status.padEnd(10)}${`${row.durationMs}ms`.padEnd(10)}${row.owner}`
       ).join('\n') + '\n');
@@ -377,7 +378,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const probeCredentials = (await readJson<AgentCredentials>(probe.files.session))!;
     expect((await admin(world, 'DELETE', `${channelPath()}/members/${enc(probeCredentials.userId)}`)).status, context('AE11')).toBe(204);
     expect(await raw(world, { method: 'GET', path: `/api/local/rooms/${enc(channel.roomId)}/members`, headers: { authorization: `Bearer ${probeCredentials.accessToken}` } }), context('AE11')).toMatchObject({ status: 403, body: { error: 'not_member' } });
-    expect(toolData(await probe.call('khala_send', { text: 'x' })), context('AE11')).toEqual({ error: 'send_failed' });
+    expect(toolData(await probe.call('khala_send', { text: 'x' })), context('AE11')).toEqual({ error: 'not_connected' });
+    expect(toolData(await probe.call('khala_status')), context('AE11')).toMatchObject({ state: 'disconnected', detail: 'removed' });
     expect((await received(world.claude, 'kev-Claude-2 left')).kind, context('AE11')).toBe('event');
     const logs = [await readFile(path.join(world.state, 'khala/local/helper.log'), 'utf8'), world.claude.stderr, world.codex.stderr, probe.stderr].join('\n');
     const helper = (await helperFile(world))!;
@@ -412,7 +414,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await ownerOpen(world, world.page!, 'refactor');
     expect((await cli(world, 'delete', 'refactor')).data, context('AE12')).toEqual({ deleted: channel.roomId });
     expect(existsSync(roomDir()), context('AE12')).toBe(false);
-    for (const agent of [world.claude, world.codex]) await eventually(async () => toolData<{ error: string }>(await agent.call('khala_send', { text: 'x' })).error === 'send_failed');
+    for (const agent of [world.claude, world.codex]) await eventually(async () => toolData<{ error: string }>(await agent.call('khala_send', { text: 'x' })).error === 'not_connected');
+    for (const agent of [world.claude, world.codex]) {
+      expect(toolData(await agent.call('khala_status')), context('AE12')).toMatchObject({ state: 'disconnected', detail: 'channel_deleted' });
+    }
+    evidence.deletedSessionDetail = 'channel_deleted';
     await world.page!.goto(`${world.origin}/conversations`);
     await eventually(async () => await world.page!.getByText('refactor', { exact: true }).count() === 0, 30_000);
     await screenshot('ae12-after-delete.png');
