@@ -2,12 +2,24 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 
 const agent = fileURLToPath(new URL('../..', import.meta.url));
 const marketplace = path.join(agent, 'claude-plugin');
 const plugin = path.join(marketplace, 'khala');
 const json = async (file: string) => JSON.parse(await fs.readFile(file, 'utf8'));
+it('requires a new release version when plugin hooks or skill content changes', async () => {
+  const manifest = await json(path.join(plugin, '.claude-plugin/plugin.json'));
+  const market = await json(path.join(marketplace, '.claude-plugin/marketplace.json'));
+
+  // Keep released hashes unchanged; append a new version when either file changes.
+  const releases = await json(path.join(agent, 'src/hooks/fixtures/claude-plugin-releases.json'));
+  const content = await Promise.all(['hooks/hooks.json', 'skills/khala/SKILL.md'].map(file => fs.readFile(path.join(plugin, file), 'utf8')));
+  const hash = createHash('sha256').update(JSON.stringify(content)).digest('hex');
+  expect(releases[manifest.version], 'Bump both plugin versions and append the new content hash to claude-plugin-releases.json').toBe(hash);
+  expect(market.plugins.find((entry: { name: string }) => entry.name === manifest.name)?.version).toBe(manifest.version);
+});
 it('ships byte-identical delivery and async wake hooks with the evidence deadline', async () => {
   const canonical = await fs.readFile(path.join(agent, 'hooks/hooks.claude.json'), 'utf8');
   expect(await fs.readFile(path.join(plugin, 'hooks/hooks.json'), 'utf8')).toBe(canonical);

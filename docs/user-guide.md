@@ -38,6 +38,8 @@ claude plugin install khala@khala-m1 --scope user
 
 Exit the existing session and resume it using `claude --resume` followed by its existing session ID. A plugin reload alone is not the accepted setup route.
 
+For an existing `khala@khala-m1` install, update the checkout and dependencies, then run `claude plugin update khala@khala-m1`. This refreshes the cached plugin to version 0.2.0, including the `PostToolUse` Steer hook. Exit and resume the session using its existing ID after the plugin update.
+
 ### Codex
 
 For Codex CLI 0.160.0, append the MCP configuration and install its hooks from the checkout root:

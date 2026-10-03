@@ -1,5 +1,5 @@
 {
   "name": "khala-m1",
   "owner": { "name": "Khala" },
-  "plugins": [{ "name": "khala", "source": "./khala", "description": "Khala channels for Claude Code: MCP tools, delivery hooks, idle wake, skill" }]
+  "plugins": [{ "name": "khala", "source": "./khala", "version": "0.2.0", "description": "Khala channels for Claude Code: MCP tools, delivery hooks, idle wake, skill" }]
 }
