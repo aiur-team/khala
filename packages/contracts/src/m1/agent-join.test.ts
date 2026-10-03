@@ -72,3 +72,29 @@ describe('M1 agent join', () => {
     for (const [path, expected] of [['label', 'invalid_label'], ['label.nested', 'invalid_label'], ['harness', 'invalid_harness'], ['', 'invalid_link'], ['extra', 'invalid_link']]) expect(join.agentJoinRequestErrorCode({ path: path!, code: 'invalid_value' })).toBe(expected);
   });
 });
+
+describe('local join additions', () => {
+  it('preserves hosted records without adding optional fields', () => {
+    expect(join.decodeAgentJoinCreated(created)).toEqual({ ok: true, value: created });
+    expect(join.decodeAgentCredentials(credentials)).toEqual({ ok: true, value: credentials });
+  });
+  it('accepts exact optional values, including nested local credentials', () => {
+    const auto = { ...created, autoConfirmed: true };
+    expect(join.decodeAgentJoinCreated(auto)).toEqual({ ok: true, value: auto });
+    for (const transport of ['local', 'matrix']) {
+      const value = { ...credentials, transport };
+      expect(join.decodeAgentCredentials(value)).toEqual({ ok: true, value });
+      expect(join.decodeAgentJoinPoll({ state: 'confirmed', credentials: value })).toEqual({ ok: true, value: { state: 'confirmed', credentials: value } });
+    }
+    const local = { homeserver: 'http://127.0.0.1:47830', userId: '@agent-a1b2c3d4:local', accessToken: 'a'.repeat(43), deviceId: 'KH_LOCAL_a1b2c3d4', roomId: '!AAAAAAAAAAAAAAAAAAAAAA:local', transport: 'local' };
+    expect(join.decodeAgentCredentials(local)).toEqual({ ok: true, value: local });
+  });
+  it.each([false, 'true', 1, undefined, null])('rejects autoConfirmed %j', autoConfirmed => {
+    expect(join.decodeAgentJoinCreated({ ...created, autoConfirmed })).toEqual({ ok: false, error: { path: 'autoConfirmed', code: 'invalid_value' } });
+  });
+  it.each(['tcp', '', undefined, null, 1])('rejects transport %j at the correct path', transport => {
+    const code = typeof transport === 'string' ? 'invalid_value' : 'wrong_type';
+    expect(join.decodeAgentCredentials({ ...credentials, transport })).toEqual({ ok: false, error: { path: 'transport', code } });
+    expect(join.decodeAgentJoinPoll({ state: 'confirmed', credentials: { ...credentials, transport } })).toEqual({ ok: false, error: { path: 'credentials.transport', code } });
+  });
+});
