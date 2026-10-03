@@ -14,7 +14,7 @@ const self = '@agent-a1b2c3d4:local';
 const other = '@agent-11223344:local';
 const room = '!c7Kq2vXbT1nP0aZ9yW3eQw:local';
 const token = 'secret-local-access-token';
-const creds: AgentCredentials = { homeserver: 'http://127.0.0.1:47830/ignored', accessToken: token, roomId: room, userId: self, deviceId: 'KH_LOCAL_a1b2c3d4', transport: 'local' };
+const creds: AgentCredentials = { homeserver: 'http://127.0.0.1:47830', accessToken: token, roomId: room, userId: self, deviceId: 'KH_LOCAL_a1b2c3d4', transport: 'local' };
 const sessions: ChannelSession[] = [];
 afterEach(async () => { await Promise.all(sessions.splice(0).map(s => s.stop())); vi.useRealTimers(); });
 const tick = async (): Promise<void> => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
@@ -425,3 +425,34 @@ it.each(['unsafe_state_dir', 'storage_failed'] as const)('exposes helper %s duri
     expect(await c.client.status()).toMatchObject({ state: 'send_failed', detail });
   } finally { await c.cleanup(); }
 });
+
+it.each([
+  'http://192.0.2.1:443', 'http://khala.invalid:443', 'http://0.0.0.0:443',
+  'https://khala.invalid:443', 'https://127.0.0.1:47830', 'ftp://localhost:47830',
+  'http://localhost.evil.invalid:47830', 'http://127.0.0.2:47830',
+  'http://[::]:47830', 'http://[::ffff:127.0.0.1]:47830',
+  `http://user:${token}@localhost:47830`, 'http://user@127.0.0.1:47830',
+  'http://localhost:47830/ignored', 'http://localhost:47830/..',
+  'http://localhost:47830?secret=value', 'http://localhost:47830#fragment',
+  'http://localhost:99999', `invalid-${token}`,
+  'http://localhost', 'http://localhost:47830?', 'http://localhost:47830#',
+  ' http://localhost:47830', 'http://localhost:47830/./',
+  'http://127.1:47830', 'http://2130706433:47830',
+])('rejects unsafe LocalSession homeserver %s before fetch or helper startup', async homeserver => {
+  const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(network('ECONNREFUSED'));
+  const ensureHelper = vi.fn(async () => {});
+  const log = vi.fn();
+  await expect(createLocalSession({ ...creds, homeserver }, { fetch, ensureHelper, log }))
+    .rejects.toMatchObject({ name: 'KhalaClientError', code: 'internal_error', message: 'invalid_local_origin' });
+  expect(fetch).not.toHaveBeenCalled();
+  expect(ensureHelper).not.toHaveBeenCalled();
+  expect(log).not.toHaveBeenCalled();
+});
+it.each(['http://127.0.0.1:47830', 'http://localhost:47830', 'http://[::1]:47830', 'http://localhost:80/'])(
+  'accepts HTTP loopback origin %s', async homeserver => {
+    const h = fakeHelper();
+    const s = await createLocalSession({ ...creds, homeserver }, { fetch: h.fetch, ensureHelper: h.ensure });
+    sessions.push(s);
+    expect(h.calls[0]?.url).toBe(new URL(homeserver).origin + `/api/local/rooms/${encodeURIComponent(room)}/me`);
+    expect(h.calls[0]?.auth).toBe(`Bearer ${token}`);
+  });
