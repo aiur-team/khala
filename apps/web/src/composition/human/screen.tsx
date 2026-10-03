@@ -27,6 +27,8 @@ export type HumanScreenProps<Route> = Readonly<{
   renderRoute: (context: HumanRouteContext, route: Route, chrome: HumanShellChrome) => ReactNode;
   /** What a signed-out snapshot shows; a composition without sign-in renders its own terminal state. */
   renderSignedOut: (path: string) => ReactNode;
+  /** What an identity that could not be determined shows; omitted, the generic status frame renders. */
+  renderIdentityUnavailable?: (path: string) => ReactNode;
   /** Signed-in key loss stays outside every room route and owner-only capability. */
   renderDeviceLoss?: (path: string) => ReactNode;
   /** Attaches optional capabilities to each ready route context. */
@@ -88,6 +90,7 @@ export function HumanScreen<Route>({
   mode = 'hosted-content',
   renderRoute,
   renderSignedOut,
+  renderIdentityUnavailable,
   renderDeviceLoss,
   attachCapabilities,
   renderReadyShell,
@@ -118,6 +121,8 @@ export function HumanScreen<Route>({
     content = <LoadingSpinner />;
   } else if (snapshot.phase === 'signed_out') {
     content = renderSignedOut(snapshot.path);
+  } else if (snapshot.phase === 'unavailable' && snapshot.source === 'identity' && renderIdentityUnavailable) {
+    content = renderIdentityUnavailable(snapshot.path);
   } else if (snapshot.phase === 'inactive' || snapshot.phase === 'unavailable' && snapshot.source === 'device'
     && snapshot.reason === 'lease_unavailable') {
     content = <InactiveDevice application={application} timedOut={snapshot.phase === 'unavailable'} />;
