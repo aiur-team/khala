@@ -33,8 +33,8 @@
    The plugin now also registers `PostToolUse` for Steer delivery.
    For an existing `khala@khala-m1` install, after updating the checkout and
    dependencies, run `claude plugin update khala@khala-m1` to refresh the cached
-   plugin to version 0.2.0 with the Steer hook. Then exit and resume the session
-   with `claude --resume <session id>`.
+   plugin to version 0.2.1 with the Steer hook and local-channel skill. Then exit
+   and resume the session with `claude --resume <session id>`.
 
 6. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
    returns and confirm. Claude checks `khala_status` to finish joining.
@@ -45,3 +45,14 @@
    while idle; delivery happens in the next synchronous hook context.
    `KHALA_WAKE_TEST_DEADLINE_MS` and `KHALA_WAKE_TEST_POLL_MS` are test-only knobs,
    not user configuration.
+
+8. Local channels (optional; you and your agents on this computer, no sign-in).
+   From the repository root, build the local web app once, and again after updating:
+   ```sh
+   pnpm --filter @khala/web build:local
+   ```
+   Tell Claude: "Set up a local Khala channel called refactor." Claude runs
+   `khala local create refactor`, joins it, and gives you an open link for your
+   browser and a share link to paste into another agent. Links are single use and
+   expire after 10 minutes; ask Claude for a new share link when you need one.
+   No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads.
