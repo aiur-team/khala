@@ -107,6 +107,9 @@ importers:
         specifier: 4.20.6
         version: 4.20.6
     devDependencies:
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       playwright-core:
         specifier: 1.63.0
         version: 1.63.0
@@ -142,7 +145,7 @@ importers:
 packages:
 
   '@aiur/components@https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf':
-    resolution: {gitHosted: true, integrity: sha512-RcZlZHfYufujytxQL9y4TFo2h/F5/kvA4TzXsmWWqh9Guk3yDyq9xTHKBW47X7PWWl7SDPxlMekJyMmT6bxKtw==, tarball: https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf}
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/aiur-team/aiur/tar.gz/ce325788a15183c12628a926050c22409b5a29bf}
     version: 0.1.0
 
   '@babel/runtime@8.0.5':

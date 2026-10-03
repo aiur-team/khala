@@ -15,41 +15,28 @@ Copy the channel's invite link and send it to your coworker. They open it, sign 
 
 ## Add your agent
 
-M1 uses `@khala/agent` from a repository checkout, not an npm-published package. Use Node 22.23.2 and pnpm 10.34.5. Clone the [source repository](https://github.com/aiur-team/khala) and open its root in a terminal. If Khala was previously installed, remove the old binary, plugin or MCP configuration first using the [Claude setup](../packages/agent/docs/install-claude.md) or [Codex setup](../packages/agent/docs/install-codex.md). Then install dependencies and expose the executable:
-
-```sh
-pnpm install --frozen-lockfile
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/packages/agent/bin/khala.mjs" ~/.local/bin/khala
-export PATH="$HOME/.local/bin:$PATH"
-khala --version
-```
-
-Keep the checkout and dependencies available and `~/.local/bin` on PATH in the shell launching your agent.
+Install the published `khala-cli` package through your harness; you need Node 22 or newer with `npm` on `PATH`, and no checkout. If Khala was previously installed from a checkout, remove the old plugin or MCP configuration first (see the [Claude setup](../packages/agent/docs/install-claude.md) or [Codex setup](../packages/agent/docs/install-codex.md)).
 
 ### Claude Code
 
-From the checkout root, install the plugin for Claude Code 2.1.287:
-
 ```sh
-claude plugin marketplace add "$(pwd)/packages/agent/claude-plugin"
-claude plugin install khala@khala-m1 --scope user
+claude plugin marketplace add aiur-team/khala
+claude plugin install khala@khala
 ```
 
-Exit the existing session and resume it using `claude --resume` followed by its existing session ID. A plugin reload alone is not the accepted setup route.
-
-For an existing `khala@khala-m1` install, update the checkout and dependencies, then run `claude plugin update khala@khala-m1`. This refreshes the cached plugin to version 0.2.0, including the `PostToolUse` Steer hook. Exit and resume the session using its existing ID after the plugin update.
+Exit the existing session and resume it using `claude --resume` followed by its existing session ID. A plugin reload alone is not the accepted setup route. The plugin runs `khala-cli` at the version it pins and installs that copy in the background on first start. To update later, run `claude plugin marketplace update khala` and `claude plugin update khala@khala`, then resume.
 
 ### Codex
 
-For Codex CLI 0.160.0, append the MCP configuration and install its hooks from the checkout root:
+For Codex CLI 0.160.0:
 
 ```sh
-cat packages/agent/codex/config.toml.example >> "${CODEX_HOME:-$HOME/.codex}/config.toml"
-node packages/agent/codex/install-hooks.mjs install
+npx -y khala-cli install codex
 ```
 
-Edit the appended `env` paths to your shell's absolute `HOME` and state directory (`XDG_STATE_HOME`, default `~/.local/state`). The MCP server and shell hooks must use the same paths. Exit the existing session and use `codex resume` followed by its existing thread ID. In **Hooks need review**, trust the three Khala hooks running `khala hook deliver --harness codex`.
+This installs the CLI under `~/.local/share/khala/npm` and adds the MCP server (with your absolute `HOME` and state directory) and three hooks to `~/.codex`. Exit the existing session and use `codex resume` followed by its existing thread ID. In **Hooks need review**, trust the three Khala hooks running `…/khala/npm/bin/khala hook deliver --harness codex`.
+
+Developers running Khala from a source checkout follow the checkout sections of the same setup pages.
 
 ### Join and confirm
 

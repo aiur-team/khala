@@ -13,7 +13,7 @@ beforeEach(async () => {
   await mkdir(join(fixture, 'src/local'), { recursive: true });
   await mkdir(join(fixture, 'hooks'));
   await copyFile(new URL('../bin/khala.mjs', import.meta.url), join(fixture, 'bin/khala.mjs'));
-  await copyFile(new URL('./version.ts', import.meta.url), join(fixture, 'src/version.ts'));
+  for (const file of ['version.ts', 'bundle.ts', 'cli.ts']) await copyFile(new URL(`./${file}`, import.meta.url), join(fixture, 'src', file));
   await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
   await symlink(fileURLToPath(new URL('../node_modules', import.meta.url)), join(fixture, 'node_modules'), 'dir');
 });
@@ -41,7 +41,7 @@ const echo = `export default async function run(stdin: string, argv: readonly st
 describe('C12 source dispatcher', () => {
   it('prints the version and reports usage for unknown commands', async () => {
     expect(await run(['--version'])).toEqual({ code: 0, stdout: '0.0.0\n', stderr: '' });
-    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala hook <name> | khala local <command> | khala --version\n' });
+    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala hook <name> | khala local <command> | khala install codex | khala --version\n' });
   });
   it('reports absent MCP modules and passes argv and the module exit code', async () => {
     expect(await run(['mcp'])).toEqual({ code: 1, stdout: '', stderr: 'khala: mcp not available\n' });

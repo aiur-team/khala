@@ -1,6 +1,8 @@
 {
   "name": "khala",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Khala channels for Claude Code",
-  "author": { "name": "Khala" }
+  "author": {
+    "name": "Khala"
+  }
 }
