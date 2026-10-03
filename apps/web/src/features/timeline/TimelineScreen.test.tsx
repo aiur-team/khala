@@ -456,6 +456,20 @@ describe('channel event rows', () => {
     expect(html).toContain('kh-row human last-of');
     expect(html).not.toContain('class="channel-event-pill"');
   });
+  it('stamps the pill in the same time zone and format as the message row', () => {
+    const alice = participant('alice', 'human', 'Alice');
+    const message = { ...item('A', alice, 'hello'), receivedAt: '2026-10-01T04:44:00Z' };
+    const event = { kind: 'channel_event' as const, eventId: '$join' as EventId, participant: alice,
+      content: { v: 1 as const, body: 'kevin-Codex joined', kind: 'member.joined', summary: 'kevin-Codex joined' },
+      receivedAt: message.receivedAt };
+    const html = renderToStaticMarkup(<TimelineScreen controller={fakeController({ phase: 'ready', items: [message],
+      rows: [{ kind: 'message' as const, item: message }, event], nextCursor: null, newMessageCount: 0 })}
+      roomPort={noopSendPort} roomId={roomId} viewer={viewer} timeOptions={{ timeZone: 'Asia/Kolkata' }} />);
+    const rowTime = html.match(/data-event-id="A"[\s\S]*?<time[^>]*>([^<]+)<\/time>/)?.[1];
+    const pillTime = html.match(/data-event-id="\$join"[\s\S]*?<time[^>]*>([^<]+)<\/time>/)?.[1];
+    expect(rowTime).toBe('10:14');
+    expect(pillTime).toBe(rowTime);
+  });
 });
 
 

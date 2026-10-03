@@ -43,7 +43,14 @@ function message(event: LocalEvent): SessionMessage {
 }
 
 export async function createLocalSession(creds: AgentCredentials, opts: LocalSessionOptions = {}): Promise<ChannelSession> {
-  const origin = new URL(creds.homeserver).origin;
+  let origin: string;
+  try {
+    // Check the original spelling too: URL parsing normalizes IP aliases and paths.
+    if (!/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):[0-9]+\/?$/iu.test(creds.homeserver)) throw new Error();
+    origin = new URL(creds.homeserver).origin;
+  } catch {
+    throw new KhalaClientError('internal_error', 'invalid_local_origin');
+  }
   const fetchImpl = opts.fetch ?? globalThis.fetch;
   const pause = opts.sleep ?? sleep;
   const log = opts.log ?? (() => {});

@@ -246,7 +246,7 @@ test('retains member tokens across leave and replay, revokes explicitly, and nev
   expect(store.agentForToken(token)).toBeNull();
 });
 
-test('deletes files and indexes and wakes both waiters; unknown deletes are no-ops', async () => {
+test('deletes files and indexes, retains token tombstones and wakes waiters; unknown deletes are no-ops', async () => {
   const { roomId } = await store.createChannel('delete', 'delete-op');
   await membership(roomId);
   await store.setMemberToken(roomId, agent, sha256('token'));
@@ -262,7 +262,8 @@ test('deletes files and indexes and wakes both waiters; unknown deletes are no-o
   expect(store.hasChannel(roomId)).toBe(false);
   expect(store.findByOperation('delete-op')).toBeUndefined();
   expect(store.channelOfMember(agent)).toBeUndefined();
-  expect(store.agentForToken('token')).toBeNull();
+  expect(store.agentForToken('token')).toEqual({ roomId, userId: agent });
+  expect(store.agentForToken('unknown')).toBeNull();
   expect(await store.consumeLink(token)).toBeNull();
   await expect(store.append(roomId, message('gone'))).rejects.toMatchObject({ code: 'not_found' });
   expect(store.revision()).toBe(rev + 1);
@@ -270,6 +271,7 @@ test('deletes files and indexes and wakes both waiters; unknown deletes are no-o
   expect(store.revision()).toBe(rev + 1);
   await reopen();
   expect(store.listChannels()).toEqual([]);
+  expect(store.agentForToken('token')).toBeNull();
 });
 
 test('uses 0700 directories and 0600 files, allowing a 0755 XDG parent and rejecting unsafe owned directories', async () => {
