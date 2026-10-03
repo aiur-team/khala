@@ -4,7 +4,6 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { startChannelSession } from './transport';
 import { createLocalSession } from './local/session';
-import { KhalaClientError } from './client';
 const mocks = vi.hoisted(() => ({ matrixModule: vi.fn(() => ({ createAgentMatrixSession: vi.fn() })), local: vi.fn(async () => ({ userId: 'local' })) }));
 vi.mock('./matrix/session', () => mocks.matrixModule());
 vi.mock('./local/session', () => ({ createLocalSession: mocks.local }));
@@ -31,11 +30,4 @@ it('has no eager matrix session edges, including inline type imports', async () 
   }
   await inspect(src);
   await inspect(fileURLToPath(new URL('../hooks/', import.meta.url)));
-});
-// KI-121 replaces the placeholder and removes this case.
-it('reports a safe error from the local placeholder', async () => {
-  const actual = await vi.importActual<typeof import('./local/session')>('./local/session');
-  const error = await actual.createLocalSession(creds).catch(error => error);
-  expect(error).toBeInstanceOf(KhalaClientError);
-  expect(error).toMatchObject({ code: 'internal_error', message: 'local_transport_unavailable' });
 });
