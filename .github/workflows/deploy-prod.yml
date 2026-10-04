@@ -1,5 +1,5 @@
 name: Deploy production
-# Every commit on `main` deploys to https://khala.aiur.team (Netlify site
+# Deploys `main` to https://khala.aiur.team (Netlify site
 # khala-aiur). This reproduces the manual deploy exactly: local build with the
 # production PUBLIC_* values, then `netlify deploy --prod --no-build`, which
 # also bundles the edge functions in infra/netlify/edge-functions.
@@ -8,9 +8,19 @@ name: Deploy production
 # for CI); only a successful build is required. The manual script described in
 # infra/netlify/README.md remains the fallback.
 on:
-  push:
-    branches: [main]
+  # Manual only. Production deploys cost Netlify credits (15 each, Personal
+  # plan 1000/month); deploy-on-push burned 41 deploys in two days. Deploy
+  # only after the full project passes local end-to-end, and the budget step
+  # below refuses deploys over the per-period cap.
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type DEPLOY after the full local end-to-end run passed
+        required: true
+      max_deploys:
+        description: Production deploy cap for this billing period (exclusive)
+        required: true
+        default: "44"
 
 # Deploys run one at a time in push order and are never cancelled, so the
 # latest main is always the last one published.
@@ -32,6 +42,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Check confirmation and Netlify credit budget
+        shell: bash  # -eo pipefail, so the budget script's exit 2 survives the tee
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          CONFIRM: ${{ inputs.confirm }}
+          MAX_DEPLOYS: ${{ inputs.max_deploys }}
+        run: |
+          [ "$CONFIRM" = DEPLOY ] || { echo '::error::confirm input must be DEPLOY'; exit 1; }
+          node scripts/netlify-credits.mjs --plus 15 --max-deploys "$MAX_DEPLOYS" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
