@@ -1,9 +1,13 @@
-import { type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal, nullable, object, safeInteger, text, utcTimestamp, utf8Length, version } from '../messaging/decode';
-import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHarness, readHttpUrl, readMatrixUserId, readRoomId } from './agent-join';
-import { type HumanColorId, readHumanColorId } from './colors';
-import { readHumanInitials } from './initials';
-import { LISTENING_MODES } from './listening-mode';
-import { checkName } from './names';
+// FROZEN COPY: packages/contracts/src/m1/local.ts at origin/main 120d9ffa (pre-#1078).
+// This is the strict local wire decoder shipped to agent CLIs before rename delivery.
+// Do not edit: helper-default responses must keep decoding with it, because one
+// machine-wide helper serves every installed CLI version. See wire-compat.test.ts.
+import { type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal, nullable, object, safeInteger, text, utcTimestamp, utf8Length, version } from '@khala/contracts/messaging/decode';
+import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHarness, readHttpUrl, readMatrixUserId, readRoomId } from '@khala/contracts/m1/agent-join';
+import { type HumanColorId, readHumanColorId } from '@khala/contracts/m1/colors';
+import { readHumanInitials } from '@khala/contracts/m1/initials';
+import { LISTENING_MODES } from '@khala/contracts/m1/listening-mode';
+import { checkName } from '@khala/contracts/m1/names';
 
 export const LOCAL_SERVER_NAME = 'local' as const;
 export const LOCAL_OWNER_USER_ID = '@khala_owner:local' as const;
@@ -55,6 +59,7 @@ export const localRoomKey = (roomId: string): string => {
   if (!isLocalRoomId(roomId)) throw new RangeError('not_local_room');
   return roomId.slice(1, -':local'.length);
 };
+// khala-terminology-allow: verbatim frozen copy of the pre-#1078 wire decoder
 export const localRoomPath = (roomId: string, tail: string): string => `/api/local/rooms/${encodeURIComponent(roomId)}/${tail}`;
 
 export type LocalEventType = 'm.room.create' | 'm.room.name' | 'm.room.member' | 'm.room.message'
@@ -69,7 +74,6 @@ export type LocalEvent = {
   ts: number;                  // helper clock, ms since epoch
   txnId?: string;              // present when the sender supplied one; (sender, txnId) is unique per channel
   content: Record<string, unknown>;
-  previousContent?: LocalMemberContent; // helper-derived preceding membership, independent of roster fetch timing
 };
 
 // content by type
@@ -252,14 +256,13 @@ function readContent(input: unknown, path: string, type: LocalEventType): Record
   }
 }
 function readEvent(input: unknown, path: string): LocalEvent {
-  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId', 'previousContent']);
+  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId']);
   const type = literal(r.field('type'), r.at('type'), EVENT_TYPES);
   return { seq: seq(r.field('seq'), r.at('seq')), eventId: readLocalEventId(r.field('eventId'), r.at('eventId')),
     roomId: readLocalRoomId(r.field('roomId'), r.at('roomId')), type,
     sender: readLocalUserId(r.field('sender'), r.at('sender')), ts: safeInteger(r.field('ts'), r.at('ts')),
     ...(has(input, 'txnId') ? { txnId: readLocalTxnId(r.field('txnId'), r.at('txnId')) } : {}),
-    content: readContent(r.field('content'), r.at('content'), type),
-    ...(has(input, 'previousContent') ? { previousContent: readMemberContent(r.field('previousContent'), r.at('previousContent')) } : {}) };
+    content: readContent(r.field('content'), r.at('content'), type) };
 }
 export function decodeLocalEvent(input: unknown): Decoded<LocalEvent> { return decodeWith(() => readEvent(input, '')); }
 function limitedArray<T>(input: unknown, path: string, max: number, read: (input: unknown, path: string) => T): T[] {

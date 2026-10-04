@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ensureStateDir, readJson, writeJsonAtomic, StateError } from '../state';
 import { memberListeningMode } from '@khala/contracts/m1/listening-mode';
+import { memberRenameContent } from '../events/member-rename';
 import {
   base64url, decodeChannelSecrets, decodeLocalEvent, decodeOwnerProfile, isLocalRoomId,
   newLocalRoomId, localRoomKey, newLocalEventId, LOCAL_OWNER_USER_ID, LOCAL_OWNER_ID,
@@ -28,6 +29,7 @@ type StoredMember = NonNullable<ReturnType<LocalStore['member']>>;
 type Channel = {
   roomId: string; dir: string; events: LocalEvent[]; byEventId: Map<string, LocalEvent>;
   byTxn: Map<string, LocalEvent>; lastMember: Map<string, { event: LocalEvent; firstSeq: number }>;
+  previousMembers: Map<string, LocalMemberContent>;
   name: string; operationId?: string; secrets: ChannelSecrets; handle?: fs.FileHandle;
   validBytes?: number; waiters: Set<() => void>;
 };
@@ -53,7 +55,7 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
   function makeChannel(roomId: string): Channel {
     return { roomId, dir: path.join(channelsDir, localRoomKey(roomId)), name: '',
       events: [], byEventId: new Map(), byTxn: new Map(), lastMember: new Map(),
-      secrets: emptySecrets(), waiters: new Set() };
+      previousMembers: new Map(), secrets: emptySecrets(), waiters: new Set() };
   }
   function indexEvent(channel: Channel, event: LocalEvent): void {
     channel.events.push(event);
@@ -65,6 +67,8 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     } else if (event.type === 'm.room.name') channel.name = event.content.name as string;
     else if (event.type === 'm.room.member') {
       const user = event.content.user as string;
+      const previous = channel.lastMember.get(user)?.event.content;
+      if (previous) channel.previousMembers.set(event.eventId, previous as LocalMemberContent);
       const firstSeq = channel.lastMember.get(user)?.firstSeq ?? event.seq;
       channel.lastMember.set(user, { event, firstSeq });
     }
@@ -262,7 +266,11 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
         const mid = Math.floor((lo + hi) / 2);
         if (events[mid]!.seq <= after) lo = mid + 1; else hi = mid;
       }
-      return structuredClone(events.slice(lo, lo + Math.max(0, limit)));
+      const channel = channels.get(roomId);
+      return structuredClone(events.slice(lo, lo + Math.max(0, limit)).map(event => {
+        const previousContent = channel?.previousMembers.get(event.eventId);
+        return previousContent ? { ...event, previousContent } : event;
+      }));
     },
     waitForEvent: (roomId, after, timeoutMs, signal) => {
       const channel = channels.get(roomId);
@@ -272,7 +280,17 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       const channel = channels.get(roomId);
       const cutoff = before !== undefined ? channel?.byEventId.get(before)?.seq : Infinity;
       if (!channel || cutoff === undefined || limit <= 0) return { events: [] };
-      const candidates = channel.events.filter(e => e.seq < cutoff && (e.type === 'm.room.message' || e.type === 'com.khala.event.v1'));
+      const previousMembers = new Map<string, Record<string, unknown>>();
+      const candidates: LocalEvent[] = [];
+      for (const event of channel.events) {
+        if (event.seq >= cutoff) break;
+        if (event.type === 'm.room.member') {
+          const user = event.content.user as string;
+          const content = memberRenameContent(event.content, previousMembers.get(user));
+          previousMembers.set(user, event.content);
+          if (content) candidates.push({ ...event, type: 'com.khala.event.v1', content });
+        } else if (event.type === 'm.room.message' || event.type === 'com.khala.event.v1') candidates.push(event);
+      }
       const events = candidates.slice(-limit);
       return { events: structuredClone(events), ...(candidates.length > events.length ? { nextBefore: events[0]!.eventId } : {}) };
     },

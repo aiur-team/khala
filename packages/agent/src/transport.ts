@@ -1,7 +1,7 @@
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 
-export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1'; body: string; content: Record<string, unknown> };
+export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1' | 'm.room.member'; body: string; content: Record<string, unknown>; previousContent?: Record<string, unknown> };
 export type SessionModeCommand = { eventId: string; roomId: string; sender: string; ts: number; content: unknown };
 export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
