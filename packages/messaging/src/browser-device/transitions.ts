@@ -46,6 +46,41 @@ export function within(promise: Promise<unknown>, ms: number): Promise<boolean> 
   });
 }
 
+export class StepTimeout extends Error {
+  constructor() {
+    super('device setup step timed out');
+  }
+}
+
+/**
+ * Settles like `promise`, but rejects with `StepTimeout` once `ms` passes. A
+ * value that arrives after the bound goes to `late`, so a resource it opened
+ * is closed rather than leaked. A setup step that never settles (a blocked
+ * IndexedDB open, an unanswered permission prompt) must not keep a tab on
+ * "Getting this device ready" while it holds the owner's lock.
+ */
+export function bounded<T>(promise: Promise<T>, ms: number, late?: (value: T) => unknown): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      reject(new StepTimeout());
+    }, ms);
+    promise.then(value => {
+      if (!expired) {
+        clearTimeout(timer);
+        resolve(value);
+        return;
+      }
+      try { void Promise.resolve(late?.(value)).catch(() => undefined); } catch { /* best-effort close */ }
+    }, (error: unknown) => {
+      if (expired) return;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 /**
  * Ends a generation. The service detaches `g` before calling this, so it runs once
  * per generation. Resolves after every resource it held is closed, or once

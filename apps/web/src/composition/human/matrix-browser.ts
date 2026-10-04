@@ -402,7 +402,6 @@ class MatrixRuntime {
         await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: input.store.name });
         const crypto = client.getCrypto();
         if (!crypto) throw new Error('Matrix crypto unavailable');
-        let startInvoked = false;
         let stopped = false;
         let crossSigningStarted = false;
         const crossSigningAbort = new AbortController();
@@ -412,7 +411,6 @@ class MatrixRuntime {
             return { fingerprint: keys.ed25519, created: false };
           },
           async start(signal) {
-            startInvoked = true;
             try {
               await startMatrixClient(client, signal);
             } catch (error) {
@@ -449,7 +447,9 @@ class MatrixRuntime {
           async close() {
             crossSigningAbort.abort();
             if (activeClient()?.client === client) setActive(null);
-            if (startInvoked && !stopped) {
+            // stopClient also closes the crypto store that initRustCrypto opened, so a
+            // generation ended before start does not keep its IndexedDB connection.
+            if (!stopped) {
               stopped = true;
               client.stopClient();
             }

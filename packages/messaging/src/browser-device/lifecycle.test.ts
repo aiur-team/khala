@@ -70,6 +70,28 @@ describe('createBrowserDeviceService', () => {
     expect(next.current().state).toBe('ready');
   });
 
+  it.each(['store', 'engine', 'markers'] as const)('fails and releases the lock when %s setup never settles', async step => {
+    const disk = createDisk();
+    const { deps } = rig(disk);
+    const never = <T>() => new Promise<T>(() => undefined);
+    const service = createBrowserDeviceService({
+      ...deps,
+      engineTimeoutMs: 20,
+      ...(step === 'store' ? { stores: { open: never } } : {}),
+      ...(step === 'engine' ? { engines: { open: never } } : {}),
+      ...(step === 'markers' ? { markers: { ...deps.markers, get: never } } : {}),
+    });
+
+    const result = await service.ensureReady(alice);
+
+    expect(result.kind === 'ok' ? result.value.state : result.kind).not.toBe('ready');
+    expect(service.current()).toMatchObject({ state: 'failed' });
+    // Retrying in another tab acquires the device at once.
+    const next = createBrowserDeviceService(rig(disk).deps);
+    expect((await next.ensureReady(alice)).kind).toBe('ok');
+    expect(next.current().state).toBe('ready');
+  });
+
   it('enters lost, not ready with new keys, when identity is missing for a device the server knows', async () => {
     const disk = createDisk();
     const { deps, engines } = rig(disk, { credentials: { owner_alice: session('DEVICE_OLD', 'fp-published-old') } });

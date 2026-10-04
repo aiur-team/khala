@@ -133,7 +133,9 @@ export function createIndexedDbStoreFactory(
       const probe = await request(factory.open(probeName));
       probe.close();
       await request(factory.deleteDatabase(probeName));
-      await storage?.persist?.().catch(() => false);
+      // Firefox answers persist() only once the person responds to a permission
+      // prompt, which may never happen. The request must not hold up setup.
+      try { void storage?.persist?.().catch(() => false); } catch { /* persistence is optional */ }
       return { name, close: async () => undefined };
     },
   };

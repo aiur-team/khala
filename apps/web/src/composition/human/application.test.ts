@@ -133,6 +133,64 @@ describe('createHumanApplication', () => {
     app.dispose();
   });
 
+  it('opens the device in an unfocused tab when no other tab holds it', async () => {
+    const lockState = vi.fn(async () => ({ held: false, waiting: false }));
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const app = createHumanApplication({ identity, device: fakeDevice(), room: {} as RoomPort, admission: {} as AdmissionPort, limits },
+      { initialPath: '/channels/first', tabHandoff: { isFocused: () => false, request: () => undefined,
+        listen: () => () => undefined, lockState } });
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+    expect(lockState).toHaveBeenCalledWith(alice.ownerId);
+    app.dispose();
+  });
+
+  it('stays inactive while another tab holds the device, and Try again claims it without focus', async () => {
+    let held = true;
+    const requests: OwnerId[] = [];
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const ensureReady = vi.fn(async () => ok(readyDevice(alice)));
+    const app = createHumanApplication({ identity, device: fakeDevice({ ensureReady }), room: {} as RoomPort,
+      admission: {} as AdmissionPort, limits },
+    { initialPath: '/channels/first', tabHandoff: { isFocused: () => false, request: ownerId => { requests.push(ownerId); },
+      listen: () => () => undefined, lockState: async () => ({ held, waiting: false }) } });
+    await eventually(() => expect(app.getSnapshot().phase).toBe('inactive'));
+    expect(ensureReady).not.toHaveBeenCalled();
+
+    held = false;
+    app.retryDevice();
+    await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
+    expect(requests).toContain(alice.ownerId);
+    app.dispose();
+  });
+
+  it('keeps a device it opened while unfocused unless another tab is waiting for it', async () => {
+    let waiting = false;
+    const stop = vi.fn(async () => undefined);
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(), signOut: vi.fn(),
+    };
+    const tabHandoff: TabHandoff = { isFocused: () => false, request: () => undefined, listen: () => () => undefined,
+      lockState: async () => ({ held: false, waiting }) };
+    const kept = createHumanApplication({ identity, device: fakeDevice({ stop }), room: {} as RoomPort,
+      admission: {} as AdmissionPort, limits }, { tabHandoff });
+    await eventually(() => expect(kept.getSnapshot().phase).toBe('ready'));
+    expect(stop).not.toHaveBeenCalled();
+    kept.dispose();
+
+    waiting = true;
+    const yielded = createHumanApplication({ identity, device: fakeDevice({ stop }), room: {} as RoomPort,
+      admission: {} as AdmissionPort, limits }, { tabHandoff });
+    await eventually(() => expect(yielded.getSnapshot().phase).toBe('inactive'));
+    yielded.dispose();
+  });
+
   it.each(['lost', 'revoked'] as const)('keeps %s device state visible after another tab claims the lease', async state => {
     let focused = true;
     let request: (ownerId: OwnerId) => void = () => undefined;
