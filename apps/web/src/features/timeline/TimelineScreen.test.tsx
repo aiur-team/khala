@@ -55,7 +55,9 @@ describe('TimelineScreen', () => {
       describeParticipant={id => id === bot.participantId ? { matrixUserId: '@bot:hs', participantId: 'bot', ownerId: bot.ownerId,
         displayName: 'Claude · Kevin', kind: 'agent', ownerLabel: 'Kevin', harness: 'claude' } : undefined} />);
     // The C3 display name keeps only the label; the avatar's owner badge says whose agent it is.
-    expect(html).toContain('<b dir="auto">Claude</b><time');
+    expect(html).toContain('<b dir="auto">Claude</b><span class="kh-kind kh-kind-agent" role="img" aria-label="Agent"');
+    // The agent's name, avatar and bubble all take its owner's resolved colour.
+    expect(html).toMatch(/style="--oh:(\d+);--ob:(#[0-9a-f]+)"><button type="button" class="kh-av kh-aav" style="--h:\1;--oh:\1;--hc:\2".*class="kh-name" style="--h:\1"/u);
     expect(html).not.toContain('machine');
     expect(html).toContain('class="kh-row agent theirs first timeline__row"');
     expect(html).toMatch(/aria-label="Claude details"><img src="[^"]+" alt=""\/>/);
@@ -72,7 +74,7 @@ describe('TimelineScreen', () => {
       describeParticipant={() => ({ matrixUserId: '@stranger:hs', displayName: '@stranger:hs', kind: 'unknown' })} />);
     expect(html).toContain('<b dir="auto">Unknown</b>');
     expect(html).toContain('<span class="kh-ini">UN</span>');
-    expect(html).not.toMatch(/kh-htag|kh-row agent/);
+    expect(html).not.toMatch(/kh-kind|kh-row agent/);
     expect(html).not.toContain('@stranger:hs');
   });
 
@@ -135,16 +137,19 @@ describe('TimelineScreen', () => {
     );
     const aliceIndex = html.indexOf('Alice');
     const botIndex = html.indexOf('Release Bot');
-    const humanIndex = html.indexOf('<span class="kh-htag">Human</span>');
+    const humanIndex = html.indexOf('<span class="kh-kind kh-kind-human" role="img" aria-label="Human"');
+    const agentMarkIndex = html.indexOf('<span class="kh-kind kh-kind-agent" role="img" aria-label="Agent"');
+    expect(html).not.toContain('kh-htag');
     const agentIndex = html.indexOf('aria-label="Release Bot, another person&#x27;s agent');
     expect(aliceIndex).toBeGreaterThanOrEqual(0);
     expect(botIndex).toBeGreaterThan(aliceIndex);
-    // The Human tag sits in Alice's row, before Bot's row starts.
+    // The person mark sits in Alice's row, before Bot's row starts; the robot mark in Bot's.
     expect(humanIndex).toBeGreaterThan(aliceIndex);
     expect(humanIndex).toBeLessThan(botIndex);
     expect(html).toContain('class="kh-row human first timeline__row"');
     // The agent row is grey (no `.human`/`.me`) and named for its owner relation.
     expect(agentIndex).toBeGreaterThan(humanIndex);
+    expect(agentMarkIndex).toBeGreaterThan(agentIndex);
     expect(html).toContain('class="kh-row agent theirs first timeline__row"');
   });
 
