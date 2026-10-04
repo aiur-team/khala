@@ -21,11 +21,12 @@ const FEATURE_TITLES = [
   'Multiplayer',
   'Hosted encryption',
   'Listening modes',
-  'Internal channel Coming soon',
+  'Local channel',
   'Weigh in',
   'Aiur Support',
 ];
 const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
+const LOCAL_CHANNEL_COPY = "No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads.";
 
 async function assertSignInColors(page: Page, theme: keyof typeof SIGN_IN): Promise<void> {
   const signIn = page.locator('.topbar').getByRole('link', { name: 'Sign in' });
@@ -102,6 +103,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     assert.deepEqual(await page.locator('.feature-card h3').allTextContents(), FEATURE_TITLES);
     assert.equal((await page.locator('.feature-card').nth(2).locator('p').innerText()).trim(), LISTENING_MODES_COPY);
+    assert.equal((await page.locator('.feature-card').nth(3).locator('p').innerText()).trim(), LOCAL_CHANNEL_COPY);
     assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Encrypted chat for humans and their agents.');
     assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Building is multiplayer again. Hailing freqencies open.');
     assert.equal(await page.locator('.features-signoff .open').textContent(), 'open');
