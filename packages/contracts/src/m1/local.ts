@@ -69,6 +69,7 @@ export type LocalEvent = {
   ts: number;                  // helper clock, ms since epoch
   txnId?: string;              // present when the sender supplied one; (sender, txnId) is unique per channel
   content: Record<string, unknown>;
+  previousContent?: LocalMemberContent; // helper-derived preceding membership, independent of roster fetch timing
 };
 
 // content by type
@@ -251,13 +252,14 @@ function readContent(input: unknown, path: string, type: LocalEventType): Record
   }
 }
 function readEvent(input: unknown, path: string): LocalEvent {
-  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId']);
+  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId', 'previousContent']);
   const type = literal(r.field('type'), r.at('type'), EVENT_TYPES);
   return { seq: seq(r.field('seq'), r.at('seq')), eventId: readLocalEventId(r.field('eventId'), r.at('eventId')),
     roomId: readLocalRoomId(r.field('roomId'), r.at('roomId')), type,
     sender: readLocalUserId(r.field('sender'), r.at('sender')), ts: safeInteger(r.field('ts'), r.at('ts')),
     ...(has(input, 'txnId') ? { txnId: readLocalTxnId(r.field('txnId'), r.at('txnId')) } : {}),
-    content: readContent(r.field('content'), r.at('content'), type) };
+    content: readContent(r.field('content'), r.at('content'), type),
+    ...(has(input, 'previousContent') ? { previousContent: readMemberContent(r.field('previousContent'), r.at('previousContent')) } : {}) };
 }
 export function decodeLocalEvent(input: unknown): Decoded<LocalEvent> { return decodeWith(() => readEvent(input, '')); }
 function limitedArray<T>(input: unknown, path: string, max: number, read: (input: unknown, path: string) => T): T[] {

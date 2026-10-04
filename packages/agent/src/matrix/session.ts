@@ -2,6 +2,7 @@ import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY } from '@khala/c
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import type { ChannelSession, SessionMessage, SessionModeCommand } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
+import { memberRenameContent } from '../events/member-rename';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
 
@@ -13,9 +14,11 @@ function message(event: MatrixEvent): SessionMessage | undefined {
   const eventId = event.getId();
   const roomId = event.getRoomId();
   const sender = event.getSender();
-  if (event.isDecryptionFailure() || !eventId || !roomId || !sender || (type !== 'm.room.message' && type !== 'com.khala.event.v1')) return;
+  if (event.isDecryptionFailure() || !eventId || !roomId || !sender || (type !== 'm.room.message' && type !== 'com.khala.event.v1' && type !== 'm.room.member')) return;
   const content = event.getContent();
-  return { eventId, roomId, sender, ts: event.getTs(), type, body: typeof content.body === 'string' ? content.body : '', content };
+  if (type === 'm.room.member' && !memberRenameContent(content, event.getPrevContent())) return;
+  return { eventId, roomId, sender, ts: event.getTs(), type, body: typeof content.body === 'string' ? content.body : '', content,
+    ...(type === 'm.room.member' ? { previousContent: event.getPrevContent() } : {}) };
 }
 
 export async function createAgentMatrixSession(creds: AgentCredentials, opts?: { log?: (line: string) => void }): Promise<AgentMatrixSession> {
@@ -45,7 +48,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     }
     const cutoff = joinTimes.get(m.roomId);
     if (cutoff === undefined) return; // Rechecked after the join state is stored.
-    if (m.sender === creds.userId || m.ts < cutoff || client.getRoom(m.roomId)?.getMyMembership() !== 'join') {
+    if ((m.sender === creds.userId && event.getType() !== 'm.room.member') || m.ts < cutoff || client.getRoom(m.roomId)?.getMyMembership() !== 'join') {
       liveEvents.delete(event);
       return;
     }

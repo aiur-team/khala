@@ -188,3 +188,14 @@ it('routes live mode commands separately with cutoff, deduplication and decrypti
   expect(messages).not.toHaveBeenCalled();
   unsubscribe(); timeline(event('$next', '@owner:hs', 102, type, content)); await flush(); expect(commands).toHaveBeenCalledTimes(1);
 });
+
+it('delivers live self profile renames once and projects membership history', async () => {
+  const s = await joined(); const seen = vi.fn(); s.onMessage(seen);
+  const rename = { ...event('$rename', creds.userId, 101, 'm.room.member', { membership: 'join', displayname: 'reviewer' }),
+    getPrevContent: () => ({ membership: 'join', displayname: 'kevin-Codex' }) };
+  timeline(rename); timeline(rename); client.emit('decrypted', rename); await flush();
+  expect(seen).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ eventId: '$rename', type: 'm.room.member',
+    previousContent: { membership: 'join', displayname: 'kevin-Codex' } }));
+  client.createMessagesRequest.mockResolvedValue({ chunk: [rename], end: undefined });
+  expect((await s.history('!r:hs', 30)).messages).toEqual([seen.mock.calls[0]![0]]);
+});
