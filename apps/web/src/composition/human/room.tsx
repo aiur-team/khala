@@ -4,7 +4,8 @@ import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
 import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
-import { createChannelController, type ChannelController } from '../../features/channel/controller';
+import { createChannelController, type ChannelController, type ChannelView } from '../../features/channel/controller';
+import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
@@ -51,6 +52,20 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipant
     },
     async installCommand() { throw new Error('agent onboarding unavailable'); },
   };
+}
+
+
+/**
+ * The participants whose names outrank what older timeline events carry: roster agents, and every other human at
+ * their current directory name, so a username change reaches the header, roster and mention chips without a reload.
+ */
+export function roomNameParticipants(agents: ChannelView['agents'], members: readonly ParticipantView[],
+  viewerId: string | null): NameParticipant[] {
+  return [...agents.flatMap(agent => agent.ownerId ? [{
+    participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const, initialName: agent.displayName,
+  }] : []), ...members.filter(member => member.kind === 'human' && member.participantId !== viewerId).map(human => ({
+    participantId: human.participantId, ownerId: human.ownerId, kind: 'human' as const, initialName: human.displayName,
+  }))];
 }
 
 /**
@@ -108,15 +123,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const viewer = context.participant?.() ?? null;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
   const presence = useSyncExternalStore(room.subscribe, room.getSnapshot, room.getSnapshot);
-  // The directory's current human names outrank the stale names carried on older timeline events.
-  const rosterHumans = participantRoster?.scope === participantScope ? participantRoster.participants
-    .filter(participant => participant.kind === 'human' && participant.participantId !== viewer?.participantId) : [];
-  const extraParticipants = [...presence.agents.flatMap(agent => agent.ownerId ? [{
-    participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const,
-    initialName: agent.displayName,
-  }] : []), ...rosterHumans.map(human => ({
-    participantId: human.participantId, ownerId: human.ownerId, kind: 'human' as const, initialName: human.displayName,
-  }))];
+  const extraParticipants = roomNameParticipants(presence.agents,
+    participantRoster?.scope === participantScope ? participantRoster.participants : [], viewer?.participantId ?? null);
   // A membership pill (a rename, a join) means the directory changed: read it now rather than at the next poll.
   const memberEvents = (timelineData.rows ?? []).filter(row => row.kind === 'channel_event' && row.content.kind === 'member').length;
   const seenMemberEvents = useRef<number | null>(null);

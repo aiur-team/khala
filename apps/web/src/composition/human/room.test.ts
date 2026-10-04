@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Participant } from '@khala/contracts/m1/participants';
-import type { ParticipantView } from '@khala/contracts/messaging/index';
+import type { ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ChannelView } from '../../features/channel/controller';
-import { renameChannelAgent } from './room';
+import { projectTimelineNames } from '../../features/timeline/names';
+import { renameChannelAgent, roomNameParticipants } from './room';
 
 const kevin = 'owner_kevin' as OwnerId;
 const viewer = { participantId: 'p_kevin', ownerId: kevin, kind: 'human', displayName: 'Kevin', deviceIds: [] } as unknown as ParticipantView;
@@ -45,5 +46,19 @@ describe('renameChannelAgent', () => {
     expect(await renameChannelAgent({ agentNames: { rename }, describeParticipant: () => undefined }, room(kevin), viewer, agentX, 'Reviewer'))
       .toEqual({ kind: 'error', code: 'unavailable' });
     expect(rename).not.toHaveBeenCalled();
+  });
+});
+
+describe('roomNameParticipants', () => {
+  it('names another human by the directory after a username change, not by the stale name on their messages (#1088)', () => {
+    const bob = { participantId: 'p_bob', ownerId: 'owner_bob', kind: 'human', displayName: 'bob', deviceIds: [] } as unknown as ParticipantView;
+    const message = { ref: { eventId: '$m', authorParticipantId: bob.participantId }, participant: bob,
+      content: { kind: 'text', body: 'hi' } } as unknown as TimelineItem;
+    const roster = [{ ...viewer, displayName: 'Stale Kevin' }, { ...bob, displayName: 'robert' }];
+    const extra = roomNameParticipants(room(kevin).getSnapshot().agents, roster, viewer.participantId);
+    const names = projectTimelineNames([message], viewer, extra).currentNames;
+    expect(names.get(bob.participantId)).toBe('robert');
+    expect(names.get(viewer.participantId)).toBe('Kevin');
+    expect(names.get(agentX)).toBe('Kevin-Claude');
   });
 });
