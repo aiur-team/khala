@@ -1,4 +1,4 @@
-import { CHANNEL_EVENT_TYPE, decodeChannelEvent } from '@khala/contracts/m1/channel-event';
+import { CHANNEL_EVENT_TYPE, decodeChannelEvent, memberRenameContent } from '@khala/contracts/m1/channel-event';
 import {
   decodeMessageContent,
   type ContentLimits,
@@ -26,11 +26,18 @@ export function projectWireEvent(input: {
   authorDeviceId: DeviceId | null;
   clientTxnId: string | null;
   receivedAt: string;
+  /** The sender's preceding membership content, which a name change is read against. */
+  previousContent?: Record<string, unknown>;
 }, limits: ContentLimits): SubstrateEvent | null {
   const { type, content: rawContent, eventId, participant, authorDeviceId, clientTxnId, receivedAt } = input;
   if (type === CHANNEL_EVENT_TYPE) {
     const decoded = decodeChannelEvent(rawContent);
     return decoded.ok ? { kind: 'channel_event', eventId, participant, content: decoded.value, receivedAt } : null;
+  }
+  if (type === 'm.room.member') {
+    // A name change is a membership event; it reads as the same pill live and from history.
+    const renamed = memberRenameContent(rawContent, input.previousContent);
+    return renamed ? { kind: 'channel_event', eventId, participant, content: renamed, receivedAt } : null;
   }
   if (type !== 'm.room.message') return null;
   if (rawContent.msgtype !== 'm.text' && rawContent.msgtype !== 'm.notice') return null;

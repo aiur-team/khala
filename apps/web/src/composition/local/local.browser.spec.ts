@@ -201,6 +201,8 @@ test('the real local app runs end to end against a faked helper', { timeout: 180
         await page.getByRole('complementary', { name: 'Reviewer details' }).getByRole('button', { name: 'Close details' }).click();
         if (await page.locator('#kh-head-btn').getAttribute('aria-expanded') === 'false') await page.locator('#kh-head-btn').click();
         await expect(agentRow(page, FAKE_CLAUDE)).toContainText('Reviewer', { timeout: 6000 });
+        // #1084 the rename pill shows live, without a reload.
+        await expect(page.locator('li.channel-event-pill', { hasText: 'kevin-Claude is now Reviewer' })).toHaveCount(1, { timeout: 6000 });
 
         // F9 Add agent mints a local join link on Copy (as hosted, the popover shows none) and copies it.
         const linksPath = `/api/local/channels/${enc(FAKE_R1)}/links`;
@@ -286,6 +288,12 @@ test('the real local app runs end to end against a faked helper', { timeout: 180
         await page.locator('#kh-head-btn').click();
         await expect(agentRow(page, FAKE_CODEX)).toContainText('kev-Codex', { timeout: 6000 });
         await page.keyboard.press('Escape');
+        // #1084 the cascade is one pill per renamed agent, and a reload does not repeat it.
+        await expect(page.locator('li.channel-event-pill', { hasText: 'kevin-Codex is now kev-Codex' })).toHaveCount(1);
+        await expect(page.locator('li.channel-event-pill', { hasText: 'kevin-Claude is now Reviewer' })).toHaveCount(1);
+        await page.reload();
+        await expect(page.locator('li.channel-event-pill', { hasText: 'kevin-Codex is now kev-Codex' })).toHaveCount(1, { timeout: 6000 });
+        await expect(page.locator('li.channel-event-pill', { hasText: 'kevin-Claude is now Reviewer' })).toHaveCount(1);
 
         await (await settingsItem(page, 'Light mode')).click();
         await expect(page.locator('.khala-app')).toHaveAttribute('data-theme', 'light');

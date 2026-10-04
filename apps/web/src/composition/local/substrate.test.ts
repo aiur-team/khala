@@ -40,7 +40,7 @@ function fixture() {
   return { calls, enqueue, http, cache, sleep, substrate, init };
 }
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const poll = (after: number) => localRoomPath(roomId, `/events?after=${after}&wait=25`);
+const poll = (after: number) => localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1`);
 const error = (status: number): LocalHttpResult<never> => ({ kind: 'error', status, code: `http_${status}` });
 
 describe('local substrate', () => {
@@ -126,6 +126,55 @@ describe('local substrate', () => {
     expect(updates[2]!.ignoredEventIds).toEqual([eventId(9)]);
     expect(f.cache.refresh).toHaveBeenCalledExactlyOnceWith(roomId);
     expect(f.calls.find(call => call.path === poll(8))?.timeoutMs).toBe(35_000); stop();
+  });
+  describe('member name changes', () => {
+    const codex = { user: agent, membership: 'join', displayname: 'kevin-Codex', kind: 'agent' };
+    const renamed = (seq: number, user: string, from: string, to: string, kind = 'agent') => event(seq, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
+      content: { ...codex, user, kind, displayname: to }, previousContent: { ...codex, user, kind, displayname: from } } as Partial<LocalEvent>);
+    const pills = (update: SubstrateUpdate | undefined) => update?.events.flatMap(e => e.kind === 'channel_event' ? [e.content.summary] : []);
+
+    it('shows a roster rename as a pill without a reload', async () => {
+      const f = fixture(); f.init([event(3)]);
+      f.enqueue(poll(5), { kind: 'ok', value: { events: [renamed(6, agent, 'kevin-Codex', 'review-bot')], next: 6 } });
+      const updates: SubstrateUpdate[] = []; const stop = f.substrate.subscribe(roomId, update => updates.push(update)); await tick();
+      expect(pills(updates.at(-1))).toEqual(['kevin-Codex is now review-bot']);
+      stop();
+    });
+    it('shows one pill per agent when an owner username cascades', async () => {
+      const f = fixture(); f.init();
+      const other = '@agent-c3d4e5f6:local';
+      f.enqueue(poll(5), { kind: 'ok', value: { events: [
+        renamed(6, LOCAL_OWNER_USER_ID, 'kevin', 'ada', 'human'), renamed(7, agent, 'kevin-Codex', 'ada-Codex'), renamed(8, other, 'kevin-Claude', 'ada-Claude'),
+      ], next: 8 } });
+      const updates: SubstrateUpdate[] = []; const stop = f.substrate.subscribe(roomId, update => updates.push(update)); await tick();
+      expect(pills(updates.at(-1))).toEqual(['kevin is now ada', 'kevin-Codex is now ada-Codex', 'kevin-Claude is now ada-Claude']);
+      stop();
+    });
+    it('ignores membership events that are not renames', async () => {
+      const f = fixture(); f.init();
+      f.enqueue(poll(5), { kind: 'ok', value: { events: [
+        event(6, { type: 'm.room.member', sender: agent, content: codex, previousContent: { ...codex, membership: 'invite' } } as Partial<LocalEvent>),
+        event(7, { type: 'm.room.member', sender: agent, content: codex }),
+      ], next: 7 } });
+      const updates: SubstrateUpdate[] = []; const stop = f.substrate.subscribe(roomId, update => updates.push(update)); await tick();
+      expect(pills(updates.at(-1))).toEqual([]);
+      stop();
+    });
+    it('shows the same single pill after a reload', async () => {
+      const f = fixture();
+      const live = renamed(6, agent, 'kevin-Codex', 'review-bot');
+      f.init(); f.enqueue(poll(5), { kind: 'ok', value: { events: [live], next: 6 } });
+      const first: SubstrateUpdate[] = []; const stop = f.substrate.subscribe(roomId, update => first.push(update)); await tick(); stop();
+      // The helper's history derives the same event id as a com.khala.event.v1 pill.
+      const { previousContent: _previous, ...rest } = live;
+      void _previous;
+      const history: LocalEvent = { ...rest, type: 'com.khala.event.v1', content: { v: 1, kind: 'member', summary: 'kevin-Codex is now review-bot', status: 'info', source: { system: 'khala' }, body: 'kevin-Codex is now review-bot' } };
+      const g = fixture(); g.init([history]);
+      const second: SubstrateUpdate[] = []; const stopAgain = g.substrate.subscribe(roomId, update => second.push(update)); await tick(); stopAgain();
+      expect(pills(first.at(-1))).toEqual(['kevin-Codex is now review-bot']);
+      expect(pills(second.at(-1))).toEqual(['kevin-Codex is now review-bot']);
+      expect(first.at(-1)!.events[0]!.eventId).toBe(second.at(-1)!.events[0]!.eventId);
+    });
   });
   it('pages with opaque cursors and projects legacy names and unknown senders', async () => {
     const f = fixture();

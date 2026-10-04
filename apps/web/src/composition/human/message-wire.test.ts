@@ -54,6 +54,14 @@ describe('shared message wire content', () => {
     expect(projectWireEvent({ ...base, content: { msgtype: 'm.text', body: 'hello' }, authorDeviceId: null }, limits)).toBeNull();
   });
 
+  it('projects a join-to-join name change as an event pill and ignores other membership changes', () => {
+    const member = { user: '@a:x', membership: 'join', displayname: 'Dolan', kind: 'agent' };
+    const rename = projectWireEvent({ ...base, type: 'm.room.member', content: { ...member, displayname: 'Zed' }, previousContent: member }, limits);
+    expect(rename).toMatchObject({ kind: 'channel_event', eventId: base.eventId, participant, content: { summary: 'Dolan is now Zed' } });
+    expect(projectWireEvent({ ...base, type: 'm.room.member', content: { ...member, displayname: 'Zed' } }, limits)).toBeNull();
+    expect(projectWireEvent({ ...base, type: 'm.room.member', content: member, previousContent: { ...member, membership: 'invite' } }, limits)).toBeNull();
+  });
+
   it('projects text and rejects unsupported or invalid message content', () => {
     expect(projectWireEvent({ ...base, content: { msgtype: 'm.text', body: 'hello' } }, limits)).toEqual({
       kind: 'message', eventId: base.eventId, authorDeviceId: base.authorDeviceId, participant,

@@ -51,7 +51,8 @@ export function createLocalSubstrate(input: {
     const participant = viewFor(roomId, event.sender);
     const projected = projectWireEvent({ type: event.type, content: event.content, eventId: event.eventId as EventId, participant,
       authorDeviceId: participant.deviceIds[0] ?? null, clientTxnId: event.sender === LOCAL_OWNER_USER_ID ? event.txnId ?? null : null,
-      receivedAt: new Date(event.ts).toISOString() }, input.limits);
+      receivedAt: new Date(event.ts).toISOString(),
+      ...(event.previousContent ? { previousContent: event.previousContent } : {}) }, input.limits);
     return projected?.kind === 'message' && projected.content.kind !== 'text'
       ? { ...projected, targetParticipant: viewFor(roomId, projected.content.agentParticipantId) } : projected;
   }
@@ -132,13 +133,13 @@ export function createLocalSubstrate(input: {
         }
         while (!disposed) {
           try {
-            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25`), decodeLocalEventsPage, abort.signal, 35_000);
+            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1`), decodeLocalEventsPage, abort.signal, 35_000);
             if (disposed) return;
             if (result.kind === 'ok') {
               let membersChanged = false;
               for (const event of result.value.events) {
                 after = Math.max(after, event.seq);
-                if (event.type === 'm.room.message' || event.type === CHANNEL_EVENT_TYPE) window.set(event.eventId, event);
+                if (event.type === 'm.room.message' || event.type === CHANNEL_EVENT_TYPE || (event.type === 'm.room.member' && event.previousContent)) window.set(event.eventId, event);
                 if (event.type === 'm.room.member') membersChanged = true;
                 if (event.type === 'm.room.name' && typeof event.content['name'] === 'string') current = channel(roomId, event.content['name'], `local:${after}`);
               }

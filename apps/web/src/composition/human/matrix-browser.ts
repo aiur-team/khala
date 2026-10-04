@@ -483,7 +483,8 @@ export function projectMatrixTimelineEvent(event: MatrixEvent, participant: Part
   }
   const transactionId = event.getUnsigned().transaction_id;
   return projectWireEvent({ type: event.getType(), content: event.getContent(), eventId: eventId as EventId, participant, authorDeviceId,
-    clientTxnId: typeof transactionId === 'string' ? transactionId : null, receivedAt }, limits);
+    clientTxnId: typeof transactionId === 'string' ? transactionId : null, receivedAt,
+    ...(event.getType() === 'm.room.member' ? { previousContent: event.getPrevContent() } : {}) }, limits);
 }
 
 export async function sendRoomMessage(
