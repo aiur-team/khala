@@ -6,7 +6,8 @@ import path from 'node:path';
 import { HARNESSES, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
-export type StatusFile = { state: AgentState; channelName?: string; detail?: string; updatedAt: string };
+/** `displayName` is the agent's own current name in the channel; hooks show it as `you=`. */
+export type StatusFile = { state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };
 export type JoinFile = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; link: string };
 export type SessionFiles = { dir: string; join: string; session: string; inbox: string; cursor: string; status: string; mode: string };
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -108,8 +109,8 @@ export async function saveJoin(files: SessionFiles, join: JoinFile): Promise<voi
 export function readJoin(files: SessionFiles): Promise<JoinFile | null> { return readJson(files.join); }
 export async function saveSession(files: SessionFiles, credentials: AgentCredentials): Promise<void> { await writeJsonAtomic(files.session, credentials); }
 export async function removeSession(files: SessionFiles): Promise<void> { await removeStateFile(files.dir, 'session.json'); }
-export async function writeStatus(files: SessionFiles, state: AgentState, detail?: string, now: () => Date = () => new Date(), channelName?: string): Promise<StatusFile> {
-  const status = { state, ...(channelName ? { channelName } : {}), ...(detail ? { detail } : {}), updatedAt: now().toISOString() };
+export async function writeStatus(files: SessionFiles, state: AgentState, detail?: string, now: () => Date = () => new Date(), channelName?: string, displayName?: string): Promise<StatusFile> {
+  const status = { state, ...(channelName ? { channelName } : {}), ...(displayName ? { displayName } : {}), ...(detail ? { detail } : {}), updatedAt: now().toISOString() };
   await writeJsonAtomic(files.status, status);
   return status;
 }

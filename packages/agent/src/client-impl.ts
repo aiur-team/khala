@@ -14,6 +14,7 @@ import { CURSOR_DEFAULT_SESSION } from './cursor';
 import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
+import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
 import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, type JoinFile, type StatusFile } from './state';
 
@@ -70,10 +71,32 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
 
   function setStatus(state: StatusFile['state'], detail?: string): Promise<void> {
     const next: StatusFile = { state, ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
+      ...(status.displayName !== undefined ? { displayName: status.displayName } : {}),
       ...(detail !== undefined ? { detail } : {}), updatedAt: now().toISOString() };
     status = next;
     statusWrites = statusWrites.catch(() => {}).then(() => writeStateFile(dir, 'status.json', next));
     return statusWrites;
+  }
+  /**
+   * The agent's own current name, as `khala_status.displayName` reports it; a rename event names it first.
+   * Only the local helper's owner may name another subject in `content.user`. Hosted member content is
+   * member-controlled, so there a rename counts only when the agent itself sent it (owner cascades do).
+   */
+  function ownName(session: ChannelSession, message?: SessionMessage, local = false): string | undefined {
+    if (message?.type === 'm.room.member') {
+      const subject = local && message.sender === LOCAL_OWNER_USER_ID && typeof message.content.user === 'string'
+        ? message.content.user : message.sender;
+      const renamed = message.content.displayname;
+      if (subject === session.userId && typeof renamed === 'string' && renamed.trim()) return renamed;
+    }
+    return session.displayName(session.userId);
+  }
+  /** Persists the own name for hooks, which run in another process and read status.json. */
+  async function trackOwnName(session: ChannelSession, message: SessionMessage, local: boolean): Promise<void> {
+    const name = ownName(session, message, local);
+    if (name === undefined || name === status.displayName) return;
+    status.displayName = name;
+    await setStatus(status.state, status.detail);
   }
   function initialize(): Promise<void> {
     return initialization ??= (async () => {
@@ -162,6 +185,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (!attempt.joined) { buffered.push(() => intake(message)); return; }
         appends = appends.then(async () => {
           if (!current(attempt)) return;
+          // Before the entry lands, so the frame that delivers a rename already says the new name.
+          if (message.type === 'm.room.member') await trackOwnName(session, message, credentials.transport === 'local');
           const entry = inboxEntry(message, session, acceptEventKey);
           if (!entry) return;
           if (await appendInbox(dir, entry) && current(attempt) && isWakeEntry(entry)) {
@@ -195,9 +220,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       else await removeStateFile(dir, 'mode.json');
       attempt.joined = true;
       status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
+      const own = ownName(session);
+      if (own !== undefined) status.displayName = own;
       for (const deliver of buffered) deliver();
       if (credentials.transport !== 'local') {
-        const own = session.displayName(session.userId);
         const username = own === undefined ? null : hostedUsernameFromAgentName(own, options.harness);
         if (username !== null) appends = appends.then(() => saveHostedUsername(username, options.env)).catch(() => {});
       }
@@ -241,6 +267,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           await removeStateFile(dir, 'cursor.json');
           acceptEventKey = createEventKeyFilter();
           delete status.channelName;
+          delete status.displayName;
         }
         const saved = await readStateFile<JoinFile>(dir, 'join.json');
         if (saved?.link === link && Date.parse(saved.expiresAt) <= now().getTime()) {
@@ -292,7 +319,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       try {
         const page = await session.history(credentials.roomId, limit, before);
         const acceptKey = createEventKeyFilter();
-        return { messages: page.messages.map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null),
+        const you = ownName(session);
+        return { ...(you !== undefined ? { you } : {}), messages: page.messages.map(m => inboxEntry(m, session, acceptKey)).filter((entry): entry is InboxEntry => entry !== null),
           ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}) };
       } catch (error) { throw safeError(error); }
     },

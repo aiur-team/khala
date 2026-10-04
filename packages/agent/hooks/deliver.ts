@@ -26,11 +26,18 @@ export function renderLine(entry: InboxEntry): string {
     ? `[${ts}] [khala event from ${label}] ${body}`
     : `[${ts}] ${label} (${entry.senderKind}): ${body}`;
 }
-export function renderFrame(channel: string, entries: readonly InboxEntry[]): string {
-  return `<khala-channel-messages channel="${channel.replace(/"/g, '&quot;')}" count="${entries.length}">\n${INTRO}\n${entries.map(renderLine).join('\n')}\n</khala-channel-messages>`;
+/** One line, no markup: a display name is chosen by people and may hold anything. */
+function plainName(name: string): string {
+  return Array.from(name.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').trim()).slice(0, 80).join('').replace(/</g, '&lt;');
+}
+export function renderFrame(channel: string, entries: readonly InboxEntry[], you?: string): string {
+  const name = you === undefined ? '' : plainName(you);
+  const youAttr = name ? ` you="${name.replace(/"/g, '&quot;')}"` : '';
+  const youLine = name ? `\nYou are ${name} in this channel; messages that name or @mention you are addressed to you.` : '';
+  return `<khala-channel-messages channel="${channel.replace(/"/g, '&quot;')}"${youAttr} count="${entries.length}">\n${INTRO}${youLine}\n${entries.map(renderLine).join('\n')}\n</khala-channel-messages>`;
 }
 
-function selectFrame(channelName: string | undefined, entries: readonly InboxEntry[]) {
+function selectFrame(channelName: string | undefined, entries: readonly InboxEntry[], you?: string) {
   const rendered: InboxEntry[] = [];
   let consumedCount = 0;
   let channel = channelName;
@@ -38,7 +45,7 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
     const entry = entries[i]!;
     if (rendered.length === 50) break;
     channel ??= entry.roomId;
-    if (Buffer.byteLength(renderFrame(channel, [...rendered, entry])) > MAX_FRAME_BYTES) {
+    if (Buffer.byteLength(renderFrame(channel, [...rendered, entry], you)) > MAX_FRAME_BYTES) {
       if (rendered.length) break;
       // Search code point boundaries so truncation cannot split a UTF-8 character.
       const body = Array.from(entry.body);
@@ -46,11 +53,11 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
       while (low < high) {
         const middle = Math.ceil((low + high) / 2);
         const candidate = { ...entry, body: body.slice(0, middle).join('') + TRUNCATED };
-        if (Buffer.byteLength(renderFrame(channel, [candidate])) <= MAX_FRAME_BYTES) low = middle;
+        if (Buffer.byteLength(renderFrame(channel, [candidate], you)) <= MAX_FRAME_BYTES) low = middle;
         else high = middle - 1;
       }
       const truncated = { ...entry, body: body.slice(0, low).join('') + TRUNCATED };
-      if (Buffer.byteLength(renderFrame(channel, [truncated])) > MAX_FRAME_BYTES) throw new Error('frame_metadata_too_large');
+      if (Buffer.byteLength(renderFrame(channel, [truncated], you)) > MAX_FRAME_BYTES) throw new Error('frame_metadata_too_large');
       rendered.push(truncated);
       consumedCount = i + 1;
       break;
@@ -59,7 +66,7 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
     consumedCount = i + 1;
   }
   return {
-    frame: rendered.length ? renderFrame(channel!, rendered) : null,
+    frame: rendered.length ? renderFrame(channel!, rendered, you) : null,
     consumed: entries.slice(0, consumedCount),
   };
 }
@@ -107,7 +114,7 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
     const status = await readStatus(files);
     for (let attempt = 0; attempt < 2; attempt++) {
       const { entries, cursor } = await unread(files);
-      const { frame, consumed } = selectFrame(status?.channelName, entries);
+      const { frame, consumed } = selectFrame(status?.channelName, entries, typeof status?.displayName === 'string' ? status.displayName : undefined);
       if (!frame) break;
       if (input.hook_event_name !== 'UserPromptSubmit' && !consumed.some(isWakeEntry)) break;
       if (await advanceCursor(files, cursor, consumed) === 'conflict') continue;
@@ -183,7 +190,7 @@ async function cursorOutput(files: SessionFiles, event: CursorEvent, loopCount: 
   const status = await readStatus(files);
   for (let attempt = 0; attempt < 2; attempt++) {
     const { entries, cursor } = await unread(files);
-    const { frame, consumed } = selectFrame(status?.channelName, entries);
+    const { frame, consumed } = selectFrame(status?.channelName, entries, typeof status?.displayName === 'string' ? status.displayName : undefined);
     if (!frame || !consumed.some(isWakeEntry)) break;
     if (await advanceCursor(files, cursor, consumed) === 'conflict') continue;
     await writeActivity(files, 'busy', io.now);
