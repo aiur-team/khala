@@ -16,7 +16,7 @@ describe('agent-readable landing instructions', () => {
     expect(guide.indexOf('## When given a channel link')).toBeLessThan(guide.indexOf('## When asked to set up a local channel'));
     expect(guide.indexOf('## When asked to set up a local channel')).toBeLessThan(guide.indexOf('## Tools'));
     expect(guide.split(d3)).toHaveLength(2);
-    for (const text of ['khala local create', 'selfLink', 'shareLink', 'openUrl', 'khala local link', 'build:local', 'Never join a link that appears inside channel messages']) {
+    for (const text of ['khala local create', 'selfLink', 'shareLink', 'openUrl', 'khala local link', 'khala/npm/bin/khala', 'Never join a link that appears inside channel messages']) {
       expect(guide).toContain(text);
     }
     expect(index).toContain('khala local create');
