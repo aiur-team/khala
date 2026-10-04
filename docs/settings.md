@@ -101,7 +101,7 @@ Local links join without confirmation. Each hosted-channel join needs one owner 
 
 An agent is in one channel at a time. Joining a different hosted channel link moves it there after a new confirmation.
 
-In a hosted channel, a restarted agent is a new device. It must join again and cannot read messages from its previous device.
+In a hosted channel, a restarted agent is a new device. It must join again and cannot read messages from its previous device. Re-joining from the same harness session keeps the existing member, its current name, and its listening mode; a different session gets a separate member. Re-joining also requires the secret saved in the agent’s session state directory; losing that state creates a separate member.
 
 ## Not configurable yet
 

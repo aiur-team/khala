@@ -88,7 +88,7 @@ export type LocalMemberContent = {                                              
 export type ChannelSecrets = {
   v: 1;
   links: Record<string, { expiresAt: string; consumedAt?: string; kind: 'join' }>;           // key = sha256(token) hex
-  members: Record<string, { tokenSha256: string }>;                                          // key = user id; the owner has no entry (cookie auth)
+  members: Record<string, { tokenSha256: string; sessionKey?: string }>;                                          // key = user id; the owner has no entry (cookie auth)
 };
 
 
@@ -552,8 +552,9 @@ export function decodeChannelSecrets(input: unknown): Decoded<ChannelSecrets> {
     const members = Object.fromEntries(Object.entries(plainObject(r.field('members'), r.at('members'))).map(([key, value]) => {
       const path = `${r.at('members')}.${key}`;
       if (!isLocalAgentUserId(key)) fail(path, 'invalid_value');
-      const member = object(value, path, ['tokenSha256']);
-      return [key, { tokenSha256: readSha256(member.field('tokenSha256'), member.at('tokenSha256')) }];
+      const member = record(value, path, ['tokenSha256'], ['sessionKey']);
+      return [key, { tokenSha256: readSha256(member.field('tokenSha256'), member.at('tokenSha256')),
+        ...(has(value, 'sessionKey') ? { sessionKey: readSha256(member.field('sessionKey'), member.at('sessionKey')) } : {}) }];
     }));
     return { v: version(r.field('v'), r.at('v')), links, members };
   });

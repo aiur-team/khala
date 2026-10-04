@@ -81,3 +81,21 @@ it.each(['put_status', 'put_throw', 'logout_throw', 'wrong_user', 'wrong_device'
     expect(fetch.mock.calls.at(-1)![0]).toBe('https://matrix.test/_matrix/client/v3/logout');
   }
 });
+
+it('reuses the account identity but issues a fresh device for each join', async () => {
+  const identityId = 'session.thread-1';
+  const id = agentIdentity(identityId, input.ownerId, 'matrix.test', 'join');
+  const devices: string[] = [];
+  for (const joinId of ['first-join', 'second-join']) {
+    const deviceId = agentIdentity(joinId, input.ownerId, 'matrix.test', 'join').deviceId;
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ nonce: 'nonce' }))
+      .mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: deviceId, access_token: 'token' }))
+      .mockResolvedValueOnce(Response.json({}));
+    const result = await createAgentProvisioner({ ...options, fetch }).provision({ ...input, identityId, joinId });
+    expect(result).toMatchObject({ kind: 'ok', credentials: { userId: id.userId, deviceId } });
+    devices.push(deviceId);
+  }
+  expect(devices[0]).not.toBe(devices[1]);
+});

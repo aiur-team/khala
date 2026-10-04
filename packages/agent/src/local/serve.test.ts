@@ -1,3 +1,7 @@
+import { requestJoin, pollJoin } from '../join';
+import { resolveStateDir } from '../state';
+import { createKhalaAgentClient } from '../client-impl';
+import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -176,4 +180,91 @@ describe('real helper composition', () => {
     expect(await helper.exit).toBe(0); expect(await readHelperFile(env)).toBeNull();
     expect(close).toHaveBeenCalledTimes(1);
   });
+});
+
+it('rejoins a restarted thread through the real helper without duplicating its member', async () => {
+  const helper = await start();
+  const created = await command(['create', 'refactor']);
+  const clients: ReturnType<typeof createKhalaAgentClient>[] = [];
+  const makeClient = (sessionId: string) => {
+    const client = createKhalaAgentClient({ harness: 'codex', sessionId, env });
+    clients.push(client);
+    return client;
+  };
+  try {
+    const first = makeClient('thread-1');
+    expect(await first.join(created.shareLink, 'Codex')).toMatchObject({ state: 'connected' });
+    const userId = (await first.status()).agentUserId!;
+    const secretFile = join(resolveStateDir('codex', 'thread-1', env), 'rejoin.json');
+    expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(secretFile, 'utf8')).secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    await first.close();
+    const store = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    await store.append(created.roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID, content: {
+      user: userId, membership: 'join', displayname: 'Reviewer', kind: 'agent', harness: 'codex',
+      'com.khala.listening_mode': 'async',
+    } });
+    helper.abort.abort();
+    expect(await helper.exit).toBe(0);
+    await start();
+    const restarted = makeClient('thread-1');
+    expect(await restarted.join((await command(['link', 'refactor'])).shareLink, 'Codex')).toMatchObject({ state: 'connected' });
+    expect(await restarted.status()).toMatchObject({ agentUserId: userId, listeningMode: 'async' });
+    const reopened: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    expect(reopened.members(created.roomId).filter(member => member.kind === 'agent')).toEqual([
+      expect.objectContaining({ userId, displayName: 'Reviewer', listeningMode: 'async' }),
+    ]);
+    expect(reopened.history(created.roomId, undefined, 100).events.filter(event => event.type === 'com.khala.event.v1').map(event => event.content.summary))
+      .toEqual(['kevin-Codex joined', 'kevin-Codex is now Reviewer', 'Reviewer rejoined']);
+    const another = makeClient('thread-2');
+    expect(await another.join((await command(['link', 'refactor'])).shareLink, 'Codex')).toMatchObject({ state: 'connected' });
+    expect((await another.status()).agentUserId).not.toBe(userId);
+    expect(reopened.members(created.roomId).filter(member => member.kind === 'agent')).toHaveLength(2);
+  } finally { await Promise.all(clients.map(client => client.close())); }
+});
+
+it('does not let a share-link holder hijack a cursor-default member', async () => {
+  await start();
+  const created = await command(['create', 'protected']);
+  const victim = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
+  try {
+    expect(await victim.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const original = JSON.parse(await readFile(join(resolveStateDir('cursor', 'cursor-default', env), 'session.json'), 'utf8'));
+    const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    for (const rejoinSecret of [undefined, 'X'.repeat(43)]) {
+      const attempted = await requestJoin({ link: (await command(['link', 'protected'])).shareLink,
+        harness: 'cursor', label: 'Evil', sessionId: 'cursor-default', ...(rejoinSecret ? { rejoinSecret } : {}) });
+      const attacker = await pollJoin(attempted);
+      expect(attacker.userId).not.toBe(original.userId);
+      expect(store.agentForToken(original.accessToken)).toEqual({ roomId: created.roomId, userId: original.userId });
+    }
+    expect(store.members(created.roomId).filter(member => member.kind === 'agent').map(member => member.displayName))
+      .toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3']);
+    expect(await victim.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
+  } finally { await victim.close(); }
+});
+
+it('keeps two Cursor windows on one machine that both fall back to cursor-default as separate members', async () => {
+  await start();
+  const created = await command(['create', 'windows']);
+  // Same env: both windows resolve to the same cursor-default state dir on this machine.
+  const first = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
+  const second = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
+  try {
+    expect(await first.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const sharedDir = resolveStateDir('cursor', 'cursor-default', env);
+    await expect(stat(join(sharedDir, 'rejoin.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const original = JSON.parse(await readFile(join(sharedDir, 'session.json'), 'utf8'));
+    expect(await second.join((await command(['link', 'windows'])).shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    expect((await second.status()).agentUserId).not.toBe(original.userId);
+    expect(store.members(created.roomId).filter(member => member.kind === 'agent').map(member => member.displayName))
+      .toEqual(['kevin-Cursor', 'kevin-Cursor-2']);
+    expect(store.agentForToken(original.accessToken)).toEqual({ roomId: created.roomId, userId: original.userId });
+    expect(await first.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
+    expect(store.history(created.roomId, undefined, 100).events.filter(event => event.type === 'com.khala.event.v1').map(event => event.content.summary))
+      .toEqual(['kevin-Cursor joined', 'kevin-Cursor-2 joined']);
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+  }
 });

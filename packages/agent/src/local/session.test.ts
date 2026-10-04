@@ -459,6 +459,15 @@ it.each(['http://127.0.0.1:47830', 'http://localhost:47830', 'http://[::1]:47830
     expect(h.calls[0]?.auth).toBe(`Bearer ${token}`);
   });
 
+it('restores the existing member listening mode when joining', async () => {
+  const h = fakeHelper();
+  h.members.find(member => member.userId === self)!.listeningMode = 'async';
+  const s = await createLocalSession(creds, { fetch: h.fetch });
+  sessions.push(s);
+  await s.join(room);
+  expect(s.listeningMode?.(room)).toBe('async');
+});
+
 it('delivers a username cascade and self rename once without any agent speaking', async () => {
   const h = fakeHelper(); const c = await localClient(h);
   try {

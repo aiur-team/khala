@@ -316,11 +316,20 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       }
       return null;
     }),
-    setMemberToken: (roomId, userId, tokenSha256) => enqueue(async () => {
+    memberForSession: (roomId, sessionKey) => {
+      const channel = channels.get(roomId);
+      if (!channel) return undefined;
+      const userId = Object.entries(channel.secrets.members).find(([, secret]) => secret.sessionKey === sessionKey)?.[0];
+      return userId ? member(channel, userId) : undefined;
+    },
+    setMemberToken: (roomId, userId, tokenSha256, sessionKey) => enqueue(async () => {
       const channel = requireChannel(roomId);
       const next = { ...channel.secrets.members };
       if (tokenSha256 === null) delete next[userId];
-      else if (userId !== LOCAL_OWNER_USER_ID) next[userId] = { tokenSha256 };
+      else if (userId !== LOCAL_OWNER_USER_ID) {
+        const identity = sessionKey ?? channel.secrets.members[userId]?.sessionKey;
+        next[userId] = { tokenSha256, ...(identity ? { sessionKey: identity } : {}) };
+      }
       await saveSecrets(channel, { ...channel.secrets, members: next });
     }),
     agentForToken: token => {

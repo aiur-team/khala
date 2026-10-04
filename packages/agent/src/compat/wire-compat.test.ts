@@ -11,6 +11,7 @@ import { openLocalStore, type OpenedLocalStore } from '../local/store';
 import { ownerRoutes } from '../local/routes/owner';
 import { profileRoutes } from '../local/routes/profile';
 import { roomRoutes } from '../local/routes/rooms';
+import { agentJoinRoutes } from '../local/routes/agent-join';
 import type { HelperContext, LocalAuth, LocalRequest, LocalRoute } from '../local/types';
 
 // One helper process serves every CLI on the machine and is reused regardless of
@@ -41,7 +42,7 @@ afterEach(async () => {
 function helper() {
   const ctx: HelperContext = { store, origin: 'http://127.0.0.1:47830', now: () => NOW, random: n => new Uint8Array(n), version: 'test',
     joins: new Map(), mintOpenToken: () => ({ token: '', expiresAt: '' }), consumeOpenToken: () => null, createOwnerSession: () => '', shutdown: () => {} };
-  const routes: LocalRoute[] = [...roomRoutes(), ...ownerRoutes(), ...profileRoutes()];
+  const routes: LocalRoute[] = [...roomRoutes(), ...ownerRoutes(), ...profileRoutes(), ...agentJoinRoutes()];
   return async (method: LocalRequest['method'], url: string, auth: LocalAuth, body?: unknown): Promise<{ status: number; json?: unknown }> => {
     const parsed = new URL(url, ctx.origin);
     const route = routes.find(r => r.method === method && r.pattern.test(parsed.pathname));
@@ -59,11 +60,26 @@ async function joinedAgent() {
   const auth: LocalAuth = { kind: 'agent', userId: AGENT, roomId };
   const room = (tail: string) => `/api/local/rooms/${encodeURIComponent(roomId)}/${tail}`;
   expect((await call('POST', room('join'), auth)).status).toBe(200);
-  return { call, auth, room, after: store.eventsAfter(roomId, 0, 200).at(-1)!.seq };
+  return { call, auth, room, roomId, after: store.eventsAfter(roomId, 0, 200).at(-1)!.seq };
 }
 type Agent = Awaited<ReturnType<typeof joinedAgent>>;
 
 const transitions: Record<string, (agent: Agent) => Promise<void>> = {
+  // A second CLI joins with a stable session, restarts and rejoins as the same member
+  // while the original agent keeps reading the default /events feed.
+  'session rejoin': async ({ call, room, roomId }) => {
+    const session = { harness: 'codex', label: 'Codex', sessionId: 'thread-1', rejoinSecret: 'S'.repeat(43) };
+    const joinAs = async () => {
+      const link = `http://127.0.0.1:47830/join/${(await store.mintLink(roomId, 'join')).token}`;
+      const created = await call('POST', '/api/agent/join', { kind: 'none' }, { link, ...session });
+      expect(created.status).toBe(201);
+      const userId = store.members(roomId).filter(m => m.harness === 'codex' && m.membership === 'invite').at(-1)!.userId;
+      expect((await call('POST', room('join'), { kind: 'agent', userId, roomId })).status).toBe(200);
+      return userId;
+    };
+    expect(await joinAs()).toBe(await joinAs());
+    expect(store.history(roomId, undefined, 100).events.map(e => e.content['summary'])).toEqual(expect.arrayContaining(['kevin-Codex-2 joined', 'kevin-Codex-2 rejoined']));
+  },
   'listening-mode change': async ({ call, auth, room }) => {
     expect((await call('PUT', room(`members/${encodeURIComponent(AGENT)}`), auth, { listeningMode: 'async' })).status).toBe(204);
   },

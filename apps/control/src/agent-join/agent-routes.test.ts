@@ -158,3 +158,15 @@ it('reports a live pending join before expiry', async () => {
   const response = await f.handlers.poll(f.request());
   expect(response.status).toBe(200); expect(await response.json()).toEqual({ state: 'pending' });
 });
+it('persists only the rejoin secret hash and accepts the client session id alphabet', async () => {
+  const f = await fixture();
+  const rejoinSecret = randomBytes(32).toString('base64url');
+  const response = await f.handlers.create(f.createRequest({ link: `${origin}/join/inv_abcdefgh`, harness: 'cursor', label: 'Agent', sessionId: 'thread.1:resume', rejoinSecret }));
+  expect(response.status).toBe(201);
+  const read = await f.joins.read((await response.json() as AgentJoinCreated).joinId); if (read.kind !== 'found') throw Error();
+  expect(read.record).toMatchObject({ sessionId: 'thread.1:resume', rejoinSecretHash: hashPollSecret(rejoinSecret) });
+  expect(JSON.stringify(read.record)).not.toContain(rejoinSecret);
+  for (const bad of ['short', 'S'.repeat(44), 42]) {
+    expect(await (await f.handlers.create(f.createRequest({ link: `${origin}/join/inv_abcdefgh`, harness: 'cursor', label: 'Agent', rejoinSecret: bad }))).json()).toEqual({ error: 'invalid_link' });
+  }
+});

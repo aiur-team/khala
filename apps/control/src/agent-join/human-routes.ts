@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
-import { agentOwnerRecordKey, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
-import { defaultAgentName, suggestUsername } from '@khala/contracts/m1/names';
-import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
+import { agentOwnerRecordKey, decodeAgentOwnerRecord, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
+import { defaultAgentName, nameKey, suggestUsername } from '@khala/contracts/m1/names';
+import { decodeNameReservation, decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
 import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
@@ -67,24 +67,35 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       }
       const username = await usernameOf(principal);
       if (!username) return unavailable();
-      const userId = deps.provisioner.agentUserId(joinId, principal.ownerId);
-      const name = record.agentUserId === userId ? record.label : await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness, expiresAt: record.expiresAt });
+      const identityId = record.sessionId === undefined || record.rejoinSecretHash === undefined ? joinId : 'session.' + createHash('sha256').update(JSON.stringify([record.roomId, record.harness, record.sessionId, record.rejoinSecretHash])).digest('hex');
+      const userId = deps.provisioner.agentUserId(identityId, principal.ownerId);
+      const existing = await safeRead(deps.store, agentOwnerRecordKey(userId));
+      if (existing.kind === 'unavailable') return unavailable();
+      const decoded = existing.kind === 'record' ? decodeAgentOwnerRecord(existing.record.value) : null;
+      if (existing.kind === 'record' && (!decoded?.ok || decoded.value.ownerId !== principal.ownerId || decoded.value.harness !== record.harness)) return unavailable();
+      const previous = decoded?.ok ? decoded.value : undefined;
+      const reservation = previous ? await safeRead(deps.store, nameKey(previous.label)) : { kind: 'absent' as const };
+      if (reservation.kind === 'unavailable') return unavailable();
+      const claim = reservation.kind === 'record' ? decodeNameReservation(reservation.record.value) : null;
+      const held = claim?.ok && claim.value.kind === 'agent' && claim.value.ownerId === principal.ownerId && claim.value.matrixUserId === userId;
+      const rejoin = held && reservation.kind === 'record' && reservation.record.expiresAt === null;
+      const name = (held ? previous?.label : undefined) ?? (record.agentUserId === userId && !previous ? record.label : await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness, expiresAt: record.expiresAt }));
       if (!name) return unavailable();
-      const provisioned = await deps.provisioner.provision({ joinId, ownerId: principal.ownerId, label: name, roomId: record.roomId });
+      const provisioned = await deps.provisioner.provision({ joinId, ...(record.sessionId === undefined ? {} : { identityId }), ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
       const { credentials } = provisioned;
       if (credentials.userId !== userId) return unavailable();
       const owner: AgentOwnerRecord = { matrixUserId: credentials.userId, ownerId: principal.ownerId,
-        ownerLabel: username, harness: record.harness, label: name, createdAt: new Date(deps.clock()).toISOString() };
-      const mapped = await writeAndResolve(deps.store, { key: agentOwnerRecordKey(credentials.userId), expectedRevision: null,
+        ownerLabel: username, harness: record.harness, label: name, createdAt: previous?.createdAt ?? new Date(deps.clock()).toISOString() };
+      const mapped = await writeAndResolve(deps.store, { key: agentOwnerRecordKey(credentials.userId), expectedRevision: existing.kind === 'record' ? existing.record.revision : null,
         operationId: `agents.${createHash('sha256').update(credentials.userId).digest('hex')}.create.${Buffer.from(deps.random(8)).toString('hex')}`,
         next: { value: owner, expiresAt: null },
       });
-      if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId)) return unavailable();
+      if (mapped.kind !== 'applied' && !(mapped.kind === 'conflict' && mapped.current?.value.ownerId === principal.ownerId && mapped.current.value.label === name)) return unavailable();
       if (effectiveState(record, deps.clock()) === 'expired') return error(404, 'not_found');
       // Persist the cleanup pointer before making the claim permanent. A failed final
       // confirmation (including a process crash) remains a pending, expirable join.
-      const staged: JoinRecord = { ...record, label: name, agentUserId: userId };
+      const staged: JoinRecord = { ...record, ...(rejoin ? { rejoin: true } : {}), label: name, agentUserId: userId };
       let stagedResult = await deps.joins.replace(joinId, revision, staged, 'name');
       if (stagedResult.kind === 'conflict') {
         const latest = await deps.joins.read(joinId);

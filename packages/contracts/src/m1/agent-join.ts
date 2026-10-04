@@ -4,7 +4,7 @@ import { validateAgentName } from '../messaging/agent-names';
 export type Harness = 'claude' | 'codex' | 'cursor';
 
 // POST /api/agent/join            (no auth; rate-limited per IP)
-export type AgentJoinRequest = { link: string; harness: Harness; label: string };   // label 1..40 chars, validateAgentName rules
+export type AgentJoinRequest = { link: string; harness: Harness; label: string; sessionId?: string; rejoinSecret?: string };   // label 1..40 chars, validateAgentName rules
 export type AgentJoinCreated = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; autoConfirmed?: true }; // 201
 // errors: 400 invalid_link | invalid_label | invalid_harness ; 404 link_unavailable ; 429 rate_limited
 
@@ -97,10 +97,18 @@ export function readRoomId(input: unknown, path: string): string {
   return value;
 }
 
+export const validAgentSessionId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(value);
+
+export const validAgentRejoinSecret = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(value);
+
 export function decodeAgentJoinRequest(input: unknown): Decoded<AgentJoinRequest> {
   return decodeWith(() => {
-    const r = object(input, '', ['link', 'harness', 'label']);
-    return { link: readChannelLink(r.field('link'), r.at('link')), harness: readHarness(r.field('harness'), r.at('harness')), label: readAgentLabel(r.field('label'), r.at('label')) };
+    const hasSession = typeof input === 'object' && input !== null && Object.hasOwn(input, 'sessionId');
+    const hasSecret = typeof input === 'object' && input !== null && Object.hasOwn(input, 'rejoinSecret');
+    const r = object(input, '', ['link', 'harness', 'label', ...(hasSession ? ['sessionId'] : []), ...(hasSecret ? ['rejoinSecret'] : [])]);
+    if (hasSecret && !validAgentRejoinSecret(r.field('rejoinSecret'))) fail(r.at('rejoinSecret'), 'invalid_value');
+    if (hasSession && !validAgentSessionId(r.field('sessionId'))) fail(r.at('sessionId'), 'invalid_value');
+    return { ...(hasSecret ? { rejoinSecret: r.field('rejoinSecret') as string } : {}), ...(hasSession ? { sessionId: r.field('sessionId') as string } : {}), link: readChannelLink(r.field('link'), r.at('link')), harness: readHarness(r.field('harness'), r.at('harness')), label: readAgentLabel(r.field('label'), r.at('label')) };
   });
 }
 

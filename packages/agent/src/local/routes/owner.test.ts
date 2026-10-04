@@ -28,6 +28,7 @@ function fixture(storeJoins = false, queue?: SerialQueue) {
       ...(c.kind === 'agent' ? { listeningMode: (c['com.khala.listening_mode'] ?? 'sync') as NonNullable<Member['listeningMode']> } : {}) };
   };
   const store: LocalStore = {
+    memberForSession: () => undefined,
     revision: () => revision,
     hasChannel: id => logs.has(id),
     owner: () => ({ v: 1, username: 'kevin', color: 'blue', initials: 'KW', updatedAt: EXPIRES }),
