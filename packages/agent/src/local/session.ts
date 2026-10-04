@@ -164,7 +164,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     let lastEnsureAt = 0;
     while (!stopped) {
       try {
-        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}`, undefined,
+        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1`, undefined,
           controller.signal, (LOCAL_LONG_POLL_MAX_S + 10) * 1000), decodeLocalEventsPage);
         if (stopped) return;
         for (const event of page.events) {

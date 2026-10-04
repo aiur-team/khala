@@ -481,7 +481,7 @@ it('delivers a username cascade and self rename once without any agent speaking'
   } finally { await c.cleanup(); }
 });
 
-it('keeps a rename when the post-join roster already contains its new name', async () => {
+it('requests previous membership and keeps a rename when the post-join roster already contains its new name', async () => {
   const { h, s } = await setup(); const seen = vi.fn(); s.onMessage(seen);
   h.intercept = call => {
     if (!call.url.endsWith('/members')) return;
@@ -491,6 +491,7 @@ it('keeps a rename when the post-join roster already contains its new name', asy
     h.members.find(m => m.userId === other)!.displayName = 'reviewer';
   };
   await s.join(room); await tick();
+  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1');
   expect(seen).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'm.room.member',
     previousContent: expect.objectContaining({ displayname: 'kevin-Codex' }) }));
 });
