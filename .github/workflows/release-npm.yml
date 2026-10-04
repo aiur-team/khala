@@ -205,7 +205,8 @@ jobs:
         if: needs.setup.outputs.publish != 'true'
         run: |
           set -o pipefail
-          tgz=$(ls artifacts/*.tgz)
+          # ./ prefix: npm 11 reads a bare artifacts/x.tgz as a GitHub user/repo spec (EALLOWGIT).
+          tgz=./$(ls artifacts/*.tgz)
           npm publish "$tgz" --dry-run --access public --loglevel verbose 2>&1 | tee out.log
           if grep -q "Failed token exchange request" out.log; then
             echo "OIDC token exchange FAILED; configure the trusted publisher on npmjs.com" >&2
@@ -218,7 +219,7 @@ jobs:
 
       - name: Publish
         if: needs.setup.outputs.publish == 'true'
-        run: npm publish artifacts/*.tgz --access public
+        run: npm publish ./artifacts/*.tgz --access public
 
       - name: Verify registry state
         if: needs.setup.outputs.publish == 'true'
