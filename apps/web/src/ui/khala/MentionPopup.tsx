@@ -17,7 +17,8 @@ function Avatar({ target }: Readonly<{ target: MentionTarget }>) {
   const swatch: Readonly<Record<string, string>> = target.swatch ? { '--hc': target.swatch } : {};
   if (target.kind === 'human') return <i style={{ '--oh': target.hue, ...swatch } as CSSProperties}>{target.ownerInitials}</i>;
   const logo = target.harness ? harnessLogo(target.harness) : null;
-  if (logo) return <img src={logo} alt="" />;
+  // An agent's avatar takes its owner's fill, as in the thread and roster.
+  if (logo) return <i className="kh-mpop-ag" style={{ '--oh': target.ownerHue, ...swatch } as CSSProperties}><img src={logo} alt="" /></i>;
   return <i style={{ '--oh': target.ownerHue, ...swatch } as CSSProperties}>{initials(target.label)}</i>;
 }
 

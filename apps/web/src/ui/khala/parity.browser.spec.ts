@@ -99,18 +99,21 @@ const SCREEN_SLACK = 0.005;
  * and agent tints follow the owner's resolved colour; main's ratios on the same machine are unchanged).
  * The six list and two 1100 thread ceilings were re-measured for the same request, for initials contrast: avatars and
  * owner badges fill from the resolved `tint`, and the list's hue-only avatars from `hsl(hue 65% 29%)`.
+ * The 23 screens with an agent avatar, agent chip or `Human` pill on screen were re-measured for operator request
+ * 2026-10-04: agents wear their owner's colour (name, avatar fill under a white harness glyph, chip text) and the
+ * `Human` pill gives way to a person icon, with a robot icon beside agent names.
  */
 const SCREEN_MEASURED: Readonly<Record<string, number>> = {
-  '1440-dark-thread': 0.0938, '1440-dark-roster': 0.0238, '1440-dark-chips': 0.0881, '1440-dark-detail-agent': 0.1267,
-  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0892, '1440-dark-pop-invite': 0.0958, '1440-dark-pop-add-agent': 0.0314,
-  '1440-dark-failed-send': 0.0938, '1440-dark-draft': 0.0901, '1100-dark-thread': 0.1495, '900-dark-thread': 0.1747, '900-dark-list': 0.0240,
-  '760-dark-thread': 0.0965, '760-dark-list': 0.0254, '390-dark-thread': 0.1055, '390-dark-list': 0.0920, '390-dark-roster': 0.0718,
-  '390-dark-chips': 0.0966, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
-  '1440-light-thread': 0.0973, '1440-light-roster': 0.0260, '1440-light-chips': 0.0919, '1440-light-detail-agent': 0.1332,
-  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.0953, '1440-light-pop-invite': 0.1009, '1440-light-pop-add-agent': 0.0342,
-  '1440-light-failed-send': 0.0973, '1440-light-draft': 0.0929, '1100-light-thread': 0.1545, '900-light-thread': 0.1835, '900-light-list': 0.0243,
-  '760-light-thread': 0.0996, '760-light-list': 0.0258, '390-light-thread': 0.1139, '390-light-list': 0.0928,
-  '390-light-roster': 0.0727, '390-light-chips': 0.1023, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
+  '1440-dark-thread': 0.1010, '1440-dark-roster': 0.0296, '1440-dark-chips': 0.0956, '1440-dark-detail-agent': 0.1267,
+  '1440-dark-detail-human': 0.1395, '1440-dark-pop-new': 0.0962, '1440-dark-pop-invite': 0.1030, '1440-dark-pop-add-agent': 0.0375,
+  '1440-dark-failed-send': 0.1010, '1440-dark-draft': 0.0981, '1100-dark-thread': 0.1546, '900-dark-thread': 0.1747, '900-dark-list': 0.0240,
+  '760-dark-thread': 0.0965, '760-dark-list': 0.0254, '390-dark-thread': 0.1055, '390-dark-list': 0.0977, '390-dark-roster': 0.0718,
+  '390-dark-chips': 0.1043, '390-dark-detail-agent': 0.0347, '390-dark-pop-invite': 0.1079,
+  '1440-light-thread': 0.1046, '1440-light-roster': 0.0322, '1440-light-chips': 0.0995, '1440-light-detail-agent': 0.1332,
+  '1440-light-detail-human': 0.1428, '1440-light-pop-new': 0.1024, '1440-light-pop-invite': 0.1082, '1440-light-pop-add-agent': 0.0411,
+  '1440-light-failed-send': 0.1046, '1440-light-draft': 0.1010, '1100-light-thread': 0.1597, '900-light-thread': 0.1835, '900-light-list': 0.0243,
+  '760-light-thread': 0.0996, '760-light-list': 0.0258, '390-light-thread': 0.1139, '390-light-list': 0.0987,
+  '390-light-roster': 0.0727, '1440-light-empty-channel': 0.0201, '390-light-chips': 0.1100, '390-light-detail-agent': 0.0540, '390-light-pop-invite': 0.1196,
 };
 const screenCeiling = (c: ScreenCase) => {
   const measured = SCREEN_MEASURED[screenName(c)];
@@ -163,6 +166,15 @@ const COMPUTED_DEVIATIONS: Readonly<Record<string, Readonly<{ reason: string; va
     reason: 'operator request 2026-10-02: per-human colours',
     values: Object.fromEntries(['1440-dark', '1440-light', '390-dark'].map(viewport => [viewport, { 'background-color': fill }])),
   }])),
+  // Operator request 2026-10-04: an agent chip's text takes its owner's colour (the viewer's blue in the fixture), like a human chip.
+  '.kh-chip-a': {
+    reason: 'operator request 2026-10-04: agents wear their owner\'s colour',
+    values: {
+      '1440-dark': { color: 'rgb(134, 177, 234)' },
+      '1440-light': { color: 'rgb(37, 84, 147)' },
+      '390-dark': { color: 'rgb(134, 177, 234)' },
+    },
+  },
   // The fixture's first mention sits in that agent row; on a tinted bubble it takes the bubble's text colour.
   '.kh-mention': {
     reason: 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
@@ -513,6 +525,7 @@ const EXACT = ['color', 'background-color', 'font-size', 'font-weight', 'font-fa
 const COMPUTED_SKIP: Readonly<Record<string, string>> = {
   '.kh-id': 'Executor decision (dec_f83838efca089ad3): #id badges are Aiur ticket numbers and M1 omits them; `.kh-id` renders only for colliding names',
   '.kh-otag': 'operator request 2026-10-02: no machine tag; agent bubbles tinted by owner',
+  '.kh-htag': 'operator request 2026-10-04: the Human pill is replaced by a person icon (`.kh-kind`)',
 };
 const SIZE_ONLY = 'position follows text length or thread scroll; size compared';
 /** Boxes that follow dataset text, thread scroll or an omitted neighbour; their styles are still compared. */

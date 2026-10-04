@@ -127,6 +127,10 @@
 .kh-av { position: relative; }
 .kh-own { position: absolute; right: -4px; bottom: -4px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; font: 700 8px/16px "JetBrains Mono", monospace; letter-spacing: -.02em; color: #fff; background: var(--hc, hsl(var(--oh) 65% 29%)); border: 2px solid var(--bg-2); box-sizing: content-box; }
 .kh-stack .kh-own, .kh-d-hero .kh-own { display: none; }
+/* Operator request 2026-10-04: an agent's avatar takes its owner's fill, with the harness glyph in white. */
+.kh-aav { background: var(--hc, hsl(var(--oh) 65% 29%)) !important; border-color: transparent; }
+.kh-aav img { filter: brightness(0) invert(1); }
+.khala-app .kh-av.kh-aav .kh-ini { color: #fff; }
 .kh-hav { background: var(--hc, hsl(var(--oh) 65% 29%)) !important; border-color: transparent; color: #fff; font: 700 .72rem/1 "Space Grotesk", sans-serif; letter-spacing: .02em; }
 .kh-d-hero .kh-hav { font-size: 1.3rem; }
 /* Operator request 2026-10-02: per-human colours. `--hc` is the resolved colour's `tint` at every tier, so

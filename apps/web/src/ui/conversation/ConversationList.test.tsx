@@ -34,10 +34,10 @@ describe('ConversationList', () => {
 
   it('shows the first two members as static avatars, the agent with its label initials', () => {
     const cell = avatars(render([release]));
-    expect(cell.match(/class="kh-av[^"]*"/gu)).toEqual(['class="kh-av kh-hav"', 'class="kh-av"']);
+    expect(cell.match(/class="kh-av[^"]*"/gu)).toEqual(['class="kh-av kh-hav"', 'class="kh-av kh-aav"']);
     expect(cell).not.toContain('<button');
     expect(cell).toMatch(/<span class="kh-av kh-hav" style="--oh:\d+" aria-hidden="true">MC<\/span>/u);
-    expect(cell).toMatch(/<span class="kh-av" style="--h:\d+" aria-hidden="true"><span class="kh-ini">SO<\/span><span class="kh-own" style="--oh:\d+">KA<\/span><\/span>/u);
+    expect(cell).toMatch(/<span class="kh-av kh-aav" style="--h:(\d+);--oh:\1" aria-hidden="true"><span class="kh-ini">SO<\/span><span class="kh-own" style="--oh:\d+">KA<\/span><\/span>/u);
   });
 
   it('caps the avatars at two members', () => {

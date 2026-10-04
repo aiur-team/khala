@@ -26,6 +26,9 @@
   --accent-ink: #8fbcff;
   --accent-soft: rgba(47, 134, 255, 0.15);
   --accent-line: rgba(47, 134, 255, 0.34);
+  /* The Aiur blue's complement: OKLCH hue +180° (nudged from amber to orange), the blue's lightness, the widest in-gamut chroma.
+     The human (blue) and agent (orange) name markers are both >= 3:1 against every dark surface. */
+  --accent-complement: #c97103;
 
   --attn: #e3b341;
   --attn-ink: #f1cf6f;
@@ -104,6 +107,7 @@
   --accent-ink: #1a4aa8;
   --accent-soft: rgba(31, 87, 196, 0.11);
   --accent-line: rgba(31, 87, 196, 0.30);
+  --accent-complement: #8e4d00;
 
   --attn: #b8821a;
   --attn-ink: #8a6210;

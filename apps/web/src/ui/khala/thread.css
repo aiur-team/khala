@@ -36,7 +36,10 @@
 .kh-row.human .kh-b code { background: rgba(0,0,0,.2); }
 .kh-row.human .kh-mention { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
 .khala-app[data-theme="light"] .kh-row.human .kh-mention { color: var(--hk, #3a1026); }
-.kh-htag { font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px; background: hsl(330 65% 48%); color: #fff; }
+.kh-kind { display: inline-grid; place-items: center; flex: 0 0 auto; width: 13px; height: 13px; }
+.kh-kind svg { width: 13px; height: 13px; }
+.kh-kind-human { color: var(--accent); }
+.kh-kind-agent { color: var(--accent-complement); }
 /* Operator request 2026-10-02: an agent's bubble is a greyed, darker (light theme: muted) tint of its
    owner's resolved colour (operator request 2026-10-02: per-human colours): the row's inline `--ob`, for
    `.yours` and `.theirs` alike; `--oh` is the fallback. Text stays --fg at >= 4.5:1 in both themes. */

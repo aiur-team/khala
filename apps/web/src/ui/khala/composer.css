@@ -21,6 +21,9 @@
 .kh-chip:hover { color: var(--fg); border-color: var(--line-strong); }
 .kh-chip-a { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 3px 2px 7px; color: var(--fg); border-color: hsl(var(--oh) 60% 55% / .45); background: hsl(var(--oh) 60% 50% / .08); }
 .kh-chip-a img { width: 12px; height: 12px; flex: 0 0 auto; }
+/* An agent chip reads in its owner's colour, like the owner's own chip. */
+.kh-chip.kh-chip-a { color: hsl(var(--oh) 70% 72%); }
+.khala-app[data-theme="light"] .kh-chip.kh-chip-a { color: hsl(var(--oh) 60% 36%); }
 .kh-chip-a i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
 .kh-chip-h { display: inline-flex; align-items: center; gap: .35rem; padding: 2px 9px 2px 3px; }
 .kh-chip-h i { font-style: normal; font: 700 8px/16px "JetBrains Mono", monospace; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
@@ -57,6 +60,8 @@
 .kh-mpop-opt b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .kh-mpop-opt em { margin-left: auto; padding-left: .8rem; flex: 0 0 auto; font-style: normal; font-size: .72rem; color: var(--faint); white-space: nowrap; }
 .kh-mpop-opt img { width: 20px; height: 20px; flex: 0 0 auto; }
+.kh-mpop-opt i.kh-mpop-ag { display: grid; place-items: center; padding: 0; }
+.kh-mpop-opt i.kh-mpop-ag img { width: 12px; height: 12px; filter: brightness(0) invert(1); }
 .kh-mpop-opt i { flex: 0 0 auto; font: 700 9px/20px "JetBrains Mono", monospace; min-width: 20px; height: 20px; padding: 0 3px; box-sizing: border-box; text-align: center; border-radius: 999px; background: var(--hc, hsl(var(--oh) 65% 29%)); color: #fff; }
 @media (pointer: coarse) { .kh-mpop-opt { min-height: 44px; } }
 @media (max-width: 760px) { .kh-mpop { left: .6rem; right: .6rem; width: auto; } }

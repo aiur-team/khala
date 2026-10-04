@@ -121,11 +121,12 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
     const ownerId = agent.ownerId ?? null;
     const name = baseNames[index]!;
     const ownerColor = colorFor?.(ownerId ?? agent.participantId) ?? null;
+    // An agent wears its owner's colour (operator request 2026-10-04): name, avatar and bubble all match the owner.
+    const ownerHue = ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId });
     return {
       kind: 'agent', participantId: agent.participantId, ownerId, name,
       idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
-      hue: participantHue({ kind: 'agent', participantId: agent.participantId }),
-      ownerHue: ownerColor?.hue ?? owner?.hue ?? participantHue({ kind: 'human', ownerId: ownerId ?? agent.participantId }), ownerColor,
+      hue: ownerHue, ownerHue, ownerColor,
       // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster, until they choose initials.
       // Another owner's member initials already carry their choice.
       ownerName, ownerInitials: owner?.isViewer ? viewerMember.initials : described?.ownerInitials ?? owner?.initials ?? initials(ownerName), harness: described?.harness ?? null,
