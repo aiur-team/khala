@@ -108,10 +108,23 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const viewer = context.participant?.() ?? null;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
   const presence = useSyncExternalStore(room.subscribe, room.getSnapshot, room.getSnapshot);
-  const extraParticipants = presence.agents.flatMap(agent => agent.ownerId ? [{
+  // The directory's current human names outrank the stale names carried on older timeline events.
+  const rosterHumans = participantRoster?.scope === participantScope ? participantRoster.participants
+    .filter(participant => participant.kind === 'human' && participant.participantId !== viewer?.participantId) : [];
+  const extraParticipants = [...presence.agents.flatMap(agent => agent.ownerId ? [{
     participantId: agent.participantId, ownerId: agent.ownerId, kind: 'agent' as const,
     initialName: agent.displayName,
-  }] : []);
+  }] : []), ...rosterHumans.map(human => ({
+    participantId: human.participantId, ownerId: human.ownerId, kind: 'human' as const, initialName: human.displayName,
+  }))];
+  // A membership pill (a rename, a join) means the directory changed: read it now rather than at the next poll.
+  const memberEvents = (timelineData.rows ?? []).filter(row => row.kind === 'channel_event' && row.content.kind === 'member').length;
+  const seenMemberEvents = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = seenMemberEvents.current;
+    seenMemberEvents.current = memberEvents;
+    if (previous !== null && memberEvents !== previous) room.refresh?.();
+  }, [memberEvents, room]);
   const matrixUserId = (participantId: string) => context.describeParticipant?.(participantId)?.matrixUserId;
   const modeFor = (participantId: string): ListeningMode => {
     const userId = matrixUserId(participantId);

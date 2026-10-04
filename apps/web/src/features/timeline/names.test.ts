@@ -11,3 +11,12 @@ it('replays an authenticated rename of a departed agent with no readable agent-a
   expect(projection.events).toMatchObject([{ kind: 'agent_rename', previousName: 'Codex #420', name: 'Dolan' }]);
   expect(projection.currentNames.get(target.participantId)).toBe('Dolan');
 });
+
+it('lets the directory name of a human outrank the stale name on their older messages', () => {
+  const viewer = { participantId: 'human_alice' as never, ownerId: 'owner_alice' as never, kind: 'human', displayName: 'alice', deviceIds: [] } as ParticipantView;
+  const bob = { participantId: 'human_bob' as never, ownerId: 'owner_bob' as never, kind: 'human', displayName: 'bob', deviceIds: [] } as ParticipantView;
+  const message = { ref: { eventId: '$m', authorParticipantId: bob.participantId }, participant: bob, content: { kind: 'text', body: 'hi' } } as unknown as TimelineItem;
+  expect(projectTimelineNames([message], viewer).currentNames.get(bob.participantId)).toBe('bob');
+  const renamed = projectTimelineNames([message], viewer, [{ participantId: bob.participantId, ownerId: bob.ownerId, kind: 'human', initialName: 'robert' }]);
+  expect(renamed.currentNames.get(bob.participantId)).toBe('robert');
+});
