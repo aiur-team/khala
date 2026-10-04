@@ -142,7 +142,7 @@ describe('agentJoinRoutes', () => {
     expect(after.userId).toBe(before.userId);
     expect(after.accessToken).not.toBe(before.accessToken);
     expect(f.store.members(roomId)).toHaveLength(2);
-    expect(f.events.at(-1)?.content).toMatchObject({ displayname: 'ReviewHelper', 'com.khala.listening_mode': 'async', 'com.khala.rejoin': true });
+    expect(f.events.at(-1)?.content).toEqual({ user: before.userId, membership: 'invite', displayname: 'ReviewHelper', kind: 'agent', harness, invitedBy: LOCAL_OWNER_USER_ID, 'com.khala.listening_mode': 'async' });
     await requestJoin({ link: f.link(), harness, label: 'Codex', sessionId: 'thread-2', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia });
     expect(f.store.members(roomId)).toHaveLength(3);
   });
@@ -156,7 +156,7 @@ describe('agentJoinRoutes', () => {
     }
     expect(f.tokens.filter(token => token.userId === original.userId)).toEqual([{ roomId, userId: original.userId, tokenSha256: hash(original.accessToken) }]);
     expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3', 'kevin-Cursor-4']);
-    expect(f.events.some(e => (e.content as LocalMemberContent)['com.khala.rejoin'])).toBe(false);
+    expect(f.events.every(e => !Object.hasOwn(e.content, 'com.khala.rejoin'))).toBe(true);
     const rejoined = await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Cursor', sessionId: 'cursor-default', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
     expect(rejoined.userId).toBe(original.userId);
   });

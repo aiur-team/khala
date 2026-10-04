@@ -39,6 +39,10 @@ function memberEvents(store: LocalStore, roomId: string, userId: string) {
   let current: LocalEvent | undefined;
   let joined: LocalEvent | undefined;
   let announced = false;
+  // Join transitions so far. A session rejoin reuses the member id, so a second
+  // transition means "rejoined" without a marker on the member event, whose
+  // default wire must stay decodable by older CLIs sharing this helper.
+  let joins = 0;
   for (;;) {
     const page = store.eventsAfter(roomId, after, 200);
     for (const event of page) {
@@ -49,6 +53,7 @@ function memberEvents(store: LocalStore, roomId: string, userId: string) {
         } else if (current?.content['membership'] !== 'join') {
           joined = event;
           announced = false;
+          joins++;
         }
         current = event;
       } else if (joined && event.type === 'com.khala.event.v1' && event.sender === LOCAL_OWNER_USER_ID
@@ -56,7 +61,7 @@ function memberEvents(store: LocalStore, roomId: string, userId: string) {
         announced = true;
       }
     }
-    if (page.length < 200) return { current, joined, announced };
+    if (page.length < 200) return { current, joined, announced, joins };
     after = page.at(-1)!.seq;
   }
 }
@@ -93,19 +98,20 @@ export function roomRoutes(): LocalRoute[] {
         let event: LocalEvent | undefined;
         let joined: LocalEvent | undefined;
         let announced = false;
+        let rejoin = false;
         if (caller.member.membership === 'join') {
-          ({ current: event, joined, announced } = memberEvents(ctx.store, caller.roomId, caller.userId));
+          let joins: number;
+          ({ current: event, joined, announced, joins } = memberEvents(ctx.store, caller.roomId, caller.userId));
+          rejoin = joins > 1;
         } else {
-          const previous = memberEvents(ctx.store, caller.roomId, caller.userId).current;
-          const rejoin = previous?.content['com.khala.rejoin'] === true;
-          event = await ctx.store.append(caller.roomId, { type: 'm.room.member', sender: caller.userId,
-            content: memberContent(caller.member, rejoin ? { 'com.khala.rejoin': true } : {}) });
+          rejoin = memberEvents(ctx.store, caller.roomId, caller.userId).joins > 0;
+          event = await ctx.store.append(caller.roomId, { type: 'm.room.member', sender: caller.userId, content: memberContent(caller.member) });
           joined = event;
         }
         // A persisted join may survive a failed announcement append or helper restart.
         // Tie the announcement to that transition, rather than later mode echoes.
         if (caller.kind === 'agent' && joined && !announced) {
-          const encoded = encodeChannelEvent({ kind: 'member', summary: `${joined.content['displayname']} ${joined.content['com.khala.rejoin'] === true ? 'rejoined' : 'joined'}`, status: 'info', source: { system: 'khala-local' } });
+          const encoded = encodeChannelEvent({ kind: 'member', summary: `${joined.content['displayname']} ${rejoin ? 'rejoined' : 'joined'}`, status: 'info', source: { system: 'khala-local' } });
           if (encoded.ok) await ctx.store.append(caller.roomId, { type: 'com.khala.event.v1', sender: LOCAL_OWNER_USER_ID,
             content: { ...encoded.value }, txnId: announcementTxn(joined) });
         }

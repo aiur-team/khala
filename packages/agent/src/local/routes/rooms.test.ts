@@ -131,14 +131,16 @@ describe('participant endpoints', () => {
     expect(f.log).toHaveLength(5);
   });
 
-  it('announces one rejoin pill and retains mode through the new join transition', async () => {
+  it('announces one rejoin pill from join history and retains mode, adding no field to member content', async () => {
     const f = fixture();
     await f.call('POST', 'join');
     await f.store.append(R, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
-      content: { ...invite, displayname: 'Helper', 'com.khala.listening_mode': 'async', 'com.khala.rejoin': true } });
+      content: { ...invite, displayname: 'Helper', 'com.khala.listening_mode': 'async' } });
     await f.call('POST', 'join');
     await f.call('POST', 'join');
     expect(f.log.filter(e => e.type === 'com.khala.event.v1').map(e => e.content.summary)).toEqual(['kevin-Claude joined', 'Helper rejoined']);
+    expect(f.log.at(-2)).toMatchObject({ type: 'm.room.member', content: { membership: 'join', displayname: 'Helper' } });
+    expect(f.log.filter(e => e.type === 'm.room.member').every(e => !Object.hasOwn(e.content, 'com.khala.rejoin'))).toBe(true);
     expect(f.store.member(R, A)).toMatchObject({ displayName: 'Helper', listeningMode: 'async' });
   });
 
@@ -367,7 +369,7 @@ describe('participant endpoints', () => {
     expect((await f.call('POST', 'join')).status).toBe(200);
     const secondAnnouncement = f.log.at(-1)!;
     expect(secondAnnouncement.txnId).not.toBe(firstAnnouncement.txnId);
-    expect(secondAnnouncement.content['summary']).toBe('new name joined');
+    expect(secondAnnouncement.content['summary']).toBe('new name rejoined');
     expect(f.log.filter(e => e.type === 'com.khala.event.v1')).toHaveLength(2);
   });
 

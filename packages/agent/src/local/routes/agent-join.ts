@@ -66,7 +66,7 @@ export function agentJoinRoutes(): LocalRoute[] {
         const accessToken = b64(ctx.random(LOCAL_TOKEN_BYTES));
         await ctx.store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
           content: { user: userId, membership: 'invite', displayname: previous?.displayName ?? checked.name, kind: 'agent', harness, invitedBy: LOCAL_OWNER_USER_ID,
-            ...(previous ? { 'com.khala.listening_mode': previous.listeningMode ?? 'sync', 'com.khala.rejoin': true } : {}) } });
+            ...(previous ? { 'com.khala.listening_mode': previous.listeningMode ?? 'sync' } : {}) } });
         await ctx.store.setMemberToken(roomId, userId, sha256hex(accessToken), sessionKey);
         const joinId = b64(ctx.random(16)), pollSecret = b64(ctx.random(LOCAL_TOKEN_BYTES));
         const expiresAt = ctx.now() + LOCAL_LINK_TTL_MS;

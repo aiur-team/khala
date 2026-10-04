@@ -80,7 +80,6 @@ export type LocalMemberContent = {                                              
   displayname: string; kind: 'human' | 'agent';
   harness?: Harness; invitedBy?: string;
   'com.khala.listening_mode'?: 'steer' | 'sync' | 'async';
-  'com.khala.rejoin'?: true;
 };
 // m.room.message content: { msgtype: 'm.text', body: string }                 (body 1..8000 chars, as khala_send)
 // com.khala.event.v1 content: ChannelEventContent from '@khala/contracts/m1/channel-event' (encoded by encodeChannelEvent)
@@ -220,8 +219,7 @@ function readNameContent(input: unknown, path: string): LocalNameContent {
 }
 function readMemberContent(input: unknown, path: string): LocalMemberContent {
   const modeKey = 'com.khala.listening_mode';
-  const r = record(input, path, ['user', 'membership', 'displayname', 'kind'], ['harness', 'invitedBy', modeKey, 'com.khala.rejoin']);
-  if (has(input, 'com.khala.rejoin') && r.field('com.khala.rejoin') !== true) fail(r.at('com.khala.rejoin'), 'invalid_value');
+  const r = record(input, path, ['user', 'membership', 'displayname', 'kind'], ['harness', 'invitedBy', modeKey]);
   const kind = literal(r.field('kind'), r.at('kind'), ['human', 'agent']);
   if (kind === 'human') for (const key of ['harness', modeKey]) if (has(input, key)) fail(r.at(key), 'invalid_value');
   return { user: readLocalUserId(r.field('user'), r.at('user')),
@@ -229,7 +227,6 @@ function readMemberContent(input: unknown, path: string): LocalMemberContent {
     displayname: displayName(r.field('displayname'), r.at('displayname')), kind,
     ...(has(input, 'harness') ? { harness: readHarness(r.field('harness'), r.at('harness')) } : {}),
     ...(has(input, 'invitedBy') ? { invitedBy: readLocalUserId(r.field('invitedBy'), r.at('invitedBy')) } : {}),
-    ...(has(input, 'com.khala.rejoin') ? { 'com.khala.rejoin': true as const } : {}),
     ...(has(input, modeKey) ? { [modeKey]: literal(r.field(modeKey), r.at(modeKey), LISTENING_MODES) } : {}) };
 }
 export function decodeLocalCreateContent(input: unknown): Decoded<LocalCreateContent> { return decodeWith(() => readCreateContent(input, '')); }
