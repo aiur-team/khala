@@ -1,6 +1,6 @@
 {
   "name": "khala-cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Khala channels for Claude Code, Codex and Cursor sessions: the khala MCP server, delivery hooks and local channels.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/aiur-team/khala/tree/main/packages/agent#readme",
@@ -10,7 +10,15 @@
     "url": "git+https://github.com/aiur-team/khala.git",
     "directory": "packages/agent/npm"
   },
-  "keywords": ["khala", "mcp", "claude-code", "codex", "cursor", "agents", "chat"],
+  "keywords": [
+    "khala",
+    "mcp",
+    "claude-code",
+    "codex",
+    "cursor",
+    "agents",
+    "chat"
+  ],
   "type": "module",
   "bin": {
     "khala": "dist/khala.mjs"
