@@ -130,20 +130,20 @@ describe('agentJoinRoutes', () => {
     await expect(requestJoin({ link, harness: 'codex', label: 'Codex' }, { fetch: f.fetchVia })).rejects.toMatchObject({ code: 'link_unavailable' });
   });
 
-  it('reuses a session member, preserves rename and mode, and separates other sessions', async () => {
+  it.each(['claude', 'codex', 'cursor'] as const)('reuses a %s session member, preserves rename and mode, and separates other sessions', async harness => {
     const f = fixture();
-    const first = await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
+    const first = await requestJoin({ link: f.link(), harness, label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
     const before = await pollJoin(first, { fetch: f.fetchVia });
     const member = f.membership.get(before.userId)!;
     member.displayname = 'ReviewHelper';
     member['com.khala.listening_mode'] = 'async';
-    const restarted = await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
+    const restarted = await requestJoin({ link: f.link(), harness, label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
     const after = await pollJoin(restarted, { fetch: f.fetchVia });
     expect(after.userId).toBe(before.userId);
     expect(after.accessToken).not.toBe(before.accessToken);
     expect(f.store.members(roomId)).toHaveLength(2);
     expect(f.events.at(-1)?.content).toMatchObject({ displayname: 'ReviewHelper', 'com.khala.listening_mode': 'async', 'com.khala.rejoin': true });
-    await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-2' }, { fetch: f.fetchVia });
+    await requestJoin({ link: f.link(), harness, label: 'Codex', sessionId: 'thread-2' }, { fetch: f.fetchVia });
     expect(f.store.members(roomId)).toHaveLength(3);
   });
 

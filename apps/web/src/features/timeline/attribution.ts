@@ -61,7 +61,7 @@ export function buildDisplayNameResolver(participants: readonly ParticipantView[
   };
 }
 
-export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex' };
+export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 
 export function rowLabels(attribution: Attribution, detail: Participant | undefined): Readonly<{ author: string | null; kindLabel: string }> {
   if (detail?.kind === 'agent') return { author: detail.displayName, kindLabel: `${HARNESS_NAMES[detail.harness]} agent` };

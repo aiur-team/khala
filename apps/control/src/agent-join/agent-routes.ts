@@ -1,4 +1,4 @@
-import { agentConfirmPagePath, validAgentSessionId, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, HARNESSES, validAgentSessionId, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { type ControlStore, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { consumeJoinBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, type JoinRecord } from './store';
@@ -44,7 +44,7 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const r = body as Record<string, unknown>;
     if (Object.keys(r).some(key => !['link', 'harness', 'label', 'sessionId'].includes(key)) || !['link', 'harness', 'label'].every(key => Object.hasOwn(r, key)) || typeof r.link !== 'string') return error('invalid_link', 400);
     if (Object.hasOwn(r, 'sessionId') && !validAgentSessionId(r.sessionId)) return error('invalid_link', 400);
-    if (r.harness !== 'claude' && r.harness !== 'codex') return error('invalid_harness', 400);
+    if (!(HARNESSES as readonly unknown[]).includes(r.harness)) return error('invalid_harness', 400);
     const label = validateAgentName(r.label);
     if (!label.ok || [...label.name].length > 40) return error('invalid_label', 400);
     const link = await resolveJoinLink({ ...deps, link: r.link });
@@ -54,7 +54,7 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const pollSecret = Buffer.from(deps.random(32)).toString('base64url');
     const now = deps.clock();
     const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret(pollSecret), roomId: link.roomId, channelName,
-      ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString() };
+      ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness as Harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString() };
     if (await deps.joins.create(record) !== 'created') return error('unavailable', 503);
     const result: AgentJoinCreated = { joinId, pollSecret, confirmUrl: deps.origin + agentConfirmPagePath(joinId), expiresAt: record.expiresAt };
     return json(result, 201);

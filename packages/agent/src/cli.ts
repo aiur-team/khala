@@ -18,7 +18,7 @@ export type CliModules = {
 
 const HOOK_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const STDIN_CAP = 1024 * 1024;
-export const USAGE = 'usage: khala mcp | khala hook <name> | khala local <command> | khala install codex | khala --version';
+export const USAGE = 'usage: khala mcp | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala --version';
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';

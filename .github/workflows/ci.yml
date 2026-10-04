@@ -59,3 +59,48 @@ jobs:
           path: apps/web/test-results/
           if-no-files-found: ignore
       - run: pnpm build
+
+  # The published CLI must install and serve MCP on native Windows too (Cursor on Windows
+  # runs it directly, not through WSL). Pack once on Linux, smoke on Linux and Windows.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @khala/agent build
+      - name: Pack
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cd packages/agent/npm
+          npm pack --pack-destination "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: khala-cli-tarball
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  package-smoke:
+    name: package smoke ${{ matrix.os }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          name: khala-cli-tarball
+          path: artifacts
+      - name: Smoke the packed CLI
+        shell: bash
+        run: node packages/agent/scripts/smoke-package.mjs artifacts/*.tgz

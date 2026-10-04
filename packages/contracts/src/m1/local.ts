@@ -1,5 +1,5 @@
 import { type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal, nullable, object, safeInteger, text, utcTimestamp, utf8Length, version } from '../messaging/decode';
-import { M1_LABEL_MAX_BYTES, readChannelLink, readHarness, readHttpUrl, readMatrixUserId, readRoomId } from './agent-join';
+import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHarness, readHttpUrl, readMatrixUserId, readRoomId } from './agent-join';
 import { type HumanColorId, readHumanColorId } from './colors';
 import { readHumanInitials } from './initials';
 import { LISTENING_MODES } from './listening-mode';
@@ -77,7 +77,7 @@ export type LocalNameContent = { name: string };                                
 export type LocalMemberContent = {                                                          // m.room.member
   user: string; membership: 'invite' | 'join' | 'leave';
   displayname: string; kind: 'human' | 'agent';
-  harness?: 'claude' | 'codex'; invitedBy?: string;
+  harness?: Harness; invitedBy?: string;
   'com.khala.listening_mode'?: 'steer' | 'sync' | 'async';
   'com.khala.rejoin'?: true;
 };
@@ -110,7 +110,7 @@ export type LocalMember = {
   participantId: string;             // = userId (the web's ParticipantId)
   ownerId: typeof LOCAL_OWNER_ID;    // every member belongs to the one owner
   deviceId: string;                  // agents "KH_LOCAL_<8hex>", the owner LOCAL_OWNER_DEVICE_ID; the web's authorDeviceId
-  displayName: string; kind: 'human' | 'agent'; harness?: 'claude' | 'codex';
+  displayName: string; kind: 'human' | 'agent'; harness?: Harness;
   ownerLabel?: string;               // agents: the owner's username (Participant.ownerLabel)
   membership: 'invite' | 'join';
   listeningMode?: 'steer' | 'sync' | 'async';   // agents only; DEFAULT_LISTENING_MODE when never echoed
@@ -125,7 +125,7 @@ export type LocalChannelSummary = {
   roomId: string; name: string; createdAt: string; lastSeq: number; lastTs: number;
   preview: string | null;                                  // body of the latest m.room.message (m.text), else null
   lastSender?: { userId: string; displayName: string };    // sender of that message
-  members: { userId: string; displayName: string; kind: 'human' | 'agent'; harness?: 'claude' | 'codex' }[];   // present members, owner first
+  members: { userId: string; displayName: string; kind: 'human' | 'agent'; harness?: Harness }[];   // present members, owner first
 };
 // POST   /api/local/channels           body {name, operationId?} → LocalChannelCreated   (name 1..64 chars, trimmed; appends create + owner join; operationId 1..64 [A-Za-z0-9._-] is stored in the create content and is idempotent)
 export type LocalChannelCreated = { roomId: string; name: string; selfLink: string; shareLink: string; openUrl: string; expiresAt: string };

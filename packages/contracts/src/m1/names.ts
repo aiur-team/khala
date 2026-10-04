@@ -13,7 +13,7 @@ export type NameError = 'too_short' | 'too_long' | 'invalid_characters' | 'reser
 export type NameCheck = { ok: true; name: string } | { ok: false; error: NameError };
 const mentionName = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
 const adjacentSeparators = /[._-]{2}/u;
-const agentSuffix = /-(?:claude|codex)(?:-\d+)?$/iu;
+const agentSuffix = /-(?:claude|codex|cursor)(?:-\d+)?$/iu;
 
 export function checkName(input: unknown, kind: NameKind): NameCheck {
   if (typeof input !== 'string') return { ok: false, error: 'invalid_characters' };
@@ -26,7 +26,7 @@ export function checkName(input: unknown, kind: NameKind): NameCheck {
 }
 
 export const nameKey = (name: string): string => `names/v1/${name.toLowerCase()}`;
-export const MODEL_NAMES: Record<Harness, string> = { claude: 'Claude', codex: 'Codex' };
+export const MODEL_NAMES: Record<Harness, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
 export function defaultAgentName(username: string, harness: Harness, n = 1): string {
   return `${username}-${MODEL_NAMES[harness]}${n === 1 ? '' : `-${n}`}`;
 }

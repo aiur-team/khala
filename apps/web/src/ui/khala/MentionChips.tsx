@@ -19,7 +19,7 @@ export type MentionTarget = Readonly<{
   swatch?: string;
   /** An agent's owner initials; a human's own. */
   ownerInitials: string;
-  harness?: 'claude' | 'codex';
+  harness?: 'claude' | 'codex' | 'cursor';
   ownerId: string;
   /** The viewer's own human entry. */
   isViewer: boolean;

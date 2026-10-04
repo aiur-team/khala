@@ -1,5 +1,6 @@
 import { resolveEventInput } from '../events/emit';
 import type { Harness } from '@khala/contracts/m1/agent-join';
+import { MODEL_NAMES } from '@khala/contracts/m1/names';
 import type { KhalaAgentClient, KhalaErrorCode } from '../client';
 import { failure, hasOnly, success, toolError, type McpTool, type McpToolDefinition } from './tool';
 
@@ -47,7 +48,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
         description: 'Optional and ignored: Khala names you <OwnerUsername>-<Claude|Codex>, and your owner can rename you.' } }, ['link'],
       args => typeof args.link === 'string' && (!Object.hasOwn(args, 'label')
         || typeof args.label === 'string' && args.label.trim().length > 0 && [...args.label].length <= 40),
-      (client, args) => client.join(args.link as string, args.label as string ?? (input.harness === 'claude' ? 'Claude' : 'Codex')),
+      (client, args) => client.join(args.link as string, args.label as string ?? MODEL_NAMES[input.harness]),
       result => {
         const joined = result as Awaited<ReturnType<KhalaAgentClient['join']>>;
         if (joined.state === 'connected') return `Connected to ${joined.channelName}.`;
