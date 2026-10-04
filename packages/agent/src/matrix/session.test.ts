@@ -199,3 +199,15 @@ it('delivers live self profile renames once and projects membership history', as
   client.createMessagesRequest.mockResolvedValue({ chunk: [rename], end: undefined });
   expect((await s.history('!r:hs', 30)).messages).toEqual([seen.mock.calls[0]![0]]);
 });
+
+it('reads rename history from raw Matrix unsigned.prev_content', async () => {
+  const { MatrixEvent } = await vi.importActual<typeof import('matrix-js-sdk')>('matrix-js-sdk');
+  const s = await joined();
+  vi.spyOn(client, 'getEventMapper').mockReturnValue(raw => new MatrixEvent(raw as ConstructorParameters<typeof MatrixEvent>[0]));
+  client.createMessagesRequest.mockResolvedValue({ chunk: [{ event_id: '$profile', room_id: '!r:hs', sender: creds.userId,
+    origin_server_ts: 102, type: 'm.room.member', state_key: creds.userId,
+    content: { membership: 'join', displayname: 'kev-Codex' },
+    unsigned: { prev_content: { membership: 'join', displayname: 'kevin-Codex' } } }], end: undefined });
+  expect((await s.history('!r:hs', 30)).messages).toEqual([expect.objectContaining({ eventId: '$profile', type: 'm.room.member',
+    content: { membership: 'join', displayname: 'kev-Codex' }, previousContent: { membership: 'join', displayname: 'kevin-Codex' } })]);
+});
