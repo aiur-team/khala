@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { codexHooksFragment, mergeCodexHooks } from '../../codex/hooks-config.mjs';
 import { bundle } from '../bundle';
+import { cursorPaths, installCursor } from './cursor';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--uninstall]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--uninstall] | khala install cursor [--uninstall]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -15,7 +16,40 @@ export type InstallDeps = {
   npmInstall?: (prefix: string, spec: string) => boolean;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
+  /** Cursor only: the platform whose paths and hook shell to target, and its Node binary. */
+  platform?: NodeJS.Platform;
+  node?: string;
+  home?: string;
 };
+
+async function runCursorInstall(flags: readonly string[], deps: InstallDeps, env: NodeJS.ProcessEnv,
+  stdout: (line: string) => void, stderr: (line: string) => void): Promise<number> {
+  let uninstall = false;
+  for (const flag of flags) {
+    if (flag === '--uninstall') uninstall = true;
+    else { stderr(USAGE); return 1; }
+  }
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) {
+    stderr('khala: install runs from the published package (npx -y khala-cli install cursor)');
+    return 1;
+  }
+  const platform = deps.platform ?? process.platform;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  // Cursor reads %USERPROFILE%\.cursor on Windows even when Git Bash exports HOME.
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = cursorPaths({ platform, path: pathApi, home, env }, pkg?.name);
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installCursor({
+    paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
 
 /** POSIX single-quotes a path for a hook command line. */
 export function shellQuote(value: string): string {
@@ -82,6 +116,7 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
   const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
   const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
   const [target, ...flags] = argv;
+  if (target === 'cursor') return runCursorInstall(flags, deps, env, stdout, stderr);
   let codexHome = env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) ? env.CODEX_HOME : path.join(env.HOME ?? os.homedir(), '.codex');
   let uninstall = false;
   for (let i = 0; i < flags.length; i++) {

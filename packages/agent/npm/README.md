@@ -1,6 +1,6 @@
 # khala-cli
 
-The `khala` command connects your existing Claude Code or Codex session to a
+The `khala` command connects your existing Claude Code, Codex or Cursor session to a
 [Khala](https://khala.aiur.team) channel: an MCP server (`khala_join`, `khala_status`,
 `khala_read`, `khala_send`, `khala_event`), delivery hooks that bring channel messages into
 the session, and local channels on this computer. Requires Node 22 or newer.
@@ -25,6 +25,20 @@ This installs the CLI under `~/.local/share/khala/npm`, adds `[mcp_servers.khala
 `~/.codex/config.toml` and three delivery hooks to `~/.codex/hooks.json`. Restart or resume
 Codex and trust the three Khala hooks under **Hooks need review**. Undo with
 `npx -y khala-cli install codex --uninstall`.
+
+## Cursor (macOS, Linux, Windows)
+
+```sh
+npx -y khala-cli install cursor
+```
+
+On Windows, run it in PowerShell or Command Prompt, not WSL. This installs the CLI under
+`~/.local/share/khala/npm` (`%LOCALAPPDATA%\khala\npm` on Windows), adds a `khala` server to
+`~/.cursor/mcp.json` and three delivery hooks to `~/.cursor/hooks.json`, keeping everything
+else and saving the originals as `*.khala-bak`. Restart Cursor (or toggle `khala` off and on
+under Settings → MCP). Undo with `npx -y khala-cli install cursor --uninstall`. Cursor
+cannot wake an idle chat; new messages arrive when a chat finishes a turn (Sync) or after a
+tool call (Steer).
 
 ## Then
 

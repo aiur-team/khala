@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { agentConfirmPagePath, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, HARNESSES, type Harness, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
 import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
@@ -38,8 +38,8 @@ export function agentJoinRoutes(): LocalRoute[] {
       const body = req.body as Record<string, unknown>;
       if (!Object.hasOwn(body, 'link') || Object.keys(body).some(key => !['link', 'harness', 'label'].includes(key))) return fail(400, 'invalid_link');
       if (typeof body.link !== 'string' || !parseChannelLink(body.link)) return fail(400, 'invalid_link');
-      const harness = body.harness;
-      if (harness !== 'claude' && harness !== 'codex') return fail(400, 'invalid_harness');
+      const harness = body.harness as Harness;
+      if (!(HARNESSES as readonly unknown[]).includes(harness)) return fail(400, 'invalid_harness');
       const url = new URL(body.link);
       if (url.origin !== ctx.origin && url.origin !== ctx.origin.replace('://127.0.0.1:', '://localhost:')) return fail(404, 'link_unavailable');
       const token = url.pathname.slice('/join/'.length);
