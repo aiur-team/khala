@@ -16,6 +16,7 @@ import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './m
 import { appendInbox } from './inbox';
 import { ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
 import { toInboxEntry } from './sender';
+import { deliver } from '../hooks/deliver';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -576,4 +577,36 @@ it('reports the current own display name and drops it after disconnecting', asyn
   expect(await client.status()).toMatchObject({ displayName: 'kev-Codex' });
   await client.close();
   expect(await client.status()).not.toHaveProperty('displayName');
+});
+
+it('tells delivery frames and khala_read who "you" are, and follows a rename (#1089)', async () => {
+  let own = 'kev-Codex';
+  vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? own : user === '@khala_abc:s' ? 'Maya' : undefined);
+  await connected();
+  expect(await statusFile()).toMatchObject({ state: 'connected', displayName: 'kev-Codex' });
+  async function frame(): Promise<string> {
+    let out = '';
+    await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
+      { stdout: { write: (text: string) => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
+    return JSON.parse(out).hookSpecificOutput.additionalContext;
+  }
+  handler!(message('$hello'));
+  await vi.waitFor(async () => expect(await entries()).toHaveLength(1));
+  const first = await frame();
+  expect(first).toContain('<khala-channel-messages channel="Release room" you="kev-Codex" count="1">');
+  expect(first).toContain('\nYou are kev-Codex in this channel; messages that name or @mention you are addressed to you.\n');
+  expect(await client.read(5)).toMatchObject({ you: 'kev-Codex' });
+  // The rename event names the new name before the session state catches up (Matrix timing).
+  handler!({ ...message('$rename', credentials.userId), type: 'm.room.member',
+    content: { membership: 'join', displayname: 'Scout' }, previousContent: { membership: 'join', displayname: 'kev-Codex' } });
+  handler!(message('$after'));
+  await vi.waitFor(async () => expect(await entries()).toHaveLength(3));
+  expect(await statusFile()).toMatchObject({ displayName: 'Scout' });
+  const second = await frame();
+  expect(second).toContain(' you="Scout" ');
+  expect(second).toContain('You are Scout in this channel;');
+  expect(second).toContain('kev-Codex is now Scout');
+  own = 'Scout';
+  expect(await client.read(5)).toMatchObject({ you: 'Scout' });
+  expect(await client.status()).toMatchObject({ displayName: 'Scout' });
 });
