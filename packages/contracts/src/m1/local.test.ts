@@ -230,3 +230,11 @@ describe('strict wire and record decoders', () => {
     rejected(local.decodeChannelSecrets({ v: 1, links: { [hash]: { expiresAt: timestamp, kind: 'join', x: 1 } }, members: {} }), `links.${hash}.x`, 'unknown_field');
   });
 });
+
+it('preserves validated previous membership for rename delivery', () => {
+  const previousContent = { user: agent, membership: 'join', displayname: 'kevin-Codex', kind: 'agent', harness: 'codex' };
+  const value = { seq: 4, eventId, roomId, sender: owner, ts: 1759395600000, type: 'm.room.member',
+    content: { ...previousContent, displayname: 'reviewer' }, previousContent };
+  expect(local.decodeLocalEvent(value)).toEqual({ ok: true, value });
+  expect(local.decodeLocalEvent({ ...value, previousContent: { ...previousContent, membership: 'invalid' } }).ok).toBe(false);
+});

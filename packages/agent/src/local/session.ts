@@ -10,6 +10,7 @@ import {
   LOCAL_LONG_POLL_MAX_S, type LocalEvent, type LocalMe,
 } from '@khala/contracts/m1/local';
 import { KhalaClientError } from '../client';
+import { memberRenameContent } from '../events/member-rename';
 import type { ChannelSession, SessionEndReason, SessionMessage, SessionModeCommand } from '../transport';
 import { ensureHelper } from './lifecycle';
 
@@ -64,6 +65,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   };
   const controller = new AbortController();
   const names = new Map<string, string>();
+  const memberships = new Map<string, string>();
   const messages = new Set<(m: SessionMessage) => void>();
   const modes = new Set<(c: SessionModeCommand) => void>();
   const ended = new Set<(reason: SessionEndReason) => void>();
@@ -135,23 +137,26 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   }
   function dispatch(event: LocalEvent): void {
     if (stopped || event.roomId !== creds.roomId) return;
+    let previousContent: Record<string, unknown> | undefined;
     if (event.type === 'm.room.member') {
       const content = decoded(event.content, decodeLocalMemberContent);
+      previousContent = event.previousContent ?? { membership: memberships.get(content.user), displayname: names.get(content.user) };
       names.set(content.user, content.displayname);
-      return;
+      memberships.set(content.user, content.membership);
+      if (!memberRenameContent(event.content, previousContent)) return;
     }
     if (event.type === 'm.room.name') { name = decoded(event.content, decodeLocalNameContent).name; return; }
-    if (event.type === 'm.room.create' || event.sender === creds.userId) return;
+    if (event.type === 'm.room.create' || (event.sender === creds.userId && event.type !== 'm.room.member')) return;
     if (event.type === LISTENING_MODE_COMMAND_TYPE) {
       for (const handler of modes) {
         if (stopped) break;
         try { handler({ eventId: event.eventId, roomId: event.roomId, sender: event.sender, ts: event.ts, content: event.content }); }
         catch { log('mode_handler_error'); }
       }
-    } else if (event.type === 'm.room.message' || event.type === CHANNEL_EVENT_TYPE) {
+    } else if (event.type === 'm.room.message' || event.type === CHANNEL_EVENT_TYPE || event.type === 'm.room.member') {
       for (const handler of messages) {
         if (stopped) break;
-        try { handler(message(event)); } catch { log('message_handler_error'); }
+        try { handler({ ...message(event), ...(previousContent ? { previousContent } : {}) }); } catch { log('message_handler_error'); }
       }
     }
   }
@@ -161,7 +166,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     let lastEnsureAt = 0;
     while (!stopped) {
       try {
-        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}`, undefined,
+        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1`, undefined,
           controller.signal, (LOCAL_LONG_POLL_MAX_S + 10) * 1000), decodeLocalEventsPage);
         if (stopped) return;
         for (const event of page.events) {
@@ -231,6 +236,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
         for (const member of members.members) {
           names.set(member.userId, member.displayName);
           if (member.userId === creds.userId) ownMode = member.listeningMode ?? 'sync';
+          memberships.set(member.userId, member.membership);
         }
         joined = true;
         loop = run();

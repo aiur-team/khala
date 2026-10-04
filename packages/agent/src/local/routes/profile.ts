@@ -17,11 +17,13 @@ async function cascade(store: LocalStore, previous: string, next: string): Promi
       const members = store.members(roomId);
       const taken = new Set(members.map(m => m.displayName.toLowerCase()));
       const owner = members.find(m => m.userId === LOCAL_OWNER_USER_ID);
-      if (owner && owner.displayName !== next) {
+      // The owner projection already reads the newly saved profile; the room's
+      // membership event still needs to record the transition for subscribers.
+      if (owner && previous !== next) {
         try {
           await store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
             content: { user: LOCAL_OWNER_USER_ID, membership: owner.membership, displayname: next, kind: 'human' } });
-          taken.delete(owner.displayName.toLowerCase());
+          taken.delete(previous.toLowerCase());
           taken.add(next.toLowerCase());
         } catch { /* A failed owner event must not stop the agents in this channel. */ }
       }

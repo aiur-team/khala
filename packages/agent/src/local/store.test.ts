@@ -562,3 +562,55 @@ test('persists session membership across helper restarts and rotates the credent
   expect(store.agentForToken('old')).toBeNull();
   expect(store.agentForToken('new')).toEqual({ roomId, userId: agent });
 });
+
+test('projects renames into history across pagination and helper restart', async () => {
+  const { roomId } = await store.createChannel('renames');
+  await membership(roomId);
+  const first = await membership(roomId, { displayname: 'reviewer' });
+  await membership(roomId, { displayname: 'reviewer', 'com.khala.listening_mode': 'async' });
+  const second = await membership(roomId, { displayname: 'writer' });
+  const expected = { events: [expect.objectContaining({ eventId: second.eventId, type: 'com.khala.event.v1', content: expect.objectContaining({ summary: 'reviewer is now writer' }) })], nextBefore: second.eventId };
+  expect(store.history(roomId, undefined, 1)).toEqual(expected);
+  expect(store.history(roomId, second.eventId, 1)).toEqual({ events: [expect.objectContaining({ eventId: first.eventId, content: expect.objectContaining({ summary: 'kevin-Claude is now reviewer' }) })] });
+  await reopen();
+  expect(store.history(roomId, undefined, 1)).toEqual(expected);
+});
+
+test('owner rename routes and username cascades produce readable rename events', async () => {
+  const { profileRoutes } = await import('./routes/profile');
+  const { ownerRoutes, serial } = await import('./routes/owner');
+  const { roomRoutes } = await import('./routes/rooms');
+  const { roomId } = await store.createChannel('cascade');
+  await membership(roomId);
+  const queue = serial();
+  const routes = [...profileRoutes({ queue }), ...ownerRoutes({ queue }), ...roomRoutes()];
+  const ctx = { store, now: () => clock } as unknown as import('./types').HelperContext;
+  const call = async (method: import('./types').LocalRequest['method'], path: string, body?: unknown) => {
+    const route = routes.find(r => r.method === method && r.pattern.test(path))!;
+    const params = route.pattern.exec(path)!.slice(1);
+    return route.handle({ method, path, body, query: new URLSearchParams(), headers: {},
+      auth: { kind: 'owner', via: 'admin' }, origin: 'http://127.0.0.1:47830', signal: new AbortController().signal }, params, ctx);
+  };
+  expect((await call('POST', '/api/local/profile/username', { username: 'kev' })).status).toBe(200);
+  expect((await call('POST', `/api/local/agents/${encodeURIComponent(agent)}/name`, { name: 'reviewer' })).status).toBe(200);
+  const history = await call('GET', `/api/local/rooms/${encodeURIComponent(roomId)}/messages`);
+  expect(history).toMatchObject({ status: 200, json: { events: [
+    { type: 'com.khala.event.v1', content: { summary: 'kevin is now kev' } },
+    { type: 'com.khala.event.v1', content: { summary: 'kevin-Claude is now kev-Claude' } },
+    { type: 'com.khala.event.v1', content: { summary: 'kev-Claude is now reviewer' } },
+  ] } });
+  await call('POST', '/api/local/profile/username', { username: 'kev' });
+  await call('POST', `/api/local/agents/${encodeURIComponent(agent)}/name`, { name: 'reviewer' });
+  expect(store.history(roomId, undefined, 100).events).toHaveLength(3);
+});
+
+test('event delivery carries canonical previous membership across restarts', async () => {
+  const { roomId } = await store.createChannel('race');
+  const joined = await membership(roomId);
+  const rename = await membership(roomId, { displayname: 'reviewer' });
+  const result = () => store.eventsAfter(roomId, joined.seq, 10);
+  const expected = [{ ...rename, previousContent: joined.content }];
+  expect(result()).toEqual(expected);
+  await reopen();
+  expect(result()).toEqual(expected);
+});

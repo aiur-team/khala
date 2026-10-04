@@ -6,6 +6,7 @@ import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, t
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
+import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
@@ -59,10 +60,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function inboxEntry(message: SessionMessage, session: ChannelSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
     const entry = toInboxEntry(message, session.displayName(message.sender));
     if (message.type === 'm.room.message') return entry;
-    if (message.type !== CHANNEL_EVENT_TYPE) return null;
+    if (message.type !== CHANNEL_EVENT_TYPE && message.type !== 'm.room.member') return null;
     const { eventId, roomId, ts, sender, senderLabel, senderKind } = entry;
     const base = { eventId, roomId, ts, sender, senderLabel, senderKind };
-    const event = toEventInboxEntry(base, message.content);
+    const content = message.type === 'm.room.member' ? memberRenameContent(message.content, message.previousContent) : message.content;
+    const event = toEventInboxEntry(base, content);
     return event && acceptKey(event.key) ? event.entry : null;
   }
 
@@ -156,7 +158,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       });
       const buffered: (() => void)[] = [];
       const intake = (message: SessionMessage): void => {
-        if (!current(attempt) || message.roomId !== credentials.roomId || message.sender === session.userId) return;
+        if (!current(attempt) || message.roomId !== credentials.roomId || (message.sender === session.userId && message.type !== 'm.room.member')) return;
         if (!attempt.joined) { buffered.push(() => intake(message)); return; }
         appends = appends.then(async () => {
           if (!current(attempt)) return;
@@ -279,8 +281,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await initialize();
       await appends;
       const unread = (await unreadCount(dir)).total;
+      const session = active?.joined && !active.controller.signal.aborted ? active.session : undefined;
+      const displayName = session?.displayName(session.userId);
       return { state: status.state, ...(status.detail !== undefined ? { detail: status.detail } : {}), ...(status.channelName !== undefined ? { channelName: status.channelName } : {}),
-        ...(active?.joined && !active.controller.signal.aborted && active.session ? { agentUserId: active.session.userId } : {}), unread, listeningMode: await readListeningMode(filesForDir(dir)) };
+        ...(session ? { agentUserId: session.userId } : {}), ...(displayName !== undefined ? { displayName } : {}), unread, listeningMode: await readListeningMode(filesForDir(dir)) };
     },
     async read(limit, before) {
       await initialize();

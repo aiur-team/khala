@@ -127,7 +127,14 @@ export function roomRoutes(): LocalRoute[] {
         if ('status' in current) return current;
         events = ctx.store.eventsAfter(caller.roomId, after, 200);
       }
-      return { status: 200, json: { events, next: events.at(-1)?.seq ?? after } };
+      // The shared helper may outlive older CLIs with strict event decoders.
+      // Only clients advertising support receive the extended wire shape.
+      const delivered = req.query.get('prev') === '1' ? events : events.map(event => {
+        const legacy = { ...event };
+        delete legacy.previousContent;
+        return legacy;
+      });
+      return { status: 200, json: { events: delivered, next: events.at(-1)?.seq ?? after } };
     }),
     route('GET', /^\/api\/local\/rooms\/([^/]+)\/messages$/u, 'joined', async (req, _params, ctx, caller) => {
       const before = req.query.get('before');

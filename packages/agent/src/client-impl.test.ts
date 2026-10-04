@@ -555,3 +555,25 @@ it('never sends a rejoin identity for Cursor windows that share cursor-default o
     expect(await readStateFile(resolveStateDir('cursor', 'cursor-default', env), 'rejoin.json')).toBeNull();
   } finally { await Promise.all(windows.map(window => window.close())); }
 });
+
+it('delivers member renames once, including self changes, without waking on events', async () => {
+  await connected();
+  const renamed: SessionMessage = { ...message('$rename', credentials.userId), type: 'm.room.member',
+    content: { membership: 'join', displayname: 'reviewer' }, previousContent: { membership: 'join', displayname: 'kevin-Codex' } };
+  handler!(renamed); handler!(renamed);
+  handler!({ ...renamed, eventId: '$mode', previousContent: renamed.content });
+  expect(await entries()).toEqual([expect.objectContaining({ eventId: '$rename', kind: 'event', body: 'kevin-Codex is now reviewer' })]);
+  expect(waker).not.toHaveBeenCalled();
+  vi.mocked(session.history).mockResolvedValue({ messages: [renamed] });
+  expect((await client.read(30)).messages).toEqual(await entries());
+});
+
+it('reports the current own display name and drops it after disconnecting', async () => {
+  await connected();
+  vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? 'reviewer' : undefined);
+  expect(await client.status()).toMatchObject({ displayName: 'reviewer' });
+  vi.mocked(session.displayName).mockReturnValue('kev-Codex');
+  expect(await client.status()).toMatchObject({ displayName: 'kev-Codex' });
+  await client.close();
+  expect(await client.status()).not.toHaveProperty('displayName');
+});

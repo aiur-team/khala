@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
@@ -9,6 +9,7 @@ import { LOCAL_OWNER_USER_ID as owner, type LocalEvent, type LocalMember } from 
 import { createLocalSession, type LocalSessionOptions } from './session';
 import type { ChannelSession, SessionMessage } from '../transport';
 import { toInboxEntry } from '../sender';
+import { resolveStateDir } from '../state';
 
 const self = '@agent-a1b2c3d4:local';
 const other = '@agent-11223344:local';
@@ -195,8 +196,9 @@ it('dispatches owner mode commands separately and caches names before delivery, 
   h.append('m.room.name', owner, { name: 'refactor-2' });
   append(h, other); await tick();
   expect(modes).toHaveBeenCalledExactlyOnceWith({ eventId: command.eventId, roomId: room, sender: owner, ts: command.ts, content });
-  expect(seen).toHaveBeenCalledTimes(1); expect(s.roomName(room)).toBe('refactor-2');
-  expect(logs).toEqual(['mode_handler_error', 'message_handler_error']);
+  expect(seen).toHaveBeenCalledTimes(2); expect(s.roomName(room)).toBe('refactor-2');
+  expect(seen.mock.calls[0]![0]).toMatchObject({ type: 'm.room.member', previousContent: { membership: 'join', displayname: 'kevin-Codex' } });
+  expect(logs).toEqual(['mode_handler_error', 'message_handler_error', 'message_handler_error']);
 });
 it('stop aborts pending fetch, is idempotent, disables handlers and rejects every asynchronous operation', async () => {
   const { h, s } = await setup(); const received = vi.fn(); s.onMessage(received);
@@ -381,7 +383,7 @@ async function localClient(h: ReturnType<typeof fakeHelper>) {
     },
   });
   const statusTool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(t => t.name === 'khala_status')!;
-  return { client, status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
+  return { client, dir: resolveStateDir('codex', 'local', { XDG_STATE_HOME: root }), status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
     await client.close(); await rm(root, { recursive: true, force: true });
   } };
 }
@@ -464,4 +466,41 @@ it('restores the existing member listening mode when joining', async () => {
   sessions.push(s);
   await s.join(room);
   expect(s.listeningMode?.(room)).toBe('async');
+});
+
+it('delivers a username cascade and self rename once without any agent speaking', async () => {
+  const h = fakeHelper(); const c = await localClient(h);
+  try {
+    await c.client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex');
+    h.duplicate = true;
+    const ownerRename = h.append('m.room.member', owner, { user: owner, membership: 'join', displayname: 'kev', kind: 'human' });
+    const selfRename = h.append('m.room.member', owner, { user: self, membership: 'join', displayname: 'kev-Codex', kind: 'agent', harness: 'codex' });
+    const otherRename = h.append('m.room.member', owner, { user: other, membership: 'join', displayname: 'kev-Codex-2', kind: 'agent', harness: 'codex' });
+    h.append('m.room.member', other, { user: other, membership: 'join', displayname: 'kev-Codex-2', kind: 'agent', harness: 'codex', 'com.khala.listening_mode': 'async' });
+    const explicitRename = h.append('m.room.member', owner, { user: other, membership: 'join', displayname: 'reviewer', kind: 'agent', harness: 'codex' });
+    await tick();
+    expect(await c.client.status()).toMatchObject({ displayName: 'kev-Codex', unread: 4 });
+    const inbox = (await readFile(path.join(c.dir, 'inbox.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(inbox.map(e => [e.eventId, e.kind, e.body])).toEqual([
+      [ownerRename.eventId, 'event', 'owner is now kev'],
+      [selfRename.eventId, 'event', 'agent is now kev-Codex'],
+      [otherRename.eventId, 'event', 'kevin-Codex is now kev-Codex-2'],
+      [explicitRename.eventId, 'event', 'kev-Codex-2 is now reviewer'],
+    ]);
+  } finally { await c.cleanup(); }
+});
+
+it('requests previous membership and keeps a rename when the post-join roster already contains its new name', async () => {
+  const { h, s } = await setup(); const seen = vi.fn(); s.onMessage(seen);
+  h.intercept = call => {
+    if (!call.url.endsWith('/members')) return;
+    const content = { user: other, membership: 'join' as const, displayname: 'reviewer', kind: 'agent' as const, harness: 'codex' as const };
+    const rename = h.append('m.room.member', owner, content);
+    rename.previousContent = { ...content, displayname: 'kevin-Codex' };
+    h.members.find(m => m.userId === other)!.displayName = 'reviewer';
+  };
+  await s.join(room); await tick();
+  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1');
+  expect(seen).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'm.room.member',
+    previousContent: expect.objectContaining({ displayname: 'kevin-Codex' }) }));
 });

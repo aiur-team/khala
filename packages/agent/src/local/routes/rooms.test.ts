@@ -382,3 +382,17 @@ describe('participant endpoints', () => {
     expect(await f.call('GET', 'events?after=6&wait=25')).toEqual({ status: 503, json: { error: 'unavailable' } });
   });
 });
+
+it.each(['mode', 'rename'])('keeps %s previous membership opt-in for older agent decoders', async change => {
+  const f = fixture();
+  await f.call('POST', 'join');
+  const content = { ...invite, membership: 'join' as const, displayname: change === 'rename' ? 'reviewer' : 'kevin-Claude', 'com.khala.listening_mode': 'async' as const };
+  f.seed({ type: 'm.room.member', sender: LOCAL_OWNER_USER_ID, content });
+  const latest = f.log.at(-1)!;
+  latest.previousContent = { ...content, displayname: 'kevin-Claude' };
+  const plain = await f.call('GET', 'events?after=5');
+  expect(JSON.stringify(plain)).not.toContain('previousContent');
+  const opted = await f.call('GET', 'events?after=5&prev=1');
+  expect(opted).toMatchObject({ status: 200, json: { events: [expect.objectContaining({ previousContent: latest.previousContent })] } });
+  expect(latest.previousContent).toBeDefined();
+});

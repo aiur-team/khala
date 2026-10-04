@@ -215,7 +215,7 @@ it('rejoins a restarted thread through the real helper without duplicating its m
       expect.objectContaining({ userId, displayName: 'Reviewer', listeningMode: 'async' }),
     ]);
     expect(reopened.history(created.roomId, undefined, 100).events.filter(event => event.type === 'com.khala.event.v1').map(event => event.content.summary))
-      .toEqual(['kevin-Codex joined', 'Reviewer rejoined']);
+      .toEqual(['kevin-Codex joined', 'kevin-Codex is now Reviewer', 'Reviewer rejoined']);
     const another = makeClient('thread-2');
     expect(await another.join((await command(['link', 'refactor'])).shareLink, 'Codex')).toMatchObject({ state: 'connected' });
     expect((await another.status()).agentUserId).not.toBe(userId);
