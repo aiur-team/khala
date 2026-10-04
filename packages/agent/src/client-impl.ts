@@ -9,6 +9,7 @@ import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/r
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
+import { CURSOR_DEFAULT_SESSION } from './cursor';
 import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
@@ -43,7 +44,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   const api = options.joinApi ?? { requestJoin, pollJoin, reportReady };
   let status: StatusFile = { state: 'idle', updatedAt: now().toISOString() };
   let initialization: Promise<void> | undefined;
-  let rejoinSecret: string;
+  // Only a session id that names one agent instance may carry a rejoin identity. Every Cursor window
+  // without a folder shares `cursor-default` (and its state dir), so it keeps one fresh member per join.
+  const rejoinable = !(options.harness === 'cursor' && options.sessionId === CURSOR_DEFAULT_SESSION);
+  let rejoinSecret: string | undefined;
   let active: Attempt | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
@@ -72,10 +76,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function initialize(): Promise<void> {
     return initialization ??= (async () => {
       await ensureStateDir(dir);
-      const identity = await readStateFile<{ secret: unknown }>(dir, 'rejoin.json');
-      if (identity && !validAgentRejoinSecret(identity.secret)) throw new StateError('storage_failed');
-      rejoinSecret = identity ? identity.secret as string : randomBytes(32).toString('base64url');
-      if (!identity) await writeStateFile(dir, 'rejoin.json', { secret: rejoinSecret });
+      if (rejoinable) {
+        // A missing, unparsable or malformed secret is replaced: the worst case is one fresh "-N" member.
+        const saved = (await readStateFile<{ secret?: unknown } | null>(dir, 'rejoin.json'))?.secret;
+        if (validAgentRejoinSecret(saved)) rejoinSecret = saved;
+        else await writeStateFile(dir, 'rejoin.json', { secret: rejoinSecret = randomBytes(32).toString('base64url') });
+      }
       // Re-joining requires fresh credentials; the server reuses membership by session.
       await removeStateFile(dir, 'session.json');
       await setStatus('idle');
@@ -242,7 +248,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         }
         let started: Attempt | undefined;
         try {
-          const created = await api.requestJoin({ link, harness: options.harness, label, sessionId: options.sessionId, rejoinSecret }, fetchDeps);
+          const created = await api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, fetchDeps);
           if (closed) throw new KhalaClientError('not_connected');
           const { joinId, pollSecret, confirmUrl, expiresAt } = created;
           await writeStateFile(dir, 'join.json', { joinId, pollSecret, confirmUrl, expiresAt, link });

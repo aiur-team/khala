@@ -524,3 +524,34 @@ it('restores the listening mode from the joined member rather than stale process
   expect((await client.status()).listeningMode).toBe('async');
   expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async' });
 });
+
+it('replaces a rejoin.json that parses but holds an invalid secret instead of failing every start', async () => {
+  await ensureStateDir(dir);
+  await writeStateFile(dir, 'rejoin.json', { secret: 'not-a-secret' });
+  await client.join(link, 'Codex');
+  const secret = (await readStateFile<{ secret: string }>(dir, 'rejoin.json'))!.secret;
+  expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+  expect((await fs.stat(path.join(dir, 'rejoin.json'))).mode & 0o777).toBe(0o600);
+  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: secret }, {});
+  expect((await client.status()).state).not.toBe('error');
+  await client.close();
+  const restarted = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  try {
+    await restarted.join(link, 'Codex');
+    expect(joinApi.requestJoin).toHaveBeenLastCalledWith(expect.objectContaining({ rejoinSecret: secret }), {});
+  } finally { await restarted.close(); }
+});
+
+it('never sends a rejoin identity for Cursor windows that share cursor-default on one machine (hosted)', async () => {
+  // Hosted twin of the real-helper regression in local/serve.test.ts: both windows share one
+  // state dir, so a shared secret would make the control plane give them one Matrix identity.
+  const env = { XDG_STATE_HOME: root };
+  const windows = [0, 1].map(() => createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env, now, startSession, joinApi }));
+  try {
+    for (const window of windows) await window.join(link, 'Cursor');
+    expect(joinApi.requestJoin.mock.calls.map(call => call[0])).toEqual([
+      { link, harness: 'cursor', label: 'Cursor' }, { link, harness: 'cursor', label: 'Cursor' },
+    ]);
+    expect(await readStateFile(resolveStateDir('cursor', 'cursor-default', env), 'rejoin.json')).toBeNull();
+  } finally { await Promise.all(windows.map(window => window.close())); }
+});

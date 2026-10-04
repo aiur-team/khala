@@ -195,6 +195,9 @@ it('rejoins a restarted thread through the real helper without duplicating its m
     const first = makeClient('thread-1');
     expect(await first.join(created.shareLink, 'Codex')).toMatchObject({ state: 'connected' });
     const userId = (await first.status()).agentUserId!;
+    const secretFile = join(resolveStateDir('codex', 'thread-1', env), 'rejoin.json');
+    expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(secretFile, 'utf8')).secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     await first.close();
     const store = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
     await store.append(created.roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID, content: {
@@ -241,20 +244,17 @@ it('does not let a share-link holder hijack a cursor-default member', async () =
   } finally { await victim.close(); }
 });
 
-it('keeps two Cursor windows that both fall back to cursor-default as separate members', async () => {
+it('keeps two Cursor windows on one machine that both fall back to cursor-default as separate members', async () => {
   await start();
   const created = await command(['create', 'windows']);
-  const otherRoot = await mkdtemp(join(tmpdir(), 'ki137-window-'));
-  const otherEnv = { ...env, XDG_STATE_HOME: otherRoot };
+  // Same env: both windows resolve to the same cursor-default state dir on this machine.
   const first = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
-  const second = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env: otherEnv });
+  const second = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
   try {
     expect(await first.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
-    const firstDir = resolveStateDir('cursor', 'cursor-default', env);
-    const secretFile = join(firstDir, 'rejoin.json');
-    expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(await readFile(secretFile, 'utf8')).secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-    const original = JSON.parse(await readFile(join(firstDir, 'session.json'), 'utf8'));
+    const sharedDir = resolveStateDir('cursor', 'cursor-default', env);
+    await expect(stat(join(sharedDir, 'rejoin.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const original = JSON.parse(await readFile(join(sharedDir, 'session.json'), 'utf8'));
     expect(await second.join((await command(['link', 'windows'])).shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
     const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
     expect((await second.status()).agentUserId).not.toBe(original.userId);
@@ -266,6 +266,5 @@ it('keeps two Cursor windows that both fall back to cursor-default as separate m
       .toEqual(['kevin-Cursor joined', 'kevin-Cursor-2 joined']);
   } finally {
     await Promise.all([first.close(), second.close()]);
-    await rm(otherRoot, { recursive: true, force: true });
   }
 });
