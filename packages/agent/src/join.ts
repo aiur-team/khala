@@ -1,4 +1,4 @@
-import type { AgentCredentials, AgentJoinCreated, Harness } from '@khala/contracts/m1/agent-join';
+import { HARNESSES, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { KhalaClientError } from './client';
 
@@ -56,7 +56,7 @@ async function post(url: URL, origin: string, body: unknown, deps: FetchDeps, po
 export async function requestJoin(input: { link: string; harness: Harness; label: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
   const parsed = parseChannelLink(input.link);
   if (!parsed) throw new KhalaClientError('invalid_link', 'invalid_link');
-  if (input.harness !== 'claude' && input.harness !== 'codex') fail('invalid_harness');
+  if (!HARNESSES.includes(input.harness)) fail('invalid_harness');
   const label = validateAgentName(input.label);
   if (!label.ok || [...label.name].length > 40) fail('invalid_label');
   const { origin } = parsed;

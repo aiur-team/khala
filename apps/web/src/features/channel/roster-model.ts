@@ -49,4 +49,4 @@ export function memberCountLabel(humans: number, agents: number): string {
   return `${humans} ${humans > 1 ? 'humans' : 'human'} · ${agents} ${agents === 1 ? 'agent' : 'agents'}`;
 }
 
-export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex' };
+export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };

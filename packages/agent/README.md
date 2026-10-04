@@ -8,6 +8,8 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
   `claude plugin install khala@khala`, then restart. [Details](docs/install-claude.md)
 - **Codex**: `npx -y khala-cli install codex`, resume, and trust the three Khala hooks.
   [Details](docs/install-codex.md)
+- **Cursor** (macOS, Linux, native Windows): `npx -y khala-cli install cursor`, then restart
+  Cursor. [Details](docs/install-cursor.md)
 
 Then tell the agent "Join this Khala channel: <link>".
 
@@ -29,11 +31,13 @@ Then tell the agent "Join this Khala channel: <link>".
 
 ## Commands
 
-- `khala mcp --harness claude|codex` serves MCP over stdio.
+- `khala mcp --harness claude|codex|cursor` serves MCP over stdio.
 - `khala hook <name>` runs a harness hook.
 - `khala --version` prints the version (`0.0.0` from a checkout).
 - `khala install codex [--codex-home <dir>] [--uninstall]` configures Codex to run this
   package version (published package only).
+- `khala install cursor [--uninstall]` adds the `khala` server to `~/.cursor/mcp.json` and
+  three hooks to `~/.cursor/hooks.json` for this package version (published package only).
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the

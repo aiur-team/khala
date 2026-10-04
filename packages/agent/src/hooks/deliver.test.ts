@@ -4,13 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { openSessionDir, sessionFiles, writeStatus, type SessionFiles } from '../state';
 import { appendEntries, readCursor, unread } from '../inbox';
 import * as inbox from '../inbox';
 import { readActivity } from '../activity';
 import { deliver, renderLine } from '../../hooks/deliver';
+import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 let root: string;
@@ -259,4 +260,65 @@ it.each(['UserPromptSubmit', 'Stop'])('never calls unread for async %s', async e
   expect(read).not.toHaveBeenCalled();
   expect(stdout.write).not.toHaveBeenCalled();
   expect(stderr.write).not.toHaveBeenCalled();
+});
+
+describe('cursor', () => {
+  const workspace = '/work/proj';
+  async function seedCursor(entries: InboxEntry[], mode?: string, id = cursorSessionId(workspace)) {
+    files = await openSessionDir('cursor', id, { XDG_STATE_HOME: root });
+    await appendEntries(files, entries);
+    await writeStatus(files, 'connected');
+    if (mode) await fs.writeFile(files.mode, JSON.stringify({ mode }));
+  }
+  async function cursorHook(event: string, extra: Record<string, unknown> = {}) {
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    expect(await deliver(JSON.stringify({ hook_event_name: event, conversation_id: 'c', workspace_roots: [workspace], ...extra }), ['--harness', 'cursor'],
+      { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() })).toBe(0);
+    expect(stdout.write).toHaveBeenCalledTimes(1);
+    return JSON.parse(stdout.write.mock.calls[0]![0] as string) as Record<string, unknown>;
+  }
+  it('answers every event with valid no-op JSON when no session exists', async () => {
+    expect(await cursorHook('beforeSubmitPrompt')).toEqual({ continue: true });
+    expect(await cursorHook('postToolUse')).toEqual({});
+    expect(await cursorHook('stop', { status: 'completed', loop_count: 0 })).toEqual({});
+    expect(await cursorHook('afterFileEdit')).toEqual({});
+    expect(await fs.readdir(root)).toEqual([]);
+  });
+  it('sync: stop returns one followup_message and never loops', async () => {
+    await seedCursor([message()]);
+    expect(await cursorHook('beforeSubmitPrompt')).toEqual({ continue: true });
+    expect((await readActivity(files)).state).toBe('busy');
+    expect(await cursorHook('postToolUse')).toEqual({});
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: exactFrame });
+    expect((await readCursor(files)).deliveredCount).toBe(1);
+    await appendEntries(files, [message(2)]);
+    expect(await cursorHook('stop', { loop_count: 1 })).toEqual({});
+    expect((await readActivity(files)).state).toBe('idle');
+    expect((await unread(files)).entries).toHaveLength(1);
+  });
+  it('steer: postToolUse returns additional_context', async () => {
+    await seedCursor([message()], 'steer');
+    expect(await cursorHook('postToolUse')).toEqual({ additional_context: exactFrame });
+    expect(await cursorHook('postToolUse')).toEqual({});
+  });
+  it('async: injects nothing and leaves messages unread', async () => {
+    await seedCursor([message()], 'async');
+    expect(await cursorHook('postToolUse')).toEqual({});
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({});
+    expect((await unread(files)).entries).toHaveLength(1);
+  });
+  it('event-only batches wait, as in other harnesses', async () => {
+    await seedCursor([message(1, { kind: 'event', body: 'ci' })], 'steer');
+    expect(await cursorHook('postToolUse')).toEqual({});
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({});
+  });
+  it('follows an MCP server left on the default session', async () => {
+    await seedCursor([message()], undefined, CURSOR_DEFAULT_SESSION);
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: exactFrame });
+  });
+  it('accepts the BOM-prefixed stdin Cursor sends on Windows, through the CLI', async () => {
+    await seedCursor([message()]);
+    const payload = '\uFEFF' + JSON.stringify({ hook_event_name: 'stop', loop_count: 0, workspace_roots: [workspace] });
+    expect(await hook('stop', 'cursor', {}, payload)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify({ followup_message: exactFrame }) + '\n' });
+  });
 });

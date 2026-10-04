@@ -24,6 +24,10 @@ it('shares agent rules while allowing model suffixes', () => {
   expect(checkName('a'.repeat(41), 'agent')).toEqual({ ok: false, error: 'too_long' });
   expect(defaultAgentName('Kevin', 'codex', 3)).toBe('Kevin-Codex-3');
   expect(defaultAgentName('Kevin', 'claude')).toBe('Kevin-Claude');
+  expect(defaultAgentName('Kevin', 'cursor')).toBe('Kevin-Cursor');
+  expect(defaultAgentName('Kevin', 'cursor', 2)).toBe('Kevin-Cursor-2');
+  expect(isDefaultAgentName('kevin-cursor-3', 'Kevin', 'cursor')).toBe(true);
+  expect(checkName('Kevin-Cursor', 'username')).toEqual({ ok: false, error: 'reserved' });
   expect(isDefaultAgentName('kevin-claude-2', 'Kevin', 'claude')).toBe(true);
   expect(isDefaultAgentName('KevinXWeaver-Claude', 'Kevin.Weaver', 'claude')).toBe(false);
   expect(isDefaultAgentName('Kevin-Claude-more', 'Kevin', 'claude')).toBe(false);
