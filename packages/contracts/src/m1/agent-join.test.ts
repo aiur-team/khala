@@ -106,3 +106,11 @@ it('accepts optional stable session identity and rejects malformed identities', 
     expect(join.decodeAgentJoinRequest({ ...request, sessionId }).ok).toBe(false);
   }
 });
+
+it('validates the optional rejoin secret and supports the client session id alphabet', () => {
+  const value = { ...request, sessionId: 'thread.1:resume', rejoinSecret: 'S'.repeat(43) };
+  expect(join.decodeAgentJoinRequest(value)).toEqual({ ok: true, value });
+  for (const rejoinSecret of ['', 'S'.repeat(42), 'S'.repeat(44), null, 42, ' '.repeat(43)]) {
+    expect(join.decodeAgentJoinRequest({ ...request, rejoinSecret }).ok).toBe(false);
+  }
+});

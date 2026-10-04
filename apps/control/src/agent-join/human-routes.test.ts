@@ -254,13 +254,13 @@ it('keeps one hosted identity and its rename across fresh join requests for the 
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   const initial = await f.joins.read(f.joinId);
   if (initial.kind !== 'found') throw Error();
-  await f.joins.replace(f.joinId, initial.revision, { ...initial.record, sessionId: 'thread-1' }, 'session');
+  await f.joins.replace(f.joinId, initial.revision, { ...initial.record, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) }, 'session');
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
   const identityId = f.deps.provisioner.agentUserId.mock.calls[0]![0];
   expect(identityId).toMatch(/^session\.[a-f0-9]{64}$/);
   expect(await renameAgent(f.deps, 'owner' as OwnerId, credentials.userId, 'Reviewer')).toBe('ok');
   const nextId = randomBytes(16).toString('base64url');
-  await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1' });
+  await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
   const rejoined = await f.handlers.confirm(f.request('POST', `joinId=${nextId}`));
   expect(rejoined.status).toBe(200);
   expect(await rejoined.json()).toMatchObject({ label: 'Reviewer', agentUserId: credentials.userId });
@@ -273,7 +273,7 @@ it('recovers a stable account after a failed initial confirmation expires', asyn
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   const first = await f.joins.read(f.joinId);
   if (first.kind !== 'found') throw Error();
-  await f.joins.replace(f.joinId, first.revision, { ...first.record, sessionId: 'thread-1' }, 'session');
+  await f.joins.replace(f.joinId, first.revision, { ...first.record, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) }, 'session');
   const replace = f.joins.replace;
   const failure = vi.spyOn(f.joins, 'replace').mockImplementation(async (...args) => args[3] === 'confirm' ? { kind: 'unavailable' } : replace(...args));
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
@@ -282,7 +282,7 @@ it('recovers a stable account after a failed initial confirmation expires', asyn
   await f.joins.read(f.joinId);
   const now = f.deps.clock();
   const nextId = randomBytes(16).toString('base64url');
-  await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() });
+  await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)), createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() });
   expect((await f.handlers.confirm(f.request('POST', `joinId=${nextId}`))).status).toBe(200);
   expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
 });
@@ -296,7 +296,7 @@ it('allocates the suffix only for a different hosted session', async () => {
   const members: string[] = [];
   for (const sessionId of ['thread-1', 'thread-1', 'thread-2']) {
     const joinId = randomBytes(16).toString('base64url');
-    await f.joins.create({ ...f.record, joinId, sessionId });
+    await f.joins.create({ ...f.record, joinId, sessionId, rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
     const response = await f.handlers.confirm(f.request('POST', `joinId=${joinId}`));
     expect(response.status).toBe(200);
     const view = await response.json() as { label: string; agentUserId: string };
@@ -305,4 +305,25 @@ it('allocates the suffix only for a different hosted session', async () => {
   }
   expect(members[0]).toBe(members[1]);
   expect(members[2]).not.toBe(members[0]);
+});
+
+it('keeps sibling hosted agents separate when a session id is asserted without its secret', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
+  f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
+    ...credentials, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
+  } }));
+  const members: string[] = [];
+  const names: string[] = [];
+  for (const rejoinSecretHash of [hashPollSecret('S'.repeat(43)), hashPollSecret('X'.repeat(43)), undefined, hashPollSecret('S'.repeat(43))]) {
+    const joinId = randomBytes(16).toString('base64url');
+    await f.joins.create({ ...f.record, joinId, sessionId: 'thread-1', ...(rejoinSecretHash ? { rejoinSecretHash } : {}) });
+    const response = await f.handlers.confirm(f.request('POST', `joinId=${joinId}`));
+    expect(response.status).toBe(200);
+    const view = await response.json() as { label: string; agentUserId: string };
+    members.push(view.agentUserId); names.push(view.label);
+  }
+  expect(new Set(members)).toHaveProperty('size', 3);
+  expect(members[0]).toBe(members[3]);
+  expect(names).toEqual(['Kevin-Codex', 'Kevin-Codex-2', 'Kevin-Codex-3', 'Kevin-Codex']);
 });

@@ -16,7 +16,7 @@ export const RATE_LIMIT = 10;
 export type JoinRecord = {
   joinId: string; pollSecretHash: string; roomId: string; channelName: string; label: string; harness: Harness;
   state: 'pending' | 'confirmed' | 'claimed' | 'ready' | 'expired'; createdAt: string; expiresAt: string;
-  rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
+  rejoinSecretHash?: string; rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
 };
 export const joinKey = (joinId: string): string => `agent-join/${joinId}`;
 export const isJoinId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value);
@@ -32,7 +32,8 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
   const required = ['joinId', 'pollSecretHash', 'roomId', 'channelName', 'label', 'harness', 'state', 'createdAt', 'expiresAt'];
   if (Object.hasOwn(r, 'sessionId') && !validAgentSessionId(r.sessionId)) return null;
   if (Object.hasOwn(r, 'rejoin') && r.rejoin !== true) return null;
-  const optional = ['sessionId', 'ownerId', 'agentUserId', 'sealedCredentials'];
+  if (Object.hasOwn(r, 'rejoinSecretHash') && (typeof r.rejoinSecretHash !== 'string' || !/^[a-f0-9]{64}$/u.test(r.rejoinSecretHash))) return null;
+  const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials'];
   if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin')
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;

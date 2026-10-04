@@ -114,8 +114,8 @@ export async function writeStatus(files: SessionFiles, state: AgentState, detail
   return status;
 }
 export function readStatus(files: SessionFiles): Promise<StatusFile | null> { return readJson(files.status); }
-export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json', value: unknown): Promise<void> {
-  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json'].includes(name)) throw new StateError('storage_failed');
+export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json', value: unknown): Promise<void> {
+  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json'].includes(name)) throw new StateError('storage_failed');
   await writeJsonAtomic(path.join(dir, name), value);
 }
 export function readStateFile<T>(dir: string, name: string): Promise<T | null> {

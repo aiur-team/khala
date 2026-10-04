@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { agentConfirmPagePath, HARNESSES, validAgentSessionId, type Harness, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, HARNESSES, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
 import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
@@ -36,9 +36,10 @@ export function agentJoinRoutes(): LocalRoute[] {
       prune(ctx);
       if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) return fail(400, 'invalid_link');
       const body = req.body as Record<string, unknown>;
-      if (!Object.hasOwn(body, 'link') || Object.keys(body).some(key => !['link', 'harness', 'label', 'sessionId'].includes(key))) return fail(400, 'invalid_link');
+      if (!Object.hasOwn(body, 'link') || Object.keys(body).some(key => !['link', 'harness', 'label', 'sessionId', 'rejoinSecret'].includes(key))) return fail(400, 'invalid_link');
       if (typeof body.link !== 'string' || !parseChannelLink(body.link)) return fail(400, 'invalid_link');
       if (Object.hasOwn(body, 'sessionId') && !validAgentSessionId(body.sessionId)) return fail(400, 'invalid_link');
+      if (Object.hasOwn(body, 'rejoinSecret') && !validAgentRejoinSecret(body.rejoinSecret)) return fail(400, 'invalid_link');
       const harness = body.harness as Harness;
       if (!(HARNESSES as readonly unknown[]).includes(harness)) return fail(400, 'invalid_harness');
       const url = new URL(body.link);
@@ -51,7 +52,7 @@ export function agentJoinRoutes(): LocalRoute[] {
         const link = await ctx.store.consumeLink(token);
         if (!link || !ctx.store.hasChannel(link.roomId)) return fail(404, 'link_unavailable');
         const roomId = link.roomId;
-        const sessionKey = body.sessionId === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId]));
+        const sessionKey = body.sessionId === undefined || body.rejoinSecret === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId, body.rejoinSecret]));
         const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
         const taken = new Set(ctx.store.members(roomId).map(member => member.displayName.toLowerCase()));
         let n = 1;

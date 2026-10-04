@@ -1,3 +1,5 @@
+import { requestJoin, pollJoin } from '../join';
+import { resolveStateDir } from '../state';
 import { createKhalaAgentClient } from '../client-impl';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { createServer } from 'node:http';
@@ -216,4 +218,25 @@ it('rejoins a restarted thread through the real helper without duplicating its m
     expect((await another.status()).agentUserId).not.toBe(userId);
     expect(reopened.members(created.roomId).filter(member => member.kind === 'agent')).toHaveLength(2);
   } finally { await Promise.all(clients.map(client => client.close())); }
+});
+
+it('does not let a share-link holder hijack a cursor-default member', async () => {
+  await start();
+  const created = await command(['create', 'protected']);
+  const victim = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
+  try {
+    expect(await victim.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const original = JSON.parse(await readFile(join(resolveStateDir('cursor', 'cursor-default', env), 'session.json'), 'utf8'));
+    const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    for (const rejoinSecret of [undefined, 'X'.repeat(43)]) {
+      const attempted = await requestJoin({ link: (await command(['link', 'protected'])).shareLink,
+        harness: 'cursor', label: 'Evil', sessionId: 'cursor-default', ...(rejoinSecret ? { rejoinSecret } : {}) });
+      const attacker = await pollJoin(attempted);
+      expect(attacker.userId).not.toBe(original.userId);
+      expect(store.agentForToken(original.accessToken)).toEqual({ roomId: created.roomId, userId: original.userId });
+    }
+    expect(store.members(created.roomId).filter(member => member.kind === 'agent').map(member => member.displayName))
+      .toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3']);
+    expect(await victim.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
+  } finally { await victim.close(); }
 });

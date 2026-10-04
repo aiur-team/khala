@@ -1,8 +1,8 @@
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { applyListeningMode, readListeningMode } from './mode';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
-import type { AgentCredentials, AgentJoinCreated, Harness } from '@khala/contracts/m1/agent-join';
+import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
@@ -43,6 +43,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   const api = options.joinApi ?? { requestJoin, pollJoin, reportReady };
   let status: StatusFile = { state: 'idle', updatedAt: now().toISOString() };
   let initialization: Promise<void> | undefined;
+  let rejoinSecret: string;
   let active: Attempt | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
@@ -71,6 +72,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function initialize(): Promise<void> {
     return initialization ??= (async () => {
       await ensureStateDir(dir);
+      const identity = await readStateFile<{ secret: unknown }>(dir, 'rejoin.json');
+      if (identity && !validAgentRejoinSecret(identity.secret)) throw new StateError('storage_failed');
+      rejoinSecret = identity ? identity.secret as string : randomBytes(32).toString('base64url');
+      if (!identity) await writeStateFile(dir, 'rejoin.json', { secret: rejoinSecret });
       // Re-joining requires fresh credentials; the server reuses membership by session.
       await removeStateFile(dir, 'session.json');
       await setStatus('idle');
@@ -237,7 +242,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         }
         let started: Attempt | undefined;
         try {
-          const created = await api.requestJoin({ link, harness: options.harness, label, sessionId: options.sessionId }, fetchDeps);
+          const created = await api.requestJoin({ link, harness: options.harness, label, sessionId: options.sessionId, rejoinSecret }, fetchDeps);
           if (closed) throw new KhalaClientError('not_connected');
           const { joinId, pollSecret, confirmUrl, expiresAt } = created;
           await writeStateFile(dir, 'join.json', { joinId, pollSecret, confirmUrl, expiresAt, link });

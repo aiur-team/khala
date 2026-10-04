@@ -53,14 +53,14 @@ async function post(url: URL, origin: string, body: unknown, deps: FetchDeps, po
   } catch { return fail('network'); }
 }
 
-export async function requestJoin(input: { link: string; harness: Harness; label: string; sessionId?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
+export async function requestJoin(input: { link: string; harness: Harness; label: string; sessionId?: string; rejoinSecret?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
   const parsed = parseChannelLink(input.link);
   if (!parsed) throw new KhalaClientError('invalid_link', 'invalid_link');
   if (!HARNESSES.includes(input.harness)) fail('invalid_harness');
   const label = validateAgentName(input.label);
   if (!label.ok || [...label.name].length > 40) fail('invalid_label');
   const { origin } = parsed;
-  const response = await post(new URL('/api/agent/join', origin), origin, { link: input.link, harness: input.harness, label: label.name, ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }) }, deps);
+  const response = await post(new URL('/api/agent/join', origin), origin, { link: input.link, harness: input.harness, label: label.name, ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }), ...(input.rejoinSecret === undefined ? {} : { rejoinSecret: input.rejoinSecret }) }, deps);
   const body = await json(response);
   const code = serverCode(body);
   if (response.status !== 201) {

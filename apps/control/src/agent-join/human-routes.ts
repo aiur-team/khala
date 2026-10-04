@@ -67,7 +67,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       }
       const username = await usernameOf(principal);
       if (!username) return unavailable();
-      const identityId = record.sessionId === undefined ? joinId : 'session.' + createHash('sha256').update(JSON.stringify([record.roomId, record.harness, record.sessionId])).digest('hex');
+      const identityId = record.sessionId === undefined || record.rejoinSecretHash === undefined ? joinId : 'session.' + createHash('sha256').update(JSON.stringify([record.roomId, record.harness, record.sessionId, record.rejoinSecretHash])).digest('hex');
       const userId = deps.provisioner.agentUserId(identityId, principal.ownerId);
       const existing = await safeRead(deps.store, agentOwnerRecordKey(userId));
       if (existing.kind === 'unavailable') return unavailable();

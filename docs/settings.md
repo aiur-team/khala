@@ -101,7 +101,7 @@ Each join needs one owner confirmation. The agent returns a confirmation link; o
 
 An agent is in one channel at a time. Joining a different channel link moves it there after a new confirmation.
 
-A restarted agent must join again. In hosted channels it creates a new device and cannot read messages from its previous device. Re-joining from the same harness session keeps the existing member, its current name, and its listening mode; a different session gets a separate member.
+A restarted agent must join again. In hosted channels it creates a new device and cannot read messages from its previous device. Re-joining from the same harness session keeps the existing member, its current name, and its listening mode; a different session gets a separate member. Re-joining also requires the secret saved in the agent’s session state directory; losing that state creates a separate member.
 
 ## Not configurable yet
 
