@@ -70,7 +70,7 @@ describe('createBrowserDeviceService', () => {
     expect(next.current().state).toBe('ready');
   });
 
-  it.each(['store', 'engine', 'markers'] as const)('fails and releases the lock when %s setup never settles', async step => {
+  it.each(['store', 'engine', 'markers'] as const)('fails, but never hands the lock on, when %s setup never settles', async step => {
     const disk = createDisk();
     const { deps } = rig(disk);
     const never = <T>() => new Promise<T>(() => undefined);
@@ -86,11 +86,53 @@ describe('createBrowserDeviceService', () => {
 
     expect(result.kind === 'ok' ? result.value.state : result.kind).not.toBe('ready');
     expect(service.current()).toMatchObject({ state: 'failed' });
-    // Retrying in another tab acquires the device at once.
+    // The step may still be writing the store, so another tab must not open it.
     const next = createBrowserDeviceService(rig(disk).deps);
-    expect((await next.ensureReady(alice)).kind).toBe('ok');
-    expect(next.current().state).toBe('ready');
+    expect((await next.ensureReady(alice)).kind).toBe('unavailable');
+    expect(next.current()).toMatchObject({ state: 'failed', reason: 'lease_unavailable' });
   });
+
+  it.each(['engine', 'store', 'marker'] as const)(
+    'keeps the lock until a timed-out %s step settles, so no second tab becomes ready meanwhile',
+    async kind => {
+      const disk = createDisk();
+      const events: string[] = [];
+      const a = rig(disk);
+      const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+      const late = async <T>(write: () => Promise<T>): Promise<T> => {
+        events.push(`A:${kind}-start`);
+        await sleep(80);
+        const value = await write();
+        events.push(`A:${kind}-wrote-store`);
+        return value;
+      };
+      const service = createBrowserDeviceService({
+        ...a.deps,
+        engineTimeoutMs: 20,
+        ...(kind === 'engine' ? { engines: { open: input => late(async () => {
+          const engine = await a.deps.engines.open(input);
+          return { ...engine, close: async () => { await engine.close(); events.push('A:late-close'); } };
+        }) } } : {}),
+        ...(kind === 'store' ? { stores: { open: (...args) => late(async () => {
+          const store = await a.deps.stores.open(...args);
+          return { ...store, close: async () => { await store.close(); events.push('A:late-close'); } };
+        }) } } : {}),
+        ...(kind === 'marker' ? { markers: { ...a.deps.markers, put: (...args) => late(async () => {
+          await a.deps.markers.put(...args);
+        }) } } : {}),
+      });
+
+      const first = await service.ensureReady(alice);
+      events.push(`A:result=${first.kind === 'ok' ? first.value.state : first.kind}`);
+      const other = createBrowserDeviceService(rig(disk, { lockWaitMs: 1_000 }).deps);
+      const second = await other.ensureReady(alice);
+      events.push(`B:result=${second.kind === 'ok' ? second.value.state : second.kind}`);
+
+      // A late marker write has nothing to close; B waits for the write itself.
+      expect(events).toEqual([`A:${kind}-start`, 'A:result=failed', `A:${kind}-wrote-store`,
+        ...(kind === 'marker' ? [] : ['A:late-close']), 'B:result=ready']);
+    },
+  );
 
   it('enters lost, not ready with new keys, when identity is missing for a device the server knows', async () => {
     const disk = createDisk();

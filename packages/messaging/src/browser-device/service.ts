@@ -12,7 +12,7 @@ import {
   type BrowserDeviceDependencies, type DeviceEngine, type EngineSignal, DEFAULT_ENGINE_TIMEOUT_MS, DEFAULT_LOCK_WAIT_MS,
   checkIdentity, deviceView,
 } from './lifecycle';
-import { type Generation, Superseded, adopt, bounded, endGeneration, guard, isLive, onEnd, openGeneration, within } from './transitions';
+import { type Generation, Superseded, adopt, endGeneration, guard, isLive, onEnd, openGeneration, step, within } from './transitions';
 
 /** Handed to crypto operations; valid only for the generation that was ready when they began. */
 export type EngineContext = Readonly<{
@@ -225,7 +225,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       const afterLock = await confirmIdentity();
       if (afterLock) return afterLock;
 
-      const credentials = await bounded(deps.credentials.resolve(principal, g.abort.signal), engineTimeoutMs);
+      const credentials = await step(g, deps.credentials.resolve(principal, g.abort.signal), engineTimeoutMs);
       if (!isLive(g)) throw new Superseded();
       if (credentials.kind === 'expired') return ok(await finish(g, locked(g.generation, g.deviceId)));
       if (credentials.kind === 'revoked') {
@@ -241,7 +241,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
 
       let store;
       try {
-        store = await bounded(deps.stores.open(ownerId, session.deviceId, g.abort.signal), engineTimeoutMs, late => late.close());
+        store = await step(g, deps.stores.open(ownerId, session.deviceId, g.abort.signal), engineTimeoutMs, late => late.close());
       } catch {
         if (!isLive(g)) throw new Superseded();
         return ok(await fail('storage_unavailable'));
@@ -250,7 +250,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
 
       let engine;
       try {
-        engine = await bounded(deps.engines.open({
+        engine = await step(g, deps.engines.open({
           ownerId, session, store, signal: g.abort.signal, emit: guard(g, signal => onEngineSignal(g, signal)),
         }), engineTimeoutMs, late => late.close());
       } catch {
@@ -260,7 +260,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       }
       await adopt(g, 'engine', engine);
 
-      const [local, marker] = await bounded(Promise.all([engine.identity(), deps.markers.get(ownerId)]), engineTimeoutMs);
+      const [local, marker] = await step(g, Promise.all([engine.identity(), deps.markers.get(ownerId)]), engineTimeoutMs);
       if (!isLive(g)) throw new Superseded();
       const decision = checkIdentity(marker, session, local);
       if (typeof decision === 'object') {
@@ -269,7 +269,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       }
       if (decision === 'enrol') {
         try {
-          await bounded(deps.markers.put(ownerId, { deviceId: session.deviceId, fingerprint: local.fingerprint }), engineTimeoutMs);
+          await step(g, deps.markers.put(ownerId, { deviceId: session.deviceId, fingerprint: local.fingerprint }), engineTimeoutMs);
         } catch {
           if (!isLive(g)) throw new Superseded();
           return ok(await fail('storage_unavailable'));
