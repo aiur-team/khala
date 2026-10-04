@@ -77,7 +77,8 @@ describe('resolveMembers colours', () => {
     const members = resolveMembers({ ...colorInput, colorFor: ownerId => colors.get(ownerId)! });
     expect(members.viewer).toMatchObject({ hue: 84, color: colors.get('owner_mira') });
     expect(members.humans[0]).toMatchObject({ hue: 244, color: colors.get('owner_theo') });
-    expect(members.agents[0]).toMatchObject({ ownerHue: 244, ownerColor: colors.get('owner_theo') });
+    // An agent wears its owner's resolved colour: its own hue is the owner's (operator request 2026-10-04).
+    expect(members.agents[0]).toMatchObject({ hue: 244, ownerHue: 244, ownerColor: colors.get('owner_theo') });
   });
 
   it('keeps the hashed hues without colorFor', () => {
@@ -85,5 +86,6 @@ describe('resolveMembers colours', () => {
     expect(members.viewer).toMatchObject({ hue: 214, color: null });
     expect(members.humans[0]).toMatchObject({ hue: participantHue({ kind: 'human', ownerId: 'owner_theo' }), color: null });
     expect(members.agents[0]?.ownerColor).toBeNull();
+    expect(members.agents[0]?.hue).toBe(members.humans[0]?.hue);
   });
 });

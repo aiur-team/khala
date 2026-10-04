@@ -6,6 +6,7 @@ import { defaultHumanColor } from '@khala/contracts/m1/colors';
 import { base64url, LOCAL_IDLE_EXIT_MS, LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { StateError, writeJsonAtomic } from '../state';
 import { KHALA_AGENT_VERSION } from '../version';
+import { bundle } from '../bundle';
 import { resolveLocalOwnerName } from './identity';
 import { helperPaths, readHelperFile } from './lifecycle';
 import { LocalStoreError, openLocalStore, type OpenedLocalStore } from './store';
@@ -20,7 +21,8 @@ export type RunHelperOptions = {
   now?: () => number; random?: (bytes: number) => Uint8Array; stderr?: (line: string) => void;
 };
 export function defaultWebDir(): string {
-  return fileURLToPath(new URL('../../../../apps/web/dist-local/', import.meta.url));
+  // The published package ships the local web app as dist/web beside its chunks.
+  return fileURLToPath(bundle ? new URL('./web/', import.meta.url) : new URL('../../../../apps/web/dist-local/', import.meta.url));
 }
 const hash = (token: string) => createHash('sha256').update(token).digest();
 

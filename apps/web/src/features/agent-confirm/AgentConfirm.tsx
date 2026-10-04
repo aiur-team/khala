@@ -12,7 +12,7 @@ import type { AgentConfirmController, AgentConfirmError } from './controller';
 import '../../ui/khala/khala-app.css';
 import './agent-confirm.css';
 
-const harnessNames: Record<Harness, string> = { claude: 'Claude Code', codex: 'Codex' };
+const harnessNames: Record<Harness, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 const errors: Record<AgentConfirmError, string> = {
   not_member: 'You are not a member of this channel.',
   not_found: 'This confirmation link is not valid.',

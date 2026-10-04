@@ -13,6 +13,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
+    "build": "node scripts/build-package.mjs",
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests --exclude '**/*.live.test.ts'",
     "test:local-e2e": "KHALA_LOCAL_E2E=1 vitest run --config ../../vitest.config.ts --pool=forks src/local/acceptance.e2e.test.ts",
@@ -24,6 +25,7 @@
     "tsx": "4.20.6"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "playwright-core": "1.63.0",
     "vite": "7.3.6"
   }

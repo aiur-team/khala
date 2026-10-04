@@ -367,7 +367,17 @@ test('Thread rows match the 1440 dark design computed styles', { timeout: 90_000
         const style = getComputedStyle(node);
         return { color: style.color, 'font-size': style.fontSize, padding: style.padding, 'border-radius': style.borderRadius };
       });
-      assert.deepEqual(got, { color: want['color'], 'font-size': want['font-size'], padding: want['padding'], 'border-radius': want['border-radius'] }, selector);
+      // Operator request 2026-10-04: an agent's name takes its owner's colour, so the first (agent) name reads in
+      // the owner's hue rather than the design's per-agent hue; everything else still matches the design.
+      const color = selector === '.kh-name b' ? await page.locator('.kh-row.agent').first().evaluate(row => {
+        const probe = document.createElement('b');
+        probe.style.color = `hsl(${(row as HTMLElement).style.getPropertyValue('--oh')} 75% 72%)`;
+        row.append(probe);
+        const value = getComputedStyle(probe).color;
+        probe.remove();
+        return value;
+      }) : want['color'];
+      assert.deepEqual(got, { color, 'font-size': want['font-size'], padding: want['padding'], 'border-radius': want['border-radius'] }, selector);
     }
     assert.equal(await page.locator('.kh-rcpt').count(), 1, 'one receipt');
     assert.equal(await page.locator('.kh-rcpt').textContent(), 'Not sent');

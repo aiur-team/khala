@@ -44,9 +44,10 @@ function MemberAvatar({ member, members, viewerOwnerId, viewerInitials }: Readon
   const humans = members.filter(other => other.kind === 'human');
   // The viewer's own agents carry `YO` (or their chosen initials) on the viewer hue, as in the thread and roster (§3).
   const viewerOwned = viewerOwnerId !== undefined && member.ownerId === viewerOwnerId;
+  // An agent wears its owner's colour.
+  const ownerHue = hue({ kind: 'human', ownerId: member.ownerId ?? owner, isViewer: viewerOwned });
   return <Avatar static kind="agent" label={label} initials={initials(label)} logo={member.harness ? harnessLogo(member.harness) : null}
-    hue={hue({ kind: 'agent', participantId: member.id })}
-    ownerHue={hue({ kind: 'human', ownerId: member.ownerId ?? owner, isViewer: viewerOwned })}
+    hue={ownerHue} ownerHue={ownerHue}
     ownerInitials={viewerOwned ? viewerInitials ?? 'YO' : ownerInitials({ ownerId: member.ownerId, label: owner, chosen: member.ownerInitials }, humans)} />;
 }
 

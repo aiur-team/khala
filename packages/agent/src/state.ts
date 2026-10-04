@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentCredentials, Harness } from '@khala/contracts/m1/agent-join';
+import { HARNESSES, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 export type StatusFile = { state: AgentState; channelName?: string; detail?: string; updatedAt: string };
@@ -19,16 +19,33 @@ export class StateError extends Error {
   }
 }
 
+const WINDOWS = process.platform === 'win32';
+
+/**
+ * On Windows a rename over a file another process (a hook, the MCP server) is reading fails
+ * with EPERM/EACCES/EBUSY until that reader closes it; retry briefly. POSIX renames once.
+ */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await fs.rename(from, to); return; } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!WINDOWS || attempt >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) throw error;
+      await new Promise(resolve => setTimeout(resolve, 10 + attempt * 5));
+    }
+  }
+}
+
 export function stateRoot(env: NodeJS.ProcessEnv = process.env): string {
   const base = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME)
-    ? env.XDG_STATE_HOME : path.join(env.HOME ?? os.homedir(), '.local/state');
+    // Windows: the profile directory, never a HOME that Git Bash may export for some processes only.
+    ? env.XDG_STATE_HOME : path.join(WINDOWS ? os.homedir() : env.HOME ?? os.homedir(), '.local', 'state');
   return path.join(base, 'khala');
 }
 export function filesForDir(dir: string): SessionFiles {
   return { dir, mode: path.join(dir, 'mode.json'), join: path.join(dir, 'join.json'), session: path.join(dir, 'session.json'), inbox: path.join(dir, 'inbox.jsonl'), cursor: path.join(dir, 'cursor.json'), status: path.join(dir, 'status.json') };
 }
 export function sessionFiles(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): SessionFiles {
-  if (!['claude', 'codex'].includes(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
+  if (!(HARNESSES as readonly string[]).includes(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
   return filesForDir(path.join(stateRoot(env), harness, sessionId));
 }
 export function resolveStateDir(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): string {
@@ -42,7 +59,8 @@ export async function ensureStateDir(dir: string): Promise<void> {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
       const stat = await fs.lstat(directory);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
+      // Windows has no POSIX mode bits (directories report 0o777); the profile ACL protects it.
+      if (!stat.isDirectory() || stat.isSymbolicLink() || (!WINDOWS && (stat.mode & 0o077) !== 0)
         || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new StateError('unsafe_state_dir');
     }
   } catch (error) {
@@ -65,9 +83,12 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await fs.rename(temporary, file);
-    const directory = await fs.open(dir, constants.O_RDONLY);
-    try { await directory.sync(); } finally { await directory.close(); }
+    await renameWithRetry(temporary, file);
+    // Windows cannot fsync a directory handle; NTFS journals the rename itself.
+    if (!WINDOWS) {
+      const directory = await fs.open(dir, constants.O_RDONLY);
+      try { await directory.sync(); } finally { await directory.close(); }
+    }
   } catch {
     throw new StateError('storage_failed');
   } finally {

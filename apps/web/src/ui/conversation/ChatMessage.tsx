@@ -1,6 +1,7 @@
 import type { AnimationEventHandler, CSSProperties, ReactNode } from 'react';
 import { clockLabel, type TimeOptions } from '../khala/format-time';
 import { humanColorStyle, type ResolvedHumanColor } from '../khala/human-colors';
+import { KindMark } from '../khala/KindMark';
 import './conversation.css';
 
 /** Where a row sits in its run (`features/timeline/runs.ts`, RECREATION-SPEC §7.1). */
@@ -12,8 +13,8 @@ export type ThreadRowName = Readonly<{
   hue: number;
   /** Collision suffix such as `#395`; rendered only when set. */
   idBadge?: string;
-  /** `Human` for other humans; agents carry no tag (their avatar's owner badge says whose they are). */
-  tag: Readonly<{ kind: 'htag' }> | null;
+  /** The kind marker after the name: a person icon for humans, a robot icon for agents. */
+  tag: 'human' | 'agent' | null;
   ariaLabel: string;
   onClick?: () => void;
 }>;
@@ -85,7 +86,7 @@ function ThreadRow({ id, run, sender, agentOwner, humanColor, time, timeOptions,
         aria-label={name.ariaLabel} onClick={name.onClick}>
         <b dir="auto">{name.label}</b>
         {name.idBadge ? <span className="kh-id">{name.idBadge}</span> : null}
-        {name.tag?.kind === 'htag' ? <span className="kh-htag">Human</span> : null}
+        {name.tag ? <KindMark kind={name.tag} /> : null}
         {time ? <time dateTime={time} title={time}>{clockLabel(new Date(time), timeOptions)}</time> : null}
       </button> : null}
       <div className="kh-b">{children}</div>

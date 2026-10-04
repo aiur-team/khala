@@ -16,6 +16,7 @@ export type AvatarProps =
     kind: 'agent';
     /** Accessible name, e.g. `Claude #2`. */
     label: string;
+    /** The owner's hue: an agent wears its owner's colour (operator request 2026-10-04). */
     hue: number;
     ownerHue: number;
     ownerInitials: string;
@@ -39,8 +40,10 @@ export function Avatar(props: AvatarProps) {
   if (props.kind === 'generic') return <span className="kh-av kh-gen" aria-hidden="true">#</span>;
   if (props.kind === 'more') return <span className="kh-av kh-more">+{props.count}</span>;
 
-  const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ''}${props.ghost ? ' ghost' : ''}`;
-  const style = props.kind === 'agent' ? { '--h': props.hue } as CSSProperties
+  const className = `kh-av${props.kind === 'human' ? ' kh-hav' : ' kh-aav'}${props.ghost ? ' ghost' : ''}`;
+  // An agent's fill is its owner's swatch, exactly as on the owner's own avatar, under a white harness glyph.
+  const style = props.kind === 'agent'
+    ? { '--h': props.hue, '--oh': props.ownerHue, ...(props.ownerSwatch ? { '--hc': props.ownerSwatch } : {}) } as CSSProperties
     : { '--oh': props.hue, ...(props.swatch ? { '--hc': props.swatch } : {}) } as CSSProperties;
   const tier = props.kind === 'human' && props.tier ? { 'data-kh-tier': String(props.tier) } : {};
   const content = props.kind === 'agent' ? <>

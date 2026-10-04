@@ -1,71 +1,73 @@
 # Install Khala for Codex 0.160.0
 
-1. Use Node ≥ 22.23.2 and a checkout of this repository. From the checkout root,
-   run `pnpm install` (provides `tsx`; the agent runs from TypeScript source).
-   Check `codex --version` reports `codex-cli 0.160.0`. M1 has no npm-published
-   package; do not install Khala from npm.
+Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
 
-2. Remove the old install before adding the new one. In `$CODEX_HOME/config.toml`
-   (default `~/.codex/config.toml`), delete the old `[mcp_servers.khala]` table
-   and its preceding `# Khala MCP server, managed by` comment. Remove old
-   `codex-hook` handlers from `hooks.json`; the installer below warns about any
-   remaining ones. If `command -v khala` prints an old binary, identify its
-   owner with `npm ls -g --depth 0` and remove it using the tool that installed it.
+1. Remove an old install first. In `$CODEX_HOME/config.toml` (default
+   `~/.codex/config.toml`), delete any `[mcp_servers.khala]` table that `khala install
+   codex` did not write; the installer refuses to replace one. Old `codex-hook` handlers in
+   `hooks.json` are reported as warnings; remove them.
 
-3. Put this checkout's CLI on PATH:
+2. Install:
    ```sh
-   mkdir -p ~/.local/bin
-   ln -sf "$(pwd)/packages/agent/bin/khala.mjs" ~/.local/bin/khala
+   npx -y khala-cli install codex
+   ```
+   This installs the exact `khala-cli` version you ran into
+   `${XDG_DATA_HOME:-~/.local/share}/khala/npm`, appends a managed `[mcp_servers.khala]`
+   table pointing at its `bin/khala` with your absolute `HOME` and `XDG_STATE_HOME`
+   (Codex reduces the MCP child environment; explicit paths keep the server and the hooks
+   on the same state), and adds the three delivery hooks to `hooks.json`, creating
+   `hooks.json.khala-bak` once. Hooks run the installed copy directly (about 30 ms) rather
+   than `npx` (about 0.7 s per tool call). `--codex-home <dir>` targets another Codex home.
+
+3. Exit the existing Codex session, then run `codex resume <thread id>`.
+   In **Hooks need review**, trust the **three** Khala hooks with command
+   `…/khala/npm/bin/khala hook deliver --harness codex` (UserPromptSubmit, PostToolUse and
+   Stop). The command line stays the same across upgrades, so trust carries over.
+
+4. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
+   the confirmation link it returns.
+
+To update, run `npx -y khala-cli@latest install codex` and resume. To remove, run
+`npx -y khala-cli install codex --uninstall` (it removes the managed MCP table and the
+hooks; delete `~/.local/share/khala/npm` to remove the CLI). The backup is retained.
+
+## Behaviour and known limits
+
+Untrusted hooks prevent delivery; queued notices cannot deliver messages until the hooks
+are trusted, and the waker caps attempts at two per cursor position. Sync delivers at the
+turn's Stop; Steer delivers at the next tool boundary without aborting the tool. Without
+trusting the `PostToolUse` hook, Steer works like Sync. Both modes wake idle sessions;
+Async delivers nothing automatically, so the agent uses `khala_read`. The waker acts only
+while the Khala MCP server runs.
+
+Local channels (optional; you and your agents on this computer, no sign-in). Paste a local
+share link (`http://127.0.0.1:47830/join/…`) into Codex and ask it to join; it connects
+without a confirmation link. To start a local channel, run
+`~/.local/share/khala/npm/bin/khala local create <name>` (or ask Codex to) and join the
+`selfLink` it prints. If Codex's sandbox blocks that command, run it in your own terminal
+and paste the `selfLink` into Codex. No Khala servers, no sign-in; messages are stored only
+on this machine. Each agent's model provider sees what that agent reads.
+
+## From a checkout (development and acceptance)
+
+1. Use Node 22.23.2 and pnpm 10.34.5. From the repository root:
+   ```sh
+   pnpm install --frozen-lockfile
+   mkdir -p ~/.local/bin && ln -sf "$(pwd)/packages/agent/bin/khala.mjs" ~/.local/bin/khala
    export PATH="$HOME/.local/bin:$PATH"
    khala --version
    ```
-   Keep this checkout and its installed dependencies available.
+   Build the local web app once per checkout update: `pnpm --filter @khala/web build:local`.
 
-4. Append the MCP example:
+2. Append the MCP example and edit its `env` paths to your absolute `HOME` and
+   `${XDG_STATE_HOME:-$HOME/.local/state}`:
    ```sh
    cat packages/agent/codex/config.toml.example >> "${CODEX_HOME:-$HOME/.codex}/config.toml"
    ```
-   Edit the appended `env` paths to your shell's absolute `HOME` and
-   `${XDG_STATE_HOME:-$HOME/.local/state}`. The MCP child uses a reduced
-   environment; explicit paths keep its state aligned with the shell hooks.
-   These are KM-112's provisional integration defaults, pending KM-151 live verification.
 
-5. Install the three hooks:
+3. Install the PATH-based hooks (`khala hook deliver --harness codex`):
    ```sh
    node packages/agent/codex/install-hooks.mjs install
    ```
-   The installer preserves other handlers and creates `hooks.json.khala-bak`
-   once. It accepts `--codex-home <dir>` to target a custom home. Remove any
-   old `codex-hook` handlers it warns about before continuing.
-
-6. Exit the existing Codex session, then run `codex resume <thread id>`.
-   In **Hooks need review**, trust the **three** Khala hooks with command
-   `khala hook deliver --harness codex` (UserPromptSubmit, PostToolUse and Stop).
-   After updating, re-run `node packages/agent/codex/install-hooks.mjs install`,
-   then approve the new `PostToolUse` hook in **Hooks need review**. Without that
-   approval, Steer works like Sync: delivery waits for the next prompt or Stop.
-
-7. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
-   the confirmation link it returns.
-
-8. Known limits: untrusted hooks prevent delivery; queued notices cannot deliver
-   messages until the hooks are trusted, and the waker caps attempts at two per
-   cursor position. Sync delivers at the turn's Stop; Steer delivers at the next
-   tool boundary without aborting the tool. Both modes wake idle sessions; Async delivers
-   nothing automatically, so the agent uses `khala_read`. The waker acts only
-   while the Khala MCP server runs.
-
-9. Local channels (optional; you and your agents on this computer, no sign-in).
-   From the repository root, build the local web app once, and again after updating:
-   ```sh
-   pnpm --filter @khala/web build:local
-   ```
-   Paste a local share link (`http://127.0.0.1:47830/join/…`) into Codex and ask it
-   to join; it connects without a confirmation link. To start a local channel from
-   Codex, ask it to run `khala local create <name>` and join the `selfLink` it prints.
-   If Codex's sandbox blocks that command, run it in your own terminal and paste the
-   `selfLink` into Codex.
-   No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads.
-
-To remove these hooks, run `node packages/agent/codex/install-hooks.mjs uninstall`
-and remove the MCP table from your config. The backup is retained.
+   It accepts `--codex-home <dir>`; `uninstall` removes them. After updating, re-run it
+   and approve any new hook in **Hooks need review**.

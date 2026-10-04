@@ -28,7 +28,7 @@ import { clockLabel, dayLabel, dayTime, type TimeOptions } from '../../ui/khala/
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { RestoreIcon, UserXIcon } from '../../ui/khala/icons';
 import { humanColorOf, ownerColorOf, useHumanColor, colorSwatch, type ResolvedHumanColor } from '../../ui/khala/human-colors';
-import { buildIdBadgeResolver, harnessLogo, humanInitials, initials, ownerInitials, useParticipantHue } from '../../ui/khala/identity';
+import { buildIdBadgeResolver, harnessLogo, humanInitials, initials, ownerInitials } from '../../ui/khala/identity';
 import { computeRuns, type RunInput, type RunPosition } from './runs';
 import { projectTimelineNames } from './names';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
@@ -223,7 +223,6 @@ export function TimelineScreen({
   describeParticipant, controller, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
-  const hueFor = useParticipantHue();
   const colorFor = useHumanColor();
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const rows = useMemo(() => dedupeByKey(data.rows ?? data.items.map(item => ({ kind: 'message' as const, item })),
@@ -492,7 +491,7 @@ export function TimelineScreen({
       return { ...shared, kind: 'human', label: fullName, idBadge, ownerLabel: null, harness: undefined, hue: color.hue, color };
     }
     const split = splitAgentName(fullName);
-    return { ...shared, kind: 'agent', label: split.label, idBadge, color, hue: hueFor({ kind: 'agent', participantId: participant.participantId }),
+    return { ...shared, kind: 'agent', label: split.label, idBadge, color, hue: color.hue,
       ownerLabel: detail?.kind === 'agent' ? detail.ownerLabel : split.owner ?? (isViewerOwned ? firstName(viewer.displayName) : null),
       harness: detail?.kind === 'agent' ? detail.harness : undefined };
   }
@@ -501,7 +500,7 @@ export function TimelineScreen({
 
   function nameLine(identity: Identity, participant: ParticipantView, time: string): ThreadRowName {
     const ownership = identity.kind === 'unknown' ? 'unknown participant' : ownershipLabel(attributionFor(participant, viewer.ownerId));
-    const tag: ThreadRowName['tag'] = identity.kind === 'human' ? { kind: 'htag' } : null;
+    const tag: ThreadRowName['tag'] = identity.kind === 'unknown' ? null : identity.kind;
     return {
       label: identity.label, hue: identity.hue, tag,
       ...(identity.idBadge ? { idBadge: identity.idBadge } : {}),
