@@ -610,3 +610,33 @@ it('tells delivery frames and khala_read who "you" are, and follows a rename (#1
   expect(await client.read(5)).toMatchObject({ you: 'Scout' });
   expect(await client.status()).toMatchObject({ displayName: 'Scout' });
 });
+
+it('another member cannot set my you= name via content.user (hosted)', async () => {
+  vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? 'kev-Codex' : user === '@khala_abc:s' ? 'Maya' : undefined);
+  await connected();
+  handler!({ ...message('$spoof', '@khala_abc:s'), type: 'm.room.member',
+    content: { membership: 'join', displayname: 'Maya', user: credentials.userId }, previousContent: { membership: 'join', displayname: 'Mayb' } });
+  handler!(message('$after'));
+  await vi.waitFor(async () => expect((await entries()).length).toBeGreaterThanOrEqual(2));
+  expect(await statusFile()).toMatchObject({ displayName: 'kev-Codex' });
+});
+
+it('a local owner-authored rename cascade still updates you=', async () => {
+  vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? 'kev-Codex' : user === '@khala_abc:s' ? 'Maya' : undefined);
+  await client.join(link, 'Codex');
+  poll.resolve({ ...credentials, transport: 'local' });
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  // A local non-owner cannot use content.user either.
+  handler!({ ...message('$spoof', '@khala_abc:s'), type: 'm.room.member',
+    content: { membership: 'join', displayname: 'Maya', user: credentials.userId }, previousContent: { membership: 'join', displayname: 'Mayb' } });
+  handler!(message('$mid'));
+  await vi.waitFor(async () => expect((await entries()).length).toBeGreaterThanOrEqual(2));
+  expect(await statusFile()).toMatchObject({ displayName: 'kev-Codex' });
+  handler!({ ...message('$cascade', '@khala_owner:local'), type: 'm.room.member',
+    content: { membership: 'join', displayname: 'kevin-Codex', user: credentials.userId }, previousContent: { membership: 'join', displayname: 'kev-Codex' } });
+  await vi.waitFor(async () => expect(await statusFile()).toMatchObject({ displayName: 'kevin-Codex' }));
+  let out = '';
+  await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
+    { stdout: { write: (text: string) => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
+  expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain(' you="kevin-Codex" ');
+});
