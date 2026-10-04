@@ -58,8 +58,12 @@ try {
     console.log(`ok mcp initialize + tools/list (${names.join(', ')})`);
   } finally { child.kill(); }
 
-  // npx needs a ./relative tarball path; an absolute one is taken for a command.
-  const viaNpx = check('npx -y <tgz> --version', 'npx', ['-y', `./${path.basename(tarball)}`, '--version'], { cwd: path.dirname(tarball) }).trim();
+  // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
+  // against the nearest package.json ancestor, not cwd. Copy the tarball into the smoke root, which has none.
+  const npxDir = path.join(root, 'npx');
+  await fs.mkdir(npxDir, { recursive: true });
+  await fs.copyFile(tarball, path.join(npxDir, path.basename(tarball)));
+  const viaNpx = check('npx -y <tgz> --version', 'npx', ['-y', `./${path.basename(tarball)}`, '--version'], { cwd: npxDir }).trim();
   if (viaNpx !== version) throw new Error(`npx printed ${viaNpx}`);
 } finally {
   await fs.rm(root, { recursive: true, force: true });
