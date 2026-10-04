@@ -39,8 +39,13 @@ land their producers.
 
 ## Deploy
 
-**`main` auto-deploys; the manual script is a fallback.** Every push to `main`
-(and a manual `workflow_dispatch`) runs `.github/workflows/deploy-prod.yml`,
+**Production deploys are manual and budgeted.** The account uses Netlify's credit plan: each production deploy costs 15 credits. Deploy previews and branch deploys are free. When credits run out, the site is paused.
+
+- Test hosted changes on the local stack or on a free draft deploy (`netlify deploy` without `--prod`).
+- Deploy to production only after the full local end-to-end run passes.
+- `scripts/netlify-credits.mjs` estimates the period's usage. The `Netlify usage` workflow runs it daily and opens an issue when usage is high.
+
+Deploying means a `workflow_dispatch` of `.github/workflows/deploy-prod.yml` with `confirm=DEPLOY`. A deploy cap is enforced per billing period, and the workflow
 which builds exactly as above with
 `PUBLIC_APP_ORIGIN=https://khala.aiur.team PUBLIC_HOMESERVER_ORIGIN=https://matrix.khala.aiur.team`,
 then runs a pinned `netlify-cli` `deploy --prod --no-build --dir apps/web/dist

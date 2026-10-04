@@ -1,0 +1,50 @@
+name: Netlify usage
+# Daily estimate of this billing period's Netlify credit use (production
+# deploys × 15 + bandwidth GB × 20). Requests and function compute aren't in the
+# API, so the real figure runs higher; on 2026-10-04 the gap was about 130
+# credits. At or above WARN_AT the job opens or updates one tracking issue and
+# fails, so the run shows red and GitHub emails the owner. Runs on GitHub,
+# so it costs no Netlify credits.
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  WARN_AT: 650
+
+jobs:
+  usage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Estimate credits
+        id: est
+        shell: bash
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          json=$(node scripts/netlify-credits.mjs)
+          echo "$json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "json=$json" >> "$GITHUB_OUTPUT"
+          echo "credits=$(echo "$json" | jq .estimatedCredits)" >> "$GITHUB_OUTPUT"
+      - name: Warn when high
+        if: ${{ fromJSON(steps.est.outputs.credits) >= fromJSON(env.WARN_AT) }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JSON: ${{ steps.est.outputs.json }}
+        run: |
+          title="Netlify credits high: ${{ steps.est.outputs.credits }} estimated (warn at $WARN_AT)"
+          body=$(printf 'Estimate (deploys×15 + bandwidth GB×20; requests/functions not included):\n\n```json\n%s\n```\n\nNo production deploys until the period resets. See scripts/netlify-credits.mjs.' "$JSON")
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "Netlify credits high in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue edit "$n" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"; else gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"; fi
+          echo "::error::$title"
+          exit 1
