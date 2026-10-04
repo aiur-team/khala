@@ -43,7 +43,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
     };
   }
   return [
-    tool('khala_join', 'Join a Khala channel from its link. Joining a different channel link leaves the current channel. Returns a link your human must open and confirm.',
+    tool('khala_join', 'Join a Khala channel from its link. Joining a different channel link leaves the current channel. Hosted links require your human to open a confirmation link; local links join automatically.',
       { link: { type: 'string' }, label: { type: 'string', minLength: 1, maxLength: 40,
         description: 'Optional and ignored: Khala names you <OwnerUsername>-<Claude|Codex>, and your owner can rename you.' } }, ['link'],
       args => typeof args.link === 'string' && (!Object.hasOwn(args, 'label')
