@@ -146,6 +146,7 @@ jobs:
           - { os: ubuntu-latest, node: "22.0.0" }
           - { os: ubuntu-latest, node: "24" }
           - { os: macos-14, node: "22" }
+          - { os: windows-latest, node: "22" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -155,7 +156,9 @@ jobs:
         with:
           name: khala-cli-tarball
           path: artifacts
-      - run: node packages/agent/scripts/smoke-package.mjs artifacts/*.tgz
+      # bash expands the glob on Windows too.
+      - shell: bash
+        run: node packages/agent/scripts/smoke-package.mjs artifacts/*.tgz
 
   publish:
     name: publish (${{ needs.setup.outputs.channel }})

@@ -23,7 +23,8 @@ async function ensurePrivateRoot(root: string): Promise<void> {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
     const stat = await fs.lstat(root);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
+    // Windows has no POSIX mode bits; the profile ACL protects the directory.
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)
       || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new StateError('unsafe_state_dir');
   } catch (error) {
     if (error instanceof StateError) throw error;

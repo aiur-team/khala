@@ -27,7 +27,8 @@ it.each(['../x', '', 'a/b', '..', '.hidden', '-x', 'a'.repeat(129)])('rejects un
 it('accepts boundary session ids and rejects unknown harnesses', () => {
   expect(() => sessionFiles('codex', 'thr_1:a.b-c')).not.toThrow();
   expect(() => sessionFiles('claude', 'a'.repeat(128))).not.toThrow();
-  expect(() => sessionFiles('cursor' as Harness, 'id')).toThrowError(expect.objectContaining({ code: 'invalid_session_id' }));
+  expect(() => sessionFiles('gemini' as Harness, 'id')).toThrowError(expect.objectContaining({ code: 'invalid_session_id' }));
+  expect(() => sessionFiles('cursor', 'ws-0123')).not.toThrow();
 });
 it('creates private directories and reopens them', async () => {
   for (const dir of [path.join(root, 'khala'), path.dirname(files.dir), files.dir]) {
