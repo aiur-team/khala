@@ -147,6 +147,30 @@ describe('agentJoinRoutes', () => {
     expect(f.store.members(roomId)).toHaveLength(3);
   });
 
+  it('creates a separate member and leaves the original token alone when the rejoin secret is wrong or missing', async () => {
+    const f = fixture();
+    const original = await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Cursor', sessionId: 'cursor-default', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
+    for (const rejoinSecret of ['T'.repeat(43), 'S'.repeat(42) + 'T', undefined]) {
+      const attacker = await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Evil', sessionId: 'cursor-default', ...(rejoinSecret ? { rejoinSecret } : {}) }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
+      expect(attacker.userId).not.toBe(original.userId);
+    }
+    expect(f.tokens.filter(token => token.userId === original.userId)).toEqual([{ roomId, userId: original.userId, tokenSha256: hash(original.accessToken) }]);
+    expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Cursor', 'kevin-Cursor-2', 'kevin-Cursor-3', 'kevin-Cursor-4']);
+    expect(f.events.some(e => (e.content as LocalMemberContent)['com.khala.rejoin'])).toBe(false);
+    const rejoined = await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Cursor', sessionId: 'cursor-default', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
+    expect(rejoined.userId).toBe(original.userId);
+  });
+
+  it('never reuses a member for a session id presented without any rejoin secret', async () => {
+    const f = fixture();
+    const users: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      users.push((await pollJoin(await requestJoin({ link: f.link(), harness: 'cursor', label: 'Cursor', sessionId: 'cursor-default' }, { fetch: f.fetchVia }), { fetch: f.fetchVia })).userId);
+    }
+    expect(users[0]).not.toBe(users[1]);
+    expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Cursor', 'kevin-Cursor-2']);
+  });
+
   it('assigns the suffix to a different session while same-session joins keep the original', async () => {
     const f = fixture();
     for (const sessionId of ['thread-1', 'thread-1', 'thread-2']) {

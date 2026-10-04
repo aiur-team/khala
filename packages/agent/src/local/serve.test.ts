@@ -240,3 +240,32 @@ it('does not let a share-link holder hijack a cursor-default member', async () =
     expect(await victim.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
   } finally { await victim.close(); }
 });
+
+it('keeps two Cursor windows that both fall back to cursor-default as separate members', async () => {
+  await start();
+  const created = await command(['create', 'windows']);
+  const otherRoot = await mkdtemp(join(tmpdir(), 'ki137-window-'));
+  const otherEnv = { ...env, XDG_STATE_HOME: otherRoot };
+  const first = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
+  const second = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env: otherEnv });
+  try {
+    expect(await first.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const firstDir = resolveStateDir('cursor', 'cursor-default', env);
+    const secretFile = join(firstDir, 'rejoin.json');
+    expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(secretFile, 'utf8')).secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    const original = JSON.parse(await readFile(join(firstDir, 'session.json'), 'utf8'));
+    expect(await second.join((await command(['link', 'windows'])).shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
+    const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
+    expect((await second.status()).agentUserId).not.toBe(original.userId);
+    expect(store.members(created.roomId).filter(member => member.kind === 'agent').map(member => member.displayName))
+      .toEqual(['kevin-Cursor', 'kevin-Cursor-2']);
+    expect(store.agentForToken(original.accessToken)).toEqual({ roomId: created.roomId, userId: original.userId });
+    expect(await first.status()).toMatchObject({ state: 'connected', agentUserId: original.userId });
+    expect(store.history(created.roomId, undefined, 100).events.filter(event => event.type === 'com.khala.event.v1').map(event => event.content.summary))
+      .toEqual(['kevin-Cursor joined', 'kevin-Cursor-2 joined']);
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+    await rm(otherRoot, { recursive: true, force: true });
+  }
+});

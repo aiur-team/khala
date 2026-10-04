@@ -327,3 +327,20 @@ it('keeps sibling hosted agents separate when a session id is asserted without i
   expect(members[0]).toBe(members[3]);
   expect(names).toEqual(['Kevin-Codex', 'Kevin-Codex-2', 'Kevin-Codex-3', 'Kevin-Codex']);
 });
+
+it('never reuses a hosted identity for a session id confirmed without any rejoin secret', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
+  f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
+    ...credentials, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
+  } }));
+  const members: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const joinId = randomBytes(16).toString('base64url');
+    await f.joins.create({ ...f.record, joinId, sessionId: 'cursor-default' });
+    const response = await f.handlers.confirm(f.request('POST', `joinId=${joinId}`));
+    expect(response.status).toBe(200);
+    members.push((await response.json() as { agentUserId: string }).agentUserId);
+  }
+  expect(members[0]).not.toBe(members[1]);
+});
