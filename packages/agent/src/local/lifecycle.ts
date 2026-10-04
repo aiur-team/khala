@@ -7,6 +7,7 @@ import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
 import { LOCAL_DEFAULT_PORT, decodeHelperFile, type HelperFile } from '@khala/contracts/m1/local';
 import { ensureStateDir, readJson, stateRoot, StateError } from '../state';
 import { KhalaClientError } from '../client';
+import { bundle } from '../bundle';
 
 export type HelperPaths = { root: string; helperFile: string; logFile: string; port: number; origin: string };
 export function helperPaths(env: NodeJS.ProcessEnv = process.env): HelperPaths {
@@ -27,7 +28,8 @@ export async function readHelperFile(env: NodeJS.ProcessEnv = process.env): Prom
 }
 
 export function helperBinPath(): string {
-  return fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
+  // Bundled chunks sit flat beside dist/khala.mjs; source runs through bin/khala.mjs.
+  return fileURLToPath(bundle ? new URL('./khala.mjs', import.meta.url) : new URL('../../bin/khala.mjs', import.meta.url));
 }
 
 export const HELPER_ENV_ALLOWLIST: readonly string[] = [
