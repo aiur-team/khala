@@ -17,6 +17,7 @@ export const files = {
   devMarketplace: `${agent}claude-plugin/.claude-plugin/marketplace.json`,
   marketplace: `${repo}.claude-plugin/marketplace.json`,
   releases: `${agent}src/hooks/fixtures/claude-plugin-releases.json`,
+  agentsGuide: `${repo}apps/web/src/landing/public/AGENTS.md`,
 };
 /** Plugin files whose content defines a plugin release (see claude-plugin.test.ts). */
 export const RELEASE_CONTENT = ['hooks/hooks.json', 'skills/khala/SKILL.md', '.mcp.json', 'bin/khala'];
@@ -46,6 +47,15 @@ export async function expectedFiles() {
     market.plugins = market.plugins.map(entry => entry.name === 'khala' ? { ...entry, version } : entry);
     out.push([file, json(market)]);
   }
+  // AGENTS.md pins the version twice for Cursor: in the JSON example and inside the base64 deeplink config.
+  const pinned = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@\\d+\\.\\d+\\.\\d+`, 'g');
+  const guide = (await fs.readFile(files.agentsGuide, 'utf8'))
+    .replace(/(cursor:\/\/anysphere\.cursor-deeplink\/mcp\/install\?name=khala&config=)([A-Za-z0-9+/%]+)/g, (_, head, encoded) => {
+      const config = Buffer.from(decodeURIComponent(encoded), 'base64').toString('utf8').replace(pinned, `${name}@${version}`);
+      return head + encodeURIComponent(Buffer.from(config).toString('base64'));
+    })
+    .replace(pinned, `${name}@${version}`);
+  out.push([files.agentsGuide, guide]);
   return { name, version, files: out };
 }
 
