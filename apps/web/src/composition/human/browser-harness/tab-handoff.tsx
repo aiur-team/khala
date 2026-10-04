@@ -18,7 +18,13 @@ history.replaceState(null, '', initialPath);
 let stopGate: Promise<void> | null = null;
 let releaseStop: (() => void) | null = null;
 let releaseSync: (() => void) | null = null;
-const syncGate = params.has('holdSync') ? new Promise<void>(resolve => { releaseSync = resolve; }) : null;
+if (params.has('unansweredPrompt')) {
+  // A Firefox permission prompt holds focus outside the page and answers
+  // persist() only when the person responds, which here never happens.
+  Document.prototype.hasFocus = () => false;
+  Object.defineProperty(navigator.storage, 'persist', { configurable: true, value: () => new Promise<boolean>(() => undefined) });
+}
+const syncGate =params.has('holdSync') ? new Promise<void>(resolve => { releaseSync = resolve; }) : null;
 const identity = {
   async current() { return { kind: 'signed_in' as const, principal }; },
   async beginSignIn() { return unavailable(); },
@@ -62,6 +68,8 @@ declare global { interface Window {
   __recordDeviceEngine(event: 'opened' | 'closed', engineId: string): Promise<void>;
   __tabHandoff: {
     phase(): string;
+    /** Every distinct phase this document has shown, in order. */
+    phases(): string[];
     whenPhase(phase: string): Promise<void>;
     generation(): number;
     holdStop(): void;
@@ -69,8 +77,14 @@ declare global { interface Window {
     releaseSync(): void;
   };
 } }
+const phases: string[] = [application.getSnapshot().phase];
+application.subscribe(() => {
+  const phase = application.getSnapshot().phase;
+  if (phases.at(-1) !== phase) phases.push(phase);
+});
 window.__tabHandoff = {
   phase: () => application.getSnapshot().phase,
+  phases: () => [...phases],
   whenPhase(phase) {
     return new Promise(resolve => {
       const check = () => {

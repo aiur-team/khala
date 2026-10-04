@@ -18,6 +18,8 @@ export type Generation = {
   store: CryptoStore | null;
   engine: DeviceEngine | null;
   readonly disposers: Set<() => void>;
+  /** Setup steps that were given up on and may still be running. See `step`. */
+  readonly stragglers: Set<Promise<void>>;
 };
 
 export class Superseded extends Error {
@@ -29,7 +31,7 @@ export class Superseded extends Error {
 export function openGeneration(principal: AuthPrincipal, generation: number, deviceId: DeviceId | null): Generation {
   return {
     ownerId: principal.ownerId, principal, generation, abort: new AbortController(), deviceId,
-    lease: null, store: null, engine: null, disposers: new Set(),
+    lease: null, store: null, engine: null, disposers: new Set(), stragglers: new Set(),
   };
 }
 
@@ -42,6 +44,52 @@ export function within(promise: Promise<unknown>, ms: number): Promise<boolean> 
     void promise.then(() => true, () => true).then(settled => {
       clearTimeout(timer);
       resolve(settled);
+    });
+  });
+}
+
+export class StepTimeout extends Error {
+  constructor() {
+    super('device setup step timed out');
+  }
+}
+
+/**
+ * Runs one setup step of `g` with a time limit. It settles like `promise`, but
+ * rejects with `StepTimeout` once `ms` passes, so a step that never settles (a
+ * blocked IndexedDB open, an unanswered permission prompt) cannot keep the tab
+ * on "Getting this device ready".
+ *
+ * Giving up on a step does not stop it: an SDK open may still be writing the
+ * crypto store. The step stays in `g.stragglers` until it has settled and any
+ * resource it produced after the generation gave up on it has been closed by
+ * `closeLate`. `closeResources` holds the owner's lock until then, so no other
+ * tab, and no retry in this tab, can open the store as a second writer.
+ */
+export function step<T>(g: Generation, promise: Promise<T>, ms: number, closeLate?: (value: T) => Promise<unknown>): Promise<T> {
+  if (!isLive(g)) return Promise.reject(new Superseded());
+  let abandoned = false;
+  const straggler: Promise<void> = promise.then(async value => {
+    if (abandoned || !isLive(g)) await closeLate?.(value);
+  }).then(() => undefined, () => undefined);
+  g.stragglers.add(straggler);
+  void straggler.then(() => { g.stragglers.delete(straggler); });
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      abandoned = true;
+      reject(new StepTimeout());
+    }, ms);
+    promise.then(value => {
+      if (abandoned) return;
+      clearTimeout(timer);
+      // The generation ended while the step ran: its resource is closed by the
+      // straggler above, and the step is abandoned.
+      if (isLive(g)) resolve(value);
+      else reject(new Superseded());
+    }, (error: unknown) => {
+      if (abandoned) return;
+      clearTimeout(timer);
+      reject(error);
     });
   });
 }
@@ -71,8 +119,17 @@ async function closeResources(g: Generation, closeWaitMs: number): Promise<void>
   // An engine that will not close may still be writing. Its store and lease stay
   // held so no other tab can become a second writer; closing the tab frees them.
   if (engine && !(await within(engine.close(), closeWaitMs))) return;
-  if (store) await store.close().catch(() => undefined);
-  lease?.release();
+  const finish = async () => {
+    if (store) await store.close().catch(() => undefined);
+    lease?.release();
+  };
+  // A setup step that was given up on may still be writing the store. The lease
+  // stays held until every such step has settled and its late resource closed;
+  // one that never settles keeps it until the tab closes. The generation has
+  // already ended, so nothing waits for this.
+  const stragglers = [...g.stragglers];
+  if (stragglers.length) void Promise.all(stragglers).then(finish);
+  else await finish();
 }
 
 /**

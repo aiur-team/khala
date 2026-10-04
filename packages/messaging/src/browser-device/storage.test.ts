@@ -137,6 +137,13 @@ describe('createIndexedDbStoreFactory', () => {
     await expect(factory.open(alice, device('DEVICE_A'), signal)).rejects.toThrow('blocked');
   });
 
+  it('does not wait for a persistence prompt that is never answered', async () => {
+    const idb = scriptedIndexedDb();
+    const factory = createIndexedDbStoreFactory(idb.factory, { persist: () => new Promise<boolean>(() => undefined) });
+
+    await expect(factory.open(alice, device('DEVICE_A'), signal)).resolves.toMatchObject({ name: cryptoStoreName(alice, device('DEVICE_A')) });
+  });
+
   it('still opens when persistence is refused', async () => {
     const idb = scriptedIndexedDb();
     const factory = createIndexedDbStoreFactory(idb.factory, { persist: () => Promise.reject(new Error('denied')) });

@@ -171,7 +171,22 @@ export function createHumanApplication(
     }
   }
 
-  async function synchronize(activePath: string): Promise<void> {
+  /**
+   * Whether another tab is known to hold (`held`) or want (`waiting`) the owner's
+   * device. Without a readable lock state, the tab defers to focus as before.
+   */
+  async function otherTab(ownerId: AuthPrincipal['ownerId'], key: 'held' | 'waiting'): Promise<boolean> {
+    let lock = null;
+    try {
+      lock = await options.tabHandoff?.lockState?.(ownerId) ?? null;
+    } catch {
+      lock = null;
+    }
+    return lock === null || lock[key];
+  }
+
+  /** `claim` comes from an explicit "Try again in this tab" and does not wait for focus. */
+  async function synchronize(activePath: string, claim = false): Promise<void> {
     const generation = ++epoch;
     identityAbort?.abort();
     identityAbort = new AbortController();
@@ -201,9 +216,16 @@ export function createHumanApplication(
     }
 
     signedInOwner = identity.principal.ownerId;
-    if (options.tabHandoff && !options.tabHandoff.isFocused() && deviceSession.current()?.state !== 'ready') {
-      setSnapshot({ phase: 'inactive', path: activePath, context: null });
-      return;
+    // An unfocused tab stays inactive only while another tab really holds the
+    // device. A focus check alone reports a phantom tab whenever focus sits in
+    // devtools, a browser prompt or the address bar, and nothing then resumes it.
+    if (!claim && options.tabHandoff && !options.tabHandoff.isFocused() && deviceSession.current()?.state !== 'ready') {
+      const held = await otherTab(identity.principal.ownerId, 'held');
+      if (disposed || generation !== epoch) return;
+      if (held) {
+        setSnapshot({ phase: 'inactive', path: activePath, context: null });
+        return;
+      }
     }
 
     if (!previous) setSnapshot({ phase: 'initializing_device', path: activePath, context: null });
@@ -214,18 +236,21 @@ export function createHumanApplication(
       // A claim can arrive before the previous tab's blur settles. Repeat only
       // while this tab remains focused and activation is still pending.
       requestTimer = setInterval(() => {
-        if (!disposed && generation === epoch && handoff.isFocused()) handoff.request(identity.principal.ownerId);
+        if (!disposed && generation === epoch && (claim || handoff.isFocused())) handoff.request(identity.principal.ownerId);
       }, 200);
     }
     const result = await deviceSession.ensureReady(identity.principal).finally(() => {
       if (requestTimer) clearInterval(requestTimer);
     });
     if (disposed || generation !== epoch) return;
-    if (handoff && !handoff.isFocused()) {
+    // Yield a device this tab just opened only to a tab that is waiting for it.
+    if (handoff && !handoff.isFocused() && await otherTab(identity.principal.ownerId, 'waiting')) {
+      if (disposed || generation !== epoch) return;
       setSnapshot({ phase: 'inactive', path: activePath, context: null });
       await deviceSession.release();
       return;
     }
+    if (disposed || generation !== epoch) return;
 
     if (result.kind !== 'ok') {
       const latest = deviceSession.current();
@@ -333,7 +358,7 @@ export function createHumanApplication(
     retryDevice() {
       if (disposed || snapshot.phase !== 'inactive' && (snapshot.phase !== 'unavailable' || snapshot.source !== 'device'
         || snapshot.reason !== 'lease_unavailable')) return;
-      void synchronize(path);
+      void synchronize(path, true);
     },
 
     signOut() {
