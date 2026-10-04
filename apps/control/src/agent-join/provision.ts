@@ -9,7 +9,7 @@ export type AgentProvisionerOptions = Readonly<{
 export type AgentProvisioner = {
   agentUserId(joinId: string, ownerId: OwnerId): string;
   setDisplayName(userId: string, name: string): Promise<boolean>;
-  provision(input: Readonly<{ joinId: string; ownerId: OwnerId; label: string; roomId: string }>):
+  provision(input: Readonly<{ joinId: string; identityId?: string; ownerId: OwnerId; label: string; roomId: string }>):
     Promise<{ kind: 'ok'; credentials: AgentCredentials } | { kind: 'unavailable' }>;
 };
 export function agentIdentity(joinId: string, ownerId: OwnerId, serverName: string, joinSecret: string): { username: string; userId: string; deviceId: string } {
@@ -55,7 +55,8 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
     },
     async provision(input) {
     try {
-      const { username, userId, deviceId } = agentIdentity(input.joinId, input.ownerId, options.serverName, options.joinSecret);
+      const { username, userId } = agentIdentity(input.identityId ?? input.joinId, input.ownerId, options.serverName, options.joinSecret);
+      const { deviceId } = agentIdentity(input.joinId, input.ownerId, options.serverName, options.joinSecret);
       const password = createHmac('sha256', options.passwordDerivationSecret).update(`khala-agent-password-v1\0${userId}`).digest('base64url');
       const headers: Record<string, string> = { accept: 'application/json', 'content-type': 'application/json' };
       if (options.registrationIngressToken) headers['X-Khala-Registration-Ingress'] = options.registrationIngressToken;

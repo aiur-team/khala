@@ -71,9 +71,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function initialize(): Promise<void> {
     return initialization ??= (async () => {
       await ensureStateDir(dir);
-      // M1 never resumes a saved Matrix account on a new process/device.
+      // Re-joining requires fresh credentials; the server reuses membership by session.
       await removeStateFile(dir, 'session.json');
-      await removeStateFile(dir, 'mode.json');
       await setStatus('idle');
     })();
   }
@@ -179,6 +178,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;
+      if (session.listeningMode) await writeStateFile(dir, 'mode.json', { mode: session.listeningMode(credentials.roomId) });
+      else await removeStateFile(dir, 'mode.json');
       attempt.joined = true;
       status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       for (const deliver of buffered) deliver();
@@ -228,7 +229,6 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           acceptEventKey = createEventKeyFilter();
           delete status.channelName;
         }
-        await removeStateFile(dir, 'mode.json');
         const saved = await readStateFile<JoinFile>(dir, 'join.json');
         if (saved?.link === link && Date.parse(saved.expiresAt) <= now().getTime()) {
           await removeStateFile(dir, 'join.json');
@@ -237,7 +237,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         }
         let started: Attempt | undefined;
         try {
-          const created = await api.requestJoin({ link, harness: options.harness, label }, fetchDeps);
+          const created = await api.requestJoin({ link, harness: options.harness, label, sessionId: options.sessionId }, fetchDeps);
           if (closed) throw new KhalaClientError('not_connected');
           const { joinId, pollSecret, confirmUrl, expiresAt } = created;
           await writeStateFile(dir, 'join.json', { joinId, pollSecret, confirmUrl, expiresAt, link });

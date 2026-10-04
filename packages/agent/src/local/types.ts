@@ -35,7 +35,8 @@ export interface LocalStore {
   channelName(roomId: string): string;
   mintLink(roomId: string, kind: 'join'): Promise<{ token: string; expiresAt: string }>;   // returns plaintext once; stores sha256
   consumeLink(token: string): Promise<{ roomId: string } | null>;                           // atomic single use; null if unknown/used/expired
-  setMemberToken(roomId: string, userId: string, tokenSha256: string | null): Promise<void>;
+  memberForSession(roomId: string, sessionKey: string): ReturnType<LocalStore['member']>;
+  setMemberToken(roomId: string, userId: string, tokenSha256: string | null, sessionKey?: string): Promise<void>;
   agentForToken(token: string): { roomId: string; userId: string } | null;                 // timing-safe compare over sha256
   owner(): OwnerProfile;
   setOwner(next: OwnerProfile): Promise<void>;

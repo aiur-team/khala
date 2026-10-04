@@ -1,5 +1,5 @@
-import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY } from '@khala/contracts/m1/listening-mode';
-import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
+import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
+import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import type { ChannelSession, SessionMessage, SessionModeCommand } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
@@ -143,6 +143,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
 
   return {
     userId: creds.userId,
+    listeningMode: roomId => memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent()),
     inviter(roomId) { return inviters.get(roomId); },
     onListeningModeCommand(handler) { modeHandlers.add(handler); return () => { modeHandlers.delete(handler); }; },
     async publishListeningMode(roomId, mode, signal) {
@@ -157,6 +158,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     },
     async join(roomId) {
       if (stopped) throw new Error('session_stopped');
+      if (joinedRoom === roomId) return;
+      const rejoinedAt = Date.now();
       const membership = client.getRoom(roomId)?.getMyMembership();
       if (membership !== 'join') {
         if (membership !== 'invite') throw new Error('not_invited');
@@ -167,7 +170,17 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       await membershipWait(roomId, () => client.getRoom(roomId)?.getMyMembership() === 'join', 30_000, 'join_timeout');
       const ownJoin = client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId);
       if (!ownJoin || ownJoin.getContent().membership !== 'join') throw new Error('join_state_unavailable');
-      joinTimes.set(roomId, ownJoin.getTs());
+      if (membership === 'join') {
+        const owner = ownJoin.getContent()['com.khala.invited_by'];
+        if (typeof owner === 'string') inviters.set(roomId, owner);
+        const event = encodeChannelEvent({ kind: 'member', summary: `${ownJoin.getContent().displayname ?? creds.userId} rejoined`, status: 'info', source: { system: 'khala-agent' } });
+        if (event.ok) await client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, event.value as never, `khala.rejoin.${creds.deviceId}`);
+      }
+      if (membership !== 'join' && inviters.has(roomId)) {
+        const content = { ...ownJoin.getContent(), membership: 'join' as const, 'com.khala.invited_by': inviters.get(roomId) };
+        await client.sendStateEvent(roomId, EventType.RoomMember, content, creds.userId);
+      }
+      joinTimes.set(roomId, membership === 'join' ? rejoinedAt : ownJoin.getTs());
       joinedRoom = roomId;
       for (const event of liveEvents) { if (event.getRoomId() === roomId) deliver(event); }
     },

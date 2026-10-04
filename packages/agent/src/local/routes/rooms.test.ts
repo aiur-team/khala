@@ -65,7 +65,7 @@ function fakeStore() {
     ...used, members: used.members as LocalStore['members'],
     listChannels: unsupported, channelSummary: unsupported, createChannel: unsupported, findByOperation: unsupported,
     channelOfMember: unsupported, revision: unsupported, waitForRevision: unsupported,
-    mintLink: unsupported, consumeLink: unsupported, setMemberToken: unsupported, agentForToken: unsupported,
+    mintLink: unsupported, consumeLink: unsupported, memberForSession: unsupported, setMemberToken: unsupported, agentForToken: unsupported,
     owner: unsupported, setOwner: unsupported,
   };
   return { store, logs, append, waitForEvent, waiters };
@@ -129,6 +129,17 @@ describe('participant endpoints', () => {
     expect(await f.call('POST', 'join')).toEqual(joined[0]);
     expect(await f.call('POST', 'join', { auth: OWNER })).toEqual({ status: 200, json: { seq: 2, ts: f.log[1]!.ts } });
     expect(f.log).toHaveLength(5);
+  });
+
+  it('announces one rejoin pill and retains mode through the new join transition', async () => {
+    const f = fixture();
+    await f.call('POST', 'join');
+    await f.store.append(R, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
+      content: { ...invite, displayname: 'Helper', 'com.khala.listening_mode': 'async', 'com.khala.rejoin': true } });
+    await f.call('POST', 'join');
+    await f.call('POST', 'join');
+    expect(f.log.filter(e => e.type === 'com.khala.event.v1').map(e => e.content.summary)).toEqual(['kevin-Claude joined', 'Helper rejoined']);
+    expect(f.store.member(R, A)).toMatchObject({ displayName: 'Helper', listeningMode: 'async' });
   });
 
   it.each([null, [], { x: 1 }, ''])('rejects nonempty or nonobject join body %j', async body => {

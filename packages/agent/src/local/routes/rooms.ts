@@ -96,13 +96,16 @@ export function roomRoutes(): LocalRoute[] {
         if (caller.member.membership === 'join') {
           ({ current: event, joined, announced } = memberEvents(ctx.store, caller.roomId, caller.userId));
         } else {
-          event = await ctx.store.append(caller.roomId, { type: 'm.room.member', sender: caller.userId, content: memberContent(caller.member) });
+          const previous = memberEvents(ctx.store, caller.roomId, caller.userId).current;
+          const rejoin = previous?.content['com.khala.rejoin'] === true;
+          event = await ctx.store.append(caller.roomId, { type: 'm.room.member', sender: caller.userId,
+            content: memberContent(caller.member, rejoin ? { 'com.khala.rejoin': true } : {}) });
           joined = event;
         }
         // A persisted join may survive a failed announcement append or helper restart.
         // Tie the announcement to that transition, rather than later mode echoes.
         if (caller.kind === 'agent' && joined && !announced) {
-          const encoded = encodeChannelEvent({ kind: 'member', summary: `${joined.content['displayname']} joined`, status: 'info', source: { system: 'khala-local' } });
+          const encoded = encodeChannelEvent({ kind: 'member', summary: `${joined.content['displayname']} ${joined.content['com.khala.rejoin'] === true ? 'rejoined' : 'joined'}`, status: 'info', source: { system: 'khala-local' } });
           if (encoded.ok) await ctx.store.append(caller.roomId, { type: 'com.khala.event.v1', sender: LOCAL_OWNER_USER_ID,
             content: { ...encoded.value }, txnId: announcementTxn(joined) });
         }

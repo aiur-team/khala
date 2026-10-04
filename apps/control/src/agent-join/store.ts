@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { decodeAgentCredentials, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
+import { decodeAgentCredentials, validAgentSessionId, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 import { nameKey } from '@khala/contracts/m1/names';
 import { decodeNameReservation } from '@khala/contracts/m1/profile';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
@@ -16,7 +16,7 @@ export const RATE_LIMIT = 10;
 export type JoinRecord = {
   joinId: string; pollSecretHash: string; roomId: string; channelName: string; label: string; harness: Harness;
   state: 'pending' | 'confirmed' | 'claimed' | 'ready' | 'expired'; createdAt: string; expiresAt: string;
-  ownerId?: string; agentUserId?: string; sealedCredentials?: string;
+  rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
 };
 export const joinKey = (joinId: string): string => `agent-join/${joinId}`;
 export const isJoinId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value);
@@ -30,8 +30,10 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const r = value as Record<string, unknown>;
   const required = ['joinId', 'pollSecretHash', 'roomId', 'channelName', 'label', 'harness', 'state', 'createdAt', 'expiresAt'];
-  const optional = ['ownerId', 'agentUserId', 'sealedCredentials'];
-  if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key))
+  if (Object.hasOwn(r, 'sessionId') && !validAgentSessionId(r.sessionId)) return null;
+  if (Object.hasOwn(r, 'rejoin') && r.rejoin !== true) return null;
+  const optional = ['sessionId', 'ownerId', 'agentUserId', 'sealedCredentials'];
+  if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin')
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;
   if (!isJoinId(r.joinId) || !/^[a-f0-9]{64}$/u.test(r.pollSecretHash as string)
@@ -68,7 +70,7 @@ export function createJoinStore(deps: JoinStoreDeps) {
         if (expired.kind !== 'applied') return { kind: 'unavailable' };
         record.state = 'expired'; revision = expired.revision;
       }
-      if (record.state === 'expired' && record.agentUserId && record.ownerId) {
+      if (record.state === 'expired' && !record.rejoin && record.agentUserId && record.ownerId) {
         const reservation = await safeRead(deps.store, nameKey(record.label));
         if (reservation.kind === 'unavailable') return { kind: 'unavailable' };
         const decoded = reservation.kind === 'record' ? decodeNameReservation(reservation.record.value) : null;

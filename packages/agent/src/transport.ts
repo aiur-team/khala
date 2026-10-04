@@ -6,6 +6,7 @@ export type SessionModeCommand = { eventId: string; roomId: string; sender: stri
 export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
   readonly userId: string;
+  listeningMode?(roomId: string): ListeningMode;
   onEnded?(handler: (reason: SessionEndReason) => void): () => void;
   inviter(roomId: string): string | undefined;
   onListeningModeCommand(handler: (c: SessionModeCommand) => void): () => void;

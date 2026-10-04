@@ -109,7 +109,7 @@ it('leaves the connected channel and clears delivery state when joining a differ
 
   expect(await client.join(nextLink, 'Other')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
-  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Other' }, {});
+  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Other', sessionId: 'test' }, {});
   expect(session.stop).toHaveBeenCalledTimes(1);
   expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   expect(await readStateFile(dir, 'session.json')).toBeNull();
@@ -224,7 +224,7 @@ it('replaces a pending link without stale failure overwriting the new attempt', 
   joinApi.requestJoin.mockResolvedValueOnce(nextCreated);
   expect(await client.join(nextLink, 'Codex')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
-  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex' }, {});
+  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex', sessionId: 'test' }, {});
   expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
   oldPoll.reject(new KhalaClientError('join_expired')); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
@@ -251,7 +251,7 @@ it('falls back to the room id and propagates injected fetch and invite timeout',
   vi.mocked(session.roomName).mockReturnValue(undefined);
   await connected();
   expect((await client.status()).channelName).toBe(credentials.roomId);
-  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex' }, { fetch: fakeFetch });
+  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test' }, { fetch: fakeFetch });
   expect(joinApi.pollJoin.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(joinApi.reportReady.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 321);
@@ -516,4 +516,11 @@ it('contains hosted cache write failure through status and close', async () => {
   await connected();
   expect((await client.status()).state).toBe('connected');
   await expect(client.close()).resolves.toBeUndefined();
+});
+
+it('restores the listening mode from the joined member rather than stale process state', async () => {
+  session.listeningMode = () => 'async';
+  await connected();
+  expect((await client.status()).listeningMode).toBe('async');
+  expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async' });
 });

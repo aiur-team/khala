@@ -550,3 +550,15 @@ test('rolls back a failed create and drains queued writes on close', async () =>
   await reopen();
   expect(store.eventsAfter(roomId, 0, 10).map(e => e.seq)).toEqual([1, 2, 3, 4]);
 });
+
+test('persists session membership across helper restarts and rotates the credential', async () => {
+  const { roomId } = await store.createChannel('Rejoin');
+  await membership(roomId, { displayname: 'Helper', 'com.khala.listening_mode': 'async' });
+  await store.setMemberToken(roomId, agent, sha256('old'), sha256('codex:thread'));
+  await reopen();
+  expect(store.memberForSession(roomId, sha256('codex:thread'))).toMatchObject({ userId: agent, displayName: 'Helper', listeningMode: 'async' });
+  expect(store.memberForSession(roomId, sha256('codex:other'))).toBeUndefined();
+  await store.setMemberToken(roomId, agent, sha256('new'), sha256('codex:thread'));
+  expect(store.agentForToken('old')).toBeNull();
+  expect(store.agentForToken('new')).toEqual({ roomId, userId: agent });
+});

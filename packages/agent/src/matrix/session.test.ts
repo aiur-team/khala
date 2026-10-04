@@ -188,3 +188,17 @@ it('routes live mode commands separately with cutoff, deduplication and decrypti
   expect(messages).not.toHaveBeenCalled();
   unsubscribe(); timeline(event('$next', '@owner:hs', 102, type, content)); await flush(); expect(commands).toHaveBeenCalledTimes(1);
 });
+
+it('restores member mode and owner on a resumed account, with one rejoin event', async () => {
+  membership = 'join';
+  client.room.currentState.getStateEvents.mockImplementation(() => event('$join', creds.userId, 100, 'm.room.member', {
+    membership: 'join', displayname: 'Reviewer', 'com.khala.listening_mode': 'async', 'com.khala.invited_by': '@owner:hs',
+  }));
+  session = await createAgentMatrixSession(creds);
+  await session.join('!r:hs');
+  await session.join('!r:hs');
+  expect(session.listeningMode?.('!r:hs')).toBe('async');
+  expect(session.inviter('!r:hs')).toBe('@owner:hs');
+  expect(client.joinRoom).not.toHaveBeenCalled();
+  expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith('!r:hs', 'com.khala.event.v1', expect.objectContaining({ summary: 'Reviewer rejoined' }), `khala.rejoin.${creds.deviceId}`);
+});

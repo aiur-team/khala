@@ -98,3 +98,11 @@ describe('local join additions', () => {
     expect(join.decodeAgentJoinPoll({ state: 'confirmed', credentials: { ...credentials, transport } })).toEqual({ ok: false, error: { path: 'credentials.transport', code } });
   });
 });
+
+it('accepts optional stable session identity and rejects malformed identities', () => {
+  const value = { ...request, sessionId: 'thread-019a_1' };
+  expect(join.decodeAgentJoinRequest(value)).toEqual({ ok: true, value });
+  for (const sessionId of ['', '../thread', 'a'.repeat(129), null, 42, undefined]) {
+    expect(join.decodeAgentJoinRequest({ ...request, sessionId }).ok).toBe(false);
+  }
+});

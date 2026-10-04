@@ -18,6 +18,7 @@ function fixture(opts: { username?: string; names?: string[]; left?: string[] } 
   const links = new Map<string, { expiresAt: number; consumed: boolean }>();
   const events: LocalEvent[] = [];
   const tokens: { roomId: string; userId: string; tokenSha256: string | null }[] = [];
+  const sessions = new Map<string, string>();
   const membership = new Map<string, LocalMemberContent>();
   const seed = (user: string, displayname: string, state: LocalMemberContent['membership']) => {
     membership.set(user, { user, displayname, membership: state, kind: user === LOCAL_OWNER_USER_ID ? 'human' : 'agent' });
@@ -33,6 +34,11 @@ function fixture(opts: { username?: string; names?: string[]; left?: string[] } 
       displayName: m.displayname, membership: m.membership as 'invite' | 'join', kind: m.kind,
       ...(m.harness ? { harness: m.harness } : {}),
     })),
+    memberForSession: (_roomId: string, key: string) => {
+      const userId = sessions.get(key);
+      const content = userId ? membership.get(userId) : undefined;
+      return content ? { userId, displayName: content.displayname, listeningMode: content['com.khala.listening_mode'] } : undefined;
+    },
     hasChannel: (id: string) => id === roomId,
     channelOfMember: (id: string) => membership.has(id) ? roomId : undefined,
     consumeLink: async (token: string) => {
@@ -50,7 +56,7 @@ function fixture(opts: { username?: string; names?: string[]; left?: string[] } 
       membership.set(content.user, content);
       return event;
     },
-    setMemberToken: async (id: string, userId: string, tokenSha256: string | null) => { tokens.push({ roomId: id, userId, tokenSha256 }); },
+    setMemberToken: async (id: string, userId: string, tokenSha256: string | null, sessionKey?: string) => { if (sessionKey) sessions.set(sessionKey, userId); tokens.push({ roomId: id, userId, tokenSha256 }); },
   };
   const store = new Proxy(implemented, { get(target, key) {
     if (key in target) return Reflect.get(target, key);
@@ -122,6 +128,31 @@ describe('agentJoinRoutes', () => {
     await reportReady(session, { fetch: f.fetchVia });
     expect(f.ctx.joins.get(session.joinId)!.state).toBe('ready');
     await expect(requestJoin({ link, harness: 'codex', label: 'Codex' }, { fetch: f.fetchVia })).rejects.toMatchObject({ code: 'link_unavailable' });
+  });
+
+  it('reuses a session member, preserves rename and mode, and separates other sessions', async () => {
+    const f = fixture();
+    const first = await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
+    const before = await pollJoin(first, { fetch: f.fetchVia });
+    const member = f.membership.get(before.userId)!;
+    member.displayname = 'ReviewHelper';
+    member['com.khala.listening_mode'] = 'async';
+    const restarted = await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-1' }, { fetch: f.fetchVia });
+    const after = await pollJoin(restarted, { fetch: f.fetchVia });
+    expect(after.userId).toBe(before.userId);
+    expect(after.accessToken).not.toBe(before.accessToken);
+    expect(f.store.members(roomId)).toHaveLength(2);
+    expect(f.events.at(-1)?.content).toMatchObject({ displayname: 'ReviewHelper', 'com.khala.listening_mode': 'async', 'com.khala.rejoin': true });
+    await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId: 'thread-2' }, { fetch: f.fetchVia });
+    expect(f.store.members(roomId)).toHaveLength(3);
+  });
+
+  it('assigns the suffix to a different session while same-session joins keep the original', async () => {
+    const f = fixture();
+    for (const sessionId of ['thread-1', 'thread-1', 'thread-2']) {
+      await requestJoin({ link: f.link(), harness: 'codex', label: 'Codex', sessionId }, { fetch: f.fetchVia });
+    }
+    expect(f.events.map(e => e.content.displayname)).toEqual(['kevin-Codex', 'kevin-Codex', 'kevin-Codex-2']);
   });
 
   it('returns raw local flags and credentials exactly once, erasing plaintext secrets', async () => {

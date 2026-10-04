@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { LISTENING_MODE_COMMAND_TYPE } from '@khala/contracts/m1/listening-mode';
@@ -69,6 +70,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   let stopped = false;
   let terminal: LocalCallError | undefined;
   let joined = false;
+  let ownMode: ListeningMode = 'sync';
   let joining: Promise<void> | undefined;
   let loop: Promise<void> | undefined;
   let name: string | undefined;
@@ -199,6 +201,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   }
   return {
     userId: creds.userId,
+    listeningMode: () => ownMode,
     onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     inviter: roomId => roomId === creds.roomId ? invitedBy ?? LOCAL_OWNER_USER_ID : undefined,
     roomName: roomId => roomId === creds.roomId ? name : undefined,
@@ -225,7 +228,10 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
         await me();
         const members = decoded(await withHelper(() => request('GET', 'members')), decodeLocalMembersResponse);
         check(roomId);
-        for (const member of members.members) names.set(member.userId, member.displayName);
+        for (const member of members.members) {
+          names.set(member.userId, member.displayName);
+          if (member.userId === creds.userId) ownMode = member.listeningMode ?? 'sync';
+        }
         joined = true;
         loop = run();
       })();

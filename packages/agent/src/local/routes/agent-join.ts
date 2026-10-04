@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { agentConfirmPagePath, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, validAgentSessionId, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
 import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
@@ -36,8 +36,9 @@ export function agentJoinRoutes(): LocalRoute[] {
       prune(ctx);
       if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) return fail(400, 'invalid_link');
       const body = req.body as Record<string, unknown>;
-      if (!Object.hasOwn(body, 'link') || Object.keys(body).some(key => !['link', 'harness', 'label'].includes(key))) return fail(400, 'invalid_link');
+      if (!Object.hasOwn(body, 'link') || Object.keys(body).some(key => !['link', 'harness', 'label', 'sessionId'].includes(key))) return fail(400, 'invalid_link');
       if (typeof body.link !== 'string' || !parseChannelLink(body.link)) return fail(400, 'invalid_link');
+      if (Object.hasOwn(body, 'sessionId') && !validAgentSessionId(body.sessionId)) return fail(400, 'invalid_link');
       const harness = body.harness;
       if (harness !== 'claude' && harness !== 'codex') return fail(400, 'invalid_harness');
       const url = new URL(body.link);
@@ -50,19 +51,22 @@ export function agentJoinRoutes(): LocalRoute[] {
         const link = await ctx.store.consumeLink(token);
         if (!link || !ctx.store.hasChannel(link.roomId)) return fail(404, 'link_unavailable');
         const roomId = link.roomId;
+        const sessionKey = body.sessionId === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId]));
+        const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
         const taken = new Set(ctx.store.members(roomId).map(member => member.displayName.toLowerCase()));
         let n = 1;
         while (taken.has(defaultAgentName(username, harness, n).toLowerCase())) n++;
         const checked = checkName(defaultAgentName(username, harness, n), 'agent');
         if (!checked.ok) return fail(503, 'unavailable');
-        let userId = newLocalAgentUserId(ctx.random(4));
-        for (let attempt = 0; attempt < 5 && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));
-        if (ctx.store.channelOfMember(userId) !== undefined) return fail(503, 'unavailable');
+        let userId = previous?.userId ?? newLocalAgentUserId(ctx.random(4));
+        for (let attempt = 0; attempt < 5 && !previous && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));
+        if (!previous && ctx.store.channelOfMember(userId) !== undefined) return fail(503, 'unavailable');
         const deviceId = 'KH_LOCAL_' + userId.slice('@agent-'.length, -':local'.length);
         const accessToken = b64(ctx.random(LOCAL_TOKEN_BYTES));
         await ctx.store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
-          content: { user: userId, membership: 'invite', displayname: checked.name, kind: 'agent', harness, invitedBy: LOCAL_OWNER_USER_ID } });
-        await ctx.store.setMemberToken(roomId, userId, sha256hex(accessToken));
+          content: { user: userId, membership: 'invite', displayname: previous?.displayName ?? checked.name, kind: 'agent', harness, invitedBy: LOCAL_OWNER_USER_ID,
+            ...(previous ? { 'com.khala.listening_mode': previous.listeningMode ?? 'sync', 'com.khala.rejoin': true } : {}) } });
+        await ctx.store.setMemberToken(roomId, userId, sha256hex(accessToken), sessionKey);
         const joinId = b64(ctx.random(16)), pollSecret = b64(ctx.random(LOCAL_TOKEN_BYTES));
         const expiresAt = ctx.now() + LOCAL_LINK_TTL_MS;
         const credentials: AgentCredentials = { homeserver: ctx.origin, userId, accessToken, deviceId, roomId, transport: 'local' };
