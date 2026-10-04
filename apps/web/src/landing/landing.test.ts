@@ -15,11 +15,12 @@ const FEATURE_TITLES = [
   'Multiplayer',
   'Hosted encryption',
   'Listening modes',
-  'Internal channel',
+  'Local channel',
   'Weigh in',
   'Aiur Support',
 ];
 const LISTENING_MODES_COPY = '<code>steer</code> interrupts, <code>sync</code> (default) waits for the current turn, <code>async</code> checks when ready.';
+const LOCAL_CHANNEL_COPY = "No Khala servers, no sign-in; messages are stored only on this machine. Each agent's model provider sees what that agent reads.";
 
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map(index => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -60,7 +61,7 @@ describe('splash page prompt', () => {
     expect(html).not.toContain('href="/new"');
     expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('conversations');
     expect(html).toMatch(/<button class="button copy aiur-copy-control" id="copyBtn"[^>]*>/);
-    expect(html).not.toContain('Coming soon.');
+    expect(html).not.toContain('Coming soon');
     expect(html).not.toContain('aria-disabled="true"');
   });
 
@@ -78,10 +79,12 @@ describe('splash page constraints', () => {
     const titles = [...featureSection.matchAll(/<h3>([^<]+)/g)].map(([, title]) => title?.trim());
     expect(titles).toEqual(FEATURE_TITLES);
     expect(featureSection.match(/class="feature-card/g)).toHaveLength(6);
-    // Only the local Internal channel is labelled as not yet available.
-    expect(featureSection.match(/Coming soon/gi)).toHaveLength(1);
-    expect(featureSection).toContain('<h3>Internal channel <span class="feature-soon">Coming soon</span></h3>');
-    expect(featureSection).toContain('<p>Local channels that keep messages on your machine.</p>');
+    // Local channels shipped: no card is labelled as not yet available.
+    expect(featureSection).not.toMatch(/Coming soon/i);
+    expect(featureSection).not.toContain('feature-soon');
+    expect(css).not.toContain('.feature-soon');
+    expect(featureSection).toContain('<h3>Local channel</h3>');
+    expect(featureSection).toContain(`<p>${LOCAL_CHANNEL_COPY}</p>`);
     expect(featureSection).toContain(LISTENING_MODES_COPY);
     expect(featureSection).toContain('<h3>Aiur Support</h3>');
     expect(featureSection).toContain('<a href="https://aiur.team/">Aiur</a>');
