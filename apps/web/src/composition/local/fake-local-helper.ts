@@ -2,7 +2,7 @@
 // State is the per-channel event log; members, names, modes and summaries are
 // derived from it by the L3 replay rules. Long-polls are held until an append
 // or the wait expires. Transport-agnostic: the browser spec routes requests in.
-import { encodeChannelEvent } from '@khala/contracts/m1/channel-event';
+import { encodeChannelEvent, memberRenameContent } from '@khala/contracts/m1/channel-event';
 import { isHumanColorId, type HumanColorId } from '@khala/contracts/m1/colors';
 import { isCanonicalInitials } from '@khala/contracts/m1/initials';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, type ListeningMode } from '@khala/contracts/m1/listening-mode';
@@ -154,6 +154,9 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
       });
     }
   }
+  function previousMember(target: Channel, event: LocalEvent): Record<string, unknown> | undefined {
+    return target.events.filter(e => e.type === 'm.room.member' && e.seq < event.seq && e.content['user'] === event.content['user']).at(-1)?.content;
+  }
   function memberEvent(roomId: string, sender: string, current: MemberContent, changes: Partial<MemberContent>): LocalEvent {
     return append(roomId, 'm.room.member', sender, { ...current, ...changes });
   }
@@ -192,7 +195,11 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
         if (!target) return error(404, 'not_found');
         const after = Number(query.get('after') ?? 0);
         await hold(Number(query.get('wait') ?? 0), () => target.events.length > after);
-        const events = target.events.filter(e => e.seq > after).slice(0, 200);
+        const events = target.events.filter(e => e.seq > after).slice(0, 200).map(e => {
+          // Like the real helper, the preceding membership only goes to clients that ask (prev=1).
+          const previous = query.get('prev') === '1' && e.type === 'm.room.member' ? previousMember(target, e) : undefined;
+          return previous ? { ...e, previousContent: previous } : e;
+        });
         return ok({ events, next: events.at(-1)?.seq ?? after });
       }
       if ((match = messagesRoute.exec(path))) {
@@ -200,7 +207,12 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
         if (!target) return error(404, 'not_found');
         const limit = Math.min(Math.max(Number(query.get('limit') ?? 50), 1), 100);
         const before = query.get('before');
-        const visible = target.events.filter(e => e.type === 'm.room.message' || e.type === 'com.khala.event.v1');
+        // History carries name changes as event pills, as the real helper derives them from membership.
+        const visible = target.events.flatMap((e): LocalEvent[] => {
+          if (e.type !== 'm.room.member') return e.type === 'm.room.message' || e.type === 'com.khala.event.v1' ? [e] : [];
+          const renamed = memberRenameContent(e.content, previousMember(target, e));
+          return renamed ? [{ ...e, type: 'com.khala.event.v1', content: renamed as unknown as Record<string, unknown> }] : [];
+        });
         const end = before ? visible.findIndex(e => e.eventId === before) : visible.length;
         const older = visible.slice(0, end < 0 ? 0 : end);
         const page = older.slice(-limit);
