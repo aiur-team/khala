@@ -121,10 +121,40 @@ for (const viewport of viewports) {
     });
   });
 
-  test(`a channel the owner can no longer open says channel at ${viewport.width}px`, { timeout: 60_000 }, async () => {
+  test(`a channel the owner can no longer open silently returns to the list at ${viewport.width}px`, { timeout: 60_000 }, async () => {
     await withPage(viewport, 'dark', '?gone', async page => {
-      await page.getByText('You no longer have access to this channel.').waitFor();
+      await page.getByText('Select a channel to read its messages.').waitFor({state:'attached'});
+      assert.equal(await page.getByText('You no longer have access to this channel.').count(), 0);
       assert.equal(await page.getByText(/encrypted/iu).count(), 0);
     });
   });
 }
+
+
+test('owner removes another human while their open channel silently disappears', {timeout:60_000}, async () => {
+  const context = await browser!.newContext({viewport:{width:1280,height:900}});
+  const owner = await context.newPage();
+  const member = await context.newPage();
+  try {
+    const url = server!.resolvedUrls!.local[0]! + 'local-owner.html';
+    await owner.goto(url + '?owner-removal&oauth');
+    await member.goto(url + '?removed-human&oauth');
+    await member.getByRole('heading', {level:1,name:'refactor'}).waitFor();
+    await owner.locator('#kh-head-btn').click();
+    await owner.getByRole('button', {name:'Remove Theo',exact:true}).click();
+    await member.evaluate(`window.__removalWarnings = [];
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes) {
+          if (/no longer have access/i.test(node.textContent ?? '')) window.__removalWarnings.push(node.textContent);
+        }
+      }).observe(document.body, {subtree:true,childList:true});`);
+    await owner.getByRole('button', {name:'Remove',exact:true}).click();
+    await member.getByText('Select a channel to read its messages.').waitFor({state:'attached'});
+    assert.equal(await member.getByRole('heading', {level:1,name:'refactor'}).count(), 0);
+    assert.deepEqual(await member.evaluate('window.__removalWarnings'), []);
+    assert.equal(await member.locator('.kh-toast.on').count(), 0);
+    assert.equal(await member.getByRole('dialog').count(), 0);
+    assert.equal(await member.getByText(/no longer have access|removed|unavailable/i).count(), 0);
+    assert.equal(await member.locator('.kh-list').getByText('refactor', {exact:true}).count(), 0);
+  } finally { await context.close(); }
+});

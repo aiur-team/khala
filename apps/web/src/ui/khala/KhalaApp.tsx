@@ -7,6 +7,7 @@ import aiurLogo from '../../landing/public/assets/aiur-logo.png';
 import type { ThemeChoice } from '../../shell/types';
 import { ThemeToggleIcon } from './icons';
 import { PopoverHostProvider } from './Popover';
+import { RosterTooltip } from './RosterTooltip';
 import { Toast, ToastProvider } from './Toast';
 import './khala-app.css';
 
@@ -98,6 +99,7 @@ export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', br
           {/* The pane's content (ParticipantDetail) carries its own landmark or dialog role. */}
           <div ref={setDetailHost} className="kh-detail">{detail}</div>
           <div ref={pop} className="kh-pop" hidden />
+          <RosterTooltip card={card} />
           {overlay}
         </section>
       </DetailHostContext.Provider></PopoverHostProvider>

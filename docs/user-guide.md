@@ -43,8 +43,16 @@ Developers running Khala from a source checkout follow the checkout sections of 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
 3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
-4. The agent checks `khala_status` until `connected`, then can read the whole channel history with `khala_read` and reply with `khala_send`.
+4. The agent checks `khala_status` until `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
+
+## Channel members
+
+Open the participant list in the channel header to see people and their agents. The creator is marked **OWNER**, visible to every member, including in local channels.
+
+In hosted channels, the owner can click the **X** beside another person to remove them. The confirmation lists their agents; choose **Remove** to end access for that person and their agents, or **Cancel** to leave everyone in the channel. Remaining members see a neutral “name left” pill. The removed person's channel disappears silently, and an open channel returns to the channel list. Their agents report `disconnected` with detail `removed` and cannot send. An old invitation cannot readmit the person; they need a new invitation from the owner.
+
+Local channels have one human, their owner. The owner cannot remove themself.
 
 ## Talking with agents
 
@@ -54,7 +62,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude's idle watcher lasts 50 minutes after its last turn; later messages arrive at your next prompt. An Esc-interrupted turn does not arm it. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status` and `khala_read`. Long-idle Claude lifetime and Codex busy-queue timing were not measured in the local acceptance run.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -88,7 +96,7 @@ An agent is in one channel at a time; joining another hosted channel link moves 
 
 - In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
-- For hosted channels, removing agents or humans, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
+- For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
 - Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 
@@ -140,8 +148,16 @@ Developers running Khala from a source checkout follow the checkout sections of 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
 3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
-4. The agent checks `khala_status` until `connected`, then can read the whole channel history with `khala_read` and reply with `khala_send`.
+4. The agent checks `khala_status` until `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
+
+## Channel members
+
+Open the participant list in the channel header to see people and their agents. The creator is marked **OWNER**, visible to every member, including in local channels.
+
+In hosted channels, the owner can click the **X** beside another person to remove them. The confirmation lists their agents; choose **Remove** to end access for that person and their agents, or **Cancel** to leave everyone in the channel. Remaining members see a neutral “name left” pill. The removed person's channel disappears silently, and an open channel returns to the channel list. Their agents report `disconnected` with detail `removed` and cannot send. An old invitation cannot readmit the person; they need a new invitation from the owner.
+
+Local channels have one human, their owner. The owner cannot remove themself.
 
 ## Talking with agents
 
@@ -151,7 +167,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude's idle watcher lasts 50 minutes after its last turn; later messages arrive at your next prompt. An Esc-interrupted turn does not arm it. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status` and `khala_read`. Long-idle Claude lifetime and Codex busy-queue timing were not measured in the local acceptance run.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -185,7 +201,7 @@ An agent is in one channel at a time; joining another hosted channel link moves 
 
 - In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
-- For hosted channels, removing agents or humans, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
+- For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
 - Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 
@@ -219,3 +235,11 @@ The MCP tools use these shapes:
 | `khala_send` | `{ text: string (1..8000) }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
 
 Local `status.json` has `{ state: 'idle'|'joining'|'connected'|'send_failed'|'disconnected', channelName?: string, detail?: string, updatedAt: string }`.
+
+### Hosted rejoin and encrypted history
+
+Hosted sessions retain their rejoin secret in `rejoin.json`. Once approved on a control version that supports approval reuse, the same room, harness, session ID and secret reconnect without another owner confirmation. A different secret/session or removal of the owner invalidates that approval. Older control versions (including `825b365d`) retain agent identity but still require confirmation on each rejoin; existing approvals need one confirmation after upgrading. Local recovery is unchanged.
+
+Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt.
+
+Use `khala watch --help` (or `-h`) for the Monitor command's usage. Unknown flags print an argument error and usage.

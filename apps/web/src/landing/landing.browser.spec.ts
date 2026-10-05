@@ -118,7 +118,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(await page.getByRole('heading', { name: 'Built around' }).count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Plain limits' }).count(), 0);
-    assert.equal((await page.locator('footer').innerText()).trim(), 'built with Aiur');
+    assert.equal((await page.locator('footer').innerText()).trim(), 'built with Aiur · Open Source');
 
     const faviconHrefs = ['/landing/favicon.ico', '/landing/favicon-32x32.png', '/landing/favicon-16x16.png', '/landing/apple-touch-icon.png'];
     const faviconResponses = await Promise.all(faviconHrefs.map(href => page.request.get(new URL(href, url).toString())));

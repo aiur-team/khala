@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest';
+import type { StartSession } from './transport';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import type { requestJoin, pollJoin, reportReady } from './join';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
@@ -38,7 +39,7 @@ let modeHandler: ((command: SessionModeCommand) => void) | undefined;
 let session: AgentMatrixSession;
 let joinApi: { requestJoin: Mock<typeof requestJoin>; pollJoin: Mock<typeof pollJoin>; reportReady: Mock<typeof reportReady> };
 let waker: Mock<(entry: InboxEntry) => void>;
-let startSession: Mock<(credentials: AgentCredentials) => Promise<AgentMatrixSession>>;
+let startSession: Mock<StartSession>;
 const statusFile = () => readStateFile<Record<string, unknown>>(dir, 'status.json');
 async function connected() {
   await client.join(link, 'Codex');
@@ -639,4 +640,36 @@ it('a local owner-authored rename cascade still updates you=', async () => {
   await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
     { stdout: { write: (text: string) => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
   expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain(' you="kevin-Codex" ');
+});
+
+it('reports a removed hosted session as disconnected and rejects subsequent sends', async () => {
+  let ended!: (reason: 'removed') => void;
+  session.onEnded = vi.fn(callback => { ended = callback; return () => {}; });
+  await connected(); ended('removed');
+  await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'removed' }));
+  await expect(client.send('after removal')).rejects.toMatchObject({ code: 'not_connected' });
+  await expect(client.sendChannelEvent({ v: 1, kind: 'test', summary: 'after removal', body: 'after removal' })).rejects.toMatchObject({ code: 'not_connected' });
+  expect(session.send).not.toHaveBeenCalled(); expect(session.sendChannelEvent).not.toHaveBeenCalled();
+});
+
+
+it.each([200, 404])('provides an authenticated removal probe and ignores unavailable status (%s)', async responseStatus => {
+  const fetchStatus = vi.fn(async () => new Response(JSON.stringify({ removed: true }), { status: responseStatus }));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch: fetchStatus });
+  await connected();
+  const checkRemoved = startSession.mock.calls[0]![1]!.checkRemoved!;
+  expect(await checkRemoved()).toBe(responseStatus === 200);
+  const expectedUrl = new URL('https://khala.example/api/agent/session/status');
+  expectedUrl.searchParams.set('userId', credentials.userId);
+  expectedUrl.searchParams.set('roomId', credentials.roomId);
+  expect(fetchStatus).toHaveBeenCalledWith(expectedUrl, expect.objectContaining({ headers: { authorization: 'Bearer SECRET' }, signal: expect.any(AbortSignal) }));
+});
+
+it('returns not_connected when authoritative removal ends a failed send', async () => {
+  let ended!: (reason: 'removed') => void;
+  session.onEnded = vi.fn(callback => { ended = callback; return () => {}; });
+  await connected();
+  vi.mocked(session.send).mockImplementation(async () => { ended('removed'); throw new Error('forbidden'); });
+  await expect(client.send('hello')).rejects.toMatchObject({ code: 'not_connected' });
+  await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'removed' }));
 });
