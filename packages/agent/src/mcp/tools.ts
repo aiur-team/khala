@@ -45,7 +45,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
   const channelProperty = { type: 'string', minLength: 1, description: 'Channel name (optionally #name) or channel ID. Required when joined to more than one channel.' };
   const validChannel = (args: Record<string, unknown>) => !Object.hasOwn(args, 'channel') || typeof args.channel === 'string' && args.channel.length > 0;
   return [
-    tool('khala_join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). Hosted links require your human to open a confirmation link; local links join automatically.',
+    tool('khala_join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). New hosted sessions require your human to open a confirmation link; previously approved hosted sessions reconnect with their saved secret, and local links join automatically.',
       { link: { type: 'string' }, label: { type: 'string', minLength: 1, maxLength: 40,
         description: 'Optional and ignored: Khala names you <OwnerUsername>-<Claude|Codex>, and your owner can rename you.' } }, ['link'],
       args => typeof args.link === 'string' && (!Object.hasOwn(args, 'label')

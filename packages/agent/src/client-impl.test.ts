@@ -913,3 +913,30 @@ it.each([false, true])('legacy leave preserves root identity and other channels 
     await expect(fs.stat(files.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
   }
 });
+
+it('migrates colliding legacy unread history before leave without deleting sibling state', async () => {
+  const files = filesForDir(dir);
+  const nested = channelFiles(files, credentials.roomId);
+  const other = channelFiles(files, '!other:s');
+  for (const [target, roomId, channelName] of [[nested, credentials.roomId, 'A'], [other, '!other:s', 'B']] as const) {
+    await ensureStateDir(target.dir);
+    await writeStateFile(target.dir, 'channel.json', { roomId, channelName });
+  }
+  for (const id of ['$old', '$overlap']) await appendInbox(nested.dir, toInboxEntry(message(id)));
+  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$old', deliveredCount: 1 });
+  await writeStateFile(nested.dir, 'mode.json', { mode: 'async' });
+  for (const id of ['$root-read', '$overlap', '$new']) await appendInbox(dir, toInboxEntry(message(id)));
+  await writeStateFile(dir, 'session.json', credentials);
+  await writeStateFile(dir, 'cursor.json', { lastDeliveredEventId: '$root-read', deliveredCount: 1 });
+  await writeStateFile(dir, 'mode.json', { mode: 'sync' });
+  const secret = 'S'.repeat(43);
+  await writeStateFile(dir, 'rejoin.json', { secret });
+  const status = await client.status();
+  expect(status.channels).toHaveLength(2);
+  expect(status.channels).toEqual(expect.arrayContaining([expect.objectContaining({ channel: 'A', unread: 2, listeningMode: 'async' })]));
+  expect((await fs.readFile(nested.inbox, 'utf8')).trim().split('\n').map(line => JSON.parse(line).eventId)).toEqual(['$old', '$overlap', '$new']);
+  expect(await readStateFile(nested.dir, 'cursor.json')).toMatchObject({ deliveredCount: 1 });
+  await client.leave('A');
+  expect(await readStateFile(dir, 'rejoin.json')).toEqual({ secret });
+  expect(await readStateFile(other.dir, 'channel.json')).toMatchObject({ roomId: '!other:s' });
+});

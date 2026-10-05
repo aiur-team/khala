@@ -206,8 +206,8 @@ export function createTimelineController(
     notify();
   }) : roomPort.observe(roomId, applySnapshot);
 
-  // Concurrent callers (the mount-effect load racing a fast second click on
-  // "Load earlier messages") share this in-flight request instead of each
+  // Concurrent callers (the mount-effect load racing a back-scroll request)
+  // share this in-flight request instead of each
   // firing their own `roomPort.timeline` call: two independent calls would
   // both compute their "new" additions against the same pre-fetch `older`
   // snapshot and each prepend a copy, duplicating rows.

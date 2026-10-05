@@ -246,8 +246,17 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       let undecryptable = 0;
       for (const raw of res.chunk) {
         const event = client.getEventMapper()({ ...raw, room_id: roomId });
-        try { await client.decryptEventIfNeeded(event); } catch { /* Report and omit below. */ }
-        if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) { undecryptable++; continue; }
+        try { await client.decryptEventIfNeeded(event); } catch { /* Report decryption failures below. */ }
+        if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
+          undecryptable++;
+          const eventId = event.getId(), sender = event.getSender();
+          if (eventId && sender && eventId !== before) {
+            const body = '[Encrypted message unavailable: this device does not have its key. Messages from before joining may not have been shared.]';
+            messages.push({ eventId, roomId, sender, ts: event.getTs(), type: 'm.room.message', body,
+              content: { msgtype: 'm.notice', body, 'com.khala.unavailable': true } });
+          }
+          continue;
+        }
         const m = message(event);
         if (m && m.eventId !== before) messages.push(m);
       }
