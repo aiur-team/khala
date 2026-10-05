@@ -35,10 +35,10 @@ const error = (status: number, code: string) => json(status, { error: code });
 const unavailable = () => error(503, 'unavailable');
 
 export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
-  async function usernameOf(principal: Pick<AuthPrincipal, 'ownerId' | 'verifiedEmail'>): Promise<string | null> {
+  async function usernameOf(principal: Pick<AuthPrincipal, 'ownerId' | 'verifiedEmail'>, fallbackUsername?: string): Promise<string | null> {
     const read = await safeRead(deps.store, profileRecordKey(principal.ownerId));
     if (read.kind === 'unavailable') return null;
-    if (read.kind === 'absent') return suggestUsername(principal.verifiedEmail);
+    if (read.kind === 'absent') return fallbackUsername ?? suggestUsername(principal.verifiedEmail);
     const decoded = decodeProfileRecord(read.record.value);
     return decoded.ok && decoded.value.ownerId === principal.ownerId ? decoded.value.username : null;
   }
@@ -63,6 +63,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (denied) return denied;
       if (record.ownerId && record.ownerId !== principal.ownerId) return error(409, 'already_confirmed_by_other');
       if (record.state === 'confirmed' || record.state === 'claimed' || record.state === 'ready') {
+        if (record.rejoinApproval && !await rememberApproval(record, record.rejoinApproval.ownerLabel, record.rejoinApproval.generation, true)) return unavailable();
         return json(200, viewOf(record));
       }
       if (!record.ownerId) {
@@ -72,7 +73,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         if (result.kind !== 'applied') return unavailable();
         record = locked; revision = result.revision;
       }
-      const username = approvedUsername ?? await usernameOf(principal);
+      const username = await usernameOf(principal, approvedUsername);
       if (!username) return unavailable();
       const identityId = rejoinIdentity(record) ?? joinId;
       const userId = deps.provisioner.agentUserId(identityId, principal.ownerId);
@@ -128,12 +129,17 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (stagedResult.kind !== 'applied') return unavailable();
       record = staged; revision = stagedResult.revision;
       if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
-      const next: JoinRecord = { ...record, label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
+      if (approvedUsername !== undefined) {
+        const approval = await safeRead(deps.store, rejoinApprovalKey(identityId));
+        if (approval.kind !== 'record' || !validRejoinApproval(approval.record.value)
+          || approval.record.value.revoked || approval.record.value.ownerId !== principal.ownerId) return unavailable();
+      }
+      const next: JoinRecord = { ...record, ...(rejoinIdentity(record) ? { rejoinApproval: { ownerLabel: username, generation: issuedGeneration } } : {}), label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
         sealedCredentials: sealCredentials(deps.sealSecret, joinId, credentials) };
       const result = await deps.joins.replace(joinId, revision, next, 'confirm');
       if (result.kind === 'applied') {
         await indexOwnerAgent(deps.store, principal.ownerId, userId);
-        if (!await rememberApproval(next, username, issuedGeneration)) return unavailable();
+        if (!await rememberApproval(next, username, issuedGeneration, approvedUsername !== undefined)) return unavailable();
         return json(200, viewOf(next));
       }
       if (result.kind === 'conflict') {
@@ -148,17 +154,20 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
     }
     return unavailable();
   }
-  async function rememberApproval(record: JoinRecord, ownerLabel: string, generation: number): Promise<boolean> {
+  async function rememberApproval(record: JoinRecord, ownerLabel: string, generation: number, repairOnly = false): Promise<boolean> {
     const identity = rejoinIdentity(record);
     if (!identity || !record.ownerId) return true;
     const key = rejoinApprovalKey(identity);
     const read = await safeRead(deps.store, key);
     if (read.kind === 'unavailable') return false;
     if (read.kind === 'record' && (!validRejoinApproval(read.record.value) || read.record.value.ownerId !== record.ownerId)) return false;
+    // A confirmed retry repairs an absent grant; it never reverses a later revocation.
+    if (read.kind === 'record' && (repairOnly || (read.record.value as RejoinApproval).generation > generation)) return true;
     const value: RejoinApproval = { v: 1, ownerId: record.ownerId as OwnerId, ownerLabel, generation };
     const result = await writeAndResolve(deps.store, { key, expectedRevision: read.kind === 'record' ? read.record.revision : null,
       operationId: `rejoin.${record.joinId}`, next: { value, expiresAt: null } });
-    return result.kind === 'applied' || result.kind === 'conflict' && result.current?.value.ownerId === record.ownerId;
+    return result.kind === 'applied' || result.kind === 'conflict' && validRejoinApproval(result.current?.value)
+      && result.current.value.ownerId === record.ownerId && !result.current.value.revoked && result.current.value.generation >= generation;
   }
   /** Internal only: this is wired to agent creation, never exposed as a human route. */
   async function autoConfirm(joinId: string): Promise<boolean> {
@@ -170,13 +179,19 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
     if (approval.kind === 'absent') return true;
     if (approval.kind !== 'record' || !validRejoinApproval(approval.record.value)) throw Error('unavailable');
     const grant = approval.record.value;
+    if (grant.revoked) return true;
     const removals = await readRoomRemovals(deps.store, read.record.roomId as RoomId);
     if (removals === 'unavailable') throw Error('unavailable');
     const removal = removals?.owners[grant.ownerId];
     if (removal && (!removal.complete || removal.generation > grant.generation)) return true;
     const response = await confirm(joinId, { ownerId: grant.ownerId, verifiedEmail: '' }, grant.ownerLabel);
     // Losing membership never reuses approval; the ordinary human flow can authorize anew.
-    return response.ok || response.status === 403;
+    if (response.status === 403) {
+      const result = await writeAndResolve(deps.store, { key: rejoinApprovalKey(identity), expectedRevision: approval.record.revision,
+        operationId: `rejoin.revoke.${joinId}`, next: { value: { ...grant, revoked: true }, expiresAt: null } });
+      return result.kind === 'applied' || result.kind === 'conflict';
+    }
+    return response.ok;
   }
   const handler = (mutation: boolean) => async (request: Request): Promise<Response> => {
     try {

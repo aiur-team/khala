@@ -369,3 +369,82 @@ it('auto-confirms a saved hosted session after one human approval, even after jo
   expect(read.kind === 'found' && read.record.state).toBe('pending');
   expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(2);
 });
+
+async function enableRejoin(f: Awaited<ReturnType<typeof fixture>>) {
+  const first = await f.joins.read(f.joinId);
+  if (first.kind !== 'found') throw Error();
+  await f.joins.replace(f.joinId, first.revision, { ...first.record, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) }, 'session');
+}
+async function nextRejoin(f: Awaited<ReturnType<typeof fixture>>) {
+  const joinId = randomBytes(16).toString('base64url');
+  expect(await f.joins.create({ ...f.record, joinId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) })).toBe('created');
+  return joinId;
+}
+it('repairs approval persistence when human confirmation is retried after a storage outage', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  await enableRejoin(f);
+  const write = f.store.compareAndSet;
+  const outage = vi.spyOn(f.store, 'compareAndSet').mockImplementation(async (...args) => args[0].key.startsWith('agent-rejoin-approval.') ? { kind: 'unavailable' } : write(...args));
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  outage.mockRestore();
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  const joinId = await nextRejoin(f);
+  expect(await f.handlers.autoConfirm(joinId)).toBe(true);
+  const read = await f.joins.read(joinId);
+  expect(read.kind === 'found' && read.record.state).toBe('confirmed');
+});
+it('requires fresh human approval after observing owner membership loss, even if membership returns', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  await enableRejoin(f);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  f.deps.inspectMembership.mockResolvedValueOnce({ kind: 'absent' });
+  expect(await f.handlers.autoConfirm(await nextRejoin(f))).toBe(true);
+  // Retrying the old confirmation must not clear the revocation.
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  const joinId = await nextRejoin(f);
+  expect(await f.handlers.autoConfirm(joinId)).toBe(true);
+  const read = await f.joins.read(joinId);
+  expect(read.kind === 'found' && read.record.state).toBe('pending');
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+  expect((await f.handlers.confirm(f.request('POST', `joinId=${joinId}`))).status).toBe(200);
+  const resumedId = await nextRejoin(f);
+  expect(await f.handlers.autoConfirm(resumedId)).toBe(true);
+  const resumed = await f.joins.read(resumedId);
+  expect(resumed.kind === 'found' && resumed.record.state).toBe('confirmed');
+});
+
+it('refreshes the owner label from the current profile when auto-confirming', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  await enableRejoin(f);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  const profile = await f.store.read(profileRecordKey('owner' as OwnerId));
+  if (profile.kind !== 'record') throw Error();
+  expect((await f.store.compareAndSet({ key: profileRecordKey('owner' as OwnerId), expectedRevision: profile.record.revision, operationId: 'profile.rename',
+    next: { value: { v: 1, ownerId: 'owner', username: 'Alex', updatedAt: new Date(f.deps.clock()).toISOString() }, expiresAt: null } })).kind).toBe('applied');
+  expect(await f.handlers.autoConfirm(await nextRejoin(f))).toBe(true);
+  const map = await f.store.read<{ ownerLabel: string }>(agentOwnerRecordKey(credentials.userId));
+  expect(map.kind === 'record' && map.record.value.ownerLabel).toBe('Alex');
+});
+
+it('does not reuse an approval in another room or provision on unavailable/corrupt grants', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  await enableRejoin(f);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  const otherId = randomBytes(16).toString('base64url');
+  expect(await f.joins.create({ ...f.record, joinId: otherId, roomId: '!other:matrix.test', sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) })).toBe('created');
+  expect(await f.handlers.autoConfirm(otherId)).toBe(true);
+  const other = await f.joins.read(otherId);
+  expect(other.kind === 'found' && other.record.state).toBe('pending');
+  const nextId = await nextRejoin(f), read = f.store.read;
+  const outage = vi.spyOn(f.store, 'read').mockImplementation(async (...args) => args[0].startsWith('agent-rejoin-approval.') ? { kind: 'unavailable' } : read(...args));
+  await expect(f.handlers.autoConfirm(nextId)).rejects.toThrow('unavailable');
+  outage.mockRestore();
+  const corrupt = vi.spyOn(f.store, 'read').mockImplementation(async (...args) => {
+    const result = await read(...args);
+    return args[0].startsWith('agent-rejoin-approval.') && result.kind === 'record'
+      ? { ...result, record: { ...result.record, value: { v: 1, ownerId: 'owner', ownerLabel: 'Kevin', generation: -1 } } } : result;
+  });
+  await expect(f.handlers.autoConfirm(nextId)).rejects.toThrow('unavailable');
+  corrupt.mockRestore();
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+});
