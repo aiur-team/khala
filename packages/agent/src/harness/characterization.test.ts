@@ -216,7 +216,7 @@ it('runCli routes every existing harness argv form unchanged', async () => {
   const calls: unknown[] = [];
   const main = (name: string) => async () => ({ default: (argv: readonly string[]) => { calls.push({ name, argv }); return 0; } });
   const modules: CliModules = {
-    mcp: () => main('mcp'), install: () => main('install'), local: () => undefined,
+    mcp: () => main('mcp'), install: () => main('install'), local: () => undefined, watch: () => main('watch'),
     hook: name => async () => ({ default: (stdin, argv) => { calls.push({ name, stdin, argv }); return 0; } }),
   };
   const argv = [
