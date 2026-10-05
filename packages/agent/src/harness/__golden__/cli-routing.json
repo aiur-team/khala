@@ -1,0 +1,61 @@
+{
+  "codes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "calls": [
+    {
+      "name": "deliver",
+      "stdin": "{}",
+      "argv": [
+        "--harness",
+        "claude"
+      ]
+    },
+    {
+      "name": "deliver",
+      "stdin": "{}",
+      "argv": [
+        "--harness",
+        "codex"
+      ]
+    },
+    {
+      "name": "deliver",
+      "stdin": "{}",
+      "argv": [
+        "--harness",
+        "cursor"
+      ]
+    },
+    {
+      "name": "claude-wake",
+      "stdin": "{}",
+      "argv": []
+    },
+    {
+      "name": "install",
+      "argv": [
+        "codex"
+      ]
+    },
+    {
+      "name": "install",
+      "argv": [
+        "cursor"
+      ]
+    },
+    {
+      "name": "mcp",
+      "argv": [
+        "--harness",
+        "claude"
+      ]
+    }
+  ]
+}
