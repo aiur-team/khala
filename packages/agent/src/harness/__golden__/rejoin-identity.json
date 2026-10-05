@@ -1,0 +1,48 @@
+[
+  {
+    "harness": "claude",
+    "sessionId": "session",
+    "status": {
+      "state": "idle",
+      "unread": 0,
+      "listeningMode": "sync"
+    },
+    "rejoin": {
+      "validSecret": true
+    }
+  },
+  {
+    "harness": "codex",
+    "sessionId": "session",
+    "status": {
+      "state": "idle",
+      "unread": 0,
+      "listeningMode": "sync"
+    },
+    "rejoin": {
+      "validSecret": true
+    }
+  },
+  {
+    "harness": "cursor",
+    "sessionId": "ws-65d80d2c48b3d23b89fb7644fbb034a4",
+    "status": {
+      "state": "idle",
+      "unread": 0,
+      "listeningMode": "sync"
+    },
+    "rejoin": {
+      "validSecret": true
+    }
+  },
+  {
+    "harness": "cursor",
+    "sessionId": "cursor-default",
+    "status": {
+      "state": "idle",
+      "unread": 0,
+      "listeningMode": "sync"
+    },
+    "rejoin": null
+  }
+]

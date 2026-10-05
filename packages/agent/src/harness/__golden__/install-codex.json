@@ -1,0 +1,20 @@
+{
+  "code": 0,
+  "stdout": [
+    "installing khala-cli@9.8.7 into <HOME>/.local/share/khala/npm",
+    "configured <HOME>/.codex/config.toml and <HOME>/.codex/hooks.json",
+    "restart or resume Codex, then trust the three Khala hooks in \"Hooks need review\""
+  ],
+  "stderr": [],
+  "npm": [
+    [
+      "<HOME>/.local/share/khala/npm",
+      "khala-cli@9.8.7"
+    ]
+  ],
+  "files": {
+    ".codex/config.toml": "model = \"existing\"\n\n# Khala MCP server, managed by `khala install codex`\n[mcp_servers.khala]\ncommand = \"<HOME>/.local/share/khala/npm/bin/khala\"\nargs = [\"mcp\", \"--harness\", \"codex\"]\nenv = { HOME = \"<HOME>\", XDG_STATE_HOME = \"<HOME>/.local/state\" }\n",
+    ".codex/hooks.json": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ]\n  }\n}\n",
+    ".codex/hooks.json.khala-bak": "{\"hooks\":{}}\n"
+  }
+}

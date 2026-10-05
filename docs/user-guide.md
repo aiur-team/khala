@@ -62,7 +62,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude's idle watcher lasts 50 minutes after its last turn; later messages arrive at your next prompt. An Esc-interrupted turn does not arm it. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status` and `khala_read`. Long-idle Claude lifetime and Codex busy-queue timing were not measured in the local acceptance run.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -167,7 +167,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude's idle watcher lasts 50 minutes after its last turn; later messages arrive at your next prompt. An Esc-interrupted turn does not arm it. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status` and `khala_read`. Long-idle Claude lifetime and Codex busy-queue timing were not measured in the local acceptance run.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per unread cursor position. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
