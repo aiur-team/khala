@@ -34,6 +34,10 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
     const requestUrls: string[] = [];
     page.on('request', request => requestUrls.push(request.url()));
+    await page.goto(`${url}?empty`);
+    await page.getByText('No messages yet', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('status', { name: 'Loading earlier messages' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Load earlier messages' }).count(), 0);
     await page.goto(url);
 
     await page.locator('section.timeline').waitFor();
@@ -193,8 +197,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // Pagination preserves the reader's anchored event *within the scrollable
     // list* after prepending 20+ older rows. Measured relative to the list's
     // own bounding box, not the viewport: the list's page position may
-    // legitimately shift (e.g. the "Load earlier messages" control disappears
-    // once history is exhausted), which is unrelated to anchor preservation.
+    // change independently of anchor preservation.
     const anchorRow = page.locator('[data-event-id="recent_1"]');
     const list = page.locator('.timeline__list');
     const relativeTop = async () => {
@@ -204,9 +207,18 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
       ]);
       return rowTop - listTop;
     };
+    assert.equal(await page.getByRole('button', { name: 'Load earlier messages' }).count(), 0);
+    await page.evaluate(() => window.__timelineHarness.delayHistory());
+    const callsBefore = await page.evaluate(() => window.__timelineHarness.historyCalls());
+    await list.evaluate(node => { node.scrollTop = 80; });
     const beforeTop = await relativeTop();
-    await page.getByRole('button', { name: 'Load earlier messages' }).click();
+    await list.evaluate(node => node.dispatchEvent(new Event('scroll')));
+    await page.getByRole('status', { name: 'Loading earlier messages' }).waitFor();
+    await list.evaluate(node => { for (let i = 0; i < 5; i++) node.dispatchEvent(new Event('scroll')); });
+    assert.equal(await page.evaluate(() => window.__timelineHarness.historyCalls()), callsBefore + 1);
+    await page.evaluate(() => window.__timelineHarness.releaseHistory());
     await page.getByText('Historical message 19').waitFor();
+    await page.getByRole('status', { name: 'Loading earlier messages' }).waitFor({ state: 'detached' });
     const afterTop = await relativeTop();
     assert.ok(Math.abs(afterTop - beforeTop) < 4, `anchored row should stay within 4px of its prior position within the list (before=${beforeTop}, after=${afterTop})`);
 

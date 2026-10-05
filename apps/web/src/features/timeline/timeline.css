@@ -23,13 +23,13 @@
   margin: 0 1.1rem;
 }
 
-.timeline__load-older {
-  align-self: center;
-  background: var(--khala-fill-control);
-  border: 1px solid var(--khala-line);
-  border-radius: 999px;
-  padding: 0.4rem 0.9rem;
-  color: inherit;
+.timeline__history-loading {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  pointer-events: none;
 }
 
 .timeline__list {

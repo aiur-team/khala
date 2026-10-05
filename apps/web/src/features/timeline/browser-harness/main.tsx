@@ -8,12 +8,16 @@ import { createFakeChannelPort } from './fake-channel-port';
 
 const navigation: NavigationItem[] = [{ id: 'timeline', label: 'Conversation', href: '#timeline', current: true }];
 
-const harness = createFakeChannelPort();
-const controller = createTimelineController(harness.port, harness.roomId, { generation: 1, pageSize: 20 });
+const harness = createFakeChannelPort(new URLSearchParams(location.search).has('empty'));
+// Keep pagination observable here; name-history scanning has dedicated tests.
+const controller = { ...createTimelineController(harness.port, harness.roomId, { generation: 1, pageSize: 20 }), scanNameHistory: async () => {} };
 
 declare global {
   interface Window {
     __timelineHarness: {
+      historyCalls: () => number;
+      delayHistory: () => void;
+      releaseHistory: () => void;
       showUnavailable: () => void;
       decryptUnavailable: () => void;
       pushLiveMessage: (body: string) => void;
@@ -26,6 +30,9 @@ declare global {
   }
 }
 window.__timelineHarness = {
+  historyCalls: harness.historyCalls,
+  delayHistory: harness.delayHistory,
+  releaseHistory: harness.releaseHistory,
   showUnavailable: harness.showUnavailable,
   decryptUnavailable: harness.decryptUnavailable,
   pushLiveMessage: harness.pushLiveMessage,
@@ -38,7 +45,7 @@ window.__timelineHarness = {
 
 function Harness() {
   return (
-    <AiurShell mode="standalone" navigation={navigation} theme={{ theme: 'dark', onThemeChange: () => {} }} collapsed={false} onCollapsedChange={() => {}}>
+    <AiurShell mode="standalone" navigation={navigation} theme={{ theme: new URLSearchParams(location.search).get('theme') === 'light' ? 'light' : 'dark', onThemeChange: () => {} }} collapsed={false} onCollapsedChange={() => {}}>
       <KhalaPageFrame model={{ title: 'Conversation', labelledBy: 'timeline-heading' }}>
         <TimelineScreen
           controller={controller}
