@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { Harness } from '@khala/contracts/m1/agent-join';
-import { ensureStateDir, filesForDir, openSessionDir, readJoin, readJson, readStateFile, readStatus, removeSession, removeStateFile, resolveStateDir, saveJoin, saveSession, sessionFiles, StateError, stateRoot, writeJsonAtomic, writeStateFile, writeStatus, type SessionFiles } from './state';
+import { channelFiles, channelsDir, joinFilePath, readJoinFile, removeJoinFile, writeJoinFile, ensureStateDir, filesForDir, openSessionDir, readJoin, readJson, readStateFile, readStatus, removeSession, removeStateFile, resolveStateDir, saveJoin, saveSession, sessionFiles, StateError, stateRoot, writeJsonAtomic, writeStateFile, writeStatus, type SessionFiles } from './state';
 
 let root: string;
 let files: SessionFiles;
@@ -113,4 +113,50 @@ it('supports safe state-file aliases and rejects traversal or unsupported writes
   await expect(fs.stat(files.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await readStateFile(files.dir, 'cursor.json')).toBeNull();
   await removeStateFile(files.dir, 'join.json');
+});
+
+it.each(['channel', 'channels', 'session', 'harness', 'root'])('checks all channel ancestors: %s', async level => {
+  const nested = channelFiles(files, '!eco:test');
+  await ensureStateDir(nested.dir);
+  const dir = { channel: nested.dir, channels: channelsDir(files), session: files.dir, harness: path.dirname(files.dir), root: path.dirname(path.dirname(files.dir)) }[level]!;
+  await fs.chmod(dir, 0o755);
+  await expect(ensureStateDir(nested.dir)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+});
+it.each(['channel', 'channels', 'session'])('rejects symlink channel ancestor: %s', async level => {
+  const nested = channelFiles(files, '!eco:test');
+  await ensureStateDir(nested.dir);
+  const dir = { channel: nested.dir, channels: channelsDir(files), session: files.dir }[level]!;
+  const target = path.join(root, 'target');
+  await fs.mkdir(target, { mode: 0o700 });
+  await fs.rm(dir, { recursive: true });
+  await fs.symlink(target, dir);
+  await expect(ensureStateDir(nested.dir)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  expect(await fs.readdir(target)).toEqual([]);
+});
+it('stores and removes independent per-link joins privately', async () => {
+  const link = 'https://khala.test/join/one';
+  const join = { joinId: 'join', pollSecret: 'secret', confirmUrl: 'https://khala.test/confirm', expiresAt: '2026-10-05T12:00:00Z', link };
+  expect(await readJoinFile(files, link)).toBeNull();
+  await writeJoinFile(files, link, join);
+  await writeJoinFile(files, link + '/two', { ...join, joinId: 'other' });
+  expect(await readJoinFile(files, link)).toEqual(join);
+  const dir = path.join(files.dir, 'joins');
+  expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+  for (const name of await fs.readdir(dir)) {
+    expect(name).toMatch(/^[a-f0-9]{24}\.json$/);
+    expect((await fs.stat(path.join(dir, name))).mode & 0o777).toBe(0o600);
+  }
+  await removeJoinFile(files, link);
+  await removeJoinFile(files, link);
+  expect(await readJoinFile(files, link)).toBeNull();
+  expect((await readJoinFile(files, link + '/two'))?.joinId).toBe('other');
+});
+it.each(['../evil', 'abc', 'A'.repeat(24), 'a'.repeat(25), 'a'.repeat(24) + '.json'])('rejects unsafe join key %s', key => {
+  expect(() => joinFilePath(files, key)).toThrowError(expect.objectContaining({ code: 'storage_failed' }));
+});
+it('allows channel metadata through state-file helpers', async () => {
+  await writeStateFile(files.dir, 'channel.json', { roomId: '!eco:test' });
+  expect(await readStateFile(files.dir, 'channel.json')).toEqual({ roomId: '!eco:test' });
+  await removeStateFile(files.dir, 'channel.json');
+  expect(await readStateFile(files.dir, 'channel.json')).toBeNull();
 });
