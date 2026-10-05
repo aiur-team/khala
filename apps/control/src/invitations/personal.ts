@@ -1,3 +1,4 @@
+import { readRoomRemovals } from './removals';
 import type { AdmissionRejection, CallOptions, OperationResult, RoomId, ShareGrant } from '@khala/contracts/messaging/index';
 import type { AdmissionRuntime } from './index';
 import { currentPrincipal, safeRead, writeAndResolve } from './internal';
@@ -14,6 +15,9 @@ export async function personalLink(
   if (identity === 'auth_required') return { kind: 'rejected', code: 'auth_required' };
   if (identity === 'unavailable') return { kind: 'unavailable', retryable: true };
   const ownerId = identity.principal.ownerId;
+  const removals = await readRoomRemovals(runtime.store, roomId, options);
+  if (removals === 'unavailable') return { kind: 'unavailable', retryable: true };
+  const roomGeneration = removals?.generation ?? 0;
   const pointerKey = runtime.digests.personalKey(ownerId, roomId);
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -39,7 +43,7 @@ export async function personalLink(
       const invite = readInviteRecord(inviteRead.record.value);
       if (!invite || invite.creatorOwnerId !== ownerId || invite.roomId !== roomId
         || invite.inviteRefDigest !== runtime.digests.inviteRef(inviteRef)) return { kind: 'unavailable', retryable: true };
-      if (invite.status === 'revoked' || invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) {
+      if ((invite.removalGeneration ?? 0) < roomGeneration || invite.status === 'revoked' || invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) {
         const next = pointer.generation + 1;
         if (!Number.isSafeInteger(next)) return { kind: 'unavailable', retryable: true };
         const rotated = await writeAndResolve(runtime.store, {
@@ -61,7 +65,7 @@ export async function personalLink(
     if (current.kind !== 'record') return { kind: 'unavailable', retryable: true };
     const invite = readInviteRecord(current.record.value);
     if (!invite || invite.creatorOwnerId !== ownerId || invite.roomId !== roomId) return { kind: 'unavailable', retryable: true };
-    if (invite.status === 'revoked' || invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) continue;
+    if ((invite.removalGeneration ?? 0) < roomGeneration || invite.status === 'revoked' || invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) continue;
     return shared;
   }
   return { kind: 'unavailable', retryable: true };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
 import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
@@ -120,6 +120,14 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
     [context.generation, context.room, roomId],
   );
+  const [creatorOwnerId, setCreatorOwnerId] = useState<OwnerId | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    void context.room.administration?.creator(roomId, { signal: abort.signal }).then(result => {
+      if (!abort.signal.aborted && result.kind === 'ok') setCreatorOwnerId(result.value);
+    }).catch(() => {});
+    return () => abort.abort();
+  }, [context.room, roomId]);
   const deviceId = context.device.current().deviceId;
   const pendingStore = useMemo(() => deviceId === null ? undefined
     : createHumanPendingSendStore(context.principal.ownerId, deviceId, roomId),
@@ -140,6 +148,11 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const account = useHumanAccount();
   const viewer = context.participant?.() ?? null;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
+  const lostAccess = timelineData.membership === 'left' || timelineData.membership === 'revoked'
+    || Boolean(conversations && !conversations.some(item => item.id === roomId));
+  useEffect(() => {
+    if (lostAccess && navigate && routes) navigate(routes.conversationsPath());
+  }, [lostAccess, navigate, routes]);
   const presence = useSyncExternalStore(room.subscribe, room.getSnapshot, room.getSnapshot);
   const extraParticipants = roomNameParticipants(presence.agents,
     participantRoster?.scope === participantScope ? participantRoster.participants : [], viewer?.participantId ?? null);
@@ -198,9 +211,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   if (context.conversations && conversations === null) {
     return <Panel heading="Conversation unavailable"><p role="alert">Channel access could not be checked. Try reloading.</p></Panel>;
   }
-  if (context.conversations && conversations && !conversations.some(item => item.id === roomId)) {
-    return <Panel heading="Conversation unavailable"><p role="alert">{account === 'local_owner' ? 'You no longer have access to this channel.' : 'You no longer have access to this encrypted conversation.'}</p></Panel>;
-  }
+  if (lostAccess) return null;
   if (viewer === null) {
     return (
       <Panel heading="Conversation unavailable">
@@ -246,6 +257,13 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     <ChannelScreen
       title={selectedConversation?.title ?? (account === 'local_owner' ? 'Channel' : 'Encrypted conversation')}
       controller={room}
+      {...(creatorOwnerId ? { creatorOwnerId } : {})}
+      {...(context.room.administration && creatorOwnerId === viewer.ownerId ? { onRemoveHuman: async (ownerId: string) => {
+        const result = await context.room.administration!.removeHuman({ roomId, ownerId: ownerId as OwnerId });
+        if (result.kind !== 'ok') return 'failed' as const;
+        room.refresh?.();
+        return 'removed' as const;
+      } } : {})}
       viewerOwnerId={viewer.ownerId}
       viewerName={channelViewer?.displayName ?? viewer.displayName}
       viewerEmail={context.principal.verifiedEmail}

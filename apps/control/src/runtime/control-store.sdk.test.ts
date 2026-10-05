@@ -1,9 +1,28 @@
 import { createHash } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createControlStore } from './control-store';
 
 type Blob = { body: string; etag: string };
+
+/**
+ * Runs `operation` with a fake setTimeout clock so the SDK's retry backoff
+ * (5 retries x 5 s via setTimeout in @netlify/blobs fetchAndRetry) elapses
+ * instantly. The SDK only shortens that delay to 1 ms when it sees
+ * NODE_ENV=test, so without this the tests depend on the caller's environment
+ * (#969). The SDK still performs every retry; only the waiting is skipped.
+ */
+async function withInstantRetryBackoff<T>(operation: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    let settled = false;
+    const pending = operation().finally(() => { settled = true; });
+    while (!settled) await vi.advanceTimersByTimeAsync(1_000);
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 /** The real SDK runs its HTTP and retry logic against this isolated fetch. */
 function sdkFixture(fail: (store: string, method: string) => number | null, omitEtag: (store: string) => boolean = () => false) {
@@ -52,7 +71,7 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
   for (const status of [401, 403, 429, 503]) {
     it(`never claims a rejected operation ledger PUT (HTTP ${status})`, async () => {
       const fixture = sdkFixture((store, method) => store === 'site:operations' && method === 'put' ? status : null);
-      const result = await fixture.store.compareAndSet({ key: 'owner/key', expectedRevision: null, operationId: `ledger-${status}`, next: { value: 'value', expiresAt: null } });
+      const result = await withInstantRetryBackoff(() => fixture.store.compareAndSet({ key: 'owner/key', expectedRevision: null, operationId: `ledger-${status}`, next: { value: 'value', expiresAt: null } }));
       expect(result).toEqual({ kind: 'outcome_unknown', operationId: `ledger-${status}` });
       expect(fixture.entries.size).toBe(0);
       if (status === 429 || status === 503) expect(fixture.putAttempts.get('site:operations')).toBe(6);
@@ -60,7 +79,7 @@ describe('control store with Netlify Blobs SDK HTTP responses', () => {
 
     it(`never applies a rejected record PUT (HTTP ${status})`, async () => {
       const fixture = sdkFixture((store, method) => store === 'site:records' && method === 'put' ? status : null);
-      const result = await fixture.store.compareAndSet({ key: 'owner/key', expectedRevision: null, operationId: `record-${status}`, next: { value: 'value', expiresAt: null } });
+      const result = await withInstantRetryBackoff(() => fixture.store.compareAndSet({ key: 'owner/key', expectedRevision: null, operationId: `record-${status}`, next: { value: 'value', expiresAt: null } }));
       expect(result).toEqual({ kind: 'outcome_unknown', operationId: `record-${status}` });
       expect(await fixture.store.read('owner/key')).toEqual({ kind: 'absent' });
       if (status === 429 || status === 503) expect(fixture.putAttempts.get('site:records')).toBe(6);

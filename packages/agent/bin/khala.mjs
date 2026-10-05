@@ -12,6 +12,7 @@ const found = relative => {
 const { runCli } = await import('../src/cli.ts');
 process.exitCode = await runCli(process.argv.slice(2), {
   mcp: () => found('../src/mcp/main.ts'),
+  watch: () => found('../src/watch.ts'),
   local: () => found('../src/local/cli.ts'),
   install: () => found('../src/install/main.ts'),
   hook: name => found(`../hooks/${name}.ts`),
