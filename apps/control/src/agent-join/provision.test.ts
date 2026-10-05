@@ -99,21 +99,3 @@ it('reuses the account identity but issues a fresh device for each join', async 
   }
   expect(devices[0]).not.toBe(devices[1]);
 });
-
-
-it('mints a distinct crypto device on every authorized resume without changing identity', async () => {
-  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
-    const body = JSON.parse(init!.body as string);
-    return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'fresh-token' });
-  });
-  const provisioner = createAgentProvisioner({ ...options, fetch });
-  const input = { userId: '@agent:matrix.test', roomId: '!room:matrix.test' };
-  const first = await provisioner.resume!(input);
-  const second = await provisioner.resume!(input);
-  expect(first.kind).toBe('ok'); expect(second.kind).toBe('ok');
-  if (first.kind !== 'ok' || second.kind !== 'ok') throw new Error('resume');
-  expect(first.credentials.userId).toBe(input.userId);
-  expect(first.credentials.roomId).toBe(input.roomId);
-  expect(first.credentials.deviceId).not.toBe(second.credentials.deviceId);
-  expect(fetch.mock.calls.map(call => String(call[0]))).toEqual(['https://matrix.test/_matrix/client/v3/login', 'https://matrix.test/_matrix/client/v3/login']);
-});

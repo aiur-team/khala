@@ -4,7 +4,7 @@ import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KhalaAgentClientOptions } from '../client-impl';
-import { ensureStateDir, sessionFiles, writeJsonAtomic, writeStateFile } from '../state';
+import { ensureStateDir, readJoinFile, writeJoinFile, sessionFiles, writeJsonAtomic, writeStateFile } from '../state';
 import { createPlaceholderClient, runMcpCommand } from './main';
 import { createRealClientFactory } from './wiring';
 
@@ -130,6 +130,35 @@ describe('real MCP client wiring', () => {
     input.destroy();
     output.destroy();
   });
+});
+
+
+it('clears pending joins at startup and forwards all channel selectors', async () => {
+  const env = await environment();
+  const files = sessionFiles('claude', 'multi', env);
+  await ensureStateDir(files.dir);
+  const link = 'http://127.0.0.1:47830/join/link';
+  await writeJoinFile(files, link, { link, joinId: 'old', pollSecret: 'old', confirmUrl: 'old', expiresAt: '2020-01-01' });
+  const client = createPlaceholderClient();
+  client.status = vi.fn(async () => ({ state: 'connected', unread: 0, listeningMode: 'sync' as const }));
+  client.read = vi.fn(async () => ({ messages: [] }));
+  client.send = vi.fn(async () => ({ eventId: '$send' }));
+  client.sendChannelEvent = vi.fn(async () => ({ eventId: '$event' }));
+  client.leave = vi.fn(async channel => ({ left: channel, channels: [] }));
+  const wrapped = createRealClientFactory(env, { createClient: () => client })({ harness: 'claude', sessionId: 'multi' });
+  await wrapped.status('A');
+  expect(await readJoinFile(files, link)).toBeNull();
+  await wrapped.read(10, '$before', '!A:local');
+  await wrapped.send('hi', '#B');
+  const event = { v: 1, kind: 'test', summary: 'test', body: 'test' } as const;
+  await wrapped.sendChannelEvent(event, 'B');
+  await wrapped.leave('A');
+  expect(client.status).toHaveBeenCalledWith('A');
+  expect(client.read).toHaveBeenCalledWith(10, '$before', '!A:local');
+  expect(client.send).toHaveBeenCalledWith('hi', '#B');
+  expect(client.sendChannelEvent).toHaveBeenCalledWith(event, 'B');
+  expect(client.leave).toHaveBeenCalledWith('A');
+  await wrapped.close();
 });
 
 it('reports the active Monitor marker only for a joined Claude session', async () => {

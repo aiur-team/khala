@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
@@ -82,7 +82,7 @@ describe('MCP command lifecycle', () => {
       });
       const completed = (async () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
-        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill('SIGTERM');
         expect(await closed).toEqual({ code: 0, signal: null });
@@ -108,7 +108,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
-        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event']);
+        .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -123,7 +123,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
       expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -162,11 +162,23 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
 
+it('forwards khala_leave through the real CLI wrapper', () => {
+  const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-leave-cli-'));
+  try {
+    const result = spawnSync(process.execPath, [path.resolve(import.meta.dirname, '../../bin/khala.mjs'), 'mcp', '--harness', 'claude'], {
+      cwd: path.resolve(import.meta.dirname, '../../../..'),
+      env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'leave-cli' },
+      input: JSON.stringify(call('khala_leave', undefined, { channel: 'A' })) + '\n', encoding: 'utf8', timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ error: 'channel_unknown', channels: [] });
+  } finally { rmSync(stateHome, { recursive: true, force: true }); }
+});
 
 it.each(['codex', 'claude'] as const)('creates the %s startup client without input and reuses it', async harness => {
   const input = new PassThrough();
@@ -183,19 +195,4 @@ it.each(['codex', 'claude'] as const)('creates the %s startup client without inp
   expect(createClient).toHaveBeenCalledOnce();
   expect(client.close).toHaveBeenCalledOnce();
   output.destroy();
-});
-
-
-it('preserves terminal removal on an eager session shutdown without reporting cleanup failure', () => {
-  const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-terminal-cleanup-'));
-  const dir = path.join(stateHome, 'khala', 'claude', 'removed-session');
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(path.join(dir, 'status.json'), JSON.stringify({ state: 'disconnected', detail: 'removed', channelName: 'Release room' }), { mode: 0o600 });
-  try {
-    const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
-      env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'removed-session' }, encoding: 'utf8', input: '' });
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-    expect(JSON.parse(readFileSync(path.join(dir, 'status.json'), 'utf8'))).toMatchObject({ state: 'disconnected', detail: 'removed', channelName: 'Release room' });
-  } finally { rmSync(stateHome, { recursive: true, force: true }); }
 });

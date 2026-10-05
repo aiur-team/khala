@@ -1,7 +1,8 @@
+import { listChannels } from '../channels';
 import { readListeningMode } from '../mode';
 import { readActivity } from '../activity';
 import { readCursor, unreadCount } from '../inbox';
-import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
+import { readJson, readStatus, TERMINAL_SESSION_DETAILS, SESSION_ID_PATTERN, type SessionFiles } from '../state';
 import { codexIdleWakeArgv, type CodexIdleWakePort } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
 
@@ -22,9 +23,8 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   const now = deps.now ?? Date.now;
   const stderr = deps.stderr ?? (line => { process.stderr.write(line); });
   const controller = new AbortController();
-  let pending: { at: number } | undefined;
-  const wakesAtCount = new Map<number, number>();
-  let channelIdentity: string | undefined;
+  let pending: { at: number; identities: string[] } | undefined;
+  const wakesAtCount = new Map<string, Map<number, number>>();
   let stopped = false;
   let again = false;
   let inFlight: Promise<void> | undefined;
@@ -35,27 +35,37 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   };
   const evaluate = async () => {
     try {
-      const session = await readJson<{ roomId: string; userId: string }>(deps.files.session);
-      const identity = JSON.stringify([session?.roomId, session?.userId]);
-      if (identity !== channelIdentity) {
-        channelIdentity = identity;
-        wakesAtCount.clear();
-        pending = undefined;
-      }
-      if (await readListeningMode(deps.files) === 'async') { pending = undefined; return; }
-      const counts = await unreadCount(deps.files.dir);
-      const cursor = await readCursor(deps.files);
-      if (!counts.messages) { pending = undefined; return; }
+      const channels = await listChannels(deps.files);
+      const targets = channels.length ? channels.map(channel => channel.files) : [deps.files];
+      const snapshots = await Promise.all(targets.map(async files => {
+        const session = await readJson<{ roomId: string; userId: string }>(files.session);
+        const identity = JSON.stringify([files.dir, session?.roomId, session?.userId]);
+        return { files, identity, cursor: await readCursor(files), mode: await readListeningMode(files),
+          counts: await unreadCount(files.dir), status: await readStatus(files) };
+      }));
+      const present = new Set(snapshots.map(channel => channel.identity));
+      for (const identity of wakesAtCount.keys()) if (!present.has(identity)) wakesAtCount.delete(identity);
+      const eligible = snapshots.filter(channel => channel.mode !== 'async' && channel.counts.messages
+        && !(channel.status?.state === 'disconnected' && TERMINAL_SESSION_DETAILS.some(detail => detail === channel.status?.detail)));
+      if (!eligible.length) { pending = undefined; return; }
+      if (pending && !eligible.some(channel => pending!.identities.includes(channel.identity))) pending = undefined;
       const activity = await readActivity(deps.files);
       if (pending && Date.parse(activity.updatedAt) > pending.at) pending = undefined;
       const at = now();
       if (pending && at - pending.at < (deps.retryAfterMs ?? 60_000)) return;
       if (stopped || activity.state !== 'idle') return;
-      const wakes = wakesAtCount.get(cursor.deliveredCount) ?? 0;
-      if (wakes >= 2) return;
-      if (await readListeningMode(deps.files) === 'async' || stopped) { pending = undefined; return; }
-      pending = { at };
-      wakesAtCount.set(cursor.deliveredCount, wakes + 1);
+      const candidates = eligible.filter(channel => (wakesAtCount.get(channel.identity)?.get(channel.cursor.deliveredCount) ?? 0) < 2);
+      const ready = [];
+      for (const channel of candidates) {
+        if (await readListeningMode(channel.files) !== 'async') ready.push(channel);
+      }
+      if (!ready.length || stopped) { pending = undefined; return; }
+      pending = { at, identities: ready.map(channel => channel.identity) };
+      for (const channel of ready) {
+        const counts = wakesAtCount.get(channel.identity) ?? new Map<number, number>();
+        counts.set(channel.cursor.deliveredCount, (counts.get(channel.cursor.deliveredCount) ?? 0) + 1);
+        wakesAtCount.set(channel.identity, counts);
+      }
       const outcome = await port.run(codexIdleWakeArgv(deps.threadId), controller.signal);
       if (outcome.status !== 'queued') warn('codex_queue_failed', outcome.status);
     } catch { warn('codex_waker_error'); }

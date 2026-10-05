@@ -13,11 +13,15 @@ import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { KhalaAgentClient } from './client';
 import { KhalaClientError } from './client';
 import { createKhalaAgentClient } from './client-impl';
+import { migrateLegacy } from './channels';
 import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './matrix/session';
 import { appendInbox } from './inbox';
-import { ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
+import { channelFiles, filesForDir, readJoinFile, writeJoinFile, joinFilePath, stateKey, ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
 import { toInboxEntry } from './sender';
 import { deliver } from '../hooks/deliver';
+
+vi.mock('node:fs/promises', { spy: true });
+vi.mock('./channels', { spy: true });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -40,6 +44,7 @@ let session: AgentMatrixSession;
 let joinApi: { requestJoin: Mock<typeof requestJoin>; pollJoin: Mock<typeof pollJoin>; reportReady: Mock<typeof reportReady> };
 let waker: Mock<(entry: InboxEntry) => void>;
 let startSession: Mock<StartSession>;
+const channelDir = () => channelFiles(filesForDir(dir), credentials.roomId).dir;
 const statusFile = () => readStateFile<Record<string, unknown>>(dir, 'status.json');
 async function connected() {
   await client.join(link, 'Codex');
@@ -48,7 +53,7 @@ async function connected() {
 }
 async function entries() {
   await client.status();
-  try { return (await fs.readFile(path.join(dir, 'inbox.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)); }
+  try { return (await fs.readFile(path.join(channelDir(), 'inbox.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)); }
   catch { return []; }
 }
 beforeEach(async () => {
@@ -79,55 +84,46 @@ it('returns promptly, persists private join state and coalesces simultaneous req
     { state: 'awaiting_confirmation', confirmUrl: created.confirmUrl }, { state: 'awaiting_confirmation', confirmUrl: created.confirmUrl },
   ]);
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(1);
-  expect(await readStateFile(dir, 'join.json')).toEqual({ joinId: 'j', pollSecret: 'POLL', confirmUrl: created.confirmUrl, expiresAt: created.expiresAt, link });
+  expect(await readJoinFile(filesForDir(dir), link)).toEqual({ joinId: 'j', pollSecret: 'POLL', confirmUrl: created.confirmUrl, expiresAt: created.expiresAt, link });
   expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
-  expect((await fs.stat(path.join(dir, 'join.json'))).mode & 0o777).toBe(0o600);
+  expect((await fs.stat(joinFilePath(filesForDir(dir), stateKey(link)))).mode & 0o777).toBe(0o600);
   expect(await statusFile()).toEqual({ state: 'joining', updatedAt: now().toISOString() });
 });
 it('runs the handshake in order and exposes a connected client', async () => {
   await connected();
-  expect(await client.status()).toEqual({ state: 'connected', channelName: 'Release room', agentUserId: credentials.userId, unread: 0, listeningMode: 'sync' });
+  expect(await client.status()).toMatchObject({ state: 'connected', channelName: 'Release room', agentUserId: credentials.userId, unread: 0, listeningMode: 'sync' });
   const calls = [joinApi.pollJoin, startSession, session.onMessage, joinApi.reportReady, session.waitForInvite, session.join].map(fn => vi.mocked(fn).mock.invocationCallOrder[0]!);
   expect(calls).toEqual([...calls].sort((a, b) => a - b));
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 120_000);
-  expect(await readStateFile(dir, 'session.json')).toEqual(credentials);
-  expect((await fs.stat(path.join(dir, 'session.json'))).mode & 0o777).toBe(0o600);
-  expect(await readStateFile(dir, 'join.json')).toBeNull();
-  expect(await client.join(link, 'Other')).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect(await readStateFile(channelDir(), 'session.json')).toEqual(credentials);
+  expect((await fs.stat(path.join(channelDir(), 'session.json'))).mode & 0o777).toBe(0o600);
+  expect(await readJoinFile(filesForDir(dir), link)).toBeNull();
+  expect(await client.join(link, 'Other')).toEqual({ state: 'connected', channelName: 'Release room', channels: [credentials.roomId] });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(1);
   expect(session.stop).not.toHaveBeenCalled();
 });
-it('leaves the connected channel and clears delivery state when joining a different link', async () => {
+it('preserves the connected channel and backlog while another link is pending', async () => {
   await connected();
   handler!(message('$old'));
-  handler!(channelEvent('$old-event'));
   await entries();
-  await writeStateFile(dir, 'cursor.json', { lastDeliveredEventId: '$old', deliveredCount: 1 });
-  const oldHandler = handler!;
   const nextLink = 'https://khala.example/join/ijklmnop';
-  const nextCreated = { ...created, joinId: 'next', confirmUrl: 'https://khala.example/agent/confirm/next' };
-  joinApi.requestJoin.mockResolvedValueOnce(nextCreated);
   poll = deferred<AgentCredentials>();
-
-  expect(await client.join(nextLink, 'Other')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
-  expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
-  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Other', sessionId: 'test', rejoinSecret: expect.any(String) }, {});
-  expect(session.stop).toHaveBeenCalledTimes(1);
-  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-  expect(await readStateFile(dir, 'session.json')).toBeNull();
-  await expect(fs.stat(path.join(dir, 'inbox.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
-  await expect(fs.stat(path.join(dir, 'cursor.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(await client.status()).toEqual({ state: 'joining', unread: 0, listeningMode: 'sync' });
-  oldHandler(message('$stale'));
-  expect(await entries()).toEqual([]);
-
-  vi.mocked(session.roomName).mockReturnValue('Next room');
-  poll.resolve(credentials);
-  await vi.waitFor(async () => expect((await client.status()).channelName).toBe('Next room'));
-  handler!(channelEvent('$next-event'));
-  handler!(message('$next'));
-  expect((await entries()).map(entry => entry.eventId)).toEqual(['$next-event', '$next']);
-  expect((await client.status()).unread).toBe(2);
+  await client.join(nextLink, 'Other');
+  expect(session.stop).not.toHaveBeenCalled();
+  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(false);
+  handler!(message('$after'));
+  expect((await entries()).map(entry => entry.eventId)).toEqual(['$old', '$after']);
+  expect((await client.status()).state).toBe('connected');
+  expect((await client.status()).channels).toEqual(expect.arrayContaining([
+    expect.objectContaining({ channel: nextLink, link: nextLink, state: 'joining' }),
+  ]));
+  await expect(client.send('for pending B')).rejects.toMatchObject({ code: 'channel_required' });
+  await expect(client.read(20)).rejects.toMatchObject({ code: 'channel_required' });
+  await expect(client.sendChannelEvent({ v: 1, kind: 'test', summary: 'B', body: 'B' })).rejects.toMatchObject({ code: 'channel_required' });
+  expect(session.send).not.toHaveBeenCalled();
+  expect(session.sendChannelEvent).not.toHaveBeenCalled();
+  await client.send('explicit A', credentials.roomId);
+  expect(session.send).toHaveBeenCalledWith(credentials.roomId, 'explicit A');
 });
 it('filters own sender, other rooms and events; dedups and appends in order with labels', async () => {
   await connected();
@@ -181,7 +177,7 @@ it('handles poll expiry and expired persisted joins with an explicit retry', asy
   await client.join(link, 'Codex'); poll.reject(new KhalaClientError('join_expired', 'expired'));
   await vi.waitFor(async () => expect((await statusFile())?.detail).toBe('join_expired'));
   expect((await client.status()).state).toBe('idle');
-  await writeStateFile(dir, 'join.json', { ...created, link, expiresAt: '2020-01-01T00:00:00Z' });
+  await writeJoinFile(filesForDir(dir), link, { ...created, link, expiresAt: '2020-01-01T00:00:00Z' });
   await expect(client.join(link, 'Codex')).rejects.toMatchObject({ code: 'join_expired' });
   poll = deferred<AgentCredentials>();
   await client.join(link, 'Codex'); expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
@@ -191,34 +187,34 @@ it('cleans up invite timeout and contains raw session errors', async () => {
   await client.join(link, 'Codex'); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await statusFile())?.detail).toBe('invite_timeout'));
   expect((await client.status()).state).toBe('disconnected');
-  expect(session.stop).toHaveBeenCalledTimes(1); expect(await readStateFile(dir, 'session.json')).toBeNull();
+  expect(session.stop).toHaveBeenCalledTimes(1); expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
 });
 it('closes idempotently and cannot be revived by late credentials', async () => {
   await client.join(link, 'Codex');
   await Promise.all([client.close(), client.close()]);
   poll.resolve(credentials); await Promise.resolve();
-  expect(startSession).not.toHaveBeenCalled(); expect(await readStateFile(dir, 'session.json')).toBeNull();
+  expect(startSession).not.toHaveBeenCalled(); expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
   expect(await statusFile()).toEqual({ state: 'disconnected', detail: 'closed', updatedAt: now().toISOString() });
   await expect(client.join(link, 'Codex')).rejects.toMatchObject({ code: 'not_connected' });
 });
 it('stops a connected session once on close', async () => {
   await connected(); await client.close(); await client.close();
-  expect(session.stop).toHaveBeenCalledTimes(1); expect(await readStateFile(dir, 'session.json')).toBeNull();
+  expect(session.stop).toHaveBeenCalledTimes(1); expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
   expect((await statusFile())?.channelName).toBe('Release room');
 });
 it('never reuses stale credentials or saved confirmation on process start', async () => {
   await ensureStateDir(dir); await writeStateFile(dir, 'session.json', credentials);
-  await writeStateFile(dir, 'join.json', { ...created, link });
-  expect(await client.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
-  expect(await readStateFile(dir, 'session.json')).toBeNull();
+  await writeJoinFile(filesForDir(dir), link, { ...created, link });
+  expect(await client.status()).toMatchObject({ state: 'idle', unread: 0, listeningMode: 'sync' });
+  expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
   await client.join(link, 'Codex'); expect(joinApi.requestJoin).toHaveBeenCalledTimes(1); expect(startSession).not.toHaveBeenCalled();
 });
 it('counts all unread kinds', async () => {
-  await connected(); await appendInbox(dir, toInboxEntry(message('$message')));
-  await appendInbox(dir, { ...toInboxEntry(message('$event')), kind: 'event' });
+  await connected(); await appendInbox(channelDir(), toInboxEntry(message('$message')));
+  await appendInbox(channelDir(), { ...toInboxEntry(message('$event')), kind: 'event' });
   expect((await client.status()).unread).toBe(2);
 });
-it('replaces a pending link without stale failure overwriting the new attempt', async () => {
+it('keeps different pending links independent when one expires', async () => {
   await client.join(link, 'Codex'); const oldPoll = poll;
   poll = deferred<AgentCredentials>();
   const nextLink = 'https://khala.example/join/ijklmnop';
@@ -227,7 +223,7 @@ it('replaces a pending link without stale failure overwriting the new attempt', 
   expect(await client.join(nextLink, 'Codex')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
   expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, {});
-  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(false);
   oldPoll.reject(new KhalaClientError('join_expired')); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
 });
@@ -238,13 +234,13 @@ it('stops a session that finishes starting after close without reviving state', 
   await client.close(); starting.resolve(session);
   await vi.waitFor(() => expect(session.stop).toHaveBeenCalledTimes(1));
   expect(joinApi.reportReady).not.toHaveBeenCalled();
-  expect(await readStateFile(dir, 'session.json')).toBeNull(); expect((await statusFile())?.detail).toBe('closed');
+  expect(await readStateFile(channelDir(), 'session.json')).toBeNull(); expect((await statusFile())?.detail).toBe('closed');
 });
 it('contains a session startup error without leaking its token', async () => {
   startSession.mockRejectedValue(new Error('SECRET'));
   await client.join(link, 'Codex'); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await statusFile())?.state).toBe('disconnected'));
-  expect((await statusFile())?.detail).toBe('internal_error'); expect(await readStateFile(dir, 'session.json')).toBeNull();
+  expect((await statusFile())?.detail).toBe('internal_error'); expect(await readStateFile(channelDir(), 'session.json')).toBeNull();
 });
 it('falls back to the room id and propagates injected fetch and invite timeout', async () => {
   const fakeFetch = vi.fn<typeof fetch>();
@@ -361,7 +357,7 @@ const modeCommand = (content: unknown = { v: 1, agent: credentials.userId, mode:
 it('applies owner commands, echoes member state and keeps commands out of the inbox', async () => {
   await connected(); modeHandler!(modeCommand());
   expect((await client.status()).listeningMode).toBe('async');
-  expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', updatedAt: now().toISOString() });
+  expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', updatedAt: now().toISOString() });
   expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async', expect.any(AbortSignal));
   expect(await entries()).toEqual([]); expect(waker).not.toHaveBeenCalled();
 });
@@ -373,7 +369,7 @@ it.each([
   { ...modeCommand(), roomId: '!other:s' },
 ])('ignores unauthorized or malformed mode command %j', async command => {
   await connected(); modeHandler!(command); await client.status();
-  expect(await readStateFile(dir, 'mode.json')).toBeNull();
+  expect(await readStateFile(channelDir(), 'mode.json')).toBeNull();
   expect(session.publishListeningMode).not.toHaveBeenCalled(); expect(await entries()).toEqual([]);
 });
 it('ignores all commands without an inviter', async () => {
@@ -392,8 +388,8 @@ it('buffers commands delivered during join until inviter capture is complete', a
 it('starts a fresh membership in sync', async () => {
   await connected(); modeHandler!(modeCommand()); await client.status();
   await client.join('https://khala.example/join/ijklmnop', 'Codex');
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
-  expect((await client.status()).listeningMode).toBe('sync');
+  await vi.waitFor(() => expect(session.stop).toHaveBeenCalledOnce());
+  await vi.waitFor(async () => expect((await client.status()).listeningMode).toBe('sync'));
 });
 
 it('preserves message and command arrival order while joining', async () => {
@@ -436,11 +432,11 @@ it('cancels a stalled member echo when closing without waiting for its deadline'
 it('waits for auto-confirmed handshake and preserves local credentials', async () => {
   joinApi.requestJoin.mockResolvedValueOnce({ ...created, autoConfirmed: true });
   poll.resolve({ ...credentials, transport: 'local' });
-  expect(await client.join(link, 'Codex')).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect(await client.join(link, 'Codex')).toEqual({ state: 'connected', channelName: 'Release room', channels: [credentials.roomId] });
   expect((await client.status()).state).toBe('connected');
   const calls = [joinApi.pollJoin, startSession, session.onMessage, joinApi.reportReady, session.waitForInvite, session.join].map(fn => vi.mocked(fn).mock.invocationCallOrder[0]!);
   expect(calls).toEqual([...calls].sort((a, b) => a - b));
-  expect(await readStateFile(dir, 'session.json')).toEqual({ ...credentials, transport: 'local' });
+  expect(await readStateFile(channelDir(), 'session.json')).toEqual({ ...credentials, transport: 'local' });
 });
 it('returns an auto-confirmed fallback, coalesces pending joins and connects later', async () => {
   await client.close();
@@ -524,7 +520,7 @@ it('restores the listening mode from the joined member rather than stale process
   session.listeningMode = () => 'async';
   await connected();
   expect((await client.status()).listeningMode).toBe('async');
-  expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async' });
+  expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'async' });
 });
 
 it('replaces a rejoin.json that parses but holds an invalid secret instead of failing every start', async () => {
@@ -586,6 +582,8 @@ it('tells delivery frames and khala_read who "you" are, and follows a rename (#1
   await connected();
   expect(await statusFile()).toMatchObject({ state: 'connected', displayName: 'kev-Codex' });
   async function frame(): Promise<string> {
+    // Part 3 owns hook channel enumeration; provide the legacy fixture for rendering here.
+    await fs.copyFile(path.join(channelDir(), 'inbox.jsonl'), path.join(dir, 'inbox.jsonl'));
     let out = '';
     await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
       { stdout: { write: (text: string) => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
@@ -636,10 +634,213 @@ it('a local owner-authored rename cascade still updates you=', async () => {
   handler!({ ...message('$cascade', '@khala_owner:local'), type: 'm.room.member',
     content: { membership: 'join', displayname: 'kevin-Codex', user: credentials.userId }, previousContent: { membership: 'join', displayname: 'kev-Codex' } });
   await vi.waitFor(async () => expect(await statusFile()).toMatchObject({ displayName: 'kevin-Codex' }));
+  await fs.copyFile(path.join(channelDir(), 'inbox.jsonl'), path.join(dir, 'inbox.jsonl'));
   let out = '';
   await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
     { stdout: { write: (text: string) => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
   expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain(' you="kevin-Codex" ');
+});
+
+async function multiClient(names = ['A', 'B']) {
+  await client.close();
+  const controls = names.map((name, index) => {
+    const creds = { ...credentials, roomId: `!${name}:local`, userId: `@agent-${index}:local`, transport: 'local' as const };
+    let receive: ((message: SessionMessage) => void) | undefined;
+    let mode: ((command: SessionModeCommand) => void) | undefined;
+    let ended: ((reason: 'removed') => void) | undefined;
+    const ownSession = { ...session, userId: creds.userId,
+      displayName: vi.fn(() => `owner-Codex-${index}`), roomName: vi.fn(() => name),
+      send: vi.fn(async () => ({ eventId: `$sent-${name}` })), sendChannelEvent: vi.fn(async () => ({ eventId: `$event-${name}` })),
+      stop: vi.fn(async () => {}), listeningMode: vi.fn(() => 'sync' as const),
+      onMessage: vi.fn(callback => { receive = callback; return () => {}; }) as typeof session.onMessage,
+      onListeningModeCommand: vi.fn(callback => { mode = callback; return () => {}; }) as typeof session.onListeningModeCommand,
+      onEnded: (callback: (reason: 'removed') => void) => { ended = callback; return () => {}; },
+    };
+    return { creds, session: ownSession, receive: (input: SessionMessage) => receive!(input), mode: (input: SessionModeCommand) => mode!(input), ended: () => ended!('removed') };
+  });
+  const api = {
+    requestJoin: vi.fn(async (input: Parameters<typeof requestJoin>[0]) => ({ ...created, joinId: input.link, autoConfirmed: true as const })),
+    pollJoin: vi.fn(async (input: Parameters<typeof pollJoin>[0]) => controls[Number(input.joinId.split('/').at(-1))]!.creds),
+    reportReady: vi.fn(async () => {}),
+  };
+  const start = vi.fn(async (creds: AgentCredentials) => controls.find(item => item.creds.roomId === creds.roomId)!.session);
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: api, startSession: start });
+  const files = filesForDir(resolveStateDir('codex', 'multi', { XDG_STATE_HOME: root }));
+  const join = (index: number) => client.join(`http://127.0.0.1:47830/join/${index}`, 'Codex');
+  const inbox = async (index: number) => {
+    await client.status();
+    try { return (await fs.readFile(channelFiles(files, controls[index]!.creds.roomId).inbox, 'utf8')).trim().split('\n').map(line => JSON.parse(line)); }
+    catch { return []; }
+  };
+  return { controls, api, files, join, inbox, start };
+}
+
+it('joins different channels concurrently, retains intake, and requires explicit routing', async () => {
+  const f = await multiClient();
+  const [a, b] = await Promise.all([f.join(0), f.join(1)]);
+  expect(a.state).toBe('connected'); expect(b.state).toBe('connected');
+  f.controls[0]!.receive({ ...message('$after-B'), roomId: f.controls[0]!.creds.roomId });
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$after-B']);
+  expect((await client.status()).channels).toEqual([
+    expect.objectContaining({ channel: 'A', state: 'connected', you: 'owner-Codex-0', unread: 1 }),
+    expect.objectContaining({ channel: 'B', state: 'connected', you: 'owner-Codex-1', unread: 0 }),
+  ]);
+  const channels = [{ channel: 'A', roomId: '!A:local' }, { channel: 'B', roomId: '!B:local' }];
+  for (const operation of [() => client.send('wrong'), () => client.read(20), () => client.sendChannelEvent({ v: 1, kind: 'test', summary: 'test', body: 'test' })]) {
+    await expect(operation()).rejects.toMatchObject({ code: 'channel_required', extra: { channels } });
+  }
+  expect(f.controls[0]!.session.send).not.toHaveBeenCalled();
+  expect(f.controls[1]!.session.send).not.toHaveBeenCalled();
+  await client.send('routed', '#b');
+  expect(f.controls[1]!.session.send).toHaveBeenCalledExactlyOnceWith('!B:local', 'routed');
+  expect((await client.status('!A:local')).channelName).toBe('A');
+});
+
+it('leaves only the selected channel and rejects stale callbacks and credentials', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  expect(await client.leave('A')).toEqual({ left: 'A', channels: ['!B:local'] });
+  expect(f.controls[0]!.session.stop).toHaveBeenCalledOnce();
+  expect(f.controls[1]!.session.stop).not.toHaveBeenCalled();
+  await expect(fs.stat(channelFiles(f.files, '!A:local').dir)).rejects.toMatchObject({ code: 'ENOENT' });
+  f.controls[0]!.receive({ ...message('$stale'), roomId: '!A:local' });
+  f.controls[0]!.ended();
+  await expect(client.send('stale', 'A')).rejects.toMatchObject({ code: 'channel_unknown' });
+  await client.send('only-B');
+  expect(f.controls[1]!.session.send).toHaveBeenCalledWith('!B:local', 'only-B');
+  expect((await client.status()).state).toBe('connected');
+});
+
+it('ends one removed session while another remains connected', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  f.controls[0]!.ended();
+  await vi.waitFor(async () => expect((await client.status('A')).state).toBe('disconnected'));
+  expect((await client.status('A')).detail).toBe('removed');
+  expect((await client.status('B')).state).toBe('connected');
+  expect((await client.status()).state).toBe('connected');
+  await expect(client.send('removed', 'A')).rejects.toMatchObject({ code: 'not_connected' });
+});
+
+it('drops cross-room messages and cross-room or cross-agent mode commands', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  f.controls[0]!.receive({ ...message('$wrong-room'), roomId: '!B:local' });
+  f.controls[0]!.mode({ ...modeCommand(), roomId: '!B:local', content: { v: 1, agent: f.controls[0]!.creds.userId, mode: 'async' } });
+  f.controls[0]!.mode({ ...modeCommand(), roomId: '!A:local', content: { v: 1, agent: f.controls[1]!.creds.userId, mode: 'async' } });
+  expect(await f.inbox(0)).toEqual([]); expect(await f.inbox(1)).toEqual([]);
+  for (const room of ['!A:local', '!B:local']) expect(await readStateFile(channelFiles(f.files, room).dir, 'mode.json')).toEqual({ mode: 'sync' });
+  f.controls[0]!.mode({ ...modeCommand(), roomId: '!A:local', content: { v: 1, agent: f.controls[0]!.creds.userId, mode: 'async' } });
+  await vi.waitFor(async () => expect((await client.status('A')).listeningMode).toBe('async'));
+  expect((await client.status('B')).listeningMode).toBe('sync');
+});
+
+it('coalesces same-link joins without duplicating entries and preserves one root secret', async () => {
+  const f = await multiClient();
+  await Promise.all([f.join(0), f.join(0), f.join(1)]);
+  expect(f.api.requestJoin).toHaveBeenCalledTimes(2);
+  const requests = f.api.requestJoin.mock.calls.map(([input]) => input);
+  expect(requests[0]!.rejoinSecret).toBe(requests[1]!.rejoinSecret);
+  expect((await client.status()).channels).toHaveLength(2);
+  expect((await f.join(0)).state).toBe('connected');
+  expect(f.api.requestJoin).toHaveBeenCalledTimes(2);
+});
+
+it('replaces credentials for the same room through another link without losing backlog', async () => {
+  const f = await multiClient(['A']); await f.join(0);
+  f.controls[0]!.receive({ ...message('$backlog'), roomId: '!A:local' }); await f.inbox(0);
+  const freshCredentials = { ...f.controls[0]!.creds, accessToken: 'fresh' };
+  f.api.pollJoin.mockResolvedValueOnce(freshCredentials);
+  let freshReceive!: (message: SessionMessage) => void;
+  const freshSession = { ...f.controls[0]!.session, stop: vi.fn(async () => {}),
+    onMessage: vi.fn((callback: (message: SessionMessage) => void) => { freshReceive = callback; return () => {}; }) };
+  f.start.mockResolvedValueOnce(freshSession);
+  expect((await client.join('http://127.0.0.1:47830/join/replacement', 'Codex')).state).toBe('connected');
+  expect(f.controls[0]!.session.stop).toHaveBeenCalledOnce();
+  expect((await client.status()).channels).toHaveLength(1);
+  expect(f.start).toHaveBeenLastCalledWith(freshCredentials, { checkRemoved: expect.any(Function) });
+  f.controls[0]!.receive({ ...message('$stale-session'), roomId: '!A:local' });
+  freshReceive({ ...message('$fresh-session'), roomId: '!A:local' });
+  expect((await f.inbox(0)).map(item => item.eventId)).toEqual(['$backlog', '$fresh-session']);
+  expect(freshSession.stop).not.toHaveBeenCalled();
+});
+
+it('reserves capacity across concurrent links and stops all sessions on close', async () => {
+  const f = await multiClient(Array.from({ length: 17 }, (_, index) => `C${index}`));
+  const results = await Promise.allSettled(Array.from({ length: 17 }, (_, index) => f.join(index)));
+  expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(16);
+  expect(results.find(item => item.status === 'rejected')).toMatchObject({ reason: { code: 'channel_limit' } });
+  expect((await client.status()).channels).toHaveLength(16);
+  await client.close();
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') expect(f.controls[index]!.session.stop).toHaveBeenCalledOnce();
+    else expect(f.controls[index]!.session.stop).not.toHaveBeenCalled();
+  });
+  expect(await readStateFile(f.files.dir, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'closed' });
+});
+
+it('migrates legacy backlog before clearing credentials and preserves it on restart and rejoin', async () => {
+  const f = await multiClient(['A']);
+  await ensureStateDir(f.files.dir);
+  await writeStateFile(f.files.dir, 'session.json', f.controls[0]!.creds);
+  await writeStateFile(f.files.dir, 'status.json', { state: 'connected', channelName: 'A', updatedAt: now().toISOString() });
+  await appendInbox(f.files.dir, toInboxEntry({ ...message('$legacy'), roomId: '!A:local' }));
+  await writeStateFile(f.files.dir, 'cursor.json', { lastDeliveredEventId: null, deliveredCount: 0 });
+  const secret = 'S'.repeat(43);
+  await writeStateFile(f.files.dir, 'rejoin.json', { secret });
+  await f.join(0);
+  expect((await f.inbox(0)).map(item => item.eventId)).toEqual(['$legacy']);
+  expect((await client.status()).unread).toBe(1);
+  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'cursor.json')).toMatchObject({ deliveredCount: 0 });
+  expect(await readStateFile(f.files.dir, 'session.json')).toBeNull();
+  expect(f.api.requestJoin.mock.calls[0]![0].rejoinSecret).toBe(secret);
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
+    joinApi: f.api, startSession: async () => f.controls[0]!.session });
+  await client.status();
+  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'session.json')).toBeNull();
+  await f.join(0);
+  expect((await client.status()).unread).toBe(1);
+  expect((await f.inbox(0)).map(item => item.eventId)).toEqual(['$legacy']);
+  expect(f.api.requestJoin.mock.calls.at(-1)![0].rejoinSecret).toBe(secret);
+});
+
+it('rejoins an ended channel and persisted channels when all sixteen slots are occupied', async () => {
+  const f = await multiClient(Array.from({ length: 16 }, (_, index) => `C${index}`));
+  await Promise.all(f.controls.map((_, index) => f.join(index)));
+  f.controls[0]!.ended();
+  await vi.waitFor(async () => expect((await client.status('C0')).state).toBe('disconnected'));
+  expect((await f.join(0)).state).toBe('connected');
+  expect((await client.status()).channels).toHaveLength(16);
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api,
+    startSession: async creds => f.controls.find(item => item.creds.roomId === creds.roomId)!.session });
+  await Promise.all(f.controls.map((_, index) => f.join(index)));
+  expect((await client.status()).channels).toHaveLength(16);
+  expect((await client.status()).channels!.every(channel => channel.state === 'connected')).toBe(true);
+});
+
+it('keeps a failed leave selectable so removal can be retried', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  const remove = vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('disk failure'));
+  try {
+    await expect(client.leave('A')).rejects.toThrow('disk failure');
+    expect((await client.status('A')).state).toBe('disconnected');
+    expect((await client.status('B')).state).toBe('connected');
+    expect(await client.leave('A')).toEqual({ left: 'A', channels: ['!B:local'] });
+  } finally { remove.mockRestore(); }
+});
+
+it('close drains a concurrent leave and keeps the root closed marker', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  const stopping = deferred<void>();
+  f.controls[0]!.session.stop.mockImplementationOnce(() => stopping.promise);
+  const leaving = client.leave('A');
+  await vi.waitFor(() => expect(f.controls[0]!.session.stop).toHaveBeenCalledOnce());
+  let finished = false;
+  const closing = client.close().then(() => { finished = true; });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(finished).toBe(false);
+  stopping.resolve();
+  await Promise.all([leaving, closing]);
+  expect(await readStateFile(f.files.dir, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'closed' });
 });
 
 it('reports a removed hosted session as disconnected and rejects subsequent sends', async () => {
@@ -675,187 +876,190 @@ it('returns not_connected when authoritative removal ends a failed send', async 
 });
 
 
-it.each([['codex', 'matrix'], ['claude', 'matrix'], ['codex', 'local'], ['claude', 'local']] as const)('restores %s %s transport and wake intake after close without another join', async (harness, transport) => {
-  if (harness === 'claude') {
-    await client.close();
-    dir = resolveStateDir(harness, 'test', { XDG_STATE_HOME: root });
-    client = createKhalaAgentClient({ harness, sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+it.each([false, true])('legacy leave preserves root identity and other channels (collision=%s)', async collision => {
+  await client.close();
+  const files = filesForDir(dir);
+  const other = channelFiles(files, '!other:s');
+  await ensureStateDir(other.dir);
+  await writeStateFile(other.dir, 'channel.json', { roomId: '!other:s', channelName: 'Other' });
+  await fs.writeFile(other.inbox, 'other backlog\n');
+  if (collision) {
+    const nested = channelFiles(files, credentials.roomId);
+    await ensureStateDir(nested.dir);
+    await writeStateFile(nested.dir, 'channel.json', { roomId: credentials.roomId, channelName: 'Legacy' });
+    await fs.writeFile(nested.inbox, 'nested backlog\n');
   }
-  const original = transport === 'local' ? { ...credentials, transport: 'local' as const } : credentials;
-  poll.resolve(original);
-  await connected();
-  await client.close();
-  expect(await readStateFile(dir, 'session.json')).toBeNull();
-  expect((await fs.stat(path.join(dir, 'resume.json'))).mode & 0o777).toBe(0o600);
-  joinApi.requestJoin.mockClear();
-  joinApi.pollJoin.mockClear();
-  joinApi.reportReady.mockClear();
-  const refreshed = { ...credentials, deviceId: 'fresh-device', accessToken: 'REFRESHED' };
-  const fetch = vi.fn(async () => Response.json(refreshed));
-  client = createKhalaAgentClient({ harness, sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch, onInboxAppend: waker });
-  await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
-  expect(joinApi.requestJoin).not.toHaveBeenCalled();
-  expect(joinApi.pollJoin).not.toHaveBeenCalled();
-  expect(joinApi.reportReady).not.toHaveBeenCalled();
-  expect(startSession).toHaveBeenLastCalledWith(transport === 'local' ? original : refreshed, expect.any(Object));
-  if (transport === 'local') expect(fetch).not.toHaveBeenCalled();
-  else {
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch).toHaveBeenNthCalledWith(1, new URL('/api/agent/session/resume', created.origin), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
-    expect(fetch).toHaveBeenNthCalledWith(2, new URL('/_matrix/client/v3/logout', credentials.homeserver), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
+  const secret = 'S'.repeat(43);
+  await writeStateFile(dir, 'rejoin.json', { secret });
+  await writeStateFile(dir, 'status.json', { channelName: 'Legacy' });
+  await fs.writeFile(files.inbox, JSON.stringify({ roomId: credentials.roomId }) + '\n');
+  await fs.writeFile(path.join(dir, 'activity.json'), JSON.stringify({ alive: true }));
+  await fs.writeFile(path.join(dir, 'watcher.json'), JSON.stringify({ armed: true }));
+  const savedJoin = { ...created, link: 'https://khala.example/join/pending9' };
+  await writeJoinFile(files, savedJoin.link, savedJoin);
+  // Model a concurrent legacy writer after migration, keeping both layouts discoverable.
+  vi.mocked(migrateLegacy).mockResolvedValueOnce('none');
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  await client.leave('Legacy');
+  expect(await readStateFile(dir, 'rejoin.json')).toEqual({ secret });
+  expect(await readStateFile(dir, 'activity.json')).toEqual({ alive: true });
+  expect(await readStateFile(dir, 'watcher.json')).toEqual({ armed: true });
+  expect(await readJoinFile(files, savedJoin.link)).toMatchObject({ link: savedJoin.link });
+  expect(await fs.readFile(other.inbox, 'utf8')).toBe('other backlog\n');
+  if (collision) {
+    await expect(fs.stat(channelFiles(files, credentials.roomId).dir)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await fs.readFile(files.inbox, 'utf8')).toContain(credentials.roomId);
+  } else {
+    await expect(fs.stat(files.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
   }
-  handler!(message('$resumed'));
-  await vi.waitFor(() => expect(waker).toHaveBeenCalledOnce());
 });
 
-it.each(['missing', 'invalid', 'changed', 'workspace', 'left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'])(
-  'does not restore authorization after %s', async reason => {
-    await connected();
-    await client.close();
-    if (reason === 'missing') await fs.unlink(path.join(dir, 'rejoin.json'));
-    if (reason === 'invalid' || reason === 'changed') await writeStateFile(dir, 'rejoin.json', { secret: reason === 'invalid' ? 'bad' : 'X'.repeat(43) });
-    if (reason === 'workspace') {
-      const saved = (await readStateFile<Record<string, unknown>>(dir, 'resume.json'))!;
-      await writeStateFile(dir, 'resume.json', { ...saved, workspace: '/another-workspace' });
+it('migrates colliding legacy unread history before leave without deleting sibling state', async () => {
+  const files = filesForDir(dir);
+  const nested = channelFiles(files, credentials.roomId);
+  const other = channelFiles(files, '!other:s');
+  for (const [target, roomId, channelName] of [[nested, credentials.roomId, 'A'], [other, '!other:s', 'B']] as const) {
+    await ensureStateDir(target.dir);
+    await writeStateFile(target.dir, 'channel.json', { roomId, channelName });
+  }
+  for (const id of ['$old', '$overlap']) await appendInbox(nested.dir, toInboxEntry(message(id)));
+  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$old', deliveredCount: 1 });
+  await writeStateFile(nested.dir, 'mode.json', { mode: 'async' });
+  for (const id of ['$root-read', '$overlap', '$new']) await appendInbox(dir, toInboxEntry(message(id)));
+  await writeStateFile(dir, 'session.json', credentials);
+  await writeStateFile(dir, 'cursor.json', { lastDeliveredEventId: '$root-read', deliveredCount: 1 });
+  await writeStateFile(dir, 'mode.json', { mode: 'sync' });
+  const secret = 'S'.repeat(43);
+  await writeStateFile(dir, 'rejoin.json', { secret });
+  const status = await client.status();
+  expect(status.channels).toHaveLength(2);
+  expect(status.channels).toEqual(expect.arrayContaining([expect.objectContaining({ channel: 'A', unread: 2, listeningMode: 'async' })]));
+  expect((await fs.readFile(nested.inbox, 'utf8')).trim().split('\n').map(line => JSON.parse(line).eventId)).toEqual(['$old', '$overlap', '$new']);
+  expect(await readStateFile(nested.dir, 'cursor.json')).toMatchObject({ deliveredCount: 1 });
+  await client.leave('A');
+  expect(await readStateFile(dir, 'rejoin.json')).toEqual({ secret });
+  expect(await readStateFile(other.dir, 'channel.json')).toMatchObject({ roomId: '!other:s' });
+});
+
+async function restartMulti(f: Awaited<ReturnType<typeof multiClient>>, env: NodeJS.ProcessEnv = { XDG_STATE_HOME: root }) {
+  await client.close();
+  f.api.requestJoin.mockClear(); f.api.pollJoin.mockClear(); f.start.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env, now, joinApi: f.api, startSession: f.start });
+  await client.resume!();
+  await vi.waitFor(async () => {
+    for (const control of f.controls) {
+      const channel = channelFiles(f.files, control.creds.roomId).dir;
+      const record = await readStateFile(channel, 'resume.json');
+      if (record) expect(await readStateFile(channel, 'status.json')).not.toHaveProperty('detail', 'closed');
     }
-    if (['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'].includes(reason)) await writeStateFile(dir, 'status.json', { state: 'disconnected', detail: reason });
-    startSession.mockClear();
-    client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
-    await client.resume!();
-    expect(startSession).not.toHaveBeenCalled();
-    expect((await client.status()).state).toBe(['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'].includes(reason) ? 'disconnected' : 'idle');
-  },
-);
-
-it('explicit leave clears resume authorization even after process close overwrites status', async () => {
-  await connected();
-  await client.leave!();
-  await client.close();
-  expect(await readStateFile(dir, 'resume.json')).toBeNull();
-  expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: expect.stringMatching(/left|removed/) });
-  startSession.mockClear();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
-  await client.resume!();
-  expect(startSession).not.toHaveBeenCalled();
-});
-
-it('owner removal clears resume authorization before close', async () => {
-  let ended!: (reason: 'removed') => void;
-  session.onEnded = fn => { ended = fn; return () => {}; };
-  await connected();
-  ended('removed');
-  await client.close();
-  expect(await readStateFile(dir, 'resume.json')).toBeNull();
-  expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: expect.stringMatching(/left|removed/) });
-  startSession.mockClear();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
-  await client.resume!();
-  expect(startSession).not.toHaveBeenCalled();
-});
-
-
-it.each([401, 403])('clears hosted resume authorization after terminal rejection %s', async code => {
-  await connected(); await client.close();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
-    fetch: vi.fn(async () => new Response('{}', { status: code })) });
-  await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
-  expect(await readStateFile(dir, 'resume.json')).toBeNull();
-});
-
-it('retains authorization after temporary hosted resume failure and restores on the next process', async () => {
-  await connected(); await client.close();
-  const fetch = vi.fn(async () => new Response('{}', { status: 503 }));
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
-  await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
-  expect(await readStateFile(dir, 'resume.json')).not.toBeNull();
-  await client.close();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
-    fetch: vi.fn(async () => Response.json({ ...credentials, deviceId: 'fresh', accessToken: 'NEW' })) });
-  await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
-});
-
-
-it('cancels a hosted resume whose response body stalls during shutdown', async () => {
-  await connected(); await client.close();
-  let responseSignal: AbortSignal | undefined;
-  const bodyStarted = deferred<void>();
-  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
-    responseSignal = init!.signal as AbortSignal;
-    return { ok: true, status: 200, json() { bodyStarted.resolve(); return new Promise(() => {}); } } as unknown as Response;
   });
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
-  await client.resume!();
-  await bodyStarted.promise;
-  await client.close();
-  expect(responseSignal!.aborted).toBe(true);
-  expect(await readStateFile(dir, 'resume.json')).not.toBeNull();
+  await vi.waitFor(async () => expect((await client.status()).channels?.some(item => item.state === 'joining')).toBe(false));
+}
+it('restores two local channels independently without consuming their single-use links', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  await restartMulti(f);
+  expect((await client.status()).channels?.map(item => item.state)).toEqual(['connected', 'connected']);
+  expect(f.api.requestJoin).not.toHaveBeenCalled(); expect(f.api.pollJoin).not.toHaveBeenCalled();
+  expect(f.start).toHaveBeenCalledTimes(2);
+});
+it('restores two hosted channels through fresh secret-confirmed joins without storing bearer credentials', async () => {
+  const f = await multiClient();
+  for (const control of f.controls) delete (control.creds as AgentCredentials).transport;
+  await Promise.all([f.join(0), f.join(1)]);
+  for (const control of f.controls) {
+    const saved = await readStateFile<Record<string, unknown>>(channelFiles(f.files, control.creds.roomId).dir, 'resume.json');
+    expect(saved).not.toHaveProperty('localCredentials'); expect(JSON.stringify(saved)).not.toContain('SECRET');
+  }
+  await restartMulti(f);
+  expect(f.api.requestJoin).toHaveBeenCalledTimes(2); expect(f.api.pollJoin).toHaveBeenCalledTimes(2);
+  expect((await client.status()).channels?.map(item => item.state)).toEqual(['connected', 'connected']);
+});
+it('leaving one channel only restores the other on the next startup', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  await client.leave('A'); await restartMulti(f);
+  expect((await client.status()).channels).toEqual([expect.objectContaining({ channel: 'B', state: 'connected' })]);
+  expect(f.start).toHaveBeenCalledTimes(1);
+});
+it('does not restore owner-removed channels', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  f.controls[0]!.ended();
+  await vi.waitFor(async () => expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).toBeNull());
+  await restartMulti(f); expect(f.start).toHaveBeenCalledTimes(1);
+});
+it.each(['missing', 'invalid', 'changed'])('does not restore with a %s rejoin secret', async kind => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]); await client.close();
+  if (kind === 'missing') await fs.rm(path.join(f.files.dir, 'rejoin.json'));
+  else await writeStateFile(f.files.dir, 'rejoin.json', { secret: kind === 'invalid' ? 'short' : 'z'.repeat(43) });
+  await restartMulti(f); expect(f.start).not.toHaveBeenCalled(); expect(f.api.requestJoin).not.toHaveBeenCalled();
+});
+it('does not restore authorization from another workspace', async () => {
+  const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
+  await restartMulti(f, { XDG_STATE_HOME: root, PWD: path.join(root, 'other-workspace') });
+  expect(f.start).not.toHaveBeenCalled();
+});
+it('never polls or starts a hosted session when the rejoin needs new owner approval', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); (f.api.requestJoin as Mock<typeof requestJoin>).mockResolvedValue(created);
+  await restartMulti(f); expect(f.api.pollJoin).not.toHaveBeenCalled(); expect(f.start).not.toHaveBeenCalled();
+  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).toBeNull();
+});
+it('retains authorization after transient hosted restoration failures and retries next startup', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); f.api.requestJoin.mockRejectedValueOnce(new KhalaClientError('internal_error', 'network'));
+  await restartMulti(f); expect(f.start).not.toHaveBeenCalled();
+  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).not.toBeNull();
+  await restartMulti(f); await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(1));
+});
+it('cancels a pending restoration request during shutdown', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close(); f.api.requestJoin.mockImplementation(() => new Promise(() => {}));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
+  const restoration = client.resume!();
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
+  await client.close(); await restoration;
+  expect((await client.status()).detail).toBe('closed');
 });
 
-
-it('coalesces a same-link join while startup restoration is still connecting', async () => {
-  await connected(); await client.close();
-  const response = deferred<Response>();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
-    fetch: vi.fn(() => response.promise) });
+it('preserves per-channel name metadata during startup and transient hosted failure', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const pending = deferred<Awaited<ReturnType<typeof requestJoin>>>();
+  (f.api.requestJoin as Mock<typeof requestJoin>).mockImplementation(() => pending.promise);
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
   await client.resume!();
-  const joining = client.join(link, 'Codex');
-  response.resolve(Response.json({ ...credentials, deviceId: 'fresh', accessToken: 'NEW' }));
-  expect(await joining).toEqual({ state: 'connected', channelName: 'Release room' });
-  expect(joinApi.requestJoin).toHaveBeenCalledOnce();
+  const directory = channelFiles(f.files, '!A:local').dir;
+  await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'joining', channelName: 'A', displayName: 'owner-Codex-0' }));
+  pending.reject(new KhalaClientError('internal_error', 'network'));
+  await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'network', channelName: 'A', displayName: 'owner-Codex-0' }));
+});
+it('delivers restored-channel wake entries without a tool call', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const wake = vi.fn();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(() => expect(f.controls[0]!.session.join).toHaveBeenCalledTimes(2));
+  f.controls[0]!.receive({ ...message('$restored-wake'), roomId: '!A:local' });
+  await vi.waitFor(() => expect(wake).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$restored-wake' })));
 });
 
-
-it('persists replacement credentials before revoking the old bearer and rejects replay', async () => {
-  await connected(); await client.close();
-  const oldRecord = await readStateFile<Record<string, unknown>>(dir, 'resume.json');
-  const refreshed = { ...credentials, deviceId: 'fresh', accessToken: 'NEW' };
-  let revoked = false;
-  const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
-    const token = new Headers(init?.headers).get('authorization');
-    if (String(url).endsWith('/logout')) {
-      expect(await readStateFile(dir, 'resume.json')).toMatchObject({ credentials: refreshed, retireToken: credentials.accessToken });
-      revoked = true;
-      return Response.json({});
-    }
-    return revoked && token === `Bearer ${credentials.accessToken}` ? new Response('{}', { status: 401 }) : Response.json(refreshed);
-  });
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+it('leaves a channel while restoration is requesting authorization without recreating its directory', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const pending = deferred<Awaited<ReturnType<typeof requestJoin>>>();
+  (f.api.requestJoin as Mock<typeof requestJoin>).mockImplementation(() => pending.promise);
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
   await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
-  expect(revoked).toBe(true);
-  expect(await readStateFile(dir, 'resume.json')).not.toHaveProperty('retireToken');
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
+  await client.leave('A'); pending.resolve({ ...created, autoConfirmed: true });
   await client.close();
-  // Replay the superseded authorization from a copied old resume record.
-  await writeStateFile(dir, 'resume.json', oldRecord);
-  startSession.mockClear();
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
-  await client.resume!();
-  await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'unauthorized' }));
-  expect(startSession).not.toHaveBeenCalled();
-  expect(await readStateFile(dir, 'resume.json')).toBeNull();
+  await expect(fs.stat(channelFiles(f.files, '!A:local').dir)).rejects.toMatchObject({ code: 'ENOENT' });
 });
-
-it('retries failed token retirement before minting another device on the next startup', async () => {
-  await connected(); await client.close();
-  const refreshed = { ...credentials, deviceId: 'fresh', accessToken: 'NEW' };
-  const fetch = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith('/logout')
-    ? new Response('{}', { status: 503 }) : Response.json(refreshed));
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as const)('forgets local restoration after terminal helper response %i', async (status, detail) => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  vi.mocked(f.controls[0]!.session.waitForInvite).mockRejectedValueOnce(Object.assign(new Error('helper rejected credentials'), { status }));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
   await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
-  expect(await readStateFile(dir, 'resume.json')).toMatchObject({ credentials: refreshed, retireToken: credentials.accessToken });
-  await client.close();
-  const next = { ...credentials, deviceId: 'next', accessToken: 'NEXT' };
-  const retry = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith('/logout') ? Response.json({}) : Response.json(next));
-  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch: retry });
-  await client.resume!();
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
-  expect(retry.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/_matrix/client/v3/logout', '/api/agent/session/resume', '/_matrix/client/v3/logout']);
-  expect(new Headers(retry.mock.calls[0]![1]!.headers).get('authorization')).toBe(`Bearer ${credentials.accessToken}`);
-  expect(new Headers(retry.mock.calls[2]![1]!.headers).get('authorization')).toBe('Bearer NEW');
-  expect(await readStateFile(dir, 'resume.json')).not.toHaveProperty('retireToken');
+  const directory = channelFiles(f.files, '!A:local').dir;
+  await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail }));
+  expect(await readStateFile(directory, 'resume.json')).toBeNull();
 });

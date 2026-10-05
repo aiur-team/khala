@@ -15,6 +15,7 @@ const fake = (): KhalaAgentClient => ({
   read: vi.fn(async () => ({ messages: [], nextBefore: '$next' })),
   send: vi.fn(async () => ({ eventId: '$sent' })),
   sendChannelEvent: vi.fn(async () => ({ eventId: '$event' })),
+  leave: vi.fn(async channel => ({ left: channel, channels: [] })),
   close: vi.fn(async () => {}),
 });
 const call = (name: string, args: unknown = {}) => ({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args, _meta: { threadId: '019a-thread' } } });
@@ -29,10 +30,10 @@ async function exchange(messages: unknown[], client: KhalaAgentClient | null = f
   return { responses: text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)), text, clientFor };
 }
 
-describe('five Khala tools through stdio', () => {
-  it('advertises exactly five strict schemas in order', async () => {
+describe('six Khala tools through stdio', () => {
+  it('advertises exactly six strict schemas in order', async () => {
     const { responses } = await exchange([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
-    expect(responses[0].result.tools.map((tool: { name: string }) => tool.name)).toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event']);
+    expect(responses[0].result.tools.map((tool: { name: string }) => tool.name)).toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
     expect(responses[0].result.tools.every((tool: { inputSchema: { additionalProperties: boolean } }) => tool.inputSchema.additionalProperties === false)).toBe(true);
   });
   it('returns confirmation instructions and forwards metadata and default label', async () => {
@@ -41,7 +42,7 @@ describe('five Khala tools through stdio', () => {
     expect(client.join).toHaveBeenCalledWith(link, 'Codex');
     expect(clientFor).toHaveBeenCalledWith({ threadId: '019a-thread' });
     expect(responses[0]).toEqual({ jsonrpc: '2.0', id: 7, result: {
-      content: [{ type: 'text', text: `Ask your human to open ${confirmUrl} and confirm. Then call khala_status until state is "connected".` }],
+      content: [{ type: 'text', text: `Ask your human to open ${confirmUrl} and confirm. Then repeat khala_join with the same link until state is "connected".` }],
       structuredContent: { state: 'awaiting_confirmation', confirmUrl },
     } });
   });
@@ -148,8 +149,8 @@ describe('channel event tool through stdio', () => {
   });
   it('advertises the exclusive object inputs and bounded optional prefix', async () => {
     const { responses } = await exchange([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
-    expect(responses[0].result.tools[4].inputSchema).toEqual({
-      type: 'object', properties: { event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
+    expect(responses[0].result.tools[5].inputSchema).toEqual({
+      type: 'object', properties: { channel: expect.objectContaining({ type: 'string', minLength: 1 }), event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
       required: [], additionalProperties: false,
       oneOf: [{ required: ['event'], not: { required: ['aiur'] } }, { required: ['aiur'], not: { required: ['event'] } }],
     });
@@ -162,7 +163,54 @@ it('renders an auto-confirmed fallback without a confirmation click', async () =
   client.join = vi.fn(async () => result);
   const { responses } = await exchange([call('khala_join', { link })], client);
   expect(responses[0].result).toEqual({
-    content: [{ type: 'text', text: 'Joining… call khala_status until state is "connected".' }],
+    content: [{ type: 'text', text: 'Joining… repeat khala_join with the same link until state is "connected".' }],
     structuredContent: result,
   });
+});
+
+it('keeps pending join guidance specific when another channel is connected', async () => {
+  const client = fake();
+  const { responses } = await exchange([call('khala_status'), call('khala_join', { link })], client);
+  expect(responses[0].result.structuredContent.state).toBe('connected');
+  expect(responses[1].result.structuredContent.state).toBe('awaiting_confirmation');
+  expect(responses[1].result.content[0].text).toContain('repeat khala_join with the same link');
+  expect(responses[1].result.content[0].text).not.toContain('call khala_status');
+});
+
+it('forwards channel selectors and exposes leave through stdio', async () => {
+  const client = fake();
+  const { responses } = await exchange([
+    call('khala_status', { channel: 'A' }), call('khala_read', { limit: 5, before: '$old', channel: '!B:local' }),
+    call('khala_send', { text: 'hello', channel: '#B' }),
+    call('khala_event', { event: { v: 1, kind: 'test', summary: 'test', body: 'test' }, channel: 'A' }),
+    call('khala_leave', { channel: 'A' }),
+  ], client);
+  expect(client.status).toHaveBeenCalledWith('A');
+  expect(client.read).toHaveBeenCalledWith(5, '$old', '!B:local');
+  expect(client.send).toHaveBeenCalledWith('hello', '#B');
+  expect(client.sendChannelEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 'test' }), 'A');
+  expect(client.leave).toHaveBeenCalledWith('A');
+  expect(responses[4].result.structuredContent).toEqual({ left: 'A', channels: [] });
+});
+
+it('retains resolver channel lists in both error representations', async () => {
+  const client = fake();
+  const channels = [{ channel: 'A', roomId: '!A:local' }, { channel: 'B', roomId: '!B:local' }];
+  for (const method of ['read', 'send', 'sendChannelEvent'] as const) vi.mocked(client[method]).mockRejectedValue(new KhalaClientError('channel_required', undefined, { channels }));
+  const { responses } = await exchange([call('khala_read'), call('khala_send', { text: 'hello' }),
+    call('khala_event', { event: { v: 1, kind: 'test', summary: 'test', body: 'test' } })], client);
+  for (const response of responses) {
+    expect(response.result.isError).toBe(true);
+    expect(response.result.structuredContent).toEqual({ error: 'channel_required', channels });
+    expect(JSON.parse(response.result.content[0].text)).toEqual({ error: 'channel_required', channels });
+  }
+});
+
+it.each(['khala_status', 'khala_read', 'khala_send', 'khala_event', 'khala_leave'])('rejects malformed channel inputs for %s', async name => {
+  const client = fake();
+  for (const channel of ['', 4, null]) {
+    const { responses } = await exchange([call(name, { channel, ...(name === 'khala_send' ? { text: 'hello' } : {}),
+      ...(name === 'khala_event' ? { event: { v: 1, kind: 'test', summary: 'test', body: 'test' } } : {}) })], client);
+    expect(responses[0].error.code).toBe(-32602);
+  }
 });

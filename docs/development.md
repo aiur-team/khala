@@ -56,20 +56,19 @@ Initials are optional and non-unique. `POST /api/human/profile/initials` accepts
 Username changes rename up to 50 indexed agents still using the old default name, keeping their numeric suffix when available and allocating a free default otherwise. Custom names stay unchanged; the first username claim does not cascade. Cascade failures are isolated per agent. Pending join reservations expire with the join; expired staged joins release their claims when polled. A permanent name reservation is required before confirmed credentials become available. Failed old-name cleanup resumes when the rename is retried.
 
 
-MCP startup restores an authorized Codex or Claude session in the same workspace
-without a tool call, provided its private resume record and rejoin secret match.
-Local sessions reuse their helper credentials. Hosted sessions call
-`POST /api/agent/session/resume` with the indexed session bearer; the control plane
-rejects removed or revoked sessions and issues a fresh Matrix device for ephemeral
-crypto. The new bearer retains the original removal generation, including when
-removal races issuance. Transient failures retain resume authorization for the next
-startup. Codex arms its waker at startup; Claude still needs its agent to arm Monitor.
-Explicit client leave clears resume authorization. Old sessions need one authorized
-join to create the resume record. No helper wire-format change is required.
+MCP startup restores each authorized Codex or Claude channel in the same workspace
+without a tool call. Each channel's private resume record holds its last authorized
+link and label, bound to the workspace and a hash of the session's rejoin secret;
+hosted Matrix credentials are not retained after process exit. Hosted startup uses the existing
+join request with the saved secret and continues through poll, ready, invite and
+join only when control auto-confirms the rejoin. This uses the existing control
+route and its removal/revocation checks, including the existing `invalid_link`
+compatibility retry. A join requiring owner confirmation is not restored.
 
-Resume saves new hosted credentials before logging out the superseded Matrix
-device. Failed logout remains in the private resume record and is retried before
-another device is issued. Channel/display-name metadata survives eager restore
-and temporary failures so Claude's SessionStart hook can still remind the agent
-to arm Monitor or rejoin. The internal client `leave()` clears resume state;
-there is currently no public `khala_leave` MCP tool.
+Temporary failures retain authorization for the next startup. `khala_leave` clears
+only the selected channel's authorization; leaving or removing one channel does
+not prevent others from restoring. Channel/display-name metadata survives startup
+and temporary failures so Claude's SessionStart hook can remind the agent to arm
+Monitor. Codex arms its waker immediately; Claude still needs its agent to arm
+Monitor. Old sessions need one authorized join to create resume state. Local resume reuses saved helper credentials because local links are single-use;
+the helper wire format and compatibility layer are unchanged.

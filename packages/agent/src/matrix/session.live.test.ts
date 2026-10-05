@@ -143,7 +143,7 @@ describe.skipIf(process.env.KHALA_E2E_LIVE !== '1')('Node rust crypto against lo
     const history = await a2.history(r2, 30);
     await h2.page.evaluate(room => window.human.send(room, 'post'), r2);
     await eventually(async () => messages, ms => ms.some(m => m.body === 'post'));
-    record(14, 'pre undecryptable; post live decrypted; no crash', { history, live: messages, logs }, !history.messages.some(m => m.body === 'pre') && logs.some(line => /^history_undecryptable=[1-9]/.test(line)) && messages.some(m => m.body === 'post'));
+    record(14, 'pre undecryptable; post live decrypted; no crash', { history, live: messages, logs }, !history.messages.some(m => m.body === 'pre') && history.messages.some(m => m.content['com.khala.unavailable'] === true && m.body.includes('Encrypted message unavailable')) && logs.some(line => /^history_undecryptable=[1-9]/.test(line)) && messages.some(m => m.body === 'post'));
   }, 180_000);
 
   it('15: records restart with an existing identity and fresh device', async () => {

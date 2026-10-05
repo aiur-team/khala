@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { OwnerId } from '@khala/contracts/messaging/index';
 
@@ -7,7 +7,6 @@ export type AgentProvisionerOptions = Readonly<{
   passwordDerivationSecret: string; joinSecret: string; fetch?: typeof globalThis.fetch; timeoutMs?: number;
 }>;
 export type AgentProvisioner = {
-  resume?(input: Readonly<{ userId: string; roomId: string }>): Promise<{ kind: 'ok'; credentials: AgentCredentials } | { kind: 'unavailable' }>;
   agentUserId(joinId: string, ownerId: OwnerId): string;
   setDisplayName(userId: string, name: string): Promise<boolean>;
   provision(input: Readonly<{ joinId: string; identityId?: string; ownerId: OwnerId; label: string; roomId: string }>):
@@ -27,18 +26,6 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
     ...init, signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
   });
   return {
-    async resume({ userId, roomId }) {
-      try {
-        const deviceId = `KH_AGENT_${randomUUID()}`;
-        const password = createHmac('sha256', options.passwordDerivationSecret).update(`khala-agent-password-v1\0${userId}`).digest('base64url');
-        const response = await request('/_matrix/client/v3/login', { method: 'POST',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'm.login.password',
-            identifier: { type: 'm.id.user', user: userId }, password, device_id: deviceId, initial_device_display_name: 'Khala agent' }) });
-        const value = await response.json() as { user_id?: unknown; device_id?: unknown; access_token?: unknown };
-        if (!response.ok || value.user_id !== userId || value.device_id !== deviceId || typeof value.access_token !== 'string' || !value.access_token) return { kind: 'unavailable' };
-        return { kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId, roomId, deviceId, accessToken: value.access_token } };
-      } catch { return { kind: 'unavailable' }; }
-    },
     agentUserId: (joinId, ownerId) => agentIdentity(joinId, ownerId, options.serverName, options.joinSecret).userId,
     async setDisplayName(userId, name) {
       let token: string | null = null;

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
 import * as activityState from '../activity';
 import { appendEntries } from '../inbox';
-import { openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
+import { channelFiles, ensureStateDir, writeStateFile, writeStatus, openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
 import { createCodexWaker, type CodexWaker } from './codex';
 import { CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
@@ -200,4 +200,41 @@ it('does not queue when mode switches to async during evaluation', async () => {
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   await wait();
   expect(run).not.toHaveBeenCalled();
+});
+
+async function nestedChannel(roomId: string, mode: 'sync' | 'async' = 'sync') {
+  const nested = channelFiles(files, roomId);
+  await ensureStateDir(nested.dir);
+  await writeStateFile(nested.dir, 'channel.json', { roomId, joinedAt: new Date(time).toISOString() });
+  await writeJsonAtomic(nested.mode, { mode });
+  await saveSession(nested, { homeserver: 'https://example.test', userId: '@agent:example.test', roomId,
+    accessToken: 'SECRET', deviceId: 'device' });
+  await appendEntries(nested, [{ eventId: roomId, roomId, ts: new Date(time).toISOString(), sender: 'sender',
+    senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
+  return nested;
+}
+it('polls two channel inboxes and queues without a tool notification', async () => {
+  await nestedChannel('!a:test'); await nestedChannel('!b:test'); await activity('idle');
+  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run }, pollMs: 20, now: () => time });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  time += 60_000; await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  time += 60_000; await wait(); expect(run).toHaveBeenCalledTimes(2);
+});
+it('async channel updates neither suppress sync wakes nor bypass its cursor cap', async () => {
+  const sync = await nestedChannel('!sync:test'); const asyncChannel = await nestedChannel('!async:test', 'async');
+  await activity('idle'); start(); await wait(); expect(run).toHaveBeenCalledTimes(1);
+  time += 60_000; waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(2);
+  await writeJsonAtomic(asyncChannel.cursor, { lastDeliveredEventId: '!async:test', deliveredCount: 1 });
+  time += 60_000; waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(2);
+  await appendEntries(sync, [{ eventId: 'second', roomId: '!sync:test', ts: new Date(time).toISOString(),
+    sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
+  await writeJsonAtomic(sync.cursor, { lastDeliveredEventId: '!sync:test', deliveredCount: 1 });
+  waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(3);
+});
+it('clears pending when its channel leaves and wakes another channel immediately', async () => {
+  const first = await nestedChannel('!first:test'); await activity('idle'); start(); await wait();
+  expect(run).toHaveBeenCalledTimes(1);
+  await writeStatus(first, 'disconnected', 'left');
+  await nestedChannel('!second:test');
+  waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(2);
 });

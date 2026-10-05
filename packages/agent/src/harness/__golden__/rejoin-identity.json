@@ -5,7 +5,8 @@
     "status": {
       "state": "idle",
       "unread": 0,
-      "listeningMode": "sync"
+      "listeningMode": "sync",
+      "channels": []
     },
     "rejoin": {
       "validSecret": true
@@ -17,7 +18,8 @@
     "status": {
       "state": "idle",
       "unread": 0,
-      "listeningMode": "sync"
+      "listeningMode": "sync",
+      "channels": []
     },
     "rejoin": {
       "validSecret": true
@@ -29,7 +31,8 @@
     "status": {
       "state": "idle",
       "unread": 0,
-      "listeningMode": "sync"
+      "listeningMode": "sync",
+      "channels": []
     },
     "rejoin": {
       "validSecret": true
@@ -41,7 +44,8 @@
     "status": {
       "state": "idle",
       "unread": 0,
-      "listeningMode": "sync"
+      "listeningMode": "sync",
+      "channels": []
     },
     "rejoin": null
   }

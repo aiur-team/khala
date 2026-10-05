@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { decodeRoomId, type ControlStore, type RoomId } from '@khala/contracts/messaging/index';
-import type { AgentProvisioner } from './provision';
 import { readRoomRemovals } from '../invitations/removals';
 
 const key = (token: string) => `agent-session-status.v1.${createHash('sha256').update(token).digest('hex')}`;
@@ -95,55 +94,4 @@ export async function rememberRoomAgent(store: ControlStore, roomId: RoomId, own
     if (result.kind !== 'conflict') return false;
   }
   return false;
-}
-
-
-export const AGENT_SESSION_RESUME_PATH = '/api/agent/session/resume';
-/** Only a still-valid indexed bearer can mint a fresh ephemeral crypto device. */
-export function createAgentSessionResumeHandler(store: ControlStore, options: {
-  homeserverOrigin: string; provisioner: AgentProvisioner; fetch?: typeof globalThis.fetch;
-}) {
-  const fetch = options.fetch ?? globalThis.fetch;
-  const status = createAgentSessionStatusHandler(store);
-  return async (request: Request): Promise<Response> => {
-    const json = (code: number, value: unknown) => new Response(JSON.stringify(value), { status: code,
-      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
-    if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
-    const token = /^Bearer ([^\s]{1,4096})$/u.exec(request.headers.get('authorization') ?? '')?.[1];
-    if (!token) return json(401, { error: 'authentication_required' });
-    let issued: AgentCredentials | undefined;
-    let delivered = false;
-    try {
-      const read = await store.read<SessionIndex>(key(token));
-      if (read.kind === 'unavailable') return json(503, { error: 'unavailable' });
-      if (read.kind !== 'record') return json(401, { error: 'unauthorized' });
-      const session = read.record.value;
-      if (session.v !== 1 || !decodeRoomId(session.roomId).ok || typeof session.userId !== 'string' || !Number.isSafeInteger(session.generation)) return json(503, { error: 'unavailable' });
-      const check = async () => {
-        const response = await status(new Request(new URL(AGENT_SESSION_STATUS_PATH, request.url), { headers: { authorization: `Bearer ${token}` } }));
-        if (!response.ok) return 'unavailable';
-        return (await response.json() as { removed: boolean }).removed ? 'removed' : 'ok';
-      };
-      const before = await check();
-      if (before !== 'ok') return json(before === 'removed' ? 403 : 503, { error: before });
-      const whoami = await fetch(`${options.homeserverOrigin}/_matrix/client/v3/account/whoami`,
-        { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
-      if (whoami.status === 401) return json(401, { error: 'unauthorized' });
-      if (!whoami.ok) return json(503, { error: 'unavailable' });
-      if ((await whoami.json() as { user_id?: unknown }).user_id !== session.userId) return json(401, { error: 'unauthorized' });
-      const result = await options.provisioner.resume?.({ userId: session.userId, roomId: session.roomId });
-      if (result?.kind !== 'ok') return json(503, { error: 'unavailable' });
-      issued = result.credentials;
-      // Keep the original generation: a concurrent removal must invalidate this device too.
-      if (!await rememberAgentSession(store, result.credentials, session.generation)) return json(503, { error: 'unavailable' });
-      const after = await check();
-      if (after !== 'ok') return json(after === 'removed' ? 403 : 503, { error: after });
-      delivered = true;
-      return json(200, result.credentials);
-    } catch { return json(503, { error: 'unavailable' }); }
-    finally {
-      if (issued && !delivered) await fetch(`${options.homeserverOrigin}/_matrix/client/v3/logout`, { method: 'POST',
-        headers: { authorization: `Bearer ${issued.accessToken}` }, signal: AbortSignal.timeout(10_000) }).catch(() => {});
-    }
-  };
 }
