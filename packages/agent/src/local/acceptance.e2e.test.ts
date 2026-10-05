@@ -13,9 +13,11 @@ import { randomBytes, createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocalChannelCreated, LocalChannelSummary, LocalMember, ChannelSecrets } from '@khala/contracts/m1/local';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { ensureStateDir, channelFiles, readJson, writeJsonAtomic } from '../state';
 import { readEntries } from '../inbox';
@@ -198,7 +200,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const own = await armClaudeWake(world.claude);
     await send(world.claude, 'ae4-self');
     // Quiet window 1: own Claude message cannot wake Claude.
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await sleep(3000);
     expect(own.running, context('AE4')).toBe(true); own.kill();
     expect((await own.exited).code, context('AE4')).not.toBe(2);
     // Codex executable recording is intentionally isolated from the guard's
@@ -220,7 +222,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
       const selfBefore = (await codexCalls(wakeWorld)).length;
       expect(toolData(await wakeWorld.codex.call('khala_send', { text: message('ae4-self-codex') })), context('AE4')).toHaveProperty('eventId');
       // Quiet window 2: own Codex message cannot queue Codex.
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await sleep(3000);
       expect((await codexCalls(wakeWorld)).length, context('AE4')).toBe(selfBefore);
     } finally { await cleanupWorld(wakeWorld); }
 
@@ -287,7 +289,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await world.page!.getByRole('combobox', { name: 'Message', exact: true }).fill(`join me: ${contentLink}`);
     await world.page!.getByRole('button', { name: 'Send', exact: true }).click();
     // Quiet window 3 combines both async watchers and the AE9 content-link rule.
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await sleep(3000);
     expect(wake.running, context('AE6')).toBe(true); wake.kill();
     expect((await wake.exited).code, context('AE6')).not.toBe(2);
     expect(await deniedCodexCount(), context('AE6')).toBe(queues);
@@ -457,7 +459,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const ecosystem = await create('Ecosystem');
       const optimism = await create('Optimism');
       let agent = multi.claude;
-      type ChannelStatus = { channel: string; roomId: string; state: string; you: string; agentUserId: string; listeningMode: string };
+      type ChannelStatus = { channel: string; roomId: string; state: string; you: string; agentUserId: string; listeningMode: ListeningMode };
       const status = async () => toolData<{ channels: ChannelStatus[] }>(await agent.call('khala_status')).channels;
       const room = (target: LocalChannelCreated) => `/api/local/rooms/${enc(target.roomId)}`;
       const files = (target: LocalChannelCreated) => channelFiles(agent.files, target.roomId);
@@ -494,7 +496,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
         ]);
       }
       expect(original[0]!.agentUserId).not.toBe(original[1]!.agentUserId);
-      const setListening = async (target: LocalChannelCreated, next: 'sync' | 'steer' | 'async') => {
+      const setListening = async (target: LocalChannelCreated, next: ListeningMode) => {
         const id = original.find(entry => entry.roomId === target.roomId)!.agentUserId;
         expect((await admin(multi, 'POST', `/api/local/channels/${enc(target.roomId)}/mode`, {
           agent: id, mode: next, txnId: `mode-${target.name}-${next}`,
@@ -518,6 +520,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       expect(blocks.match(/<khala-channel-messages /g)).toHaveLength(2);
       expect(blocks).toContain(sync); expect(blocks).toContain(stopSteer); expect(blocks).not.toContain(steer);
       for (const name of ['Ecosystem', 'Optimism']) expect(blocks).toContain(`channel=\\"${name}\\" you=\\"kevin-Claude\\"`);
+      const groups = stop!.reason!.match(/<khala-channel-messages\b[\s\S]*?<\/khala-channel-messages>/g)!;
+      for (const [name, own, other] of [['Ecosystem', sync, stopSteer], ['Optimism', stopSteer, sync]]) {
+        const group = groups.find(block => block.includes(`channel="${name}"`));
+        expect(group).toContain(own); expect(group).not.toContain(other);
+      }
 
       const routed = message('multi-routed');
       expect(toolData(await agent.call('khala_send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
@@ -525,7 +532,20 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const unsent = message('multi-no-channel');
       expect(toolData(await agent.call('khala_send', { text: unsent }))).toMatchObject({ error: 'channel_required' });
       for (const target of [ecosystem, optimism]) expect(await history(target)).not.toContain(unsent);
+      for (const [target, own, other] of [[ecosystem, sync, stopSteer], [optimism, stopSteer, sync]] as const) {
+        const read = toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: target.name, limit: 100 }));
+        expect(read.messages.some(entry => entry.body === own)).toBe(true);
+        expect(read.messages.some(entry => entry.body === other)).toBe(false);
+        expect(read.messages.every(entry => entry.roomId === target.roomId)).toBe(true);
+      }
+      const eventText = message('multi-event');
+      expect(toolData(await agent.call('khala_event', { channel: 'Optimism',
+        event: { v: 1, kind: 'test', summary: eventText, body: eventText, status: 'success' },
+      }))).toHaveProperty('eventId');
+      expect(await history(optimism)).toContain(eventText); expect(await history(ecosystem)).not.toContain(eventText);
 
+      // A blocking Stop keeps the turn busy; the following quiet Stop completes it.
+      expect(await deliver(agent, 'Stop')).toBeNull();
       const steerWake = await armClaudeWake(agent);
       const awakeSteer = await human(optimism, 'multi-steer-wake');
       expect((await steerWake.exited).code).toBe(2);
@@ -536,9 +556,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       expect(await deliver(agent, 'Stop')).toBeNull();
       const wake = await armClaudeWake(agent);
       const asyncText = await human(optimism, 'multi-async');
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await sleep(3000);
       expect(wake.running).toBe(true);
       for (const event of ['PostToolUse', 'UserPromptSubmit', 'Stop'] as const) expect(await deliver(agent, event)).toBeNull();
+      const asyncRead = toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: 'Optimism' }));
+      expect(asyncRead.messages.some(entry => entry.body === asyncText)).toBe(true);
       // The same watcher must still notice the other channel's sync message.
       const stillSync = await human(ecosystem, 'multi-still-sync');
       expect((await wake.exited).code).toBe(2);
