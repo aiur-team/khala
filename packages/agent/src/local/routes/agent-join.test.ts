@@ -34,8 +34,8 @@ function fixture(opts: { username?: string; names?: string[]; left?: string[] } 
       displayName: m.displayname, membership: m.membership as 'invite' | 'join', kind: m.kind,
       ...(m.harness ? { harness: m.harness } : {}),
     })),
-    memberForSession: (_roomId: string, key: string) => {
-      const userId = sessions.get(key);
+    memberForSession: (id: string, key: string) => {
+      const userId = sessions.get(JSON.stringify([id, key]));
       const content = userId ? membership.get(userId) : undefined;
       return content ? { userId, displayName: content.displayname, listeningMode: content['com.khala.listening_mode'] } : undefined;
     },
@@ -56,7 +56,7 @@ function fixture(opts: { username?: string; names?: string[]; left?: string[] } 
       membership.set(content.user, content);
       return event;
     },
-    setMemberToken: async (id: string, userId: string, tokenSha256: string | null, sessionKey?: string) => { if (sessionKey) sessions.set(sessionKey, userId); tokens.push({ roomId: id, userId, tokenSha256 }); },
+    setMemberToken: async (id: string, userId: string, tokenSha256: string | null, sessionKey?: string) => { if (sessionKey) sessions.set(JSON.stringify([id, sessionKey]), userId); tokens.push({ roomId: id, userId, tokenSha256 }); },
   };
   const store = new Proxy(implemented, { get(target, key) {
     if (key in target) return Reflect.get(target, key);
@@ -145,6 +145,24 @@ describe('agentJoinRoutes', () => {
     expect(f.events.at(-1)?.content).toEqual({ user: before.userId, membership: 'invite', displayname: 'ReviewHelper', kind: 'agent', harness, invitedBy: LOCAL_OWNER_USER_ID, 'com.khala.listening_mode': 'async' });
     await requestJoin({ link: f.link(), harness, label: 'Codex', sessionId: 'thread-2', rejoinSecret: 'S'.repeat(43) }, { fetch: f.fetchVia });
     expect(f.store.members(roomId)).toHaveLength(3);
+  });
+
+  it('creates a fresh member in another room with the same session secret', async () => {
+    const f = fixture();
+    const identity = { harness: 'codex' as const, label: 'Codex', sessionId: 'thread-1', rejoinSecret: 'S'.repeat(43) };
+    const first = await pollJoin(await requestJoin({ link: f.link(), ...identity }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
+    const key = hash(JSON.stringify([identity.harness, identity.sessionId, identity.rejoinSecret]));
+    const otherRoomId = '!other:local';
+    expect(f.store.memberForSession(roomId, key)?.userId).toBe(first.userId);
+    expect(f.store.memberForSession(otherRoomId, key)).toBeUndefined();
+    const consumeLink = f.store.consumeLink;
+    f.store.consumeLink = async token => await consumeLink(token) ? { roomId: otherRoomId } : null;
+    f.store.hasChannel = id => id === roomId || id === otherRoomId;
+    const second = await pollJoin(await requestJoin({ link: f.link(), ...identity }, { fetch: f.fetchVia }), { fetch: f.fetchVia });
+    expect(second.roomId).toBe(otherRoomId);
+    expect(second.userId).not.toBe(first.userId);
+    expect(f.store.memberForSession(roomId, key)?.userId).toBe(first.userId);
+    expect(f.store.memberForSession(otherRoomId, key)?.userId).toBe(second.userId);
   });
 
   it('creates a separate member and leaves the original token alone when the rejoin secret is wrong or missing', async () => {
