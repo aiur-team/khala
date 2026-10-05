@@ -1,0 +1,8 @@
+{
+  "threads": [
+    "session"
+  ],
+  "notified": 1,
+  "stopped": 1,
+  "hasInboxCallback": true
+}
