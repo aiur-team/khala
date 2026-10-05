@@ -380,6 +380,27 @@ test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000 }, 
           const rect = element.getBoundingClientRect();
           return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
         }), true, 'rename/detail pane is above the roster');
+        // Verify remove-member placement from a fresh roster, independently of detail focus restoration.
+        await page.goto(`${server.resolvedUrls!.local[0]!}?theme=${theme}&crowd`);
+        await page.locator('#kh-head-btn').click();
+        const remove = page.getByRole('button', { name: 'Remove Theo Park', exact: true });
+        await scroller.evaluate(element => {
+          const row = element.querySelector('[aria-label="Remove Theo Park"]')!.closest('.kh-rrow')!;
+          (element as HTMLElement).style.maxHeight = `${row.getBoundingClientRect().bottom - element.getBoundingClientRect().top + 2}px`;
+          element.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        await remove.click();
+        const dialog = page.getByRole('dialog', { name: 'Remove Theo Park' });
+        await dialog.waitFor();
+        await page.waitForTimeout(200);
+        for (const button of await dialog.getByRole('button').all()) {
+          assert.equal(await button.evaluate(element => {
+            const rect = element.getBoundingClientRect();
+            return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+          }), true, 'remove-member popover actions escape the roster fade');
+        }
+        if (shots) await page.screenshot({ path: join(shots, `bottom-remove-menu-${width}-${theme}.png`) });
+        await dialog.getByRole('button', { name: 'Cancel' }).click();
         await page.close();
       }
     }
