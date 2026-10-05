@@ -1,3 +1,4 @@
+import { inviteRemovalState } from '../invitations/removals';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { decodeAgentCredentials, HARNESSES, validAgentSessionId, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 import { nameKey } from '@khala/contracts/m1/names';
@@ -163,5 +164,7 @@ export async function resolveJoinLink(input: Readonly<{ link: string; origin: st
   const invite = readInviteRecord(read.record.value);
   if (!invite || invite.inviteRefDigest !== digests.inviteRef(inviteRef)) return { kind: 'unavailable' };
   if (invite.status === 'revoked' || invite.expiresAt !== null && input.clock() >= Date.parse(invite.expiresAt)) return { kind: 'link_unavailable' };
+  const removal = await inviteRemovalState(input.store, invite);
+  if (removal !== 'allowed') return { kind: removal === 'revoked' ? 'link_unavailable' : 'unavailable' };
   return { kind: 'ok', roomId: invite.roomId, creatorOwnerId: invite.creatorOwnerId };
 }
