@@ -9,6 +9,7 @@ import type {
   IdentityPort,
   InviteState,
   OperationResult,
+  OwnerId,
   RoomId,
   ChannelSummary,
   ShareGrant,
@@ -59,6 +60,8 @@ export type GatewayRequest = Readonly<{
   deviceId: DeviceId;
   history: AdmissionHistory;
   inviteRevision: string;
+  removalGeneration?: number;
+  inviteCreatorOwnerId?: OwnerId;
 }>;
 
 /** Provider boundary: membership and key/history disclosure share one idempotent operation identity. */

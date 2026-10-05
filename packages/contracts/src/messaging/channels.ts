@@ -5,7 +5,7 @@ import {
   nullable, object, safeInteger,
 } from './decode';
 import { type EventRef, type MessageContent, type TimelineItem, readEventRef, readTimelineItem, verifyContentDigest } from './events';
-import { type EventId, type RoomId, readId } from './ids';
+import { type EventId, type RoomId, type OwnerId, readId } from './ids';
 import type { CallOptions, Disposer, OperationResult } from './outcomes';
 
 export type ChannelMembership = 'joining' | 'joined' | 'left' | 'revoked';
@@ -67,7 +67,15 @@ export type RoomRejection = ChannelRejection;
 
 export type IntroBatch = Readonly<{ roomId: RoomId; batchId: string; messages: readonly MessageContent[] }>;
 
+/** Creator authority and human-plus-agents removal, scoped to one channel. */
+export interface ChannelAdministrationPort {
+  creator(roomId: RoomId, options?: CallOptions): Promise<OperationResult<OwnerId, ChannelRejection>>;
+  removeHuman(input: Readonly<{ roomId: RoomId; ownerId: OwnerId }>, options?: CallOptions): Promise<OperationResult<null, ChannelRejection>>;
+}
+
 export interface ChannelPort {
+  readonly administration?: ChannelAdministrationPort;
+
   create(input: Readonly<{ operationId: string; title: string | null }>, options?: CallOptions): Promise<OperationResult<ChannelSummary, ChannelRejection>>;
   /** One `SendState` per message, in input order. Resuming the same `batchId` never duplicates messages. */
   prepareIntro(input: IntroBatch, options?: CallOptions): Promise<OperationResult<readonly SendState[], ChannelRejection>>;

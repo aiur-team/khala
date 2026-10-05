@@ -1,3 +1,4 @@
+import { readRoomRemovals } from './removals';
 import type {
   AdmissionRejection,
   CallOptions,
@@ -46,6 +47,10 @@ export async function shareInvite(
       ? ok(grant(runtime, inviteRef, invite.expiresAt))
       : rejected('operation_mismatch');
   }
+  const removals = await readRoomRemovals(runtime.store, input.roomId, options);
+  if (removals === 'unavailable') return unavailable();
+  const removal = removals?.owners[identity.principal.ownerId];
+  if (removal && !removal.complete) return rejected('forbidden');
   const expiresAt = runtime.inviteLifetimeMs === null ? null : new Date(runtime.clock() + runtime.inviteLifetimeMs).toISOString();
   const value: InviteRecord = {
     v: 1,
@@ -53,6 +58,7 @@ export async function shareInvite(
     creatorOwnerId: identity.principal.ownerId,
     inviteRefDigest: runtime.digests.inviteRef(inviteRef),
     policyRevision: 1,
+    removalGeneration: removals?.generation ?? 0,
     policy,
     status: 'active',
     expiresAt,
