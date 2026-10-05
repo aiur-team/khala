@@ -368,7 +368,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           status: { state: 'joining', updatedAt: now().toISOString() }, appends: Promise.resolve(), acceptEventKey: createEventKeyFilter() };
         attempts.set(link, attempt);
         try {
-          const created = await api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, fetchDeps);
+          const created = await api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, { ...fetchDeps, ...(options.env ? { env: options.env } : {}) });
           if (closed) throw new KhalaClientError('not_connected');
           attempt.created = created;
           const { joinId, pollSecret, confirmUrl, expiresAt } = created;

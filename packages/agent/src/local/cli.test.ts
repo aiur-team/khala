@@ -60,19 +60,19 @@ describe('local commands', () => {
     expect(f.stdout).toHaveBeenLastCalledWith(JSON.stringify({ deleted: roomId }) + '\n');
   });
   it('status and stop never start a helper and verify its pid', async () => {
-    const f = fixture(url => url.endsWith('/healthz') ? Response.json({ ok: true, pid: 999, version: 'new' }) : Response.json({ channels: [] }));
+    const f = fixture(url => url.endsWith('/healthz') ? Response.json({ ok: true, pid: 999, version: '0.0.0' }) : Response.json({ channels: [] }));
     f.deps.readHelperFile = async () => file;
     for (const command of ['status', 'stop']) expect(await runLocalCommand([command], f.deps)).toBe(0);
     expect(f.stdout.mock.calls).toEqual([['{"running":false}\n'], ['{"stopped":false}\n']]);
     expect(f.ensureHelper).not.toHaveBeenCalled();
-    f.deps.fetch = async () => Response.json({ ok: true, pid: file.pid, version: 'new', channels: [{ roomId }] });
+    f.deps.fetch = async () => Response.json({ ok: true, pid: file.pid, version: '0.0.0', channels: [{ roomId }] });
     expect(await runLocalCommand(['status'], f.deps)).toBe(0);
-    expect(f.stdout).toHaveBeenLastCalledWith(JSON.stringify({ running: true, origin: file.origin, pid: file.pid, version: 'new', channels: 1 }) + '\n');
+    expect(f.stdout).toHaveBeenLastCalledWith(JSON.stringify({ running: true, origin: file.origin, pid: file.pid, version: '0.0.0', channels: 1 }) + '\n');
     let shutdown = false;
     f.deps.fetch = async (_url, init) => {
       if (init?.method === 'POST') { shutdown = true; return new Response(null, { status: 204 }); }
       if (shutdown) throw new Error('closed');
-      return Response.json({ ok: true, pid: file.pid, version: 'new' });
+      return Response.json({ ok: true, pid: file.pid, version: '0.0.0' });
     };
     expect(await runLocalCommand(['stop'], f.deps)).toBe(0);
     expect(f.stdout).toHaveBeenLastCalledWith('{"stopped":true}\n');
@@ -126,4 +126,12 @@ describe('local commands', () => {
       }
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+});
+
+it.each(['0.0.0-beta.1', undefined])('status explains an older helper version %s', async version => {
+  const f = fixture(url => url.endsWith('/healthz') ? Response.json({ ok: true, pid: file.pid, version }) : Response.json({ channels: [] }));
+  f.deps.readHelperFile = async () => file;
+  expect(await runLocalCommand(['status'], f.deps)).toBe(0);
+  expect(JSON.parse(f.stdout.mock.calls.at(-1)![0])).toMatchObject({ running: true, detail: 'older helper in use' });
+  expect(f.ensureHelper).not.toHaveBeenCalled();
 });
