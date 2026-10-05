@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { channelFiles, openSessionDir, sessionFiles, writeStatus, type SessionFiles } from '../state';
+import { channelFiles, openSessionDir, sessionFiles, StateError, writeStatus, type SessionFiles } from '../state';
 import { appendEntries, readCursor, unread } from '../inbox';
 import * as inbox from '../inbox';
 import * as channels from '../channels';
@@ -453,6 +453,36 @@ describe('multi-channel delivery', () => {
     expect(frame).toContain('channel="Optimism"');
     expect((await readCursor(eco)).deliveredCount).toBe(2);
     expect((await readCursor(opt)).deliveredCount).toBe(1);
+  });
+  it.each((['claude', 'codex', 'cursor'] as const).flatMap(harness =>
+    ['advance', 'retry-read'].map(failure => ({ harness, failure }))))('preserves an earlier block when a later channel $failure fails on $harness', async ({ harness, failure }) => {
+    if (harness !== 'claude') files = await openSessionDir(harness, harness === 'cursor' ? CURSOR_DEFAULT_SESSION : 'session', { XDG_STATE_HOME: root });
+    const a = await channel('A', 'sync', [message(1)]);
+    const b = await channel('B', 'sync', [message(2)]);
+    const advance = inbox.advanceCursor;
+    const read = inbox.unread;
+    let retry = false;
+    vi.spyOn(inbox, 'advanceCursor').mockImplementation(async (target, cursor, consumed) => {
+      if (target.dir !== b.dir) return advance(target, cursor, consumed);
+      if (failure === 'advance') throw new StateError('storage_failed');
+      retry = true;
+      return 'conflict';
+    });
+    vi.spyOn(inbox, 'unread').mockImplementation(async target => {
+      if (target.dir === b.dir && retry) throw new StateError('storage_failed');
+      return read(target);
+    });
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    const input = harness === 'cursor' ? { hook_event_name: 'stop', workspace_roots: [] }
+      : { session_id: 'session', hook_event_name: 'Stop' };
+    await deliver(JSON.stringify(input), ['--harness', harness], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
+    const result = JSON.parse(stdout.write.mock.calls[0]![0] as string);
+    const frame = harness === 'cursor' ? result.followup_message : result.reason;
+    expect(frame).toContain('channel="A"');
+    expect(frame).not.toContain('channel="B"');
+    expect((await readCursor(a)).deliveredCount).toBe(1);
+    expect((await readCursor(b)).deliveredCount).toBe(0);
+    expect(stderr.write).toHaveBeenCalledWith(JSON.stringify({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' }) + '\n');
   });
   it('includes a legacy root channel alongside a channel directory', async () => {
     await channel('Legacy', 'sync', [message(1)], true);

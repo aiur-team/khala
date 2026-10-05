@@ -91,7 +91,7 @@ export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_B
   return selected;
 }
 
-async function channelFrames(files: SessionFiles, tool: boolean, requireWake: boolean): Promise<string | null> {
+async function channelFrames(files: SessionFiles, tool: boolean, requireWake: boolean, io: HookIO): Promise<string | null> {
   const groups: FrameGroup[] = [];
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
@@ -109,25 +109,35 @@ async function channelFrames(files: SessionFiles, tool: boolean, requireWake: bo
   const order = selected.map((group, index) => ({ group, index }));
   if (requireWake) order.sort((a, b) => Number(b.group.consumed.some(isWakeEntry)) - Number(a.group.consumed.some(isWakeEntry)));
   let hasWake = false;
+  const failures: unknown[] = [];
   for (const { group, index } of order) {
     if (requireWake && !hasWake && !group.consumed.some(isWakeEntry)) continue;
-    let current = group;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (!current.frame || (requireWake && !hasWake && !current.consumed.some(isWakeEntry))) break;
-      if (await advanceCursor(current.channel.files, current.cursor, current.consumed) === 'conflict') {
-        if (attempt === 0) {
-          const pending = await unread(current.channel.files);
-          const retry = selectFrame(current.channel.channelName ?? current.channel.roomId, pending.entries, current.you,
-            Buffer.byteLength(group.frame!) + spare, index === 0);
-          current = { ...current, ...pending, ...retry };
+    try {
+      let current = group;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (!current.frame || (requireWake && !hasWake && !current.consumed.some(isWakeEntry))) break;
+        if (await advanceCursor(current.channel.files, current.cursor, current.consumed) === 'conflict') {
+          if (attempt === 0) {
+            const pending = await unread(current.channel.files);
+            const retry = selectFrame(current.channel.channelName ?? current.channel.roomId, pending.entries, current.you,
+              Buffer.byteLength(group.frame!) + spare, index === 0);
+            current = { ...current, ...pending, ...retry };
+          }
+          continue;
         }
-        continue;
+        spare += Buffer.byteLength(group.frame!) - Buffer.byteLength(current.frame);
+        emitted.set(index, current.frame);
+        hasWake ||= current.consumed.some(isWakeEntry);
+        break;
       }
-      spare += Buffer.byteLength(group.frame!) - Buffer.byteLength(current.frame);
-      emitted.set(index, current.frame);
-      hasWake ||= current.consumed.some(isWakeEntry);
-      break;
+    } catch (error) {
+      failures.push(error);
     }
+  }
+  if (failures.length) {
+    if (!emitted.size) throw failures[0];
+    const error = failures[0];
+    diagnostic(io, error instanceof StateError ? error.code : 'internal_error');
   }
   return emitted.size ? [...emitted].sort(([a], [b]) => a - b).map(([, frame]) => frame).join('\n') : null;
 }
@@ -166,7 +176,7 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
       await writeActivity(files, 'idle', io.now);
       return 0;
     }
-    const frame = await channelFrames(files, input.hook_event_name === 'PostToolUse', input.hook_event_name !== 'UserPromptSubmit');
+    const frame = await channelFrames(files, input.hook_event_name === 'PostToolUse', input.hook_event_name !== 'UserPromptSubmit', io);
     if (frame) {
       await writeActivity(files, 'busy', io.now);
       const envelope = input.hook_event_name === 'Stop'
@@ -235,7 +245,7 @@ async function cursorOutput(files: SessionFiles, event: CursorEvent, loopCount: 
     await writeActivity(files, 'idle', io.now);
     return null;
   }
-  const frame = await channelFrames(files, event === 'postToolUse', true);
+  const frame = await channelFrames(files, event === 'postToolUse', true, io);
   if (frame) {
     await writeActivity(files, 'busy', io.now);
     return event === 'stop' ? { followup_message: frame } : { additional_context: frame };
