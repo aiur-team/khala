@@ -4,7 +4,7 @@
 // session, `?gone` opens a channel the owner can no longer open, `?oauth`
 // renders the same fixture as the hosted account for comparison.
 import { createRoot } from 'react-dom/client';
-import type { AuthPrincipal, DevicePort, DeviceView, IdentityPort, ParticipantView, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, DevicePort, DeviceView, IdentityPort, ParticipantView, RoomId, ChannelSnapshot, Disposer } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, ok } from '@khala/contracts/messaging/index';
 import type { ProfilePort } from '../../../features/profile/ports';
 import { createHumanApplication } from '../application';
@@ -18,7 +18,9 @@ import '../../../features/channel/channel.css';
 import '../../../main.css';
 
 const query = new URLSearchParams(location.search);
-const principal: AuthPrincipal = { v: 1, ownerId: 'local-owner' as never, providerIssuer: 'khala-local', providerSubject: 'owner',
+const removalFixture = query.has('owner-removal') || query.has('removed-human');
+const removedViewer = query.has('removed-human');
+const principal: AuthPrincipal = { v: 1, ownerId: (removedViewer ? 'owner_theo' : 'local-owner') as never, providerIssuer: 'khala-local', providerSubject: 'owner',
   verifiedEmail: '', sessionExpiresAt: '9999-12-31T23:59:59.000Z' };
 let signInCount = 0;
 let signOutCount = 0;
@@ -44,32 +46,53 @@ const profile: ProfilePort = {
   async setColor(color) { return { kind: 'ok', color }; },
   async setInitials(initials) { return { kind: 'ok', initials }; },
 };
+let removed = false;
+const indexListeners = new Set<() => void>();
+const channelListeners = new Set<(snapshot: ChannelSnapshot) => void>();
+const channelId = '!refactor0000000000000000:local' as RoomId;
 const conversations = {
-  snapshot: () => [
+  snapshot: () => removed ? [] : [
     { id: '!refactor0000000000000000:local', title: 'refactor', preview: '@kevin-Codex can you review PR #12?', timestamp: null, unreadCount: null },
     { id: '!release00000000000000000:local', title: 'release', preview: null, timestamp: null, unreadCount: null },
   ],
-  subscribe: () => () => undefined,
+  subscribe: (_owner: unknown, _generation: unknown, listener: () => void): Disposer => { indexListeners.add(listener); return () => { indexListeners.delete(listener); }; },
 };
-const viewer: ParticipantView = { participantId: '@khala_owner:local' as never, kind: 'human', ownerId: 'local-owner' as never,
-  displayName: 'kevin', deviceIds: ['KH_LOCAL_OWNER' as never] } as ParticipantView;
+const viewer: ParticipantView = { participantId: (removedViewer ? '@theo:local' : '@khala_owner:local') as never, kind: 'human', ownerId: principal.ownerId,
+  displayName: removedViewer ? 'Theo' : 'kevin', deviceIds: ['KH_LOCAL_OWNER' as never] } as ParticipantView;
 const limits = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
 if (!limits.ok) throw new Error('invalid harness limits');
 const room = {
   timeline: async () => ({ kind: 'unavailable', retryable: true }),
-  observe: () => () => undefined,
+  observe: (_roomId: RoomId, listener: (snapshot: ChannelSnapshot) => void) => {
+    channelListeners.add(listener);
+    if (removalFixture) listener({room:{roomId:channelId,title:'refactor',membership:'joined',revision:'1'},items:[],snapshotRevision:'1',generation:1});
+    return () => { channelListeners.delete(listener); };
+  },
+  administration: {
+    creator: async () => ok('local-owner'),
+    removeHuman: async () => { removalBus.postMessage('removed'); return ok(null); },
+  },
   create: async ({ title }: { title: string | null }) => ok({ roomId: '!release00000000000000000:local' as RoomId, title,
     membership: 'joined' as const, revision: 'rev_created' }),
 };
+const removalBus = new BroadcastChannel('khala-removal-test');
+removalBus.onmessage = () => {
+  if (!removedViewer) return;
+  removed = true;
+  for (const listener of channelListeners) listener({room:{roomId:channelId,title:'refactor',membership:'revoked',revision:'2'},items:[],snapshotRevision:'2',generation:1});
+  for (const listener of indexListeners) listener();
+};
+const roomParticipants = async () => [viewer, {participantId: removedViewer ? '@khala_owner:local' : '@theo:local',
+  kind:'human', ownerId:removedViewer ? 'local-owner' : 'owner_theo', displayName:removedViewer ? 'kevin' : 'Theo',deviceIds:[]} as unknown as ParticipantView];
 const routes = createHumanRouteCodec({ origin: location.origin, basePath: '/', allowInsecureLoopback: true });
 const application = createHumanApplication({ identity, device, room: room as never, admission: {} as never, conversations, profile,
-  participant: () => viewer, limits: limits.value },
-{ initialPath: query.has('gone') ? '/channels/!gone00000000000000000000:local' : routes.conversationsPath() });
+  participant: () => viewer, ...(removalFixture ? {roomParticipants} : {}), limits: limits.value },
+{ initialPath: query.has('gone') ? '/channels/!gone00000000000000000000:local' : removalFixture ? routes.roomPath(channelId) : routes.conversationsPath() });
 createRoot(document.getElementById('app')!).render(
   <HumanApplicationScreen application={application} identity={identity} routes={routes} renderRoom={renderHumanRoom}
     account={query.has('oauth') ? 'oauth' : 'local_owner'} />,
 );
-application.navigate(query.has('gone') ? '/channels/!gone00000000000000000000:local' : routes.conversationsPath());
+application.navigate(query.has('gone') ? '/channels/!gone00000000000000000000:local' : removalFixture ? routes.roomPath(channelId) : routes.conversationsPath());
 
 declare global { interface Window {
   __localOwner: { signInCount(): number; signOutCount(): number; copied: string[] };

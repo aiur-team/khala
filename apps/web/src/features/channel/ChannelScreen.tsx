@@ -17,7 +17,7 @@ import { ChevronDownIcon, ChevronLeftIcon, ShareIcon } from '../../ui/khala/icon
 import { useDetailHost } from '../../ui/khala/KhalaApp';
 import { Popover } from '../../ui/khala/Popover';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type SetModeHandler } from './AgentPresencePanel';
+import { AgentName, ChannelRoster, harnessName, MemberAvatar, RenameAgent, type RenameAgentHandler, type RemoveHumanHandler, type SetModeHandler } from './AgentPresencePanel';
 import type { ChannelController } from './controller';
 import { agentsOwnedBy, resolveMembers, type AgentMember, type ChannelMembers, type HumanMember } from './members';
 import { memberCountLabel, ownerOfLabel } from './roster-model';
@@ -31,6 +31,8 @@ export type RecentRender = Readonly<{ mentions: MentionRoster; onOpenParticipant
 
 export interface ChannelScreenProps {
   title: string;
+  creatorOwnerId?: string;
+  onRemoveHuman?: RemoveHumanHandler;
   /** @deprecated The design header has no description line. */
   description?: string;
   /** @deprecated The surrounding `KhalaApp` owns the theme. */
@@ -162,7 +164,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
   humanParticipants, currentNames, renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
-  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1 }: ChannelScreenProps) {
+  renderAddAgent, creatorOwnerId, onRemoveHuman, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1 }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
   const humanColors = useMemo(() => {
@@ -268,7 +270,8 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   function onRosterKeyDown(event: KeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape' || !rosterOpen) return;
     // A popover opened from the roster closes first (§6.3).
-    if (event.target instanceof Element && event.target.closest('.kh-pop')) return;
+    if (event.target instanceof Element && event.target.closest('.kh-pop')
+      || room.current?.closest('.kh-card')?.querySelector('.kh-pop:not([hidden])')) return;
     event.preventDefault();
     closeRoster(true);
   }
@@ -297,7 +300,7 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
     <div className={`kh-roster${rosterOpen ? ' is-open' : ''}`} id="kh-roster" inert={!rosterOpen} onKeyDown={onRosterKeyDown}>
       <div ref={rosterList} className={`kh-roster-in${more ? ' more' : ''}`} role="group" aria-label="Channel members"
         onScroll={event => { const list = event.currentTarget; setMore(list.scrollHeight - list.scrollTop - list.clientHeight >= 4); }}>
-        <ChannelRoster members={members} phase={view.phase} onOpen={openFromRoster}
+        <ChannelRoster creatorOwnerId={creatorOwnerId} onRemoveHuman={onRemoveHuman} members={members} phase={view.phase} onOpen={openFromRoster}
           {...(renameAgent ? { onRename: renameFromRoster } : {})}
           {...(renderAddAgent ? { renderAddAgent } : {})} {...(modeFor ? { modeFor } : {})} {...(onSetMode ? { onSetMode } : {})} />
       </div>
