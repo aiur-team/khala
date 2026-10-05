@@ -176,3 +176,17 @@ it('reports the active Monitor marker only for a joined Claude session', async (
   expect(await wrapped.status()).toMatchObject({ watcherArmed: false });
   await wrapped.close();
 });
+
+
+it.each(['codex', 'claude'] as const)('starts restoring %s before any tool call', async harness => {
+  const env = await environment();
+  const client = createPlaceholderClient();
+  client.resume = vi.fn(async () => {});
+  const waker = { notify: vi.fn(), stop: vi.fn(async () => {}) };
+  const createWaker = vi.fn(() => waker);
+  const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker })({ harness, sessionId: 'startup' });
+  await vi.waitFor(() => expect(client.resume).toHaveBeenCalledOnce());
+  if (harness === 'codex') expect(createWaker).toHaveBeenCalledOnce();
+  else expect(createWaker).not.toHaveBeenCalled();
+  await wrapped.close();
+});
