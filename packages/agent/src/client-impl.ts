@@ -170,7 +170,19 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       attempt.credentials = credentials;
       await writeStateFile(dir, 'session.json', credentials);
       if (!current(attempt)) return;
-      const starting = (options.startSession ?? startChannelSession)(credentials).then(async session => {
+      const starting = (options.startSession ?? startChannelSession)(credentials, { checkRemoved: async () => {
+        try {
+          const url = new URL('/api/agent/session/status', attempt.created.origin);
+          url.searchParams.set('userId', credentials.userId);
+          url.searchParams.set('roomId', credentials.roomId);
+          const response = await (options.fetch ?? fetch)(url, {
+            headers: { authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(5000),
+          });
+          if (!response.ok) return false;
+          const body: unknown = await response.json();
+          return typeof body === 'object' && body !== null && 'removed' in body && body.removed === true;
+        } catch { return false; }
+      } }).then(async session => {
         if (!current(attempt)) { await session.stop(); throw new KhalaClientError('internal_error'); }
         attempt.session = session;
         return session;
@@ -334,6 +346,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
       } catch (error) {
+        if (!current(attempt)) throw new KhalaClientError('not_connected');
         if (current(attempt)) await setStatus('send_failed', errorDetail(error, 'send_failed'));
         throw new KhalaClientError('send_failed');
       }
@@ -350,6 +363,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (current(attempt) && status.state === 'send_failed') await setStatus('connected');
         return sent;
       } catch (error) {
+        if (!current(attempt)) throw new KhalaClientError('not_connected');
         if (current(attempt)) await setStatus('send_failed', errorDetail(error, 'send_failed'));
         throw new KhalaClientError('send_failed');
       }

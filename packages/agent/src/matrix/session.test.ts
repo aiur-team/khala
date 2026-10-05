@@ -6,7 +6,7 @@ const sdk = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
-  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING' },
+  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR' },
   EventType: { RoomMember: 'm.room.member' },
   Direction: { Backward: 'b' }, Method: { Get: 'GET' },
 }));
@@ -224,4 +224,82 @@ it('reads rename history from raw Matrix unsigned.prev_content', async () => {
     unsigned: { prev_content: { membership: 'join', displayname: 'kevin-Codex' } } }], end: undefined });
   expect((await s.history('!r:hs', 30)).messages).toEqual([expect.objectContaining({ eventId: '$profile', type: 'm.room.member',
     content: { membership: 'join', displayname: 'kev-Codex' }, previousContent: { membership: 'join', displayname: 'kevin-Codex' } })]);
+});
+
+it.each(['leave', 'ban'])('ends a joined hosted session once when membership becomes %s', async next => {
+  const s = await joined(); const ended = vi.fn(); const ignored = vi.fn();
+  s.onEnded!(ended); s.onEnded!(ignored)();
+  membership = next;
+  client.emit('membership', { ...client.room, roomId: '!other:hs' }, next, 'join');
+  expect(ended).not.toHaveBeenCalled();
+  client.emit('membership', client.room, next, 'join');
+  client.emit('membership', client.room, next, 'join');
+  expect(ended).toHaveBeenCalledExactlyOnceWith('removed');
+  expect(ignored).not.toHaveBeenCalled(); expect(client.stopClient).toHaveBeenCalledOnce();
+  expect(client.eventNames()).toEqual([]);
+  await expect(s.send('!r:hs', 'after removal')).rejects.toThrow('session_stopped');
+  await expect(s.sendChannelEvent('!r:hs', { body: 'after removal' })).rejects.toThrow('session_stopped');
+  await expect(s.history('!r:hs', 30)).rejects.toThrow('session_stopped');
+  await expect(s.publishListeningMode('!r:hs', 'async')).rejects.toThrow('session_stopped');
+  expect(client.sendTextMessage).not.toHaveBeenCalled();
+});
+
+it('does not signal removal for invites, profile changes or explicit stop', async () => {
+  session = await createAgentMatrixSession(creds); const ended = vi.fn(); session.onEnded!(ended);
+  membership = 'leave'; client.emit('membership', client.room, 'leave', 'invite');
+  membership = 'invite'; await session.join('!r:hs');
+  client.emit('membership', client.room, 'join', 'join');
+  await session.stop(); expect(ended).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('checks control status after token revocation (removed=%s)', async removed => {
+  const checkRemoved = vi.fn(async () => removed);
+  session = await createAgentMatrixSession(creds, { checkRemoved }); await session.join('!r:hs');
+  const ended = vi.fn(); session.onEnded!(ended);
+  client.emit('sync', 'ERROR', 'SYNCING', { error: Object.assign(new Error('expired'), { errcode: 'M_UNKNOWN_TOKEN' }) });
+  await flush(); await flush();
+  expect(checkRemoved).toHaveBeenCalledOnce();
+  expect(ended).toHaveBeenCalledExactlyOnceWith(removed ? 'removed' : 'unauthorized');
+  expect(client.stopClient).toHaveBeenCalledOnce();
+});
+
+it.each([true, false])('checks removal on a forbidden bound-room send (removed=%s)', async removed => {
+  const checkRemoved = vi.fn(async () => removed);
+  session = await createAgentMatrixSession(creds, { checkRemoved }); await session.join('!r:hs');
+  const ended = vi.fn(); session.onEnded!(ended);
+  client.sendTextMessage.mockRejectedValue(Object.assign(new Error('forbidden'), { errcode: 'M_FORBIDDEN' }));
+  await expect(session.send('!r:hs', 'hello')).rejects.toThrow('forbidden');
+  expect(checkRemoved).toHaveBeenCalledOnce();
+  if (removed) expect(ended).toHaveBeenCalledExactlyOnceWith('removed');
+  else { expect(ended).not.toHaveBeenCalled(); expect(client.stopClient).not.toHaveBeenCalled(); }
+});
+
+it('preserves revocation while a forbidden-send probe is pending', async () => {
+  let resolveProbe!: (removed: boolean) => void;
+  const checkRemoved = vi.fn(() => new Promise<boolean>(resolve => { resolveProbe = resolve; }));
+  session = await createAgentMatrixSession(creds, { checkRemoved }); await session.join('!r:hs');
+  const ended = vi.fn(); session.onEnded!(ended);
+  client.sendTextMessage.mockRejectedValue(Object.assign(new Error('forbidden'), { errcode: 'M_FORBIDDEN' }));
+  const sending = expect(session.send('!r:hs', 'hello')).rejects.toThrow('forbidden');
+  await flush();
+  client.emit('sync', 'ERROR', 'SYNCING', { error: Object.assign(new Error('expired'), { errcode: 'M_UNKNOWN_TOKEN' }) });
+  resolveProbe(false); await sending; await flush();
+  expect(checkRemoved).toHaveBeenCalledOnce();
+  expect(ended).toHaveBeenCalledExactlyOnceWith('unauthorized');
+});
+
+it('does not infer removal when the control probe is unavailable', async () => {
+  session = await createAgentMatrixSession(creds, { checkRemoved: async () => { throw new Error('unavailable'); } });
+  await session.join('!r:hs'); const ended = vi.fn(); session.onEnded!(ended);
+  client.emit('sync', 'ERROR', 'SYNCING', { error: Object.assign(new Error('expired'), { errcode: 'M_UNKNOWN_TOKEN' }) });
+  await flush(); await flush();
+  expect(ended).toHaveBeenCalledExactlyOnceWith('unauthorized');
+});
+
+it('uses the removal probe for forbidden history reads', async () => {
+  session = await createAgentMatrixSession(creds, { checkRemoved: async () => true });
+  await session.join('!r:hs'); const ended = vi.fn(); session.onEnded!(ended);
+  client.createMessagesRequest.mockRejectedValue(Object.assign(new Error('forbidden'), { errcode: 'M_FORBIDDEN' }));
+  await expect(session.history('!r:hs', 30)).rejects.toThrow('forbidden');
+  expect(ended).toHaveBeenCalledExactlyOnceWith('removed');
 });

@@ -25,7 +25,7 @@ describe('createHumanBrowserApi', () => {
   it('exposes only the human admission and messaging adapters', () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
-    expect(Object.keys(api).sort()).toEqual(['admission', 'agentJoin', 'agentNames', 'channelLinks', 'credentials', 'identity', 'participants', 'profile']);
+    expect(Object.keys(api).sort()).toEqual(['administration', 'admission', 'agentJoin', 'agentNames', 'channelLinks', 'credentials', 'identity', 'participants', 'profile']);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -654,5 +654,25 @@ describe('agent name adapter', () => {
       .mockRejectedValueOnce(new Error('offline'));
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
     expect(await api.agentNames.rename(matrixUserId, 'Reviewer')).toEqual({ kind: 'error', code: 'unavailable' });
+  });
+});
+
+
+describe('channel administration', () => {
+  it('decodes authenticated creator authority and rejects malformed responses', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, {ownerId:principal.ownerId})).mockResolvedValueOnce(json(200, {ownerId:''}));
+    const api = createHumanBrowserApi({origin, homeserverOrigin, limits, fetch});
+    expect(await api.administration.creator('!room:test' as RoomId)).toEqual({kind:'ok',value:principal.ownerId});
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channels/creator?roomId=!room%3Atest`);
+    expect((await api.administration.creator('!room:test' as RoomId)).kind).toBe('unavailable');
+  });
+  it('removes by owner id with CSRF protection and maps forbidden replies', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(200, {principal, csrfToken:'csrf'}))
+      .mockResolvedValueOnce(json(200, {kind:'ok'})).mockResolvedValueOnce(json(403, {}));
+    const api = createHumanBrowserApi({origin, homeserverOrigin, limits, fetch});
+    const input = {roomId:'!room:test' as RoomId, ownerId:'owner_theo' as OwnerId};
+    expect(await api.administration.removeHuman(input)).toEqual({kind:'ok',value:null});
+    expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(input));
+    expect(await api.administration.removeHuman(input)).toMatchObject({kind:'rejected',code:'forbidden'});
   });
 });

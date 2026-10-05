@@ -1,3 +1,4 @@
+import { inviteRemovalState } from './removals';
 import type { CallOptions, InviteState } from '@khala/contracts/messaging/index';
 import type { AdmissionRuntime } from './index';
 import { currentPrincipal, safeRead } from './internal';
@@ -13,6 +14,8 @@ export async function inspectInvite(runtime: AdmissionRuntime, inviteRef: string
   const invite = readInviteRecord(stored.record.value);
   if (!invite || invite.inviteRefDigest !== runtime.digests.inviteRef(inviteRef)) return 'unavailable';
   if (invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) return 'expired';
+  const removal = await inviteRemovalState(runtime.store, invite, identity.principal.ownerId, options);
+  if (removal !== 'allowed') return removal;
   if (invite.status === 'revoked') return 'revoked';
   if (!policyAllows(invite.policy, identity.principal, runtime.digests)) return 'identity_mismatch';
   try {

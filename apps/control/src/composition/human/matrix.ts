@@ -1,3 +1,7 @@
+import { withMembershipLease } from '../../invitations/membership-lock';
+import { roomAgents } from '../../agent-join/session-status';
+import { CHANNEL_EVENT_TYPE, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
+import { readRoomRemovals, recordRemoval, completeRemoval } from '../../invitations/removals';
 import { decodeHumanInitialsRecord, humanInitialsRecordKey } from '@khala/contracts/m1/initials';
 import { createHash, createHmac } from 'node:crypto';
 import {
@@ -70,13 +74,20 @@ export interface MatrixSessionIssuer {
 
 export type MatrixParticipant = Participant;
 
+export interface MatrixChannelAdministration {
+  creator(principal: AuthPrincipal, roomId: RoomId): Promise<{ kind: 'ok'; ownerId: OwnerId } | { kind: 'forbidden' | 'unavailable' }>;
+  removeHuman(principal: AuthPrincipal, roomId: RoomId, ownerId: OwnerId): Promise<{ kind: 'ok' | 'forbidden' | 'not_found' | 'unavailable' }>;
+}
+
 export type MatrixHumanServices = Readonly<{
+  administration: MatrixChannelAdministration;
   directory: MessagingAccountDirectory;
   sessions: MatrixSessionIssuer;
   authority: InvitationAuthority;
   gateway: AdmissionGateway;
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  revokeAgentSession(userId: string, roomId: RoomId): Promise<boolean>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
   /** The joined members of a channel the owner is in, with the names they hold there; `null` when unavailable. */
   roomMembers(ownerId: OwnerId, roomId: RoomId): Promise<readonly Readonly<{ userId: string; name: string }>[] | null>;
@@ -545,6 +556,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       if (diagnostic) { diagnostic.stage = 'membership'; diagnostic.status = response.status; }
       if (response.status === 404 || response.status === 403) return { kind: 'absent' };
       const value = await body(response);
+      if (response.status === 200 && (value?.membership === 'leave' || value?.membership === 'ban')) return { kind: 'absent' };
       return response.status === 200 && value?.membership === 'join'
         ? { kind: 'joined', historyReady: true }
         : { kind: 'unavailable' };
@@ -578,20 +590,47 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     };
   }
 
+  async function admissionRemovalAllowed(input: GatewayRequest, call?: CallOptions): Promise<boolean> {
+    const removals = await readRoomRemovals(options.store, input.roomId, call);
+    if (removals === 'unavailable') return false;
+    if (!removals) return true;
+    const target = removals.owners[input.principal.ownerId];
+    const issuer = input.inviteCreatorOwnerId ? removals.owners[input.inviteCreatorOwnerId] : null;
+    const generation = input.removalGeneration ?? 0;
+    return !(issuer && generation < issuer.generation)
+      && !(target && (!target.complete || generation < target.generation || input.inviteCreatorOwnerId !== removals.creatorOwnerId));
+  }
+
   const gateway: AdmissionGateway = {
     inspectMembership: (input, call) => membership(input.principal, input.roomId, call),
     lookup,
     async admit(input, call): Promise<GatewayAdmission> {
+      return withMembershipLease(options.store, input.roomId, input.principal.ownerId, async lease => {
+      const mutate = async (path: string, init: RequestInit) => {
+        if (!await lease.renew()) throw new Error('membership_lease_lost');
+        return request(path, init, call);
+      };
+      if (!await admissionRemovalAllowed(input, call)) return { kind: 'forbidden' };
+      const removal = await readRoomRemovals(options.store, input.roomId, call);
+      if (removal === 'unavailable') return { kind: 'unavailable' };
       const current = await lookup(input, call);
       if (current.kind === 'joined') return current;
       if (current.kind === 'unavailable' || current.kind === 'outcome_unknown') return current;
-      const creatorOwnerId = await roomAuthority(input.roomId, call);
+      const creatorOwnerId = removal?.creatorOwnerId as OwnerId | undefined ?? await roomAuthority(input.roomId, call);
       if (creatorOwnerId === null) return { kind: 'unavailable' };
       const creatorSession = await controlLogin(creatorOwnerId, call);
       const session = await authenticated(input.principal, call);
       if (creatorSession === null || session === null) return { kind: 'unavailable' };
       try {
-        const invitation = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(input.roomId)}/invite`, {
+        if (removal?.owners[input.principal.ownerId]) {
+          if (!await admissionRemovalAllowed(input, call)) return { kind: 'forbidden' };
+          const unbanned = await mutate(`/_matrix/client/v3/rooms/${encodeURIComponent(input.roomId)}/unban`, {
+            method: 'POST', headers: { authorization: `Bearer ${creatorSession.accessToken}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ user_id: session.userId }),
+          });
+          if (!unbanned.ok) return { kind: 'unavailable' };
+        }
+        const invitation = await mutate(`/_matrix/client/v3/rooms/${encodeURIComponent(input.roomId)}/invite`, {
           method: 'POST',
           headers: {
             accept: 'application/json',
@@ -599,11 +638,11 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
             'content-type': 'application/json',
           },
           body: JSON.stringify({ user_id: session.userId }),
-        }, call);
+        });
         if (invitation.status === 403) return { kind: 'forbidden' };
         if (invitation.status >= 500) return { kind: 'outcome_unknown' };
         if (![200, 409].includes(invitation.status)) return { kind: 'unavailable' };
-        const response = await request(`/_matrix/client/v3/join/${encodeURIComponent(input.roomId)}`, {
+        const response = await mutate(`/_matrix/client/v3/join/${encodeURIComponent(input.roomId)}`, {
           method: 'POST',
           headers: {
             accept: 'application/json',
@@ -611,11 +650,18 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
             'content-type': 'application/json',
           },
           body: '{}',
-        }, call);
+        });
         const value = await body(response);
         if (response.status === 403) return { kind: 'forbidden' };
         if (response.status >= 500) return { kind: 'outcome_unknown' };
         if (response.status !== 200 || value?.room_id !== input.roomId) return { kind: 'unavailable' };
+        if (!await admissionRemovalAllowed(input, call)) {
+          await mutate(`/_matrix/client/v3/rooms/${encodeURIComponent(input.roomId)}/ban`, {
+            method: 'POST', headers: { authorization: `Bearer ${creatorSession.accessToken}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ user_id: session.userId }),
+          });
+          return { kind: 'forbidden' };
+        }
         return {
           kind: 'joined',
           room: matrixRoom(input.roomId, await roomName(session, input.roomId, call)),
@@ -624,10 +670,144 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       } catch {
         return { kind: 'outcome_unknown' };
       }
+      });
     },
   };
 
-  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
+  async function revokeAgent(userId: string, roomId: RoomId): Promise<boolean> {
+    let token: string | null = null;
+    try {
+      const password = createHmac('sha256', passwordSecret).update(`khala-agent-password-v1\0${userId}`).digest('base64url');
+      const response = await request('/_matrix/client/v3/login', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'm.login.password', identifier: { type: 'm.id.user', user: userId }, password,
+          device_id: `KHALA_REMOVE_${createHash('sha256').update(userId).digest('hex').slice(0, 24)}` }) });
+      const login = response.ok ? await body(response) : null;
+      if (login?.user_id !== userId || typeof login.access_token !== 'string') return false;
+      token = login.access_token;
+      const headers = { authorization: `Bearer ${token}` };
+      const rooms = await request('/_matrix/client/v3/joined_rooms', { headers });
+      const value = rooms.ok ? await body(rooms) : null;
+      // M1 agent identities are room-scoped. Never log out an identity belonging to another room.
+      if (!Array.isArray(value?.joined_rooms) || value.joined_rooms.some(room => room !== roomId)) return false;
+      return (await request('/_matrix/client/v3/logout/all', { method: 'POST', headers })).ok;
+    } catch { return false; }
+    finally {
+      if (token) {
+        try { await request('/_matrix/client/v3/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } }); }
+        catch { /* Temporary token cleanup does not change the revocation result. */ }
+      }
+    }
+  }
+
+  const administration: MatrixChannelAdministration = {
+    async creator(principal, roomId) {
+      const member = await membership(principal, roomId);
+      if (member.kind !== 'joined') return { kind: member.kind === 'absent' ? 'forbidden' : 'unavailable' };
+      const session = await controlLogin(principal.ownerId);
+      if (!session) return { kind: 'unavailable' };
+      const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.create/`,
+        { headers: { authorization: `Bearer ${session.accessToken}` } });
+      const value = response.ok ? await body(response) : null;
+      // Room creation state is authoritative; the legacy first-share record is not.
+      let creatorUser = typeof value?.creator === 'string' ? value.creator : null;
+      if (!creatorUser && response.ok) {
+        const state = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state`,
+          { headers: { authorization: `Bearer ${session.accessToken}` } });
+        const events: unknown = state.ok ? await state.json() : null;
+        const create = Array.isArray(events) ? events.map(safeObject).find(event => event?.type === 'm.room.create' && event.state_key === '') : null;
+        creatorUser = typeof create?.sender === 'string' ? create.sender : null;
+      }
+      const ownerId = creatorUser ? ownerFromMatrixUserId(creatorUser, serverName) : null;
+      return ownerId ? { kind: 'ok', ownerId } : { kind: 'unavailable' };
+    },
+    async removeHuman(principal, roomId, ownerId) {
+      return withMembershipLease(options.store, roomId, ownerId, async lease => {
+      const creator = await administration.creator(principal, roomId);
+      if (creator.kind !== 'ok') return creator;
+      if (creator.ownerId !== principal.ownerId || ownerId === principal.ownerId) return { kind: 'forbidden' };
+      const session = await controlLogin(creator.ownerId);
+      if (!session) return { kind: 'unavailable' };
+      const headers = { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' };
+      const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`, { headers });
+      const joined = response.ok ? safeObject((await body(response))?.joined) : null;
+      if (!joined) return { kind: 'unavailable' };
+      const previous = await readRoomRemovals(options.store, roomId);
+      if (previous === 'unavailable') return { kind: 'unavailable' };
+      const human = accountId(ownerId);
+      if (!Object.hasOwn(joined, human) && !previous?.owners[ownerId]) return { kind: 'not_found' };
+      if (!Object.hasOwn(joined, human) && previous?.owners[ownerId]?.complete) return { kind: 'ok' };
+      const bindings = await roomAgents(options.store, roomId, ownerId);
+      if (bindings === 'unavailable') return { kind: 'unavailable' };
+      const agents: string[] = [...bindings];
+      const members = { ...joined };
+      async function collectAgents(): Promise<boolean> {
+        const stateResponse = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state`, { headers });
+        const state: unknown = stateResponse.ok ? await stateResponse.json() : null;
+        if (!Array.isArray(state)) return false;
+        for (const item of state) {
+          const event = safeObject(item); const content = safeObject(event?.content);
+          if (event?.type === 'm.room.member' && typeof event.state_key === 'string'
+            && (content?.membership === 'join' || content?.membership === 'invite')) members[event.state_key] = content;
+        }
+        for (const userId of Object.keys(members)) {
+          if (participantFor(userId)) continue;
+          const read = await options.store.read(agentOwnerRecordKey(userId));
+          if (read.kind === 'unavailable') return false;
+          if (read.kind === 'absent') continue;
+          const decoded = decodeAgentOwnerRecord(read.record.value);
+          if (!decoded.ok || decoded.value.matrixUserId !== userId) return false;
+          if (decoded.value.ownerId === ownerId) agents.push(userId);
+        }
+        return true;
+      }
+      if (!await collectAgents()) return { kind: 'unavailable' };
+      const label = displayName(safeObject(joined[human])?.display_name, human);
+      if (!await lease.renew()) return { kind: 'unavailable' };
+      let removal = !Object.hasOwn(joined, human) && previous?.owners[ownerId] ? previous
+        : await recordRemoval(options.store, roomId, creator.ownerId, ownerId, agents, label);
+      if (removal === 'unavailable') return { kind: 'unavailable' };
+      // Ban ends invitation authority and prevents direct readmission by other members.
+      if (Object.hasOwn(joined, human)) {
+        if (!await lease.renew()) return { kind: 'unavailable' };
+        const kicked = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/ban`, {
+          method: 'POST', headers, body: JSON.stringify({ user_id: human }),
+        });
+        if (!kicked.ok) return { kind: 'unavailable' };
+      }
+      delete members[human];
+      if (!await collectAgents()) return { kind: 'unavailable' };
+      if (!await lease.renew()) return { kind: 'unavailable' };
+      removal = await recordRemoval(options.store, roomId, creator.ownerId, ownerId, agents, removal.owners[ownerId]!.label);
+      if (removal === 'unavailable') return { kind: 'unavailable' };
+      for (const userId of removal.owners[ownerId]!.agents) {
+        if (!await lease.renew()) return { kind: 'unavailable' };
+        if (Object.hasOwn(members, userId)) {
+          const kicked = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/kick`, {
+            method: 'POST', headers, body: JSON.stringify({ user_id: userId }),
+          });
+          if (!kicked.ok) return { kind: 'unavailable' };
+        }
+        if (!await revokeAgent(userId, roomId)) return { kind: 'unavailable' };
+      }
+      const entry = removal.owners[ownerId]!;
+      const event = encodeChannelEvent({ kind: 'member', summary: `${entry.label} left`, status: 'info', source: { system: 'khala' } });
+      if (!event.ok) return { kind: 'unavailable' };
+      const transaction = createHash('sha256').update(JSON.stringify([roomId, ownerId, entry.generation])).digest('hex');
+      if (!await lease.renew()) return { kind: 'unavailable' };
+      const announced = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${CHANNEL_EVENT_TYPE}/${transaction}`,
+        { method: 'PUT', headers, body: JSON.stringify(event.value) });
+      if (!announced.ok || !await completeRemoval(options.store, roomId, ownerId, entry.generation)) return { kind: 'unavailable' };
+      return { kind: 'ok' };
+      });
+    },
+  };
+
+  return { revokeAgentSession: revokeAgent, administration, directory, sessions, authority, gateway, inspectOwnerMembership: async (ownerId, roomId) => {
+      const removal = await readRoomRemovals(options.store, roomId);
+      if (removal === 'unavailable') return { kind: 'unavailable' };
+      if (removal?.owners[ownerId] && !removal.owners[ownerId]!.complete) return { kind: 'absent' };
+      return membershipForOwner(ownerId, roomId);
+    },
     setOwnerDisplayName: async (ownerId, name) => {
       try {
         const session = await controlLogin(ownerId);

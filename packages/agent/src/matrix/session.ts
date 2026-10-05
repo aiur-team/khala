@@ -1,6 +1,6 @@
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
-import type { ChannelSession, SessionMessage, SessionModeCommand } from '../transport';
+import type { ChannelSession, SessionEndReason, SessionMessage, SessionModeCommand } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { memberRenameContent } from '../events/member-rename';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
@@ -21,11 +21,12 @@ function message(event: MatrixEvent): SessionMessage | undefined {
     ...(type === 'm.room.member' ? { previousContent: event.getPrevContent() } : {}) };
 }
 
-export async function createAgentMatrixSession(creds: AgentCredentials, opts?: { log?: (line: string) => void }): Promise<AgentMatrixSession> {
+export async function createAgentMatrixSession(creds: AgentCredentials, opts?: { log?: (line: string) => void; checkRemoved?: () => Promise<boolean> }): Promise<AgentMatrixSession> {
   const started = Date.now();
   const log = (line: string) => opts?.log?.(line);
   const client = createClient({ baseUrl: creds.homeserver, userId: creds.userId, accessToken: creds.accessToken, deviceId: creds.deviceId });
   const handlers = new Set<(m: SessionMessage) => void>();
+  const ended = new Set<(reason: SessionEndReason) => void>();
   const modeHandlers = new Set<(c: SessionModeCommand) => void>();
   const inviters = new Map<string, string>();
   const emitted = new Set<string>();
@@ -72,7 +73,36 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     void client.decryptEventIfNeeded(event).then(() => deliver(event), () => log('live_decryption_failed'));
   };
   const decrypted = (event: MatrixEvent) => deliver(event);
-  const syncLog = (state: SyncState) => log(`sync_state=${state}`);
+  const syncLog = (state: SyncState, _previous: SyncState | null, data?: { error?: Error }) => {
+    log(`sync_state=${state}`);
+    if (state === SyncState.Error && joinedRoom && matrixCode(data?.error) === 'M_UNKNOWN_TOKEN') {
+      void checkEnded('unauthorized');
+    }
+  };
+  const matrixCode = (error: unknown): unknown => typeof error === 'object' && error !== null && 'errcode' in error ? error.errcode : undefined;
+  let checkingEnded: Promise<void> | undefined;
+  let pendingEndReason: SessionEndReason | undefined;
+  const checkEnded = (fallback?: SessionEndReason): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (fallback) pendingEndReason = fallback;
+    if (checkingEnded) return checkingEnded;
+    checkingEnded = (async () => {
+      let removed = false;
+      try { removed = await opts?.checkRemoved?.() ?? false; } catch { /* Unavailable is not proof of removal. */ }
+      if (removed) end('removed'); else if (pendingEndReason) end(pendingEndReason);
+    })().finally(() => { checkingEnded = undefined; pendingEndReason = undefined; });
+    return checkingEnded;
+  };
+  const guarded = async <T>(roomId: string, operation: () => Promise<T>): Promise<T> => {
+    if (stopped) throw new Error('session_stopped');
+    try { return await operation(); } catch (error) {
+      const code = matrixCode(error);
+      if (roomId === joinedRoom && (code === 'M_FORBIDDEN' || code === 'M_UNKNOWN_TOKEN')) {
+        await checkEnded(code === 'M_UNKNOWN_TOKEN' ? 'unauthorized' : undefined);
+      }
+      throw error;
+    }
+  };
 
   // All waits are cancellable so stop never leaves timers or listeners behind.
   const wait = (subscribe: (check: () => void) => () => void, ready: () => boolean, timeoutMs: number, error: string): Promise<void> => {
@@ -101,11 +131,25 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     client.removeListener(RoomEvent.Timeline, timeline);
     client.removeListener(MatrixEventEvent.Decrypted, decrypted);
     client.removeListener(ClientEvent.Sync, syncLog);
+    client.removeListener(RoomEvent.MyMembership, membershipEnded);
     for (const cancel of [...cancellations]) cancel();
     liveEvents.clear();
     emitted.clear();
     handlers.clear();
     modeHandlers.clear();
+    ended.clear();
+  };
+  const membershipEnded = (room: Room, membership: string) => {
+    if (stopped || room.roomId !== joinedRoom || !['leave', 'ban'].includes(membership)) return;
+    end('removed');
+  };
+  const end = (reason: SessionEndReason) => {
+    if (stopped) return;
+    const listeners = [...ended];
+    void stop();
+    for (const handler of listeners) {
+      try { handler(reason); } catch { log('ended_handler_error'); }
+    }
   };
   try {
     await client.initRustCrypto({ useIndexedDB: false });
@@ -146,10 +190,12 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
 
   return {
     userId: creds.userId,
+    onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     listeningMode: roomId => memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent()),
     inviter(roomId) { return inviters.get(roomId); },
     onListeningModeCommand(handler) { modeHandlers.add(handler); return () => { modeHandlers.delete(handler); }; },
     async publishListeningMode(roomId, mode, signal) {
+      if (stopped) throw new Error('session_stopped');
       const content = client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent();
       if (!content) throw new Error('join_state_unavailable');
       const next = { ...content, membership: 'join' as const, [LISTENING_MODE_MEMBER_KEY]: mode };
@@ -184,16 +230,18 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         await client.sendStateEvent(roomId, EventType.RoomMember, content, creds.userId);
       }
       joinTimes.set(roomId, membership === 'join' ? rejoinedAt : ownJoin.getTs());
+      if (!joinedRoom) client.on(RoomEvent.MyMembership, membershipEnded);
       joinedRoom = roomId;
       for (const event of liveEvents) { if (event.getRoomId() === roomId) deliver(event); }
     },
     async history(roomId, limit, before) {
+      if (stopped) throw new Error('session_stopped');
       let token: string | null = null;
       if (before !== undefined) {
-        const context = await client.http.authedRequest<{ start: string }>(Method.Get, `/rooms/${encodeURIComponent(roomId)}/context/${encodeURIComponent(before)}`, { limit: '0' });
+        const context = await guarded(roomId, () => client.http.authedRequest<{ start: string }>(Method.Get, `/rooms/${encodeURIComponent(roomId)}/context/${encodeURIComponent(before)}`, { limit: '0' }));
         token = context.start;
       }
-      const res = await client.createMessagesRequest(roomId, token, limit, Direction.Backward);
+      const res = await guarded(roomId, () => client.createMessagesRequest(roomId, token, limit, Direction.Backward));
       const messages: SessionMessage[] = [];
       let undecryptable = 0;
       for (const raw of res.chunk) {
@@ -208,9 +256,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       const oldest = messages[0];
       return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest.eventId } : { messages };
     },
-    async send(roomId, text) { const res = await client.sendTextMessage(roomId, text); return { eventId: res.event_id }; },
+    async send(roomId, text) { if (stopped) throw new Error('session_stopped'); const res = await guarded(roomId, () => client.sendTextMessage(roomId, text)); return { eventId: res.event_id }; },
     async sendChannelEvent(roomId, content, txnId) {
-      const res = await client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, content as never, txnId);
+      if (stopped) throw new Error('session_stopped');
+      const res = await guarded(roomId, () => client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, content as never, txnId));
       return { eventId: res.event_id };
     },
     roomName(roomId) { return client.getRoom(roomId)?.name ?? undefined; },

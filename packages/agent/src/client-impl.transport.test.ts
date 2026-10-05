@@ -25,6 +25,6 @@ it('starts the default transport with polled credentials', async () => {
   } });
   try {
     expect(await client.join('http://127.0.0.1:47830/join/abcdefgh', 'Codex')).toEqual({ state: 'connected', channelName: 'refactor' });
-    expect(startChannelSession).toHaveBeenCalledExactlyOnceWith(creds);
+    expect(startChannelSession).toHaveBeenCalledExactlyOnceWith(creds, { checkRemoved: expect.any(Function) });
   } finally { await client.close(); await rm(root, { recursive: true, force: true }); }
 });
