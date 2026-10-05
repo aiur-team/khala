@@ -194,3 +194,20 @@ it('still notifies a live append when delivery advances before evaluation', asyn
   await writeJsonAtomic(files.cursor, { deliveredCount: 1, lastDeliveredEventId: '$1' });
   await vi.waitFor(() => expect(lines).toHaveLength(1));
 });
+
+
+it('prints watch help and reports invalid arguments without an internal error', async () => {
+  const { default: run, WATCH_USAGE } = await import('./watch');
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    for (const flag of ['--help', '-h']) expect(await run([flag])).toBe(0);
+    expect(out).toHaveBeenCalledWith(WATCH_USAGE);
+    expect(await run(['--bogus'])).toBe(1);
+    expect(err).toHaveBeenCalledWith(`khala: invalid_arguments\n${WATCH_USAGE}`);
+    expect(await run(['--session', '--bogus'])).toBe(1);
+    expect(err).toHaveBeenCalledWith(`khala: invalid_session_id\n${WATCH_USAGE}`);
+    expect(await run(['--harness', 'unknown', '--session', 'valid'])).toBe(1);
+    expect(err).toHaveBeenCalledWith(`khala: invalid_harness\n${WATCH_USAGE}`);
+  } finally { out.mockRestore(); err.mockRestore(); }
+});

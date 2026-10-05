@@ -322,3 +322,50 @@ it('revokes provisioned credentials and refuses confirmation when owner removal 
   const read = await f.joins.read(f.joinId);
   expect(read.kind === 'found' && read.record.state).toBe('pending');
 });
+
+it('auto-confirms a saved hosted session after one human approval, even after join expiry', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  const { createAgentJoinAgentHandlers } = await import('./agent-routes');
+  const { createDigests } = await import('../invitations/internal');
+  const digests = createDigests(secret), ref = 'inv_abcdefgh';
+  await f.store.compareAndSet({ key: digests.inviteKey(ref), expectedRevision: null, operationId: 'invite', next: { value: {
+    v: 1, roomId: credentials.roomId, creatorOwnerId: 'owner', inviteRefDigest: digests.inviteRef(ref), policyRevision: 1,
+    policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null, lastAuthorizedOperationDigest: null,
+  }, expiresAt: null } });
+  const agents = () => createAgentJoinAgentHandlers({ ...f.deps, origin: 'https://khala.test', secret,
+    roomName: async () => 'Channel', autoConfirm: createAgentJoinHumanHandlers(f.deps).autoConfirm });
+  const create = async (overrides = {}) => {
+    const response = await agents().create(new Request('https://khala.test/api/agent/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      link: `https://khala.test/join/${ref}`, harness: 'codex', label: 'Codex', sessionId: 'thread-1', rejoinSecret: 'S'.repeat(43), ...overrides,
+    }) }));
+    expect(response.status).toBe(201);
+    return await response.json() as { joinId: string; pollSecret: string; autoConfirmed?: boolean };
+  };
+  const first = await create();
+  expect((await f.joins.read(first.joinId)).kind).toBe('found');
+  expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+  expect((await f.handlers.confirm(f.request('POST', `joinId=${first.joinId}`))).status).toBe(200);
+  f.advance();
+  const second = await create();
+  expect(second.autoConfirmed).toBe(true);
+  const polled = await agents().poll(new Request(`https://khala.test/api/agent/join/poll?joinId=${second.joinId}`, { headers: { authorization: `Bearer ${second.pollSecret}` } }));
+  expect(await polled.json()).toEqual({ state: 'confirmed', credentials });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(2);
+  for (const changes of [{ rejoinSecret: 'X'.repeat(43) }, { sessionId: 'thread-2' }, { harness: 'claude' }]) {
+    const next = await create(changes);
+    const read = await f.joins.read(next.joinId);
+    expect(read.kind === 'found' && read.record.state).toBe('pending');
+  }
+  f.deps.inspectMembership.mockResolvedValueOnce({ kind: 'absent' });
+  const absent = await create();
+  expect(absent.autoConfirmed).toBeUndefined();
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(2);
+  // Previously granted approval cannot survive removal, even when membership returns.
+  await recordRemoval(f.store, credentials.roomId as RoomId, 'owner' as OwnerId, 'owner' as OwnerId, [credentials.userId], 'Kevin');
+  const removedId = randomBytes(16).toString('base64url');
+  await f.joins.create({ ...f.record, joinId: removedId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)), createdAt: new Date(f.deps.clock()).toISOString(), expiresAt: new Date(f.deps.clock() + 600000).toISOString() });
+  expect(await f.handlers.autoConfirm(removedId)).toBe(true);
+  const read = await f.joins.read(removedId);
+  expect(read.kind === 'found' && read.record.state).toBe('pending');
+  expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(2);
+});

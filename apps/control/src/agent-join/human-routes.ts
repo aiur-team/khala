@@ -1,3 +1,4 @@
+import { rejoinIdentity, rejoinApprovalKey, validRejoinApproval, type RejoinApproval } from './rejoin';
 import { readRoomRemovals } from '../invitations/removals';
 import { rememberAgentSession, rememberRoomAgent } from './session-status';
 import { createHash } from 'node:crypto';
@@ -34,7 +35,7 @@ const error = (status: number, code: string) => json(status, { error: code });
 const unavailable = () => error(503, 'unavailable');
 
 export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
-  async function usernameOf(principal: AuthPrincipal): Promise<string | null> {
+  async function usernameOf(principal: Pick<AuthPrincipal, 'ownerId' | 'verifiedEmail'>): Promise<string | null> {
     const read = await safeRead(deps.store, profileRecordKey(principal.ownerId));
     if (read.kind === 'unavailable') return null;
     if (read.kind === 'absent') return suggestUsername(principal.verifiedEmail);
@@ -48,11 +49,11 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       ...(record.agentUserId ? { agentUserId: record.agentUserId } : {}),
     };
   }
-  async function membership(principal: AuthPrincipal, record: JoinRecord): Promise<Response | null> {
+  async function membership(principal: Pick<AuthPrincipal, 'ownerId'>, record: JoinRecord): Promise<Response | null> {
     const result = await deps.inspectMembership(principal.ownerId, record.roomId as RoomId);
     return result.kind === 'joined' ? null : result.kind === 'absent' ? error(403, 'not_member') : unavailable();
   }
-  async function confirm(joinId: string, principal: AuthPrincipal): Promise<Response> {
+  async function confirm(joinId: string, principal: Pick<AuthPrincipal, 'ownerId' | 'verifiedEmail'>, approvedUsername?: string): Promise<Response> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const read = await deps.joins.read(joinId);
       if (read.kind !== 'found') return read.kind === 'absent' ? error(404, 'not_found') : unavailable();
@@ -71,9 +72,9 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         if (result.kind !== 'applied') return unavailable();
         record = locked; revision = result.revision;
       }
-      const username = await usernameOf(principal);
+      const username = approvedUsername ?? await usernameOf(principal);
       if (!username) return unavailable();
-      const identityId = record.sessionId === undefined || record.rejoinSecretHash === undefined ? joinId : 'session.' + createHash('sha256').update(JSON.stringify([record.roomId, record.harness, record.sessionId, record.rejoinSecretHash])).digest('hex');
+      const identityId = rejoinIdentity(record) ?? joinId;
       const userId = deps.provisioner.agentUserId(identityId, principal.ownerId);
       const existing = await safeRead(deps.store, agentOwnerRecordKey(userId));
       if (existing.kind === 'unavailable') return unavailable();
@@ -132,6 +133,7 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const result = await deps.joins.replace(joinId, revision, next, 'confirm');
       if (result.kind === 'applied') {
         await indexOwnerAgent(deps.store, principal.ownerId, userId);
+        if (!await rememberApproval(next, username, issuedGeneration)) return unavailable();
         return json(200, viewOf(next));
       }
       if (result.kind === 'conflict') {
@@ -145,6 +147,36 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       return unavailable();
     }
     return unavailable();
+  }
+  async function rememberApproval(record: JoinRecord, ownerLabel: string, generation: number): Promise<boolean> {
+    const identity = rejoinIdentity(record);
+    if (!identity || !record.ownerId) return true;
+    const key = rejoinApprovalKey(identity);
+    const read = await safeRead(deps.store, key);
+    if (read.kind === 'unavailable') return false;
+    if (read.kind === 'record' && (!validRejoinApproval(read.record.value) || read.record.value.ownerId !== record.ownerId)) return false;
+    const value: RejoinApproval = { v: 1, ownerId: record.ownerId as OwnerId, ownerLabel, generation };
+    const result = await writeAndResolve(deps.store, { key, expectedRevision: read.kind === 'record' ? read.record.revision : null,
+      operationId: `rejoin.${record.joinId}`, next: { value, expiresAt: null } });
+    return result.kind === 'applied' || result.kind === 'conflict' && result.current?.value.ownerId === record.ownerId;
+  }
+  /** Internal only: this is wired to agent creation, never exposed as a human route. */
+  async function autoConfirm(joinId: string): Promise<boolean> {
+    const read = await deps.joins.read(joinId);
+    if (read.kind !== 'found') throw Error('unavailable');
+    const identity = rejoinIdentity(read.record);
+    if (!identity) return true;
+    const approval = await safeRead(deps.store, rejoinApprovalKey(identity));
+    if (approval.kind === 'absent') return true;
+    if (approval.kind !== 'record' || !validRejoinApproval(approval.record.value)) throw Error('unavailable');
+    const grant = approval.record.value;
+    const removals = await readRoomRemovals(deps.store, read.record.roomId as RoomId);
+    if (removals === 'unavailable') throw Error('unavailable');
+    const removal = removals?.owners[grant.ownerId];
+    if (removal && (!removal.complete || removal.generation > grant.generation)) return true;
+    const response = await confirm(joinId, { ownerId: grant.ownerId, verifiedEmail: '' }, grant.ownerLabel);
+    // Losing membership never reuses approval; the ordinary human flow can authorize anew.
+    return response.ok || response.status === 403;
   }
   const handler = (mutation: boolean) => async (request: Request): Promise<Response> => {
     try {
@@ -180,5 +212,5 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       return json(200, view);
     } catch { return unavailable(); }
   };
-  return { view: handler(false), confirm: handler(true), status: handler(false) };
+  return { view: handler(false), confirm: handler(true), status: handler(false), autoConfirm };
 }
