@@ -18,7 +18,7 @@ import '../../../features/channel/channel.css';
 import '../../../main.css';
 
 const query = new URLSearchParams(location.search);
-const removalFixture = query.has('owner-removal') || query.has('removed-human');
+const removalFixture = query.has('owner-removal') || query.has('removed-human') || query.has('late-channel') || query.has('forbidden');
 const removedViewer = query.has('removed-human');
 const principal: AuthPrincipal = { v: 1, ownerId: (removedViewer ? 'owner_theo' : 'local-owner') as never, providerIssuer: 'khala-local', providerSubject: 'owner',
   verifiedEmail: '', sessionExpiresAt: '9999-12-31T23:59:59.000Z' };
@@ -47,11 +47,12 @@ const profile: ProfilePort = {
   async setInitials(initials) { return { kind: 'ok', initials }; },
 };
 let removed = false;
+let synced = !query.has('late-channel');
 const indexListeners = new Set<() => void>();
 const channelListeners = new Set<(snapshot: ChannelSnapshot) => void>();
 const channelId = '!refactor0000000000000000:local' as RoomId;
 const conversations = {
-  snapshot: () => removed ? [] : [
+  snapshot: () => removed || !synced ? [] : [
     { id: '!refactor0000000000000000:local', title: 'refactor', preview: '@kevin-Codex can you review PR #12?', timestamp: null, unreadCount: null },
     { id: '!release00000000000000000:local', title: 'release', preview: null, timestamp: null, unreadCount: null },
   ],
@@ -65,11 +66,17 @@ const room = {
   timeline: async () => ({ kind: 'unavailable', retryable: true }),
   observe: (_roomId: RoomId, listener: (snapshot: ChannelSnapshot) => void) => {
     channelListeners.add(listener);
-    if (removalFixture) listener({room:{roomId:channelId,title:'refactor',membership:'joined',revision:'1'},items:[],snapshotRevision:'1',generation:1});
-    return () => { channelListeners.delete(listener); };
+    if (query.has('gone')) listener({room:{roomId:_roomId,title:null,membership:'left',revision:'1'},items:[],snapshotRevision:'1',generation:1});
+    if (removalFixture && synced) listener({room:{roomId:channelId,title:'refactor',membership:'joined',revision:'1'},items:[],snapshotRevision:'1',generation:1});
+    const timer = query.has('late-channel') ? setTimeout(() => {
+      synced = true;
+      listener({room:{roomId:channelId,title:'refactor',membership:'joined',revision:'1'},items:[],snapshotRevision:'1',generation:1});
+      for (const update of indexListeners) update();
+    }, 500) : undefined;
+    return () => { clearTimeout(timer); channelListeners.delete(listener); };
   },
   administration: {
-    creator: async () => ok('local-owner'),
+    creator: async () => query.has('forbidden') ? { kind: 'rejected' as const, code: 'forbidden' as const } : ok('local-owner'),
     removeHuman: async () => { removalBus.postMessage('removed'); return ok(null); },
   },
   create: async ({ title }: { title: string | null }) => ok({ roomId: '!release00000000000000000:local' as RoomId, title,
