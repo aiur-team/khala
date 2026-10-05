@@ -131,3 +131,15 @@ test('accepts the Matrix SDK relative context endpoint without allowing room cop
   });
   assert(errors.some(error => error.includes('user-facing Khala copy')));
 });
+
+
+test('leaves frozen agent compatibility copies intact while scanning live source', t => {
+  const { errors } = fixture(t, {
+    'packages/agent/src/compat/local-decoder.0-4.frozen.ts': `export const localRoomPath = '/api/local/rooms/';`,
+    'packages/agent/src/compat/live.ts': `export const help = 'Join a room';`,
+    'packages/agent/src/other.frozen.ts': `export const help = 'Join a room';`,
+  });
+  assert.equal(errors.length, 2);
+  assert(errors.some(error => error.startsWith('packages/agent/src/compat/live.ts:')));
+  assert(errors.some(error => error.startsWith('packages/agent/src/other.frozen.ts:')));
+});
