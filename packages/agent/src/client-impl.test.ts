@@ -209,7 +209,12 @@ it('stops a connected session once on close', async () => {
 it('never reuses stale credentials or saved confirmation on process start', async () => {
   await ensureStateDir(dir); await writeStateFile(dir, 'session.json', credentials);
   await writeStateFile(dir, 'join.json', { ...created, link });
-  expect(await client.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
+  await appendInbox(dir, toInboxEntry(message('$saved-unread')));
+  await writeStateFile(dir, 'mode.json', { mode: 'async' });
+  expect(await client.status()).toEqual({ state: 'idle', unread: 1, listeningMode: 'async' });
+  expect((await entries()).map(entry => entry.eventId)).toEqual(['$saved-unread']);
+  expect(await readStateFile(dir, 'mode.json')).toEqual({ mode: 'async' });
+  expect(await fs.readdir(dir)).not.toContain('channels');
   expect(await readStateFile(dir, 'session.json')).toBeNull();
   await client.join(link, 'Codex'); expect(joinApi.requestJoin).toHaveBeenCalledTimes(1); expect(startSession).not.toHaveBeenCalled();
 });
