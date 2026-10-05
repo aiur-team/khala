@@ -1,3 +1,4 @@
+import { inviteRemovalState } from './removals';
 import type {
   Admission,
   AdmissionRejection,
@@ -28,6 +29,13 @@ export async function admitInvite(
   if (existing === 'unavailable') return unavailable();
   if (existing !== 'absent') {
     if (!sameRequest(existing, input, identity.principal.ownerId, runtime)) return rejected('operation_mismatch');
+    const inviteRead = await safeRead(runtime.store, runtime.digests.inviteKey(input.inviteRef), options);
+    if (inviteRead.kind !== 'record') return unavailable();
+    const invite = readInviteRecord(inviteRead.record.value);
+    if (!invite) return unavailable();
+    const removal = await inviteRemovalState(runtime.store, invite, identity.principal.ownerId, options);
+    if (removal === 'unavailable') return unavailable();
+    if (removal === 'revoked') return rejected('revoked');
     if (existing.record.state === 'joined') return ok({ outcome: 'already_joined', room: existing.record.room as ChannelSummary });
     return resumeAdmission(runtime, journal, input, existing, identity.principal, options, true);
   }
@@ -95,6 +103,9 @@ async function readEligibleInvite(
   if (invite.expiresAt !== null && runtime.clock() >= Date.parse(invite.expiresAt)) {
     return { kind: 'failure', result: rejected('expired') };
   }
+  const removal = await inviteRemovalState(runtime.store, invite, principal.ownerId, options);
+  if (removal === 'unavailable') return { kind: 'failure', result: unavailable() };
+  if (removal === 'revoked') return { kind: 'failure', result: rejected('revoked') };
   if (invite.status === 'revoked') return { kind: 'failure', result: rejected('revoked') };
   if (!policyAllows(invite.policy, principal, runtime.digests)) {
     return { kind: 'failure', result: rejected('identity_mismatch') };
@@ -112,6 +123,12 @@ async function resumeAdmission(
   reconcileFirst: boolean,
 ): Promise<OperationResult<Admission, AdmissionRejection>> {
   const operationId = input.operationId;
+  const inviteRead = await safeRead(runtime.store, runtime.digests.inviteKey(input.inviteRef), options);
+  const invite = inviteRead.kind === 'record' ? readInviteRecord(inviteRead.record.value) : null;
+  if (!invite) return unavailable();
+  const removal = await inviteRemovalState(runtime.store, invite, principal.ownerId, options);
+  if (removal === 'unavailable') return unavailable();
+  if (removal === 'revoked') return rejected('revoked');
   const request = {
     operationId,
     roomId: entry.record.roomId,
@@ -119,6 +136,8 @@ async function resumeAdmission(
     deviceId: entry.record.deviceId,
     history: entry.record.history,
     inviteRevision: entry.record.inviteRevision,
+    removalGeneration: invite.removalGeneration ?? 0,
+    inviteCreatorOwnerId: invite.creatorOwnerId,
   };
   if (reconcileFirst) {
     const reconciled = await callGateway(() => runtime.gateway.lookup(request, options));

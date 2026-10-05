@@ -8,7 +8,7 @@ import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/n
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
 import { harnessLogo, initials } from '../../ui/khala/identity';
-import { AgentIcon, AsyncIcon, PencilIcon, SteerIcon, SyncIcon } from '../../ui/khala/icons';
+import { AgentIcon, AsyncIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
@@ -272,8 +272,44 @@ function AddAgent({ renderAddAgent }: Readonly<{ renderAddAgent: () => ReactNode
   </span>;
 }
 
+export type RemoveHumanHandler = (ownerId: string) => Promise<'removed' | 'failed'>;
+
+function RemoveHuman({ human, agents, remove }: Readonly<{ human: HumanMember; agents: readonly AgentMember[]; remove: RemoveHumanHandler }>) {
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const inFlight = useRef(false);
+  const [error, setError] = useState('');
+  async function confirm() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSending(true);
+    setError('');
+    const result = await remove(human.ownerId).catch(() => 'failed' as const);
+    inFlight.current = false;
+    setSending(false);
+    if (result === 'removed') setOpen(false);
+    else setError('Couldn’t remove. Try again.');
+  }
+  return <span className="kh-racts">
+    <button type="button" ref={anchor} className="kh-ib sm" aria-label={`Remove ${human.name}`} aria-haspopup="dialog" aria-expanded={open}
+      onClick={() => { setError(''); setOpen(current => !current); }}><XIcon /></button>
+    {open ? <Popover anchor={anchor} open={open} onClose={() => setOpen(false)}>
+      <div role="dialog" aria-label={`Remove ${human.name}`}>
+        <p>Remove {human.name} and their agents from this channel?</p>
+        {agents.length ? <p className="kh-remove-agents">Also removes {agents.map(agentLabel).join(', ')}</p> : null}
+        {error ? <p role="alert">{error}</p> : null}
+        <div className="kh-row2"><button type="button" className="kh-btn danger" disabled={sending} onClick={() => void confirm()}>{sending ? 'Removing…' : 'Remove'}</button>
+          <button type="button" className="kh-btn" onClick={() => { setOpen(false); anchor.current?.focus(); }}>Cancel</button></div>
+      </div>
+    </Popover> : null}
+  </span>;
+}
+
 export type ChannelRosterProps = Readonly<{
   members: ChannelMembers;
+  creatorOwnerId?: string | undefined;
+  onRemoveHuman?: RemoveHumanHandler | undefined;
   phase: 'loading' | 'ready' | 'unavailable';
   onOpen(participantId: string): void;
   /** Opens the rename field for one of the viewer's agents; no Rename buttons without it. */
@@ -287,7 +323,7 @@ export type ChannelRosterProps = Readonly<{
 }>;
 
 /** The roster tree: one group per human, each with the agents it owns. */
-export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, modeFor, onSetMode }: ChannelRosterProps) {
+export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent, modeFor, onSetMode, creatorOwnerId, onRemoveHuman }: ChannelRosterProps) {
   const agentsById = new Map(members.agents.map(agent => [agent.participantId as string, agent]));
   const humansById = new Map([members.viewer, ...members.humans].map(human => [human.ownerId, human]));
   return <>
@@ -300,13 +336,15 @@ export function ChannelRoster({ members, phase, onOpen, onRename, renderAddAgent
       return <div key={`${group.human.ownerId}:${'notInChannel' in group ? 'absent' : 'member'}`} className="kh-rg">
         <div className="kh-rrow">
           {human ? <button type="button" className="kh-rh" data-kh-human={human.participantId} onClick={() => onOpen(human.participantId)}>
-            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}</b>
+            <MemberAvatar member={human} /><span><b>{human.isViewer ? 'You' : human.name}{human.ownerId === creatorOwnerId ? <span className="kh-owner-tag">OWNER</span> : null}</b>
               {human.email ? <em className="kh-email" title={human.email}>{human.email}</em> : null}<em>{ownerOfLabel(agents.length)}</em></span>{agentCount}
           </button> : <div className="kh-rh">
             <Avatar kind="human" static label={group.human.displayName} hue={agents[0]?.ownerHue ?? 0} initials={agents[0]?.ownerInitials ?? '?'}
               swatch={colorSwatch(agents[0]?.ownerColor)} tier={agents[0]?.ownerColor?.tier} />
             <span><b>{group.human.displayName}</b><em>Not in this channel</em></span>{agentCount}
           </div>}
+          {human && creatorOwnerId === members.viewer.ownerId && human.ownerId !== creatorOwnerId && onRemoveHuman
+            ? <RemoveHuman human={human} agents={agents} remove={onRemoveHuman} /> : null}
           {human?.isViewer && renderAddAgent ? <AddAgent renderAddAgent={renderAddAgent} /> : null}
         </div>
         {agents.length > 0 ? <div className="kh-ra">{agents.map(agent => <AgentRow key={agent.participantId} agent={agent}
