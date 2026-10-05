@@ -83,6 +83,8 @@ export interface ChannelScreenProps {
   timeOptions?: TimeOptions;
   /** @deprecated The screen always renders inside `KhalaApp`. */
   embedded?: boolean;
+  /** The hidden channel title's heading level: 2 where the host page owns the `h1` (the splash demo). */
+  headingLevel?: 1 | 2;
 }
 
 /** @deprecated Use `ChannelScreenProps`. Kept through the first tagged release containing #163. */
@@ -160,7 +162,7 @@ function measureRoster(main: HTMLElement, head: HTMLElement): void {
 
 export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, viewerEmail, viewerInitials = null, viewerParticipantId, viewerColor,
   humanParticipants, currentNames, renameAgent, modeFor, onSetMode, describeParticipant, recentActivity, agentJoinedAt, renderTimeline, renderShare,
-  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {} }: ChannelScreenProps) {
+  renderAddAgent, onMention, onRosterOpen, onBack, timeOptions = {}, headingLevel = 1 }: ChannelScreenProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   // Operator request 2026-10-02: per-human colours, resolved once per channel as this viewer sees them.
   const humanColors = useMemo(() => {
@@ -272,7 +274,8 @@ export function ChannelScreen({ title, controller, viewerOwnerId, viewerName, vi
   }
 
   return <HumanColorsProvider value={humanColors}><div ref={room} className={`kh-channel${rosterOpen ? ' roster-open' : ''}`}>
-    <h1 className="sr-only" id="khala-channel-title" dir="auto">{title}</h1>
+    {headingLevel === 2 ? <h2 className="sr-only" id="khala-channel-title" dir="auto">{title}</h2>
+      : <h1 className="sr-only" id="khala-channel-title" dir="auto">{title}</h1>}
     <div ref={head} className="kh-head" onKeyDown={onRosterKeyDown}>
       {onBack ? <button type="button" className="kh-back" aria-label="All channels" onClick={onBack}><ChevronLeftIcon /></button> : null}
       <div className="kh-stack">

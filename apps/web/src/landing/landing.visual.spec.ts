@@ -59,6 +59,8 @@ async function open(page: Page, theme: Theme, viewport: Viewport, { bannerDismis
     },
     { theme, bannerDismissed },
   );
+  // The demo's messages are timed relative to now; a fixed clock keeps their time labels stable.
+  await page.clock.setFixedTime(new Date('2026-10-05T17:12:00Z'));
   await page.goto(url);
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
   await expect(page.locator('#copyBtn [data-copy-label]')).toHaveText('Copy');
@@ -112,10 +114,19 @@ for (const theme of THEMES) {
       });
 
       if (viewport.width === 1280 || viewport.width === 390 || viewport.width === 320) {
-        test('active conversation', async ({ page }) => {
+        test('demo roster', async ({ page }) => {
           await open(page, theme, viewport);
-          await page.getByRole('button', { name: 'Launch' }).click();
-          await expect(page.locator('.showcase-window')).toHaveScreenshot(`${name}-active-conversation.png`);
+          await page.locator('#kh-head-btn').click();
+          await expect(page.locator('#kh-head-btn')).toHaveAttribute('aria-expanded', 'true');
+          await expect(page.locator('.showcase-window')).toHaveScreenshot(`${name}-demo-roster.png`);
+        });
+
+        test('demo channel list', async ({ page }) => {
+          await open(page, theme, viewport);
+          const back = page.getByRole('button', { name: 'All channels' });
+          if (await back.isVisible()) await back.click();
+          await expect(page.locator('.kh-list')).toBeVisible();
+          await expect(page.locator('.showcase-window')).toHaveScreenshot(`${name}-demo-channels.png`);
         });
       }
     });

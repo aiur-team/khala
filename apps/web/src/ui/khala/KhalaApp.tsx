@@ -28,6 +28,11 @@ export type KhalaAppProps = Readonly<{
   /** A modal layer over the card (e.g. a dialog), visible in either phone pane. */
   overlay?: ReactNode;
   className?: string;
+  /**
+   * Inside a host page that has its own `main` landmark (the splash demo): the
+   * main column is a plain region and the card is labelled as `label`.
+   */
+  embedded?: Readonly<{ label: string }>;
 }>;
 
 type DetailHostValue = Readonly<{ host: HTMLElement | null; setOpen(open: boolean): void }>;
@@ -73,7 +78,7 @@ export function Brand({ theme, onThemeChange, homeHref, actions, menu }: Readonl
   </div>;
 }
 
-export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, brandMenu, list, main, detail, inThread = false, overlay, className = '' }: KhalaAppProps) {
+export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', brandActions, brandMenu, list, main, detail, inThread = false, overlay, className = '', embedded }: KhalaAppProps) {
   const card = useRef<HTMLElement>(null);
   const pop = useRef<HTMLDivElement>(null);
   const [detailHost, setDetailHost] = useState<HTMLElement | null>(null);
@@ -86,9 +91,10 @@ export function KhalaApp({ theme, onThemeChange, homeHref = '/conversations', br
   return <div className={`khala-app${className ? ` ${className}` : ''}`} data-theme={theme}>
     <ToastProvider>
       <PopoverHostProvider host={pop} card={card}><DetailHostContext.Provider value={detailContext}>
-        <section ref={card} className={classes} id="kh-card">
+        <section ref={card} className={classes} id="kh-card" {...(embedded ? { 'aria-label': embedded.label } : {})}>
           {solo ? null : <aside className="kh-list" aria-label="Channels">{brand}{list}</aside>}
-          <main className="kh-main">{solo ? brand : null}{main}<Toast /></main>
+          {embedded ? <div className="kh-main">{solo ? brand : null}{main}<Toast /></div>
+            : <main className="kh-main">{solo ? brand : null}{main}<Toast /></main>}
           {/* The pane's content (ParticipantDetail) carries its own landmark or dialog role. */}
           <div ref={setDetailHost} className="kh-detail">{detail}</div>
           <div ref={pop} className="kh-pop" hidden />

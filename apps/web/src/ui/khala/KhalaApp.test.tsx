@@ -17,6 +17,13 @@ describe('KhalaApp', () => {
     expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div></section></div>');
   });
 
+  it('embedded in a host page, adds no main landmark and labels the card', () => {
+    const html = render({ embedded: { label: 'Khala demo' } });
+    expect(html).not.toContain('<main');
+    expect(html).toContain('<section class="section-card kh-card" id="kh-card" aria-label="Khala demo">');
+    expect(html).toContain('<div class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></div>');
+  });
+
   it('puts the wordmark in the brand row and nowhere else', () => {
     const html = render();
     expect(html).toContain('<a class="wm" href="/conversations" aria-label="Khala home">khala</a>');
