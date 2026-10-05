@@ -17,7 +17,7 @@ async function readJson(file: string): Promise<{ nonce?: string; mode?: string; 
 }
 
 /** Match inbox unreadCount: ignore corrupt records and incomplete trailing writes. */
-export async function unreadMessages(dir: string): Promise<number> {
+async function unreadChannelMessages(dir: string): Promise<number> {
   const cursor = await readJson(path.join(dir, 'cursor.json'));
   const delivered = cursor && (cursor.lastDeliveredEventId === null || typeof cursor.lastDeliveredEventId === 'string')
     && Number.isSafeInteger(cursor.deliveredCount) && typeof cursor.deliveredCount === 'number' && cursor.deliveredCount >= 0 ? cursor.deliveredCount : 0;
@@ -31,6 +31,23 @@ export async function unreadMessages(dir: string): Promise<number> {
     if (!entry || !['eventId', 'roomId', 'ts', 'sender', 'senderLabel', 'body'].every(key => typeof entry[key] === 'string')
       || !['human', 'agent', 'unknown'].includes(entry.senderKind) || !['message', 'event'].includes(entry.kind)) continue;
     if (index++ >= delivered && entry.kind === 'message') messages++;
+  }
+  return messages;
+}
+/** Re-list each observation so channels joined while Stop is waiting are included. */
+export async function unreadMessages(dir: string): Promise<number> {
+  const directories = [dir];
+  try {
+    for (const entry of await fs.readdir(path.join(dir, 'channels'), { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) directories.push(path.join(dir, 'channels', entry.name));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let messages = 0;
+  for (const directory of directories) {
+    if ((await readJson(path.join(directory, 'mode.json')))?.mode === 'async') continue;
+    messages += await unreadChannelMessages(directory);
   }
   return messages;
 }
@@ -69,12 +86,11 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       const activity = await readJson(path.join(dir, 'activity.json'));
       return activity?.state === 'idle' && typeof activity.updatedAt === 'string' && Number.isFinite(Date.parse(activity.updatedAt));
     };
-    const listening = async () => (await readJson(path.join(dir, 'mode.json')))?.mode !== 'async';
     while (io.now().getTime() < deadline) {
       if (!await owns() || !parentAlive(parent)) return 0;
-      if (await listening() && await idle() && await unreadMessages(dir) > 0) {
+      if (await idle() && await unreadMessages(dir) > 0) {
         // Delivery or a new prompt may have raced the first observation.
-        if (await unreadMessages(dir) > 0 && await listening() && await idle() && await owns()
+        if (await unreadMessages(dir) > 0 && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
           return 2;
