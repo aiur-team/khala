@@ -673,3 +673,118 @@ it('returns not_connected when authoritative removal ends a failed send', async 
   await expect(client.send('hello')).rejects.toMatchObject({ code: 'not_connected' });
   await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'removed' }));
 });
+
+
+it.each([['codex', 'matrix'], ['claude', 'matrix'], ['codex', 'local'], ['claude', 'local']] as const)('restores %s %s transport and wake intake after close without another join', async (harness, transport) => {
+  if (harness === 'claude') {
+    await client.close();
+    dir = resolveStateDir(harness, 'test', { XDG_STATE_HOME: root });
+    client = createKhalaAgentClient({ harness, sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  }
+  const original = transport === 'local' ? { ...credentials, transport: 'local' as const } : credentials;
+  poll.resolve(original);
+  await connected();
+  await client.close();
+  expect(await readStateFile(dir, 'session.json')).toBeNull();
+  expect((await fs.stat(path.join(dir, 'resume.json'))).mode & 0o777).toBe(0o600);
+  joinApi.requestJoin.mockClear();
+  joinApi.pollJoin.mockClear();
+  joinApi.reportReady.mockClear();
+  const refreshed = { ...credentials, deviceId: 'fresh-device', accessToken: 'REFRESHED' };
+  const fetch = vi.fn(async () => Response.json(refreshed));
+  client = createKhalaAgentClient({ harness, sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch, onInboxAppend: waker });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(joinApi.requestJoin).not.toHaveBeenCalled();
+  expect(joinApi.pollJoin).not.toHaveBeenCalled();
+  expect(joinApi.reportReady).not.toHaveBeenCalled();
+  expect(startSession).toHaveBeenLastCalledWith(transport === 'local' ? original : refreshed, expect.any(Object));
+  if (transport === 'local') expect(fetch).not.toHaveBeenCalled();
+  else expect(fetch).toHaveBeenCalledExactlyOnceWith(new URL('/api/agent/session/resume', created.origin), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
+  handler!(message('$resumed'));
+  await vi.waitFor(() => expect(waker).toHaveBeenCalledOnce());
+});
+
+it.each(['missing', 'invalid', 'changed', 'workspace', 'left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'])(
+  'does not restore authorization after %s', async reason => {
+    await connected();
+    await client.close();
+    if (reason === 'missing') await fs.unlink(path.join(dir, 'rejoin.json'));
+    if (reason === 'invalid' || reason === 'changed') await writeStateFile(dir, 'rejoin.json', { secret: reason === 'invalid' ? 'bad' : 'X'.repeat(43) });
+    if (reason === 'workspace') {
+      const saved = (await readStateFile<Record<string, unknown>>(dir, 'resume.json'))!;
+      await writeStateFile(dir, 'resume.json', { ...saved, workspace: '/another-workspace' });
+    }
+    if (['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'].includes(reason)) await writeStateFile(dir, 'status.json', { state: 'disconnected', detail: reason });
+    startSession.mockClear();
+    client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+    await client.resume!();
+    expect(startSession).not.toHaveBeenCalled();
+    expect((await client.status()).state).toBe('idle');
+  },
+);
+
+it('explicit leave clears resume authorization even after process close overwrites status', async () => {
+  await connected();
+  await client.leave!();
+  await client.close();
+  expect(await readStateFile(dir, 'resume.json')).toBeNull();
+  startSession.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  await client.resume!();
+  expect(startSession).not.toHaveBeenCalled();
+});
+
+it('owner removal clears resume authorization before close', async () => {
+  let ended!: (reason: 'removed') => void;
+  session.onEnded = fn => { ended = fn; return () => {}; };
+  await connected();
+  ended('removed');
+  await client.close();
+  expect(await readStateFile(dir, 'resume.json')).toBeNull();
+  startSession.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  await client.resume!();
+  expect(startSession).not.toHaveBeenCalled();
+});
+
+
+it.each([401, 403])('clears hosted resume authorization after terminal rejection %s', async code => {
+  await connected(); await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
+    fetch: vi.fn(async () => new Response('{}', { status: code })) });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
+  expect(await readStateFile(dir, 'resume.json')).toBeNull();
+});
+
+it('retains authorization after temporary hosted resume failure and restores on the next process', async () => {
+  await connected(); await client.close();
+  const fetch = vi.fn(async () => new Response('{}', { status: 503 }));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
+  expect(await readStateFile(dir, 'resume.json')).not.toBeNull();
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
+    fetch: vi.fn(async () => Response.json({ ...credentials, deviceId: 'fresh', accessToken: 'NEW' })) });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+});
+
+
+it('cancels a hosted resume whose response body stalls during shutdown', async () => {
+  await connected(); await client.close();
+  let responseSignal: AbortSignal | undefined;
+  const bodyStarted = deferred<void>();
+  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+    responseSignal = init!.signal as AbortSignal;
+    return { ok: true, status: 200, json() { bodyStarted.resolve(); return new Promise(() => {}); } } as unknown as Response;
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+  await client.resume!();
+  await bodyStarted.promise;
+  await client.close();
+  expect(responseSignal!.aborted).toBe(true);
+  expect(await readStateFile(dir, 'resume.json')).not.toBeNull();
+});

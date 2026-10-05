@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import main, { createPlaceholderClient, runMcpCommand } from './main';
 
@@ -165,4 +165,22 @@ describe('MCP command lifecycle', () => {
       expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync' });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
+});
+
+
+it.each(['codex', 'claude'] as const)('creates the %s startup client without input and reuses it', async harness => {
+  const input = new PassThrough();
+  const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const controller = new AbortController();
+  const client = createPlaceholderClient();
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn(() => client);
+  const env = harness === 'codex' ? { CODEX_THREAD_ID: 'resume' } : { CLAUDE_CODE_SESSION_ID: 'resume' };
+  const running = runMcpCommand(['--harness', harness], { input, output, signal: controller.signal, createClient, env });
+  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume' });
+  input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
+  await running;
+  expect(createClient).toHaveBeenCalledOnce();
+  expect(client.close).toHaveBeenCalledOnce();
+  output.destroy();
 });

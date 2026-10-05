@@ -1,4 +1,4 @@
-import { AGENT_SESSION_STATUS_PATH, createAgentSessionStatusHandler } from './session-status';
+import { AGENT_SESSION_RESUME_PATH, createAgentSessionResumeHandler, AGENT_SESSION_STATUS_PATH, createAgentSessionStatusHandler } from './session-status';
 import { randomBytes } from 'node:crypto';
 import type { ProductionHumanRuntime } from '../composition/human/production';
 import type { RouteRegistration } from '../runtime/handler';
@@ -22,7 +22,7 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
       roomMemberNames: async (ownerId, roomId) => (await active.matrix.roomMembers(ownerId, roomId))?.map(member => member.name) ?? null });
     const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner,
       roomMembers: active.matrix.roomMembers });
-    return { agent, human, rename, sessionStatus: createAgentSessionStatusHandler(active.store, { homeserverOrigin: active.env.publicHomeserverOrigin, ...(fetch ? { fetch } : {}) }) };
+    return { agent, human, rename, sessionResume: createAgentSessionResumeHandler(active.store, { homeserverOrigin: active.env.publicHomeserverOrigin, provisioner, ...(fetch ? { fetch } : {}) }), sessionStatus: createAgentSessionStatusHandler(active.store, { homeserverOrigin: active.env.publicHomeserverOrigin, ...(fetch ? { fetch } : {}) }) };
   }
   function route(path: string, method: 'GET' | 'POST', select: (active: ReturnType<typeof handlers>) => (request: Request) => Promise<Response>): RouteRegistration {
     return { path, methods: [method], async handle(request) {
@@ -33,6 +33,7 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
     } };
   }
   return Object.freeze([
+    route(AGENT_SESSION_RESUME_PATH, 'POST', active => active.sessionResume),
     route(AGENT_SESSION_STATUS_PATH, 'GET', active => active.sessionStatus),
     route(AGENT_RENAME_PATH, 'POST', active => active.rename),
     route(AGENT_JOIN_PATH, 'POST', active => active.agent.create),

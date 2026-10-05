@@ -61,6 +61,7 @@ const keptRoutes = [
   ['/api/human/messaging/participants', ['POST']],
   ['/api/human/channel-link/resolve', ['POST']],
   ['/api/human/channel-link/personal', ['POST']],
+  ['/api/agent/session/resume', ['POST']],
   ['/api/agent/session/status', ['GET']],
   ['/api/human/agents/rename', ['POST']],
   ['/api/agent/join', ['POST']],

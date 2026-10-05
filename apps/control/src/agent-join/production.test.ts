@@ -46,6 +46,7 @@ function durableStores() {
 
 
 const c2 = [
+  ['/api/agent/session/resume', ['POST']],
   ['/api/agent/session/status', ['GET']],
   ['/api/human/agents/rename', ['POST']],
   ['/api/agent/join', ['POST']],
@@ -75,11 +76,11 @@ it('maps runtime initialization failures to 503 on every C2 route', async () => 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'unavailable' });
   }
-  expect(load).toHaveBeenCalledTimes(8);
+  expect(load).toHaveBeenCalledTimes(c2.length);
   const response = await handle(new Request(origin + '/api/agent/join/poll/abc'));
   expect(response.status).toBe(404);
   expect(await response.json()).toMatchObject({ code: 'not_found' });
-  expect(load).toHaveBeenCalledTimes(8);
+  expect(load).toHaveBeenCalledTimes(c2.length);
 });
 
 it.each([

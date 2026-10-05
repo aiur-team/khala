@@ -3,6 +3,8 @@ import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 
 export interface KhalaAgentClient {
+  resume?(): Promise<void>;
+  leave?(): Promise<void>;
   join(link: string, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string; autoConfirmed?: true } | { state: 'connected'; channelName: string }>;
   status(): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; unread: number; watcherArmed?: boolean; listeningMode: ListeningMode }>;
   /** `you` is your own current display name in the channel. */

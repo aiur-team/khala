@@ -54,3 +54,15 @@ Initials are optional and non-unique. `POST /api/human/profile/initials` accepts
 `POST /api/human/agents/rename` accepts exactly `{ matrixUserId, name }` with the same cookie, Origin and CSRF requirements. Only the recorded owner can rename an agent. Agent names use the shared namespace and username character rules, with a 2–40 character limit. Success returns `{ matrixUserId, name }` after setting the agent's global Matrix display name through a dedicated control device and updating its owner record; it emits no per-channel rename event. Errors include `400 invalid_request`, `400 invalid_name` (with `reason`), `403 not_owner`, `404 not_found`, `409 name_taken`, and `503 unavailable`. The web port is `context.agentNames`; UI wiring is separate.
 
 Username changes rename up to 50 indexed agents still using the old default name, keeping their numeric suffix when available and allocating a free default otherwise. Custom names stay unchanged; the first username claim does not cascade. Cascade failures are isolated per agent. Pending join reservations expire with the join; expired staged joins release their claims when polled. A permanent name reservation is required before confirmed credentials become available. Failed old-name cleanup resumes when the rename is retried.
+
+
+MCP startup restores an authorized Codex or Claude session in the same workspace
+without a tool call, provided its private resume record and rejoin secret match.
+Local sessions reuse their helper credentials. Hosted sessions call
+`POST /api/agent/session/resume` with the indexed session bearer; the control plane
+rejects removed or revoked sessions and issues a fresh Matrix device for ephemeral
+crypto. The new bearer retains the original removal generation, including when
+removal races issuance. Transient failures retain resume authorization for the next
+startup. Codex arms its waker at startup; Claude still needs its agent to arm Monitor.
+Explicit client leave clears resume authorization. Old sessions need one authorized
+join to create the resume record. No helper wire-format change is required.

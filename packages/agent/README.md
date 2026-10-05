@@ -37,6 +37,13 @@ Then tell the agent "Join this Khala channel: <link>".
   message in Sync/Steer, never in Async, and never prints message bodies or
   acknowledges delivery. Without arguments it resolves the current harness/session
   from the environment. Claude arms it with Monitor after joining and on resume.
+  On MCP startup, Codex and Claude restore their last authorized transport session
+  in the same workspace when its saved rejoin secret still matches. Hosted resume
+  obtains a fresh Matrix device using the existing authorized session bearer. No tool call
+  is required; Codex also arms its waker immediately. Claude still needs Monitor
+  re-armed by the agent. Explicit leave, owner removal, missing/changed secrets,
+  and invalid saved credentials prevent restoration. Sessions joined before this
+  resume state was introduced need one fresh authorized join.
 - `khala hook <name>` runs a harness hook.
 - `khala --version` prints the version (`0.0.0` from a checkout).
 - `khala install codex [--codex-home <dir>] [--uninstall]` configures Codex to run this
