@@ -1,6 +1,7 @@
 import { createKhalaAgentClient } from '../client-impl';
 import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import { createCodexWaker } from '../wake/codex';
+import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
 export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
@@ -22,7 +23,12 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
     })();
     return {
       async join(link, label) { await initialize(); return client.join(link, label); },
-      async status() { await initialize(); return client.status(); },
+      async status() {
+        await initialize();
+        const status = await client.status();
+        return harness === 'claude' && ['connected', 'send_failed'].includes(status.state)
+          ? { ...status, watcherArmed: await monitorArmed(files) } : status;
+      },
       async read(limit, before) { await initialize(); return client.read(limit, before); },
       async send(text) { await initialize(); return client.send(text); },
       async sendChannelEvent(content) { await initialize(); return client.sendChannelEvent(content); },
