@@ -13,7 +13,7 @@ import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
 import { appendInbox, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
-import { CURSOR_DEFAULT_SESSION } from './cursor';
+import { adapterFor } from './harness';
 import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
@@ -55,7 +55,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let initialization: Promise<void> | undefined;
   // Only a session id that names one agent instance may carry a rejoin identity. Every Cursor window
   // without a folder shares `cursor-default` (and its state dir), so it keeps one fresh member per join.
-  const rejoinable = !(options.harness === 'cursor' && options.sessionId === CURSOR_DEFAULT_SESSION);
+  const rejoinable = adapterFor(options.harness)?.rejoinable(options.sessionId) ?? false;
   let rejoinSecret: string | undefined;
   let savedSecret: string | undefined;
   let resuming: Promise<void> | undefined;
