@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocalChannelCreated, LocalChannelSummary, LocalMember, ChannelSecrets } from '@khala/contracts/m1/local';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { ensureStateDir, filesForDir, readJson, writeJsonAtomic } from '../state';
+import { ensureStateDir, channelFiles, readJson, writeJsonAtomic } from '../state';
 import { readEntries } from '../inbox';
 import { eventually, readEgressLog, nonLoopbackAttempts, matrixModules } from './fixtures/egress';
 import { createWorld, cleanupWorld, cli, raw, admin, deliver, armClaudeWake, inbox, mode, codexCalls, helperFile,
@@ -460,8 +460,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       type ChannelStatus = { channel: string; roomId: string; state: string; you: string; agentUserId: string; listeningMode: string };
       const status = async () => toolData<{ channels: ChannelStatus[] }>(await agent.call('khala_status')).channels;
       const room = (target: LocalChannelCreated) => `/api/local/rooms/${enc(target.roomId)}`;
-      const files = (target: LocalChannelCreated) => filesForDir(path.join(agent.files.dir, 'channels',
-        createHash('sha256').update(target.roomId).digest('hex').slice(0, 24)));
+      const files = (target: LocalChannelCreated) => channelFiles(agent.files, target.roomId);
       const roster = async (target: LocalChannelCreated) => {
         const result = await admin(multi, 'GET', `${room(target)}/members`);
         expect(result.status).toBe(200);
@@ -546,7 +545,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const awake = frameText(await deliver(agent, 'UserPromptSubmit'));
       expect(awake).toContain(stillSync); expect(awake).not.toContain(asyncText);
 
-      expect(toolData(await agent.call('khala_leave', { channel: 'Optimism' }))).toMatchObject({ left: optimism.roomId });
+      expect(toolData(await agent.call('khala_leave', { channel: 'Optimism' }))).toMatchObject({ left: optimism.name });
       expect(await status()).toEqual([expect.objectContaining({ roomId: ecosystem.roomId, state: 'connected' })]);
       const afterLeave = message('multi-after-leave');
       expect(toolData(await agent.call('khala_send', { text: afterLeave }))).toHaveProperty('eventId');
