@@ -268,6 +268,86 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
   }
 });
 
+test('bottom-row roster overlays escape the scroll fade', { timeout: 120_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-roster-overlay-dist-'));
+  const chromiumProfileRoot = await mkdtemp('/tmp/khala-roster-overlay-profile-');
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true,
+      args: ['--no-sandbox'], env: { ...process.env, TMPDIR: chromiumProfileRoot } });
+    for (const theme of ['light', 'dark']) {
+      for (const width of [390, 1280]) {
+        const page = await browser.newPage({ viewport: { width, height: 844 } });
+        await page.goto(`${server.resolvedUrls!.local[0]!}?theme=${theme}&crowd`);
+        await page.locator('#kh-head-btn').click();
+        const scroller = page.locator('.kh-roster-in');
+        // Put the viewer's last agent at the bottom, with more content below it.
+        await scroller.evaluate(element => {
+          const row = element.querySelector('[data-kh-agent="agent_scout_2"]')!.parentElement!;
+          const rect = row.getBoundingClientRect();
+          (element as HTMLElement).style.maxHeight = `${rect.bottom - element.getBoundingClientRect().top + 2}px`;
+          element.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        await page.waitForTimeout(300);
+        assert.notEqual(await scroller.evaluate(element => getComputedStyle(element).maskImage), 'none', 'scroll fade remains');
+        const row = page.locator('[data-kh-agent="agent_scout_2"]').locator('..');
+        const mode = width === 390 ? row.locator('.kh-mode-btn') : row.locator('[role="radio"][data-v="sync"]');
+        await mode.hover();
+        const tip = page.getByRole('tooltip');
+        await tip.waitFor();
+        assert.equal(await tip.textContent(), 'Sync · next turn');
+        assert.equal(await tip.evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          return !element.closest('.kh-roster') && rect.width > 0 && rect.height > 0
+            && rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight;
+        }), true, 'tooltip is visible outside the masked ancestor');
+        const shots = process.env.KHALA_SCREENSHOT_DIR;
+        if (shots) {
+          await mkdir(shots, { recursive: true });
+          await page.screenshot({ path: join(shots, `bottom-mode-tooltip-${width}-${theme}.png`) });
+        }
+        await row.getByRole('button', { name: /Rename/ }).hover();
+        assert.equal(await tip.textContent(), 'Rename', 'rename tooltip uses the same overlay');
+        // Exercise the compact mode menu at both widths, as in a narrow main pane.
+        if (width === 1280) await row.locator('.kh-mode-btn').evaluate(element => { (element as HTMLElement).style.display = 'grid'; });
+        for (const value of ['steer', 'async', 'sync']) {
+          await row.locator('.kh-mode-btn').click();
+          const items = page.getByRole('menuitemradio');
+          await page.locator('.kh-pop.menu').waitFor();
+          await page.waitForTimeout(200);
+          assert.equal(await items.count(), 3);
+          for (const item of await items.all()) {
+            assert.equal(await item.evaluate(element => {
+              const rect = element.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+              return hit === element || element.contains(hit);
+            }), true, `each menu item is unobscured at its centre (${theme}, ${width}, ${value}, ${await item.textContent()})`);
+          }
+          if (shots && value === 'steer') await page.screenshot({ path: join(shots, `bottom-mode-menu-${width}-${theme}.png`) });
+          await page.locator(`[role="menuitemradio"][data-v="${value}"]`).click();
+          await page.locator('.kh-pop').waitFor({ state: 'hidden' });
+        }
+        await row.getByRole('button', { name: /Rename/ }).click();
+        await page.getByLabel('Name for Scout').waitFor();
+        await page.waitForTimeout(300);
+        assert.equal(await page.getByLabel('Name for Scout').evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        }), true, 'rename/detail pane is above the roster');
+        await page.close();
+      }
+    }
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
 test('a failed copy leaves the link selected for copying by hand', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-dist-'));
   const chromiumProfileRoot = await mkdtemp('/tmp/khala-channel-profile-');
