@@ -1,5 +1,5 @@
 import { requestJoin, pollJoin } from '../join';
-import { resolveStateDir } from '../state';
+import { channelFiles, filesForDir, resolveStateDir } from '../state';
 import { createKhalaAgentClient } from '../client-impl';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { createServer } from 'node:http';
@@ -229,7 +229,7 @@ it('does not let a share-link holder hijack a cursor-default member', async () =
   const victim = createKhalaAgentClient({ harness: 'cursor', sessionId: 'cursor-default', env });
   try {
     expect(await victim.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
-    const original = JSON.parse(await readFile(join(resolveStateDir('cursor', 'cursor-default', env), 'session.json'), 'utf8'));
+    const original = JSON.parse(await readFile(channelFiles(filesForDir(resolveStateDir('cursor', 'cursor-default', env)), created.roomId).session, 'utf8'));
     const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
     for (const rejoinSecret of [undefined, 'X'.repeat(43)]) {
       const attempted = await requestJoin({ link: (await command(['link', 'protected'])).shareLink,
@@ -254,7 +254,7 @@ it('keeps two Cursor windows on one machine that both fall back to cursor-defaul
     expect(await first.join(created.shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
     const sharedDir = resolveStateDir('cursor', 'cursor-default', env);
     await expect(stat(join(sharedDir, 'rejoin.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-    const original = JSON.parse(await readFile(join(sharedDir, 'session.json'), 'utf8'));
+    const original = JSON.parse(await readFile(channelFiles(filesForDir(sharedDir), created.roomId).session, 'utf8'));
     expect(await second.join((await command(['link', 'windows'])).shareLink, 'Cursor')).toMatchObject({ state: 'connected' });
     const store: Awaited<ReturnType<typeof openLocalStore>> = await vi.mocked(openLocalStore).mock.results.at(-1)!.value;
     expect((await second.status()).agentUserId).not.toBe(original.userId);

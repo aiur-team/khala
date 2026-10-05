@@ -22,7 +22,8 @@ export interface ChannelSession {
   stop(): Promise<void>;
 }
 
-export type StartSession = (creds: AgentCredentials) => Promise<ChannelSession>;
-export const startChannelSession: StartSession = async creds => creds.transport === 'local'
+export type SessionOptions = { checkRemoved?: () => Promise<boolean> };
+export type StartSession = (creds: AgentCredentials, options?: SessionOptions) => Promise<ChannelSession>;
+export const startChannelSession: StartSession = async (creds, options) => creds.transport === 'local'
   ? (await import('./local/session')).createLocalSession(creds)
-  : (await import('./matrix/session')).createAgentMatrixSession(creds);
+  : (await import('./matrix/session')).createAgentMatrixSession(creds, options);

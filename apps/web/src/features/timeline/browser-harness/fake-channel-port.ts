@@ -34,7 +34,7 @@ function makeItem(eventId: string, author: ParticipantView, body: string, client
   };
 }
 
-export function createFakeChannelPort() {
+export function createFakeChannelPort(empty = false) {
   const roomId = 'room_harness' as RoomId;
   const history: TimelineItem[] = [];
   for (let i = 0; i < 40; i += 1) history.push(makeItem(`hist_${i}`, i % 5 === 0 ? agent : alice, `Historical message ${i}`));
@@ -47,6 +47,10 @@ export function createFakeChannelPort() {
     ),
     makeItem('recent_3', alice, 'A fenced snippet:\n```ts\nconst risky = "<script>alert(1)</script>";\n```'),
   ];
+  if (empty) { history.length = 0; recent = []; }
+  let historyCalls = 0;
+  let releaseHistory: (() => void) | undefined;
+  let delayHistory = false;
   let generation = 1;
   let membership: ChannelSnapshot['room']['membership'] = 'joined';
   const listeners = new Set<(snapshot: ChannelSnapshot) => void>();
@@ -124,6 +128,11 @@ export function createFakeChannelPort() {
       return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
     },
     timeline: async ({ cursor, limit }) => {
+      historyCalls += 1;
+      if (delayHistory) {
+        delayHistory = false;
+        await new Promise<void>(resolve => { releaseHistory = resolve; });
+      }
       const startIndex = cursor ? Number(cursor) : history.length;
       const pageStart = Math.max(0, startIndex - limit);
       const items = history.slice(pageStart, startIndex);
@@ -138,6 +147,9 @@ export function createFakeChannelPort() {
 
   return {
     port,
+    historyCalls: () => historyCalls,
+    delayHistory: () => { delayHistory = true; },
+    releaseHistory: () => { releaseHistory?.(); },
     showUnavailable() {
       encrypted = { kind: 'unavailable', eventId: 'encrypted' as never, receivedAt: '2026-09-17T00:00:00Z' };
       emit();

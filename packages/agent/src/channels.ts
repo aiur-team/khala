@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { appendEntries, unread } from './inbox';
 import { channelFiles, channelsDir, ensureStateDir, filesForDir, readJson, readStatus, removeStateFile, stateKey, StateError, writeStateFile, type SessionFiles } from './state';
 
 export type ChannelRef = { key: string; roomId: string; channelName?: string; files: SessionFiles; legacy: boolean };
@@ -65,6 +66,14 @@ export async function migrateLegacy(files: SessionFiles): Promise<'none' | 'move
   }
   const nested = channelFiles(files, id);
   await ensureStateDir(nested.dir);
+  const destinationInbox = await exists(nested.inbox);
+  if (present[2] && !destinationInbox && present[0] && await exists(nested.cursor)) {
+    // Two cursors without channel history cannot establish which inbox they index.
+    // Leave both trees untouched rather than guessing and skipping messages.
+    if (await fs.readFile(files.cursor, 'utf8') !== await fs.readFile(nested.cursor, 'utf8')) {
+      throw new StateError('storage_failed');
+    }
+  }
   const status = await readStatus(files);
   // Publish metadata before moving the inbox, which is the legacy-presence marker.
   // A restart after any rename can reuse the root credentials or remaining inbox.
@@ -73,7 +82,20 @@ export async function migrateLegacy(files: SessionFiles): Promise<'none' | 'move
     await writeStateFile(nested.dir, 'channel.json', { roomId: id,
       ...(typeof status?.channelName === 'string' ? { channelName: status.channelName } : {}), joinedAt: new Date().toISOString() });
   }
+  if (destinationInbox) {
+    if (present[2]) await appendEntries(nested, (await unread(files)).entries);
+    // Inbox is the source-presence marker. Remove it before its cursor so a
+    // restart cannot append delivered entries as unread; append dedupes retries.
+    for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json']) await removeStateFile(files.dir, name);
+    return 'moved';
+  }
   for (const name of names) {
+    // A cursor already moved by an interrupted migration must remain in place.
+    // Existing channel modes likewise take precedence over the legacy mode.
+    if (await exists(path.join(nested.dir, name))) {
+      await removeStateFile(files.dir, name);
+      continue;
+    }
     try { await fs.rename(path.join(files.dir, name), path.join(nested.dir, name)); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StateError('storage_failed');
     }

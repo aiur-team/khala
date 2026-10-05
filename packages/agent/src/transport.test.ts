@@ -8,6 +8,12 @@ it.each([undefined, 'matrix'] as const)('selects matrix for transport %s', async
   mocks.matrix.mockClear();
   const input = { ...creds, ...(transport ? { transport } : {}) };
   expect(await startChannelSession(input)).toEqual({ userId: 'matrix' });
-  expect(mocks.matrix).toHaveBeenCalledExactlyOnceWith(input);
+  expect(mocks.matrix).toHaveBeenCalledExactlyOnceWith(input, undefined);
   expect(mocks.local).not.toHaveBeenCalled();
+});
+
+it('forwards authoritative removal checks to the hosted session', async () => {
+  mocks.matrix.mockClear(); const checkRemoved = vi.fn(async () => true);
+  await startChannelSession(creds, { checkRemoved });
+  expect(mocks.matrix).toHaveBeenCalledExactlyOnceWith(creds, { checkRemoved });
 });
