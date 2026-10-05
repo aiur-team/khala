@@ -1,9 +1,10 @@
+import { recordRemoval } from '../invitations/removals';
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { ownerAgentsKey } from '@khala/contracts/m1/names';
 import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
-import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { Authentication, MutationAuthorization } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
 import { createControlStore } from '../runtime/control-store';
@@ -240,7 +241,7 @@ it('numbers the default name only for a different hosted session in the same cha
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
   f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
-    ...credentials, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
+    ...credentials, accessToken: 'token-' + input.joinId, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
   } }));
   const members: string[] = [];
   for (const sessionId of ['thread-1', 'thread-1', 'thread-2']) {
@@ -261,7 +262,7 @@ it('keeps sibling hosted agents separate when a session id is asserted without i
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
   f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
-    ...credentials, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
+    ...credentials, accessToken: 'token-' + input.joinId, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
   } }));
   const members: string[] = [];
   const names: string[] = [];
@@ -283,7 +284,7 @@ it('never reuses a hosted identity for a session id confirmed without any rejoin
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
   f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
-    ...credentials, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
+    ...credentials, accessToken: 'token-' + input.joinId, userId: f.deps.provisioner.agentUserId(input.identityId ?? input.joinId, input.ownerId),
   } }));
   const members: string[] = [];
   for (let i = 0; i < 2; i++) {
@@ -314,4 +315,18 @@ it('fails closed when the channel members cannot be read', async () => {
   f.deps.roomMemberNames.mockResolvedValue(null);
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
   expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+});
+
+it('revokes provisioned credentials and refuses confirmation when owner removal races provisioning', async () => {
+  const f = await fixture();
+  const revokeAgentSession = vi.fn(async () => true);
+  f.deps.provisioner.provision.mockImplementation(async () => {
+    await recordRemoval(f.store, credentials.roomId as RoomId, 'creator' as OwnerId, 'owner' as OwnerId, [credentials.userId], 'Owner');
+    return { kind: 'ok', credentials };
+  });
+  const handlers = createAgentJoinHumanHandlers({ ...f.deps, revokeAgentSession });
+  expect((await handlers.confirm(f.request('POST'))).status).toBe(403);
+  expect(revokeAgentSession).toHaveBeenCalledWith(credentials.userId, credentials.roomId);
+  const read = await f.joins.read(f.joinId);
+  expect(read.kind === 'found' && read.record.state).toBe('pending');
 });

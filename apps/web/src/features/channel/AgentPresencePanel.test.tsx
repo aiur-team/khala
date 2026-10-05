@@ -145,3 +145,16 @@ describe('submitRename', () => {
       .toEqual({ kind: 'error', message: 'Couldn’t rename. Try again.' });
   });
 });
+
+
+describe('channel creator authority', () => {
+  it('shows OWNER to every viewer and removal only to the creator', () => {
+    const roster = resolveMembers({viewer:{ownerId:mira, name:'Mira'}, humans:[{participantId:'p_theo',ownerId:'owner_theo',displayName:'Theo'}],agents:[]});
+    const render = (creatorOwnerId: string) => renderToStaticMarkup(<ChannelRoster members={roster} phase="ready" onOpen={() => {}} creatorOwnerId={creatorOwnerId} onRemoveHuman={async () => 'removed'} />);
+    expect(render(mira)).toContain('OWNER');
+    expect(render(mira)).toContain('aria-label="Remove Theo"');
+    expect(render(mira)).not.toContain('aria-label="Remove Mira"');
+    expect(render('owner_theo')).toContain('OWNER');
+    expect(render('owner_theo')).not.toContain('aria-label="Remove Theo"');
+  });
+});

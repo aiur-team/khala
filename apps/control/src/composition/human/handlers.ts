@@ -1,5 +1,6 @@
 import {
   decodeDeviceId,
+  decodeOwnerId,
   decodeParticipantId,
   decodeRoomId,
   type AdmissionPolicy,
@@ -13,7 +14,7 @@ import {
 } from '../../auth/index';
 import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
-import type { MatrixSessionIssuer } from './matrix';
+import type { MatrixSessionIssuer, MatrixChannelAdministration } from './matrix';
 import type { BrowserSenderVerifier } from './browser-sender';
 import { createProductionHumanServiceLoader } from './production';
 
@@ -32,6 +33,7 @@ export type HumanHandlerServices = Readonly<{
   admission: AdmissionService;
   /** Server-side Matrix login boundary. Tokens leave only through its authenticated route. */
   messaging?: MatrixSessionIssuer;
+  administration?: MatrixChannelAdministration;
   verifyBrowserSender?: BrowserSenderVerifier;
 }>;
 
@@ -326,6 +328,35 @@ export function createHumanHandlers(
         if (operationId === null || inviteRef === null || !deviceId.ok) return json(400, { code: 'invalid_request' });
         const result = await admission.admit({ operationId, inviteRef, deviceId: deviceId.value });
         return result.kind === 'ok' ? json(200, result) : responseForOperationFailure(result);
+      }),
+    },
+    {
+      path: '/api/human/channels/creator', methods: get,
+      handle: request => withServices(request, async ({ auth, administration }) => {
+        const principal = await authenticated(auth, request);
+        if (isResponse(principal)) return principal;
+        if (!administration) return unavailable('feature_unavailable');
+        const search = new URL(request.url).searchParams;
+        const roomId = decodeRoomId(search.get('roomId'));
+        if (!roomId.ok || search.getAll('roomId').length !== 1 || [...search.keys()].some(key => key !== 'roomId')) return json(400, { code: 'invalid_request' });
+        const result = await administration.creator(principal, roomId.value);
+        return result.kind === 'ok' ? json(200, { ownerId: result.ownerId })
+          : result.kind === 'forbidden' ? json(403, { code: 'forbidden' }) : unavailable();
+      }),
+    },
+    {
+      path: '/api/human/channels/remove-human', methods: post,
+      handle: request => withServices(request, async ({ auth, administration }) => {
+        const principal = await authorized(auth, request);
+        if (isResponse(principal)) return principal;
+        if (!administration) return unavailable('feature_unavailable');
+        const value = await readJsonObject(request);
+        if (!value || !hasExactKeys(value, ['roomId', 'ownerId'])) return json(400, { code: 'invalid_request' });
+        const roomId = decodeRoomId(value.roomId); const ownerId = decodeOwnerId(value.ownerId);
+        if (!roomId.ok || !ownerId.ok) return json(400, { code: 'invalid_request' });
+        const result = await administration.removeHuman(principal, roomId.value, ownerId.value);
+        return result.kind === 'ok' ? json(200, { kind: 'ok' }) : result.kind === 'forbidden' ? json(403, { code: 'forbidden' })
+          : result.kind === 'not_found' ? json(404, { code: 'not_found' }) : unavailable();
       }),
     },
     {

@@ -28,3 +28,6 @@
 .kh-cname .kh-txt[aria-invalid="true"]{border-color:var(--block-line)}
 .kh-cname-actions{display:flex;justify-content:flex-end;margin-top:.2rem}
 @media (max-width:480px){.kh-cname-scrim{place-items:start stretch}.kh-cname{width:100%}.kh-cname-actions .kh-btn{flex:1;height:44px}}
+
+.kh-owner-tag { display: inline-block; margin-left: .4rem; padding: .1rem .3rem; border: 1px solid var(--line-strong); border-radius: 4px; font-size: .55rem; letter-spacing: .05em; color: var(--faint); vertical-align: middle; }
+.kh-remove-agents { color: var(--faint); font-size: .75rem; overflow-wrap: anywhere; }
