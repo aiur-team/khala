@@ -215,7 +215,7 @@ it('keeps one hosted identity and its rename across fresh join requests for the 
   const otherRoomId = '!other:matrix.test';
   await f.joins.create({ ...f.record, joinId: otherId, roomId: otherRoomId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)) });
   f.deps.provisioner.agentUserId.mockReturnValueOnce('@other-agent:matrix.test');
-  f.deps.provisioner.provision.mockResolvedValueOnce({ kind: 'ok', credentials: { ...credentials, roomId: otherRoomId, userId: '@other-agent:matrix.test' } });
+  f.deps.provisioner.provision.mockResolvedValueOnce({ kind: 'ok', credentials: { ...credentials, roomId: otherRoomId, userId: '@other-agent:matrix.test', accessToken: 'OTHER-AGENT-TOKEN' } });
   expect((await f.handlers.confirm(f.request('POST', `joinId=${otherId}`))).status).toBe(200);
   expect(f.deps.provisioner.agentUserId.mock.calls.at(-1)![0]).not.toBe(identityId);
 });
