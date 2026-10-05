@@ -56,20 +56,26 @@ for (const theme of THEMES) {
     for (const selected of ['launch', 'design']) {
       test(`${theme} row states at ${width}, selected ${selected}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
-        await page.goto(`${url}?view=list&theme=${theme}&selected=${selected}`);
+        await page.goto(`${url}?view=list&theme=${theme}&selected=${selected}${selected === 'launch' ? '&singleUnread' : ''}`);
         await page.locator('.kh-cv').first().waitFor();
-        await page.locator('[data-kh-convo="empty"]').hover();
+        await page.locator(`[data-kh-convo="${selected === 'launch' ? 'design' : 'launch'}"]`).hover();
         await settle(page);
         const badge = page.locator('.kh-cv-unread');
-        const insideRow = await badge.evaluate(dot => {
+        const placements = await badge.evaluateAll(dots => dots.map(dot => {
           const badgeBox = dot.getBoundingClientRect();
           const row = dot.closest('.kh-cv')!.getBoundingClientRect();
-          const avatar = dot.closest('.kh-cv-av')!.getBoundingClientRect();
+          const avatar = dot.closest('.kh-cv-av')!.querySelector('.kh-av')!.getBoundingClientRect();
+          const fillRadius = badgeBox.width / 2 - parseFloat(getComputedStyle(dot).borderLeftWidth);
+          const distance = Math.hypot(
+            badgeBox.left + badgeBox.width / 2 - (avatar.left + avatar.width / 2),
+            badgeBox.top + badgeBox.height / 2 - (avatar.top + avatar.height / 2),
+          );
           return badgeBox.left >= row.left && badgeBox.top >= row.top
             && badgeBox.right <= row.right && badgeBox.bottom <= row.bottom
-            && badgeBox.left < avatar.left && badgeBox.top < avatar.top;
-        });
-        expect(insideRow).toBe(true);
+            && Math.abs(distance - avatar.width / 2) <= fillRadius;
+        }));
+        expect(placements.length).toBe(selected === 'launch' ? 2 : 1);
+        expect(placements.every(Boolean)).toBe(true);
         await expect(page.locator('.kh-list')).toHaveScreenshot(`${theme}-rows-${width}-${selected}.png`);
       });
     }
