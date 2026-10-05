@@ -14,6 +14,8 @@ const occurrences = /\b(?:rooms?|chats?)\b/gi;
 const splashSentence = 'Encrypted chat for humans and their agents.';
 const suppression = /khala-terminology-allow:[ \t]*\S/;
 const sourcePattern = /\.[cm]?[jt]sx?$/;
+// Frozen wire decoders preserve released protocol strings, not current product copy.
+const frozenAgentCompatPath = /(?:^|\/)packages\/agent\/src\/compat\/[^/]+\.frozen\.ts$/;
 const ignoredPath = /(?:^|\/)(?:dist|node_modules)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/;
 // Every string attribute is visible copy unless it is machine-only.
 const machineAttributes = new Set([
@@ -34,7 +36,7 @@ function filesBelow(directory, pattern) {
   }
   return entries.flatMap(entry => {
     const filename = path.join(directory, entry.name);
-    if (ignoredPath.test(normalize(filename))) return [];
+    if (ignoredPath.test(normalize(filename)) || frozenAgentCompatPath.test(normalize(filename))) return [];
     if (entry.isDirectory()) return filesBelow(filename, pattern);
     return pattern.test(filename) ? [filename] : [];
   });
