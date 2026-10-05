@@ -66,3 +66,8 @@
 .kh-toast { position: absolute; left: 50%; bottom: 104px; z-index: 30; display: flex; align-items: center; gap: .35rem; padding: .45rem .85rem; border-radius: 999px; background: var(--fg); color: var(--surface); font-size: .8rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translate(-50%, 8px); pointer-events: none; transition: opacity .18s, transform .18s; }
 .kh-toast.on { opacity: 1; transform: translate(-50%, 0); }
 .kh-toast svg { width: 14px; height: 14px; }
+
+/* Roster tips live beside the popover host, outside the scroll mask. */
+.kh-card .kh-roster [data-tip]:hover::after { content: none; }
+.kh-roster-tooltip { position: absolute; z-index: 30; width: max-content; max-width: calc(100% - 16px); box-sizing: border-box; font-size: .7rem; font-weight: 600; line-height: 1.2; padding: 5px 8px; border-radius: 7px; background: var(--fg); color: var(--surface); pointer-events: none; }
+.kh-roster-tooltip[hidden] { display: none; }
