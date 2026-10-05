@@ -145,14 +145,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(cog).toHaveAttribute('aria-expanded', 'true');
       const menu = page.getByRole('menu', { name: 'Settings' });
       const items = menu.getByRole('menuitem');
-      assert.deepEqual(await items.allInnerTexts(), ['Light mode', 'Profile\n@Kevin', 'Log out']);
+      assert.deepEqual(await items.allInnerTexts(), ['Light mode', '@\nNotify me when I’m mentioned\nOff', 'Profile\n@Kevin', 'Log out']);
       await expect(items.nth(0)).toBeFocused();
       await page.keyboard.press('ArrowUp');
-      await expect(items.nth(2)).toBeFocused();
+      await expect(items.nth(3)).toBeFocused();
       await page.keyboard.press('ArrowDown');
       await expect(items.nth(0)).toBeFocused();
       await page.keyboard.press('End');
-      await expect(items.nth(2)).toBeFocused();
+      await expect(items.nth(3)).toBeFocused();
       await page.keyboard.press('Home');
       await expect(items.nth(0)).toBeFocused();
       // The menu fits inside the card, a phone included.
@@ -167,7 +167,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
 
       // ArrowUp opens at the last item; Tab closes the menu.
       await page.keyboard.press('ArrowUp');
-      await expect(items.nth(2)).toBeFocused();
+      await expect(items.nth(3)).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(menu).toHaveCount(0);
 
@@ -187,6 +187,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       // Profile opens the dialog with focus in the username; Esc closes back to the cog.
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('ArrowDown');
       await page.keyboard.press('Enter');
       const dialog = page.getByRole('dialog', { name: 'Profile' });
       const input = dialog.getByRole('textbox', { name: 'Username' });
@@ -202,7 +203,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
 
       // Focus is trapped while the dialog is open; Save renames and the item reads the new name.
       await cog.click();
-      await press(items.nth(1));
+      await press(items.nth(2));
       await expect(input).toBeFocused();
       await input.fill('Kev');
       await page.keyboard.press('Shift+Tab');
@@ -214,13 +215,13 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       await expect(cog).toBeFocused();
       assert.deepEqual(saved, ['Kev']);
       await cog.click();
-      await expect(items.nth(1)).toHaveText(/@Kev$/u);
+      await expect(items.nth(2)).toHaveText(/@Kev$/u);
       await expect(page.locator('.khala-owner-shell')).toHaveAttribute('data-theme', 'light');
       await page.keyboard.press('Escape');
 
       // Log out keeps its brand-row messages; the fixture's sign-out fails.
       await cog.click();
-      await press(items.nth(2));
+      await press(items.nth(3));
       await expect(brand.getByRole('alert')).toHaveText('Log out failed. Try again.');
       await expect(cog).toBeFocused();
       // The message fits the brand row without scrolling the card sideways.
@@ -232,7 +233,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await press(items.nth(0));
         await page.waitForTimeout(600);
         await cog.click();
-        await press(items.nth(1));
+        await press(items.nth(2));
         await shoot('dialog');
       }
     });
