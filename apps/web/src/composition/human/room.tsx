@@ -121,10 +121,13 @@ function HumanRoom({ context, roomId, navigate, routes }: {
     [context.generation, context.room, roomId],
   );
   const [creatorOwnerId, setCreatorOwnerId] = useState<OwnerId | null>(null);
+  const [controlForbidden, setControlForbidden] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
     void context.room.administration?.creator(roomId, { signal: abort.signal }).then(result => {
-      if (!abort.signal.aborted && result.kind === 'ok') setCreatorOwnerId(result.value);
+      if (abort.signal.aborted) return;
+      if (result.kind === 'ok') setCreatorOwnerId(result.value);
+      else if (result.kind === 'rejected' && result.code === 'forbidden') setControlForbidden(true);
     }).catch(() => {});
     return () => abort.abort();
   }, [context.room, roomId]);
@@ -148,8 +151,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const account = useHumanAccount();
   const viewer = context.participant?.() ?? null;
   const timelineData = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot, timeline.getSnapshot);
-  const lostAccess = timelineData.membership === 'left' || timelineData.membership === 'revoked'
-    || Boolean(conversations && !conversations.some(item => item.id === roomId));
+  const lostAccess = controlForbidden || timelineData.membership === 'left' || timelineData.membership === 'revoked';
   useEffect(() => {
     if (lostAccess && navigate && routes) navigate(routes.conversationsPath());
   }, [lostAccess, navigate, routes]);
