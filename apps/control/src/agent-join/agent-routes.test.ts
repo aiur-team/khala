@@ -61,7 +61,7 @@ it('creates normalized pending joins without persisting poll secrets', async () 
 it('validates methods and request fields in contract order', async () => {
   const f = await fixture();
   expect((await f.handlers.create(new Request(origin))).status).toBe(405);
-  const cases: [unknown, string][] = [[{}, 'invalid_link'], [{ link: 'bad', harness: 'other', label: '' }, 'invalid_harness'], [{ link: 'bad', harness: 'claude', label: 'system' }, 'invalid_label'], [{ link: 'bad', harness: 'claude', label: 'x'.repeat(41) }, 'invalid_label'], [{ link: 'bad', harness: 'claude', label: 'Agent' }, 'invalid_link'], [{ link: `${origin}/join/inv_absent`, harness: 'claude', label: 'Agent' }, 'link_unavailable']];
+  const cases: [unknown, string][] = [[{}, 'invalid_link'], [{ link: 'bad', harness: 'bad_id', label: '' }, 'invalid_harness'], [{ link: 'bad', harness: 'claude', label: 'system' }, 'invalid_label'], [{ link: 'bad', harness: 'claude', label: 'x'.repeat(41) }, 'invalid_label'], [{ link: 'bad', harness: 'claude', label: 'Agent' }, 'invalid_link'], [{ link: `${origin}/join/inv_absent`, harness: 'claude', label: 'Agent' }, 'link_unavailable']];
   for (const [body, code] of cases) expect(await (await f.handlers.create(f.createRequest(body))).json()).toEqual({ error: code });
   expect((await f.handlers.create(f.createRequest('{'))).status).toBe(400);
   expect((await f.handlers.create(f.createRequest({}, 'text/plain'))).status).toBe(400);
@@ -168,5 +168,17 @@ it('persists only the rejoin secret hash and accepts the client session id alpha
   expect(JSON.stringify(read.record)).not.toContain(rejoinSecret);
   for (const bad of ['short', 'S'.repeat(44), 42]) {
     expect(await (await f.handlers.create(f.createRequest({ link: `${origin}/join/inv_abcdefgh`, harness: 'cursor', label: 'Agent', rejoinSecret: bad }))).json()).toEqual({ error: 'invalid_link' });
+  }
+});
+
+it('accepts registry and generic harness ids at the control boundary', async () => {
+  const f = await fixture();
+  for (const harness of ['gemini', 'antigravity', 'cline']) {
+    const response = await f.handlers.create(f.createRequest({ link: `${origin}/join/inv_abcdefgh`, harness, label: 'Agent' }));
+    expect(response.status).toBe(201);
+    const created = await response.json() as AgentJoinCreated;
+    const read = await f.joins.read(created.joinId);
+    expect(read.kind).toBe('found');
+    if (read.kind === 'found') expect(read.record.harness).toBe(harness);
   }
 });
