@@ -1,6 +1,14 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
-import type { LocalChannelSummary, LocalEvent, LocalEventType, LocalHistoryPage, LocalMember, OwnerProfile } from '@khala/contracts/m1/local';
+import type { LocalChannelSummary as WireChannelSummary, LocalEvent as WireEvent, LocalEventType, LocalHistoryPage as WireHistoryPage, LocalMember as WireMember, LocalMemberContent as WireMemberContent, OwnerProfile } from '@khala/contracts/m1/local';
+// Helper projections accept open ids; shared wire decoders stay closed until U8.
+export type LocalMemberContent = Omit<WireMemberContent, 'harness'> & { harness?: string };
+export type LocalMember = Omit<WireMember, 'harness'> & { harness?: string };
+export type LocalEvent = Omit<WireEvent, 'previousContent'> & { previousContent?: LocalMemberContent };
+export type LocalHistoryPage = Omit<WireHistoryPage, 'events'> & { events: LocalEvent[] };
+export type LocalChannelSummary = Omit<WireChannelSummary, 'members'> & {
+  members: (Omit<WireChannelSummary['members'][number], 'harness'> & { harness?: string })[];
+};
 export type LocalRequest = {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; query: URLSearchParams; headers: IncomingHttpHeaders;
   body: unknown;                       // parsed JSON (undefined for GET/DELETE or empty body); invalid JSON is rejected by the server with 400 before routing

@@ -1,20 +1,34 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { checkName, isDefaultAgentName, MODEL_NAMES } from '@khala/contracts/m1/names';
-import type { Harness } from '@khala/contracts/m1/agent-join';
+import { checkName } from '@khala/contracts/m1/names';
+import { harnessInfo, type HarnessId } from '@khala/contracts/m1/harness';
 import { readJson, StateError, stateRoot, writeJsonAtomic } from '../state';
 
 export const HOSTED_PROFILE_FILE = 'hosted-profile.json';
 export type HostedProfileFile = { v: 1; username: string; savedAt: string };
 export const LOCAL_OWNER_FALLBACK_NAME = 'User';
 
-export function hostedUsernameFromAgentName(displayName: string, harness: Harness): string | null {
-  const suffix = new RegExp(`-${MODEL_NAMES[harness]}(?:-\\d+)?$`, 'iu');
+export function defaultLocalAgentName(username: string, harness: HarnessId, n = 1): string {
+  return `${username}-${harnessInfo(harness).modelName}${n === 1 ? '' : `-${n}`}`;
+}
+export function isDefaultLocalAgentName(name: string, username: string, harness: HarnessId): boolean {
+  const escaped = defaultLocalAgentName(username, harness).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^${escaped}(?:-\\d+)?$`, 'iu').test(name);
+}
+export function freeLocalAgentName(username: string, harness: HarnessId, taken: Iterable<string>): string {
+  const used = new Set([...taken].map(name => name.toLowerCase()));
+  let n = 1;
+  while (n < 1000 && used.has(defaultLocalAgentName(username, harness, n).toLowerCase())) n++;
+  return defaultLocalAgentName(username, harness, n);
+}
+
+export function hostedUsernameFromAgentName(displayName: string, harness: HarnessId): string | null {
+  const suffix = new RegExp(`-${harnessInfo(harness).modelName}(?:-\\d+)?$`, 'iu');
   if (!suffix.test(displayName)) return null;
   const candidate = displayName.replace(suffix, '');
   const checked = checkName(candidate, 'username');
-  return checked.ok && checked.name === candidate && isDefaultAgentName(displayName, candidate, harness) ? candidate : null;
+  return checked.ok && checked.name === candidate && isDefaultLocalAgentName(displayName, candidate, harness) ? candidate : null;
 }
 
 async function ensurePrivateRoot(root: string): Promise<void> {

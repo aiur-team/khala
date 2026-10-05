@@ -1,8 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { agentConfirmPagePath, HARNESSES, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { agentConfirmPagePath, validAgentSessionId, validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
-import { freeAgentName } from '@khala/contracts/m1/channel-names';
-import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
+import { isHarnessId } from '@khala/contracts/m1/harness';
+import { defaultLocalAgentName, freeLocalAgentName } from '../identity';
+import { checkName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, PendingJoin } from '../types';
 
@@ -41,14 +42,14 @@ export function agentJoinRoutes(): LocalRoute[] {
       if (typeof body.link !== 'string' || !parseChannelLink(body.link)) return fail(400, 'invalid_link');
       if (Object.hasOwn(body, 'sessionId') && !validAgentSessionId(body.sessionId)) return fail(400, 'invalid_link');
       if (Object.hasOwn(body, 'rejoinSecret') && !validAgentRejoinSecret(body.rejoinSecret)) return fail(400, 'invalid_link');
-      const harness = body.harness as Harness;
-      if (!(HARNESSES as readonly unknown[]).includes(harness)) return fail(400, 'invalid_harness');
+      const harness = body.harness;
+      if (!isHarnessId(harness)) return fail(400, 'invalid_harness');
       const url = new URL(body.link);
       if (url.origin !== ctx.origin && url.origin !== ctx.origin.replace('://127.0.0.1:', '://localhost:')) return fail(404, 'link_unavailable');
       const token = url.pathname.slice('/join/'.length);
       if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) return fail(404, 'link_unavailable');
       const username = ctx.store.owner().username;
-      if (!checkName(defaultAgentName(username, harness, 2), 'agent').ok) return fail(503, 'unavailable');
+      if (!checkName(defaultLocalAgentName(username, harness, 2), 'agent').ok) return fail(503, 'unavailable');
       return await queue(async () => {
         const link = await ctx.store.consumeLink(token);
         if (!link || !ctx.store.hasChannel(link.roomId)) return fail(404, 'link_unavailable');
@@ -56,7 +57,7 @@ export function agentJoinRoutes(): LocalRoute[] {
         const sessionKey = body.sessionId === undefined || body.rejoinSecret === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId, body.rejoinSecret]));
         const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
         // Names are unique per channel only: a taken default gets the lowest free `-N` here.
-        const checked = checkName(freeAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
+        const checked = checkName(freeLocalAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
         if (!checked.ok) return fail(503, 'unavailable');
         let userId = previous?.userId ?? newLocalAgentUserId(ctx.random(4));
         for (let attempt = 0; attempt < 5 && !previous && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));

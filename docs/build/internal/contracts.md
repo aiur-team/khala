@@ -43,12 +43,17 @@ No new package, no new runtime dependency, no database, no SQLite. All helper an
     owner.json                        0600  L7 OwnerProfile
     channels/<roomKey>/               0700  roomKey = roomId without the leading "!" and the ":local" suffix
       log.jsonl                       0600  L3 LocalEvent, one per line, append-only
+      harness.json                    0600  non-legacy harness ids by userId, rewritten atomically
       secrets.json                    0600  L3 ChannelSecrets (hashes only), rewritten atomically
 ```
 
 - The helper is the **only** writer of everything under `local/`. Agents' MCP processes stay the only writers of their own session directories (`<stateRoot>/<harness>/<sessionId>/`, unchanged).
 - On start the store replays `log.jsonl`; a torn last line (no trailing `\n` or invalid JSON) is ignored and truncated away before the next append, the same tolerance as `readEntries` (`packages/agent/src/inbox.ts:12-19`).
 - Deleting a channel removes `channels/<roomKey>/` recursively. Nothing is pruned automatically (D6).
+
+The helper keeps non-legacy harness ids in `harness.json` as `{ "<userId>": "<harnessId>" }` and omits them from member content in `log.jsonl`. Replay restores those ids for member views and channel summaries. Older helpers ignore the sidecar and keep reading every event and sequence number.
+
+For `/events`, `/messages`, `/members`, and channel summaries, `harness` defaults to the legacy ids (`claude`, `codex`, `cursor`) only. Requests with `wire=2` receive other valid harness ids. `prev=1` independently includes preceding member content in `/events`; it never enables new ids. New local clients send `wire=2`, which older helpers ignore. Shared wire decoders remain closed until the decoder migration.
 
 ## L3. Ids, events and secrets (`packages/contracts/src/m1/local.ts`)
 
@@ -144,7 +149,8 @@ Local behaviour:
 - **Share link:** `http://127.0.0.1:<port>/join/<43-char base64url token>`. It passes the shipped `parseChannelLink` (`packages/agent/src/join.ts:5-13`) unchanged.
 - `POST /api/agent/join {link, harness, label}` → `201 {joinId, pollSecret, confirmUrl: "<origin>/agent/confirm?joinId=<joinId>", expiresAt, autoConfirmed: true}`.
   - The link token is **consumed atomically here** (single use, D5): `secrets.links[sha256].consumedAt` is set before the response. Unknown, consumed or expired token → `404 {"error":"link_unavailable"}`. Malformed link → `400 invalid_link`.
-  - The agent is named by the helper (the `label` is ignored, as hosted, `packages/agent/src/mcp/tools.ts:47`): `defaultAgentName(owner.username, harness, n)` from `packages/contracts/src/m1/names.ts:30-32`, with the smallest `n ≥ 1` whose name is not a present member's display name in that channel (case-insensitive), validated with `checkName(name, 'agent')`.
+  - Harness ids are validated with `isHarnessId`; registered ids use the registry model name and unknown valid ids use `Agent`.
+  - The agent is named by the helper (the `label` is ignored, as hosted, `packages/agent/src/mcp/tools.ts:47`): `defaultLocalAgentName(owner.username, harness, n)` from `packages/agent/src/local/identity.ts`, using `harnessInfo(harness).modelName`, with the smallest `n ≥ 1` whose name is not a present member's display name in that channel (case-insensitive), validated with `checkName(name, 'agent')`.
   - The helper mints the agent's user id, access token and device id (`KH_LOCAL_<8 hex>`), appends the `invite` member event (`invitedBy: LOCAL_OWNER_USER_ID`), and marks the join `confirmed` immediately: the join is announced in the channel by that member event (D5). There is no confirm page and no click.
   - `joinId` = 16 random bytes base64url; `pollSecret` = 32 random bytes base64url, stored only as sha256 in memory. Pending joins live in memory; a helper restart turns a pending poll into `404` (`join_expired` on the agent), which is acceptable inside the 10-minute window.
 - `GET /api/agent/join/poll?joinId=` (Bearer pollSecret) → first call `{state:'confirmed', credentials:{homeserver:<origin>, userId, accessToken, deviceId, roomId, transport:'local'}}`, later calls `{state:'claimed'}`; wrong secret or unknown join → `404 not_found`.

@@ -493,14 +493,14 @@ it('delivers a username cascade and self rename once without any agent speaking'
 it('requests previous membership and keeps a rename when the post-join roster already contains its new name', async () => {
   const { h, s } = await setup(); const seen = vi.fn(); s.onMessage(seen);
   h.intercept = call => {
-    if (!call.url.endsWith('/members')) return;
+    if (!new URL(call.url).pathname.endsWith('/members')) return;
     const content = { user: other, membership: 'join' as const, displayname: 'reviewer', kind: 'agent' as const, harness: 'codex' as const };
     const rename = h.append('m.room.member', owner, content);
     rename.previousContent = { ...content, displayname: 'kevin-Codex' };
     h.members.find(m => m.userId === other)!.displayName = 'reviewer';
   };
   await s.join(room); await tick();
-  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1');
+  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1&wire=2');
   expect(seen).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'm.room.member',
     previousContent: expect.objectContaining({ displayname: 'kevin-Codex' }) }));
 });

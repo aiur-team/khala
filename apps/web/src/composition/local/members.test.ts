@@ -44,7 +44,7 @@ describe('local members', () => {
     expect(cache.listeningMode(roomId, agent.userId)).toBe('sync');
     expect(get).not.toHaveBeenCalled();
     await cache.refresh(roomId);
-    expect(get).toHaveBeenCalledWith('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/members', expect.any(Function));
+    expect(get).toHaveBeenCalledWith('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/members?wire=2', expect.any(Function));
     expect(cache.members(roomId)).toEqual([owner, agent, claude]);
     expect(cache.describe(agent.userId)).toEqual({ matrixUserId: agent.userId, participantId: agent.userId,
       ownerId: LOCAL_OWNER_ID, displayName: 'kevin-Codex', kind: 'agent', ownerLabel: 'kevin', harness: 'codex' });

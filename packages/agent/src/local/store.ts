@@ -9,10 +9,10 @@ import {
   base64url, decodeChannelSecrets, decodeLocalEvent, decodeOwnerProfile, isLocalRoomId,
   newLocalRoomId, localRoomKey, newLocalEventId, LOCAL_OWNER_USER_ID, LOCAL_OWNER_ID,
   LOCAL_OWNER_DEVICE_ID, LOCAL_AGENT_DEVICE_PREFIX, LOCAL_LINK_TTL_MS, LOCAL_TOKEN_BYTES,
-  type ChannelSecrets, type LocalEvent, type LocalMember, type LocalMemberContent,
-  type LocalChannelSummary, type OwnerProfile,
+  type ChannelSecrets, type OwnerProfile,
 } from '@khala/contracts/m1/local';
-import type { LocalStore } from './types';
+import type { LocalStore, LocalEvent, LocalMember, LocalMemberContent, LocalChannelSummary } from './types';
+import { isHarnessId, LEGACY_HARNESSES } from '@khala/contracts/m1/harness';
 
 export class LocalStoreError extends Error {
   readonly code: 'not_found' | 'storage_failed';
@@ -30,7 +30,7 @@ type StoredMember = NonNullable<ReturnType<LocalStore['member']>>;
 type Channel = {
   roomId: string; dir: string; events: LocalEvent[]; byEventId: Map<string, LocalEvent>;
   byTxn: Map<string, LocalEvent>; lastMember: Map<string, { event: LocalEvent; firstSeq: number }>;
-  previousMembers: Map<string, LocalMemberContent>;
+  previousMembers: Map<string, LocalMemberContent>; harnesses: Record<string, string>;
   name: string; operationId?: string; secrets: ChannelSecrets; handle?: fs.FileHandle;
   /** The owner's name in this channel only (names.json), overriding the profile username here. */
   ownerName?: string;
@@ -58,7 +58,7 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
   function makeChannel(roomId: string): Channel {
     return { roomId, dir: path.join(channelsDir, localRoomKey(roomId)), name: '',
       events: [], byEventId: new Map(), byTxn: new Map(), lastMember: new Map(),
-      previousMembers: new Map(), secrets: emptySecrets(), waiters: new Set() };
+      previousMembers: new Map(), harnesses: {}, secrets: emptySecrets(), waiters: new Set() };
   }
   function indexEvent(channel: Channel, event: LocalEvent): void {
     channel.events.push(event);
@@ -96,13 +96,23 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       let buffer: Buffer;
       try { buffer = await fs.readFile(path.join(channel.dir, 'log.jsonl')); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+      const harnesses = await readJson<unknown>(path.join(channel.dir, 'harness.json'));
+      if (typeof harnesses === 'object' && harnesses !== null && !Array.isArray(harnesses)) {
+        channel.harnesses = Object.fromEntries(Object.entries(harnesses).filter(([, id]) => isHarnessId(id))) as Record<string, string>;
+      }
       const completeBytes = buffer.lastIndexOf(0x0a) + 1;
       if (completeBytes < buffer.length) channel.validBytes = completeBytes;
       for (const line of buffer.subarray(0, completeBytes).toString('utf8').split('\n')) {
         let parsed: unknown;
         try { parsed = JSON.parse(line); } catch { continue; }
         const decoded = decodeLocalEvent(parsed);
-        if (decoded.ok && decoded.value.roomId === roomId && decoded.value.seq > lastSeq(channel)) indexEvent(channel, decoded.value);
+        if (!decoded.ok || decoded.value.roomId !== roomId || decoded.value.seq <= lastSeq(channel)) continue;
+        const event = decoded.value;
+        if (event.type === 'm.room.member' && event.content.harness === undefined) {
+          const harness = channel.harnesses[event.content.user as string];
+          if (harness) event.content.harness = harness;
+        }
+        indexEvent(channel, event);
       }
       if (channel.events[0]?.type !== 'm.room.create') continue;
       // A separate file: older helpers decode secrets.json strictly and must keep reading it after a downgrade.
@@ -138,6 +148,27 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       ...(eventInput.txnId !== undefined ? { txnId: eventInput.txnId } : {}), content: eventInput.content };
     // Own the input before the first await, so later caller mutations cannot alter replay.
     const stored = structuredClone(event);
+    const disk = { ...stored, content: { ...stored.content } };
+    if (disk.type === 'm.room.member') {
+      const user = disk.content.user as string;
+      const harness = disk.content.harness;
+      if (harness !== undefined && !(LEGACY_HARNESSES as readonly unknown[]).includes(harness)) {
+        if (!isHarnessId(harness)) throw new LocalStoreError('storage_failed');
+        if (channel.harnesses[user] !== harness) {
+          const next = { ...channel.harnesses, [user]: harness };
+          await writeJsonAtomic(path.join(channel.dir, 'harness.json'), next);
+          channel.harnesses = next;
+        }
+        delete disk.content.harness;
+      } else if (harness !== undefined && Object.hasOwn(channel.harnesses, user)) {
+        const next = { ...channel.harnesses };
+        delete next[user];
+        await writeJsonAtomic(path.join(channel.dir, 'harness.json'), next);
+        channel.harnesses = next;
+      } else if (harness === undefined && channel.harnesses[user]) {
+        stored.content.harness = channel.harnesses[user];
+      }
+    }
     const logPath = path.join(channel.dir, 'log.jsonl');
     if (channel.validBytes !== undefined) {
       await fs.truncate(logPath, channel.validBytes);
@@ -145,7 +176,7 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     }
     channel.handle ??= await fs.open(logPath, 'a', 0o600);
     const start = (await channel.handle.stat()).size;
-    try { await channel.handle.writeFile(JSON.stringify(stored) + '\n', 'utf8'); }
+    try { await channel.handle.writeFile(JSON.stringify(disk) + '\n', 'utf8'); }
     catch (error) {
       // A failed append may have written a partial line. Retry must not append onto it.
       channel.validBytes = start;

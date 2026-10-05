@@ -1,3 +1,4 @@
+import { LEGACY_HARNESSES } from '@khala/contracts/m1/harness';
 // An in-memory fake of the local helper's owner-facing API (contracts L5/L6).
 // State is the per-channel event log; members, names, modes and summaries are
 // derived from it by the L3 replay rules. Long-polls are held until an append
@@ -11,6 +12,17 @@ import {
   type LocalChannelSummary, type LocalEvent, type LocalEventType, type LocalMember, type OwnerProfileView,
 } from '@khala/contracts/m1/local';
 import { checkName, isDefaultAgentName } from '@khala/contracts/m1/names';
+
+function harnessView<T extends object>(content: T, query: URLSearchParams): T {
+  if (query.get('wire') === '2' || !('harness' in content) || content.harness === undefined
+    || (LEGACY_HARNESSES as readonly unknown[]).includes(content.harness)) return content;
+  const view = { ...content };
+  delete (view as { harness?: unknown }).harness;
+  return view;
+}
+function summaryView(value: LocalChannelSummary, query: URLSearchParams): LocalChannelSummary {
+  return { ...value, members: value.members.map(member => harnessView(member, query)) };
+}
 
 export type FakeRequest = Readonly<{ method: string; path: string; query: URLSearchParams; headers: Readonly<Record<string, string>>; body: unknown }>;
 export type FakeResponse = Readonly<{ status: number; json?: unknown }>;
@@ -179,7 +191,7 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
       if (channelsRoute.test(path)) {
         const since = query.get('since');
         if (since !== null) await hold(Number(query.get('wait') ?? 0), () => String(revision) !== since);
-        return ok({ revision, channels: summaries() });
+        return ok({ revision, channels: summaries().map(value => summaryView(value, query)) });
       }
       if ((match = byOperationRoute.exec(path))) {
         const operationId = decodeURIComponent(match[1]!);
@@ -188,7 +200,7 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
       }
       if ((match = channelRoute.exec(path))) {
         const target = channel(decodeURIComponent(match[1]!));
-        return target ? ok(summary(target)) : error(404, 'not_found');
+        return target ? ok(summaryView(summary(target), query)) : error(404, 'not_found');
       }
       if ((match = eventsRoute.exec(path))) {
         const target = channel(decodeURIComponent(match[1]!));
@@ -198,7 +210,7 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
         const events = target.events.filter(e => e.seq > after).slice(0, 200).map(e => {
           // Like the real helper, the preceding membership only goes to clients that ask (prev=1).
           const previous = query.get('prev') === '1' && e.type === 'm.room.member' ? previousMember(target, e) : undefined;
-          return previous ? { ...e, previousContent: previous } : e;
+          return { ...e, content: harnessView(e.content, query), ...(previous ? { previousContent: harnessView(previous, query) } : {}) };
         });
         return ok({ events, next: events.at(-1)?.seq ?? after });
       }
@@ -216,11 +228,11 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
         const end = before ? visible.findIndex(e => e.eventId === before) : visible.length;
         const older = visible.slice(0, end < 0 ? 0 : end);
         const page = older.slice(-limit);
-        return ok({ events: page, ...(older.length > page.length ? { nextBefore: page[0]!.eventId } : {}) });
+        return ok({ events: page.map(e => ({ ...e, content: harnessView(e.content, query) })), ...(older.length > page.length ? { nextBefore: page[0]!.eventId } : {}) });
       }
       if ((match = membersRoute.exec(path))) {
         const target = channel(decodeURIComponent(match[1]!));
-        return target ? ok({ members: members(target) }) : error(404, 'not_found');
+        return target ? ok({ members: members(target).map(member => harnessView(member, query)) }) : error(404, 'not_found');
       }
       return null;
     }

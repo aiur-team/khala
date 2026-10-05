@@ -1,8 +1,9 @@
+import { defaultLocalAgentName, isDefaultLocalAgentName } from '../identity';
 import { isHumanColorId } from '@khala/contracts/m1/colors';
 import { normalizeInitials } from '@khala/contracts/m1/initials';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_MEMBER_KEY } from '@khala/contracts/m1/listening-mode';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type OwnerProfileView } from '@khala/contracts/m1/local';
-import { checkName, defaultAgentName, isDefaultAgentName } from '@khala/contracts/m1/names';
+import { checkName } from '@khala/contracts/m1/names';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
 import { serial, type SerialQueue } from './owner';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, LocalStore } from '../types';
@@ -30,16 +31,16 @@ async function cascade(store: LocalStore, previous: string, next: string): Promi
         } catch { /* A failed owner event must not stop the agents in this channel. */ }
       }
       for (const m of members) {
-        if (m.kind !== 'agent' || !m.harness || !isDefaultAgentName(m.displayName, previous, m.harness)) continue;
+        if (m.kind !== 'agent' || !m.harness || !isDefaultLocalAgentName(m.displayName, previous, m.harness)) continue;
         const n = Number(/-(\d+)$/u.exec(m.displayName)?.[1] ?? 1);
         if (!Number.isSafeInteger(n) || n < 1) continue;
         const oldKey = m.displayName.toLowerCase();
         taken.delete(oldKey);
         try {
-          let name = defaultAgentName(next, m.harness, n);
+          let name = defaultLocalAgentName(next, m.harness, n);
           if (taken.has(name.toLowerCase())) {
             let k = 1;
-            do { name = defaultAgentName(next, m.harness, k++); } while (taken.has(name.toLowerCase()));
+            do { name = defaultLocalAgentName(next, m.harness, k++); } while (taken.has(name.toLowerCase()));
           }
           if (!checkName(name, 'agent').ok) {
             taken.add(oldKey);
