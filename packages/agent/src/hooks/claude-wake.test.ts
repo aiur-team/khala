@@ -198,3 +198,12 @@ it('keeps polling in async and wakes after switching to sync', async () => {
   await writeJsonAtomic(files.mode, { mode: 'sync' });
   expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
+
+it('retains backup wake after the former 50-minute deadline', async () => {
+  await seed('idle', [entry()]);
+  let reads = 0;
+  const now = () => new Date(reads++ === 0 ? 0 : 51 * 60 * 1000);
+  const stderr = { write: vi.fn() };
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now, stderr })).toBe(2);
+  expect(stderr.write).toHaveBeenCalledExactlyOnceWith(notice);
+});
