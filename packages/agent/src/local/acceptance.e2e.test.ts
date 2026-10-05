@@ -376,10 +376,10 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     const cookie = String(Array.isArray(setCookie) ? setCookie[0]! : setCookie!).split(';')[0]!;
     for (const headers of [{ cookie }, { cookie, 'x-khala-local': '1', origin: 'http://evil.example' }]) expect(await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers, body: {} }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden_origin' } });
     expect((await raw(world, { method: 'POST', path: `${channelPath()}/links`, headers: { cookie, 'x-khala-local': '1', origin: world.origin }, body: {} })).status, context('AE11')).toBe(200);
-    const credentials = (await readJson<AgentCredentials>(world.claude.files.session))!;
-    const codexCredentials = (await readJson<AgentCredentials>(world.codex.files.session))!;
+    const credentials = (await readJson<AgentCredentials>(channelFiles(world.claude.files, channel.roomId).session))!;
+    const codexCredentials = (await readJson<AgentCredentials>(channelFiles(world.codex.files, channel.roomId).session))!;
     for (const [method, requestPath] of [['GET', '/api/local/channels'], ['POST', `${channelPath()}/links`]] as const) expect(await raw(world, { method, path: requestPath, headers: { authorization: `Bearer ${credentials.accessToken}` }, ...(method === 'POST' ? { body: {} } : {}) }), context('AE11')).toMatchObject({ status: 403, body: { error: 'forbidden' } });
-    const probeCredentials = (await readJson<AgentCredentials>(probe.files.session))!;
+    const probeCredentials = (await readJson<AgentCredentials>(channelFiles(probe.files, channel.roomId).session))!;
     expect((await admin(world, 'DELETE', `${channelPath()}/members/${enc(probeCredentials.userId)}`)).status, context('AE11')).toBe(204);
     expect(await raw(world, { method: 'GET', path: `/api/local/rooms/${enc(channel.roomId)}/members`, headers: { authorization: `Bearer ${probeCredentials.accessToken}` } }), context('AE11')).toMatchObject({ status: 403, body: { error: 'not_member' } });
     expect(toolData(await probe.call('khala_send', { text: 'x' })), context('AE11')).toEqual({ error: 'not_connected' });
@@ -394,7 +394,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
   acceptance('AE8', 'agent reconnection restarts a killed helper without replay or cursor loss', async () => {
     await received(world.codex, await send(world.claude, 'ae8-before'));
     const agents = [world.claude, world.codex];
-    const before = await Promise.all(agents.map(async agent => ({ lines: await readFile(agent.files.inbox, 'utf8'), cursor: await readFile(agent.files.cursor, 'utf8') })));
+    const before = await Promise.all(agents.map(async agent => ({ lines: await readFile(channelFiles(agent.files, channel.roomId).inbox, 'utf8'), cursor: await readFile(channelFiles(agent.files, channel.roomId).cursor, 'utf8') })));
     const killed = (await helperFile(world))!.pid; process.kill(killed, 'SIGKILL');
     // No CLI until the agent-owned LocalSession has respawned the helper.
     await eventually(async () => { try { const helper = (await helperFile(world))!; if (helper.pid === killed) return false; const health = await raw(world, { method: 'GET', path: '/healthz' }); return health.status === 200 && (health.body as { pid: number }).pid === helper.pid; } catch { return false; } }, 15_000);
@@ -403,8 +403,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await received(world.claude, await send(world.codex, 'ae8-after'));
     for (let index = 0; index < agents.length; index++) {
       const agent = agents[index]!;
-      expect((await readFile(agent.files.inbox, 'utf8')).startsWith(before[index]!.lines), context('AE8')).toBe(true);
-      expect(await readFile(agent.files.cursor, 'utf8'), context('AE8')).toBe(before[index]!.cursor);
+      expect((await readFile(channelFiles(agent.files, channel.roomId).inbox, 'utf8')).startsWith(before[index]!.lines), context('AE8')).toBe(true);
+      expect(await readFile(channelFiles(agent.files, channel.roomId).cursor, 'utf8'), context('AE8')).toBe(before[index]!.cursor);
       const entries = await inbox(agent); expect(new Set(entries.map(entry => entry.eventId)).size, context('AE8')).toBe(entries.length);
     }
     const history = toolData<{ messages: InboxEntry[] }>(await world.claude.call('khala_read', { limit: 100 })).messages.map(entry => entry.body);
@@ -519,17 +519,17 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       expect(blocks).toContain(sync); expect(blocks).toContain(stopSteer); expect(blocks).not.toContain(steer);
       for (const name of ['Ecosystem', 'Optimism']) expect(blocks).toContain(`channel=\\"${name}\\" you=\\"kevin-Claude\\"`);
 
-      const steerWake = await armClaudeWake(agent);
-      const awakeSteer = await human(optimism, 'multi-steer-wake');
-      expect((await steerWake.exited).code).toBe(2);
-      expect(frameText(await deliver(agent, 'UserPromptSubmit'))).toContain(awakeSteer);
-
       const routed = message('multi-routed');
       expect(toolData(await agent.call('khala_send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
       expect(await history(optimism)).toContain(routed); expect(await history(ecosystem)).not.toContain(routed);
       const unsent = message('multi-no-channel');
       expect(toolData(await agent.call('khala_send', { text: unsent }))).toMatchObject({ error: 'channel_required' });
       for (const target of [ecosystem, optimism]) expect(await history(target)).not.toContain(unsent);
+
+      const steerWake = await armClaudeWake(agent);
+      const awakeSteer = await human(optimism, 'multi-steer-wake');
+      expect((await steerWake.exited).code).toBe(2);
+      expect(frameText(await deliver(agent, 'UserPromptSubmit'))).toContain(awakeSteer);
 
       await setListening(optimism, 'async');
       await deliver(agent, 'UserPromptSubmit');
@@ -557,7 +557,14 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const rejoin = await readFile(rejoinFile, 'utf8');
       await agent.close();
       agent = await McpProcess.start(multi, 'claude', agent.sessionId);
-      for (const target of [ecosystem, optimism]) expect(toolData(await agent.call('khala_join', { link: target.selfLink }))).toMatchObject({ state: 'connected' });
+      // Local capabilities are single-use; fresh links preserve the same shared
+      // rejoin secret and test identity continuity without replaying consumed links.
+      for (const target of [ecosystem, optimism]) {
+        const linked = await cli(multi, 'link', target.name);
+        expect(linked.code).toBe(0);
+        const { shareLink } = linked.data as { shareLink: string };
+        expect(toolData(await agent.call('khala_join', { link: shareLink }))).toMatchObject({ state: 'connected' });
+      }
       expect(await readFile(rejoinFile, 'utf8')).toBe(rejoin);
       const restarted = await status();
       expect(restarted).toHaveLength(2);
