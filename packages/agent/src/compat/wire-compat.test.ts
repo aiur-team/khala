@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MatrixEvent } from 'matrix-js-sdk';
+import { localChannelNamePath } from '@khala/contracts/m1/channel-names';
 import { LOCAL_OWNER_USER_ID, decodeLocalEventsPage, type OwnerProfile } from '@khala/contracts/m1/local';
 import { decodeLocalEventsPage as frozenEventsPage, decodeLocalHistoryPage as frozenHistoryPage } from './local-decoder.main.frozen';
 import { frozenMainMatrixMessage } from './matrix-message.main.frozen';
@@ -89,6 +90,12 @@ const transitions: Record<string, (agent: Agent) => Promise<void>> = {
   'owner username cascade': async ({ call }) => {
     expect((await call('POST', '/api/local/profile/username', ADMIN, { username: 'kev' })).status).toBe(200);
   },
+  // A per-channel name travels as the owner's ordinary m.room.member displayname: no new field or event kind.
+  'owner per-channel name': async ({ call, roomId }) => {
+    expect((await call('POST', localChannelNamePath(roomId), ADMIN, { name: 'kevin2' })).status).toBe(200);
+    expect(store.eventsAfter(roomId, 0, 200).at(-1)?.content).toEqual(
+      { user: LOCAL_OWNER_USER_ID, membership: 'join', displayname: 'kevin2', kind: 'human' });
+  },
 };
 
 describe('local helper default wire stays decodable by pre-#1078 CLIs', () => {
@@ -135,7 +142,9 @@ describe('hosted Matrix events stay mappable by pre-#1078 CLIs', () => {
   // Hosted renames arrive from the homeserver as standard m.room.member events with
   // unsigned.prev_content; #1078 adds no hosted event type or field. Old mappers drop
   // member events, so older CLIs keep receiving messages (just without rename news).
-  it.each([['rename', rename], ['mode change', mode]] as const)('old mapper drops a %s member event cleanly', (_name, event) => {
+  // A per-channel name is the member's own room-scoped displayname: the same standard event, sent by the member.
+  const channelName = raw('$channel-name', { membership: 'join', displayname: 'kevin-Codex-2' }, { membership: 'join', displayname: 'kevin-Codex' });
+  it.each([['rename', rename], ['mode change', mode], ['per-channel name', channelName]] as const)('old mapper drops a %s member event cleanly', (_name, event) => {
     expect(() => frozenMainMatrixMessage(event)).not.toThrow();
     expect(frozenMainMatrixMessage(event)).toBeUndefined();
   });
@@ -143,5 +152,6 @@ describe('hosted Matrix events stay mappable by pre-#1078 CLIs', () => {
   it('new projection announces the rename and stays silent for the mode change', () => {
     expect(memberRenameContent(rename.getContent(), rename.getPrevContent())).toMatchObject({ kind: 'member', body: 'kevin-Codex is now reviewer' });
     expect(memberRenameContent(mode.getContent(), mode.getPrevContent())).toBeNull();
+    expect(memberRenameContent(channelName.getContent(), channelName.getPrevContent())).toMatchObject({ body: 'kevin-Codex is now kevin-Codex-2' });
   });
 });

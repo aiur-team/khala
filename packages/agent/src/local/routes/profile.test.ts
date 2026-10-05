@@ -24,6 +24,7 @@ function setup(channels: Record<string, LocalMember[]> = {}, queue?: SerialQueue
     setOwner: vi.fn(async (next: OwnerProfile) => { owner = next; writes.push(next); }),
     listChannels: vi.fn(() => Object.keys(channels).map(roomId => ({ roomId }))),
     members: vi.fn((roomId: string) => (channels[roomId] ?? []).map(m => ({ ...m }))), append,
+    ownerChannelName: vi.fn((): string | undefined => undefined),
   };
   // The routes depend only on these store/context capabilities; no HTTP or disk store is imported.
   const ctx = { store, now: () => now } as unknown as HelperContext;

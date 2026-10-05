@@ -1,4 +1,5 @@
 import type { AgentRenameResult } from '@khala/contracts/m1/agent-names';
+import type { ChannelNameResult } from '@khala/contracts/m1/channel-names';
 import { CHANNEL_EVENT_TYPE, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, decodeListeningModeCommand } from '@khala/contracts/m1/listening-mode';
 import { LOCAL_LONG_POLL_MAX_S, LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
@@ -138,6 +139,22 @@ export function ownerRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[]
       if (store.members(roomId).some(other => other.userId !== userId && other.displayName.toLowerCase() === checked.name.toLowerCase())) return fail(409, 'name_taken');
       if (member.displayName !== checked.name) await store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID, content: memberContent(member, member.membership, { displayname: checked.name }) });
       return { status: 200, json: { matrixUserId: userId, name: checked.name } satisfies AgentRenameResult };
+    }, { serial: true }),
+    // The owner's own name in one channel. Only the owner's session reaches it; agents get 403 above,
+    // and there is no subject field, so no one can rename another member here.
+    route('POST', /^\/api\/local\/channels\/([^/]+)\/name$/u, async (req, params, { store }) => {
+      const roomId = channelParam(params[0], store);
+      if (roomId === null) return fail(404, 'not_found');
+      const body = decodeWith(() => object(req.body, '', ['name']).field('name'));
+      if (!body.ok || typeof body.value !== 'string') return fail(400, 'invalid_request');
+      const checked = checkName(body.value, 'username');
+      if (!checked.ok) return { status: 400, json: { error: 'invalid_name', reason: checked.error } };
+      const self = store.member(roomId, LOCAL_OWNER_USER_ID);
+      if (!self || self.membership !== 'join') return fail(404, 'not_found');
+      if (store.members(roomId).some(other => other.userId !== LOCAL_OWNER_USER_ID && other.displayName.toLowerCase() === checked.name.toLowerCase())) return fail(409, 'name_taken');
+      // The profile username is the default, so choosing it again clears the override.
+      await store.setOwnerChannelName(roomId, checked.name === store.owner().username ? null : checked.name);
+      return { status: 200, json: { name: checked.name } satisfies ChannelNameResult };
     }, { serial: true }),
     route('DELETE', /^\/api\/local\/channels\/([^/]+)\/members\/([^/]+)$/u, async (_req, params, ctx) => {
       const roomId = channelParam(params[0], ctx.store);

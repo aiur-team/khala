@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
-import { nameKey, ownerAgentsKey } from '@khala/contracts/m1/names';
+import { ownerAgentsKey } from '@khala/contracts/m1/names';
 import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import type { AuthPrincipal, OwnerId } from '@khala/contracts/messaging/index';
@@ -31,12 +31,14 @@ async function fixture(options: { username?: string; harness?: 'claude' | 'codex
     authenticateRequest: vi.fn(async (): Promise<Authentication> => ({ kind: 'authenticated', context: { principal: principal(), csrfToken: 'csrf' } })),
     requireHumanMutation: vi.fn(async (): Promise<MutationAuthorization> => ({ kind: 'authorized', context: { principal: principal(), csrfToken: 'csrf' } })),
   };
+  const roomNames: string[] = [];
   const deps = { auth, joins, store, clock, random: randomBytes, sealSecret: secret,
+    roomMemberNames: vi.fn(async (): Promise<readonly string[] | null> => [...roomNames]),
     inspectMembership: vi.fn(async (): Promise<GatewayInspection> => ({ kind: 'joined', historyReady: true })),
     provisioner: { setDisplayName: vi.fn(async () => true), agentUserId: vi.fn<AgentProvisioner['agentUserId']>(() => credentials.userId), provision: vi.fn<AgentProvisioner['provision']>(async () => ({ kind: 'ok' as const, credentials })) },
   };
   const request = (method = 'GET', query = `joinId=${joinId}`) => new Request(`https://khala.test/api/human/agent-join?${query}`, { method });
-  return { deps, joins, store, record, joinId, request, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
+  return { deps, joins, store, record, joinId, request, roomNames, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
 }
 it('confirms, seals credentials and creates a permanent owner map through the real store', async () => {
   const f = await fixture();
@@ -140,7 +142,7 @@ it('shows expired confirmed records with identity and refuses confirmation', asy
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
 });
 
-it('assigns the profile-based name, previews it and persists the reservation and owner index', async () => {
+it('assigns the profile-based name, previews it and persists the owner index', async () => {
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   for (const handler of [f.handlers.view, f.handlers.status]) {
     expect(await (await handler(f.request())).json()).toMatchObject({ state: 'pending', label: 'Kevin-Codex' });
@@ -151,31 +153,26 @@ it('assigns the profile-based name, previews it and persists the reservation and
   expect(f.deps.provisioner.provision).toHaveBeenCalledWith({ joinId: f.joinId, ownerId: 'owner', label: 'Kevin-Codex', roomId: credentials.roomId });
   const owner = await f.store.read(agentOwnerRecordKey(credentials.userId));
   expect(owner.kind === 'record' && owner.record.value).toMatchObject({ label: 'Kevin-Codex', ownerLabel: 'Kevin' });
-  const reservation = await f.store.read(nameKey('Kevin-Codex'));
-  expect(reservation.kind === 'record' && reservation.record.value).toEqual({ v: 1, kind: 'agent', ownerId: 'owner', matrixUserId: credentials.userId });
   const index = await f.store.read(ownerAgentsKey('owner'));
   expect(index.kind === 'record' && index.record.value).toEqual({ v: 1, ownerId: 'owner', agents: [credentials.userId] });
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
-  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
   expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
 });
-it('uses the email suggestion without reserving a username when there is no profile', async () => {
+it('uses the email suggestion when there is no profile', async () => {
   const f = await fixture({ harness: 'codex', email: 'kevin.weaver2@x' });
   expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ label: 'Kevin-Codex' });
   expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ label: 'Kevin-Codex' });
-  expect(await f.store.read(nameKey('Kevin'))).toEqual({ kind: 'absent' });
 });
-it('reuses the reservation after provisioning fails and does not append the index twice', async () => {
+it('keeps the staged name after provisioning fails and does not append the index twice', async () => {
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   f.deps.provisioner.provision.mockRejectedValueOnce(Error('offline'));
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
   expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ label: 'Kevin-Codex' });
-  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
   const index = await f.store.read(ownerAgentsKey('owner'));
   expect(index.kind === 'record' && index.record.value).toMatchObject({ agents: [credentials.userId] });
 });
-it('fails closed when the profile or name namespace is unavailable', async () => {
-  for (const prefix of ['profiles/', 'names/']) {
+it('fails closed when the profile is unavailable', async () => {
+  for (const prefix of ['profiles/']) {
     const f = await fixture(); const read = f.store.read, write = f.store.compareAndSet;
     vi.spyOn(f.store, 'read').mockImplementation((key, ...args) => key.startsWith(prefix) ? Promise.resolve({ kind: 'unavailable' }) : read(key, ...args));
     vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, ...args) => input.key.startsWith(prefix) ? Promise.resolve({ kind: 'unavailable' }) : write(input, ...args));
@@ -189,65 +186,11 @@ it('does not fail confirmation when the owner index is unavailable', async () =>
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
 });
 
-it('expires a name reserved by a join that never confirms', async () => {
-  const f = await fixture({ username: 'Kevin' });
-  f.deps.provisioner.provision.mockResolvedValue({ kind: 'unavailable' } as never);
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
-  const claim = await f.store.read(nameKey('Kevin-Claude'));
-  expect(claim.kind === 'record' && claim.record.expiresAt).toBe(f.record.expiresAt);
-  f.advance();
-  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
-});
-it('expires a pending name when the final confirmation write never succeeds', async () => {
-  const f = await fixture({ username: 'Kevin' });
-  const replace = f.joins.replace;
-  vi.spyOn(f.joins, 'replace').mockImplementation(async (...args) => args[3] === 'confirm' ? { kind: 'unavailable' } : replace(...args));
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
-  expect(await f.store.read(ownerAgentsKey('owner'))).toEqual({ kind: 'absent' });
-  f.advance();
-  await f.joins.read(f.joinId);
-  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
-});
-it('makes a confirmed name permanent even after the join deadline', async () => {
-  const f = await fixture({ username: 'Kevin' });
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
-  f.advance();
-  const claim = await f.store.read(nameKey('Kevin-Claude'));
-  expect(claim.kind === 'record' && claim.record.expiresAt).toBeNull();
-});
 
-it('does not publish confirmation or credentials when name promotion fails', async () => {
-  const f = await fixture({ username: 'Kevin' }); const write = f.store.compareAndSet;
-  vi.spyOn(f.store, 'compareAndSet').mockImplementation((input, options) => input.key === nameKey('Kevin-Claude') && input.expectedRevision !== null && input.next.expiresAt === null
-    ? Promise.resolve({ kind: 'unavailable' }) : write(input, options));
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
-  const read = await f.joins.read(f.joinId);
-  expect(read.kind === 'found' && read.record).toMatchObject({ state: 'pending', label: 'Kevin-Claude', agentUserId: credentials.userId });
-  expect(read.kind === 'found' && read.record.sealedCredentials).toBeUndefined();
-});
-it('releases a promoted name when an unconfirmed staged join expires', async () => {
-  const f = await fixture({ username: 'Kevin' }); const replace = f.joins.replace;
-  vi.spyOn(f.joins, 'replace').mockImplementation((...args) => args[3] === 'confirm' ? Promise.resolve({ kind: 'unavailable' }) : replace(...args));
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
-  const claim = await f.store.read(nameKey('Kevin-Claude'));
-  expect(claim.kind === 'record' && claim.record.expiresAt).toBeNull();
-  f.advance();
-  expect(await (await f.handlers.status(f.request())).json()).toMatchObject({ state: 'expired' });
-  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
-  const expired = await f.joins.read(f.joinId);
-  expect(expired.kind === 'found' && expired.record.sealedCredentials).toBeUndefined();
-});
 it('refuses confirmation if provisioning crosses the join deadline', async () => {
   const f = await fixture({ username: 'Kevin' });
   f.deps.provisioner.provision.mockImplementationOnce(async () => { f.advance(); return { kind: 'ok', credentials }; });
   expect((await f.handlers.confirm(f.request('POST'))).status).toBe(404);
-  expect(await f.store.read(nameKey('Kevin-Claude'))).toEqual({ kind: 'absent' });
-});
-it('keeps confirmed reservations permanent when the unclaimed join expires', async () => {
-  const f = await fixture({ username: 'Kevin' });
-  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
-  f.advance(); await f.joins.read(f.joinId);
-  expect((await f.store.read(nameKey('Kevin-Claude'))).kind).toBe('record');
 });
 
 it('keeps one hosted identity and its rename across fresh join requests for the same session', async () => {
@@ -266,7 +209,6 @@ it('keeps one hosted identity and its rename across fresh join requests for the 
   expect(await rejoined.json()).toMatchObject({ label: 'Reviewer', agentUserId: credentials.userId });
   expect(f.deps.provisioner.agentUserId.mock.calls.at(-1)![0]).toBe(identityId);
   expect(f.deps.provisioner.provision).toHaveBeenLastCalledWith({ joinId: nextId, identityId, ownerId: 'owner', label: 'Reviewer', roomId: credentials.roomId });
-  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
 });
 
 it('recovers a stable account after a failed initial confirmation expires', async () => {
@@ -284,10 +226,9 @@ it('recovers a stable account after a failed initial confirmation expires', asyn
   const nextId = randomBytes(16).toString('base64url');
   await f.joins.create({ ...f.record, joinId: nextId, sessionId: 'thread-1', rejoinSecretHash: hashPollSecret('S'.repeat(43)), createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() });
   expect((await f.handlers.confirm(f.request('POST', `joinId=${nextId}`))).status).toBe(200);
-  expect(await f.store.read(nameKey('Kevin-Codex-2'))).toEqual({ kind: 'absent' });
 });
 
-it('allocates the suffix only for a different hosted session', async () => {
+it('numbers the default name only for a different hosted session in the same channel', async () => {
   const f = await fixture({ username: 'Kevin', harness: 'codex' });
   f.deps.provisioner.agentUserId.mockImplementation((identityId, ownerId) => agentIdentity(identityId, ownerId, 'matrix.test', secret).userId);
   f.deps.provisioner.provision.mockImplementation(async input => ({ kind: 'ok', credentials: {
@@ -302,6 +243,7 @@ it('allocates the suffix only for a different hosted session', async () => {
     const view = await response.json() as { label: string; agentUserId: string };
     expect(view.label).toBe(sessionId === 'thread-1' ? 'Kevin-Codex' : 'Kevin-Codex-2');
     members.push(view.agentUserId);
+    if (!f.roomNames.includes(view.label)) f.roomNames.push(view.label);
   }
   expect(members[0]).toBe(members[1]);
   expect(members[2]).not.toBe(members[0]);
@@ -322,6 +264,7 @@ it('keeps sibling hosted agents separate when a session id is asserted without i
     expect(response.status).toBe(200);
     const view = await response.json() as { label: string; agentUserId: string };
     members.push(view.agentUserId); names.push(view.label);
+    if (!f.roomNames.includes(view.label)) f.roomNames.push(view.label);
   }
   expect(new Set(members)).toHaveProperty('size', 3);
   expect(members[0]).toBe(members[3]);
@@ -343,4 +286,24 @@ it('never reuses a hosted identity for a session id confirmed without any rejoin
     members.push((await response.json() as { agentUserId: string }).agentUserId);
   }
   expect(members[0]).not.toBe(members[1]);
+});
+
+it('previews and confirms the lowest free number when someone in the channel holds the default name', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  f.roomNames.push('kevin', 'kevin-codex', 'Kevin-Codex-3');
+  expect(await (await f.handlers.view(f.request())).json()).toMatchObject({ state: 'pending', label: 'Kevin-Codex-2' });
+  expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ state: 'confirmed', label: 'Kevin-Codex-2' });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledWith(expect.objectContaining({ label: 'Kevin-Codex-2' }));
+  expect(f.deps.roomMemberNames).toHaveBeenCalledWith('owner', credentials.roomId);
+});
+it('lets the same default name exist in another channel', async () => {
+  const f = await fixture({ username: 'Kevin', harness: 'codex' });
+  // Another owner's Kevin-Codex in some other channel is invisible here: only this channel's members count.
+  expect(await (await f.handlers.confirm(f.request('POST'))).json()).toMatchObject({ label: 'Kevin-Codex' });
+});
+it('fails closed when the channel members cannot be read', async () => {
+  const f = await fixture({ username: 'Kevin' });
+  f.deps.roomMemberNames.mockResolvedValue(null);
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(503);
+  expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
 });

@@ -32,7 +32,7 @@ function fixture(storeJoins = false, queue?: SerialQueue) {
     revision: () => revision,
     hasChannel: id => logs.has(id),
     owner: () => ({ v: 1, username: 'kevin', color: 'blue', initials: 'KW', updatedAt: EXPIRES }),
-    setOwner: vi.fn(),
+    setOwner: vi.fn(), ownerChannelName: () => undefined, setOwnerChannelName: vi.fn(async () => null),
     append: vi.fn(async (id, input) => {
       const events = logs.get(id);
       if (!events) throw new Error('missing_channel');
@@ -97,8 +97,8 @@ afterEach(() => vi.useRealTimers());
 const data = (response: unknown) => (response as { json: Record<string, unknown> }).json;
 const error = (status: number, code: string) => ({ status, json: { error: code } });
 
-it('exports twelve routes and rejects unauthenticated and agent callers before parsing', async () => {
-  const f = fixture(); expect(f.routes).toHaveLength(12);
+it('exports thirteen routes and rejects unauthenticated and agent callers before parsing', async () => {
+  const f = fixture(); expect(f.routes).toHaveLength(13);
   for (const route of f.routes.filter(r => !r.pattern.test(`/open/${'T'.repeat(43)}`))) {
     for (const [auth, expected] of [[{ kind: 'none' }, error(401, 'unauthorized')], [{ kind: 'agent', userId: A, roomId: 'missing' }, error(403, 'forbidden')]] as const) {
       expect(await route.handle({ auth, body: null } as LocalRequest, ['%ZZ', '%ZZ'], f.ctx)).toEqual(expected);

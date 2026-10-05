@@ -78,9 +78,15 @@ it('maps agent absence, ownership, namespace conflicts and Matrix failures', asy
   const refused = await foreign.handler(foreign.request());
   expect(refused.status).toBe(403); expect(await refused.json()).toEqual({ error: 'not_owner' });
   expect(foreign.provisioner.setDisplayName).not.toHaveBeenCalled();
-  const taken = await fixture(); await taken.put(nameKey('Reviewer'), { v: 1, kind: 'human', ownerId: 'other' });
-  const conflict = await taken.handler(taken.request());
+  // A name another account holds is fine; one another member holds in the same channel is not.
+  const shared = await fixture(); await shared.put(nameKey('Reviewer'), { v: 1, kind: 'human', ownerId: 'other' });
+  expect((await shared.handler(shared.request())).status).toBe(200);
+  const taken = await fixture();
+  const scoped = createAgentRenameHandler({ ...taken, clock: () => Date.parse('2026-10-02T12:00:00.000Z'),
+    roomMembers: async () => [{ userId: matrixUserId, name: 'Kevin-Claude' }, { userId: '@maya:matrix.test', name: 'reviewer' }] });
+  const conflict = await scoped(taken.request({ matrixUserId, name: 'Reviewer', roomId: '!room:matrix.test' }));
   expect(conflict.status).toBe(409); expect(await conflict.json()).toEqual({ error: 'name_taken' });
+  expect((await scoped(taken.request({ matrixUserId, name: 'Reviewer', roomId: 'room' }))).status).toBe(400);
   const offline = await fixture(); offline.provisioner.setDisplayName.mockResolvedValue(false);
   const unavailable = await offline.handler(offline.request());
   expect(unavailable.status).toBe(503); expect(await unavailable.json()).toEqual({ error: 'unavailable' });

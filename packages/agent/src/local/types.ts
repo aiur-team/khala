@@ -38,6 +38,10 @@ export interface LocalStore {
   memberForSession(roomId: string, sessionKey: string): ReturnType<LocalStore['member']>;
   setMemberToken(roomId: string, userId: string, tokenSha256: string | null, sessionKey?: string): Promise<void>;
   agentForToken(token: string): { roomId: string; userId: string } | null;                 // timing-safe compare over sha256
+  /** The owner's per-channel name, when one overrides the profile username in `roomId`. */
+  ownerChannelName(roomId: string): string | undefined;
+  /** Sets, or with `null` clears, the owner's name in one channel; appends the owner's member event when the shown name changes. */
+  setOwnerChannelName(roomId: string, name: string | null): Promise<LocalEvent | null>;
   owner(): OwnerProfile;
   setOwner(next: OwnerProfile): Promise<void>;
 }

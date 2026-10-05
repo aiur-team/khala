@@ -52,44 +52,49 @@ function fixture() {
   const seed = (key: string, value: { [key: string]: string | number | null }) => store.compareAndSet({ key, expectedRevision: null, operationId: randomBytes(8).toString('hex'), next: { value, expiresAt: null } });
   return { deps, store, handlers, request, set, seed, owner: (id: string) => { ownerId = id as OwnerId; }, email: (value: string) => { email = value; } };
 }
-it('suggests an available username and returns null for existing owners without a profile', async () => {
+it('suggests the email name with no lookup and returns null for owners without a profile', async () => {
   const f = fixture();
   expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin', color: defaultHumanColor('own_abc'), initials: null });
-  await f.seed(nameKey('Kevin'), { v: 1, kind: 'human', ownerId: 'other' });
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2', color: defaultHumanColor('own_abc'), initials: null });
+  // Someone else already being Kevin no longer changes the suggestion: usernames are not unique.
+  f.owner('other'); await f.set('Kevin'); f.owner('own_abc');
+  expect(await (await f.handlers.get(f.request())).json()).toMatchObject({ username: null, suggestion: 'Kevin' });
 });
-it('stores the profile and reservation then updates Matrix', async () => {
+it('stores the profile without reserving the name, then updates Matrix', async () => {
   const f = fixture(); const response = await f.set(' Kevin ');
   expect(response.status).toBe(200); expect(await response.json()).toEqual({ username: 'Kevin' });
   const profile = await f.store.read(profileRecordKey('own_abc'));
   expect(profile.kind === 'record' && profile.record.value).toEqual({ v: 1, ownerId: 'own_abc', username: 'Kevin', updatedAt: '2026-10-02T18:00:00.000Z' });
-  const reservation = await f.store.read(nameKey('Kevin'));
-  expect(reservation.kind === 'record' && reservation.record.value).toEqual({ v: 1, kind: 'human', ownerId: 'own_abc' });
+  expect(await f.store.read(nameKey('Kevin'))).toEqual({ kind: 'absent' });
   expect(f.deps.setDisplayName).toHaveBeenCalledWith('own_abc', 'Kevin');
   expect(f.deps.afterUsernameChange).toHaveBeenCalledWith('own_abc', null, 'Kevin');
   expect(response.headers.get('cache-control')).toBe('no-store');
   expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: 'Kevin', suggestion: 'Kevin', color: defaultHumanColor('own_abc'), initials: null });
 });
-it('rejects another owner claiming a case-insensitive reservation', async () => {
+it('lets two people hold the same username, in any case', async () => {
   const f = fixture(); expect((await f.set('Kevin')).status).toBe(200);
   f.owner('other'); const response = await f.set('kevin');
-  expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: 'username_taken' });
-  expect((await f.store.read(profileRecordKey('other'))).kind).toBe('absent');
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ username: 'kevin' });
+  const other = await f.store.read(profileRecordKey('other'));
+  expect(other.kind === 'record' && other.record.value).toMatchObject({ ownerId: 'other', username: 'kevin' });
+});
+it('ignores legacy human and agent reservations of the name', async () => {
+  const f = fixture();
+  await f.seed(nameKey('Kevin'), { v: 1, kind: 'agent', ownerId: 'own_abc', matrixUserId: '@agent:matrix.test' });
+  await f.seed(nameKey('Kev'), { v: 1, kind: 'human', ownerId: 'other' });
+  expect((await f.set('Kevin')).status).toBe(200);
+  expect((await f.set('Kev')).status).toBe(200);
 });
 it('allows case changes and repairs display names on identical retries', async () => {
   const f = fixture(); await f.set('Kevin');
   expect((await f.set('KEVIN')).status).toBe(200);
-  const reservation = await f.store.read(nameKey('Kevin')); expect(reservation.kind).toBe('record');
   f.deps.setDisplayName.mockClear(); f.deps.afterUsernameChange.mockClear();
   expect((await f.set('KEVIN')).status).toBe(200);
   expect(f.deps.setDisplayName).toHaveBeenCalledWith('own_abc', 'KEVIN');
   expect(f.deps.afterUsernameChange).not.toHaveBeenCalled();
 });
-it('releases the previous username so another owner can claim it', async () => {
+it('reports the previous username to the agent cascade', async () => {
   const f = fixture(); await f.set('Kevin'); expect((await f.set('Kev')).status).toBe(200);
-  expect(await f.store.read(nameKey('Kevin'))).toEqual({ kind: 'absent' });
   expect(f.deps.afterUsernameChange).toHaveBeenLastCalledWith('own_abc', 'Kevin', 'Kev');
-  f.owner('other'); expect((await f.set('Kevin')).status).toBe(200);
 });
 it('rejects invalid names and non-exact request bodies', async () => {
   const f = fixture(); const response = await f.set('k');
@@ -118,46 +123,24 @@ it('keeps successful writes when Matrix or post-change hooks fail', async () => 
     expect(log.mock.calls.flat()).not.toContain('private detail');
   } finally { log.mockRestore(); }
 });
-it('does not treat agent reservations as the same human owner', async () => {
-  const f = fixture(); await f.seed(nameKey('Kevin'), { v: 1, kind: 'agent', ownerId: 'own_abc', matrixUserId: '@agent:matrix.test' });
-  expect((await f.set('Kevin')).status).toBe(409);
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'Kevin2', color: defaultHumanColor('own_abc'), initials: null });
-});
-it('truncates suggestion suffixes and bounds exhausted suggestions', async () => {
-  const f = fixture(); f.email('a'.repeat(24) + '@x');
-  await f.seed(nameKey('A' + 'a'.repeat(23)), { v: 1, kind: 'human', ownerId: 'other' });
-  expect(await (await f.handlers.get(f.request())).json()).toEqual({ username: null, suggestion: 'A' + 'a'.repeat(22) + '2', color: defaultHumanColor('own_abc'), initials: null });
-  const g = fixture();
-  for (const suffix of ['', ...Array.from({ length: 98 }, (_, i) => String(i + 2))]) {
-    await g.seed(nameKey('Kevin' + suffix), { v: 1, kind: 'human', ownerId: 'other' });
-  }
-  expect((await g.handlers.get(g.request())).status).toBe(503);
-});
-it('fails closed on unavailable reads, reservations and profile writes', async () => {
+it('fails closed on unavailable reads and profile writes', async () => {
   const f = fixture(); vi.spyOn(f.store, 'read').mockResolvedValue({ kind: 'unavailable' });
   expect((await f.handlers.get(f.request())).status).toBe(503); expect((await f.set('Kevin')).status).toBe(503);
   const g = fixture(); vi.spyOn(g.store, 'compareAndSet').mockResolvedValue({ kind: 'unavailable' });
   expect((await g.set('Kevin')).status).toBe(503); expect(g.deps.setDisplayName).not.toHaveBeenCalled();
-  const h = fixture(); const cas = h.store.compareAndSet.bind(h.store);
-  vi.spyOn(h.store, 'compareAndSet').mockImplementation(input => input.key.startsWith('profiles/') ? Promise.resolve({ kind: 'unavailable' }) : cas(input));
-  expect((await h.set('Kevin')).status).toBe(503);
-  h.deps.store.compareAndSet = cas;
-  expect((await h.set('Kevin')).status).toBe(200); // own reservation is retryable
 });
-it('retries a profile conflict once and releases the latest previous name', async () => {
+it('retries a profile conflict once and reports the latest previous name', async () => {
   const f = fixture(); await f.set('Kevin');
   const cas = f.store.compareAndSet.bind(f.store); let raced = false;
   vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => {
     if (input.key.startsWith('profiles/') && !raced) {
       raced = true;
-      await f.seed(nameKey('Kev'), { v: 1, kind: 'human', ownerId: 'own_abc' });
       await cas({ ...input, operationId: 'racing-update', next: { value: { v: 1, ownerId: 'own_abc', username: 'Kev', updatedAt: '2026-10-02T18:00:00.000Z' }, expiresAt: null } });
     }
     return cas(input);
   });
   expect((await f.set('Kevin2')).status).toBe(200);
   expect(f.deps.afterUsernameChange).toHaveBeenLastCalledWith('own_abc', 'Kev', 'Kevin2');
-  expect((await f.store.read(nameKey('Kev'))).kind).toBe('absent');
 });
 it('bounds repeated profile conflicts without reporting success', async () => {
   const f = fixture(); const cas = f.store.compareAndSet.bind(f.store);
@@ -166,47 +149,7 @@ it('bounds repeated profile conflicts without reporting success', async () => {
   expect(spy.mock.calls.filter(([input]) => input.key.startsWith('profiles/'))).toHaveLength(2);
   expect(f.deps.setDisplayName).not.toHaveBeenCalled();
 });
-it('does not release a username reclaimed while an earlier release is delayed', async () => {
-  const f = fixture(); await f.set('Kevin');
-  const cas = f.store.compareAndSet.bind(f.store);
-  let resume!: () => void; let reached!: () => void;
-  const paused = new Promise<void>(resolve => { reached = resolve; });
-  const gate = new Promise<void>(resolve => { resume = resolve; });
-  let delayed = false;
-  vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => {
-    if (input.key === nameKey('Kevin') && input.next.expiresAt !== null && !delayed) {
-      delayed = true; reached(); await gate;
-    }
-    return cas(input);
-  });
-  const first = f.set('Kev'); await paused;
-  const otherHandler = createProfileHandlers(f.deps);
-  expect((await otherHandler.setUsername(f.request({ username: 'Kevin' }))).status).toBe(200);
-  resume(); expect((await first).status).toBe(200);
-  expect(f.deps.setDisplayName).toHaveBeenLastCalledWith('own_abc', 'Kevin');
-  expect((await f.store.read(nameKey('Kevin'))).kind).toBe('record');
-  f.owner('other'); expect((await f.set('Kevin')).status).toBe(409);
-});
-it('reserves again after a profile conflict when its pending claim was released', async () => {
-  const f = fixture(); await f.set('Kevin');
-  const cas = f.store.compareAndSet.bind(f.store);
-  let raced = false;
-  vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => {
-    if (input.key === profileRecordKey('own_abc') && !raced) {
-      raced = true;
-      const claim = await f.store.read(nameKey('Kev'));
-      if (claim.kind !== 'record') throw Error('pending claim missing');
-      await cas({ key: nameKey('Kev'), expectedRevision: claim.record.revision, operationId: 'expire-pending-claim',
-        next: { value: claim.record.value, expiresAt: new Date(f.deps.clock()).toISOString() } });
-      await cas({ ...input, operationId: 'concurrent-profile-update', next: { value: { v: 1, ownerId: 'own_abc', username: 'Kevin2', updatedAt: new Date(f.deps.clock()).toISOString() }, expiresAt: null } });
-    }
-    return cas(input);
-  });
-  expect((await f.set('Kev')).status).toBe(200);
-  expect((await f.store.read(nameKey('Kev'))).kind).toBe('record');
-  f.owner('other'); expect((await f.set('Kev')).status).toBe(409);
-});
-it('resolves applied reservation and profile writes with uncertain responses', async () => {
+it('resolves an applied profile write with an uncertain response', async () => {
   const f = fixture(); const cas = f.store.compareAndSet.bind(f.store);
   const writes = vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => {
     const result = await cas(input);
@@ -214,22 +157,19 @@ it('resolves applied reservation and profile writes with uncertain responses', a
   });
   const resolve = vi.spyOn(f.store, 'resolve');
   expect((await f.set('Kevin')).status).toBe(200);
-  expect(writes).toHaveBeenCalledTimes(2);
-  expect(resolve).toHaveBeenCalledTimes(2);
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect(resolve).toHaveBeenCalledTimes(1);
   expect(f.deps.setDisplayName).toHaveBeenCalledTimes(1);
-  expect((await f.store.read(nameKey('Kevin'))).kind).toBe('record');
   expect((await f.store.read(profileRecordKey('own_abc'))).kind).toBe('record');
 });
-it('fails closed when a reservation or profile write remains uncertain', async () => {
-  for (const uncertainKey of [nameKey('Kevin'), profileRecordKey('own_abc')]) {
-    const f = fixture(); const cas = f.store.compareAndSet.bind(f.store);
-    vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => input.key === uncertainKey
-      ? { kind: 'outcome_unknown', operationId: input.operationId } : cas(input));
-    vi.spyOn(f.store, 'resolve').mockImplementation(async input => ({ kind: 'outcome_unknown', operationId: input.operationId }));
-    expect((await f.set('Kevin')).status).toBe(503);
-    expect(f.deps.setDisplayName).not.toHaveBeenCalled();
-    expect(f.deps.afterUsernameChange).not.toHaveBeenCalled();
-  }
+it('fails closed when a profile write remains uncertain', async () => {
+  const f = fixture(); const cas = f.store.compareAndSet.bind(f.store);
+  vi.spyOn(f.store, 'compareAndSet').mockImplementation(async input => input.key === profileRecordKey('own_abc')
+    ? { kind: 'outcome_unknown', operationId: input.operationId } : cas(input));
+  vi.spyOn(f.store, 'resolve').mockImplementation(async input => ({ kind: 'outcome_unknown', operationId: input.operationId }));
+  expect((await f.set('Kevin')).status).toBe(503);
+  expect(f.deps.setDisplayName).not.toHaveBeenCalled();
+  expect(f.deps.afterUsernameChange).not.toHaveBeenCalled();
 });
 it('rejects malformed and mismatched stored profiles before writes or Matrix updates', async () => {
   for (const value of [{ v: 1, ownerId: 'own_abc', username: 'Kevin' },

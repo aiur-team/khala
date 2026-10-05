@@ -614,3 +614,21 @@ test('event delivery carries canonical previous membership across restarts', asy
   await reopen();
   expect(result()).toEqual(expected);
 });
+
+test('a per-channel owner name shows in that channel only, persists and clears back to the username', async () => {
+  const { roomId: here } = await store.createChannel('here');
+  const { roomId: there } = await store.createChannel('there');
+  const owner = (roomId: string) => store.members(roomId).find(m => m.userId === LOCAL_OWNER_USER_ID)!.displayName;
+  const event = await store.setOwnerChannelName(here, 'kevin2');
+  expect(event?.content).toEqual({ user: LOCAL_OWNER_USER_ID, membership: 'join', displayname: 'kevin2', kind: 'human' });
+  expect([owner(here), owner(there)]).toEqual(['kevin2', 'kevin']);
+  expect(store.channelSummary(here)?.members[0]?.displayName).toBe('kevin2');
+  expect(store.ownerChannelName(there)).toBeUndefined();
+  expect(store.history(here, undefined, 10).events.map(e => e.content['body'])).toContain('kevin is now kevin2');
+  await reopen();
+  expect([owner(here), owner(there)]).toEqual(['kevin2', 'kevin']);
+  expect(await store.setOwnerChannelName(here, 'kevin2')).toBeNull();
+  expect((await store.setOwnerChannelName(here, null))?.content['displayname']).toBe('kevin');
+  await reopen();
+  expect(owner(here)).toBe('kevin');
+});

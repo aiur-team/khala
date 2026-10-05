@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { agentConfirmPagePath, HARNESSES, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
+import { freeAgentName } from '@khala/contracts/m1/channel-names';
 import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, PendingJoin } from '../types';
@@ -54,10 +55,8 @@ export function agentJoinRoutes(): LocalRoute[] {
         const roomId = link.roomId;
         const sessionKey = body.sessionId === undefined || body.rejoinSecret === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId, body.rejoinSecret]));
         const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
-        const taken = new Set(ctx.store.members(roomId).map(member => member.displayName.toLowerCase()));
-        let n = 1;
-        while (taken.has(defaultAgentName(username, harness, n).toLowerCase())) n++;
-        const checked = checkName(defaultAgentName(username, harness, n), 'agent');
+        // Names are unique per channel only: a taken default gets the lowest free `-N` here.
+        const checked = checkName(freeAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
         if (!checked.ok) return fail(503, 'unavailable');
         let userId = previous?.userId ?? newLocalAgentUserId(ctx.random(4));
         for (let attempt = 0; attempt < 5 && !previous && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));
