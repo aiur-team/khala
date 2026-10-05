@@ -43,7 +43,7 @@ Developers running Khala from a source checkout follow the checkout sections of 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
 3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
-4. The agent checks `khala_status` until `connected`, then can read the whole channel history with `khala_read` and reply with `khala_send`.
+4. The agent checks `khala_status` until `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
 ## Channel members
@@ -148,7 +148,7 @@ Developers running Khala from a source checkout follow the checkout sections of 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
 3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
-4. The agent checks `khala_status` until `connected`, then can read the whole channel history with `khala_read` and reply with `khala_send`.
+4. The agent checks `khala_status` until `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
 ## Channel members
@@ -235,3 +235,11 @@ The MCP tools use these shapes:
 | `khala_send` | `{ text: string (1..8000) }` | `{ eventId }`. Errors: `not_connected`, `send_failed` |
 
 Local `status.json` has `{ state: 'idle'|'joining'|'connected'|'send_failed'|'disconnected', channelName?: string, detail?: string, updatedAt: string }`.
+
+### Hosted rejoin and encrypted history
+
+Hosted sessions retain their rejoin secret in `rejoin.json`. Once approved on a control version that supports approval reuse, the same room, harness, session ID and secret reconnect without another owner confirmation. A different secret/session or removal of the owner invalidates that approval. Older control versions (including `825b365d`) retain agent identity but still require confirmation on each rejoin; existing approvals need one confirmation after upgrading. Local recovery is unchanged.
+
+Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt.
+
+Use `khala watch --help` (or `-h`) for the Monitor command's usage. Unknown flags print an argument error and usage.

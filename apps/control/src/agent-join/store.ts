@@ -17,6 +17,7 @@ export const RATE_LIMIT = 10;
 export type JoinRecord = {
   joinId: string; pollSecretHash: string; roomId: string; channelName: string; label: string; harness: Harness;
   state: 'pending' | 'confirmed' | 'claimed' | 'ready' | 'expired'; createdAt: string; expiresAt: string;
+  rejoinApproval?: { ownerLabel: string; generation: number };
   rejoinSecretHash?: string; rejoin?: true; sessionId?: string; ownerId?: string; agentUserId?: string; sealedCredentials?: string;
 };
 export const joinKey = (joinId: string): string => `agent-join/${joinId}`;
@@ -34,8 +35,14 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
   if (Object.hasOwn(r, 'sessionId') && !validAgentSessionId(r.sessionId)) return null;
   if (Object.hasOwn(r, 'rejoin') && r.rejoin !== true) return null;
   if (Object.hasOwn(r, 'rejoinSecretHash') && (typeof r.rejoinSecretHash !== 'string' || !/^[a-f0-9]{64}$/u.test(r.rejoinSecretHash))) return null;
+  if (Object.hasOwn(r, 'rejoinApproval')) {
+    const approval = r.rejoinApproval as JoinRecord['rejoinApproval'];
+    if (!approval || typeof approval !== 'object' || Array.isArray(approval) || typeof approval.ownerLabel !== 'string' || !approval.ownerLabel
+      || !Number.isSafeInteger(approval.generation) || approval.generation < 0
+      || Object.keys(approval).some(key => !['ownerLabel', 'generation'].includes(key))) return null;
+  }
   const optional = ['rejoinSecretHash', 'sessionId', 'ownerId', 'agentUserId', 'sealedCredentials'];
-  if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin')
+  if (Object.keys(r).some(key => !required.includes(key) && !optional.includes(key) && key !== 'rejoin' && key !== 'rejoinApproval')
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;
   if (!isJoinId(r.joinId) || !/^[a-f0-9]{64}$/u.test(r.pollSecretHash as string)

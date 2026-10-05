@@ -136,15 +136,24 @@ describe('C11 Node Matrix session', () => {
     timeline(event('$empty', '@human:hs', 100, 'com.khala.event.v1', { kind: 'ci' })); await flush(); expect(handler.mock.calls[1]?.[0].body).toBe('');
     unsubscribe(); timeline(event('$unsub')); await flush(); expect(handler).toHaveBeenCalledTimes(2);
   });
-  it('omits undecryptable history, keeps self and paginates newest-last', async () => {
+  it('shows unavailable encrypted history, keeps self and paginates newest-last', async () => {
     const log = vi.fn(); session = await createAgentMatrixSession(creds, { log });
     client.createMessagesRequest.mockResolvedValue({ chunk: [event('$new', creds.userId, 300), event('$bad', '@human:hs', 200, 'm.room.encrypted', {}, true), event('$old', '@human:hs', 100)] as never[], end: 'more' as never });
     const page = await session.history('!r:hs', 3, '$before');
-    expect(page.messages.map(m => m.eventId)).toEqual(['$old', '$new']); expect(page.nextBefore).toBe('$old'); expect(log).toHaveBeenCalledWith('history_undecryptable=1');
+    expect(page.messages.map(m => m.eventId)).toEqual(['$old', '$bad', '$new']);
+    expect(page.messages[1]).toMatchObject({ body: expect.stringContaining('Encrypted message unavailable'), content: { 'com.khala.unavailable': true } });
+    expect(page.nextBefore).toBe('$old'); expect(log).toHaveBeenCalledWith('history_undecryptable=1');
     expect(client.http.authedRequest).toHaveBeenCalledWith('GET', '/rooms/!r%3Ahs/context/%24before', { limit: '0' });
     expect(client.createMessagesRequest).toHaveBeenCalledWith('!r:hs', 'cursor', 3, 'b');
     client.createMessagesRequest.mockResolvedValue({ chunk: [event()] as never[], end: undefined });
     expect((await session.history('!r:hs', 3)).nextBefore).toBeUndefined(); expect(client.createMessagesRequest).toHaveBeenLastCalledWith('!r:hs', null, 3, 'b');
+  });
+  it('paginates an entirely encrypted history page using its oldest placeholder', async () => {
+    session = await createAgentMatrixSession(creds);
+    client.createMessagesRequest.mockResolvedValue({ chunk: [event('$new', '@human:hs', 300, 'm.room.encrypted', {}, true), event('$old', '@human:hs', 100, 'm.room.encrypted', {}, true)] as never[], end: 'more' as never });
+    const page = await session.history('!r:hs', 2);
+    expect(page.messages.map(m => m.eventId)).toEqual(['$old', '$new']);
+    expect(page.nextBefore).toBe('$old');
   });
   it('reads member display names only after joining, with no fallback or network', async () => {
     session = await createAgentMatrixSession(creds); memberContent = { displayname: 'Maya' }; expect(session.displayName('@human:hs')).toBeUndefined();
