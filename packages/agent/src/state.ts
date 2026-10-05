@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { HARNESSES, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
@@ -45,6 +45,33 @@ export function stateRoot(env: NodeJS.ProcessEnv = process.env): string {
 export function filesForDir(dir: string): SessionFiles {
   return { dir, mode: path.join(dir, 'mode.json'), join: path.join(dir, 'join.json'), session: path.join(dir, 'session.json'), inbox: path.join(dir, 'inbox.jsonl'), cursor: path.join(dir, 'cursor.json'), status: path.join(dir, 'status.json') };
 }
+/** Keys are shared by room directories and pending joins; never use raw Matrix IDs in paths. */
+export function stateKey(value: string): string { return createHash('sha256').update(value).digest('hex').slice(0, 24); }
+export function channelsDir(files: SessionFiles): string { return path.join(files.dir, 'channels'); }
+export function channelFiles(files: SessionFiles, roomId: string): SessionFiles {
+  return filesForDir(path.join(channelsDir(files), stateKey(roomId)));
+}
+export function joinFilePath(files: SessionFiles, key: string): string {
+  if (!/^[a-f0-9]{24}$/.test(key)) throw new StateError('storage_failed');
+  return path.join(files.dir, 'joins', `${key}.json`);
+}
+export async function writeJoinFile(files: SessionFiles, link: string, join: JoinFile): Promise<void> {
+  const file = joinFilePath(files, stateKey(link));
+  await ensureStateDir(path.dirname(file));
+  await writeJsonAtomic(file, join);
+}
+export async function readJoinFile(files: SessionFiles, link: string): Promise<JoinFile | null> {
+  const file = joinFilePath(files, stateKey(link));
+  await ensureStateDir(path.dirname(file));
+  return readJson(file);
+}
+export async function removeJoinFile(files: SessionFiles, link: string): Promise<void> {
+  const file = joinFilePath(files, stateKey(link));
+  await ensureStateDir(path.dirname(file));
+  try { await fs.unlink(file); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StateError('storage_failed');
+  }
+}
 export function sessionFiles(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): SessionFiles {
   if (!(HARNESSES as readonly string[]).includes(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
   return filesForDir(path.join(stateRoot(env), harness, sessionId));
@@ -55,7 +82,22 @@ export function resolveStateDir(harness: Harness, sessionId: string, env?: NodeJ
 export async function ensureStateDir(dir: string): Promise<void> {
   try {
     // Check parents before descending so a pre-existing symlink is never followed.
-    for (const directory of [path.dirname(path.dirname(dir)), path.dirname(dir), dir]) {
+    let sessionDir = dir;
+    if (path.basename(path.dirname(dir)) === 'channels' && /^[a-f0-9]{24}$/.test(path.basename(dir))
+      && (HARNESSES as readonly string[]).includes(path.basename(path.dirname(path.dirname(path.dirname(dir)))))) {
+      sessionDir = path.dirname(path.dirname(dir));
+    } else if (['channels', 'joins'].includes(path.basename(dir))
+      && (HARNESSES as readonly string[]).includes(path.basename(path.dirname(path.dirname(dir))))) {
+      sessionDir = path.dirname(dir);
+    }
+    const directories = [path.dirname(path.dirname(sessionDir)), path.dirname(sessionDir), sessionDir];
+    const relative = path.relative(sessionDir, dir);
+    let parent = sessionDir;
+    for (const component of relative ? relative.split(path.sep) : []) {
+      parent = path.join(parent, component);
+      directories.push(parent);
+    }
+    for (const directory of directories) {
       try { await fs.mkdir(directory, { recursive: true, mode: 0o700 }); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
@@ -115,8 +157,8 @@ export async function writeStatus(files: SessionFiles, state: AgentState, detail
   return status;
 }
 export function readStatus(files: SessionFiles): Promise<StatusFile | null> { return readJson(files.status); }
-export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json', value: unknown): Promise<void> {
-  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json'].includes(name)) throw new StateError('storage_failed');
+export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json' | 'channel.json', value: unknown): Promise<void> {
+  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json', 'channel.json'].includes(name)) throw new StateError('storage_failed');
   await writeJsonAtomic(path.join(dir, name), value);
 }
 export function readStateFile<T>(dir: string, name: string): Promise<T | null> {
