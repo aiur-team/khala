@@ -46,6 +46,7 @@ export function createLocalHumanPorts(input: { origin: string; limits: ContentLi
     subscribeListeningModes: (roomId, listener) => members.subscribeListeningModes(roomId, listener),
     setListeningMode: (roomId, userId, mode, txnId) => members.setListeningMode(roomId, userId, mode, txnId),
     roomParticipants: (roomId, signal) => members.roomParticipants(roomId, signal),
+    memberSince: (roomId, userId) => conversations.memberSince(roomId, userId),
     limits: input.limits,
     dispose() {
       if (disposed) return;

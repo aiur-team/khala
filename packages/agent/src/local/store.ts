@@ -194,8 +194,9 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     return { roomId: channel.roomId, name: channel.name, createdAt: new Date(channel.events[0]!.ts).toISOString(),
       lastSeq: lastSeq(channel), lastTs: channel.events.at(-1)!.ts, preview: message ? message.content.body as string : null,
       ...(message ? { lastSender: { userId: message.sender, displayName: member(channel, message.sender)?.displayName ?? message.sender } } : {}),
+      // `since` orders who held a name first in this channel, for the per-channel name prompt.
       members: members(channel).map(m => ({ userId: m.userId, displayName: m.displayName, kind: m.kind,
-        ...(m.harness !== undefined ? { harness: m.harness } : {}) })) };
+        ...(m.harness !== undefined ? { harness: m.harness } : {}), since: channel.lastMember.get(m.userId)!.event.ts })) };
   }
   async function saveSecrets(channel: Channel, secrets: ChannelSecrets): Promise<void> {
     await writeJsonAtomic(path.join(channel.dir, 'secrets.json'), secrets);

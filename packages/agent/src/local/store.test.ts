@@ -59,7 +59,7 @@ test('creates a channel with exactly one owner join, summary, secrets and two re
     ownerId: 'local-owner', deviceId: 'KH_LOCAL_OWNER', displayName: 'kevin', kind: 'human', membership: 'join' });
   expect(store.revision()).toBe(2);
   expect(store.listChannels()).toEqual([{ roomId, name: 'refactor', createdAt: ownerDefault.updatedAt,
-    lastSeq: 2, lastTs: clock, preview: null, members: [{ userId: LOCAL_OWNER_USER_ID, displayName: 'kevin', kind: 'human' }] }]);
+    lastSeq: 2, lastTs: clock, preview: null, members: [{ userId: LOCAL_OWNER_USER_ID, displayName: 'kevin', kind: 'human', since: clock }] }]);
   expect(JSON.parse(await fs.readFile(path.join(roomDir(roomId), 'secrets.json'), 'utf8'))).toEqual({ v: 1, links: {}, members: {} });
 });
 
@@ -622,7 +622,7 @@ test('a per-channel owner name shows in that channel only, persists and clears b
   const event = await store.setOwnerChannelName(here, 'kevin2');
   expect(event?.content).toEqual({ user: LOCAL_OWNER_USER_ID, membership: 'join', displayname: 'kevin2', kind: 'human' });
   expect([owner(here), owner(there)]).toEqual(['kevin2', 'kevin']);
-  expect(store.channelSummary(here)?.members[0]?.displayName).toBe('kevin2');
+  expect(store.channelSummary(here)?.members[0]).toMatchObject({ displayName: 'kevin2', since: event!.ts });
   expect(store.ownerChannelName(there)).toBeUndefined();
   expect(store.history(here, undefined, 10).events.map(e => e.content['body'])).toContain('kevin is now kevin2');
   await reopen();
