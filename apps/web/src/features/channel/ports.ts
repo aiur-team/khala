@@ -43,10 +43,26 @@ export interface ChannelUiPort {
 export type RoomUiPort = ChannelUiPort;
 
 export interface AgentNamesPort {
-  rename(matrixUserId: string, name: string, signal?: AbortSignal):
+  /** `roomId` keeps the name unique in that channel where the backend supports it. */
+  rename(matrixUserId: string, name: string, signal?: AbortSignal, roomId?: RoomId):
     Promise<{ kind: 'ok'; name: string } | {
       kind: 'error';
       code: 'invalid_name' | 'name_taken' | 'not_owner' | 'not_found' | 'signed_out' | 'unavailable';
       reason?: NameError;
     }>;
+}
+
+export type ChannelNameResult = { kind: 'ok'; name: string } | {
+  kind: 'error';
+  code: 'invalid_name' | 'name_taken' | 'signed_out' | 'unavailable';
+  reason?: NameError;
+};
+
+/**
+ * The viewer's own name in one channel. Usernames are not unique across Khala,
+ * so a human who meets someone with the same name picks another for that channel.
+ * There is no subject: no one can set another member's name through it.
+ */
+export interface ChannelNamesPort {
+  setOwnName(roomId: RoomId, name: string, signal?: AbortSignal): Promise<ChannelNameResult>;
 }

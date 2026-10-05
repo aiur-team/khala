@@ -1,7 +1,8 @@
 import { AGENT_RENAME_PATH } from '@khala/contracts/m1/agent-names';
 import { readMatrixUserId } from '@khala/contracts/m1/agent-join';
 import { checkName } from '@khala/contracts/m1/names';
-import { decodeWith, object } from '@khala/contracts/messaging/decode';
+import { decodeWith, fail, object } from '@khala/contracts/messaging/decode';
+import { readId } from '@khala/contracts/messaging/ids';
 import type { AuthService } from '../auth/index';
 import { renameAgent, type AgentRenameDeps } from './rename';
 export { AGENT_RENAME_PATH };
@@ -19,14 +20,20 @@ export function createAgentRenameHandler(deps: AgentRenameDeps & { auth: Pick<Au
         auth.code === 'not_a_mutation' ? 'method_not_allowed' : auth.code);
       let input: unknown;
       try { input = await request.json(); } catch { return error(400, 'invalid_request'); }
+      // `roomId` (optional, from newer clients) keeps the name unique in that channel.
+      const scoped = typeof input === 'object' && input !== null && Object.hasOwn(input, 'roomId');
       const parsed = decodeWith(() => {
-        const r = object(input, '', ['matrixUserId', 'name']);
-        return { matrixUserId: readMatrixUserId(r.field('matrixUserId'), r.at('matrixUserId')), name: r.field('name') };
+        const r = object(input, '', scoped ? ['matrixUserId', 'name', 'roomId'] : ['matrixUserId', 'name']);
+        const roomId = scoped ? readId<'RoomId'>(r.field('roomId'), r.at('roomId')) : undefined;
+        if (roomId !== undefined && !/^![^:\s]+:\S+$/u.test(roomId)) fail(r.at('roomId'), 'invalid_value');
+        return { matrixUserId: readMatrixUserId(r.field('matrixUserId'), r.at('matrixUserId')), name: r.field('name'),
+          ...(roomId !== undefined ? { roomId } : {}) };
       });
       if (!parsed.ok || typeof parsed.value.name !== 'string') return error(400, 'invalid_request');
       const checked = checkName(parsed.value.name, 'agent');
       if (!checked.ok) return json(400, { error: 'invalid_name', reason: checked.error });
-      const result = await renameAgent(deps, auth.context.principal.ownerId, parsed.value.matrixUserId, checked.name);
+      const result = await renameAgent(deps, auth.context.principal.ownerId, parsed.value.matrixUserId, checked.name,
+        parsed.value.roomId !== undefined ? { roomId: parsed.value.roomId } : {});
       if (result === 'ok') return json(200, { matrixUserId: parsed.value.matrixUserId, name: checked.name });
       const status = { invalid: 400, not_found: 404, not_owner: 403, taken: 409, unavailable: 503 }[result];
       return error(status, result === 'taken' ? 'name_taken' : result === 'invalid' ? 'invalid_name' : result);

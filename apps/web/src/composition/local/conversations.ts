@@ -8,6 +8,8 @@ import { LOCAL_CHANNELS_PATH, localRoomPath, type LocalHttp } from './http';
 export const LAST_SEEN_KEY_PREFIX = 'khala.local.last-seen.v1:';
 export type LocalConversations = ConversationIndexPort & Readonly<{
   viewing(roomId: RoomId): Disposer;
+  /** When a member took its current name in a channel (its latest membership event), from the live channel list. */
+  memberSince(roomId: RoomId, userId: string): number | null;
   syncStatus: SyncStatusPort;
   dispose(): void;
 }>;
@@ -153,6 +155,7 @@ export function createLocalConversations(http: LocalHttp, options?: Readonly<{
         rebuild();
       };
     },
+    memberSince: (roomId, userId) => lastSummaries.find(item => item.roomId === roomId)?.members.find(member => member.userId === userId)?.since ?? null,
     dispose() { abort.abort(); live = false; listeners.clear(); },
   };
 }

@@ -66,7 +66,7 @@ function fakeStore() {
     listChannels: unsupported, channelSummary: unsupported, createChannel: unsupported, findByOperation: unsupported,
     channelOfMember: unsupported, revision: unsupported, waitForRevision: unsupported,
     mintLink: unsupported, consumeLink: unsupported, memberForSession: unsupported, setMemberToken: unsupported, agentForToken: unsupported,
-    owner: unsupported, setOwner: unsupported,
+    owner: unsupported, setOwner: unsupported, ownerChannelName: unsupported, setOwnerChannelName: unsupported,
   };
   return { store, logs, append, waitForEvent, waiters };
 }

@@ -21,9 +21,11 @@ async function cascade(store: LocalStore, previous: string, next: string): Promi
       // membership event still needs to record the transition for subscribers.
       if (owner && previous !== next) {
         try {
-          await store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
+          // A new username replaces a per-channel name too, as a hosted profile change does in every room.
+          if (store.ownerChannelName(roomId) !== undefined) await store.setOwnerChannelName(roomId, null);
+          else await store.append(roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
             content: { user: LOCAL_OWNER_USER_ID, membership: owner.membership, displayname: next, kind: 'human' } });
-          taken.delete(previous.toLowerCase());
+          taken.delete(owner.displayName.toLowerCase());
           taken.add(next.toLowerCase());
         } catch { /* A failed owner event must not stop the agents in this channel. */ }
       }

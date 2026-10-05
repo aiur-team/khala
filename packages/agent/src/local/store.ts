@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ensureStateDir, readJson, writeJsonAtomic, StateError } from '../state';
 import { memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { memberRenameContent } from '../events/member-rename';
+import { checkName } from '@khala/contracts/m1/names';
 import {
   base64url, decodeChannelSecrets, decodeLocalEvent, decodeOwnerProfile, isLocalRoomId,
   newLocalRoomId, localRoomKey, newLocalEventId, LOCAL_OWNER_USER_ID, LOCAL_OWNER_ID,
@@ -31,6 +32,8 @@ type Channel = {
   byTxn: Map<string, LocalEvent>; lastMember: Map<string, { event: LocalEvent; firstSeq: number }>;
   previousMembers: Map<string, LocalMemberContent>;
   name: string; operationId?: string; secrets: ChannelSecrets; handle?: fs.FileHandle;
+  /** The owner's name in this channel only (names.json), overriding the profile username here. */
+  ownerName?: string;
   validBytes?: number; waiters: Set<() => void>;
 };
 const sha256 = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -102,6 +105,9 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
         if (decoded.ok && decoded.value.roomId === roomId && decoded.value.seq > lastSeq(channel)) indexEvent(channel, decoded.value);
       }
       if (channel.events[0]?.type !== 'm.room.create') continue;
+      // A separate file: older helpers decode secrets.json strictly and must keep reading it after a downgrade.
+      const names = await readJson<{ v?: unknown; owner?: unknown }>(path.join(channel.dir, 'names.json'));
+      if (names?.v === 1 && typeof names.owner === 'string' && checkName(names.owner, 'username').ok) channel.ownerName = names.owner;
       const secrets = decodeChannelSecrets(await readJson(path.join(channel.dir, 'secrets.json')));
       channel.secrets = secrets.ok ? secrets.value : emptySecrets();
       register(channel);
@@ -165,7 +171,7 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     const human = userId === LOCAL_OWNER_USER_ID;
     return { userId, participantId: userId, ownerId: LOCAL_OWNER_ID,
       deviceId: human ? LOCAL_OWNER_DEVICE_ID : LOCAL_AGENT_DEVICE_PREFIX + userId.slice(7, 15),
-      displayName: human ? owner.username : content.displayname, kind: content.kind, membership: content.membership,
+      displayName: human ? channel.ownerName ?? owner.username : content.displayname, kind: content.kind, membership: content.membership,
       ...(!human ? { ownerLabel: owner.username, listeningMode: memberListeningMode(content),
         ...(content.harness !== undefined ? { harness: content.harness } : {}) } : {}) };
   }
@@ -188,8 +194,9 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
     return { roomId: channel.roomId, name: channel.name, createdAt: new Date(channel.events[0]!.ts).toISOString(),
       lastSeq: lastSeq(channel), lastTs: channel.events.at(-1)!.ts, preview: message ? message.content.body as string : null,
       ...(message ? { lastSender: { userId: message.sender, displayName: member(channel, message.sender)?.displayName ?? message.sender } } : {}),
+      // `since` orders who held a name first in this channel, for the per-channel name prompt.
       members: members(channel).map(m => ({ userId: m.userId, displayName: m.displayName, kind: m.kind,
-        ...(m.harness !== undefined ? { harness: m.harness } : {}) })) };
+        ...(m.harness !== undefined ? { harness: m.harness } : {}), since: channel.lastMember.get(m.userId)!.event.ts })) };
   }
   async function saveSecrets(channel: Channel, secrets: ChannelSecrets): Promise<void> {
     await writeJsonAtomic(path.join(channel.dir, 'secrets.json'), secrets);
@@ -345,6 +352,23 @@ export async function openLocalStore(input: OpenLocalStoreInput): Promise<Opened
       }
       return result;
     },
+    ownerChannelName: roomId => channels.get(roomId)?.ownerName,
+    setOwnerChannelName: (roomId, name) => enqueue(async () => {
+      const channel = requireChannel(roomId);
+      const before = member(channel, LOCAL_OWNER_USER_ID);
+      const file = path.join(channel.dir, 'names.json');
+      if (name === null) await fs.rm(file, { force: true });
+      else await writeJsonAtomic(file, { v: 1, owner: name });
+      if (name === null) delete channel.ownerName;
+      else channel.ownerName = name;
+      const after = member(channel, LOCAL_OWNER_USER_ID);
+      if (!before || !after || before.displayName === after.displayName) { bump(); return null; }
+      // The membership event tells subscribers (and the rename pill) about the change.
+      const event = await writeEvent(channel, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
+        content: { user: LOCAL_OWNER_USER_ID, membership: before.membership, displayname: after.displayName, kind: 'human' } });
+      bump(); fire(channel.waiters);
+      return structuredClone(event);
+    }),
     owner: () => structuredClone(owner),
     setOwner: next => {
       const owned = structuredClone(next);

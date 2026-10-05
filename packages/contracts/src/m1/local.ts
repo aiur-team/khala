@@ -125,7 +125,8 @@ export type LocalChannelSummary = {
   roomId: string; name: string; createdAt: string; lastSeq: number; lastTs: number;
   preview: string | null;                                  // body of the latest m.room.message (m.text), else null
   lastSender?: { userId: string; displayName: string };    // sender of that message
-  members: { userId: string; displayName: string; kind: 'human' | 'agent'; harness?: Harness }[];   // present members, owner first
+  // present members, owner first; since = ts of the member's latest membership event (owner routes only: the CLI never decodes summaries)
+  members: { userId: string; displayName: string; kind: 'human' | 'agent'; harness?: Harness; since?: number }[];
 };
 // POST   /api/local/channels           body {name, operationId?} → LocalChannelCreated   (name 1..64 chars, trimmed; appends create + owner join; operationId 1..64 [A-Za-z0-9._-] is stored in the create content and is idempotent)
 export type LocalChannelCreated = { roomId: string; name: string; selfLink: string; shareLink: string; openUrl: string; expiresAt: string };
@@ -480,11 +481,12 @@ function readSender(input: unknown, path: string): { userId: string; displayName
 }
 function readSummaryMembers(input: unknown, path: string): LocalChannelSummary['members'] {
   return limitedArray(input, path, LOCAL_MEMBERS_MAX, (value, at) => {
-    const r = record(value, at, ['userId', 'displayName', 'kind'], ['harness']);
+    const r = record(value, at, ['userId', 'displayName', 'kind'], ['harness', 'since']);
     const kind = literal(r.field('kind'), r.at('kind'), ['human', 'agent']);
     if (kind === 'human' && has(value, 'harness')) fail(r.at('harness'), 'invalid_value');
     return { userId: readLocalUserId(r.field('userId'), r.at('userId')), displayName: displayName(r.field('displayName'), r.at('displayName')), kind,
-      ...(has(value, 'harness') ? { harness: readHarness(r.field('harness'), r.at('harness')) } : {}) };
+      ...(has(value, 'harness') ? { harness: readHarness(r.field('harness'), r.at('harness')) } : {}),
+      ...(has(value, 'since') ? { since: safeInteger(r.field('since'), r.at('since')) } : {}) };
   });
 }
 function readChannels(input: unknown, path: string): LocalChannelSummary[] {

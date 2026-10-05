@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
 import { agentOwnerRecordKey, decodeAgentOwnerRecord, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
-import { defaultAgentName, nameKey, suggestUsername } from '@khala/contracts/m1/names';
-import { decodeNameReservation, decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
+import { freeAgentName } from '@khala/contracts/m1/channel-names';
+import { suggestUsername } from '@khala/contracts/m1/names';
+import { decodeProfileRecord, profileRecordKey } from '@khala/contracts/m1/profile';
 import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
 import type { GatewayInspection } from '../invitations/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
-import { allocateAgentName, indexOwnerAgent, retainAgentName } from './names';
+import { indexOwnerAgent } from './names';
 import type { AgentProvisioner } from './provision';
 import { createJoinStore, effectiveState, isJoinId, sealCredentials, type JoinRecord } from './store';
 
@@ -19,6 +20,8 @@ export type AgentJoinHumanDeps = Readonly<{
   joins: ReturnType<typeof createJoinStore>; store: ControlStore; clock: () => number;
   random: (bytes: number) => Uint8Array; sealSecret: string;
   inspectMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  /** The display names the channel's joined members hold there, read as `ownerId`; `null` when unavailable. */
+  roomMemberNames(ownerId: OwnerId, roomId: RoomId): Promise<readonly string[] | null>;
   provisioner: AgentProvisioner;
 }>;
 const json = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: {
@@ -74,13 +77,15 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       const decoded = existing.kind === 'record' ? decodeAgentOwnerRecord(existing.record.value) : null;
       if (existing.kind === 'record' && (!decoded?.ok || decoded.value.ownerId !== principal.ownerId || decoded.value.harness !== record.harness)) return unavailable();
       const previous = decoded?.ok ? decoded.value : undefined;
-      const reservation = previous ? await safeRead(deps.store, nameKey(previous.label)) : { kind: 'absent' as const };
-      if (reservation.kind === 'unavailable') return unavailable();
-      const claim = reservation.kind === 'record' ? decodeNameReservation(reservation.record.value) : null;
-      const held = claim?.ok && claim.value.kind === 'agent' && claim.value.ownerId === principal.ownerId && claim.value.matrixUserId === userId;
-      const rejoin = held && reservation.kind === 'record' && reservation.record.expiresAt === null;
-      const name = (held ? previous?.label : undefined) ?? (record.agentUserId === userId && !previous ? record.label : await allocateAgentName(deps.store, { ownerId: principal.ownerId, matrixUserId: userId, username, harness: record.harness, expiresAt: record.expiresAt }));
-      if (!name) return unavailable();
+      // A rejoining session keeps its name. Agent names are not unique across Khala, only within a
+      // channel: a new agent takes its default name, or the lowest free `-N` when someone here holds it.
+      const rejoin = previous !== undefined;
+      let name = previous?.label ?? (record.agentUserId === userId ? record.label : null);
+      if (name === null) {
+        const names = await deps.roomMemberNames(principal.ownerId, record.roomId as RoomId);
+        if (!names) return unavailable();
+        name = freeAgentName(username, record.harness, names);
+      }
       const provisioned = await deps.provisioner.provision({ joinId, ...(record.sessionId === undefined ? {} : { identityId }), ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
       const { credentials } = provisioned;
@@ -107,8 +112,6 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       }
       if (stagedResult.kind !== 'applied') return unavailable();
       record = staged; revision = stagedResult.revision;
-      if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
-      if (!await retainAgentName(deps.store, name, principal.ownerId, userId)) return unavailable();
       if (effectiveState(record, deps.clock()) === 'expired') { await deps.joins.read(joinId); return error(404, 'not_found'); }
       const next: JoinRecord = { ...record, label: name, ownerId: principal.ownerId, state: 'confirmed', agentUserId: credentials.userId,
         sealedCredentials: sealCredentials(deps.sealSecret, joinId, credentials) };
@@ -156,7 +159,9 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
       if (view.state === 'pending') {
         const username = await usernameOf(principal);
         if (!username) return unavailable();
-        view.label = defaultAgentName(username, read.record.harness);
+        // The name it will join as: its default, numbered when someone in this channel holds it.
+        const names = await deps.roomMemberNames(principal.ownerId, read.record.roomId as RoomId);
+        view.label = freeAgentName(username, read.record.harness, names ?? []);
       }
       return json(200, view);
     } catch { return unavailable(); }

@@ -17,8 +17,10 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
       origin: active.env.publicAppOrigin, secret: active.env.invitationHmacSecret, roomName: active.matrix.roomName });
     const provisioner = createProductionAgentProvisioner(active, fetch);
     const human = createAgentJoinHumanHandlers({ auth: active.auth, joins, store: active.store, clock: active.clock, random,
-      sealSecret: active.env.invitationHmacSecret, inspectMembership: active.matrix.inspectOwnerMembership, provisioner });
-    const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner });
+      sealSecret: active.env.invitationHmacSecret, inspectMembership: active.matrix.inspectOwnerMembership, provisioner,
+      roomMemberNames: async (ownerId, roomId) => (await active.matrix.roomMembers(ownerId, roomId))?.map(member => member.name) ?? null });
+    const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner,
+      roomMembers: active.matrix.roomMembers });
     return { agent, human, rename };
   }
   function route(path: string, method: 'GET' | 'POST', select: (active: ReturnType<typeof handlers>) => (request: Request) => Promise<Response>): RouteRegistration {

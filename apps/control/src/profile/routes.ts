@@ -1,9 +1,9 @@
 import { decodeHumanInitialsRecord, humanInitialsRecordKey, normalizeInitials } from '@khala/contracts/m1/initials';
 import { decodeHumanColorRecord, defaultHumanColor, humanColorRecordKey, isHumanColorId, type HumanColorId } from '@khala/contracts/m1/colors';
-import { checkName, nameKey, suggestUsername, USERNAME_MAX } from '@khala/contracts/m1/names';
-import { decodeNameReservation, decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
+import { checkName, suggestUsername } from '@khala/contracts/m1/names';
+import { decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
-import type { AuthPrincipal, ControlRecord, ControlStore, OwnerId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlStore, OwnerId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth/index';
 import { safeRead, writeAndResolve } from '../invitations/internal';
 
@@ -20,10 +20,6 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
 } });
 const error = (status: number, code: string) => json(status, { error: code });
 const unavailable = () => error(503, 'unavailable');
-const ownReservation = (value: unknown, ownerId: string): boolean => {
-  const decoded = decodeNameReservation(value);
-  return decoded.ok && decoded.value.kind === 'human' && decoded.value.ownerId === ownerId;
-};
 
 export function createProfileHandlers(deps: ProfileDeps) {
   const operationId = () => `profile.${Buffer.from(deps.random(16)).toString('hex')}`;
@@ -63,18 +59,9 @@ export function createProfileHandlers(deps: ProfileDeps) {
     if (color.kind !== 'ok') return unavailable();
     const initials = await readInitials(principal.ownerId);
     if (initials.kind !== 'ok') return unavailable();
-    const base = suggestUsername(principal.verifiedEmail);
-    for (let n = 1; n <= 99; n++) {
-      const suffix = n === 1 ? '' : String(n);
-      const stem = base.slice(0, USERNAME_MAX - suffix.length).replace(/[._-]+$/u, '');
-      const suggestion = `${stem}${suffix}`;
-      const reservation = await safeRead(deps.store, nameKey(suggestion));
-      if (reservation.kind === 'unavailable') return unavailable();
-      if (reservation.kind === 'absent' || ownReservation(reservation.record.value, principal.ownerId)) {
-        return json(200, { username: profile.record?.username ?? null, suggestion, color: color.color, initials: initials.initials });
-      }
-    }
-    return unavailable();
+    // Usernames are not unique across Khala, so the suggestion needs no reservation lookup.
+    return json(200, { username: profile.record?.username ?? null, suggestion: suggestUsername(principal.verifiedEmail),
+      color: color.color, initials: initials.initials });
   }
   async function displayName(ownerId: OwnerId): Promise<void> {
     try {
@@ -84,28 +71,6 @@ export function createProfileHandlers(deps: ProfileDeps) {
       if (latest.kind === 'ok' && latest.record && await deps.setDisplayName(ownerId, latest.record.username)) return;
     } catch { /* Log only the finite failure code, never upstream details. */ }
     console.warn('profile_display_name_unavailable');
-  }
-  async function release(record: ControlRecord | null): Promise<void> {
-    if (record === null) return;
-    try {
-      await writeAndResolve(deps.store, { key: record.key, expectedRevision: record.revision, operationId: operationId(),
-        next: { value: record.value, expiresAt: new Date(deps.clock()).toISOString() } });
-    } catch { /* Releasing an old name is best effort. */ }
-  }
-  async function reserve(ownerId: OwnerId, username: string): Promise<'ok' | 'taken' | 'unavailable'> {
-    const input = { key: nameKey(username), expectedRevision: null, operationId: operationId(),
-      next: { value: { v: 1, kind: 'human', ownerId }, expiresAt: null } } as const;
-    const reserved = await writeAndResolve(deps.store, input);
-    if (reserved.kind === 'applied') return 'ok';
-    if (reserved.kind !== 'conflict') return 'unavailable';
-    if (!reserved.current || !ownReservation(reserved.current.value, ownerId)) return 'taken';
-    // Rotate even an own reservation: an earlier rename may still be releasing
-    // the revision it observed before committing its profile change.
-    const renewed = await writeAndResolve(deps.store, { ...input, expectedRevision: reserved.current.revision,
-      operationId: operationId() });
-    if (renewed.kind === 'applied') return 'ok';
-    if (renewed.kind === 'conflict' && renewed.current && !ownReservation(renewed.current.value, ownerId)) return 'taken';
-    return 'unavailable';
   }
   async function setUsername(request: Request, principal: AuthPrincipal): Promise<Response> {
     let input: unknown;
@@ -121,18 +86,10 @@ export function createProfileHandlers(deps: ProfileDeps) {
       await displayName(principal.ownerId);
       return json(200, { username });
     }
+    // Usernames are not unique across Khala: two people may share one, and a
+    // channel where they meet asks the later one for a name there instead.
     for (let attempt = 0; attempt < 2; attempt++) {
-      const reserved = await reserve(principal.ownerId, username);
-      if (reserved === 'taken') return error(409, 'username_taken');
-      if (reserved !== 'ok') return unavailable();
       const previous = profile.record?.username ?? null;
-      let previousReservation: ControlRecord | null = null;
-      if (previous !== null && nameKey(previous) !== nameKey(username)) {
-        const read = await safeRead(deps.store, nameKey(previous));
-        if (read.kind === 'record' && ownReservation(read.record.value, principal.ownerId)) previousReservation = read.record;
-      }
-      // Capture the old reservation before the profile CAS. A concurrent claim
-      // either rotates this revision or must retry after its profile CAS fails.
       const next: ProfileRecord = { v: 1, ownerId: principal.ownerId, username, updatedAt: new Date(deps.clock()).toISOString() };
       const written = await writeAndResolve(deps.store, { key: profileRecordKey(principal.ownerId), expectedRevision: profile.revision,
         operationId: operationId(), next: { value: next, expiresAt: null } });
@@ -144,7 +101,6 @@ export function createProfileHandlers(deps: ProfileDeps) {
         continue;
       }
       if (written.kind !== 'applied') return unavailable();
-      await release(previousReservation);
       await displayName(principal.ownerId);
       try { await deps.afterUsernameChange?.(principal.ownerId, previous, username); }
       catch { console.warn('profile_after_username_change_unavailable'); }

@@ -78,6 +78,8 @@ export type MatrixHumanServices = Readonly<{
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
+  /** The joined members of a channel the owner is in, with the names they hold there; `null` when unavailable. */
+  roomMembers(ownerId: OwnerId, roomId: RoomId): Promise<readonly Readonly<{ userId: string; name: string }>[] | null>;
   setOwnerDisplayName(ownerId: OwnerId, name: string): Promise<boolean>;
 
 }>;
@@ -631,6 +633,19 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         const session = await controlLogin(ownerId);
         return session ? await setDisplayName(session, name) : false;
       } catch { return false; }
+    },
+    async roomMembers(ownerId, roomId) {
+      try {
+        if ((await membershipForOwner(ownerId, roomId)).kind !== 'joined') return null;
+        const session = await controlLogin(ownerId);
+        if (!session) return null;
+        const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`,
+          { headers: { authorization: `Bearer ${session.accessToken}` } });
+        const joined = response.status === 200 ? safeObject((await body(response))?.joined) : null;
+        if (!joined || Object.keys(joined).length > 100) return null;
+        // Room-scoped display names: a per-channel name is the member's own m.room.member displayname here.
+        return Object.keys(joined).map(userId => ({ userId, name: displayName(safeObject(joined[userId])?.display_name, userId) }));
+      } catch { return null; }
     },
     roomName: async (ownerId, roomId) => {
       const session = await controlLogin(ownerId);

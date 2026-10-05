@@ -6,12 +6,14 @@ import { renderMessageContent } from '../../features/timeline/message-renderer';
 import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
 import { createChannelController, type ChannelController, type ChannelView } from '../../features/channel/controller';
 import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
-import type { ChannelUiPort } from '../../features/channel/ports';
+import type { ChannelNameResult, ChannelUiPort } from '../../features/channel/ports';
+import { channelNamePrompts, nameAcknowledgements, type ChannelNameMember } from '../../features/channel/channel-names';
+import { ChannelNameDialog, TAKEN_HERE, type ChannelNameSave } from '../../features/channel/ChannelNameDialog';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { projectTimelineNames } from '../../features/timeline/names';
-import type { ParticipantView } from '@khala/contracts/messaging/index';
+import type { ParticipantView, RoomId } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { LoadingSpinner } from '../../ui/khala/LoadingSpinner';
 import { useHumanAccount, type HumanRoomRenderer } from './mount';
@@ -69,18 +71,34 @@ export function roomNameParticipants(agents: ChannelView['agents'], members: rea
 }
 
 /**
- * Renames one of the viewer's agents in this channel through the global rename
- * API, which also sets the agent's Matrix display name in every room.
+ * Renames one of the viewer's agents. An agent is one member of one channel, so
+ * this is its name in that channel; `roomId` keeps it unique there.
  */
 export async function renameChannelAgent(context: Pick<Parameters<HumanRoomRenderer>[0], 'agentNames' | 'describeParticipant'>,
   room: Pick<ChannelController, 'getSnapshot'>, viewer: ParticipantView, participantId: ParticipantId, name: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal, roomId?: RoomId,
 ): Promise<RenameAgentResult> {
   const target = room.getSnapshot().agents.find(agent => agent.participantId === participantId);
   if (viewer.kind !== 'human' || target?.ownerId !== viewer.ownerId) return { kind: 'error', code: 'not_owner' };
   const detail = context.describeParticipant?.(participantId);
   if (!context.agentNames || detail?.kind !== 'agent') return { kind: 'error', code: 'unavailable' };
-  return context.agentNames.rename(detail.matrixUserId, name, signal);
+  return roomId === undefined ? context.agentNames.rename(detail.matrixUserId, name, signal)
+    : context.agentNames.rename(detail.matrixUserId, name, signal, roomId);
+}
+
+/** The prompt's message for a failed save. */
+export function channelNameSaveError(result: Extract<ChannelNameResult | RenameAgentResult, { kind: 'error' }>): string {
+  if (result.code === 'name_taken') return TAKEN_HERE;
+  if (result.code === 'signed_out') return 'You were signed out. Sign in again.';
+  if (result.code === 'invalid_name') return 'Choose a different name.';
+  return 'Couldn’t save. Try again.';
+}
+
+/** The channel's members as the name prompt sees them: this tab's just-saved names win over the roster. */
+export function channelNameMembers(roster: readonly ParticipantView[], overrides: ReadonlyMap<string, string>,
+  since: (participantId: string) => number | null): ChannelNameMember[] {
+  return roster.map(member => ({ participantId: member.participantId, kind: member.kind, ownerId: member.ownerId,
+    name: overrides.get(member.participantId) ?? member.displayName, since: since(member.participantId) }));
 }
 
 export const renderHumanRoom: HumanRoomRenderer = (context, route, navigate, routes) => (
@@ -96,7 +114,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
 }) {
   const conversations = useConversationIndex(context);
   // Updates the instant a Profile save succeeds, so the viewer sees their own choice at once.
-  const { initials: viewerInitials, color: viewerColor } = useProfile();
+  const { initials: viewerInitials, color: viewerColor, username } = useProfile();
   const selectedConversation = conversations?.find(item => item.id === roomId);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -154,7 +172,18 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       participants.some(item => item.participantId === participantId && item.displayName === name));
     if (settled.length > 0) setRenamed(current => new Map([...current].filter(([participantId]) => !settled.some(([id]) => id === participantId))));
   }, [participantRoster, renamed]);
-  const projectedNames = viewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, viewer, extraParticipants).currentNames : undefined;
+  // The viewer's name in this channel, when it differs from their username: one they just saved here
+  // (shown at once, dropped once the roster agrees), else the roster's channel-scoped name.
+  const [ownName, setOwnName] = useState<string | null>(null);
+  const roster = participantRoster?.scope === participantScope ? participantRoster.participants : null;
+  const rosterSelf = viewer ? roster?.find(member => member.participantId === viewer.participantId) : undefined;
+  useEffect(() => { if (ownName !== null && rosterSelf?.displayName === ownName) setOwnName(null); }, [ownName, rosterSelf?.displayName]);
+  const channelName = ownName ?? (rosterSelf && username && rosterSelf.displayName !== username ? rosterSelf.displayName : null);
+  const channelViewer = useMemo(() => viewer && channelName && channelName !== viewer.displayName ? { ...viewer, displayName: channelName } : viewer,
+    [viewer, channelName]);
+  const acknowledgements = useMemo(() => nameAcknowledgements(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
+  const [, setAcknowledged] = useState(0);
+  const projectedNames = channelViewer ? projectTimelineNames(timelineData.nameHistory ?? timelineData.items, channelViewer, extraParticipants).currentNames : undefined;
   const currentNames = projectedNames && renamed.size > 0 ? new Map([...projectedNames, ...renamed]) : projectedNames;
   const baseDescribe = context.describeParticipant;
   const describeParticipant = useMemo(() => baseDescribe && ((participantId: string) => {
@@ -182,12 +211,43 @@ function HumanRoom({ context, roomId, navigate, routes }: {
 
   const linkSource = context.admission ? { admission: context.admission, roomId,
     ...(context.channelLinks ? { channelLinks: context.channelLinks } : {}) } : null;
-  return (
+  // Only the viewer's own name, or their own agents', is ever prompted for, and only when it collides here.
+  const sinceOf = (participantId: string) => {
+    const userId = matrixUserId(participantId);
+    return userId && context.memberSince ? context.memberSince(roomId, userId) : null;
+  };
+  const prompt = roster ? channelNamePrompts({
+    members: channelNameMembers(roster, new Map([...renamed, ...(ownName ? [[viewer.participantId, ownName] as const] : [])]), sinceOf),
+    viewerParticipantId: viewer.participantId, viewerOwnerId: viewer.ownerId, acknowledged: acknowledgements.has,
+  }).find(item => item.kind === 'human' ? context.channelNames : context.agentNames) ?? null : null;
+  const saveChannelName: ChannelNameSave = async (name, signal) => {
+    if (!prompt) return { kind: 'ok' };
+    if (prompt.kind === 'human') {
+      const result: ChannelNameResult = await context.channelNames?.setOwnName(roomId, name, signal) ?? { kind: 'error', code: 'unavailable' };
+      if (result.kind === 'error') return { kind: 'error', message: channelNameSaveError(result) };
+      setOwnName(result.name);
+      room.refresh?.();
+      return { kind: 'ok' };
+    }
+    const participantId = prompt.participantId as ParticipantId;
+    let saved = name;
+    if (name !== prompt.name) {
+      const result = await renameChannelAgent(context, room, viewer, participantId, name, signal, roomId);
+      if (result.kind === 'error') return { kind: 'error', message: channelNameSaveError(result) };
+      saved = result.name;
+      setRenamed(current => new Map([...current, [participantId, saved]]));
+      room.refresh?.();
+    }
+    acknowledgements.add(participantId, saved);
+    setAcknowledged(count => count + 1);
+    return { kind: 'ok' };
+  };
+  return (<>
     <ChannelScreen
       title={selectedConversation?.title ?? (account === 'local_owner' ? 'Channel' : 'Encrypted conversation')}
       controller={room}
       viewerOwnerId={viewer.ownerId}
-      viewerName={viewer.displayName}
+      viewerName={channelViewer?.displayName ?? viewer.displayName}
       viewerEmail={context.principal.verifiedEmail}
       viewerInitials={viewerInitials}
       viewerParticipantId={viewer.participantId}
@@ -201,7 +261,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
         ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
         joined: () => timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
       {...(context.agentNames ? { renameAgent: async (participantId: ParticipantId, name: string, signal?: AbortSignal) => {
-        const result = await renameChannelAgent(context, room, viewer, participantId, name, signal);
+        const result = await renameChannelAgent(context, room, viewer, participantId, name, signal, roomId);
         if (result.kind === 'ok') {
           setRenamed(current => new Map([...current, [participantId, result.name]]));
           room.refresh?.();
@@ -221,7 +281,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       } : {})}
       renderTimeline={(openParticipant, openInvite, onMentionRoster) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
-          controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} viewerInitials={viewerInitials} composerRef={composer}
+          controller={timeline} roomPort={context.room} roomId={roomId} viewer={channelViewer ?? viewer} viewerInitials={viewerInitials} composerRef={composer}
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}
@@ -230,5 +290,6 @@ function HumanRoom({ context, roomId, navigate, routes }: {
           unreadableActivity={selectedConversation?.preview === null && selectedConversation.timestamp !== null} />
       )}
     />
-  );
+    {prompt ? <ChannelNameDialog key={JSON.stringify([prompt.participantId, prompt.name, prompt.reason])} prompt={prompt} onSave={saveChannelName} /> : null}
+  </>);
 }

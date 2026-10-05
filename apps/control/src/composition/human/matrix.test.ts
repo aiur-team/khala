@@ -96,6 +96,25 @@ describe('createMatrixHumanServices', () => {
     expect(await services(failedLogin).roomName(principal.ownerId, roomId)).toBeNull();
     expect(failedLogin).toHaveBeenCalledTimes(1);
   });
+  it('lists a channel\'s members with the names they hold there, only for a joined owner', async () => {
+    const roomId = '!room:matrix.example.test' as RoomId;
+    let membership = 'join';
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        const request = JSON.parse(String(init?.body));
+        return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'control-token' });
+      }
+      if (path.includes('/state/m.room.member/')) return json(200, { membership });
+      if (path.endsWith('/joined_members')) return json(200, { joined: { '@a:matrix.example.test': { display_name: 'alice2' }, '@b:matrix.example.test': {} } });
+      throw new Error(`unexpected ${path}`);
+    });
+    const matrix = services(fetch);
+    expect(await matrix.roomMembers(principal.ownerId, roomId)).toEqual([
+      { userId: '@a:matrix.example.test', name: 'alice2' }, { userId: '@b:matrix.example.test', name: '@b:matrix.example.test' }]);
+    membership = 'leave';
+    expect(await matrix.roomMembers(principal.ownerId, roomId)).toBeNull();
+  });
   it('reuses one server-only control login across concurrent and repeated membership checks', async () => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let logins = 0;

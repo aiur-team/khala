@@ -87,11 +87,13 @@ it.each([
 ])('runs the full C2 handshake through production adapters with room name $roomName', async ({ roomName, channelName }) => {
   const clock = () => Date.parse('2026-10-01T12:00:00Z');
   const blobs = durableStores();
+  const registered: string[] = [];
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
     if (path === '/_synapse/admin/v1/register') {
       if (init?.method !== 'POST') return json({ nonce: 'nonce' });
       const body = JSON.parse(String(init.body));
+      registered.push(`@${body.username}:matrix.example.test`);
       return json({ user_id: `@${body.username}:matrix.example.test` });
     }
     if (path === '/_matrix/client/v3/login') {
@@ -102,6 +104,9 @@ it.each([
     if (path.endsWith('/displayname') && init?.method === 'PUT' || path === '/_matrix/client/v3/logout') return json({});
     if (path.includes('/state/m.room.member/')) return json({ membership: 'join' });
     if (path.endsWith('/state/m.room.name/')) return json({ name: roomName });
+    // Another owner's agent here already holds the default name, so this one joins numbered.
+    if (path.endsWith('/joined_members')) return json({ joined: Object.fromEntries([['@other-agent:matrix.example.test', { display_name: 'Alice-Codex' }],
+      ...registered.map(userId => [userId, { display_name: 'Ally-Codex-2' }])]) });
     throw Error(`Unexpected Synapse path: ${path}`);
   });
   const options = { env, stores: blobs.storeFor, fetch, clock };
@@ -133,7 +138,7 @@ it.each([
   expect(await (await handle(humanRequest('/api/human/agent-join'))).json()).toMatchObject({ state: 'pending', channelName });
   const confirm = await handle(humanRequest('/api/human/agent-join/confirm', 'POST'));
   expect(confirm.status).toBe(200);
-  expect(await confirm.json()).toMatchObject({ state: 'confirmed' });
+  expect(await confirm.json()).toMatchObject({ state: 'confirmed', label: 'Alice-Codex-2' });
   const agentRequest = (path: string, method = 'GET') => new Request(`${origin}${path}?joinId=${join.joinId}`, {
     method, headers: { origin, authorization: `Bearer ${join.pollSecret}` },
   });
@@ -151,7 +156,10 @@ it.each([
   const matrixUserId = pollBody.credentials.userId;
   expect((await handle(mutation('/api/human/profile/username', { username: 'Ally' }))).status).toBe(200);
   const owner = await active.store.read(`agents/${encodeURIComponent(matrixUserId)}`);
-  expect(owner.kind === 'record' && owner.record.value).toMatchObject({ label: 'Ally-Codex' });
+  expect(owner.kind === 'record' && owner.record.value).toMatchObject({ label: 'Ally-Codex-2' });
+  const clash = await handle(mutation('/api/human/agents/rename', { matrixUserId, name: 'alice-codex', roomId }));
+  expect(clash.status).toBe(409);
+  expect(await clash.json()).toEqual({ error: 'name_taken' });
   expect((await handle(mutation('/api/human/agents/rename', { matrixUserId, name: 'Reviewer' }, false))).status).toBe(403);
   const renamed = await handle(mutation('/api/human/agents/rename', { matrixUserId, name: 'Reviewer' }));
   expect(renamed.status).toBe(200);
