@@ -1,7 +1,7 @@
 // Resolves the channel's members into what the header, roster and detail
 // pane draw: names (never routing IDs), hues, initials, harness and ownership.
 
-import type { Harness } from '@khala/contracts/m1/agent-join';
+import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import type { ResolvedHumanColor } from '../../ui/khala/human-colors';
@@ -39,7 +39,7 @@ export type AgentMember = Readonly<{
   ownerColor: ResolvedHumanColor | null;
   ownerName: string;
   ownerInitials: string;
-  harness: Harness | null;
+  harness: HarnessId | null;
   isViewerOwned: boolean;
   agent: ChannelAgentView;
 }>;

@@ -1,3 +1,4 @@
+import type { Harness } from '@khala/contracts/m1/agent-join';
 // An in-memory fake of the local helper's owner-facing API (contracts L5/L6).
 // State is the per-channel event log; members, names, modes and summaries are
 // derived from it by the L3 replay rules. Long-polls are held until an append
@@ -39,7 +40,7 @@ export const FAKE_LINK_ORIGIN = 'http://127.0.0.1:47830';
 
 type Channel = { roomId: string; events: LocalEvent[]; operationId?: string; createdAt: string };
 type MemberContent = { user: string; membership: 'invite' | 'join' | 'leave'; displayname: string; kind: 'human' | 'agent';
-  harness?: 'claude' | 'codex' | 'cursor'; [LISTENING_MODE_MEMBER_KEY]?: ListeningMode };
+  harness?: Harness; [LISTENING_MODE_MEMBER_KEY]?: ListeningMode };
 
 const BASE64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const token = (n: number, counter: number) => Array.from({ length: n }, (_, i) => BASE64URL[(counter * 7 + i * 13) % 64]).join('');
