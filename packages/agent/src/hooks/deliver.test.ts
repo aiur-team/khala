@@ -6,11 +6,10 @@ import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { filesForDir, openSessionDir, sessionFiles, writeStatus, type SessionFiles } from '../state';
+import { channelFiles, openSessionDir, sessionFiles, writeStatus, type SessionFiles } from '../state';
 import { appendEntries, readCursor, unread } from '../inbox';
 import * as inbox from '../inbox';
 import * as channels from '../channels';
-import { createHash } from 'node:crypto';
 import { readActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
@@ -354,13 +353,11 @@ describe('multi-channel delivery', () => {
   beforeEach(async () => {
     refs.length = 0;
     files = await openSessionDir('claude', 'session', { XDG_STATE_HOME: root });
-    // Local dependency scaffold: remove this mock once #1101 is integrated.
-    vi.spyOn(channels, 'listChannels').mockImplementation(async () => refs);
   });
   async function channel(name: string, mode: string, entries: InboxEntry[], legacy = false) {
     const roomId = `!${name}:khala.local`;
-    const key = createHash('sha256').update(roomId).digest('hex').slice(0, 24);
-    const target = legacy ? files : filesForDir(path.join(files.dir, 'channels', key));
+    const key = channels.channelKey(roomId);
+    const target = legacy ? files : channelFiles(files, roomId);
     await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
     if (!legacy) await fs.writeFile(path.join(target.dir, 'channel.json'), JSON.stringify({ roomId, channelName: name, joinedAt: '2026-10-05T12:00:00Z' }));
     await appendEntries(target, entries);
@@ -520,12 +517,11 @@ for (const harness of ['claude', 'codex', 'cursor'] as const) {
 it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$guard BOM=$bom in both layouts', async ({ harness, event, mode, count, guard, bom }) => {
   const session = await openSessionDir(harness, harness === 'cursor' ? CURSOR_DEFAULT_SESSION : 'session', { XDG_STATE_HOME: root });
   const roomId = '!r:khala.local';
-  const key = createHash('sha256').update(roomId).digest('hex').slice(0, 24);
   const input = harness === 'cursor' ? { hook_event_name: event, loop_count: guard ? 1 : 0 }
     : { session_id: 'session', hook_event_name: event, stop_hook_active: guard };
   const outputs: string[] = [];
   for (const layout of ['legacy', 'channel']) {
-    const target = layout === 'legacy' ? session : filesForDir(path.join(session.dir, 'channels', key));
+    const target = layout === 'legacy' ? session : channelFiles(session, roomId);
     await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
     if (layout === 'channel') {
       await fs.rm(session.inbox);
@@ -535,8 +531,6 @@ it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$
     if (count === 0) await fs.writeFile(target.inbox, '');
     await writeStatus(target, 'connected');
     await fs.writeFile(target.mode, JSON.stringify({ mode }));
-    // Local dependency scaffold: use real listChannels after #1101 arrives.
-    vi.spyOn(channels, 'listChannels').mockResolvedValue([{ key, roomId, files: target, legacy: layout === 'legacy' }]);
     const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
     await deliver((bom ? '\uFEFF' : '') + JSON.stringify(input), ['--harness', harness],
       { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
