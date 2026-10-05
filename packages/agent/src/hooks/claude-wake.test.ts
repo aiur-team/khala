@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
+import { filesForDir, openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
 import { appendEntries, unreadCount } from '../inbox';
 import { writeActivity } from '../activity';
 import { unreadMessages, watch } from '../../hooks/claude-wake';
@@ -196,6 +196,41 @@ it('keeps polling in async and wakes after switching to sync', async () => {
   await armed(); await sleep(250);
   expect(running.child.exitCode).toBeNull();
   await writeJsonAtomic(files.mode, { mode: 'sync' });
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+
+async function channel(name: string, mode = 'sync', entries = [entry()]) {
+  const target = filesForDir(path.join(files.dir, 'channels', name));
+  await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
+  await writeJsonAtomic(target.mode, { mode });
+  await appendEntries(target, entries);
+  return target;
+}
+it('wakes for sync channel B even when the legacy root is async', async () => {
+  await seed();
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  await channel('b');
+  expect(await start().result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('does not wake for async channels beside an empty sync channel', async () => {
+  await seed();
+  await channel('a', 'async');
+  await channel('b', 'sync', []);
+  expect(await start(input, 200).result).toEqual({ code: 0, stdout: '', stderr: '' });
+});
+it('counts the legacy inbox and channel inbox separately without advancing cursors', async () => {
+  await seed('idle', [entry()]);
+  const target = await channel('b', 'steer', [entry(2), entry(3)]);
+  await writeJsonAtomic(target.cursor, { deliveredCount: 1, lastDeliveredEventId: '$e2' });
+  const cursor = await fs.readFile(target.cursor);
+  expect(await unreadMessages(files.dir)).toBe(2);
+  expect(await fs.readFile(target.cursor)).toEqual(cursor);
+});
+it('finds a channel joined after the watcher is armed', async () => {
+  await seed();
+  const running = start();
+  await armed();
+  await channel('later');
   expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
 
