@@ -62,6 +62,22 @@ describe('local channel service', () => {
     service.dispose();
   });
 
+  it('observes notification entries without acknowledging unread messages', async () => {
+    const { service, ready, substrate, onObserve, releaseSubstrate } = setup();
+    await ready();
+    const background = service.observeBackgroundEntries(roomId, () => {});
+    expect(onObserve).not.toHaveBeenCalled();
+    expect(substrate.subscribe).toHaveBeenCalledOnce();
+    const foreground = service.room.observeEntries(roomId, () => {});
+    expect(onObserve).toHaveBeenCalledExactlyOnceWith(roomId);
+    expect(substrate.subscribe).toHaveBeenCalledOnce();
+    foreground();
+    expect(releaseSubstrate).not.toHaveBeenCalled();
+    background();
+    expect(releaseSubstrate).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
   it('rebuilds after device stop even when generation stays one and retains the journal', async () => {
     const { service, ready, session, substrate, releaseSubstrate, journal } = setup();
     await ready();

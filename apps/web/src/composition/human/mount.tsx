@@ -1,6 +1,6 @@
 import { AgentConfirm, AgentConfirmFrame } from '../../features/agent-confirm/AgentConfirm';
 import { createAgentConfirmController } from '../../features/agent-confirm/controller';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
@@ -24,6 +24,7 @@ import { useToast } from '../../ui/khala/Toast';
 import { copyShareLink } from '../../ui/share-link';
 import { ProfileProvider, useProfile } from '../../features/profile/ProfileProvider';
 import { ProfileDialog } from '../../features/profile/ProfileDialog';
+import { createMentionNotificationPreference, observeMentionNotifications } from './mention-notifications';
 import { UsernameGate } from '../../features/profile/UsernameGate';
 
 export type HumanAccountMode = 'oauth' | 'local_owner';
@@ -291,6 +292,19 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
   children: ReactNode;
 }) {
   const route = routes.parse(chrome.path);
+  const [notificationPreference] = useState(createMentionNotificationPreference);
+  const notificationState = useSyncExternalStore(notificationPreference.subscribe, notificationPreference.state, () => 'off' as const);
+  const notificationContext = useRef(context);
+  notificationContext.current = context;
+  const openMessage = (roomId: string, eventId: string) => {
+    navigateRoute(routes.roomPath(roomId));
+    window.location.hash = `message=${encodeURIComponent(eventId)}`;
+  };
+  const openNotification = useRef(openMessage);
+  openNotification.current = openMessage;
+  useEffect(() => notificationState === 'on' ? observeMentionNotifications(notificationContext.current, notificationPreference,
+    (roomId, eventId) => openNotification.current(roomId, eventId)) : undefined,
+  [context.principal.ownerId, context.generation, context.room, context.conversations, context.observeNotificationEntries, notificationPreference, notificationState]);
   const conversations = useConversationIndex(context);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
@@ -307,6 +321,7 @@ function OwnerShell({ application, routes, chrome, context, navigateRoute, local
     homeHref={routes.conversationsPath()} inThread={inThread}
     brandActions={local ? null : <SignOutStatus signingOut={signingOut} failed={failed} />}
     brandMenu={<SettingsMenu theme={chrome.theme.theme} onThemeChange={chrome.theme.onThemeChange}
+      mentionNotifications={{ state: notificationState, toggle: () => void notificationPreference.toggle() }}
       username={username} color={color} onEditProfile={() => setEditingProfile(true)} {...(local ? {} : { onSignOut: signOut, signingOut })} />}
     overlay={editingProfile ? <ProfileDialog ownerId={context.principal.ownerId} onClose={closeProfile} /> : undefined}
     list={<ConversationList conversations={withHarnesses(conversations ?? [], context.describeMatrixUser)} selectedId={route.kind === 'channel' ? route.roomId : null}
