@@ -15,15 +15,16 @@ execution: code
 
 - **Objective:** every supported agent harness gets every Khala feature, and Khala adds Muse Code, Gemini CLI with Qwen Code, OpenCode, GitHub Copilot (CLI and VS Code), and a generic any-MCP-client tier.
 - **Product authority:** the operator, in this session's brainstorm dialogue of 2026-10-05.
-- **Open blockers:** none for creating tickets. The Planning Contract answers Q1–Q5. The operator decisions in Open Questions (review) items 1 to 7 must be settled before the units they name start: U14 and U15 (item 3), U25 (item 6), U27 (item 5), U28 and U29 (item 2), and U36 and U37 (items 1 and 7). Unverified research is fenced behind spike units (U16, U20, U23, U28, U30, U32), and each spike names the fallback its build unit takes if it fails.
-- **Scope addition:** Antigravity CLI is added next to Gemini CLI. See Scope Additions under the Planning Contract.
+- **Open blockers:** none for creating tickets. The Planning Contract answers Q1–Q5, and the operator settled every Open Questions (review) item on 2026-10-05. The hard blockers HB1–HB3 (Wake Ladder per Harness) are provisional. Spikes U38–U40 confirm or clear them, and any cell they cannot clear goes to the operator before U36 signs off that harness. Unverified research is fenced behind spike units (U16, U20, U23, U28, U30, U32, U38, U39, U40). Each spike names the branch its build unit takes, and a spike result that would leave a parity gap becomes a hard blocker, never an accepted gap.
+- **Scope addition:** Antigravity CLI is added next to Gemini CLI and is required for the release (operator-approved 2026-10-05). See Scope Additions under the Planning Contract.
 - **Authority order:** the Product Contract and KD1–KD4 come first, then the Planning Contract KTDs, then each unit's Approach. A unit that conflicts with a KTD stops and escalates. It does not improvise.
-- **Execution profile:** 40 units, each sized for one PR (complexity 1–3). 32 are Codex worker tickets. The six spikes (U16, U20, U23, U28, U30, U32), U36 and U37 need GUI sessions, accounts or deploy rights, so the operator or Executor runs them (the "Runs as" column). Run them in the parallel waves under Sequencing. Spikes are time-boxed to about an hour of hands-on work and write their evidence to `docs/build/multi-harness/spikes/`.
+- **Execution profile:** 46 units, each sized for one PR (complexity 1–3). 35 are Codex worker tickets. The nine spikes (U16, U20, U23, U28, U30, U32, U38, U39, U40), U36 and U37 need GUI sessions, accounts or deploy rights, so the operator or Executor runs them (the "Runs as" column). Run them in the parallel waves under Sequencing. Spikes are time-boxed to about an hour of hands-on work (U38 to about two) and write their evidence to `docs/build/multi-harness/spikes/`.
 - **Stop conditions:**
   - Stop if a change would wrap or launch an agent, inject OS keystrokes or steal focus (KD1).
+  - Stop and escalate if a harness can wake from idle, or get an R1 feature, only by changing the user's experience. Record it as a hard blocker (KTD18), never as an accepted gap.
   - Stop if a change would edit a frozen compat copy other than `local-decoder.main.frozen.ts` in U1.
   - Stop if a change would alter the four hash-pinned Claude plugin files. The only exception is `sync-release.mjs` inside a `chore(release)` version-bump PR, whether an interim release or U37.
-  - Stop if a change would need a second production deploy (R14).
+  - Stop if a change would need a production deploy other than U37's (R14, KD6). The cycle's other remaining deploy is reserved for an urgent hosted fix only.
 - **Tail ownership:** each unit owns its tests, its docs line, and a draft PR with self-review. U36 owns the live evidence, and U37 owns the release and the single production deploy.
 
 ---
@@ -109,7 +110,9 @@ Khala supports three harnesses today, and they don't all behave the same: Cursor
 - **KD1 Side-channel nudges only** (session-settled, operator): "the user experience of using their agent CANNOT change. khala must nudge agents, not be the thing the user has to know about or open the agent through".
 - **KD2 Build workarounds for parity** (session-settled, operator): where a harness lacks a native path, build a companion mechanism instead of shipping a gap.
 - **KD3 Adapter plus conformance suite** (agent recommendation, accepted at scope confirmation): one adapter per harness, proven by a shared suite.
-- **KD4 Harness set** (session-settled, operator): Muse Code, Gemini CLI plus Qwen Code, OpenCode, and GitHub Copilot CLI plus VS Code.
+- **KD4 Harness set** (session-settled, operator): Muse Code, Gemini CLI plus Qwen Code, OpenCode, and GitHub Copilot CLI plus VS Code. Antigravity CLI joined on 2026-10-05 (session-settled: user-approved, "Approve, required").
+- **KD5 Strict wake parity** (session-settled: user-directed, 2026-10-05, "Strict: no gaps"): R2 stands as written. Opt-in-only wake and terminal-only wake do not satisfy it. Where KD1 and R2 collide, the case is a hard blocker for the operator, never an accepted gap.
+- **KD6 Deploy budget** (session-settled: user-directed, 2026-10-05, "1 for release, 1 reserve"): of the two production deploys left this cycle, the release uses exactly one. The last is reserved for an urgent fix only.
 
 ### Dependencies / Assumptions
 
@@ -140,11 +143,11 @@ Khala supports three harnesses today, and they don't all behave the same: Cursor
 
 ## Planning Contract
 
-Product Contract preservation: the Product Contract above is unchanged from the brainstorm, and the Planning Contract answers its Outstanding Questions and records one scope addition.
+Product Contract preservation: the Product Contract above is unchanged from the brainstorm except for KD5, KD6 and the Antigravity line in KD4, which record the operator's 2026-10-05 review answers. The Planning Contract answers its Outstanding Questions and records the scope additions.
 
 ### Summary
 
-Every agent-side harness branch moves behind one adapter per harness in `packages/agent/src/harness/`. A data-only registry in `@khala/contracts` supplies names, logos and capabilities. The hosted control plane, the local helper and the web app accept any well-formed harness id and fall back to safe names. Idle wake becomes a ladder of rungs per harness: a native API, then a self-re-arming hook, then a companion editor extension, then terminal remote control. Each wake is verified by a nonce, and a driver that fails twice turns itself off. A shared conformance suite gates every adapter. Ten harnesses are first-class: Claude Code, Codex, Cursor, OpenCode, Copilot CLI, Copilot in VS Code, Gemini CLI, Antigravity CLI, Qwen Code and Muse Code. Any other MCP client gets the generic tier. Hosted changes ship in one production deploy after a live matrix on the local stack.
+Every agent-side harness branch moves behind one adapter per harness in `packages/agent/src/harness/`. A data-only registry in `@khala/contracts` supplies names, logos and capabilities. The hosted control plane, the local helper and the web app accept any well-formed harness id and fall back to safe names. Idle wake becomes a ladder of rungs per harness: a native API, then a self-re-arming hook, then a companion editor extension, then terminal remote control. Each wake is verified by a nonce, and a driver that fails twice turns itself off for that session. The one install step records wake consent, so no harness needs a second user action to wake. Wake parity is strict (KD5): every gap known today has a follow-up spike and build unit (U38–U43), and a cell that no KD1-clean mechanism can close is a hard blocker for the operator. A shared conformance suite gates every adapter. Ten harnesses are first-class: Claude Code, Codex, Cursor, OpenCode, Copilot CLI, Copilot in VS Code, Gemini CLI, Antigravity CLI, Qwen Code and Muse Code. Any other MCP client gets the generic tier. Hosted changes ship in one production deploy after a live matrix on the local stack, and the cycle's last deploy stays in reserve.
 
 ### Problem Frame Recap
 
@@ -152,16 +155,16 @@ Harness knowledge sits in closed lists and switch statements across contracts, c
 
 ### Scope Additions
 
-- **Antigravity CLI** joins the harness set next to Gemini CLI (added by Executor from research; operator informed). Gemini CLI stopped serving consumer tiers on 2026-06-18, and those users moved to Google's Antigravity CLI (`agy`) (`idle-wake.md` §3; the source is a third-party issue plus press coverage, not Google docs). Gemini CLI stays a first-class harness for Enterprise and API-key users. Paid consumer plans count as consumer tiers. Antigravity's contract is unresearched, so spike U28 runs before its adapter U29.
+- **Antigravity CLI** joins the harness set next to Gemini CLI (session-settled: user-approved 2026-10-05 — proposed by the Executor from research; the operator approved it as required for the release, so U28 and U29 stay on the critical path). Gemini CLI stopped serving consumer tiers on 2026-06-18, and those users moved to Google's Antigravity CLI (`agy`) (`idle-wake.md` §3; the source is a third-party issue plus press coverage, not Google docs). Gemini CLI stays a first-class harness for Enterprise and API-key users. Paid consumer plans count as consumer tiers. Antigravity's contract is unresearched, so spike U28 runs before its adapter U29.
 - **Qwen Code native wake.** Qwen Code has a documented messaging socket that is on by default (`QWEN_CODE_MESSAGING_SOCKET` and `QWEN_CODE_MESSAGING_TOKEN`). That makes it a rung-1 native wake rather than a Gemini-fork terminal fallback (`idle-wake.md` §3). Spike U30 live-tests it before U31 builds on it.
 
 ### Resolved Product Questions
 
 | Question | Resolution | Where |
 |---|---|---|
-| Q1 Idle-wake mechanism per harness | One rung per harness from the ladder, with the gaps recorded | KTD7, KTD8, Wake Ladder table |
+| Q1 Idle-wake mechanism per harness | One primary rung per harness from the ladder. Wake parity is strict (KD5): every gap known today has a follow-up spike and unit, and a cell with no KD1-clean mechanism is a hard blocker escalated to the operator | KTD7, KTD8, KTD18, Wake Ladder table, U38–U43 |
 | Q2 Claude Code after the 50-minute window | Raise the watcher deadline to 24 h and keep Stop re-arming. Defer channels and the SessionStart arm | KTD11, U12 |
-| Q3 One companion for Cursor and VS Code | Yes. One `.vsix` on Marketplace and Open VSX, plus a `khala install` sideload | KTD12, U17–U19, U26 |
+| Q3 One companion for Cursor and VS Code | Yes. One `.vsix` on Marketplace and Open VSX, plus a `khala install` sideload. It also hosts the editor-terminal wake | KTD12, U17–U19, U26, U41, U42 |
 | Q4 Session identity without a session id in MCP | Each adapter declares an ordered list of session sources: `meta`, `env`, `hook-map`, `workspace` and `process` | KTD5, Session Identity table, U4 |
 | Q5 Generic hosted acceptance | Yes. An open id pattern plus registry fallbacks, with a wire gate for older local CLIs | KTD1, KTD3, U5, U6, U8 |
 
@@ -169,7 +172,8 @@ Harness knowledge sits in closed lists and switch statements across contracts, c
 
 - KTD1. **Data-only harness registry with an open id pattern.**
   - `packages/contracts/src/m1/harness.ts` holds `HARNESS_REGISTRY`, `HARNESS_ID = /^[a-z][a-z0-9-]{1,23}$/` and `harnessInfo(id)`.
-  - Unknown ids get a title-cased display name, model name `Agent`, no logo and no capabilities.
+  - Unknown ids get a title-cased display name, `registered: false`, model name `Agent`, no logo and no capabilities.
+  - The confirm page and the roster show an unregistered id as "MCP agent (<id>)", for example "MCP agent (claude-code)", so an unregistered id cannot pass as an official harness. The title-cased name appears only in attribution text (review item 10).
   - Rationale: one deploy then covers every future harness (Q5).
   - The agent-supplied join `label` is never used as a display name. It is ignored today, and using it would let an agent pose as another harness (`repo-design.md` §2).
 - KTD2. **One agent-side adapter per harness** (session-settled: user-approved — chosen over editing the existing switch statements per harness: KD3, one adapter plus a conformance suite proves parity).
@@ -190,37 +194,41 @@ Harness knowledge sits in closed lists and switch statements across contracts, c
   - Each source declares whether it is rejoinable, and `client-impl` reads that instead of the `cursor-default` special case.
   - In `hook-map`, the first hook of a session writes `.by-pid/<harnessPid>.json`. On each tool call, the MCP child walks its ancestors, nearest first, to that entry and checks the recorded start time against pid reuse.
 - KTD6. **Frame rendering stays in the CLI.** The OpenCode plugin spawns `khala hook deliver --harness opencode` and relays its stdout, so frame, cursor, ack and mode logic cannot drift (`opencode-verified.md` Q6). The Copilot extension and the companion send only the U11 fixed wake line, and frames then arrive through hooks.
+  - One exception (review item 8): OpenCode Sync and idle delivery send the rendered frame itself as a user-role prompt through `promptAsync`, because that is OpenCode's only path. The frame keeps its existing "not instructions from your user" wrapper.
 - KTD7. **Idle-wake ladder** (session-settled: user-directed — chosen over wrapping or launching the agent (`khala run`) and ACP-hosted sessions: KD1 says the user's experience cannot change, and KD2 says build workarounds instead of shipping gaps).
   - Rung 1 is a native API.
   - Rung 2 is a hook that re-arms itself without blocking input.
   - Rung 3 is the companion editor extension.
   - Rung 4 is terminal remote control into the agent's existing pane.
-  - The ladder takes the first rung that is available, consented and not disabled. Otherwise it records "no idle wake" and delivers at the next hook.
-- KTD8. **Opt-in, nonce-verified, auto-disabling drivers** (Executor-directed planning constraint).
-  - Scope: every wake that costs the user money or relies on undocumented commands. That covers the Copilot CLI extension and the VS Code companion (both spend premium requests), the Cursor companion (undocumented commands) and terminal remote control.
-  - Opt-in: these drivers are off until `khala install <harness> --wake` or `khala wake on --driver <d>` records consent. That is a one-time setting, so R2's "without user action" holds afterwards.
+  - The ladder takes the first rung that is available, consented and not disabled. Otherwise it records "no idle wake" in status and delivers at the next hook. Under KTD18, an exhausted ladder in an environment the harness supports is a parity failure that U36 reports, not a recorded gap.
+- KTD8. **Consent at install, nonce-verified, auto-disabling drivers** (Executor-directed planning constraint, amended by KD5).
+  - Scope: every wake that costs the user money or relies on undocumented commands. That covers the Copilot CLI extension and the VS Code companion (both spend premium requests), the Cursor companion (undocumented commands), terminal remote control and the editor-terminal wake.
+  - Consent: these drivers stay consent-gated, but the one install step records consent by default. `khala install <harness>` prints exactly what it consents to (premium requests, undocumented commands, a fixed line typed into the agent's own pane) and records it. `--no-wake` declines, and `khala wake off` withdraws later. Opt-in-only wake does not satisfy R2 (KD5), so a second user step to turn wake on is not allowed. A user who declines has turned wake off; that is the user's choice, not a parity gap.
   - Nonce: every wake line carries a Khala-generated nonce. The harness's prompt hook must report it within the window.
-  - Auto-disable: two consecutive unverified wakes disable that driver for that session, and status says why. One misconfigured session never turns wake off machine-wide. Consent is machine-wide; disables are per session (U11).
+  - Auto-disable: two consecutive unverified wakes disable that driver for that session, and status says why. One misconfigured session never turns wake off machine-wide. Consent is machine-wide; disables are per session (U11). The next delivered frame or `khala_read` result after a disable carries one line that names the driver and the re-enable command, shown once (review item 9, U11b).
 - KTD9. **Codex queue stays on by default.**
   - `codex queue` is undocumented and sits on an `#[experimental]` API. R3 still requires Codex wake to keep working, and no documented path exists (`idle-wake.md` §2).
-  - A `codex queue --help` probe gates it, a nonce verifies it, and two failures fall through to the terminal rung if the user opted in.
+  - A `codex queue --help` probe gates it, a nonce verifies it, and two failures fall through to the terminal rung, whose consent the install step records.
   - A weekly live CI job checks it against the latest Codex.
-- KTD10. **Terminal remote control is opt-in, idle-only and writes one fixed line** (session-settled: user-directed — chosen over OS keystroke injection: KD1 forbids OS keystrokes and focus stealing, while the terminal's own IPC into the agent's existing pane does neither).
+- KTD10. **Terminal remote control is consent-gated, idle-only, writes one fixed line, and only into an empty prompt** (session-settled: user-directed — chosen over OS keystroke injection: KD1 forbids OS keystrokes and focus stealing, while the terminal's own IPC into the agent's existing pane does neither).
+  - Consent is recorded by the install step (KTD8).
   - The line is `Khala: channel messages are waiting. Continue. (k-<nonce>)`. Its only variable part is a Khala-generated `[0-9a-f]{8}` nonce. Channel text never reaches the terminal.
   - Pane variables are captured by a hook, never from `khala mcp`, because Codex strips the MCP child's environment.
-  - Before sending, the driver checks that the pane still holds the agent and is not in a mode.
+  - Before sending, the driver checks that the pane still holds the agent, is not in a mode, and that its input line is empty (KTD19).
 - KTD11. **Claude: a 24-hour watcher deadline, with no plugin-file change.**
   - Claude Code does not enforce the timeout on Stop, so the 3000 s limit is Khala's own (`idle-wake.md` §1).
   - The four hash-pinned plugin files stay byte-identical.
   - The SessionStart asyncRewake arm and Claude channels are deferred.
 - KTD12. **One companion `.vsix` for VS Code and Cursor.**
   - It reads Khala state files only: no new port, no clipboard and no OS focus.
-  - It submits through `workbench.action.chat.open` in VS Code, and through U16's allowlisted command sequence in Cursor.
+  - It submits through `workbench.action.chat.open` in VS Code, and through U16's allowlisted command sequence in Cursor. U42 replaces both with the targeting U39 proves.
+  - It also hosts the editor-terminal wake (U41): `Terminal.sendText` into the integrated terminal that holds the agent, never with `show()`.
 - KTD13. **Installers write documented user config files directly**, following `packages/agent/src/install/cursor.ts`.
   - Each install merges into the harness's config, is idempotent, and has an uninstall that removes only Khala's keys.
   - Interactive harness CLIs (`opencode mcp add`, `gemini mcp add`) are not used.
   - The OpenCode plugin is installed as an exact pinned spec, and the companion through `code` or `cursor --install-extension`.
-- KTD14. **Release train with exactly one production deploy** (session-settled: user-directed — chosen over a deploy per harness: R14, only two production deploys remain this cycle).
+- KTD14. **Release train with exactly one production deploy, one in reserve** (session-settled: user-directed — chosen over a deploy per harness: R14 and KD6, only two production deploys remain this cycle).
+  - The release uses exactly one deploy (U37). The cycle's last deploy is reserved for an urgent hosted fix only: a control or web regression, or broken install pins. It is never spent on features or cosmetics, and it runs only with the operator's go-ahead.
   - Interim npm releases are free and may ship at any time. They deliberately ship the helper and CLI ahead of control and web, which departs from the §5.4 order. That is safe through `repo-design.md` §2.7: the not-yet-deployed hosted control rejects new ids with `invalid_harness`, which U6b turns into `update_required`. The helper in the same package already carries the wire gate.
   - An interim release runs `sync-release.mjs`, which appends a plugin hash. That is the only sanctioned change to the hash-pinned plugin files before U37.
   - The single production deploy runs after the U36 live matrix and follows the `repo-design.md` §5.4 order:
@@ -230,8 +238,8 @@ Harness knowledge sits in closed lists and switch statements across contracts, c
     4. the CLI. Steps 3 and 4 publish together in the `khala-cli` release tagged after the deploy.
   - Control is never rolled back once new-id records exist, because `store.ts:41` would null them.
 - KTD15. **A spike precedes every build that rests on unverified research.**
-  - The spikes are U16 (editor submit commands), U20 (OpenCode open questions), U23 (Copilot `joinSession` idle start), U28 (Antigravity), U30 (Qwen socket) and U32 (Muse hooks).
-  - Each has pass criteria and a named fallback, so its build unit never blocks on an open question.
+  - The spikes are U16 (editor submit commands), U20 (OpenCode open questions), U23 (Copilot `joinSession` idle start), U28 (Antigravity), U30 (Qwen socket), U32 (Muse hooks), U38 (terminal hosts and empty-prompt patterns), U39 (editor chat targeting and focused windows) and U40 (Qwen and Muse gaps).
+  - Each has pass criteria and a named branch for its build unit, so the build unit never blocks on an open question. A branch that would leave an R1 or R2 gap is a hard blocker for the operator (KTD18), not a fallback the plan accepts.
 - KTD16. **Name hygiene.**
   - Registry model names are at most 12 characters, so `<24-char username>-<model>-NN` fits `AGENT_NAME_MAX` = 40.
   - Reserved username suffixes come from the registry's known model names, excluding the generic `Agent`. The open id pattern is never used for this, because it would block ordinary usernames.
@@ -239,7 +247,16 @@ Harness knowledge sits in closed lists and switch statements across contracts, c
 - KTD17. **Generic tier.** The Product Contract's Scope Boundaries send Cline, Kiro, Zed and other harnesses to this tier (R4) until they are promoted.
   - It covers `--harness generic` and any well-formed `--harness <id>` without an adapter.
   - It runs in Async only. Its session id comes from `KHALA_SESSION_ID`, else the process.
-  - Display names follow `harnessInfo`, so `--harness cline` shows "Cline".
+  - Display names follow `harnessInfo` and KTD1, so `--harness cline` shows "MCP agent (cline)" in the roster and on the confirm page, and "Cline" in attribution text.
+- KTD18. **Strict wake parity** (session-settled: user-directed — KD5, "Strict: no gaps", chosen over the review's recommendation to accept recorded gaps).
+  - Every supported harness wakes from idle in Steer and Sync without user action beyond its one install step, in every environment the harness supports.
+  - For each harness whose wake today is consent-gated or conditional (Gemini CLI, Antigravity CLI, Copilot CLI, Cursor and VS Code through the companion, Muse Code, Qwen Code), the current path stays, and a follow-up spike and unit pursue a no-gap mechanism (the "No-gap units" column of the Wake Ladder table). Claude Code's and Codex's remaining cells are in the same units.
+  - The release cannot claim parity for a harness until its no-gap unit passes and its U36 rows are green.
+  - KD1 still holds: no wrapping, no focus stealing, no keystroke injection. Where research shows a harness genuinely cannot wake without a UX change, the cell is a hard blocker (HB1–HB3) escalated to the operator. It is never written down as an accepted gap.
+- KTD19. **Empty-prompt guard for typed wakes** (review item 3, operator-accepted).
+  - Each adapter whose ladder has a terminal or editor-terminal rung declares `emptyPrompt`, a pattern for its TUI's empty input line. U38 records the patterns.
+  - Before every send, the driver reads the cursor line (`tmux capture-pane`, `wezterm cli get-text`, `kitten @ get-text`, the iTerm2 screen API, or the U41 editor path) and skips the send unless the line matches `emptyPrompt`.
+  - A skip is not a failure. The ladder retries on its next cycle, and the next hook delivers in the meantime.
 
 ### High-Level Technical Design
 
@@ -306,7 +323,7 @@ flowchart TB
   E -->|"rung 1 native API"| F{"Available, consented if opt-in, not disabled?"}
   E -->|"rung 2 self-re-arming hook"| F
   E -->|"rung 3 companion extension"| F
-  E -->|"rung 4 terminal remote control"| T{"Pane captured, still holds agent, not in a mode?"}
+  E -->|"rung 4 terminal remote control"| T{"Pane captured, still holds agent, not in a mode, prompt empty?"}
   E -->|"ladder exhausted"| X["Status: no idle wake; deliver at next hook"]
   T -->|no| E
   T -->|yes| F
@@ -324,7 +341,7 @@ flowchart TB
 
 #### Harness Registry
 
-Display names, model names and logo keys are frozen for the production deploy. Capabilities are read only by the agent side, so an npm release may update them without a deploy.
+Display names, model names and logo keys are frozen for the production deploy. Capabilities are read only by the agent side, so an npm release may update them without a deploy. In the `idleWake` column, `opt-in` means the driver is consent-gated, and the install step records that consent by default (KTD8).
 
 | id | displayName | modelName | logoKey | steer | sync | idleWake at registration |
 |---|---|---|---|---|---|---|
@@ -342,19 +359,26 @@ Display names, model names and logo keys are frozen for the production deploy. C
 
 #### Wake Ladder per Harness (answers Q1)
 
-| Harness | Primary rung | Default | Fallback | Recorded gap |
-|---|---|---|---|---|
-| Claude Code | 2: asyncRewake Stop watcher, 24 h | on | 4: terminal, opt-in | a fresh or `--continue` session before its first Stop |
-| Codex | 1: `codex queue --thread` via the shared daemon | on | 4: terminal, opt-in | TUIs started with `--no-daemon` |
-| Cursor | 3: companion with allowlisted submit commands | opt-in | none | Cursor versions off the allowlist; a focused window if U16 shows in-window focus movement; none at all if U16 fails |
-| OpenCode | 1: plugin `client.session.promptAsync` | on | 4: terminal, opt-in, only if U20(c) fails | none expected |
-| Copilot CLI | 1: CLI extension `joinSession` + `session.send` | opt-in | 4: terminal, opt-in | rung 1 dropped if U23 fails |
-| Copilot in VS Code | 3: companion `workbench.action.chat.open` | opt-in | none | several chats open: the last-used chat receives the line, and the nonce cannot tell chats in one workspace apart; a focused window if U16 shows in-window focus movement |
-| Gemini CLI | 4: terminal | opt-in | none | Windows; Windows Terminal, GNOME Terminal, Alacritty, macOS Terminal.app, editor-integrated terminals and other terminals without remote control |
-| Antigravity CLI | set by U28; 4: terminal unless U28 finds a native path | opt-in | none | as Gemini CLI unless U28 finds more |
-| Qwen Code | 1: native messaging socket | on | 4: terminal, opt-in | Windows (Unix socket); users who set `agents.crossSessionMessaging: false` or `crossSessionInbound: refuse`; `crossSessionInbound: hold` per U30 item 4 |
-| Muse Code | 1: peer session messaging, if U32 finds an outside sender | set by U33 | 4: terminal, opt-in | Windows, where session messaging is unavailable; until the user approves Khala as a peer, messages are parked or notify-only (`muse.md` §4) |
-| Generic tier | none | none | none | by design (R4) |
+"Consent" is `default` for drivers that need none, and `install` for consent-gated drivers whose consent the install step records (KTD8). "Fallback" rungs that type into a pane carry the KTD19 empty-prompt guard. "Known gap today" lists what the primary and fallback rungs leave uncovered. None of these is accepted (KTD18): each is closed by the named no-gap units, or it becomes the named hard blocker.
+
+| Harness | Primary rung | Consent | Fallback | Known gap today | No-gap units |
+|---|---|---|---|---|---|
+| Claude Code | 2: asyncRewake Stop watcher, 24 h | default | 4: terminal; 3: editor terminal (U41) | a fresh, `--continue` or `--resume` session before its first Stop, outside a remote-control terminal | U38, U41; else HB1 |
+| Codex | 1: `codex queue --thread` via the shared daemon | default | 4: terminal; 3: editor terminal (U41) | TUIs started with `--no-daemon`, outside a remote-control terminal | U38, U41; else HB1 |
+| Cursor | 3: companion with allowlisted submit commands | install | none | Cursor versions off the allowlist; a focused window if U16 shows in-window focus movement; everything if U16 fails | U39, U42; else HB2 |
+| OpenCode | 1: plugin `client.session.promptAsync` | default | 4: terminal, only if U20(c) fails | none expected; if U20(c) fails, as Gemini CLI | U38, U41 only if U20(c) fails |
+| Copilot CLI | 1: CLI extension `joinSession` + `session.send` | install | 4: terminal; 3: editor terminal (U41) | everything outside a remote-control terminal if U23 fails or review item 6 drops U25 | U38, U41; else HB1 |
+| Copilot in VS Code | 3: companion `workbench.action.chat.open` | install | none | several chats open: the last-used chat receives the line, and the nonce cannot tell chats in one workspace apart (accepted only as interim, review item 4); a focused window if U16 shows in-window focus movement | U39, U42; else HB2 |
+| Gemini CLI | 4: terminal | install | 3: editor terminal (U41) | Windows; Windows Terminal, GNOME Terminal, Alacritty, macOS Terminal.app and other terminals without remote control; editor-integrated terminals until U41 | U38, U41; else HB1 |
+| Antigravity CLI | set by U28; 4: terminal unless U28 finds a native path | install unless U28 finds a native path | 3: editor terminal (U41) | as Gemini CLI unless U28 finds more | U28, U38, U41; else HB1 |
+| Qwen Code | 1: native messaging socket | default | 4: terminal; 3: editor terminal (U41) | Windows (Unix socket); `crossSessionInbound: hold` per U30 item 4. A user who sets `agents.crossSessionMessaging: false` or `crossSessionInbound: refuse` has turned wake off, like `khala wake off`; status says so | U40, U43; else HB3 |
+| Muse Code | 1: peer session messaging, if U32 finds an outside sender | set by U33 | 4: terminal; 3: editor terminal (U41) | Windows, where session messaging is unavailable; until the user approves Khala as a peer, messages are parked or notify-only (`muse.md` §4) | U40, U43; else HB3 |
+| Generic tier | none | none | none | by design (R4); the generic tier is not a first-class harness | none |
+
+**Hard blockers (operator escalation, provisional).** Each is a cell where research found no KD1-clean wake. Its spike confirms or clears it. A confirmed cell goes to the operator before U36 signs off that harness, with the evidence and the two options the operator has: accept a UX change, or not claim parity for that harness in that environment. The plan does not choose for the operator.
+- **HB1. CLI harnesses in terminals without a remote-control API, with no native wake.** Gemini CLI, Antigravity CLI, and the fallback cells of Claude Code, Codex, Copilot CLI and OpenCode in Windows Terminal and conhost, GNOME Terminal, Alacritty and macOS Terminal.app. Evidence: Gemini's injection paths are all closed or not planned (`idle-wake.md` §3), and these terminals have no remote-control API (`idle-wake.md` §4). AppleScript (`osascript`) and console input injection count as OS keystroke injection under KD1. Spike U38 confirms or clears each (harness, terminal) cell.
+- **HB2. Editor chats.** A VS Code chat that cannot be told apart from other chats in its workspace, a focused window where every submit moves keyboard focus, and Cursor builds where no submit path works. Spike U39 confirms or clears each.
+- **HB3. Qwen Code and Muse Code on Windows, and Muse peer approval if it must be repeated per session.** Spike U40 confirms or clears each.
 
 #### Session Identity per Harness (answers Q4)
 
@@ -365,7 +389,7 @@ Display names, model names and logo keys are frozen for the production deploy. C
 | Cursor | `workspace` `KHALA_CURSOR_WORKSPACE` | yes; `cursor-default` is not |
 | OpenCode | `meta` plugin-stamped `khala_session` arg if U20(b) passes, then `hook-map` written by `hook deliver` when the plugin spawns it | yes |
 | Copilot CLI | `hook-map` from `sessionStart` | yes |
-| Copilot in VS Code | `workspace` `KHALA_VSCODE_WORKSPACE` from the companion's MCP definition | yes, one identity per workspace |
+| Copilot in VS Code | `workspace` `KHALA_VSCODE_WORKSPACE` from the companion's MCP definition; a per-chat id ahead of it if U39 item 2 passes (U42) | yes; one identity per workspace, or per chat after U42 |
 | Gemini CLI | `env` `GEMINI_SESSION_ID` if present, then `hook-map` | yes |
 | Antigravity CLI | per U28, default `hook-map` | yes |
 | Qwen Code | `hook-map` | yes |
@@ -384,12 +408,17 @@ flowchart TB
   F --> G["U37 step 5: hosted check from the published package"]
 ```
 
+The cycle's other remaining production deploy is not part of this order. It stays in reserve for an urgent hosted fix, with the operator's go-ahead (KTD14).
+
 ### Sequencing
 
 ```mermaid
 flowchart TB
   U1 --> U3
   U2 --> U3
+  KMC2["#1102 KMC-2"] --> U3
+  KMC3["#1103 KMC-3"] --> U3
+  KMC4["#1104 KMC-4"] --> U3
   U3 --> U3b
   U3b --> U4
   U1 --> U5
@@ -464,6 +493,25 @@ flowchart TB
   U31 --> U35
   U33 --> U35
   U34 --> U35
+  U38 --> U14
+  U16 --> U39
+  U30 --> U40
+  U32 --> U40
+  U11b --> U41
+  U14 --> U41
+  U15 --> U41
+  U17 --> U41
+  U18 --> U41
+  U38 --> U41
+  U19 --> U42
+  U26 --> U42
+  U39 --> U42
+  U31 --> U43
+  U33 --> U43
+  U40 --> U43
+  U41 --> U35
+  U42 --> U35
+  U43 --> U35
   U10 --> U36
   U35 --> U36
   U36 --> U37
@@ -473,18 +521,25 @@ Units in the same wave can run in parallel:
 
 | Wave | Units | Note |
 |---|---|---|
-| 1 | U1, U2, U16, U20, U23, U28, U30, U32 | The six spikes need local harness installs and accounts, so the operator or Executor starts them first |
-| 2 | U3, U5, U6, U6b, U7 | |
+| 1 | U1, U2, U16, U20, U23, U28, U30, U32, U38 | The seven spikes need local harness installs and accounts, so the operator or Executor starts them first. U38 gates U14 in wave 5 |
+| 2 | U3, U5, U6, U6b, U7, U39, U40 | U39 and U40 are spikes. U39 gates U42 in wave 8, and U40 gates U43 in wave 7 |
 | 3 | U3b | |
 | 4 | U4, U8, U11, U12 | |
 | 5 | U9, U11b, U13, U14, U17 | |
 | 6 | U15, U18, U21, U24, U27, U31, U33, U34 | |
-| 7 | U10, U19, U22, U25, U26, U29 | |
-| 8 | U35 | |
-| 9 | U36 | Operator or Executor |
-| 10 | U37 | Operator or Executor |
+| 7 | U10, U19, U22, U25, U26, U29, U41, U43 | |
+| 8 | U42 | |
+| 9 | U35 | |
+| 10 | U36 | Operator or Executor |
+| 11 | U37 | Operator or Executor |
 
-**Critical path:** U1 → U3 → U3b → U11 → U14 → U27 → U29 → U35 → U36 → U37. U2 must finish beside U1. U11 → U9 → U21 → U22 and U11 → U17 → U18 → U26 are equal-length branches. Spike U28 (Antigravity) must finish by wave 7, so it is the likeliest critical-path slip.
+**Critical path** (11 waves, computed by script from the unit table, which matches every unit's Dependencies line and the graph above): U1 and U2 → U3 → U3b → U4 and U11 → U9 and U14 → U24 → U26 → U42 → U35 → U36 → U37. U18 → U26 and U19 → U42 are equal-length feeders. Spikes U38 (by wave 5), U28 (by wave 7) and U39 (by wave 8) are the likeliest slips, and every hard blocker they surface should reach the operator well before wave 10.
+
+**Cross-plan ordering: multi-channel lands first** (Executor decision, 2026-10-05). The multi-channel agent sessions work (`docs/build/multi-channel/design.md` on the `plan/multi-channel` branch; tickets #1101–#1104 and #1106, plus #1100 `khala watch`, which #1104 needs) touches the same files as U3, U3b, U8, U11, U12 and U13: `client-impl.ts`, `mcp/wiring.ts`, `mcp/tools.ts`, `state.ts`, `hooks/deliver.ts`, `hooks/claude-wake.ts` and `wake/codex.ts`.
+- U3 depends on #1102, #1103 and #1104, so U3, U3b and U11 move multi-channel-aware code instead of retrofitting channels into every adapter afterwards. #1101–#1104 run beside wave 1.
+- Session state then has one directory per channel: `<session>/channels/<hash>/` holds `session.json`, `inbox.jsonl`, `cursor.json`, `status.json` and `mode.json`, while `activity.json`, `watcher.json` and `rejoin.json` stay at the session level. Every unit in this plan that names a per-channel file (U3b, U4, U11, U12, U13, U17, U22, U41) reads it per channel through the multi-channel resolver, and wake rules fire when any non-async channel has unread messages from others.
+- U2's goldens stay valid either way, because multi-channel keeps single-channel output byte-identical (design D3). Capture them on whichever `main` U2 starts from.
+- If #1102 slips, rebase it onto U3 rather than holding U3.
 
 **Shared-file hot spots:** rebase rather than resolve by hand.
 - Adapter units each add one line to `packages/agent/src/harness/index.ts`, one entry to `packages/agent/src/harness/conformance/drivers/index.ts` and one usage string in `packages/agent/src/cli.ts`.
@@ -492,6 +547,9 @@ Units in the same wave can run in parallel:
 - `packages/agent/src/harness/codex.ts` is edited by U13 and U14 in the same wave.
 - `apps/web/src/composition/local/fake-local-helper.ts` is edited by U5, U6 and U7, and `packages/agent/src/local/routes/profile.ts` by U5 and U6, all in wave 2.
 - `packages/agent/src/harness/deliver-core.ts` is edited by U4, U11, U14 and U17.
+- `packages/agent/src/wake/terminal/capture.ts` is edited by U14, U15 and U41 (hard dependencies keep them in sequence).
+- `packages/agent/src/install/main.ts` is edited by U3, U11b and U41, and `packages/companion-vscode/src/submit.ts` and `cursor.ts` by U17, U19 and U42.
+- `packages/agent/src/wake/qwen-socket.ts` and `muse-peer.ts` are edited by U31, U33 and U43.
 - `packages/agent/scripts/build-package.mjs` and `smoke-package.mjs` are edited by U15, U18 and U25.
 - `.github/workflows/release-npm.yml` is edited by U18 and U22, and `packages/agent/scripts/sync-release.mjs` by U22 and U35. Merge each pair in sequence.
 
@@ -501,19 +559,20 @@ Units in the same wave can run in parallel:
 |---|---|---|
 | `codex queue` regresses or disappears; it is undocumented and experimental | Probe gate, nonce verification, terminal fallback, weekly live CI | U13 |
 | Cursor's undocumented submit commands change between versions | Version allowlist, `getCommands` probe, nonce, auto-disable, status reason | U16, U19 |
-| `workbench.action.chat.open` options are internal; the last-used chat may not be the Khala-bound one | Opt-in only; recorded as a gap. The nonce cannot catch it, because every chat in a workspace shares one session (see Open Questions (review)) | U17, U26 |
+| `workbench.action.chat.open` options are internal; the last-used chat may not be the Khala-bound one | Accepted only as an interim step (review item 4). U39 and U42 target the bound chat with a per-chat identity; HB2 holds what they cannot close | U17, U26, U39, U42 |
 | A companion submit moves keyboard focus inside a focused editor window (KD1) | U16 tests in-window focus; the companion submits only while the window is unfocused if focus moves | U16, U17, U19 |
 | An older pinned CLI respawns its own helper over state a newer helper wrote, skips new-id member events and reuses their `seq` | Non-legacy `harness` lives in a `harness.json` sidecar, never in `log.jsonl`; frozen 0.4.x `decodeLocalEvent` test | U6 |
 | Older CLIs go silent on `/events` pages with new ids | `wire=2` query gate separate from `prev=1`, both frozen decoders (pre-#1078 and 0.4.x) inlined first, wire-compat tests | U1, U6, U8 |
 | Control rollback after new-id records exist nulls them (`store.ts:41`) | Deploy only after U36; forward-fix only | U37 |
-| Terminal line lands in a shell after the agent exits | Pane-holds-agent check, fixed line, idle-only, opt-in | U14, U15 |
-| Wakes spend Copilot premium requests | Opt-in, 2 wakes per batch, auto-disable | U25, U26 |
+| Terminal line lands in a shell after the agent exits, or appends to a typed draft | Pane-holds-agent check, empty-prompt guard (KTD19), fixed line, idle-only, consent-gated | U14, U15, U41 |
+| Wakes spend Copilot premium requests, now on by default after install | Install output states the cost and how to decline; `--no-wake`; 2 wakes per batch; auto-disable with a one-time notice | U11b, U25, U26 |
+| Strict parity meets KD1 in terminals with no remote control and in editor chats; no KD1-clean wake may exist | Spikes U38–U40 run in early waves; each unresolved cell is a hard blocker (HB1–HB3) escalated to the operator before U36, never an accepted gap | U38–U43, U36 |
 | Muse hook contract is behind SSO | Spike with a logging hook on a local install; capability-driven fallback | U32, U33 |
-| Antigravity contract is unresearched | Spike first; Async-only fallback | U28, U29 |
+| Antigravity contract is unresearched, and Antigravity is required for the release | Spike first, in wave 1; a result short of R1 is escalated to the operator at once | U28, U29 |
 | `hook-map` ambiguity: several sessions per process, pid reuse | Start-time check, latest active session wins, "send a message first" error | U4 |
 | Reserving new suffixes such as `-Gemini` affects usernames, and a stricter decode check would silence CLIs | Reserve only through `checkNewUsername` at change sites; `checkName` and every decoder stay unchanged | U5 |
 | New publishing surfaces need accounts: `khala-opencode` on npm, Marketplace, Open VSX. npm trusted publishing needs an existing package | Operator hand-publishes a `khala-opencode` placeholder before U22 merges; publish steps skip with a warning when a secret or publisher is missing; sideload works without the marketplaces | U18, U22, U37 |
-| Production deploy budget: one of two left is spent here | One deploy, run only after U36 passes; merge freeze; hosted smoke before tagging the deployed SHA | U37 |
+| Production deploy budget: one of two left is spent here | One deploy, run only after U36 passes; merge freeze; hosted smoke before tagging the deployed SHA; the last deploy is held in reserve for an urgent fix (KD6) | U37 |
 | One misconfigured session (for example Codex `--no-daemon`) auto-disables a default-on driver for everyone | Failures and disables are per session; consent is machine-wide | U11, U13 |
 
 ### Assumptions
@@ -522,7 +581,7 @@ Units in the same wave can run in parallel:
 - Each CLI harness spawns `khala mcp` as a descendant of the harness process, and its hooks run as descendants of the same process. VS Code is the exception, so it uses the `workspace` source.
 - Versions researched: Claude Code 2.1.289, Codex rust-v0.160.0, Gemini CLI v0.62.0, Qwen Code v0.25.0, Copilot CLI 1.0.91, Muse Code 1.4.1 or later.
 - The operator provides accounts for the live matrix: Copilot, a Gemini API key or Enterprise account, Antigravity, Qwen, Muse (Meta SSO), Cursor, and an OpenCode provider with a Kimi model.
-- A Linux machine with tmux, WezTerm and kitty, a macOS machine with iTerm2, and a Windows machine are available for U36.
+- A Linux machine with tmux, WezTerm, kitty, GNOME Terminal and Alacritty, a macOS machine with iTerm2 and Terminal.app, and a Windows machine with Windows Terminal are available for U38 and U36, each with VS Code and Cursor installed.
 - Before U22 merges, the operator hand-publishes a placeholder `khala-opencode` and configures its npm trusted publisher (`packages/agent/docs/releasing.md`: a trusted publisher needs an existing package). Before U37, the operator creates the `khala` publisher on the VS Code Marketplace and Open VSX and sets `VSCE_PAT` and `OVSX_PAT`.
 - No other production deploy from `main` happens between the first merged unit and U37. Any deploy would carry partly-opened decoders, and control could not then be rolled back (`store.ts:41`).
 
@@ -531,19 +590,21 @@ Units in the same wave can run in parallel:
 - Claude SessionStart asyncRewake arm, which would cover sessions before their first Stop. Claude Code issue #89960 reports it stalls the first reply in `-p` and desktop hosts, and it would change hash-pinned plugin files.
 - Claude channels as an opt-in upgrade for users who already launch with `--channels`.
 - A Codex app-server `turn/start` fallback over the daemon socket.
-- Terminal wake on terminals without a remote-control API (Windows Terminal, GNOME Terminal, Alacritty).
 - Packaging Gemini, Antigravity and Qwen as harness extensions instead of a `settings.json` merge.
 - An OS notification when a wake driver auto-disables.
 - Generating the per-harness docs table from registry capabilities.
 - Kilo Code through the OpenCode plugin; promoting Cline, Factory Droid and Augment from the generic tier.
-- Muse idle wake on Windows.
+- A capability-aware web mode picker, so an owner cannot pick Steer for an Async-only agent (review item 11).
+
+Wake on terminals without a remote-control API and Muse wake on Windows are no longer deferred. Strict parity (KD5) puts them in U38–U43, with HB1 and HB3 for what those units cannot close.
 
 ---
 
 ## Implementation Units
 
 Every unit honours two hard constraints:
-- **KD1:** no wrapping or launching agents, no OS keystroke injection, no focus stealing (OS focus or keyboard focus inside an editor window). Terminal IPC sends only the U11 fixed line, idle-only, for users who opted in. No unit changes how a user starts their agent.
+- **KD1:** no wrapping or launching agents, no OS keystroke injection, no focus stealing (OS focus or keyboard focus inside an editor window). Terminal IPC and the editor-terminal path send only the U11 fixed line, idle-only, into an empty prompt (KTD19), for users whose install recorded consent (KTD8). No unit changes how a user starts their agent.
+- **KD5 and KTD18:** no unit records an R1 or R2 gap as accepted. A spike branch that would leave one is a hard blocker for the operator.
 - **R14 and KTD14:** no unit triggers a production deploy except U37.
 
 Paths are repo-relative. A harness's conformance driver is registered by the unit that completes its last R1–R2 feature, and from then on Tier A gates it.
@@ -552,7 +613,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 |---|---|---|---|---|
 | U1 | Freeze local decoders; harness registry | `packages/contracts/src/m1/harness.ts`, `packages/agent/src/compat/local-decoder.{main,0-4}.frozen.ts` | none | Codex |
 | U2 | Characterization tests: claude, codex, cursor | `packages/agent/src/harness/characterization.test.ts` | none | Codex |
-| U3 | Adapter interface and registry; migrate session, wiring, argv, installs | `packages/agent/src/harness/*`, `packages/agent/src/mcp/{session-id,wiring}.ts`, `client-impl.ts`, `install/main.ts` | U1, U2 | Codex |
+| U3 | Adapter interface and registry; migrate session, wiring, argv, installs | `packages/agent/src/harness/*`, `packages/agent/src/mcp/{session-id,wiring}.ts`, `client-impl.ts`, `install/main.ts` | U1, U2; multi-channel #1102, #1103, #1104 | Codex |
 | U3b | Deliver codecs; migrate hook entry points | `packages/agent/src/harness/{deliver-core,codecs/*}.ts`, `packages/agent/hooks/deliver.ts` | U3 | Codex |
 | U4 | Session sources: hook-map and process | `packages/agent/src/harness/session-sources.ts`, `proc.ts` | U3b | Codex |
 | U5 | Control plane: registry validation and names | `apps/control/src/agent-join/*`, `packages/contracts/src/m1/names.ts`, username change sites | U1 | Codex |
@@ -566,7 +627,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 | U11b | `khala wake` command, status fields, install consent | `packages/agent/src/wake/{cli,status}.ts`, `mcp/tools.ts`, `install/main.ts` | U11, U12 | Codex |
 | U12 | Claude 24-hour wake deadline and watcher state | `packages/agent/hooks/claude-wake.ts` | U3b | Codex |
 | U13 | Codex queue probe, nonce, live CI | `packages/agent/src/wake/codex.ts`, `.github/workflows/codex-queue-live.yml` | U11 | Codex |
-| U14 | Terminal wake: capture, tmux, WezTerm | `packages/agent/src/wake/terminal/*` | U11, U12 | Codex |
+| U14 | Terminal wake: capture, empty-prompt guard, tmux, WezTerm | `packages/agent/src/wake/terminal/*` | U11, U12, U38 | Codex |
 | U15 | Terminal wake: kitty, iTerm2 | `packages/agent/src/wake/terminal/{kitty,iterm2}.ts`, `scripts/build-package.mjs` | U14 | Codex |
 | U16 | Spike: editor submit commands | `docs/build/multi-harness/spikes/editor-submit.md` | none | Operator or Executor |
 | U17 | Companion editor extension core | `packages/companion-vscode/*`, `packages/agent/src/harness/deliver-core.ts` | U11, U16 | Codex |
@@ -587,9 +648,15 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 | U32 | Spike: Muse Code contract | `docs/build/multi-harness/spikes/muse.md` | none | Operator or Executor |
 | U33 | Muse Code adapter | `packages/agent/src/harness/muse.ts`, `install/muse.ts` | U8, U9, U14, U32 | Codex |
 | U34 | Generic MCP tier | `packages/agent/src/harness/generic.ts`, `install/mcp.ts` | U8, U9 | Codex |
-| U35 | Docs and landing harness list | `apps/web/src/landing/public/AGENTS.md`, `docs/settings.md`, `packages/agent/docs/*` | U7, U11b, U12, U13, U15, U19, U22, U25, U26, U29, U31, U33, U34 | Codex |
+| U35 | Docs and landing harness list | `apps/web/src/landing/public/AGENTS.md`, `docs/settings.md`, `packages/agent/docs/*` | U7, U11b, U12, U13, U15, U19, U22, U25, U26, U29, U31, U33, U34, U41, U42, U43 | Codex |
 | U36 | Live end-to-end matrix with evidence | `docs/evidence/multi-harness/*` | U10, U35 | Operator or Executor |
 | U37 | Release and the one production deploy | `packages/agent/npm/package.json`, release workflows | U36 | Operator or Executor |
+| U38 | Spike: no-gap wake in terminal hosts; empty-prompt patterns | `docs/build/multi-harness/spikes/terminal-hosts.md` | none | Operator or Executor |
+| U39 | Spike: editor chat targeting and focused-window wake | `docs/build/multi-harness/spikes/editor-chat-targeting.md` | U16 | Operator or Executor |
+| U40 | Spike: Qwen and Muse no-gap wake | `docs/build/multi-harness/spikes/qwen-muse-no-gap.md` | U30, U32 | Operator or Executor |
+| U41 | Editor-terminal wake through the companion | `packages/agent/src/wake/terminal/{capture,editor}.ts`, `packages/companion-vscode/src/terminal.ts`, `install/main.ts` | U11b, U14, U15, U17, U18, U38 | Codex |
+| U42 | Editor chat targeting and focused-window wake | `packages/companion-vscode/src/{submit,cursor,bind}.ts`, `packages/agent/src/harness/vscode.ts` | U19, U26, U39 | Codex |
+| U43 | Qwen and Muse no-gap wake | `packages/agent/src/wake/{qwen-socket,muse-peer}.ts`, `install/{qwen,muse}.ts` | U31, U33, U40 | Codex |
 
 ### U1. Freeze the local decoder and add the harness registry
 
@@ -624,7 +691,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Both frozen decoders reject an `/events` member whose `harness` is `gemini`. These tests must keep passing after U8.
   - The 0.4.x frozen decoder accepts a `prev=1` page that the helper serves today, and accepts a page from the existing `wire-compat.test.ts` transitions run with `prev=1`.
   - `isHarnessId` accepts `opencode` and `copilot-x`. It rejects `A`, `x`, `9abc`, `-ab`, a 25-character id and `a/../b`.
-  - `harnessInfo('gemini')` returns the Gemini row. `harnessInfo('cline')` returns display name `Cline`, model name `Agent`, logo `null` and all capabilities off. `harnessInfo('copilot-x')` has display name `Copilot X`.
+  - `harnessInfo('gemini')` returns the Gemini row with `registered: true`. `harnessInfo('cline')` returns display name `Cline`, `registered: false`, model name `Agent`, logo `null` and all capabilities off. `harnessInfo('copilot-x')` has display name `Copilot X`.
   - Every registry model name is at most 12 characters. `<24-char username>-<modelName>-99` passes `validateAgentName` within `AGENT_NAME_MAX`.
   - Registry ids are unique and all match `HARNESS_ID`. `LEGACY_HARNESSES` equals today's `HARNESSES`.
 - **Verification:** `pnpm --filter @khala/contracts test`; `pnpm --filter @khala/agent test -- src/compat`; `pnpm typecheck`.
@@ -669,7 +736,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 - **Goal:** add one `HarnessAdapter` per existing harness, and route every non-hook harness branch through it, with no behaviour change. Hook delivery moves in U3b.
 - **Requirements:** R10, R1.
-- **Dependencies:** U1, U2.
+- **Dependencies:** U1, U2. Also the multi-channel tickets #1102 (KMC-2), #1103 (KMC-3) and #1104 (KMC-4), which land first (see Cross-plan ordering under Sequencing).
 - **Complexity:** 2.
 - **Files:**
   - New:
@@ -901,12 +968,14 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Tests: `identity.test.ts`, `attribution.test.ts`, `MentionChips.test.tsx`, plus the agent-confirm and roster tests.
 - **Approach:**
   - Delete the three `HARNESS_NAMES` copies and call `harnessInfo(id).displayName`.
+  - The confirm page and the roster render an id with `registered: false` as "MCP agent (<id>)". Attribution text keeps the title-cased `displayName` (KTD1, review item 10).
   - `harnessLogo` maps the registry `logoKey` to an asset, and unknown keys return `null`, which renders initials.
   - Record each logo's source and licence in `SOURCES.md`. A mark whose licence does not allow this use gets `logoKey: null` in this unit's registry change.
 - **Patterns to follow:** the existing `harnessLogo` claude and codex branches; `Avatar.tsx`, which already handles `null`.
 - **Test scenarios:**
   - `harnessLogo('gemini')` returns the Gemini asset. The assertion at `identity.test.ts:55` moves to an unknown id, `cline`, which still returns `null`.
   - Attribution for harness `cline` reads "Cline", never "undefined".
+  - The roster and the confirm page show "MCP agent (claude-code)" for the unregistered id `claude-code`, never "Claude Code".
   - The roster shows `Copilot (VS Code)` for `vscode`.
   - The confirm page shows the registry name and logo for `opencode`.
   - Visual baselines change only for the intended roster and confirm rows.
@@ -1002,7 +1071,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U11. Wake core: ladder, opt-in settings, nonce verification, auto-disable
 
-- **Goal:** one wake runtime that takes a harness's first usable rung, honours opt-in, verifies every wake by nonce, and turns a failing driver off for that session after 2 failures. The user-facing `khala wake` command and status fields are in U11b.
+- **Goal:** one wake runtime that takes a harness's first usable rung, honours consent, verifies every wake by nonce, and turns a failing driver off for that session after 2 failures. The user-facing `khala wake` command and status fields are in U11b.
 - **Requirements:** R2, R3, R8.
 - **Dependencies:** U3b.
 - **Complexity:** 3.
@@ -1019,7 +1088,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - `packages/agent/src/harness/adapter.ts`.
 - **Approach:**
   - A `WakeDriver` has `{id, rung, optIn, minIdleMs, available(ctx), wake(ctx, line)}`. Adapters declare a `wakeLadder` in place of the U3 `waker?` field.
-  - `ladder.ts` generalises the policy in `wake/codex.ts:45-60`:
+  - `ladder.ts` generalises the policy in `wake/codex.ts:45-60`, as multi-channel #1104 leaves it (any non-async channel with unread messages from others counts):
     - skip async;
     - wake only when activity is `idle` for at least the driver's `minIdleMs` and there are unread messages from others;
     - at most 2 wakes per delivered count;
@@ -1055,8 +1124,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U11b. `khala wake` command, status fields and install consent
 
-- **Goal:** users can see and control idle wake for every harness, with fixed wording.
-- **Requirements:** R2, R8, R9.
+- **Goal:** users can see and control idle wake for every harness, with fixed wording, and the one install step turns wake on.
+- **Requirements:** R2, R8, R9; KTD8, KD5.
 - **Dependencies:** U11, U12.
 - **Complexity:** 2.
 - **Files:**
@@ -1077,14 +1146,16 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - `lapsed`: Claude's watcher passed its deadline, and any prompt re-arms it. U12 writes this state;
     - `none_by_design`, for the generic tier.
   - `khala wake status`, `khala_status` and every later unit render only from this table.
-  - `khala install <harness> --wake` is implemented once, in the shared install dispatch (`install/main.ts`). For any adapter whose ladder has an opt-in driver, it records consent for that driver. Adapter units add only their extra sideload steps (U19, U25, U26).
-  - Every installer for a harness whose wake is opt-in prints one closing line naming the state and the command, for example: "Idle wake is off. Run `khala install gemini --wake` to let Khala type a fixed wake line into this agent's terminal pane."
+  - Consent at install (KTD8) is implemented once, in the shared install dispatch (`install/main.ts`). For any adapter whose ladder has a consent-gated driver, `khala install <harness>` records consent for each such driver by default. `--no-wake` records none, and `--wake` stays accepted as an explicit re-consent. Adapter units add only their extra sideload steps (U19, U25, U26, U41).
+  - Every installer that records consent prints one closing line naming what it consented to and how to withdraw, for example: "Idle wake is on: Khala types a fixed wake line into this agent's terminal pane when messages wait and the prompt is empty. Run `khala wake off --harness gemini` to turn it off." With `--no-wake`, the line says wake is off and names `khala wake on --harness <id>`.
+  - Auto-disable notice (review item 9): after a driver auto-disables for a session, the next delivered frame or `khala_read` result carries one line naming the driver and the re-enable command. It is shown once per disable, and the shown flag lives in that session's `wake-state.json`.
 - **Patterns to follow:** the argv handling in `packages/agent/src/cli.ts`.
 - **Test scenarios:**
   - `khala wake status` lists drivers with their state and reason, and `--json` parses.
   - `khala wake on` re-enables a disabled driver.
   - An unknown `--driver` exits 2 and lists the valid drivers.
-  - `khala install codex --wake` records consent for the terminal driver.
+  - `khala install codex` records consent for the terminal driver, and prints the consent line. `khala install codex --no-wake` records none.
+  - After an auto-disable, the next frame carries the notice line once, and the frame after it does not.
   - Every state in the table renders the same text in the CLI and in `khala_status`.
 - **Verification:** `pnpm --filter @khala/agent test -- src/wake src/install src/mcp`.
 
@@ -1106,7 +1177,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - At the deadline, exit 0 and write `state: 'expired'`. U11b renders that as `lapsed`.
   - A watcher error never exits 2 (Claude Code issue #96148).
   - Leave `hooks.json`, `hooks.claude.json` and every other hash-pinned plugin file unchanged. The `timeout: 3300` stays.
-  - That Claude Code does not enforce the timeout on Stop comes from a code read, not a live test (`idle-wake.md` §1). If U36 shows it is enforced, the watcher is killed at 55 minutes, which is today's behaviour. Record that as a gap; do not change plugin files.
+  - That Claude Code does not enforce the timeout on Stop comes from a code read, not a live test (`idle-wake.md` §1). If U36 shows it is enforced, the watcher is killed at 55 minutes, which is today's behaviour. The terminal and editor-terminal rungs then cover the lapse, and any environment they cannot reach joins HB1 for the operator; do not change plugin files.
 - **Patterns to follow:** the existing `KHALA_WAKE_TEST_DEADLINE_MS` override.
 - **Test scenarios:**
   - The default deadline is 24 hours.
@@ -1132,7 +1203,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Probe `codex queue --help` once per MCP process and cache the result by the binary's mtime. A missing subcommand makes the driver unavailable, and status says why.
   - The queue message is the U11 wake line with its nonce, and the Codex `UserPromptSubmit` hook verifies it through the codec's `promptText` (the payload's `prompt` field).
   - This intentionally changes the U2 codex waker golden and the acceptance Codex argv. Update only those.
-  - Two failures, such as a TUI started with `--no-daemon`, disable the driver for that session (U11). The ladder then falls to the terminal rung if the user opted in.
+  - Two failures, such as a TUI started with `--no-daemon`, disable the driver for that session (U11). The ladder then falls to the terminal rung, whose consent the install step recorded.
   - The live workflow runs weekly and on manual dispatch, with `permissions: contents: read`.
     - It installs the latest `@openai/codex` and asserts that `codex queue --help` lists `--thread` and `--message`.
     - When the `OPENAI_API_KEY` secret is set, it also queues a nonce message to a daemon thread. It asserts that a turn ran, and that a `UserPromptSubmit` hook in that thread received the nonce in `prompt`. If the hook does not fire for queued messages, nonce verification cannot work for Codex: stop and escalate.
@@ -1147,24 +1218,25 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U14. Terminal remote control: pane capture, tmux and WezTerm
 
-- **Goal:** an opt-in last-rung wake that sends the fixed wake line into the agent's own pane while the agent is idle.
-- **Requirements:** R2, R8.
-- **Dependencies:** U11, U12.
+- **Goal:** a consent-gated last-rung wake that sends the fixed wake line into the agent's own pane while the agent is idle and its prompt is empty.
+- **Requirements:** R2, R8; KTD10, KTD19.
+- **Dependencies:** U11, U12, U38. U38 supplies the empty-prompt patterns for Claude Code and Codex.
 - **Complexity:** 3.
 - **Files:**
-  - New in `packages/agent/src/wake/terminal/`: `capture.ts`, `driver.ts`, `tmux.ts`, `wezterm.ts`, each with a test.
-  - Modified: `packages/agent/src/harness/deliver-core.ts`; `packages/agent/src/harness/claude.ts` and `codex.ts`, whose ladders gain the terminal rung.
+  - New in `packages/agent/src/wake/terminal/`: `capture.ts`, `driver.ts`, `prompt-guard.ts`, `tmux.ts`, `wezterm.ts`, each with a test.
+  - Modified: `packages/agent/src/harness/adapter.ts` (the optional `emptyPrompt` field); `packages/agent/src/harness/deliver-core.ts`; `packages/agent/src/harness/claude.ts` and `codex.ts`, whose ladders gain the terminal rung and whose `emptyPrompt` comes from U38's evidence.
 - **Approach:**
   - Capture runs in session-start and prompt hooks, never in `khala mcp`. It reads `TMUX` and `TMUX_PANE`, or `WEZTERM_PANE`, and writes `pane.json` with `{kind, paneId, socket?, agentPid, capturedAt}` beside `activity.json`.
   - Before every send, the driver checks the following:
     - the pane still holds the agent: tmux `#{pane_pid}` is an ancestor of `agentPid`, or WezTerm's `cli list --format json` shows the pane's process. The WezTerm check is not covered by the research (`idle-wake.md` §4 gives ownership checks only for tmux and kitty), so U36's WezTerm row is its only proof;
     - tmux `#{pane_in_mode}` and `#{pane_input_off}` are both 0;
     - the pane is not synchronised;
-    - activity has been idle for at least 30 s.
+    - activity has been idle for at least 30 s;
+    - the input line is empty (KTD19): read the cursor line (tmux `capture-pane -p -t <pane>` at `#{cursor_y}`; WezTerm `cli get-text --pane-id <id>`, last non-blank line) and send only if it matches the adapter's `emptyPrompt`. An adapter with no `emptyPrompt` never gets a terminal send. A mismatch skips this cycle and is not counted as a failure.
   - How it sends:
     - tmux: `send-keys -t <pane> -l <line>`, then `send-keys -t <pane> Enter`.
     - WezTerm: `cli send-text --pane-id <id> --no-paste <line>`, then a carriage return.
-  - The driver is opt-in under the `terminal` driver. It is verified by the harness's prompt hook and disabled after 2 failures.
+  - The driver runs only with `terminal` consent, which the install step records (KTD8). It is verified by the harness's prompt hook and disabled after 2 failures.
   - It is unavailable on Windows, and an unsupported terminal reports "no remote-control API".
   - For Claude, rung 2 counts as available only while U12's `watcher.json` has `state: 'armed'` and its `pid` is alive. The ladder then leaves the wake to the watcher. A stale file from an earlier Stop does not count.
 - **Patterns to follow:** `packages/agent/src/wake/idle-wake-process.ts` (spawning a CLI with fixed argv).
@@ -1172,6 +1244,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - A tmux environment writes `pane.json`. A plain environment writes nothing.
   - The driver refuses to send when `agentPid` is not under the pane, as when a shell reuses the pane, and when the pane is in copy mode.
   - It refuses without consent.
+  - A cursor line holding a typed draft skips the send and counts no failure. A line matching `emptyPrompt` sends. An adapter without `emptyPrompt` never sends.
   - Claude with an armed, live watcher leaves the wake to rung 2. Claude whose `watcher.json` says `exited`, or whose `pid` is dead, uses the terminal rung.
   - With fake binaries, tmux and WezTerm receive the exact argv.
   - A property test: for arbitrary channel text in the inbox, argv contains only the fixed literal plus a `[0-9a-f]{8}` nonce.
@@ -1192,11 +1265,12 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - kitty:
     - Capture `KITTY_WINDOW_ID` and `KITTY_LISTEN_ON`.
     - Probe with `kitten @ --to <listen> ls`, which confirms the window exists and its foreground pid descends from `agentPid`.
+    - Before sending, read the cursor line with `kitten @ --to <listen> get-text --match id:<win> --extent screen` and apply the U14 `prompt-guard` (KTD19).
     - Send with `kitten @ --to <listen> send-text --match id:<win> <line>`, then a carriage return. The research example adds `--bracketed-paste` (`idle-wake.md` §4). Leave it out on purpose, because the separate carriage return must submit.
     - Required configuration: `allow_remote_control socket-only` with a Unix `listen_on`. Never document `allow_remote_control yes`, which lets any program in any kitty window, including SSH output, drive every window. The probe reports `unavailable` with a reason when `KITTY_LISTEN_ON` is not a `unix:` address.
   - iTerm2:
     - Capture `ITERM_SESSION_ID` and take the UUID after the colon. The `w0t0p0:<UUID>` format is marked UNVERIFIED in `idle-wake.md` §4. A value that does not match makes the driver `unavailable` with a reason, and U36's macOS row confirms the format.
-    - Run `python3 <dist>/iterm2_send.py <uuid> <line>`, which calls `async_send_text(..., suppress_broadcast=True)`. Resolve the script relative to the running `khala.mjs`.
+    - Run `python3 <dist>/iterm2_send.py <uuid> <line>`. It first reads the session's screen contents (`async_get_screen_contents`) and exits with a "not empty" status unless the cursor line matches the pattern passed in, then calls `async_send_text(..., suppress_broadcast=True)`. Resolve the script relative to the running `khala.mjs`.
     - This requires the iTerm2 Python API.
   - `build-package.mjs` copies `iterm2_send.py` into `dist/`.
   - A failed probe makes the driver unavailable with a reason.
@@ -1206,6 +1280,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Fake binaries receive the exact argv.
   - A failed probe gives an unavailable state with a reason. A `tcp:` listen address is unavailable.
   - `w0t0p0:<UUID>` parses to the UUID. A malformed value is unavailable.
+  - A draft on the cursor line skips the send for both kitty and iTerm2, with no failure counted.
   - The same fixed-line property test as U14 passes.
   - The package smoke asserts that `iterm2_send.py` is in the tarball.
 - **Verification:** `pnpm --filter @khala/agent test -- src/wake/terminal`; the package smoke; U36 kitty row on Linux and iTerm2 row on macOS.
@@ -1236,15 +1311,15 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - In Cursor, at least one command sequence starts a turn in the open agent chat with no click and no OS focus change. Record the exact command ids and the Cursor version.
   - The editor's prompt hook sees the submitted text.
   - KD1 also forbids moving keyboard focus inside the window (R8). Record whether, in the focused-and-typing state, the next keystroke still lands in the text editor. If it does not, the companion may submit only while `vscode.window.state.focused` is `false`.
-- **Fallback:**
-  - If VS Code fails only when minimized, document that case as a gap.
-  - If a submit moves in-window focus, the companion submits only while the window is unfocused. Record "window focused: wake waits until the editor loses focus or the next hook" as a gap in the Wake Ladder table.
-  - If Cursor fails, its registry entry stays `idleWake: none`. U19 then ships only the status reason and docs, and Cursor is recorded as a harness with no working rung.
+- **Branches** (none of these is an accepted gap; U39 and U42 pursue each, and HB2 holds what they cannot close):
+  - If VS Code fails only when minimized, record the minimized case for U39.
+  - If a submit moves in-window focus, the companion submits only while the window is unfocused for now, and the focused-window case goes to U39.
+  - If Cursor fails, its registry entry stays `idleWake: none` for now. U19 then ships only the status reason and docs, and U39 looks for another Cursor path.
 - **Verification:** the evidence doc records editor versions, command ids and logs or recordings for each window state.
 
 ### U17. Companion editor extension core
 
-- **Goal:** a VS Code extension, also loadable in Cursor, that watches Khala state files and, with opt-in, submits the wake line into the open chat.
+- **Goal:** a VS Code extension, also loadable in Cursor, that watches Khala state files and, with consent recorded at install, submits the wake line into the open chat.
 - **Requirements:** R2, R8, R9; Q3.
 - **Dependencies:** U11, U16.
 - **Complexity:** 3.
@@ -1260,7 +1335,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - On every prompt event for an adapter whose session sources include `workspace`, `deliver-core` writes `<stateRoot>/<harness>/.by-workspace/<sha256 of the normalized workspace root>.json` holding `{sessionDir, at}`.
     - Write it atomically with mode `0600`, normalizing the root the same way as `packages/agent/src/cursor.ts`.
     - The extension maps its workspace folder to a session directory through that file.
-  - Watching: it watches `inbox.jsonl`, `activity.json` and `mode.json` with `fs.watch`, plus a 2 s poll fallback.
+  - Watching: it watches the session's `activity.json` and each channel directory's `inbox.jsonl` and `mode.json` (multi-channel layout, see Cross-plan ordering) with `fs.watch`, plus a 2 s poll fallback.
   - Wake rules come from `wake/shared`, bundled with esbuild.
   - Submission uses the VS Code command shape proven by U16. Cursor's sequence lands in U19.
   - In-window focus (KD1): if U16 showed that a submit moves keyboard focus inside a focused window, submit only while `vscode.window.state.focused` is `false`. Otherwise report `waiting_for_unfocus` and let the next hook deliver.
@@ -1308,7 +1383,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U19. Cursor idle wake through the companion
 
-- **Goal:** Cursor chats wake from idle through the companion, opt-in, on allowlisted Cursor versions.
+- **Goal:** Cursor chats wake from idle through the companion, on allowlisted Cursor versions, with consent recorded by `khala install cursor`.
 - **Requirements:** R3, R2, R8, AE2.
 - **Dependencies:** U9, U17, U18. U9 owns the Cursor conformance driver this unit edits.
 - **Complexity:** 2.
@@ -1319,7 +1394,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 - **Approach:**
   - Take the command sequence and the version allowlist from U16's evidence.
   - Detect Cursor through `vscode.env.appName`. Submit only when the version is allowlisted and `getCommands` contains the commands. Otherwise write `companion.json` with `ok: false` and `reason: 'cursor_version_not_allowlisted'`.
-  - `khala install cursor --wake` sideloads the companion through U18 and records consent.
+  - `khala install cursor` sideloads the companion through U18 and records `companion` consent (KTD8). `--no-wake` skips both.
   - The existing `beforeSubmitPrompt` hook verifies the nonce from its `prompt` field.
   - Never use the clipboard path.
 - **Patterns to follow:** U17 `submit.ts`.
@@ -1340,7 +1415,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 - **Success criteria** (each recorded pass or fail, with the OpenCode version):
   - a. A plugin `config` hook that sets `cfg.mcp.khala` makes `opencode mcp list` show `khala` connected. On failure, the installer writes `mcp.khala` itself.
   - b. A `khala_session` arg stamped in `tool.execute.before` reaches the MCP server when the tool schema declares it optional. On failure, OpenCode uses `hook-map` only.
-  - c. `session.idle` followed by `client.session.promptAsync` without `noReply` starts a turn that renders in the attached TUI. On failure, OpenCode wake moves to the terminal rung (opt-in) and the gap is recorded.
+  - c. `session.idle` followed by `client.session.promptAsync` without `noReply` starts a turn that renders in the attached TUI. On failure, OpenCode wake moves to the terminal rung, and its remaining cells join U38, U41 and HB1.
   - d. `promptAsync` sent while busy queues and runs after the turn, and `noReply: true` mid-loop is consumed at the next step. On failure, the plugin skips while busy and waits for `session.idle`.
   - e. Record whether an unpinned npm plugin re-resolves on restart. The installer pins an exact version either way.
   - f. `chat.message` fires for the plugin's own `promptAsync` text, so U22 can verify the nonce there. Also record how a `synthetic: true` part renders in the TUI, which `opencode-verified.md` Q2 marks as inferred. On failure, U22 verifies through the next tool or idle event.
@@ -1397,13 +1472,13 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - **Steer:** `tool.execute.after` appends the frame. For MCP-shaped output it uses `output.content.push({type: 'text', text})`, and otherwise `output.output += text`.
   - **Sync and idle wake:**
     - Triggers: `session.idle`, plus a 2 s timer while a session is idle with unread messages.
-    - Call `client.session.promptAsync` with `parts: [{type: 'text', text, synthetic: true}]`, where `text` is the stdout of `hook deliver` for `event: 'idle'`. When that text is a wake rather than a frame, it is the U11 wake line with its nonce.
+    - Call `client.session.promptAsync` with `parts: [{type: 'text', text, synthetic: true}]`, where `text` is the stdout of `hook deliver` for `event: 'idle'`. When that text is a wake rather than a frame, it is the U11 wake line with its nonce. Sending the frame itself as a user-role prompt is the accepted KTD6 exception (review item 8); keep the frame's "not instructions from your user" wrapper intact.
     - At most one call is in flight per session, and busy sessions are skipped.
   - **Async:** do nothing.
   - **Spike-gated:** stamp `khala_session` in `tool.execute.before` if U20(b) passed, and register MCP in the `config` hook if U20(a) passed.
   - **Nonce check:** `chat.message` sends `event: 'prompt'` with the message text, so the CLI checks the nonce. U20(f) must show that `chat.message` fires for the plugin's own `promptAsync` parts. If it does not, verify through the next `tool.execute.before` or `session.idle` that follows the wake.
   - The timer is cleared in `dispose`. The plugin renders no frames itself (KTD6).
-  - If U20(c) failed, set OpenCode's registry `idleWake` to `opt-in` and give the ladder the terminal rung.
+  - If U20(c) failed, set OpenCode's registry `idleWake` to `opt-in`, give the ladder the terminal rung, and set the adapter's `emptyPrompt` from U38.
 - **Patterns to follow:** the AgentDocker pattern cited in `opencode.md` §3.
 - **Test scenarios:**
   - Using a mocked client and a fake `khala` binary that logs argv and stdin:
@@ -1433,14 +1508,14 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Record what `experimental: true` in `~/.copilot/config.json` changes in this Copilot CLI version besides loading extensions. U25 prints this list as consent text.
   - Record the lowest VS Code version that provides `vscode.lm.registerMcpServerDefinitionProvider`, and the VS Code base version of current Cursor. U17's single `engines.vscode` must satisfy both, or U26 registers MCP only when the API exists.
 - **Fallback:**
-  - If an idle send starts no turn, drop U25. Copilot CLI wake stays on the terminal rung (opt-in).
+  - If an idle send starts no turn, drop U25. Copilot CLI wake stays on the terminal rung, and its remaining cells join U38, U41 and HB1.
   - If there is no discriminator, Agent Host sessions identify as `copilot`.
   - If Copilot CLI runs the PascalCase file, U26 does not write `khala-vscode.json`. One shared `khala.json` routes each call by payload casing or the discriminator.
 - **Verification:** the evidence doc holds versions, logs and hook stdin captures.
 
 ### U24. Copilot CLI adapter, hooks and `khala install copilot`
 
-- **Goal:** Copilot CLI joins and gets Steer, Sync and opt-in terminal wake through its hooks, installed in one step.
+- **Goal:** Copilot CLI joins and gets Steer, Sync and terminal wake through its hooks, installed in one step that also records wake consent.
 - **Requirements:** R1, R2, R5, R9.
 - **Dependencies:** U8, U9, U14, U23.
 - **Complexity:** 2.
@@ -1458,7 +1533,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - `agentStop` returns `{decision: 'block', reason}` when messages are pending and `stop_hook_active` is false.
     - It always emits JSON and never uses exit 2, which Copilot treats as a warning.
   - Session: `sessionId` from hook stdin feeds `hook-map`.
-  - Ladder: the terminal rung. U25 adds the extension rung ahead of it.
+  - Ladder: the terminal rung, with `emptyPrompt` from U38's Copilot CLI capture. U25 adds the extension rung ahead of it.
 - **Patterns to follow:** `packages/agent/src/harness/codecs/claude-style.ts`; `packages/agent/src/install/cursor.ts`.
 - **Test scenarios:**
   - The install golden and uninstall preserve existing `mcp-config.json` servers.
@@ -1470,17 +1545,18 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U25. Copilot CLI extension wake
 
-- **Goal:** opt-in idle wake for Copilot CLI through a Copilot CLI extension that joins the user's running session.
+- **Goal:** idle wake for Copilot CLI through a Copilot CLI extension that joins the user's running session, with consent recorded by `khala install copilot`.
 - **Requirements:** R2, R8.
 - **Dependencies:** U11, U24.
 - **Complexity:** 2.
+- **Gate (review item 6, operator-accepted 2026-10-05):** the `experimental: true` question is decided from U23's list of what the flag changes. If it only loads extensions, this unit proceeds. If it changes more, this unit closes with a pointer to the evidence and no code, and Copilot CLI wake rests on the terminal rung plus U38 and U41, with HB1 holding what they cannot close. The Executor applies this rule and records the result on the ticket.
 - **Files:**
   - `packages/agent/src/copilot-extension/extension.ts` (new) and its test with a fake `joinSession`.
   - `packages/agent/scripts/build-package.mjs`: a second, self-contained esbuild entry that writes `dist/copilot/extension.mjs` and inlines `wake/shared`. The copied extension runs inside Copilot, outside the `khala` bundle, so it cannot import from it.
   - `packages/agent/scripts/smoke-package.mjs`: assert that `dist/copilot/extension.mjs` is in the tarball.
   - `packages/agent/src/install/copilot.ts`, `packages/agent/src/harness/copilot.ts`.
 - **Approach:**
-  - `khala install copilot --wake` does four things:
+  - `khala install copilot` does four things unless `--no-wake` is passed (KTD8):
     - prints the consent text: each wake spends a premium request, and `experimental: true` turns on Copilot CLI experimental features globally and lets extensions in `~/.copilot/extensions/` load. U23 records which features that enables;
     - copies `dist/copilot/extension.mjs` to `~/.copilot/extensions/khala/extension.mjs`;
     - sets `experimental: true` in `~/.copilot/config.json` and remembers that it set it;
@@ -1489,7 +1565,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Uninstall reverses only what the installer set.
   - The extension calls `joinSession` and watches the session directory. It applies the `wake/shared` rules, then sends the nonce line with `session.send({prompt, mode: 'enqueue'})`.
   - It sends at most 2 wakes per batch, because each one costs a premium request. Its status goes to `copilot-extension.json`.
-  - If U23 failed, this unit is closed with a pointer to the evidence and no code.
+  - If U23 failed, or the gate above dropped this unit, it is closed with a pointer to the evidence and no code.
 - **Patterns to follow:** U17 watch logic.
 - **Test scenarios:**
   - No send without consent, in async mode or while busy.
@@ -1501,7 +1577,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U26. VS Code Copilot adapter
 
-- **Goal:** Copilot in VS Code joins and gets Steer, Sync and opt-in idle wake through hooks and the companion.
+- **Goal:** Copilot in VS Code joins and gets Steer, Sync and idle wake through hooks and the companion, with consent recorded by `khala install vscode`.
 - **Requirements:** R1, R2, R5, R9.
 - **Dependencies:** U17, U18, U24.
 - **Complexity:** 3.
@@ -1522,8 +1598,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Local codec: `PostToolUse` returns `hookSpecificOutput.additionalContext`. `Stop` returns `{decision: 'block', reason}`, guarded by `stop_hook_active`.
   - Agent Host sessions use the Copilot codec and U23's discriminator.
   - Session: the `workspace` source, adding `transcript_path` when `session_id` is absent. That gives one identity per workspace, as in Cursor.
-  - Wake: the companion's VS Code path from U17, opt-in.
-  - `khala install vscode [--wake]` sideloads the companion and installs the hooks.
+  - Wake: the companion's VS Code path from U17. It wakes the last-used chat, which is accepted only as an interim step under strict parity (review item 4). U39 and U42 replace it with targeting of the Khala-bound chat.
+  - `khala install vscode [--no-wake]` sideloads the companion, installs the hooks and records `companion` consent unless `--no-wake` is passed.
 - **Patterns to follow:** U19 Cursor wiring; `codecs/claude-style.ts`.
 - **Test scenarios:**
   - Local and Agent Host payloads parse.
@@ -1535,7 +1611,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ### U27. Gemini CLI adapter
 
-- **Goal:** Gemini CLI for Enterprise and API-key users joins and gets Steer, Sync and opt-in terminal wake.
+- **Goal:** Gemini CLI for Enterprise and API-key users joins and gets Steer, Sync and terminal wake, with consent recorded by `khala install gemini`.
 - **Requirements:** R1, R2, R5, R9, AE1.
 - **Dependencies:** U8, U9, U14.
 - **Complexity:** 2.
@@ -1547,15 +1623,16 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - tests beside each
 - **Approach:**
   - The installer merges into `~/.gemini/settings.json`:
-    - `mcpServers.khala` with `{command, args: ['mcp', '--harness', 'gemini'], trust: true}`;
+    - `mcpServers.khala` with `{command, args: ['mcp', '--harness', 'gemini']}`. `trust` is off by default, so Gemini asks before each Khala tool call (review item 5). `khala install gemini --trust-tools` adds `trust: true` and prints that it auto-approves `khala_send` and `khala_join`. Uninstall removes `trust` with the rest of the entry;
     - hooks for `SessionStart` (pane capture and `hook-map`), `BeforeAgent` (activity and nonce check), `AfterTool` (Steer through `hookSpecificOutput.additionalContext`) and `AfterAgent` (Sync).
   - Sync uses `decision: 'deny'` with a `reason`, at most once per delivered batch. The delivered cursor guards the loop, because `stop_hook_active` is unverified for Gemini.
   - Hook commands are `node <stable khala bin> hook deliver --harness gemini`. Logs go to stderr and JSON to stdout.
   - Session: `GEMINI_SESSION_ID` when the MCP child has it, else `hook-map`.
-  - Wake: the terminal rung only, opt-in.
+  - Wake: the terminal rung, with consent recorded at install and `emptyPrompt` from U38's Gemini capture. Gemini's remaining cells are U38, U41 and HB1.
 - **Patterns to follow:** `packages/agent/src/install/cursor.ts`; `idle-wake.md` §3.
 - **Test scenarios:**
   - The settings merge keeps sibling keys, and uninstall works.
+  - A default install writes no `trust` key. `--trust-tools` writes `trust: true` and prints the auto-approval line.
   - `AfterAgent` denies once per batch and then allows.
   - `AfterTool` carries the context.
   - stdout contains only JSON.
@@ -1577,7 +1654,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   5. Windows support.
 
   The spike passes when items 1 and 3 are captured. Items 2, 4 and 5 are recorded whatever the result.
-- **Fallback:** if Antigravity has no usable hooks, it ships as a named registry entry with Async-only capabilities plus the terminal rung, and the gap is recorded.
+- **Branch:** Antigravity is required for the release (operator, 2026-10-05). If it has no usable hooks, U29 still ships the registry entry, join, read, send and the terminal rung, and the missing Steer or Sync becomes a hard blocker escalated to the operator at once, because it puts the release's required harness short of R1. It is not recorded as an accepted gap.
+- Also record the idle input line for U38's empty-prompt pattern if U38 has not captured it yet.
 - **Verification:** the evidence doc and fixtures.
 
 ### U29. Antigravity CLI adapter
@@ -1595,8 +1673,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - tests beside each
 - **Approach:**
   - Reuse `codecs/gemini.ts` where U28 shows the same hook contract, and add a codec only for the differences.
-  - Wake uses the terminal rung unless U28 found a native path.
-  - Set the registry capabilities to what U28 proved.
+  - Wake uses the terminal rung, with consent at install and `emptyPrompt` from U38 or U28, unless U28 found a native path.
+  - Set the registry capabilities to what U28 proved. A capability U28 could not prove stays declared as required in the conformance driver, so Tier A fails loudly instead of passing as absent, and the ticket records the hard blocker.
 - **Patterns to follow:** U27.
 - **Test scenarios:**
   - The codec handles the captured fixtures.
@@ -1622,8 +1700,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - If item 1 fails, the session-start hook writes the socket path and token to the session directory with mode `0600`.
     - It overwrites the file on every session start.
     - The waker deletes the file once the harness pid is gone.
-  - If item 2 fails, Qwen wake moves to the terminal rung (opt-in).
-  - If item 6 shows a different envelope, U31 adds `codecs/qwen.ts` for the difference. If there is no `PostToolUse` context, Steer is unsupported.
+  - If item 2 fails, Qwen wake moves to the terminal rung, and U40 pursues a native path.
+  - If item 6 shows a different envelope, U31 adds `codecs/qwen.ts` for the difference. If there is no `PostToolUse` context, Steer is missing: escalate it as a hard blocker (R1), not an accepted gap.
 - **Verification:** the evidence doc holds the Qwen version, frames sent and observed turns.
 
 ### U31. Qwen Code adapter and socket waker
@@ -1647,8 +1725,8 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - The installer never prints or logs the messaging token.
   - The waker connects to the Unix socket and sends `auth` and then a `user` frame carrying the wake line, per `cross-session-protocol.md`.
   - The waker is on by default, because the feature is documented and on by default.
-  - The nonce verifies each wake. Two failures fall to the terminal rung (opt-in).
-  - The token is never logged. The driver is unavailable on Windows unless U30 documents a path.
+  - The nonce verifies each wake. Two failures fall to the terminal rung, whose consent the install step records, with `emptyPrompt` from U38.
+  - The token is never logged. The driver is unavailable on Windows unless U30 documents a path. U43 closes the Windows and `hold` cells.
   - If U30 item 2 failed, set Qwen's registry `idleWake` to `opt-in`, so only the terminal rung remains.
 - **Patterns to follow:** `packages/agent/src/harness/codecs/claude-style.ts`; U13 driver shape.
 - **Test scenarios:**
@@ -1676,13 +1754,12 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   6. Whether a plugin manifest can ship `mcp_servers`.
   7. Whether peer messages from Khala need the user's approval (`muse.md` §4: messages are "accepted, rejected or withheld with privacy controls"), whether that approval is a one-time step, and what happens to messages before it.
   8. The settings path and the shell that runs hook commands on Windows. `muse.md` §6 marks both UNVERIFIED.
-- **Fallback:**
-  - If item 2 fails, Steer is unsupported.
-  - If item 3 fails, Sync is unsupported.
+- **Branches:**
+  - If item 2 fails, Steer is missing, and if item 3 fails, Sync is missing. Either is a hard blocker (R1) escalated to the operator, not an accepted gap.
   - If item 4 fails, the session comes from `hook-map`.
-  - If item 5 fails, wake uses the terminal rung (opt-in).
-  - If item 7 needs approval on every session, Muse's rung 1 is `opt-in`, and the install output says how to approve Khala.
-  - Each failure is recorded in registry capabilities and docs.
+  - If item 5 fails, wake uses the terminal rung, and U40 pursues a native path.
+  - If item 7 needs approval on every session, Muse's rung 1 is `opt-in`, the install output says how to approve Khala, and U40 pursues a one-time approval.
+  - Each result is recorded in registry capabilities and docs.
 - **Verification:** the evidence doc and fixtures, with the Muse version.
 
 ### U33. Muse Code adapter
@@ -1704,14 +1781,14 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - It keeps `schema_version: 1` and sibling keys. A malformed settings file makes it stop and tell the user, without writing.
   - Codec: reuse `codecs/claude-style.ts` where U32's fixtures show the same hook contract. Add `packages/agent/src/harness/codecs/muse.ts` and its test only for the differences.
   - Session: `MUSE_SESSION_ID` if U32 item 4 passed, then `hook-map`.
-  - Wake: `wake/muse-peer.ts` is a U11 `WakeDriver` (rung 1). Its default follows U32 item 7.
+  - Wake: `wake/muse-peer.ts` is a U11 `WakeDriver` (rung 1). Its default follows U32 item 7. The terminal rung follows it, with `emptyPrompt` from U38. U43 closes the Windows and approval cells.
   - Set the registry capabilities to what U32 proved.
 - **Patterns to follow:** `packages/agent/src/install/cursor.ts`.
 - **Test scenarios:**
   - The merge keeps `schema_version` and siblings.
   - A malformed file is refused.
   - The codec handles the captured fixtures.
-  - Windows reports no idle wake.
+  - Windows reports the peer driver `unavailable` with a reason (U43 owns closing it).
   - Tier A passes against the declared capabilities.
 - **Verification:** Tier A; U36 Muse row.
 
@@ -1738,15 +1815,15 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 - **Patterns to follow:** U3 adapters.
 - **Test scenarios:**
   - The printed snippet parses as JSON.
-  - `--harness cline` shows `Cline` and names the agent `kevin-Agent`.
+  - `--harness cline` names the agent `kevin-Agent`, attributes messages to `Cline`, and shows "MCP agent (cline)" in the roster (KTD1).
   - The generic rows pass: read, send, status and `you`. The hook rows are asserted unsupported.
 - **Verification:** Tier A.
 
 ### U35. Docs and landing harness list
 
-- **Goal:** every doc and agent-facing page lists every supported harness with its install step, wake rung and gaps.
+- **Goal:** every doc and agent-facing page lists every supported harness with its install step, wake rungs and any hard blocker still open.
 - **Requirements:** R13, R9, R6.
-- **Dependencies:** U7, U11b, U12, U13, U15, U19, U22, U25, U26, U29, U31, U33, U34.
+- **Dependencies:** U7, U11b, U12, U13, U15, U19, U22, U25, U26, U29, U31, U33, U34, U41, U42, U43.
 - **Complexity:** 2.
 - **Files:**
   - Landing: `apps/web/src/landing/public/AGENTS.md`, `apps/web/src/landing/public/llms.txt`, `apps/web/src/landing/index.html`.
@@ -1756,7 +1833,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Install docs: `packages/agent/docs/install-{claude,codex,cursor,opencode,copilot,vscode,gemini,antigravity,qwen,muse,mcp}.md`.
   - Release sync: `packages/agent/scripts/sync-release.mjs`.
 - **Approach:**
-  - For each harness, document the install and uninstall steps, the behaviour in each mode, its idle-wake rung, the `--wake` opt-in and its known gaps. The Wake Ladder table is the source.
+  - For each harness, document the install and uninstall steps, the behaviour in each mode, its idle-wake rungs, what the install step consents to and how `--no-wake` and `khala wake off` decline it, and `khala install gemini --trust-tools`. The Wake Ladder table, as updated by U41–U43, is the source. Do not document any environment as an accepted gap. A hard blocker the operator has not yet decided is listed as "not yet supported" with its HB number.
   - `docs/settings.md` replaces the "Cursor agents do not wake" line and lists the reserved suffixes.
   - `khala wake` and the `khala_status` wake fields are documented.
   - Unsupported harnesses are pointed to the generic tier.
@@ -1784,7 +1861,9 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - read and send;
     - `you=`, rename and rejoin;
     - steer, sync and async;
-    - idle wake on each rung, including the opt-in drivers.
+    - idle wake on each rung, including every consent-gated driver installed with default consent;
+    - idle wake in every environment the Wake Ladder table names for that harness: each remote-control terminal, a VS Code and a Cursor integrated terminal (U41), Windows, each terminal named in HB1, a focused editor window and two chats in one workspace (U42);
+    - a typed draft in the prompt, which must not be submitted (KTD19).
   - Each row records versions, OS, terminal, result and an evidence link.
   - The acceptance examples:
     - AE1: Gemini CLI in tmux, idle, in Sync.
@@ -1796,7 +1875,7 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
     - Codex `--no-daemon`, which shows auto-disable and status for that session, while a second, daemon-backed Codex session still wakes;
     - an older pinned CLI (0.4.2) in the same local channel as a Gemini agent: it keeps receiving messages, and after its own helper respawns from the shared state, its channel still loads;
     - Windows hosted joins for Cursor, VS Code, OpenCode and Copilot CLI.
-- **Pass:** every row is green, or is a gap that matches the Wake Ladder table. No row is an unexplained red.
+- **Pass:** every row is green, with zero idle-wake gaps (KD5, KTD18). A red row is never passed as a known gap. A red row that its spike confirmed as a hard blocker carries the operator's recorded decision, and until that decision exists U36 has not passed for that harness and the release does not claim parity for it.
 - **Verification:** `pnpm --filter @khala/agent test:local-e2e` green, and `live-matrix.md` complete.
 
 ### U37. Release and the one production deploy
@@ -1814,15 +1893,16 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - `khala-opencode` exists on npm (the U22 placeholder) with its trusted publisher configured.
   - The `khala` publisher exists on the VS Code Marketplace and Open VSX, and `VSCE_PAT` and `OVSX_PAT` are set (U18).
   - A `release-npm.yml` dry run is green.
+  - Every hard blocker U36 surfaced has the operator's recorded decision.
 - **Approach (in this order):**
   0. Freeze merges to `main` from step 1 until step 4 finishes. Run steps 2 to 4 back to back, starting step 4 as soon as step 3 passes. Between steps 1 and 4, the landing `AGENTS.md`, the Cursor deeplink and the plugin launcher pin a `khala-cli` version that is not on npm yet, so keep that window to minutes.
   1. Open a version-bump PR using the `release` skill steps without tagging. `sync-release.mjs` rewrites the pins. Merge it, and record the merge SHA.
   2. Run `gh workflow run deploy-prod.yml -f confirm=DEPLOY` on `main` at that SHA. This is the only production deploy. It carries the open decoders in control and web, and the landing docs.
-  3. Hosted smoke: the confirm page loads, and a hosted join from the packed tarball with `--harness opencode` shows `OpenCode` and `kevin-OpenCode`.
+  3. Hosted smoke: the confirm page loads, and a hosted join from the packed tarball with `--harness opencode` shows `OpenCode` and `kevin-OpenCode`. Reload any web tab opened before the deploy first: stale tabs drop new-id participants and show new-id confirm pages as unavailable until reloaded, which is accepted (review item 12). Note it in the smoke record.
   4. Tag `v<version>` on exactly the SHA that step 2 deployed. `release-npm.yml` publishes `khala-cli` (helper and CLI), `khala-opencode`, and the `.vsix` to Marketplace and Open VSX.
   5. Repeat the hosted check from the published package.
 
-  Never roll control back after step 2. Forward-fix through npm. A hosted defect that npm cannot fix is an Open Question (review) item for the operator; do not run a second deploy without the operator.
+  Never roll control back after step 2. Forward-fix through npm. A hosted defect that npm cannot fix may use the cycle's reserved deploy only if it is urgent (a control or web regression, or broken install pins) and the operator gives the go-ahead (KTD14, KD6). Anything else waits for the next cycle.
 - **Patterns to follow:** `packages/agent/docs/releasing.md`; `.github/workflows/deploy-prod.yml`.
 - **Test scenarios:**
   - The deploy workflow is green, and the budget step shows one deploy used.
@@ -1830,6 +1910,131 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
   - Both marketplace listings show the new version.
   - The hosted checks from steps 3 and 5 are recorded.
 - **Verification:** the release rows in `live-matrix.md`.
+
+### U38. Spike: no-gap wake in terminal hosts; empty-prompt patterns
+
+- **Goal:** find a KD1-clean idle wake for every CLI harness in every terminal it supports, and record each CLI's empty input line for the KTD19 guard.
+- **Requirements:** R2, R8; KD5, KTD18, KTD19; review items 1 and 3.
+- **Dependencies:** none.
+- **Complexity:** 2.
+- **Files:** `docs/build/multi-harness/spikes/terminal-hosts.md` (new); per-harness prompt captures under `docs/build/multi-harness/spikes/terminal-hosts/`; a throwaway extension in `experiments/terminal-hosts/`, deleted before U37.
+- **Success criteria:** record each as pass or fail, with versions and OS.
+  1. **Empty-prompt patterns.** For Claude Code, Codex, Gemini CLI, Antigravity CLI, Copilot CLI, Qwen Code, Muse Code and OpenCode, capture the idle input line with `tmux capture-pane -p`, once empty and once holding a typed draft. Write one regular expression per harness that matches only the empty line. U14 and the adapter units use these.
+  2. **Editor-integrated terminals** (VS Code and Cursor). From a throwaway extension, find the terminal whose `processId` is an ancestor of the agent's pid, read its current input line through a stable API (shell integration, or another documented read path; note whether any path needs a proposed API that Marketplace extensions cannot use), and call `terminal.sendText(line, true)` without `show()`. Test with the window unfocused, and focused with the user typing in a text editor. Pass: a turn starts within 5 s, OS focus and in-window keyboard focus do not move, and a typed draft is detected.
+  3. **Windows:** Windows Terminal and conhost, for Gemini CLI, Copilot CLI and Claude Code. Look for any documented IPC that writes to a pane's input without OS keystroke injection.
+  4. **Other terminals without remote control:** GNOME Terminal and Alacritty on Linux, Terminal.app on macOS. The same question. `osascript`, `xdotool`, `SendKeys` and console input injection (`WriteConsoleInput`) count as OS keystroke injection under KD1 and are excluded.
+  5. **Native surfaces:** re-check Gemini CLI releases after v0.62.0, and Antigravity CLI together with U28 item 4, for any injection API into the running TUI (IPC, socket, remote API, A2A attach).
+  6. **Claude Code before its first Stop:** whether a session started with `--continue` or `--resume` can be woken by any native path before its first Stop.
+- **Branch:** every (harness, terminal) cell with no KD1-clean mechanism is written up under HB1 with its evidence, and the Executor escalates it to the operator before U36. It is never recorded as an accepted gap. U41 builds the editor-terminal path if item 2 passes, plus any other host that items 3 and 4 prove.
+- **Verification:** the evidence doc records each criterion with versions and OS, and the prompt patterns are checked against both captures.
+
+### U39. Spike: editor chat targeting and focused-window wake
+
+- **Goal:** find how the companion can wake the Khala-bound chat instead of the last-used one, and wake a focused window without moving keyboard focus, in VS Code and Cursor.
+- **Requirements:** R2, R3, R8; KD5, KTD18; review item 4.
+- **Dependencies:** U16.
+- **Complexity:** 1.
+- **Files:** `docs/build/multi-harness/spikes/editor-chat-targeting.md` (new); reuse `experiments/editor-submit/`, deleted before U37.
+- **Success criteria:** record each as pass or fail, with editor versions.
+  1. **Targeting in VS Code:** whether an extension can read a chat session id or resource for the open chats, whether the hook payloads (`session_id`, `transcript_path`, U23) name the same chat, and whether a submit can target a given chat. Pass: with two chats open in one workspace, the wake lands in the chat that joined Khala.
+  2. **Per-chat identity:** whether that id can be a session source, so each chat is its own Khala member and the nonce tells chats apart.
+  3. **Focused window:** a submit path that leaves in-window keyboard focus where it was, tested while the user types in a text editor. Restoring focus after moving it passes only if no keystroke typed during the move is lost or misdirected. Record the exact behaviour.
+  4. **Cursor:** a submit path that does not depend on the version allowlist, or else the refresh cadence the allowlist needs. Probe the last three Cursor versions.
+- **Branch:** U42 builds what passes. Each criterion that fails is written up under HB2 for operator escalation, and the interim last-used-chat behaviour stays until the operator decides.
+- **Verification:** the evidence doc records commands, versions and recordings for each criterion.
+
+### U40. Spike: Qwen and Muse no-gap wake
+
+- **Goal:** close the wake gaps that U30 and U32 leave for Qwen Code and Muse Code.
+- **Requirements:** R2, R8; KD5, KTD18.
+- **Dependencies:** U30, U32.
+- **Complexity:** 1.
+- **Files:** `docs/build/multi-harness/spikes/qwen-muse-no-gap.md` (new).
+- **Success criteria:** record each as pass or fail, with versions.
+  1. **Qwen on Windows:** which transport the messaging socket uses there (for example a named pipe), and whether an `auth` plus `user` frame starts a turn in an idle session.
+  2. **Qwen `crossSessionInbound: hold`:** whether a held message starts a turn once the session is idle. Also whether a controller token minted with `qwen sessions controllers add --label khala` at install time makes delivery independent of the own-process path.
+  3. **Muse peer approval:** whether approving Khala as a peer persists across sessions, and whether the install step can record it (a settings key or a CLI command), so no per-session approval is needed.
+  4. **Muse on Windows:** whether session messaging exists in the current Windows build.
+- **Branch:** U43 builds what passes. Each criterion that fails is written up under HB3 for operator escalation.
+- **Verification:** the evidence doc records versions, frames sent and observed turns.
+
+### U41. Editor-terminal wake through the companion
+
+- **Goal:** wake CLI harnesses running inside a VS Code or Cursor integrated terminal, with no OS keystrokes and no focus change, plus any other terminal host U38 proved KD1-clean.
+- **Requirements:** R2, R8, R9; KD5, KTD18, KTD19.
+- **Dependencies:** U11b, U14, U15, U17, U18, U38. U14 and U15 own `capture.ts`, U17 owns the companion's watch and bind code, U18 owns the sideload, and U11b owns the install consent dispatch.
+- **Complexity:** 3.
+- **Files:**
+  - Agent: `packages/agent/src/wake/terminal/capture.ts`; `packages/agent/src/wake/terminal/editor.ts` (new) and its test; `packages/agent/src/install/main.ts`.
+  - Companion: `packages/companion-vscode/src/terminal.ts` (new) and its test; `packages/companion-vscode/src/extension.ts`.
+- **Approach:**
+  - Capture: inside an integrated terminal (`TERM_PROGRAM=vscode`, plus the Cursor discriminator U38 recorded), `capture.ts` writes `pane.json` with `kind: 'editor'`, `agentPid` and the normalized workspace root.
+  - The `editor` backend of the `terminal` driver does not send by itself. It writes `wake-request.json` (`{nonce, line, at}`, mode `0600`) into the session directory.
+  - The companion watches the session directories bound to its workspace (U17's `.by-workspace` binding). On a request it:
+    - finds the terminal whose `processId` is an ancestor of `agentPid`;
+    - reads the input line by the method U38 proved, and skips unless it matches the adapter's `emptyPrompt` (KTD19);
+    - calls `terminal.sendText(line, true)`, and never `show()`, focus commands or the clipboard.
+  - Consent, nonce verification and the 2-failure session disable are the `terminal` driver's (U14, KTD8).
+  - Install: for every CLI harness whose ladder has the terminal rung, the shared install dispatch also sideloads the companion through U18 when `code` or `cursor` is on PATH. The companion stays idle in editors with no Khala session.
+  - Any other terminal host that U38 items 3 or 4 proved KD1-clean gets a backend in U14's shape in this unit.
+  - If U38 item 2 failed, this unit closes with a pointer to the evidence, and HB1 holds editor terminals for the operator.
+- **Patterns to follow:** U14 drivers; U17 `watch.ts` and `bind.ts`.
+- **Test scenarios:**
+  - `TERM_PROGRAM=vscode` makes capture write `kind: 'editor'`; a plain environment writes nothing.
+  - The companion picks the terminal whose `processId` is an ancestor of `agentPid`, and ignores the others.
+  - A draft on the input line skips the send with no failure counted; an empty line sends exactly the fixed line. The U14 fixed-line property test passes for the editor path.
+  - `show()`, focus commands and the clipboard API are never called.
+  - Without consent nothing is sent, and 2 unverified wakes disable the driver for that session.
+  - The installer sideloads the companion only when an editor CLI is on PATH, and `--no-wake` skips it.
+- **Verification:** `pnpm --filter @khala/agent test -- src/wake/terminal src/install`; `pnpm --filter @khala/companion-vscode test`; the KD1 audit; U36 editor-terminal rows.
+
+### U42. Editor chat targeting and focused-window wake
+
+- **Goal:** the companion wakes the Khala-bound chat in VS Code and Cursor, also while the window is focused, replacing the interim last-used-chat behaviour (review item 4).
+- **Requirements:** R2, R3, R8; KD5, KTD18.
+- **Dependencies:** U19, U26, U39.
+- **Complexity:** 2.
+- **Files:**
+  - Companion: `packages/companion-vscode/src/submit.ts`, `src/cursor.ts` and `src/bind.ts`, with tests.
+  - Agent: `packages/agent/src/harness/vscode.ts` and `codecs/vscode-local.ts`, only if U39 item 2 passed; `packages/agent/src/harness/conformance/drivers/vscode.ts` and `drivers/cursor.ts`.
+- **Approach:**
+  - Apply the targeting U39 item 1 proved: the wake goes to the chat bound to the Khala session.
+  - If U39 item 2 passed, VS Code's session source becomes the per-chat id, ahead of `workspace`, so each chat is its own member and the nonce tells chats apart.
+  - Apply U39 item 3's focused-window path. Drop the "submit only while unfocused" guard only for editors and versions where U39 proved it safe.
+  - Apply U39 item 4 for Cursor: the version-independent path, or the allowlist refresh.
+  - A criterion U39 failed keeps the interim behaviour for that cell, and the ticket records its HB2 entry.
+- **Patterns to follow:** U17 `submit.ts`; U19 `cursor.ts`.
+- **Test scenarios:**
+  - With two mocked chats, the wake targets the bound chat.
+  - With per-chat identity, a nonce reported by the other chat counts as a failure for this one.
+  - In a focused window, the proven path runs and no focus command is called beyond what U39 proved.
+  - A Cursor version off the old allowlist still submits when U39 item 4 passed.
+- **Verification:** `pnpm --filter @khala/companion-vscode test`; Tier A; U36 VS Code and Cursor rows with two chats and a focused window.
+
+### U43. Qwen and Muse no-gap wake
+
+- **Goal:** close Qwen Code's and Muse Code's remaining wake gaps with the mechanisms U40 proved.
+- **Requirements:** R2, R8, R9; KD5, KTD18.
+- **Dependencies:** U31, U33, U40.
+- **Complexity:** 2.
+- **Files:**
+  - `packages/agent/src/wake/qwen-socket.ts`, `packages/agent/src/wake/muse-peer.ts`, with tests;
+  - `packages/agent/src/install/qwen.ts`, `packages/agent/src/install/muse.ts`, with tests;
+  - `packages/contracts/src/m1/harness.ts` (capabilities);
+  - `packages/agent/src/harness/conformance/drivers/qwen.ts` and `drivers/muse.ts`.
+- **Approach:**
+  - Qwen on Windows: add the transport U40 item 1 proved.
+  - Qwen `hold`: if U40 item 2 proved a controller token removes the gap, mint it at install. Store it in the session state root with mode `0600`, never print or log it, and remove it on uninstall.
+  - Muse approval: if U40 item 3 proved a persistent approval, record it in the install step, and print what it approves.
+  - Muse on Windows: enable the peer driver where U40 item 4 proved session messaging.
+  - Set registry capabilities to what U40 proved. A criterion U40 failed stays `unavailable` with a reason, and the ticket records its HB3 entry.
+- **Patterns to follow:** U31 `qwen-socket.ts`; U33 `muse-peer.ts`; `packages/agent/src/install/cursor.ts`.
+- **Test scenarios:**
+  - A fake Windows transport receives the exact frame bytes.
+  - The controller token never appears in logs, status or install output, and uninstall removes it.
+  - Install records the Muse approval, and uninstall reverses only what install set.
+  - Tier A passes for Qwen and Muse against the updated capabilities.
+- **Verification:** Tier A; U36 Qwen and Muse rows, including Windows.
 
 ---
 
@@ -1847,30 +2052,30 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 | Conformance Tier B and acceptance | `pnpm --filter @khala/agent test:local-e2e` (sets `KHALA_LOCAL_E2E=1`) | U10 and U36. Adapter units gate on Tier A; U36 runs Tier B for every registered driver |
 | Conformance report | `KHALA_CONFORMANCE_REPORT=1 pnpm --filter @khala/agent test -- src/harness/conformance` | U36 |
 | Web | `pnpm --filter @khala/web test`; `pnpm test:browser`; `pnpm --filter @khala/web test:visual` | U5, U6, U7, U35 |
-| Companion | `pnpm --filter @khala/companion-vscode test`; `pnpm --filter @khala/companion-vscode build` | U17, U19, U26 |
+| Companion | `pnpm --filter @khala/companion-vscode test`; `pnpm --filter @khala/companion-vscode build` | U17, U19, U26, U41, U42 |
 | OpenCode plugin | `pnpm --filter khala-opencode test` | U22 |
 | Package smoke | `pnpm --filter @khala/agent build`, then `npm pack` in the built package directory, then `node packages/agent/scripts/smoke-package.mjs <tgz>` | any unit touching installers, bundling or `cli.ts` |
 | Release sync | `node packages/agent/scripts/sync-release.mjs --check` | U18, U22, U35, U37 |
 | Build | `pnpm build` | every code unit |
 | Codex live check | `gh workflow run codex-queue-live.yml` | U13, then weekly |
 | Local stack | `pnpm stack:up` then the U36 matrix | U36 |
-| KD1 audit | `rg -n "xdotool|osascript|SendKeys|robotjs|clipboard|hostService.focus" packages apps --glob "!*.test.*"` returns no new hits | U11, U14, U15, U17, U19, U22, U25, U26 |
-| Spike evidence | the spike's evidence doc records each success criterion as pass or fail, with versions | U16, U20, U23, U28, U30, U32 |
+| KD1 audit | `rg -n "xdotool|osascript|SendKeys|robotjs|clipboard|hostService.focus" packages apps --glob "!*.test.*"` returns no new hits | U11, U14, U15, U17, U19, U22, U25, U26, U41, U42 |
+| Spike evidence | the spike's evidence doc records each success criterion as pass or fail, with versions | U16, U20, U23, U28, U30, U32, U38, U39, U40 |
 
 ---
 
 ## Definition of Done
 
 **Global:**
-- All 40 units are merged or, for spikes, U36 and U37, completed with their evidence.
+- All 46 units are merged or, for spikes, U36 and U37, completed with their evidence.
 - Tier A and Tier B conformance pass for every adapter, and each adapter has a conformance driver.
-- `docs/evidence/multi-harness/live-matrix.md` shows every harness row green, or a gap that matches the Wake Ladder table.
-- Exactly one production deploy ran for this plan, and it came after U36 (KTD14).
-- No code wraps or launches an agent, injects OS keystrokes, or moves OS or in-window keyboard focus. The only text Khala types into a terminal is the U11 fixed wake line, opt-in and idle-only.
-- Every opt-in driver is off without consent, verifies its nonce, and disables itself for that session after 2 failures.
+- `docs/evidence/multi-harness/live-matrix.md` shows every harness row green with zero idle-wake gaps, in every environment the Wake Ladder table names (KD5, KTD18). No row is passed as a known gap. A hard blocker appears only with the operator's recorded decision, and no harness it touches is claimed at parity until that decision allows it.
+- Exactly one production deploy ran for this plan, and it came after U36. The cycle's other deploy is unspent, unless an urgent hosted fix used it with the operator's go-ahead (KTD14, KD6).
+- No code wraps or launches an agent, injects OS keystrokes, or moves OS or in-window keyboard focus. The only text Khala types into a terminal is the U11 fixed wake line, consent-gated, idle-only and only into an empty prompt (KTD19).
+- Every consent-gated driver is off without consent, gets its consent from the one install step unless the user passed `--no-wake`, verifies its nonce, and disables itself for that session after 2 failures.
 - The four hash-pinned Claude plugin files changed only through `sync-release.mjs` in `chore(release)` PRs (interim releases and U37).
 - Every frozen compat copy is unchanged except the U1 inline. U1 adds the 0.4.x local decoder copy, and U8 adds the opened-validator copies.
-- Cleanup: spike scratch code under `experiments/editor-submit/`, `experiments/opencode-spike/` and `experiments/copilot-spike/` is deleted, while the spike evidence docs stay. Abandoned approaches and dead code are removed from the diff, not left behind flags.
+- Cleanup: spike scratch code under `experiments/editor-submit/`, `experiments/opencode-spike/`, `experiments/copilot-spike/` and `experiments/terminal-hosts/` is deleted, while the spike evidence docs stay. Abandoned approaches and dead code are removed from the diff, not left behind flags.
 - `AGENTS.md`, `llms.txt`, `docs/settings.md` and the per-harness install docs list every supported harness, and they point everything else to the generic tier.
 
 **Per unit:**
@@ -1881,8 +2086,9 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 | U2, U3, U3b | Goldens are green before and after U3 and U3b, and the plugin hash test is unchanged |
 | U4 | Fake process-tree tests are green on Linux, macOS and Windows fixtures |
 | U9, U10 | Claude, Codex and Cursor pass both tiers, and the AE4 synthetic adapter fails |
-| U11, U11b, U12–U15 | Ladder, nonce and disable tests are green. The KD1 audit is clean. The fixed-line property tests pass. Every wake state renders from the U11b table |
-| U16, U20, U23, U28, U30, U32 | The evidence doc records every criterion. The dependent build unit names the branch it takes |
+| U11, U11b, U12–U15 | Ladder, nonce and disable tests are green. The KD1 audit is clean. The fixed-line and empty-prompt tests pass. Every wake state renders from the U11b table, and install records consent by default |
+| U16, U20, U23, U28, U30, U32, U38, U39, U40 | The evidence doc records every criterion. The dependent build unit names the branch it takes, and every failed criterion that leaves a gap is written up as a hard blocker |
+| U41, U42, U43 | The unit's tests and Tier A are green, the KD1 audit is clean, and the U36 rows for the cells it closes are green. Any cell it could not close names its HB entry on the ticket |
 | U17–U19, U26 | The companion builds a `.vsix`, the sideload works, and the Cursor and VS Code rows pass in U36 |
 | U21 | Install and uninstall goldens are green, the codec tests pass, and the package smoke passes. Tier A for OpenCode is U22's gate |
 | U22, U24, U25, U27, U29, U31, U33, U34 | The adapter passes Tier A against its registry capabilities. Install and uninstall goldens are green, and the package smoke passes |
@@ -1894,57 +2100,52 @@ Paths are repo-relative. A harness's conformance driver is registered by the uni
 
 ## Open Questions (review)
 
-The 2026-10-05 document review recorded these judgment calls instead of deciding them silently. Each has a recommendation. None blocks ticket creation for the units it does not name.
+The 2026-10-05 document review recorded these judgment calls instead of deciding them silently. The operator settled all of them on 2026-10-05. Each item states the question and its resolution, and the resolution is applied in the sections it names.
 
-**Needs an operator decision**
+**Operator decisions**
 
-1. **What "parity" means for idle wake (R2, AE1, Success Criteria).**
-   - Opt-in drivers mean that, after a plain install, Copilot CLI, VS Code, Cursor, Gemini and Antigravity have no idle wake.
-   - Gemini and Antigravity wake only inside tmux, WezTerm, kitty or iTerm2. They cannot wake in Windows Terminal, GNOME Terminal, macOS Terminal.app or editor terminals.
-   - R2 says every harness wakes "without user action", and U36 passes any gap that is listed in the Wake Ladder table.
-   - *Recommendation:* amend R2 to "idle wake works wherever a rung exists and the user has consented once; every remaining gap is recorded and shown in `khala wake status`". Accept the Gemini and Antigravity rows as partial before U36 marks them green.
-2. **Antigravity CLI (U28, U29) was added by the Executor, and the operator was only informed.** It sits on the critical path, and its contract is unresearched.
-   - *Recommendation:* approve it explicitly, or keep the `antigravity` registry row (data only, so it costs no deploy) and make U28 and U29 non-blocking for U35, U36 and U37. Until it ships, point Antigravity users at the generic tier.
-3. **Terminal wake can submit a half-typed draft.**
-   - Idleness comes from hooks, and typing fires none.
-   - `send-keys -l <line>` followed by Enter would append the wake line to an unsent draft and submit both. No pane check detects a non-empty input line.
-   - *Recommendation:*
-     - Each adapter supplies an "empty prompt" pattern for its TUI's input line.
-     - U14 and U15 capture the cursor line (`tmux capture-pane`, `wezterm cli get-text`, `kitten @ get-text`, or the iTerm2 screen API) and skip the wake unless the line matches that pattern.
-     - Otherwise, document the risk in the `--wake` consent text.
-4. **The VS Code companion wakes the last-used chat.** Every chat in a workspace shares one Khala session, so the nonce cannot catch a wake that lands in an unrelated chat, which then spends a premium request.
-   - *Recommendation:* keep it as an opt-in, recorded gap (applied in the Wake Ladder table), unless U23 finds a chat id that the companion can read and match.
-5. **The Gemini installer sets `trust: true`.** That auto-approves `khala_send` and `khala_join` for content that may be prompt-injected, and no other installer grants auto-approval.
-   - *Recommendation:* drop it from the default install, and add a `khala install gemini --trust-tools` opt-in.
-6. **Copilot `--wake` sets the global `experimental: true` flag.** This review added consent text and a U23 inventory of what the flag changes. The open question is whether a global experimental switch is compatible with R8 at all.
-   - *Recommendation:* decide after U23 lists the effects. If they go beyond loading extensions, drop U25, and Copilot CLI wake stays on the terminal rung.
-7. **No contingency for a hosted defect after the single deploy.** `npm` cannot fix control, web or the landing pages, and a second deploy is a stop condition.
-   - *Recommendation:* reserve the cycle's last deploy as a hotfix budget for control or web regressions and broken install pins only. Cosmetic issues wait for the next cycle.
+1. **What "parity" means for idle wake (R2, AE1, Success Criteria).** The review asked whether consent-gated drivers, and Gemini and Antigravity waking only inside remote-control terminals, could count as parity.
+   - **Resolved — strict, no gaps (operator: "Strict: no gaps").** R2 stands as written. Opt-in-only and terminal-only wake do not satisfy it. Each harness whose wake is consent-gated or conditional keeps its path and gets a follow-up spike and unit for a no-gap mechanism. The release cannot claim parity for a harness until its unit passes. KD1 still holds. Where KD1 and R2 collide, the cell is a hard blocker for the operator, never an accepted gap.
+   - Applied in: KD5, KTD7, KTD8 (consent at install), KTD18, the Wake Ladder table and HB1–HB3, U11b, U36, U38–U43 and the Definition of Done.
+2. **Antigravity CLI (U28, U29) was added by the Executor.**
+   - **Resolved — approved and required (operator: "Approve, required").** It is session-settled (user-approved), and U28 and U29 stay on the critical path. A U28 result that would leave Antigravity short of R1 is escalated as a hard blocker.
+   - Applied in: KD4, Scope Additions, the Goal Capsule, U28 and U29.
+3. **Terminal wake could submit a half-typed draft.**
+   - **Resolved — empty-prompt guard (recommendation accepted).** Each adapter supplies an `emptyPrompt` pattern. Every terminal-style send reads the cursor line and skips unless it matches. U38 records the patterns.
+   - Applied in: KTD10, KTD19, U14, U15, U41, the adapter units and U38.
+4. **The VS Code companion wakes the last-used chat.**
+   - **Resolved — interim only (recommendation accepted under strict parity).** The last-used-chat behaviour ships as an interim step. Spike U39 and unit U42 target the Khala-bound chat, and HB2 holds whatever they cannot close.
+   - Applied in: the Wake Ladder table, U26, U39 and U42.
+5. **The Gemini installer set `trust: true`.**
+   - **Resolved — off by default (operator).** The default install writes no `trust` key. `khala install gemini --trust-tools` opts in.
+   - Applied in: U27 and U35.
+6. **Copilot `--wake` sets the global `experimental: true` flag.**
+   - **Resolved — decide after U23 (recommendation accepted).** If U23 shows the flag only loads extensions, U25 proceeds. If it changes more, U25 closes, and Copilot CLI wake rests on the terminal rung plus U38 and U41, with HB1 for what they cannot close.
+   - Applied in: the U25 gate and the Wake Ladder table.
+7. **No contingency for a hosted defect after the single deploy.**
+   - **Resolved — one for the release, one in reserve (operator: "1 for release, 1 reserve").** The release uses exactly one production deploy. The cycle's last deploy is reserved for an urgent hosted fix only, with the operator's go-ahead.
+   - Applied in: KD6, KTD14, the Goal Capsule stop conditions, U37 and the Definition of Done.
 
-**Product and UX calls**
+**Product and UX calls** (the operator took the review's recommendations)
 
-8. **OpenCode Sync sends the delivery frame as a user-role prompt through `promptAsync`.** Every other driver sends only the fixed line.
-   - *Recommendation:* accept this for Sync and idle delivery, since it is OpenCode's only path, and keep the frame's existing "not instructions from your user" wrapper. Record it as a KTD6 exception.
-9. **Auto-disable is silent until someone checks status.**
-   - *Recommendation:* in U11b, after an auto-disable, the next delivered frame or `khala_read` result carries one line naming the driver and the re-enable command. The line is shown once.
-10. **Unregistered harness ids can look official.** For example, `--harness claude-code` renders as "Claude Code".
-    - *Recommendation:* on the confirm page and in the roster, show unregistered ids as "MCP agent (claude-code)". Keep the title case only in attribution text.
-11. **The web mode picker is not capability-aware.** For example, an owner can set Steer on an Async-only generic agent.
-    - *Recommendation:* defer to follow-up work, since it is not needed for parity.
-12. **Stale hosted web tabs.** Tabs opened before the deploy drop new-id participants and show new-id confirm pages as unavailable until reloaded.
-    - *Recommendation:* accept this, and note it in the U37 smoke.
+8. **OpenCode Sync sends the delivery frame as a user-role prompt through `promptAsync`.**
+   - **Resolved — accepted** as a KTD6 exception, keeping the frame's "not instructions from your user" wrapper. Applied in KTD6 and U22.
+9. **Auto-disable was silent until someone checked status.**
+   - **Resolved — one notice line.** After an auto-disable, the next delivered frame or `khala_read` result names the driver and the re-enable command, once. Applied in KTD8 and U11b.
+10. **Unregistered harness ids could look official.**
+    - **Resolved — "MCP agent (<id>)"** on the confirm page and in the roster; the title-cased name appears only in attribution text. Applied in KTD1, KTD17, U1, U7 and U34.
+11. **The web mode picker is not capability-aware.**
+    - **Resolved — deferred** to follow-up work; it is not needed for parity. Applied in Deferred to Follow-Up Work.
+12. **Stale hosted web tabs** drop new-id participants until reloaded.
+    - **Resolved — accepted**, and noted in the U37 smoke. Applied in U37.
 
-**Decided in this review; confirm or reverse**
+**Review-made decisions** (the operator confirmed they stand)
 
-13. **The wire gate is the query parameter `wire=2`, not an `X-Khala-Wire: 2` header.** It matches the existing `prev=1` convention, and `repo-design.md` §2.6 offers both.
-14. **Auto-disable is per session, not per (harness, driver) machine-wide.** The machine-wide version let one `--no-daemon` Codex TUI turn off Codex wake everywhere, which breaks R3. Consent stays machine-wide.
-15. **U37 keeps the stated order (deploy, then tag) with a merge freeze, and tags the deployed SHA.** The review's alternative was to tag first and then deploy, which the KTD14 `update_required` argument makes safe and which removes the window of pins to an unpublished version. It was not applied, because it changes the stated deploy order.
-16. **Unit splits.** U3 became U3 and U3b, U6 became U6 and U6b, and U11 became U11 and U11b. The total is now 40 units. Reviewers also flagged these as large:
-    - U7: names, plus 8 logos with licence research;
-    - U26: two packages;
-    - U35: about 25 files.
-
-    *Recommendation:* split U7 into names and logos if the licence work is not trivial. Split U35 into per-harness install docs, each started right after its adapter, and the landing pages last.
+13. **The wire gate is the query parameter `wire=2`**, not an `X-Khala-Wire: 2` header. Confirmed. Applied in KTD3 and U6.
+14. **Auto-disable is per session**, while consent is machine-wide. Confirmed. Applied in KTD8 and U11.
+15. **U37 deploys, then tags the deployed SHA, under a merge freeze.** Confirmed. Applied in KTD14 and U37.
+16. **Unit splits** U3 and U3b, U6 and U6b, U11 and U11b. Confirmed.
+    - The review's further suggestion to split U7 and U35 is not applied (Executor call). U7 cannot block on licence work, because an unlicensed mark already gets `logoKey: null`. U35 renders from the final Wake Ladder table, which is only final after U41–U43, so starting per-harness docs early would mean rewriting them.
 
 ---
 
