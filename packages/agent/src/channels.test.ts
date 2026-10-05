@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { appendEntries, readEntries, unread } from './inbox';
 import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRef } from './channels';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile, type SessionFiles } from './state';
 
@@ -83,4 +84,76 @@ it('resolves omitted refs, normalized names, exact ids and ambiguity', async () 
   const general = [{ ...eco, channelName: 'General' }, { ...other, channelName: 'general' }];
   expect(resolveChannel(general, '#GENERAL')).toMatchObject({ ok: false, code: 'channel_ambiguous' });
   expect(resolveChannel([eco], '!ECO:test')).toMatchObject({ ok: false, code: 'channel_unknown' });
+});
+
+function entry(eventId: string) {
+  return { eventId, roomId: '!eco:test', ts: '2026-10-05T12:00:00.000Z', sender: '@human:test', senderLabel: 'Human', senderKind: 'human' as const, kind: 'message' as const, body: eventId };
+}
+it.each([false, true])('merges only legacy unread entries without replacing channel history (root cursor: %s)', async withCursor => {
+  const nested = (await channel('!eco:test')).files;
+  const cursorBytes = '{ "lastDeliveredEventId": "$channel-delivered", "deliveredCount": 1 }\n';
+  const modeBytes = '{ "mode": "watch" }\n';
+  await appendEntries(nested, [entry('$channel-delivered'), entry('$overlap')]);
+  await fs.writeFile(nested.cursor, cursorBytes);
+  await fs.writeFile(nested.mode, modeBytes);
+  await appendEntries(files, [...(withCursor ? [entry('$root-delivered')] : []), entry('$overlap'), entry('$new')]);
+  if (withCursor) await writeStateFile(files.dir, 'cursor.json', { lastDeliveredEventId: '$root-delivered', deliveredCount: 1 });
+  await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect((await readEntries(nested)).map(e => e.eventId)).toEqual(['$channel-delivered', '$overlap', '$new']);
+  expect((await unread(nested)).entries.map(e => e.eventId)).toEqual(['$overlap', '$new']);
+  expect(await fs.readFile(nested.cursor, 'utf8')).toBe(cursorBytes);
+  expect(await fs.readFile(nested.mode, 'utf8')).toBe(modeBytes);
+  expect(await migrateLegacy(files)).toBe('none');
+  // Simulate a crash after append: deduplication makes retry harmless.
+  await appendEntries(files, [entry('$overlap'), entry('$new')]);
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect((await readEntries(nested)).map(e => e.eventId)).toEqual(['$channel-delivered', '$overlap', '$new']);
+  // Simulate a crash after removing the inbox but before root cursor/mode cleanup.
+  await writeStateFile(files.dir, 'session.json', { roomId: '!eco:test' });
+  await writeStateFile(files.dir, 'cursor.json', { lastDeliveredEventId: '$stale', deliveredCount: 20 });
+  await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect(await fs.readFile(nested.cursor, 'utf8')).toBe(cursorBytes);
+  expect(await fs.readFile(nested.mode, 'utf8')).toBe(modeBytes);
+});
+
+it('leaves conflicting cursors and legacy data intact when destination history is absent', async () => {
+  const nested = (await channel('!eco:test')).files;
+  await appendEntries(files, [entry('$delivered'), entry('$unread')]);
+  await writeStateFile(files.dir, 'cursor.json', { lastDeliveredEventId: '$delivered', deliveredCount: 1 });
+  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$other', deliveredCount: 5 });
+  await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
+  await writeStateFile(nested.dir, 'mode.json', { mode: 'watch' });
+  const source = await Promise.all([files.cursor, files.mode, files.inbox].map(file => fs.readFile(file, 'utf8')));
+  const destination = await Promise.all([nested.cursor, nested.mode].map(file => fs.readFile(file, 'utf8')));
+  await expect(migrateLegacy(files)).rejects.toMatchObject({ code: 'storage_failed' });
+  expect(await Promise.all([files.cursor, files.mode, files.inbox].map(file => fs.readFile(file, 'utf8')))).toEqual(source);
+  expect(await Promise.all([nested.cursor, nested.mode].map(file => fs.readFile(file, 'utf8')))).toEqual(destination);
+});
+it('preserves an existing mode while completing an interrupted cursor rename', async () => {
+  const nested = (await channel('!eco:test')).files;
+  await appendEntries(files, [entry('$delivered'), entry('$unread')]);
+  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$delivered', deliveredCount: 1 });
+  await writeStateFile(nested.dir, 'mode.json', { mode: 'watch' });
+  await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
+  const bytes = await fs.readFile(files.inbox, 'utf8');
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect(await fs.readFile(nested.inbox, 'utf8')).toBe(bytes);
+  expect((await unread(nested)).entries.map(e => e.eventId)).toEqual(['$unread']);
+  expect(JSON.parse(await fs.readFile(nested.mode, 'utf8'))).toEqual({ mode: 'watch' });
+});
+
+it('migrates legacy cursor and mode byte-identically even before an inbox exists', async () => {
+  const nested = channelFiles(files, '!eco:test');
+  await writeStateFile(files.dir, 'session.json', { roomId: '!eco:test' });
+  const cursorBytes = '{ "lastDeliveredEventId": null, "deliveredCount": 0 }\n';
+  const modeBytes = '{ "mode": "async" }\n';
+  await fs.writeFile(files.cursor, cursorBytes);
+  await fs.writeFile(files.mode, modeBytes);
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect(await fs.readFile(nested.cursor, 'utf8')).toBe(cursorBytes);
+  expect(await fs.readFile(nested.mode, 'utf8')).toBe(modeBytes);
+  await expect(fs.access(nested.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await migrateLegacy(files)).toBe('none');
 });

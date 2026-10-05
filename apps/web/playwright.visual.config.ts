@@ -24,8 +24,16 @@ export const PRODUCTION_CSP = contentSecurityPolicy(PRODUCTION_HOMESERVER_ORIGIN
 
 export const LANDING_PORT = 4311;
 export const SHELL_PORT = 4312;
+export const TIMELINE_PORT = 4313;
 
 const servers: Record<string, { port: number; build: InlineConfig; preview: InlineConfig }> = {
+  timeline: {
+    port: TIMELINE_PORT,
+    build: { configFile: false, root: `${here}/src/features/timeline/browser-harness`,
+      build: { outDir: `${here}/dist/visual-timeline-harness`, emptyOutDir: true }, logLevel: 'error' },
+    preview: { configFile: false, root: `${here}/src/features/timeline/browser-harness`,
+      build: { outDir: `${here}/dist/visual-timeline-harness` }, logLevel: 'error' },
+  },
   // The production splash build, written to dist/landing exactly as `pnpm build` does.
   landing: {
     port: LANDING_PORT,
@@ -94,5 +102,5 @@ export default defineConfig({
     locale: 'en-US',
     timezoneId: 'UTC',
   },
-  webServer: [server('landing', LANDING_PORT), server('shell', SHELL_PORT)],
+  webServer: [server('landing', LANDING_PORT), server('shell', SHELL_PORT), server('timeline', TIMELINE_PORT)],
 });

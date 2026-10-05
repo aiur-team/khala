@@ -287,6 +287,8 @@ export function TimelineScreen({
     return next;
   }), []);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const previousScrollTopRef = useRef(0);
   const listRef = useRef<HTMLOListElement | null>(null);
   const anchorRef = useRef<ReaderAnchor>({ atLatest: true });
   // The viewer's own send brings them to latest; follows it until it resolves
@@ -374,7 +376,7 @@ export function TimelineScreen({
     if (wasAtLatest && 'atLatest' in anchorRef.current) glideToLatest(list);
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const list = listRef.current;
     const anchor = anchorRef.current;
     if (!list || 'atLatest' in anchor) return;
@@ -387,6 +389,8 @@ export function TimelineScreen({
   }, [data.items]);
 
   const handleLoadOlder = useCallback(async () => {
+    if (loadingOlderRef.current || data.nextCursor === null || data.phase !== 'ready') return;
+    loadingOlderRef.current = true;
     const list = listRef.current;
     const topItem = data.items[0];
     if (list && topItem) {
@@ -397,9 +401,24 @@ export function TimelineScreen({
     try {
       await controller.loadOlder();
     } finally {
+      loadingOlderRef.current = false;
       setIsLoadingOlder(false);
     }
-  }, [controller, data.items]);
+  }, [controller, data.items, data.nextCursor, data.phase]);
+
+  // Raw history pages can project to very few visible rows. Keep paging until
+  // the reader can scroll, including when a resize creates more room.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const fillViewport = () => {
+      if (list.clientHeight > 0 && list.scrollHeight <= list.clientHeight + 80) void handleLoadOlder();
+    };
+    fillViewport();
+    const observer = new ResizeObserver(fillViewport);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [handleLoadOlder, isLoadingOlder]);
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
@@ -676,12 +695,10 @@ export function TimelineScreen({
           <EvidenceAnnouncer text={evidenceView.announcement?.text ?? null} />
         </>
       ) : null}
-      {data.nextCursor !== null ? (
-        <button type="button" className="timeline__load-older" disabled={isLoadingOlder} onClick={() => void handleLoadOlder()}>
-          Load earlier messages
-        </button>
-      ) : null}
       <div className="timeline__viewport">
+        {isLoadingOlder && data.nextCursor !== null ? <div className="timeline__history-loading">
+          <LoadingSpinner label="Loading earlier messages" />
+        </div> : null}
         <ol
           className="timeline__list kh-thread"
           ref={listRef}
@@ -689,6 +706,9 @@ export function TimelineScreen({
           onWheel={stopFollowing} onTouchStart={stopFollowing} onKeyDown={stopFollowing}
           onScroll={event => {
             const el = event.currentTarget;
+            const scrollingUp = el.scrollTop < previousScrollTopRef.current;
+            previousScrollTopRef.current = el.scrollTop;
+            if (scrollingUp && el.scrollTop <= 80) void handleLoadOlder();
             const distance = distanceFromEnd(el);
             if (distance < 2) glidingRef.current = false;
             if (!glidingRef.current) setAtLatest(distance < NEAR_BOTTOM_PX);

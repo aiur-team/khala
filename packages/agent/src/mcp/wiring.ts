@@ -1,3 +1,5 @@
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
 import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import { createCodexWaker } from '../wake/codex';
@@ -20,18 +22,22 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
     const initialize = () => initialization ??= (async () => {
       await ensureStateDir(files.dir);
       await removeStateFile(files.dir, 'join.json');
+      const joinsDir = path.join(files.dir, 'joins');
+      await ensureStateDir(joinsDir);
+      await fs.rm(joinsDir, { recursive: true, force: true });
     })();
     return {
       async join(link, label) { await initialize(); return client.join(link, label); },
-      async status() {
+      async status(channel) {
         await initialize();
-        const status = await client.status();
+        const status = await (channel === undefined ? client.status() : client.status(channel));
         return harness === 'claude' && ['connected', 'send_failed'].includes(status.state)
           ? { ...status, watcherArmed: await monitorArmed(files) } : status;
       },
-      async read(limit, before) { await initialize(); return client.read(limit, before); },
-      async send(text) { await initialize(); return client.send(text); },
-      async sendChannelEvent(content) { await initialize(); return client.sendChannelEvent(content); },
+      async read(limit, before, channel) { await initialize(); return channel === undefined ? client.read(limit, before) : client.read(limit, before, channel); },
+      async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
+      async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
+      async leave(channel) { await initialize(); return client.leave(channel); },
       async close() {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {

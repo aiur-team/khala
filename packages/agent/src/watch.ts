@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries } from './inbox';
 import { readListeningMode } from './mode';
-import { readJson, readStatus, sessionFiles, writeJsonAtomic, type SessionFiles } from './state';
+import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
 import { resolveHarness, resolveSessionId } from './mcp/session-id';
 
 const MARKER = 'monitor.json';
@@ -117,15 +117,20 @@ export async function watchSession(files: SessionFiles, io: {
   }
 }
 
+export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor --session <id>]';
+
 export default async function run(argv: readonly string[]): Promise<number> {
+  if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
+  const invalid = (reason: string) => { console.error(`khala: ${reason}\n${WATCH_USAGE}`); return 1; };
   // Explicit session id also works when Claude does not export its id to Monitor.
   if (argv.length !== 0 && !(argv.length === 2 && argv[0] === '--session')
-    && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) throw new Error('invalid_arguments');
+    && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) return invalid('invalid_arguments');
   const harness = resolveHarness(argv, process.env);
-  if (harness === 'invalid') throw new Error('invalid_harness');
+  if (harness === 'invalid') return invalid('invalid_harness');
   const index = argv.indexOf('--session');
   const id = index === -1 ? resolveSessionId(harness, undefined, process.env) : argv[index + 1];
-  if (!id) throw new Error('session_unknown');
+  if (!id) return invalid('session_unknown');
+  if (!SESSION_ID_PATTERN.test(id)) return invalid('invalid_session_id');
   const files = sessionFiles(harness, id, process.env);
   const controller = new AbortController();
   const stop = () => controller.abort();

@@ -95,6 +95,8 @@ Any joined channel member can create and copy their channel link. Open **Invite*
 
 Humans who join by link see messages from their join onward, not earlier history. The invite panel's **Type**, **Approve joins** and **History** controls are locked and marked **Coming soon**.
 
+Scroll upward near the start of the visible conversation to load older messages automatically. Short pages load automatically until the timeline fills or history ends. A small spinner appears while a page loads, and your reading position stays in place. Empty channels and the start of history show no history control or spinner. This works in hosted and local channels.
+
 When you scroll away from the latest messages, a pill such as **2 new messages** appears as new messages arrive. Choose it to return to the latest messages. This is automatic, with no setting to enable it.
 
 ## Adding and moving agents
