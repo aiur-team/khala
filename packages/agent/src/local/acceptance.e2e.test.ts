@@ -17,7 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocalChannelCreated, LocalChannelSummary, LocalMember, ChannelSecrets } from '@khala/contracts/m1/local';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { ensureStateDir, readJson, writeJsonAtomic } from '../state';
+import { ensureStateDir, filesForDir, readJson, writeJsonAtomic } from '../state';
+import { readEntries } from '../inbox';
 import { eventually, readEgressLog, nonLoopbackAttempts, matrixModules } from './fixtures/egress';
 import { createWorld, cleanupWorld, cli, raw, admin, deliver, armClaudeWake, inbox, mode, codexCalls, helperFile,
   openBrowser, ownerOpen, McpProcess, type World } from './fixtures/e2e-harness';
@@ -441,4 +442,144 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     for (const request of world.requests) { const url = new URL(request); expect(url.origin === world.origin || ['data:', 'blob:'].includes(url.protocol), context('AE10')).toBe(true); expect(/\/api\/human\/|\/_matrix\/|khala\.aiur\.team|google|gstatic/i.test(request), context('AE10')).toBe(false); }
     for (const agent of [world.claude, world.codex]) expect(records.some(record => record.kind === 'tcp' && record.pid === agent.pid && record.host === '127.0.0.1' && record.port === world.port), context('AE10')).toBe(true);
   });
+});
+
+// A separate world keeps the existing single-channel acceptance and evidence intact.
+describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptance', () => {
+  it('keeps Ecosystem and Optimism connected with isolated routing, modes and identity', async () => {
+    const multi = await createWorld();
+    try {
+      const create = async (name: string) => {
+        const result = await cli(multi, 'create', name);
+        expect(result.code, `create ${name}`).toBe(0);
+        return result.data as LocalChannelCreated;
+      };
+      const ecosystem = await create('Ecosystem');
+      const optimism = await create('Optimism');
+      let agent = multi.claude;
+      type ChannelStatus = { channel: string; roomId: string; state: string; you: string; agentUserId: string; listeningMode: string };
+      const status = async () => toolData<{ channels: ChannelStatus[] }>(await agent.call('khala_status')).channels;
+      const room = (target: LocalChannelCreated) => `/api/local/rooms/${enc(target.roomId)}`;
+      const files = (target: LocalChannelCreated) => filesForDir(path.join(agent.files.dir, 'channels',
+        createHash('sha256').update(target.roomId).digest('hex').slice(0, 24)));
+      const roster = async (target: LocalChannelCreated) => {
+        const result = await admin(multi, 'GET', `${room(target)}/members`);
+        expect(result.status).toBe(200);
+        return (result.body as { members: LocalMember[] }).members;
+      };
+      const history = async (target: LocalChannelCreated) => {
+        const result = await admin(multi, 'GET', `${room(target)}/messages?limit=100`);
+        expect(result.status).toBe(200);
+        return JSON.stringify(result.body);
+      };
+      const human = async (target: LocalChannelCreated, label: string) => {
+        const text = message(label);
+        const result = await admin(multi, 'POST', `${room(target)}/send`, {
+          txnId: label, type: 'm.room.message', content: { msgtype: 'm.text', body: text },
+        });
+        expect(result.status).toBe(200);
+        await eventually(async () => (await readEntries(files(target))).some(entry => entry.body === text));
+        return text;
+      };
+      for (const target of [ecosystem, optimism]) {
+        expect(toolData(await agent.call('khala_join', { link: target.selfLink }))).toMatchObject({ state: 'connected' });
+      }
+      const original = await status();
+      expect(original).toHaveLength(2);
+      expect(original.map(entry => entry.channel).sort()).toEqual(['Ecosystem', 'Optimism']);
+      for (const target of [ecosystem, optimism]) {
+        const entry = original.find(entry => entry.roomId === target.roomId)!;
+        expect(entry).toMatchObject({ state: 'connected', you: 'kevin-Claude' });
+        expect((await roster(target)).filter(member => member.kind === 'agent')).toEqual([
+          expect.objectContaining({ userId: entry.agentUserId, displayName: entry.you, harness: 'claude' }),
+        ]);
+      }
+      expect(original[0]!.agentUserId).not.toBe(original[1]!.agentUserId);
+      const setListening = async (target: LocalChannelCreated, next: 'sync' | 'steer' | 'async') => {
+        const id = original.find(entry => entry.roomId === target.roomId)!.agentUserId;
+        expect((await admin(multi, 'POST', `/api/local/channels/${enc(target.roomId)}/mode`, {
+          agent: id, mode: next, txnId: `mode-${target.name}-${next}`,
+        })).status).toBe(200);
+        await eventually(async () => (await status()).find(entry => entry.roomId === target.roomId)?.listeningMode === next
+          && (await roster(target)).find(member => member.userId === id)?.listeningMode === next);
+      };
+      await setListening(ecosystem, 'sync'); await setListening(optimism, 'steer');
+      await deliver(agent, 'UserPromptSubmit');
+      const sync = await human(ecosystem, 'multi-sync');
+      const steer = await human(optimism, 'multi-steer');
+      const post = frameText(await deliver(agent, 'PostToolUse'));
+      expect(post).toContain(steer); expect(post).not.toContain(sync);
+      expect(post).toContain('channel=\\"Optimism\\" you=\\"kevin-Claude\\"');
+      // The first steer message was consumed; a fresh message proves Stop groups
+      // both channels without replaying the PostToolUse message.
+      const stopSteer = await human(optimism, 'multi-stop-steer');
+      const stop = await deliver(agent, 'Stop');
+      expect(stop).toMatchObject({ decision: 'block' });
+      const blocks = frameText(stop);
+      expect(blocks.match(/<khala-channel-messages /g)).toHaveLength(2);
+      expect(blocks).toContain(sync); expect(blocks).toContain(stopSteer); expect(blocks).not.toContain(steer);
+      for (const name of ['Ecosystem', 'Optimism']) expect(blocks).toContain(`channel=\\"${name}\\" you=\\"kevin-Claude\\"`);
+
+      const steerWake = await armClaudeWake(agent);
+      const awakeSteer = await human(optimism, 'multi-steer-wake');
+      expect((await steerWake.exited).code).toBe(2);
+      expect(frameText(await deliver(agent, 'UserPromptSubmit'))).toContain(awakeSteer);
+
+      const routed = message('multi-routed');
+      expect(toolData(await agent.call('khala_send', { channel: 'Optimism', text: routed }))).toHaveProperty('eventId');
+      expect(await history(optimism)).toContain(routed); expect(await history(ecosystem)).not.toContain(routed);
+      const unsent = message('multi-no-channel');
+      expect(toolData(await agent.call('khala_send', { text: unsent }))).toMatchObject({ error: 'channel_required' });
+      for (const target of [ecosystem, optimism]) expect(await history(target)).not.toContain(unsent);
+
+      await setListening(optimism, 'async');
+      await deliver(agent, 'UserPromptSubmit');
+      expect(await deliver(agent, 'Stop')).toBeNull();
+      const wake = await armClaudeWake(agent);
+      const asyncText = await human(optimism, 'multi-async');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      expect(wake.running).toBe(true);
+      for (const event of ['PostToolUse', 'UserPromptSubmit', 'Stop'] as const) expect(await deliver(agent, event)).toBeNull();
+      // The same watcher must still notice the other channel's sync message.
+      const stillSync = await human(ecosystem, 'multi-still-sync');
+      expect((await wake.exited).code).toBe(2);
+      const awake = frameText(await deliver(agent, 'UserPromptSubmit'));
+      expect(awake).toContain(stillSync); expect(awake).not.toContain(asyncText);
+
+      expect(toolData(await agent.call('khala_leave', { channel: 'Optimism' }))).toMatchObject({ left: optimism.roomId });
+      expect(await status()).toEqual([expect.objectContaining({ roomId: ecosystem.roomId, state: 'connected' })]);
+      const afterLeave = message('multi-after-leave');
+      expect(toolData(await agent.call('khala_send', { text: afterLeave }))).toHaveProperty('eventId');
+      expect(await history(ecosystem)).toContain(afterLeave); expect(await history(optimism)).not.toContain(afterLeave);
+      const beforeRestart = await human(ecosystem, 'multi-before-restart');
+      expect(frameText(await deliver(agent, 'Stop'))).toContain(beforeRestart);
+
+      const rejoinFile = path.join(agent.files.dir, 'rejoin.json');
+      const rejoin = await readFile(rejoinFile, 'utf8');
+      await agent.close();
+      agent = await McpProcess.start(multi, 'claude', agent.sessionId);
+      for (const target of [ecosystem, optimism]) expect(toolData(await agent.call('khala_join', { link: target.selfLink }))).toMatchObject({ state: 'connected' });
+      expect(await readFile(rejoinFile, 'utf8')).toBe(rejoin);
+      const restarted = await status();
+      expect(restarted).toHaveLength(2);
+      for (const old of original) {
+        expect(restarted.find(entry => entry.roomId === old.roomId)).toMatchObject({ state: 'connected', you: old.you, agentUserId: old.agentUserId });
+        const target = old.roomId === ecosystem.roomId ? ecosystem : optimism;
+        expect((await roster(target)).filter(member => member.kind === 'agent')).toEqual([
+          expect.objectContaining({ userId: old.agentUserId, displayName: old.you }),
+        ]);
+      }
+      // Use the real per-channel token against the other room's helper route.
+      const creds = await readJson<AgentCredentials>(files(ecosystem).session);
+      expect(creds?.roomId).toBe(ecosystem.roomId);
+      expect(creds?.accessToken).toBeTruthy();
+      const attacked = message('multi-cross-room');
+      const rejected = await raw(multi, { method: 'POST', path: `${room(optimism)}/send`,
+        headers: { authorization: `Bearer ${creds!.accessToken}` },
+        body: { txnId: 'cross-room', type: 'm.room.message', content: { msgtype: 'm.text', body: attacked } },
+      });
+      expect([401, 403]).toContain(rejected.status);
+      expect(await history(optimism)).not.toContain(attacked);
+    } finally { await cleanupWorld(multi); }
+  }, 120_000);
 });
