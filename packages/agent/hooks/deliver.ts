@@ -1,7 +1,8 @@
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { sessionFiles, readStatus, StateError, type SessionFiles } from '../src/state';
-import { unread, advanceCursor } from '../src/inbox';
+import { unread, advanceCursor, type Cursor } from '../src/inbox';
+import { listChannels, type ChannelRef } from '../src/channels';
 import { writeActivity } from '../src/activity';
 import { readListeningMode } from '../src/mode';
 import { isWakeEntry } from '../src/events/receive';
@@ -37,7 +38,7 @@ export function renderFrame(channel: string, entries: readonly InboxEntry[], you
   return `<khala-channel-messages channel="${channel.replace(/"/g, '&quot;')}"${youAttr} count="${entries.length}">\n${INTRO}${youLine}\n${entries.map(renderLine).join('\n')}\n</khala-channel-messages>`;
 }
 
-function selectFrame(channelName: string | undefined, entries: readonly InboxEntry[], you?: string) {
+function selectFrame(channelName: string | undefined, entries: readonly InboxEntry[], you?: string, budget = MAX_FRAME_BYTES, truncate = true) {
   const rendered: InboxEntry[] = [];
   let consumedCount = 0;
   let channel = channelName;
@@ -45,19 +46,19 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
     const entry = entries[i]!;
     if (rendered.length === 50) break;
     channel ??= entry.roomId;
-    if (Buffer.byteLength(renderFrame(channel, [...rendered, entry], you)) > MAX_FRAME_BYTES) {
-      if (rendered.length) break;
+    if (Buffer.byteLength(renderFrame(channel, [...rendered, entry], you)) > budget) {
+      if (rendered.length || !truncate) break;
       // Search code point boundaries so truncation cannot split a UTF-8 character.
       const body = Array.from(entry.body);
       let low = 0, high = body.length;
       while (low < high) {
         const middle = Math.ceil((low + high) / 2);
         const candidate = { ...entry, body: body.slice(0, middle).join('') + TRUNCATED };
-        if (Buffer.byteLength(renderFrame(channel, [candidate], you)) <= MAX_FRAME_BYTES) low = middle;
+        if (Buffer.byteLength(renderFrame(channel, [candidate], you)) <= budget) low = middle;
         else high = middle - 1;
       }
       const truncated = { ...entry, body: body.slice(0, low).join('') + TRUNCATED };
-      if (Buffer.byteLength(renderFrame(channel, [truncated], you)) > MAX_FRAME_BYTES) throw new Error('frame_metadata_too_large');
+      if (Buffer.byteLength(renderFrame(channel, [truncated], you)) > budget) throw new Error('frame_metadata_too_large');
       rendered.push(truncated);
       consumedCount = i + 1;
       break;
@@ -69,6 +70,76 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
     frame: rendered.length ? renderFrame(channel!, rendered, you) : null,
     consumed: entries.slice(0, consumedCount),
   };
+}
+
+type FrameGroup = { channel: ChannelRef; entries: readonly InboxEntry[]; cursor: Cursor; you?: string | undefined };
+/** Later channels wait rather than truncating to the remainder of another channel's budget. */
+export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_BYTES) {
+  const ordered = [...groups].filter(group => group.entries.length).sort((a, b) =>
+    Date.parse(a.entries[0]!.ts) - Date.parse(b.entries[0]!.ts));
+  const selected = [];
+  let used = 0;
+  for (const group of ordered) {
+    const result = selectFrame(group.channel.channelName ?? group.channel.roomId, group.entries, group.you,
+      budget - used - (selected.length ? 1 : 0), selected.length === 0);
+    if (!result.frame) continue;
+    const bytes = Buffer.byteLength(result.frame) + (selected.length ? 1 : 0);
+    if (used + bytes > budget) continue;
+    selected.push({ ...group, ...result });
+    used += bytes;
+  }
+  return selected;
+}
+
+async function channelFrames(files: SessionFiles, tool: boolean, requireWake: boolean, io: HookIO): Promise<string | null> {
+  const groups: FrameGroup[] = [];
+  for (const channel of await listChannels(files)) {
+    const mode = await readListeningMode(channel.files);
+    if (mode === 'async' || (tool && mode !== 'steer')) continue;
+    const [status, pending] = await Promise.all([readStatus(channel.files), unread(channel.files)]);
+    groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
+      ...pending, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
+  }
+  const selected = selectFrames(groups);
+  const emitted = new Map<number, string>();
+  const reserved = selected.reduce((sum, group) => sum + Buffer.byteLength(group.frame!), 0) + Math.max(0, selected.length - 1);
+  let spare = MAX_FRAME_BYTES - reserved;
+  // Commit wake-bearing groups first so conflicts cannot consume event-only groups
+  // when the hook ultimately has no reason to emit anything.
+  const order = selected.map((group, index) => ({ group, index }));
+  if (requireWake) order.sort((a, b) => Number(b.group.consumed.some(isWakeEntry)) - Number(a.group.consumed.some(isWakeEntry)));
+  let hasWake = false;
+  const failures: unknown[] = [];
+  for (const { group, index } of order) {
+    if (requireWake && !hasWake && !group.consumed.some(isWakeEntry)) continue;
+    try {
+      let current = group;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (!current.frame || (requireWake && !hasWake && !current.consumed.some(isWakeEntry))) break;
+        if (await advanceCursor(current.channel.files, current.cursor, current.consumed) === 'conflict') {
+          if (attempt === 0) {
+            const pending = await unread(current.channel.files);
+            const retry = selectFrame(current.channel.channelName ?? current.channel.roomId, pending.entries, current.you,
+              Buffer.byteLength(group.frame!) + spare, index === 0);
+            current = { ...current, ...pending, ...retry };
+          }
+          continue;
+        }
+        spare += Buffer.byteLength(group.frame!) - Buffer.byteLength(current.frame);
+        emitted.set(index, current.frame);
+        hasWake ||= current.consumed.some(isWakeEntry);
+        break;
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length) {
+    if (!emitted.size) throw failures[0];
+    const error = failures[0];
+    diagnostic(io, error instanceof StateError ? error.code : 'internal_error');
+  }
+  return emitted.size ? [...emitted].sort(([a], [b]) => a - b).map(([, frame]) => frame).join('\n') : null;
 }
 
 function diagnostic(io: HookIO, code: string): void {
@@ -100,24 +171,13 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
     if (!(await fs.stat(files.dir)).isDirectory()) return 0;
   } catch { return 0; }
   try {
-    const mode = await readListeningMode(files);
-    if (input.hook_event_name === 'PostToolUse' && mode !== 'steer') return 0;
     if (input.hook_event_name === 'UserPromptSubmit') await writeActivity(files, 'busy', io.now);
     if (input.hook_event_name === 'Stop' && input.stop_hook_active === true) {
       await writeActivity(files, 'idle', io.now);
       return 0;
     }
-    if (mode === 'async') {
-      if (input.hook_event_name === 'Stop') await writeActivity(files, 'idle', io.now);
-      return 0;
-    }
-    const status = await readStatus(files);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { entries, cursor } = await unread(files);
-      const { frame, consumed } = selectFrame(status?.channelName, entries, typeof status?.displayName === 'string' ? status.displayName : undefined);
-      if (!frame) break;
-      if (input.hook_event_name !== 'UserPromptSubmit' && !consumed.some(isWakeEntry)) break;
-      if (await advanceCursor(files, cursor, consumed) === 'conflict') continue;
+    const frame = await channelFrames(files, input.hook_event_name === 'PostToolUse', input.hook_event_name !== 'UserPromptSubmit', io);
+    if (frame) {
       await writeActivity(files, 'busy', io.now);
       const envelope = input.hook_event_name === 'Stop'
         ? { decision: 'block', reason: frame }
@@ -176,23 +236,17 @@ export async function deliverCursor(stdin: string, io: HookIO): Promise<number> 
 }
 
 async function cursorOutput(files: SessionFiles, event: CursorEvent, loopCount: unknown, io: HookIO): Promise<object | null> {
-  const mode = await readListeningMode(files);
   if (event === 'beforeSubmitPrompt') {
     await writeActivity(files, 'busy', io.now);
     return null;
   }
-  if (event === 'postToolUse' && mode !== 'steer') return null;
   // Like Claude's stop_hook_active: at most one follow-up per user turn, never a loop.
-  if (event === 'stop' && (mode === 'async' || (typeof loopCount === 'number' && loopCount > 0))) {
+  if (event === 'stop' && typeof loopCount === 'number' && loopCount > 0) {
     await writeActivity(files, 'idle', io.now);
     return null;
   }
-  const status = await readStatus(files);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { entries, cursor } = await unread(files);
-    const { frame, consumed } = selectFrame(status?.channelName, entries, typeof status?.displayName === 'string' ? status.displayName : undefined);
-    if (!frame || !consumed.some(isWakeEntry)) break;
-    if (await advanceCursor(files, cursor, consumed) === 'conflict') continue;
+  const frame = await channelFrames(files, event === 'postToolUse', true, io);
+  if (frame) {
     await writeActivity(files, 'busy', io.now);
     return event === 'stop' ? { followup_message: frame } : { additional_context: frame };
   }
