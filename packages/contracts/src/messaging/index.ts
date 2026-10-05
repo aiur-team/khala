@@ -25,7 +25,7 @@ export {
 } from './events';
 export {
   type ChannelMembership, type ChannelPort, type ChannelRejection, type ChannelSnapshot, type ChannelSummary,
-  type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,
+  type ChannelAdministrationPort, type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,
   type SendState, type TimelinePage,
   decodeChannelSnapshot, decodeChannelSummary, decodeRoomSnapshot, decodeRoomSummary, decodeSendState, decodeTimelinePage,
   readChannelSummary, readRoomSummary,
