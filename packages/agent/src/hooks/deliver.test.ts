@@ -6,11 +6,12 @@ import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { openSessionDir, sessionFiles, writeStatus, type SessionFiles } from '../state';
+import { channelFiles, openSessionDir, sessionFiles, StateError, writeStatus, type SessionFiles } from '../state';
 import { appendEntries, readCursor, unread } from '../inbox';
 import * as inbox from '../inbox';
+import * as channels from '../channels';
 import { readActivity } from '../activity';
-import { deliver, renderLine } from '../../hooks/deliver';
+import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
@@ -344,4 +345,233 @@ describe('cursor', () => {
     const payload = '\uFEFF' + JSON.stringify({ hook_event_name: 'stop', loop_count: 0, workspace_roots: [workspace] });
     expect(await hook('stop', 'cursor', {}, payload)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify({ followup_message: exactFrame }) + '\n' });
   });
+});
+
+
+describe('multi-channel delivery', () => {
+  const refs: channels.ChannelRef[] = [];
+  beforeEach(async () => {
+    refs.length = 0;
+    files = await openSessionDir('claude', 'session', { XDG_STATE_HOME: root });
+  });
+  async function channel(name: string, mode: string, entries: InboxEntry[], legacy = false) {
+    const roomId = `!${name}:khala.local`;
+    const key = channels.channelKey(roomId);
+    const target = legacy ? files : channelFiles(files, roomId);
+    await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
+    if (!legacy) await fs.writeFile(path.join(target.dir, 'channel.json'), JSON.stringify({ roomId, channelName: name, joinedAt: '2026-10-05T12:00:00Z' }));
+    await appendEntries(target, entries);
+    await writeStatus(target, 'connected', undefined, undefined, name, `${name}-name`);
+    await fs.writeFile(target.mode, JSON.stringify({ mode }));
+    const ref = { key, roomId, channelName: name, files: target, legacy };
+    refs.push(ref);
+    return target;
+  }
+  async function run(event: string, harness = 'claude', extra = {}) {
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    const input = harness === 'cursor'
+      ? { hook_event_name: event, workspace_roots: [], ...extra }
+      : { session_id: 'session', hook_event_name: event, ...extra };
+    await deliver(JSON.stringify(input), ['--harness', harness], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
+    expect(stderr.write).not.toHaveBeenCalled();
+    return stdout.write.mock.calls[0]?.[0] as string | undefined;
+  }
+  it.each(['claude', 'codex', 'cursor'])('uses independent modes and identities on %s', async harness => {
+    if (harness !== 'claude') files = await openSessionDir(harness as 'codex' | 'cursor', harness === 'cursor' ? CURSOR_DEFAULT_SESSION : 'session', { XDG_STATE_HOME: root });
+    const eco = await channel('Ecosystem', 'sync', [message(1), message(2)]);
+    const opt = await channel('Optimism', 'steer', [message(3)]);
+    const research = await channel('Research', 'async', [message(4)]);
+    const tool = JSON.parse((await run(harness === 'cursor' ? 'postToolUse' : 'PostToolUse', harness))!);
+    const context = harness === 'cursor' ? tool.additional_context : tool.hookSpecificOutput.additionalContext;
+    expect(context).toContain('channel="Optimism" you="Optimism-name"');
+    expect(context).not.toContain('Ecosystem');
+    expect((await readCursor(eco)).deliveredCount).toBe(0);
+    await appendEntries(opt, [message(5)]);
+    const stop = JSON.parse((await run(harness === 'cursor' ? 'stop' : 'Stop', harness))!);
+    const frame = harness === 'cursor' ? stop.followup_message : stop.reason;
+    expect(frame.match(/<khala-channel-messages /g)).toHaveLength(2);
+    expect(frame).toContain('channel="Ecosystem" you="Ecosystem-name" count="2"');
+    expect(frame).toContain('channel="Optimism" you="Optimism-name" count="1"');
+    expect(frame).not.toContain('Research');
+    expect((await readCursor(eco)).deliveredCount).toBe(2);
+    expect((await readCursor(opt)).deliveredCount).toBe(2);
+    expect((await readCursor(research)).deliveredCount).toBe(0);
+    expect((await readActivity(files)).state).toBe('busy');
+  });
+  it('orders by oldest unread timestamp and leaves a 40 KiB channel for the next hook', async () => {
+    const later = await channel('A', 'sync', [message(1, { body: 'a'.repeat(40960), ts: '2026-10-02T10:05:00Z' })]);
+    const older = await channel('B', 'sync', [message(2, { body: 'b'.repeat(40960) })]);
+    const first = JSON.parse((await run('Stop'))!).reason as string;
+    expect(first.match(/<khala-channel-messages /g)).toHaveLength(1);
+    expect(first).toContain('channel="B"');
+    expect(Buffer.byteLength(first)).toBeLessThanOrEqual(65536);
+    expect((await readCursor(later)).deliveredCount).toBe(0);
+    expect((await readCursor(older)).deliveredCount).toBe(1);
+    expect(JSON.parse((await run('Stop'))!).reason).toContain('channel="A"');
+  });
+  it('counts separators and fills the remaining budget without truncating later channels', async () => {
+    await channel('A', 'sync', [message(1)]);
+    await channel('B', 'sync', [message(2), message(3)]);
+    const groups = await Promise.all(refs.map(async channel => ({ channel, ...await unread(channel.files), you: `${channel.channelName}-name` })));
+    const a = renderFrame('A', [message(1)], 'A-name');
+    const b = renderFrame('B', [message(2)], 'B-name');
+    const budget = Buffer.byteLength(a) + 1 + Buffer.byteLength(b);
+    const selected = selectFrames(groups, budget);
+    expect(selected.map(group => group.consumed.length)).toEqual([1, 1]);
+    expect(Buffer.byteLength(selected.map(group => group.frame).join('\n'))).toBe(budget);
+    expect(selectFrames(groups, budget - 1)).toHaveLength(1);
+  });
+  it('a repeated cursor conflict drops only its own channel', async () => {
+    const eco = await channel('Ecosystem', 'sync', [message(1)]);
+    const opt = await channel('Optimism', 'sync', [message(2)]);
+    const advance = inbox.advanceCursor;
+    const spy = vi.spyOn(inbox, 'advanceCursor').mockImplementation(async (target, cursor, consumed) =>
+      target.dir === eco.dir ? 'conflict' : advance(target, cursor, consumed));
+    const frame = JSON.parse((await run('Stop'))!).reason;
+    expect(frame).not.toContain('Ecosystem');
+    expect(frame).toContain('Optimism');
+    expect(spy.mock.calls.filter(([target]) => target.dir === eco.dir)).toHaveLength(2);
+    expect((await readCursor(eco)).deliveredCount).toBe(0);
+    expect((await readCursor(opt)).deliveredCount).toBe(1);
+  });
+  it('retries a concurrent channel advance without duplicating its consumed entry', async () => {
+    const eco = await channel('Ecosystem', 'sync', [message(1), message(2, { body: 'remaining' })]);
+    const opt = await channel('Optimism', 'sync', [message(3)]);
+    const advance = inbox.advanceCursor;
+    let conflict = true;
+    vi.spyOn(inbox, 'advanceCursor').mockImplementation(async (target, cursor, consumed) => {
+      if (target.dir === eco.dir && conflict) {
+        conflict = false;
+        await advance(target, cursor, [consumed[0]!]);
+        return 'conflict';
+      }
+      return advance(target, cursor, consumed);
+    });
+    const frame = JSON.parse((await run('Stop'))!).reason;
+    expect(frame).toContain('channel="Ecosystem" you="Ecosystem-name" count="1"');
+    expect(frame).toContain('remaining');
+    expect(frame).toContain('channel="Optimism"');
+    expect((await readCursor(eco)).deliveredCount).toBe(2);
+    expect((await readCursor(opt)).deliveredCount).toBe(1);
+  });
+  it.each((['claude', 'codex', 'cursor'] as const).flatMap(harness =>
+    ['advance', 'retry-read'].map(failure => ({ harness, failure }))))('preserves an earlier block when a later channel $failure fails on $harness', async ({ harness, failure }) => {
+    if (harness !== 'claude') files = await openSessionDir(harness, harness === 'cursor' ? CURSOR_DEFAULT_SESSION : 'session', { XDG_STATE_HOME: root });
+    const a = await channel('A', 'sync', [message(1)]);
+    const b = await channel('B', 'sync', [message(2)]);
+    const advance = inbox.advanceCursor;
+    const read = inbox.unread;
+    let retry = false;
+    vi.spyOn(inbox, 'advanceCursor').mockImplementation(async (target, cursor, consumed) => {
+      if (target.dir !== b.dir) return advance(target, cursor, consumed);
+      if (failure === 'advance') throw new StateError('storage_failed');
+      retry = true;
+      return 'conflict';
+    });
+    vi.spyOn(inbox, 'unread').mockImplementation(async target => {
+      if (target.dir === b.dir && retry) throw new StateError('storage_failed');
+      return read(target);
+    });
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    const input = harness === 'cursor' ? { hook_event_name: 'stop', workspace_roots: [] }
+      : { session_id: 'session', hook_event_name: 'Stop' };
+    await deliver(JSON.stringify(input), ['--harness', harness], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
+    const result = JSON.parse(stdout.write.mock.calls[0]![0] as string);
+    const frame = harness === 'cursor' ? result.followup_message : result.reason;
+    expect(frame).toContain('channel="A"');
+    expect(frame).not.toContain('channel="B"');
+    expect((await readCursor(a)).deliveredCount).toBe(1);
+    expect((await readCursor(b)).deliveredCount).toBe(0);
+    expect(stderr.write).toHaveBeenCalledWith(JSON.stringify({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' }) + '\n');
+  });
+  it('includes a legacy root channel alongside a channel directory', async () => {
+    await channel('Legacy', 'sync', [message(1)], true);
+    await channel('New', 'sync', [message(2)]);
+    const frame = JSON.parse((await run('Stop'))!).reason;
+    expect(frame).toContain('channel="Legacy"');
+    expect(frame).toContain('channel="New"');
+    expect(frame.match(/<khala-channel-messages /g)).toHaveLength(2);
+  });
+  it('leaves all event-only channels unread, but emits them with another channel wake', async () => {
+    const a = await channel('A', 'sync', [message(1, { kind: 'event' })]);
+    const b = await channel('B', 'sync', [message(2, { kind: 'event' })]);
+    expect(await run('Stop')).toBeUndefined();
+    expect((await readCursor(a)).deliveredCount).toBe(0);
+    expect((await readCursor(b)).deliveredCount).toBe(0);
+    await appendEntries(b, [message(3)]);
+    const frame = JSON.parse((await run('Stop'))!).reason;
+    expect(frame.match(/<khala-channel-messages /g)).toHaveLength(2);
+    expect((await readCursor(a)).deliveredCount).toBe(1);
+    expect((await readCursor(b)).deliveredCount).toBe(2);
+  });
+  it('does not consume event-only channels when all wake-bearing channels conflict', async () => {
+    const events = await channel('A', 'sync', [message(1, { kind: 'event' })]);
+    const wake = await channel('B', 'sync', [message(2)]);
+    const advance = inbox.advanceCursor;
+    vi.spyOn(inbox, 'advanceCursor').mockImplementation(async (target, cursor, consumed) =>
+      target.dir === wake.dir ? 'conflict' : advance(target, cursor, consumed));
+    expect(await run('Stop')).toBeUndefined();
+    expect((await readCursor(events)).deliveredCount).toBe(0);
+  });
+  it('uses directory identity even when an entry claims another room', async () => {
+    const a = await channel('A', 'sync', [message(1, { roomId: '!B:khala.local' })]);
+    const b = await channel('B', 'sync', []);
+    const frame = JSON.parse((await run('Stop'))!).reason;
+    expect(frame).toContain('channel="A" you="A-name"');
+    expect(frame).not.toContain('B-name');
+    expect(frame).not.toContain('channel="B"');
+    expect((await readCursor(a)).deliveredCount).toBe(1);
+    expect((await readCursor(b)).deliveredCount).toBe(0);
+  });
+});
+
+
+function expectedEnvelope(harness: string, event: string, emits: boolean, frame: string) {
+  if (harness === 'cursor') {
+    if (event === 'beforeSubmitPrompt') return { continue: true };
+    if (!emits) return {};
+    if (event === 'stop') return { followup_message: frame };
+    return { additional_context: frame };
+  }
+  if (!emits) return null;
+  if (event === 'Stop') return { decision: 'block', reason: frame };
+  return { hookSpecificOutput: { hookEventName: event, additionalContext: frame } };
+}
+
+const goldenCases = (['claude', 'codex', 'cursor'] as const).flatMap(harness =>
+  (harness === 'cursor' ? ['beforeSubmitPrompt', 'postToolUse', 'stop'] : ['UserPromptSubmit', 'PostToolUse', 'Stop']).flatMap(event =>
+    ['steer', 'sync', 'async'].flatMap(mode => [0, 1, 51].map(count => ({ harness, event, mode, count, guard: false, bom: harness === 'cursor' })))));
+for (const harness of ['claude', 'codex', 'cursor'] as const) {
+  for (const mode of ['steer', 'sync', 'async']) goldenCases.push({ harness, event: harness === 'cursor' ? 'stop' : 'Stop', mode, count: 1, guard: true, bom: harness === 'cursor' });
+}
+it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$guard BOM=$bom in both layouts', async ({ harness, event, mode, count, guard, bom }) => {
+  const session = await openSessionDir(harness, harness === 'cursor' ? CURSOR_DEFAULT_SESSION : 'session', { XDG_STATE_HOME: root });
+  const roomId = '!r:khala.local';
+  const input = harness === 'cursor' ? { hook_event_name: event, loop_count: guard ? 1 : 0 }
+    : { session_id: 'session', hook_event_name: event, stop_hook_active: guard };
+  const outputs: string[] = [];
+  for (const layout of ['legacy', 'channel']) {
+    const target = layout === 'legacy' ? session : channelFiles(session, roomId);
+    await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
+    if (layout === 'channel') {
+      await fs.rm(session.inbox);
+      await fs.writeFile(path.join(target.dir, 'channel.json'), JSON.stringify({ roomId, joinedAt: '2026-10-05T12:00:00Z' }));
+    }
+    await appendEntries(target, Array.from({ length: count }, (_, i) => message(i)));
+    if (count === 0) await fs.writeFile(target.inbox, '');
+    await writeStatus(target, 'connected');
+    await fs.writeFile(target.mode, JSON.stringify({ mode }));
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    await deliver((bom ? '\uFEFF' : '') + JSON.stringify(input), ['--harness', harness],
+      { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
+    expect(stderr.write).not.toHaveBeenCalled();
+    outputs.push(stdout.write.mock.calls[0]?.[0] as string ?? '');
+    const emits = count > 0 && mode !== 'async' && !guard && event !== 'beforeSubmitPrompt'
+      && (!['PostToolUse', 'postToolUse'].includes(event) || mode === 'steer');
+    expect((await readCursor(target)).deliveredCount).toBe(emits ? Math.min(50, count) : 0);
+    const frame = renderFrame(roomId, Array.from({ length: Math.min(count, 50) }, (_, i) => message(i)));
+    const expected = expectedEnvelope(harness, event, emits, frame);
+    expect(outputs.at(-1)).toBe(expected ? JSON.stringify(expected) + '\n' : '');
+  }
+  expect(outputs[1]).toBe(outputs[0]);
 });

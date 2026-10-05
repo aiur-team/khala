@@ -324,7 +324,7 @@ describe('TimelineScreen', () => {
     expect(html).not.toContain('No messages yet');
   });
 
-  it('renders a load-earlier control only when a further page exists', () => {
+  it('never renders a history control or an idle pagination spinner', () => {
     const withCursor = renderToStaticMarkup(
       <TimelineScreen
         controller={fakeController({ phase: 'ready' as const, items: [], nextCursor: 'cursor_1', newMessageCount: 0 })}
@@ -333,7 +333,8 @@ describe('TimelineScreen', () => {
         viewer={viewer}
       />,
     );
-    expect(withCursor).toContain('Load earlier messages');
+    expect(withCursor).not.toContain('Load earlier messages');
+    expect(withCursor).not.toContain('Loading earlier messages');
     const withoutCursor = renderToStaticMarkup(
       <TimelineScreen
         controller={fakeController({ phase: 'ready' as const, items: [], nextCursor: null, newMessageCount: 0 })}
@@ -343,6 +344,7 @@ describe('TimelineScreen', () => {
       />,
     );
     expect(withoutCursor).not.toContain('Load earlier messages');
+    expect(withoutCursor).not.toContain('Loading earlier messages');
   });
 });
 

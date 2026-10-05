@@ -8,6 +8,7 @@ export const AGENT_JOIN_READY_PATH = '/api/agent/join/ready';
 export type AgentJoinAgentDeps = Readonly<{
   joins: ReturnType<typeof createJoinStore>; store: ControlStore; clock: () => number;
   random: (bytes: number) => Uint8Array; origin: string; secret: string;
+  autoConfirm?: (joinId: string) => Promise<boolean>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
 }>;
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
@@ -57,7 +58,10 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret(pollSecret), roomId: link.roomId, channelName,
       ...(r.rejoinSecret === undefined ? {} : { rejoinSecretHash: hashPollSecret(r.rejoinSecret as string) }), ...(r.sessionId === undefined ? {} : { sessionId: r.sessionId as string }), label: label.name, harness: r.harness as Harness, state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + JOIN_TTL_MS).toISOString() };
     if (await deps.joins.create(record) !== 'created') return error('unavailable', 503);
-    const result: AgentJoinCreated = { joinId, pollSecret, confirmUrl: deps.origin + agentConfirmPagePath(joinId), expiresAt: record.expiresAt };
+    if (deps.autoConfirm && !await deps.autoConfirm(joinId)) return error('unavailable', 503);
+    const current = deps.autoConfirm ? await deps.joins.read(joinId) : undefined;
+    if (current && current.kind !== 'found') return error('unavailable', 503);
+    const result: AgentJoinCreated = { ...(current?.kind === 'found' && current.record.state === 'confirmed' ? { autoConfirmed: true } : {}), joinId, pollSecret, confirmUrl: deps.origin + agentConfirmPagePath(joinId), expiresAt: record.expiresAt };
     return json(result, 201);
   });
   const poll = guarded('GET', async request => {

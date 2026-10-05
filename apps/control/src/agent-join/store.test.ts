@@ -59,7 +59,7 @@ function fixture() {
 it('strictly decodes records and strips undefined keys', () => {
   const { record } = fixture();
   expect(decodeJoinRecord(toStored({ ...record, ownerId: undefined } as unknown as JoinRecord))).toEqual(record);
-  for (const patch of [{ extra: 1 }, { label: ' system ' }, { harness: 'unknown' }, { joinId: 'bad' }, { pollSecretHash: 'secret' }, { expiresAt: 'bad' }, { state: 'confirmed' }, { ownerId: 4 }]) expect(decodeJoinRecord({ ...record, ...patch })).toBeNull();
+  for (const patch of [{ extra: 1 }, { label: ' system ' }, { harness: 'unknown' }, { joinId: 'bad' }, { pollSecretHash: 'secret' }, { expiresAt: 'bad' }, { state: 'confirmed' }, { ownerId: 4 }, { rejoinApproval: { ownerLabel: 'Kevin', generation: -1 } }, { rejoinApproval: { ownerLabel: '', generation: 0 } }]) expect(decodeJoinRecord({ ...record, ...patch })).toBeNull();
   expect(pollSecretMatches('poll-secret', record.pollSecretHash)).toBe(true);
   expect(pollSecretMatches('wrong', record.pollSecretHash)).toBe(false);
 });

@@ -1,0 +1,18 @@
+{
+  "harnesses": [
+    "cursor",
+    "cursor",
+    "claude",
+    "codex",
+    "invalid"
+  ],
+  "sessions": {
+    "claude": "claude-env",
+    "codexMeta": "meta-thread",
+    "codexEnv": "env-thread",
+    "cursorWorkspace": "ws-65d80d2c48b3d23b89fb7644fbb034a4",
+    "cursorDefault": "cursor-default",
+    "invalidClaude": null,
+    "invalidCodex": null
+  }
+}

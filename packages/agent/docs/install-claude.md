@@ -27,12 +27,22 @@ then restart. To remove: `claude plugin uninstall khala@khala`.
 
 ## Behaviour
 
-- An idle session is watched for 3000 seconds (50 minutes) after its last turn.
-  Later messages arrive at your next prompt. Esc-interrupted turns do not arm a
-  watcher. The watcher polls every 500 ms and wakes only for unread messages
-  while idle; delivery happens in the next synchronous hook context.
-  `KHALA_WAKE_TEST_DEADLINE_MS` and `KHALA_WAKE_TEST_POLL_MS` are test-only knobs,
-  not user configuration.
+- After joining, Claude starts a background Monitor on `khala watch` for its session.
+  The listener watches all session channels, including channels joined later, and prints
+  one count-only notification per channel batch in Sync/Steer, with no message bodies;
+  Async remains silent. Leaving one channel keeps the listener running; it exits when
+  the session closes.
+  Claude re-arms Monitor at its 30-minute deadline. On start/resume, the plugin
+  reminds Claude to check status, rejoin the previously authorized channel if needed,
+  and arm Monitor. Local links are single-use: for a local channel you authorized
+  Claude to manage, it obtains a fresh `shareLink` with `khala local link "<name>"`;
+  otherwise provide a fresh local link. Replace an unavailable hosted link too.
+  `khala_status` reports `watcherArmed: false` when a connected session needs arming.
+  Monitor availability depends on the Claude host; Claude reports if it is unavailable.
+- The Stop-hook backup watches an idle session for 24 hours after a completed turn,
+  polling every 500 ms. It exits with the parent process; Esc-interrupted turns do not
+  arm it. Delivery happens in the next synchronous hook context.
+  `KHALA_WAKE_TEST_DEADLINE_MS` and `KHALA_WAKE_TEST_POLL_MS` remain test-only knobs.
 - The plugin registers `PostToolUse` for Steer delivery.
 - Local channels (optional; you and your agents on this computer, no sign-in).
   Tell Claude: "Set up a local Khala channel called refactor." Claude runs
