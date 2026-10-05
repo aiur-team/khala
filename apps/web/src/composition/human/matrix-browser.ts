@@ -125,7 +125,7 @@ function roomSummary(room: Room, limits: ContentLimits): RoomSummary {
   const base = {
     roomId: room.roomId as RoomId,
     title: room.name && room.name !== room.roomId ? room.name : null,
-    membership: membership === 'join' ? 'joined' : membership === 'invite' || membership === 'knock' ? 'joining' : 'left',
+    membership: membership === 'join' ? 'joined' : membership === 'ban' ? 'revoked' : membership === 'leave' ? 'left' : 'joining',
     revision: room.getLastLiveEvent()?.getId() ?? `matrix:${room.roomId}`,
   };
   const decoded = decodeRoomSummary(base, limits);
@@ -359,7 +359,7 @@ export function createMatrixRoomRequest(input: Readonly<{ operationId: string; t
   };
 }
 
-async function waitForEncryptedRoom(client: MatrixClient, roomId: string, signal?: AbortSignal): Promise<Room> {
+export async function waitForEncryptedRoom(client: MatrixClient, roomId: string, signal?: AbortSignal): Promise<Room> {
   const combined = AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]);
   while (!combined.aborted) {
     const room = client.getRoom(roomId);
@@ -507,7 +507,7 @@ export async function sendRoomMessage(
   }
 }
 
-class MatrixSubstrate implements RoomSubstrate {
+export class MatrixSubstrate implements RoomSubstrate {
   constructor(
     private readonly runtime: MatrixRuntime,
     private readonly limits: ContentLimits,
@@ -553,9 +553,13 @@ class MatrixSubstrate implements RoomSubstrate {
     }
   }
 
-  async room(roomId: RoomId): Promise<SubstrateRead<RoomSummary>> {
-    const room = this.active().client.getRoom(roomId);
-    return room ? { kind: 'done', value: roomSummary(room, this.limits) } : { kind: 'rejected', code: 'not_found' };
+  async room(roomId: RoomId, options?: { signal?: AbortSignal }): Promise<SubstrateRead<RoomSummary>> {
+    try {
+      const active = this.active();
+      const room = await waitForEncryptedRoom(active.client, roomId, options?.signal);
+      if (this.runtime.active !== active) return { kind: 'unavailable' };
+      return { kind: 'done', value: roomSummary(room, this.limits) };
+    } catch { return { kind: 'unavailable' }; }
   }
 
   async sendEvent(input: Readonly<{ roomId: RoomId; clientTxnId: string; content: MessageContent }>): Promise<SubstrateEffect<{ eventId: EventId; authorDeviceId: DeviceId }>> {
@@ -635,8 +639,7 @@ class MatrixSubstrate implements RoomSubstrate {
   async timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>): Promise<SubstrateRead<{ events: readonly SubstrateEvent[]; nextCursor: string | null; revision: string }>> {
     try {
       const active = this.active();
-      const room = active.client.getRoom(input.roomId);
-      if (!room) return { kind: 'rejected', code: 'not_found' };
+      const room = await waitForEncryptedRoom(active.client, input.roomId);
       const timeline = room.getLiveTimeline();
       const currentCursor = timeline.getPaginationToken(Direction.Backward);
       let source: readonly MatrixEvent[];
@@ -669,12 +672,21 @@ class MatrixSubstrate implements RoomSubstrate {
   subscribe(roomId: RoomId, listener: (update: SubstrateUpdate) => void): () => void {
     let disposed = false;
     const active = this.runtime.active;
-    const room = active?.client.getRoom(roomId);
-    if (!active || !room) return () => undefined;
+    if (!active) return () => undefined;
+    const abort = new AbortController();
     let publishEpoch = 0;
     const publish = () => {
       if (disposed || this.runtime.active !== active) return;
+      const room = active.client.getRoom(roomId);
+      if (!room) return;
       const epoch = ++publishEpoch;
+      const summary = roomSummary(room, this.limits);
+      // Removal must reach the UI even when control no longer resolves this
+      // room's participants, so it cannot depend on timeline attribution.
+      if (summary.membership === 'left' || summary.membership === 'revoked') {
+        listener({ generation: active.generation, room: summary, events: [] });
+        return;
+      }
       const source = [...room.getLiveTimeline().getEvents()];
       void this.events(source, roomId).then(events => {
         const ignoredEventIds = source.flatMap(event => {
@@ -693,9 +705,13 @@ class MatrixSubstrate implements RoomSubstrate {
     active.client.on(RoomEvent.Timeline, receive);
     const disposeDecryption = subscribeRoomDecryption(active.client, roomId,
       () => !disposed && this.runtime.active === active, publish);
-    publish();
+    const membershipChanged = () => publish();
+    active.client.on(RoomEvent.MyMembership, membershipChanged);
+    void waitForEncryptedRoom(active.client, roomId, abort.signal).then(publish).catch(() => undefined);
     return () => {
       disposed = true;
+      abort.abort();
+      active.client.off(RoomEvent.MyMembership, membershipChanged);
       active.client.off(RoomEvent.Timeline, receive);
       disposeDecryption();
     };

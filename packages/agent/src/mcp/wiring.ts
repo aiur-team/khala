@@ -16,7 +16,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       ? (deps.createWaker ?? createCodexWaker)({ files, threadId: sessionId }) : undefined;
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
-    // The client initializes lazily. Clear the previous process's join before
+    // Restore authorization before the first tool call. Clear the previous process's join before
     // delegating any operation, so an expired join cannot reject a fresh one.
     let initialization: Promise<void> | undefined;
     const initialize = () => initialization ??= (async () => {
@@ -25,7 +25,9 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       const joinsDir = path.join(files.dir, 'joins');
       await ensureStateDir(joinsDir);
       await fs.rm(joinsDir, { recursive: true, force: true });
+      await client.resume?.();
     })();
+    void initialize().catch(() => {});
     return {
       async join(link, label) { await initialize(); return client.join(link, label); },
       async status(channel) {
