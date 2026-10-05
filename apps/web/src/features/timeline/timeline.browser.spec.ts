@@ -37,6 +37,8 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.goto(url);
 
     await page.locator('section.timeline').waitFor();
+    await page.waitForFunction(() => window.__timelineHarness.readEvents.includes('recent_3'));
+    assert.equal(await page.evaluate(() => window.__timelineHarness.readEvents.filter(id => id === 'recent_3').length), 1, 'opening and seeing latest marks it once');
 
     await page.evaluate(() => window.__timelineHarness.showUnavailable());
     const unavailable = page.locator('[data-event-id="encrypted"]');
@@ -224,11 +226,14 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     // before the next live snapshot arrives, or the controller still thinks
     // the reader is at the latest message.
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    await page.evaluate(() => (window as unknown as { __timelineHarness: { pushLiveMessage: (body: string) => void } }).__timelineHarness.pushLiveMessage('a live arrival while scrolled away'));
+    const readsBeforeArrival = await page.evaluate(() => window.__timelineHarness.readEvents.length);
+    await page.evaluate(() => window.__timelineHarness.pushLiveMessage('a live arrival while scrolled away'));
     await page.getByRole('button', { name: /new message/ }).waitFor();
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
     assert.equal(await list.evaluate(node => node.scrollTop), 0, 'another participant\'s arrival never moves a reader who scrolled away');
+    assert.equal(await page.evaluate(() => window.__timelineHarness.readEvents.length), readsBeforeArrival, 'scrolled-up arrival remains unread');
     await page.getByRole('button', { name: /new message/ }).click();
+    await page.waitForFunction(count => window.__timelineHarness.readEvents.length === count + 1, readsBeforeArrival);
     assert.equal(await page.getByRole('button', { name: /new message/ }).count(), 0, 'jump-to-latest clears the new-message count');
     assert.equal(await page.getByText('a live arrival while scrolled away').count(), 1);
 
@@ -291,8 +296,30 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
         assert.equal(await atEnd(), true, `an arrival keeps a reader ${offset}px from the end pinned at ${width}`);
         assert.equal(await sentRowVisible(body), true, `the arrival is fully visible at ${width}`);
         assert.equal(await pill.count(), 0, 'no pill while at latest');
+        const eventId = await page.locator('.timeline__row', { hasText: body }).getAttribute('data-event-id');
+        await page.waitForFunction(id => window.__timelineHarness.readEvents.includes(id!), eventId);
+        assert.equal(await page.evaluate(id => window.__timelineHarness.readEvents.filter(event => event === id).length, eventId), 1, 'new arrival at latest is marked once');
       }
 
+      if (width === 1024) {
+        // Headless Chromium keeps tabs focused; emulate only the focus input.
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'hasFocus', { configurable: true, value: Boolean.bind(null, false) });
+          window.dispatchEvent(new Event('blur'));
+        });
+        const before = await page.evaluate(() => window.__timelineHarness.readEvents.length);
+        await pushLive('arrived in an unfocused tab');
+        await page.locator('.timeline__row', { hasText: 'arrived in an unfocused tab' }).waitFor();
+        await settle();
+        assert.equal(await page.evaluate(() => window.__timelineHarness.readEvents.length), before, 'unfocused tab stays unread');
+        const eventId = await page.locator('.timeline__row', { hasText: 'arrived in an unfocused tab' }).getAttribute('data-event-id');
+        await page.evaluate(() => {
+          Reflect.deleteProperty(document, 'hasFocus');
+          window.dispatchEvent(new Event('focus'));
+        });
+        await page.waitForFunction(id => window.__timelineHarness.readEvents.includes(id!), eventId);
+        assert.equal(await page.evaluate(id => window.__timelineHarness.readEvents.filter(event => event === id).length, eventId), 1);
+      }
       await scrollToOffset(300);
       const readingAt = await list.evaluate(node => node.scrollTop);
       await pushLive(`first arrival while reading at ${width}`);
@@ -331,6 +358,7 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.evaluate(() => (window as unknown as { __timelineHarness: { revokeMembership: () => void } }).__timelineHarness.revokeMembership());
     await page.getByText('no longer have access').waitFor();
     assert.equal(await composer.isDisabled(), true, 'the composer is disabled once membership is revoked');
+
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

@@ -17,6 +17,7 @@ import { attributionFor, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent, type RenderOptions } from './message-renderer';
 import type { MentionCandidate } from './mentions';
+import { createLatestReadTracker } from './read-latest';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
 import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
@@ -36,6 +37,8 @@ import type { NameParticipant } from '@khala/contracts/messaging/agent-names';
 export interface TimelineScreenProps {
   describeParticipant?: (participantId: ParticipantId) => Participant | undefined;
   controller: TimelineController;
+  /** Persist the latest event only after the focused viewer has seen it. */
+  onReadLatest?: (eventId: EventId) => void | Promise<void>;
   roomPort: Pick<ChannelPort, 'send'>;
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
@@ -220,7 +223,7 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  describeParticipant, controller, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
+  describeParticipant, controller, onReadLatest, roomPort, roomId, viewer, viewerInitials = null, extraParticipants = [], members = [], renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
   unreadableActivity = false, composerRef, onOpenParticipant, onMentionRoster, onInvite, now = () => new Date(), timeOptions = {},
 }: TimelineScreenProps) {
   const colorFor = useHumanColor();
@@ -321,6 +324,41 @@ export function TimelineScreen({
   useEffect(() => {
     controller.setReaderAtLatest(atLatest);
   }, [atLatest, controller]);
+
+  const readLatest = useMemo(() => onReadLatest ? createLatestReadTracker(onReadLatest) : null, [onReadLatest]);
+  const latestRow = rows.at(-1);
+  const latestEventId = latestRow ? latestRow.kind === 'message' ? latestRow.item.ref.eventId : latestRow.eventId : null;
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !readLatest || !latestEventId || data.phase !== 'ready' || !canCompose) return;
+    let frame = 0;
+    const check = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const row = list.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(latestEventId)}"]`);
+        const bounds = list.getBoundingClientRect();
+        const end = row?.getBoundingClientRect();
+        readLatest(latestEventId, {
+          atLatest: atLatest && distanceFromEnd(list) < NEAR_BOTTOM_PX,
+          focused: document.visibilityState === 'visible' && document.hasFocus(),
+          visible: !!end && end.bottom <= bounds.bottom + 1 && end.bottom > bounds.top,
+        });
+      });
+    };
+    check();
+    list.addEventListener('scroll', check);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    const resize = new ResizeObserver(check);
+    resize.observe(list);
+    return () => {
+      cancelAnimationFrame(frame);
+      resize.disconnect();
+      list.removeEventListener('scroll', check);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [atLatest, canCompose, data.phase, latestEventId, readLatest]);
 
   // Requests the first history page once on mount so a fresh channel has a
   // cursor to page from; pagination-request state otherwise stays local.

@@ -7,6 +7,7 @@ import {
   MatrixEvent,
   MatrixEventEvent,
   MsgType,
+  NotificationCountType,
   Preset,
   Room,
   RoomEvent,
@@ -217,8 +218,10 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         ));
       const body = latest?.getType() === EventType.RoomMessage && !latest.isDecryptionFailure()
         ? latest.getClearContent()?.body : null;
-      const unread = candidate.getUnreadNotificationCount();
       const viewer = client.getUserId();
+      const latestId = latest?.getId();
+      const unread = viewer && latestId && candidate.hasUserReadEvent(viewer, latestId)
+        ? 0 : candidate.getUnreadNotificationCount();
       const sender = latest?.getSender();
       return {
         id: summary.roomId,
@@ -235,6 +238,20 @@ export function projectJoinedEncryptedRooms(client: Pick<MatrixClient, 'getRooms
         } } : {}),
       };
     }));
+}
+
+/** Persist both the fully-read marker and public receipt for the rendered event. */
+export async function markMatrixRoomRead(client: Pick<MatrixClient, 'getRoom' | 'setRoomReadMarkers'>,
+  roomId: RoomId, eventId: EventId): Promise<void> {
+  const room = client.getRoom(roomId);
+  const event = room?.getLiveTimeline().getEvents().find(candidate => candidate.getId() === eventId);
+  if (!room || !event || room.getMyMembership() !== 'join') throw new Error('Read event unavailable');
+  await client.setRoomReadMarkers(roomId, eventId, event);
+  // Do not erase a newer arrival while the server was accepting this receipt.
+  if (room.getLiveTimeline().getEvents().at(-1)?.getId() === eventId) {
+    room.setUnreadNotificationCount(NotificationCountType.Total, 0);
+    room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
+  }
 }
 
 /** The homeserver sync is live once the initial sync lands, until it errors, reconnects or stops. */
@@ -264,11 +281,13 @@ export function subscribeConversationIndex(client: Pick<MatrixClient, 'getRooms'
     try { bindEvents(); } catch { /* Snapshot reports unavailable without crashing the route. */ }
     listener();
   };
+  client.on(RoomEvent.Receipt, publish);
   client.on(RoomEvent.Timeline, publish);
   client.on(ClientEvent.Sync, publish);
   publish();
   return () => {
     disposed = true;
+    client.off(RoomEvent.Receipt, publish);
     client.off(RoomEvent.Timeline, publish);
     client.off(ClientEvent.Sync, publish);
     for (const event of observed) event.off(MatrixEventEvent.Decrypted, onDecrypted);
@@ -849,6 +868,13 @@ export function createMatrixBrowserPorts(input: Readonly<{
   };
 
   const conversations: ConversationIndexPort = {
+    async markRead(ownerId, generation, roomId, eventId) {
+      const active = runtime.active;
+      const view = device.current();
+      if (!active || active.principal.ownerId !== ownerId || view.state !== 'ready'
+        || view.generation !== generation || active.generation !== generation) throw new Error('Read session unavailable');
+      await markMatrixRoomRead(active.client, roomId, eventId);
+    },
     snapshot(ownerId, generation) {
       const active = runtime.active;
       const view = device.current();

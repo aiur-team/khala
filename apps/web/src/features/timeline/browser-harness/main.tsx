@@ -14,6 +14,7 @@ const controller = createTimelineController(harness.port, harness.roomId, { gene
 declare global {
   interface Window {
     __timelineHarness: {
+      readEvents: string[];
       showUnavailable: () => void;
       decryptUnavailable: () => void;
       pushLiveMessage: (body: string) => void;
@@ -25,7 +26,9 @@ declare global {
     };
   }
 }
+const readEvents: string[] = [];
 window.__timelineHarness = {
+  readEvents,
   showUnavailable: harness.showUnavailable,
   decryptUnavailable: harness.decryptUnavailable,
   pushLiveMessage: harness.pushLiveMessage,
@@ -41,6 +44,7 @@ function Harness() {
     <AiurShell mode="standalone" navigation={navigation} theme={{ theme: 'dark', onThemeChange: () => {} }} collapsed={false} onCollapsedChange={() => {}}>
       <KhalaPageFrame model={{ title: 'Conversation', labelledBy: 'timeline-heading' }}>
         <TimelineScreen
+          onReadLatest={eventId => { readEvents.push(eventId); }}
           controller={controller}
           roomPort={harness.port}
           roomId={harness.roomId}

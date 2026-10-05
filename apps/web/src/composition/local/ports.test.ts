@@ -72,9 +72,11 @@ describe('local composition', () => {
     expect(await ports.identity.current()).toEqual({ kind: 'signed_in', principal: LOCAL_PRINCIPAL });
     expect(captured.channel!.actor()).toEqual(ports.participant!());
     expect(ports.participant!()?.displayName).toBe('kevin');
-    const viewing = vi.spyOn(ports.conversations as LocalConversations, 'viewing');
-    const release = captured.channel!.onObserve!(roomId);
-    expect(viewing).toHaveBeenCalledExactlyOnceWith(roomId); expect(release).toBeTypeOf('function'); release();
+    const remember = vi.spyOn(ports.conversations as LocalConversations, 'rememberEvent');
+    const event = { roomId, eventId: '$latest', seq: 8, type: 'm.room.message' as const, sender: agent, ts: 1, content: { body: 'hi', msgtype: 'm.text' } };
+    captured.substrate!.onEvent!(event);
+    expect(remember).toHaveBeenCalledExactlyOnceWith(event);
+    expect(captured.channel!.onObserve).toBeUndefined();
     const describe = vi.spyOn(captured.substrate!.members, 'describe');
     ports.describeParticipant!('someone'); expect(describe).toHaveBeenCalledWith('someone');
     expect(await ports.profile!.setUsername('kev')).toEqual({ kind: 'ok', username: 'kev' });

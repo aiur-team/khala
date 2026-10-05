@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
-import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import type { EventId, ParticipantId } from '@khala/contracts/messaging/ids';
 import type { TimelineComposerHandle } from '../../features/timeline/TimelineScreen';
 import { renderMessageContent } from '../../features/timeline/message-renderer';
 import type { RenameAgentResult } from '../../features/channel/AgentPresencePanel';
@@ -115,6 +115,8 @@ function HumanRoom({ context, roomId, navigate, routes }: {
   const conversations = useConversationIndex(context);
   // Updates the instant a Profile save succeeds, so the viewer sees their own choice at once.
   const { initials: viewerInitials, color: viewerColor, username } = useProfile();
+  const markRead = useCallback((eventId: EventId) => context.conversations?.markRead?.(
+    context.principal.ownerId, context.generation, roomId, eventId), [context, roomId]);
   const selectedConversation = conversations?.find(item => item.id === roomId);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -281,7 +283,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       } : {})}
       renderTimeline={(openParticipant, openInvite, onMentionRoster) => (
         <TimelineScreen key={JSON.stringify([context.principal.ownerId, deviceId, context.generation, roomId])}
-          controller={timeline} roomPort={context.room} roomId={roomId} viewer={channelViewer ?? viewer} viewerInitials={viewerInitials} composerRef={composer}
+          onReadLatest={markRead} controller={timeline} roomPort={context.room} roomId={roomId} viewer={channelViewer ?? viewer} viewerInitials={viewerInitials} composerRef={composer}
           extraParticipants={extraParticipants} onOpenParticipant={openParticipant} onMentionRoster={onMentionRoster}
           {...(participantRoster?.scope === participantScope ? { members: participantRoster.participants } : {})}
           {...(openInvite ? { onInvite: openInvite } : {})}

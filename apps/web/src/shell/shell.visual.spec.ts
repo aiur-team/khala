@@ -49,3 +49,29 @@ for (const theme of THEMES) {
     });
   });
 }
+
+// Both selected combinations alongside unread, read and hover, on desktop and phone.
+for (const theme of THEMES) {
+  for (const width of [390, 1280]) {
+    for (const selected of ['launch', 'design']) {
+      test(`${theme} row states at ${width}, selected ${selected}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.goto(`${url}?view=list&theme=${theme}&selected=${selected}`);
+        await page.locator('.kh-cv').first().waitFor();
+        await page.locator('[data-kh-convo="empty"]').hover();
+        await settle(page);
+        const badge = page.locator('.kh-cv-unread');
+        const insideRow = await badge.evaluate(dot => {
+          const badgeBox = dot.getBoundingClientRect();
+          const row = dot.closest('.kh-cv')!.getBoundingClientRect();
+          const avatar = dot.closest('.kh-cv-av')!.getBoundingClientRect();
+          return badgeBox.left >= row.left && badgeBox.top >= row.top
+            && badgeBox.right <= row.right && badgeBox.bottom <= row.bottom
+            && badgeBox.left < avatar.left && badgeBox.top < avatar.top;
+        });
+        expect(insideRow).toBe(true);
+        await expect(page.locator('.kh-list')).toHaveScreenshot(`${theme}-rows-${width}-${selected}.png`);
+      });
+    }
+  }
+}
