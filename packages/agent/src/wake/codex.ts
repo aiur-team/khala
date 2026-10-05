@@ -1,5 +1,7 @@
+import path from 'node:path';
 import { readListeningMode } from '../mode';
 import { readActivity } from '../activity';
+import { listChannels } from '../channels';
 import { readCursor, unreadCount } from '../inbox';
 import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
 import { codexIdleWakeArgv, type CodexIdleWakePort } from './idle-wake';
@@ -23,8 +25,8 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   const stderr = deps.stderr ?? (line => { process.stderr.write(line); });
   const controller = new AbortController();
   let pending: { at: number } | undefined;
-  const wakesAtCount = new Map<number, number>();
-  let channelIdentity: string | undefined;
+  const wakesAtCount = new Map<string, number>();
+  const identities = new Map<string, string>();
   let stopped = false;
   let again = false;
   let inFlight: Promise<void> | undefined;
@@ -35,27 +37,61 @@ export function createCodexWaker(deps: CodexWakerDeps): CodexWaker {
   };
   const evaluate = async () => {
     try {
-      const session = await readJson<{ roomId: string; userId: string }>(deps.files.session);
-      const identity = JSON.stringify([session?.roomId, session?.userId]);
-      if (identity !== channelIdentity) {
-        channelIdentity = identity;
-        wakesAtCount.clear();
-        pending = undefined;
+      const channels = await listChannels(deps.files);
+      const eligible = [];
+      const currentIdentities = new Map<string, string>();
+      for (const channel of channels) {
+        const session = await readJson<{ roomId: string; userId: string }>(channel.files.session);
+        const metadata = channel.legacy ? null : await readJson<{ joinedAt?: string }>(path.join(channel.files.dir, 'channel.json'));
+        currentIdentities.set(channel.key, JSON.stringify([session?.roomId ?? channel.roomId, session?.userId, metadata?.joinedAt]));
+        if (await readListeningMode(channel.files) === 'async') continue;
+        eligible.push({ channel,
+          counts: await unreadCount(channel.files.dir), cursor: await readCursor(channel.files) });
       }
-      if (await readListeningMode(deps.files) === 'async') { pending = undefined; return; }
-      const counts = await unreadCount(deps.files.dir);
-      const cursor = await readCursor(deps.files);
-      if (!counts.messages) { pending = undefined; return; }
+      const keys = new Set(currentIdentities.keys());
+      const changed = new Set<string>();
+      for (const [key, identity] of currentIdentities) {
+        if (identities.get(key) !== identity) changed.add(key);
+      }
+      for (const key of identities.keys()) if (!keys.has(key)) changed.add(key);
+      // Preserve projections for unaffected channels when a membership/identity changes.
+      // An empty rejoined A must not renew the budget earned by unread B.
+      if (changed.size) {
+        for (const [key, wakes] of [...wakesAtCount]) {
+          const pairs = JSON.parse(key) as [string, number][];
+          if (!pairs.some(([id]) => changed.has(id))) continue;
+          wakesAtCount.delete(key);
+          const remainingPairs = pairs.filter(([id]) => !changed.has(id));
+          if (!remainingPairs.length) continue;
+          const remaining = JSON.stringify(remainingPairs);
+          wakesAtCount.set(remaining, Math.max(wakes, wakesAtCount.get(remaining) ?? 0));
+        }
+      }
+      for (const key of changed) identities.delete(key);
+      for (const [key, identity] of currentIdentities) identities.set(key, identity);
+      const pairs = eligible.map(({ channel, cursor }) => [channel.key, cursor.deliveredCount] as [string, number])
+        .sort(([a], [b]) => a.localeCompare(b));
+      const budgetKey = JSON.stringify(pairs);
+      if (changed.size) {
+        const inheritedKey = JSON.stringify(pairs.filter(([key]) => !changed.has(key)));
+        const newUnread = eligible.some(item => changed.has(item.channel.key) && item.counts.messages > 0);
+        wakesAtCount.set(budgetKey, newUnread ? 0 : wakesAtCount.get(inheritedKey) ?? 0);
+        if (newUnread || !eligible.some(item => !changed.has(item.channel.key) && item.counts.messages > 0)) pending = undefined;
+      }
+      if (!eligible.some(item => item.counts.messages > 0)) { pending = undefined; return; }
       const activity = await readActivity(deps.files);
       if (pending && Date.parse(activity.updatedAt) > pending.at) pending = undefined;
       const at = now();
       if (pending && at - pending.at < (deps.retryAfterMs ?? 60_000)) return;
       if (stopped || activity.state !== 'idle') return;
-      const wakes = wakesAtCount.get(cursor.deliveredCount) ?? 0;
+      const wakes = wakesAtCount.get(budgetKey) ?? 0;
       if (wakes >= 2) return;
-      if (await readListeningMode(deps.files) === 'async' || stopped) { pending = undefined; return; }
+      for (const { channel } of eligible) {
+        if (await readListeningMode(channel.files) === 'async') { pending = undefined; return; }
+      }
+      if (stopped) return;
       pending = { at };
-      wakesAtCount.set(cursor.deliveredCount, wakes + 1);
+      wakesAtCount.set(budgetKey, wakes + 1);
       const outcome = await port.run(codexIdleWakeArgv(deps.threadId), controller.signal);
       if (outcome.status !== 'queued') warn('codex_queue_failed', outcome.status);
     } catch { warn('codex_waker_error'); }
