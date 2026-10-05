@@ -42,7 +42,7 @@ test('a human who meets someone with the same name picks a name for this channel
     const field = dialog.getByRole('textbox', { name: 'Your name in this channel' });
     assert.equal(await field.inputValue(), 'alice2');
     assert.equal(await focused(page), 'input');
-    assert.equal(await field.evaluate(input => (input as HTMLInputElement).selectionEnd - (input as HTMLInputElement).selectionStart), 6);
+    assert.equal(await field.evaluate(input => { const box = input as HTMLInputElement; return (box.selectionEnd ?? 0) - (box.selectionStart ?? 0); }), 6);
     const save = dialog.getByRole('button', { name: 'Save' });
     assert.equal(await dialog.getByRole('button').count(), 1, 'Save is the only action');
 

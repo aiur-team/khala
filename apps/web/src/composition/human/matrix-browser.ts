@@ -903,6 +903,8 @@ export function createMatrixBrowserPorts(input: Readonly<{
       const active = runtime.active;
       if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;
       try {
+        // Lazy-loaded rooms hold only some membership events; the name prompt orders members by them (memberSince).
+        try { await active.client.getRoom(roomId)?.loadMembersIfNeeded(); } catch { /* The prompt then orders unknown members last. */ }
         const joined = await active.client.getJoinedRoomMembers(roomId);
         if (signal?.aborted || runtime.active !== active) return null;
         const userIds = Object.keys(joined.joined);
