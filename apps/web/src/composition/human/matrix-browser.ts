@@ -36,6 +36,8 @@ import {
   type RoomSummary,
 } from '@khala/contracts/messaging/index';
 import { attachNameTargets } from './name-targets';
+import { checkName } from '@khala/contracts/m1/names';
+import type { ChannelNameResult, ChannelNamesPort } from '../../features/channel/ports';
 import { encodeMessageContent, projectWireEvent } from './message-wire';
 import {
   DEFAULT_LISTENING_MODE, LISTENING_MODE_COMMAND_TYPE, memberListeningMode, type ListeningMode, type ListeningModeCommandContent,
@@ -717,6 +719,35 @@ export function readListeningMode(client: Pick<MatrixClient, 'getRoom'>, roomId:
   return memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
 }
 
+/**
+ * Sets the viewer's own name in one channel: their room-scoped `m.room.member`
+ * displayname, which every client already reads as the member's name there. The
+ * homeserver accepts a member event only from that member, so no one else can set it.
+ */
+export async function setOwnChannelName(client: Pick<MatrixClient, 'getRoom' | 'getUserId' | 'sendStateEvent'>, roomId: string,
+  name: string): Promise<ChannelNameResult> {
+  try {
+    const checked = checkName(name, 'username');
+    if (!checked.ok) return { kind: 'error', code: 'invalid_name', reason: checked.error };
+    const userId = client.getUserId();
+    const room = client.getRoom(roomId);
+    const own = userId ? room?.currentState.getStateEvents(EventType.RoomMember, userId) : null;
+    if (!userId || !room || !own || own.getContent().membership !== 'join') return { kind: 'error', code: 'unavailable' };
+    const wanted = checked.name.toLowerCase();
+    if (room.getJoinedMembers().some(member => member.userId !== userId && member.rawDisplayName.toLowerCase() === wanted)) {
+      return { kind: 'error', code: 'name_taken' };
+    }
+    const send = client.sendStateEvent as unknown as (roomId: string, type: string, content: object, stateKey: string) => Promise<unknown>;
+    await send.call(client, roomId, EventType.RoomMember, { ...own.getContent(), membership: 'join', displayname: checked.name }, userId);
+    return { kind: 'ok', name: checked.name };
+  } catch { return { kind: 'error', code: 'unavailable' }; }
+}
+
+/** When `userId` took its current name in `roomId`: the time of its latest membership event. */
+export function memberSince(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): number | null {
+  return client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getTs() ?? null;
+}
+
 /** Sends the owner's encrypted listening-mode command to one agent. */
 export async function sendListeningMode(client: Pick<MatrixClient, 'getRoom' | 'sendEvent'>, roomId: string, userId: string,
   mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'> {
@@ -740,6 +771,8 @@ export type MatrixBrowserPorts = Readonly<{
   subscribeListeningModes(roomId: RoomId, listener: () => void): () => void;
   setListeningMode(roomId: RoomId, userId: string, mode: ListeningMode, txnId: string): Promise<'sent' | 'failed'>;
   participant(): ParticipantView | null;
+  channelNames: ChannelNamesPort;
+  memberSince(roomId: RoomId, userId: string): number | null;
   roomParticipants(roomId: RoomId, signal?: AbortSignal): Promise<readonly ParticipantView[] | null>;
 }>;
 
@@ -863,6 +896,9 @@ export function createMatrixBrowserPorts(input: Readonly<{
     setListeningMode: (roomId, userId, mode, txnId) => runtime.active
       ? sendListeningMode(runtime.active.client, roomId, userId, mode, txnId) : Promise.resolve('failed'),
     device, room, conversations, syncStatus, participant: () => runtime.active?.actor ?? null,
+    channelNames: { setOwnName: (roomId, name) => runtime.active
+      ? setOwnChannelName(runtime.active.client, roomId, name) : Promise.resolve({ kind: 'error', code: 'unavailable' }) },
+    memberSince: (roomId, userId) => runtime.active ? memberSince(runtime.active.client, roomId, userId) : null,
     async roomParticipants(roomId, signal) {
       const active = runtime.active;
       if (!active || !active.client.getRoom(roomId)?.hasEncryptionStateEvent()) return null;

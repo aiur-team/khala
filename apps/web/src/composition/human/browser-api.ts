@@ -452,12 +452,12 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     },
   };
   const agentNames: AgentNamesPort = {
-    async rename(matrixUserId, name, signal) {
+    async rename(matrixUserId, name, signal, roomId) {
       if (csrfToken === null) {
         const state = await readCurrent(signal);
         if (state.kind !== 'signed_in') return { kind: 'error', code: state.kind === 'signed_out' ? 'signed_out' : 'unavailable' };
       }
-      const response = await mutation(AGENT_RENAME_PATH, { matrixUserId, name }, signal);
+      const response = await mutation(AGENT_RENAME_PATH, { matrixUserId, name, ...(roomId ? { roomId } : {}) }, signal);
       if (!response) return { kind: 'error', code: 'unavailable' };
       if (response.status === 401) return { kind: 'error', code: 'signed_out' };
       const body = await jsonObject(response);

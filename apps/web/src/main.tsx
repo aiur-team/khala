@@ -62,6 +62,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     setListeningMode: matrix.setListeningMode,
     participant: matrix.participant,
     roomParticipants: matrix.roomParticipants,
+    channelNames: matrix.channelNames,
+    memberSince: matrix.memberSince,
     limits: decodedLimits.value,
   }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId } from '@khala/contracts/messaging/index';
-import { inviteWithHistory, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
+import { inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('attempts all initial ciphertext and keeps a failed event available for later key recovery', async () => {
@@ -369,6 +369,42 @@ describe('inviteWithHistory', () => {
   it('returns false when the invite fails', async () => {
     const sdk = client(); sdk.invite.mockRejectedValue(new Error('offline'));
     expect(await inviteWithHistory(sdk, '!r', '@agent-x:hs')).toBe(false);
+  });
+});
+
+describe('setOwnChannelName', () => {
+  const me = '@me:hs';
+  function client(content: Record<string, unknown> | null = { membership: 'join', displayname: 'alice', avatar_url: 'mxc://hs/a' }) {
+    const members = [{ userId: me, rawDisplayName: 'alice' }, { userId: '@other:hs', rawDisplayName: 'alice' }];
+    return {
+      getUserId: () => me,
+      getRoom: vi.fn(() => ({
+        currentState: { getStateEvents: (type: string, key: string) => type === EventType.RoomMember && key === me && content
+          ? { getContent: () => content, getTs: () => 42 } : null },
+        getJoinedMembers: () => members,
+      } as unknown as Room)),
+      sendStateEvent: vi.fn().mockResolvedValue({ event_id: '$e' }),
+    };
+  }
+  it('sends the viewer’s own room-scoped member event, keeping the rest of its content', async () => {
+    const sdk = client();
+    expect(await setOwnChannelName(sdk as unknown as MatrixClient, '!r', 'alice2')).toEqual({ kind: 'ok', name: 'alice2' });
+    expect(sdk.sendStateEvent).toHaveBeenCalledExactlyOnceWith('!r', EventType.RoomMember,
+      { membership: 'join', displayname: 'alice2', avatar_url: 'mxc://hs/a' }, me);
+    expect(memberSince(sdk as unknown as MatrixClient, '!r', me)).toBe(42);
+  });
+  it('refuses a name another member holds here, invalid names and non-members without sending', async () => {
+    const sdk = client();
+    expect(await setOwnChannelName(sdk as unknown as MatrixClient, '!r', 'ALICE')).toEqual({ kind: 'error', code: 'name_taken' });
+    expect(await setOwnChannelName(sdk as unknown as MatrixClient, '!r', 'a b')).toMatchObject({ kind: 'error', code: 'invalid_name' });
+    const left = client({ membership: 'leave', displayname: 'alice' });
+    expect(await setOwnChannelName(left as unknown as MatrixClient, '!r', 'alice2')).toEqual({ kind: 'error', code: 'unavailable' });
+    expect(sdk.sendStateEvent).not.toHaveBeenCalled();
+    expect(left.sendStateEvent).not.toHaveBeenCalled();
+  });
+  it('reports unavailable when the homeserver refuses', async () => {
+    const sdk = client(); sdk.sendStateEvent.mockRejectedValue(new Error('M_FORBIDDEN'));
+    expect(await setOwnChannelName(sdk as unknown as MatrixClient, '!r', 'alice2')).toEqual({ kind: 'error', code: 'unavailable' });
   });
 });
 

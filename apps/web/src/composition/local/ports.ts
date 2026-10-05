@@ -1,10 +1,11 @@
-import type { ContentLimits } from '@khala/contracts/messaging/index';
+import type { ContentLimits, RoomId } from '@khala/contracts/messaging/index';
 import { readHumanEntry, type EntryLocation } from '../human/entry';
 import type { HumanApplicationPorts } from '../human/application';
 import { createLocalHttp } from './http';
 import { LOCAL_PRINCIPAL, createLocalSession } from './session';
 import { createLocalProfilePort } from './profile';
 import { createLocalAgentNamesPort } from './agent-names';
+import { createLocalChannelNamesPort } from './channel-names';
 import { createLocalSubstrate } from './substrate';
 import { createLocalChannelService } from './channel-service';
 import { createLocalMembers } from './members';
@@ -37,6 +38,8 @@ export function createLocalHumanPorts(input: { origin: string; limits: ContentLi
     channelLinks: createLocalChannelLinks(http),
     profile: createLocalProfilePort(http, { onUsername: username => session.noteUsername(username) }),
     agentNames: createLocalAgentNamesPort(http),
+    // The roster re-reads at once so the new name (and the end of the prompt) show without waiting for a poll.
+    channelNames: createLocalChannelNamesPort(http, { onSaved: roomId => void members.refresh(roomId as RoomId) }),
     describeParticipant: participantId => members.describe(participantId),
     describeMatrixUser: userId => members.describeMatrixUser(userId),
     listeningMode: (roomId, userId) => members.listeningMode(roomId, userId),

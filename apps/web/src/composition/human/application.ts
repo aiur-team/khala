@@ -1,4 +1,4 @@
-import type { AgentNamesPort } from '../../features/channel/ports';
+import type { AgentNamesPort, ChannelNamesPort } from '../../features/channel/ports';
 import type { ProfilePort } from '../../features/profile/ports';
 import type { Participant } from '@khala/contracts/m1/participants';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
@@ -36,6 +36,10 @@ export interface HumanApplicationPorts {
   readonly describeMatrixUser?: (matrixUserId: string) => Participant | undefined;
   readonly agentJoin?: AgentJoinPort;
   readonly agentNames?: AgentNamesPort;
+  /** Sets the viewer's own name in one channel. */
+  readonly channelNames?: ChannelNamesPort;
+  /** When `matrixUserId` took its current name in `roomId` (its latest membership event), if known. */
+  readonly memberSince?: (roomId: RoomId, matrixUserId: string) => number | null;
   readonly profile?: ProfilePort;
   readonly inviteAgent?: AgentInvitePort;
   /** The listening mode a Matrix user reports in `roomId`; `sync` when unknown. */
