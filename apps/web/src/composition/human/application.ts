@@ -51,6 +51,8 @@ export interface HumanApplicationPorts {
   readonly device: DevicePort;
   readonly room: RoomPort & Partial<Pick<ChannelService, 'observeEntries'>>;
   readonly conversations?: ConversationIndexPort;
+  /** Background message observation must not acknowledge unread messages. */
+  readonly observeNotificationEntries?: ChannelService['observeEntries'];
   /** Homeserver sync liveness for the brand row's Live badge. */
   readonly syncStatus?: SyncStatusPort;
   readonly admission: AdmissionPort;
