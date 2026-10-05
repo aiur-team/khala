@@ -21,6 +21,7 @@ export type InviteRecord = Readonly<{
   creatorOwnerId: OwnerId;
   inviteRefDigest: string;
   policyRevision: 1;
+  removalGeneration?: number;
   policy: StoredAdmissionPolicy;
   status: 'active' | 'revoked';
   expiresAt: string | null;
@@ -69,6 +70,7 @@ export function readInviteRecord(value: JsonValue): InviteRecord | null {
     creatorOwnerId: creatorOwnerId as OwnerId,
     inviteRefDigest,
     policyRevision: 1,
+    ...(Number.isSafeInteger(value.removalGeneration) && typeof value.removalGeneration === 'number' && value.removalGeneration >= 0 ? { removalGeneration: value.removalGeneration } : {}),
     policy: decodedPolicy,
     status,
     expiresAt,

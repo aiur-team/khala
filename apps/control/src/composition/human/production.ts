@@ -68,6 +68,7 @@ export function createProductionHumanServiceLoader(dependencies: ProductionHuman
           diagnostic: (stage: ShareDiagnosticStage) => productionDiagnostic('share', stage),
         }),
         messaging: active.matrix.sessions,
+        administration: active.matrix.administration,
         verifyBrowserSender: createMatrixBrowserSenderVerifier({
           homeserverOrigin: active.env.publicHomeserverOrigin,
           serverName: active.env.matrixServerName,

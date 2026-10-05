@@ -16,7 +16,7 @@ import {
 } from './handlers';
 
 const ORIGIN = 'https://khala.aiur.team';
-const FLOW_ROUTE_COUNT = 9;
+const FLOW_ROUTE_COUNT = 11;
 const flowRoutes = () => registerHumanHandlers().slice(0, FLOW_ROUTE_COUNT);
 const principal: AuthPrincipal = {
   v: 1,
@@ -97,6 +97,8 @@ describe('human handler registration', () => {
       [SHARE_PATH, ['POST']],
       [INSPECT_PATH, ['GET']],
       [ADMIT_PATH, ['POST']],
+      ['/api/human/channels/creator', ['GET']],
+      ['/api/human/channels/remove-human', ['POST']],
       [MATRIX_SESSION_PATH, ['POST']],
       [MATRIX_PARTICIPANTS_PATH, ['POST']],
     ]);
@@ -397,17 +399,40 @@ describe('admission route handlers', () => {
 });
 
 describe('registerHumanHandlers', () => {
-  it('registers exactly the nine human flow routes', () => {
+  it('registers exactly the eleven human flow routes', () => {
     const registrations = registerHumanHandlers();
-    expect(registrations).toHaveLength(9);
+    expect(registrations).toHaveLength(11);
     expect(Object.isFrozen(registrations)).toBe(true);
   });
 
   it('appends the supplied channel-link route', () => {
     const r = { path: '/api/human/channel-link/resolve', methods: ['POST'], handle: async () => new Response() };
     const registrations = registerHumanHandlers({ channelLink: () => [r] });
-    expect(registrations.slice(0, 9).map(({ path, methods }) => ({ path, methods })))
+    expect(registrations.slice(0, 11).map(({ path, methods }) => ({ path, methods })))
       .toEqual(registerHumanHandlers().map(({ path, methods }) => ({ path, methods })));
     expect(registrations.at(-1)).toBe(r);
   });
+});
+
+
+it('authenticates creator lookup and authorizes human removal, mapping provider refusals precisely', async () => {
+  const administration: NonNullable<HumanHandlerServices['administration']> = {
+    creator: vi.fn(async () => ({ kind: 'ok' as const, ownerId: principal.ownerId })),
+    removeHuman: vi.fn(async () => ({ kind: 'ok' as const })),
+  };
+  const supplied = { ...services(), administration };
+  const registrations = createHumanHandlers(() => supplied);
+  const get = route(registrations, '/api/human/channels/creator');
+  const post = route(registrations, '/api/human/channels/remove-human');
+  expect(await body(await get.handle(request('/api/human/channels/creator?roomId=room_1')))).toEqual({ ownerId: principal.ownerId });
+  expect((await get.handle(request('/api/human/channels/creator?roomId=room_1&extra=x'))).status).toBe(400);
+  const mutation = () => request('/api/human/channels/remove-human', { method: 'POST', body: JSON.stringify({ roomId: 'room_1', ownerId: 'owner_bob' }) });
+  expect(await body(await post.handle(mutation()))).toEqual({ kind: 'ok' });
+  expect(administration.removeHuman).toHaveBeenCalledWith(principal, 'room_1', 'owner_bob');
+  for (const [kind, status] of [['forbidden', 403], ['not_found', 404], ['unavailable', 503]] as const) {
+    vi.mocked(administration.removeHuman).mockResolvedValueOnce({ kind });
+    expect((await post.handle(mutation())).status).toBe(status);
+  }
+  vi.mocked(supplied.auth.requireHumanMutation).mockResolvedValueOnce({ kind: 'rejected', code: 'csrf_mismatch' });
+  expect((await post.handle(mutation())).status).toBe(403);
 });
