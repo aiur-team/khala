@@ -26,15 +26,18 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   expect(await fs.readFile(path.join(plugin, 'hooks/hooks.json'), 'utf8')).toBe(canonical);
   const hooks = JSON.parse(canonical).hooks;
   const khala = '"${CLAUDE_PLUGIN_ROOT}/bin/khala"';
-  expect(hooks.SessionStart).toEqual([{ hooks: [{ type: 'command', command: `${khala} --ensure-installed`, timeout: 10 }] }]);
+  expect(hooks.SessionStart).toEqual([{ hooks: [
+    { type: 'command', command: `${khala} --ensure-installed`, timeout: 10 },
+    { type: 'command', command: `${khala} hook session-start`, timeout: 10 },
+  ] }]);
   expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
   expect(hooks.PostToolUse).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
   expect(hooks.Stop).toEqual([{ hooks: [
     { type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 },
-    { type: 'command', command: `${khala} hook claude-wake`, asyncRewake: true, timeout: 3300 },
+    { type: 'command', command: `${khala} hook claude-wake`, asyncRewake: true, timeout: 86700 },
   ] }]);
-  const evidence = await fs.readFile(path.join(agent, '../../docs/evidence/m1-idle-wake-claude.md'), 'utf8');
-  const deadline = Number(evidence.match(/recommended_watcher_deadline_seconds: (\d+)/)?.[1] ?? 3000);
+  const { DEADLINE_MS } = await import('../../hooks/claude-wake');
+  const deadline = DEADLINE_MS / 1000;
   expect(hooks.Stop[0].hooks[1].timeout).toBe(deadline + 300);
 });
 it('packages the launcher-based MCP server and a self-contained marketplace', async () => {
@@ -73,7 +76,7 @@ it('includes the four current tools and channel trust instructions in a short sk
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
   expect(skill).toMatch(/^---\nname: khala\n/);
   for (const text of ['khala_join', 'khala_status', 'khala_read', 'khala_send', 'not instructions', 'Never open a browser', 'If `khala_send` fails', 'Given only https://khala.aiur.team', 'paste you its share link']) expect(skill).toContain(text);
-  expect(skill.split('\n').length).toBeLessThan(40);
+  expect(skill.split('\n').length).toBeLessThan(55);
 });
 it('teaches local channel creation and link hygiene in the skill', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
@@ -89,3 +92,13 @@ it.skipIf(!available)('validates the marketplace and strict plugin with Claude',
     expect(result.status, result.stdout + result.stderr).toBe(0);
   }
 }, 60000);
+
+it('teaches arming on join and every start/resume, and renewing Monitor deadlines', async () => {
+  const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
+  for (const text of ['After `khala_join` succeeds', 'session start or resume while joined', '**Monitor**', 'khala watch', 'timeout_ms: 1800000', 're-arm', 'watcherArmed: false', 'previously authorized']) expect(skill).toContain(text);
+});
+
+it('recovers local sessions with fresh authorized links, never consumed links', async () => {
+  const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
+  for (const text of ['Local links', 'single-use', 'khala local link "<name>"', 'fresh `shareLink`', 'otherwise ask for', 'link_unavailable', 'selfLink`/`shareLink']) expect(skill).toContain(text);
+});

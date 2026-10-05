@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "stdout": "{}\n",
+  "stderr": "",
+  "activity": {
+    "state": "idle",
+    "updatedAt": "2026-10-05T12:00:00.000Z"
+  },
+  "cursor": {
+    "lastDeliveredEventId": "$message-1",
+    "deliveredCount": 1
+  },
+  "unread": [
+    "$message-2"
+  ]
+}

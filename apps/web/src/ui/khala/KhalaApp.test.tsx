@@ -9,12 +9,12 @@ function render(props: Partial<Parameters<typeof KhalaApp>[0]> = {}) {
 }
 
 describe('KhalaApp', () => {
-  it('renders the full-bleed card with list, main, detail, popover and toast hosts', () => {
+  it('renders the full-bleed card with list, main, detail, popover, tooltip and toast hosts', () => {
     const html = render();
     expect(html).toMatch(/<div class="khala-app" data-theme="dark"><section class="section-card kh-card" id="kh-card">/u);
     expect(html).toContain('<aside class="kh-list" aria-label="Channels"><div class="kh-brand">');
     expect(html).toContain('<p>list</p></aside><main class="kh-main"><p>main</p><div class="kh-toast" role="status"></div></main>');
-    expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div></section></div>');
+    expect(html).toContain('<div class="kh-detail"></div><div class="kh-pop" hidden=""></div><div class="kh-roster-tooltip" role="tooltip" hidden=""></div></section></div>');
   });
 
   it('embedded in a host page, adds no main landmark and labels the card', () => {
@@ -70,7 +70,7 @@ describe('KhalaApp', () => {
 
   it('renders an overlay at card level, outside both panes', () => {
     expect(render({ overlay: <div role="dialog">create</div> }))
-      .toContain('<div class="kh-pop" hidden=""></div><div role="dialog">create</div></section>');
+      .toContain('<div class="kh-pop" hidden=""></div><div class="kh-roster-tooltip" role="tooltip" hidden=""></div><div role="dialog">create</div></section>');
   });
 
   it('carries the theme on the app root', () => {

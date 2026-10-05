@@ -48,6 +48,7 @@ export function plainObject(value: unknown): value is Record<string, unknown> {
 }
 
 
-export function toolError(code: string) {
-  return { content: [{ type: 'text', text: JSON.stringify({ error: code }) }], structuredContent: { error: code }, isError: true };
+export function toolError(code: string, extra?: Readonly<Record<string, unknown>>) {
+  const error = { ...extra, error: code };
+  return { content: [{ type: 'text', text: JSON.stringify(error) }], structuredContent: error, isError: true };
 }

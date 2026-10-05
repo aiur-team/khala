@@ -70,3 +70,7 @@
 /* The mention setting includes a browser-blocked explanation on a second line. */
 .kh-mi[data-setting="mentions"] { max-width: min(320px, calc(100vw - 48px)); flex-wrap: wrap; white-space: normal; }
 .kh-mi[data-setting="mentions"] em { flex-basis: 100%; margin-left: 1.25rem; padding-left: 0; }
+/* Roster tips live beside the popover host, outside the scroll mask. */
+.kh-card .kh-roster [data-tip]:hover::after { content: none; }
+.kh-roster-tooltip { position: absolute; z-index: 30; width: max-content; max-width: calc(100% - 16px); box-sizing: border-box; font-size: .7rem; font-weight: 600; line-height: 1.2; padding: 5px 8px; border-radius: 7px; background: var(--fg); color: var(--surface); pointer-events: none; }
+.kh-roster-tooltip[hidden] { display: none; }
