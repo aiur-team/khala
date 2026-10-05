@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
@@ -183,4 +183,19 @@ it.each(['codex', 'claude'] as const)('creates the %s startup client without inp
   expect(createClient).toHaveBeenCalledOnce();
   expect(client.close).toHaveBeenCalledOnce();
   output.destroy();
+});
+
+
+it('preserves terminal removal on an eager session shutdown without reporting cleanup failure', () => {
+  const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-terminal-cleanup-'));
+  const dir = path.join(stateHome, 'khala', 'claude', 'removed-session');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(dir, 'status.json'), JSON.stringify({ state: 'disconnected', detail: 'removed', channelName: 'Release room' }), { mode: 0o600 });
+  try {
+    const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
+      env: { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: 'removed-session' }, encoding: 'utf8', input: '' });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(readFileSync(path.join(dir, 'status.json'), 'utf8'))).toMatchObject({ state: 'disconnected', detail: 'removed', channelName: 'Release room' });
+  } finally { rmSync(stateHome, { recursive: true, force: true }); }
 });

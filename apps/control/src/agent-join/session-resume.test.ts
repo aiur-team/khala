@@ -48,3 +48,23 @@ it('keeps temporary homeserver failure retryable without minting a device', asyn
   expect((await f.handler(request())).status).toBe(503);
   expect(f.resume).not.toHaveBeenCalled();
 });
+
+
+it('rejects the superseded bearer after the resumed client logs out the old device', async () => {
+  const f = await fixture();
+  let loggedOut = false;
+  f.fetch.mockImplementation(async (url, init) => {
+    const token = new Headers(init?.headers).get('authorization');
+    if (String(url).endsWith('/logout')) { loggedOut = true; return Response.json({}); }
+    return loggedOut && token === 'Bearer old-token' ? new Response('{}', { status: 401 }) : Response.json({ user_id: old.userId });
+  });
+  const response = await f.handler(request());
+  expect(response.status).toBe(200);
+  const delivered = await response.json();
+  expect(delivered).toEqual(fresh);
+  await f.fetch('https://matrix.test/_matrix/client/v3/logout', { method: 'POST', headers: { authorization: 'Bearer old-token' } });
+  f.resume.mockClear();
+  expect((await f.handler(request())).status).toBe(401);
+  expect(f.resume).not.toHaveBeenCalled();
+  expect((await f.handler(request(fresh.accessToken))).status).toBe(200);
+});

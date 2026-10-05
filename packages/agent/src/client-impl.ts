@@ -17,7 +17,7 @@ import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
-import { ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, type JoinFile, type StatusFile } from './state';
+import { TERMINAL_SESSION_DETAILS, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, type JoinFile, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
   harness: Harness; sessionId: string; env?: NodeJS.ProcessEnv;
@@ -25,7 +25,7 @@ export type KhalaAgentClientOptions = {
   joinApi?: { requestJoin: typeof requestJoin; pollJoin: typeof pollJoin; reportReady: typeof reportReady };
   fetch?: typeof fetch; inviteTimeoutMs?: number; autoConfirmWaitMs?: number; onInboxAppend?: (entry: InboxEntry) => void;
 };
-type ResumeFile = { link: string; label: string; workspace: string; secretHash: string; credentials: AgentCredentials };
+type ResumeFile = { link: string; label: string; workspace: string; secretHash: string; credentials: AgentCredentials; retireToken?: string };
 type Attempt = {
   link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
   task: Promise<void>; session?: ChannelSession; credentials?: AgentCredentials;
@@ -61,6 +61,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let appends: Promise<void> = Promise.resolve();
   let statusWrites: Promise<void> = Promise.resolve();
   let resumeWrites: Promise<void> = Promise.resolve();
+  let retireToken: string | undefined;
+  function persistResume(attempt: Attempt, credentials: AgentCredentials): Promise<void> {
+    const saved: ResumeFile = { link: attempt.link, label: lastLabel, workspace,
+      secretHash: createHash('sha256').update(rejoinSecret!).digest('hex'), credentials,
+      ...(retireToken ? { retireToken } : {}) };
+    return resumeWrites = resumeWrites.catch(() => {}).then(() => writeStateFile(dir, 'resume.json', saved));
+  }
   function forgetResume(): Promise<void> {
     return resumeWrites = resumeWrites.catch(() => {}).then(() => removeStateFile(dir, 'resume.json'));
   }
@@ -115,9 +122,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (validAgentRejoinSecret(saved)) rejoinSecret = saved;
         else await writeStateFile(dir, 'rejoin.json', { secret: rejoinSecret = randomBytes(32).toString('base64url') });
       }
+      const previous = await readStateFile<StatusFile>(dir, 'status.json');
+      if (typeof previous?.channelName === 'string') status.channelName = previous.channelName;
+      if (typeof previous?.displayName === 'string') status.displayName = previous.displayName;
       // Re-joining requires fresh credentials; the server reuses membership by session.
       await removeStateFile(dir, 'session.json');
-      await setStatus('idle');
+      if (previous?.state === 'disconnected' && TERMINAL_SESSION_DETAILS.some(detail => detail === previous.detail)) await setStatus('disconnected', previous.detail);
+      else await setStatus('idle');
     })();
   }
   function current(attempt: Attempt): boolean {
@@ -174,6 +185,18 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       let credentials = resumed ?? await wait(api.pollJoin(input, { signal, ...fetchDeps }));
       if (!current(attempt)) return;
       if (resumed && credentials.transport !== 'local') {
+        const retire = async () => {
+          if (!retireToken) return;
+          const response = await wait((options.fetch ?? fetch)(new URL('/_matrix/client/v3/logout', credentials.homeserver), {
+            method: 'POST', headers: { authorization: `Bearer ${retireToken}` },
+            signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+          }));
+          if (!response.ok && response.status !== 401) throw new KhalaClientError('internal_error', 'retirement_unavailable');
+          retireToken = undefined;
+          await persistResume(attempt, credentials);
+        };
+        // Retry a prior failed logout before issuing yet another device.
+        await retire();
         const response = await wait((options.fetch ?? fetch)(new URL('/api/agent/session/resume', attempt.created.origin), {
           method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
         }));
@@ -184,13 +207,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (!response.ok) throw new KhalaClientError('internal_error', 'resume_unavailable');
         const decoded = decodeAgentCredentials(await wait(response.json()));
         if (!decoded.ok || decoded.value.userId !== credentials.userId || decoded.value.roomId !== credentials.roomId
-          || decoded.value.homeserver !== credentials.homeserver || decoded.value.deviceId === credentials.deviceId) throw new KhalaClientError('internal_error', 'resume_invalid');
+          || decoded.value.homeserver !== credentials.homeserver || decoded.value.deviceId === credentials.deviceId
+          || decoded.value.accessToken === credentials.accessToken) throw new KhalaClientError('internal_error', 'resume_invalid');
+        retireToken = credentials.accessToken;
         credentials = decoded.value;
         // Persist the newly issued token before crypto starts, even if startup later fails transiently.
-        const saved: ResumeFile = { link: attempt.link, label: lastLabel, workspace,
-          secretHash: createHash('sha256').update(rejoinSecret!).digest('hex'), credentials };
-        resumeWrites = resumeWrites.catch(() => {}).then(() => writeStateFile(dir, 'resume.json', saved));
-        await resumeWrites;
+        await persistResume(attempt, credentials);
+        await retire();
       }
       attempt.credentials = credentials;
       await writeStateFile(dir, 'session.json', credentials);
@@ -269,10 +292,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await removeStateFile(dir, 'join.json');
       if (current(attempt)) {
         if (rejoinSecret) {
-          const saved: ResumeFile = { link: attempt.link, label: lastLabel, workspace,
-            secretHash: createHash('sha256').update(rejoinSecret).digest('hex'), credentials };
-          resumeWrites = resumeWrites.catch(() => {}).then(() => writeStateFile(dir, 'resume.json', saved));
-          await resumeWrites;
+          await persistResume(attempt, credentials);
         }
         if (current(attempt)) await setStatus('connected');
       }
@@ -282,8 +302,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const failure = safeError(error);
         const inviteTimeout = error instanceof Error && error.message === 'invite_timeout';
         await cleanup(attempt);
+        const detail = failure.code === 'not_connected' && TERMINAL_SESSION_DETAILS.some(value => value === failure.message) ? failure.message : failure.code;
         await setStatus(failure.code === 'join_expired' ? 'idle' : 'disconnected',
-          failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(error, failure.code));
+          failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(error, detail));
         active = undefined;
       }
     } finally {
@@ -307,7 +328,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const saved = await readStateFile<ResumeFile>(dir, 'resume.json');
       const secret = (await readStateFile<{ secret?: unknown }>(dir, 'rejoin.json'))?.secret;
       const previous = await readStateFile<StatusFile>(dir, 'status.json');
-      if (previous?.state === 'disconnected' && ['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'].includes(previous.detail ?? '')) {
+      if (previous?.state === 'disconnected' && TERMINAL_SESSION_DETAILS.some(detail => detail === previous.detail)) {
         await forgetResume();
         return;
       }
@@ -319,6 +340,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await initialize();
       if (closed || active) return;
       lastLabel = saved.label;
+      retireToken = typeof saved.retireToken === 'string' ? saved.retireToken : undefined;
       const attempt: Attempt = { link: saved.link, created: { origin: new URL(saved.link).origin,
         joinId: '', pollSecret: '', confirmUrl: '', expiresAt: '' }, controller: new AbortController(), task: Promise.resolve(), joined: false };
       active = attempt;
@@ -343,6 +365,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         }
         if (active?.link === link && !active.controller.signal.aborted) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl, ...(active.created.autoConfirmed === true ? { autoConfirmed: true as const } : {}) };
         lastLabel = label;
+        retireToken = undefined;
         const wasJoined = active?.joined;
         await cancel();
         await forgetResume();
@@ -449,7 +472,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         await appends;
         await resumeWrites;
         await removeStateFile(dir, 'session.json');
-        await setStatus('disconnected', 'closed');
+        await statusWrites;
+        await setStatus('disconnected', TERMINAL_SESSION_DETAILS.some(detail => detail === status.detail) ? status.detail : 'closed');
       })();
       return closing;
     },

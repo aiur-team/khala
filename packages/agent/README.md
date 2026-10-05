@@ -39,7 +39,9 @@ Then tell the agent "Join this Khala channel: <link>".
   from the environment. Claude arms it with Monitor after joining and on resume.
   On MCP startup, Codex and Claude restore their last authorized transport session
   in the same workspace when its saved rejoin secret still matches. Hosted resume
-  obtains a fresh Matrix device using the existing authorized session bearer. No tool call
+  obtains a fresh Matrix device using the existing authorized session bearer,
+  then logs out the superseded device after saving the replacement credentials.
+  Failed logout is retried before another device is issued. No tool call
   is required; Codex also arms its waker immediately. Claude still needs Monitor
   re-armed by the agent. Explicit leave, owner removal, missing/changed secrets,
   and invalid saved credentials prevent restoration. Sessions joined before this

@@ -7,7 +7,7 @@ import { runMcpServer } from './server';
 import { resolveHarness, resolveSessionId } from './session-id';
 import { createKhalaTools } from './tools';
 import { createRealClientFactory } from './wiring';
-import { readStatus, sessionFiles } from '../state';
+import { TERMINAL_SESSION_DETAILS, readStatus, sessionFiles } from '../state';
 
 export type ClientFactory = (input: { harness: Harness; sessionId: string }) => KhalaAgentClient;
 
@@ -80,7 +80,7 @@ export default async function main(argv: readonly string[]): Promise<number> {
             (async () => {
               await client.close();
               const status = await readStatus(sessionFiles(input.harness, input.sessionId, process.env));
-              if (status?.state !== 'disconnected' || status.detail !== 'closed') throw new Error('cleanup_not_closed');
+              if (status?.state !== 'disconnected' || status.detail !== 'closed' && !TERMINAL_SESSION_DETAILS.some(detail => detail === status.detail)) throw new Error('cleanup_not_closed');
             })(),
             new Promise<never>((_resolve, reject) => {
               timer = setTimeout(() => reject(new Error('cleanup_timeout')), 5000);

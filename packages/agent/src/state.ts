@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HARNESSES, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 
+export const TERMINAL_SESSION_DETAILS = ['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'] as const;
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 /** `displayName` is the agent's own current name in the channel; hooks show it as `you=`. */
 export type StatusFile = { state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };

@@ -700,7 +700,11 @@ it.each([['codex', 'matrix'], ['claude', 'matrix'], ['codex', 'local'], ['claude
   expect(joinApi.reportReady).not.toHaveBeenCalled();
   expect(startSession).toHaveBeenLastCalledWith(transport === 'local' ? original : refreshed, expect.any(Object));
   if (transport === 'local') expect(fetch).not.toHaveBeenCalled();
-  else expect(fetch).toHaveBeenCalledExactlyOnceWith(new URL('/api/agent/session/resume', created.origin), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
+  else {
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(1, new URL('/api/agent/session/resume', created.origin), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
+    expect(fetch).toHaveBeenNthCalledWith(2, new URL('/_matrix/client/v3/logout', credentials.homeserver), expect.objectContaining({ method: 'POST', headers: { authorization: `Bearer ${credentials.accessToken}` } }));
+  }
   handler!(message('$resumed'));
   await vi.waitFor(() => expect(waker).toHaveBeenCalledOnce());
 });
@@ -720,7 +724,7 @@ it.each(['missing', 'invalid', 'changed', 'workspace', 'left', 'removed', 'revok
     client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
     await client.resume!();
     expect(startSession).not.toHaveBeenCalled();
-    expect((await client.status()).state).toBe('idle');
+    expect((await client.status()).state).toBe(['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'].includes(reason) ? 'disconnected' : 'idle');
   },
 );
 
@@ -729,6 +733,7 @@ it('explicit leave clears resume authorization even after process close overwrit
   await client.leave!();
   await client.close();
   expect(await readStateFile(dir, 'resume.json')).toBeNull();
+  expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: expect.stringMatching(/left|removed/) });
   startSession.mockClear();
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
   await client.resume!();
@@ -742,6 +747,7 @@ it('owner removal clears resume authorization before close', async () => {
   ended('removed');
   await client.close();
   expect(await readStateFile(dir, 'resume.json')).toBeNull();
+  expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: expect.stringMatching(/left|removed/) });
   startSession.mockClear();
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
   await client.resume!();
@@ -800,4 +806,56 @@ it('coalesces a same-link join while startup restoration is still connecting', a
   response.resolve(Response.json({ ...credentials, deviceId: 'fresh', accessToken: 'NEW' }));
   expect(await joining).toEqual({ state: 'connected', channelName: 'Release room' });
   expect(joinApi.requestJoin).toHaveBeenCalledOnce();
+});
+
+
+it('persists replacement credentials before revoking the old bearer and rejects replay', async () => {
+  await connected(); await client.close();
+  const oldRecord = await readStateFile<Record<string, unknown>>(dir, 'resume.json');
+  const refreshed = { ...credentials, deviceId: 'fresh', accessToken: 'NEW' };
+  let revoked = false;
+  const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+    const token = new Headers(init?.headers).get('authorization');
+    if (String(url).endsWith('/logout')) {
+      expect(await readStateFile(dir, 'resume.json')).toMatchObject({ credentials: refreshed, retireToken: credentials.accessToken });
+      revoked = true;
+      return Response.json({});
+    }
+    return revoked && token === `Bearer ${credentials.accessToken}` ? new Response('{}', { status: 401 }) : Response.json(refreshed);
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(revoked).toBe(true);
+  expect(await readStateFile(dir, 'resume.json')).not.toHaveProperty('retireToken');
+  await client.close();
+  // Replay the superseded authorization from a copied old resume record.
+  await writeStateFile(dir, 'resume.json', oldRecord);
+  startSession.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+  await client.resume!();
+  await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'unauthorized' }));
+  expect(startSession).not.toHaveBeenCalled();
+  expect(await readStateFile(dir, 'resume.json')).toBeNull();
+});
+
+it('retries failed token retirement before minting another device on the next startup', async () => {
+  await connected(); await client.close();
+  const refreshed = { ...credentials, deviceId: 'fresh', accessToken: 'NEW' };
+  const fetch = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith('/logout')
+    ? new Response('{}', { status: 503 }) : Response.json(refreshed));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('disconnected'));
+  expect(await readStateFile(dir, 'resume.json')).toMatchObject({ credentials: refreshed, retireToken: credentials.accessToken });
+  await client.close();
+  const next = { ...credentials, deviceId: 'next', accessToken: 'NEXT' };
+  const retry = vi.fn<typeof globalThis.fetch>(async url => String(url).endsWith('/logout') ? Response.json({}) : Response.json(next));
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi, fetch: retry });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(retry.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/_matrix/client/v3/logout', '/api/agent/session/resume', '/_matrix/client/v3/logout']);
+  expect(new Headers(retry.mock.calls[0]![1]!.headers).get('authorization')).toBe(`Bearer ${credentials.accessToken}`);
+  expect(new Headers(retry.mock.calls[2]![1]!.headers).get('authorization')).toBe('Bearer NEW');
+  expect(await readStateFile(dir, 'resume.json')).not.toHaveProperty('retireToken');
 });

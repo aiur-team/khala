@@ -66,3 +66,10 @@ removal races issuance. Transient failures retain resume authorization for the n
 startup. Codex arms its waker at startup; Claude still needs its agent to arm Monitor.
 Explicit client leave clears resume authorization. Old sessions need one authorized
 join to create the resume record. No helper wire-format change is required.
+
+Resume saves new hosted credentials before logging out the superseded Matrix
+device. Failed logout remains in the private resume record and is retried before
+another device is issued. Channel/display-name metadata survives eager restore
+and temporary failures so Claude's SessionStart hook can still remind the agent
+to arm Monitor or rejoin. The internal client `leave()` clears resume state;
+there is currently no public `khala_leave` MCP tool.
