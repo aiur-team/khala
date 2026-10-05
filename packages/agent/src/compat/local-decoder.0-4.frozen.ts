@@ -1,6 +1,6 @@
-// FROZEN COPY: packages/contracts/src/m1/local.ts at origin/main 120d9ffa (pre-#1078).
-// This is the strict local wire decoder shipped to agent CLIs before rename delivery.
-// Do not edit: helper-default responses must keep decoding with it, because one
+// FROZEN COPY: packages/contracts/src/m1/local.ts at 825b365d (khala-cli 0.4.2).
+// This is the strict local wire decoder shipped to khala-cli 0.4.1 and 0.4.2.
+// Do not edit: helper prev=1 responses must keep decoding with it, because one
 // machine-wide helper serves every installed CLI version. See wire-compat.test.ts.
 import { type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal, nullable, object, safeInteger, text, utcTimestamp, utf8Length, version } from '@khala/contracts/messaging/decode';
 import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHttpUrl, readMatrixUserId, readRoomId } from '@khala/contracts/m1/agent-join';
@@ -63,7 +63,6 @@ export const localRoomKey = (roomId: string): string => {
   if (!isLocalRoomId(roomId)) throw new RangeError('not_local_room');
   return roomId.slice(1, -':local'.length);
 };
-// khala-terminology-allow: verbatim frozen copy of the pre-#1078 wire decoder
 export const localRoomPath = (roomId: string, tail: string): string => `/api/local/rooms/${encodeURIComponent(roomId)}/${tail}`;
 
 export type LocalEventType = 'm.room.create' | 'm.room.name' | 'm.room.member' | 'm.room.message'
@@ -78,6 +77,7 @@ export type LocalEvent = {
   ts: number;                  // helper clock, ms since epoch
   txnId?: string;              // present when the sender supplied one; (sender, txnId) is unique per channel
   content: Record<string, unknown>;
+  previousContent?: LocalMemberContent; // helper-derived preceding membership, independent of roster fetch timing
 };
 
 // content by type
@@ -96,7 +96,7 @@ export type LocalMemberContent = {                                              
 export type ChannelSecrets = {
   v: 1;
   links: Record<string, { expiresAt: string; consumedAt?: string; kind: 'join' }>;           // key = sha256(token) hex
-  members: Record<string, { tokenSha256: string }>;                                          // key = user id; the owner has no entry (cookie auth)
+  members: Record<string, { tokenSha256: string; sessionKey?: string }>;                                          // key = user id; the owner has no entry (cookie auth)
 };
 
 
@@ -260,13 +260,14 @@ function readContent(input: unknown, path: string, type: LocalEventType): Record
   }
 }
 function readEvent(input: unknown, path: string): LocalEvent {
-  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId']);
+  const r = record(input, path, ['seq', 'eventId', 'roomId', 'type', 'sender', 'ts', 'content'], ['txnId', 'previousContent']);
   const type = literal(r.field('type'), r.at('type'), EVENT_TYPES);
   return { seq: seq(r.field('seq'), r.at('seq')), eventId: readLocalEventId(r.field('eventId'), r.at('eventId')),
     roomId: readLocalRoomId(r.field('roomId'), r.at('roomId')), type,
     sender: readLocalUserId(r.field('sender'), r.at('sender')), ts: safeInteger(r.field('ts'), r.at('ts')),
     ...(has(input, 'txnId') ? { txnId: readLocalTxnId(r.field('txnId'), r.at('txnId')) } : {}),
-    content: readContent(r.field('content'), r.at('content'), type) };
+    content: readContent(r.field('content'), r.at('content'), type),
+    ...(has(input, 'previousContent') ? { previousContent: readMemberContent(r.field('previousContent'), r.at('previousContent')) } : {}) };
 }
 export function decodeLocalEvent(input: unknown): Decoded<LocalEvent> { return decodeWith(() => readEvent(input, '')); }
 function limitedArray<T>(input: unknown, path: string, max: number, read: (input: unknown, path: string) => T): T[] {
@@ -559,8 +560,9 @@ export function decodeChannelSecrets(input: unknown): Decoded<ChannelSecrets> {
     const members = Object.fromEntries(Object.entries(plainObject(r.field('members'), r.at('members'))).map(([key, value]) => {
       const path = `${r.at('members')}.${key}`;
       if (!isLocalAgentUserId(key)) fail(path, 'invalid_value');
-      const member = object(value, path, ['tokenSha256']);
-      return [key, { tokenSha256: readSha256(member.field('tokenSha256'), member.at('tokenSha256')) }];
+      const member = record(value, path, ['tokenSha256'], ['sessionKey']);
+      return [key, { tokenSha256: readSha256(member.field('tokenSha256'), member.at('tokenSha256')),
+        ...(has(value, 'sessionKey') ? { sessionKey: readSha256(member.field('sessionKey'), member.at('sessionKey')) } : {}) }];
     }));
     return { v: version(r.field('v'), r.at('v')), links, members };
   });
