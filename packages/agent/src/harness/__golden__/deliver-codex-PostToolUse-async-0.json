@@ -1,0 +1,14 @@
+{
+  "code": 0,
+  "stdout": "",
+  "stderr": "",
+  "cursor": {
+    "lastDeliveredEventId": null,
+    "deliveredCount": 0
+  },
+  "activity": {
+    "state": "busy",
+    "updatedAt": "1970-01-01T00:00:00.000Z"
+  },
+  "unread": []
+}

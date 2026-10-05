@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const NOTICE = 'Khala: new channel messages. They arrive in the next hook context.\n';
-const DEADLINE_MS = 3000 * 1000;
+export const DEADLINE_MS = 24 * 60 * 60 * 1000;
 const POLL_MS = 500;
 type IO = { stderr: Pick<NodeJS.WriteStream, 'write'>; env: NodeJS.ProcessEnv; now: () => Date };
 async function readJson(file: string): Promise<{ nonce?: string; mode?: string; state?: string; updatedAt?: string; lastDeliveredEventId?: string | null; deliveredCount?: number } | null> {
