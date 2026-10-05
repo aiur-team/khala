@@ -2,7 +2,8 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
 import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
-import { createCodexWaker } from '../wake/codex';
+import type { createCodexWaker } from '../wake/codex';
+import { adapterFor } from '../harness';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
@@ -12,8 +13,9 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
 } = {}): ClientFactory {
   return ({ harness, sessionId }) => {
     const files = sessionFiles(harness, sessionId, env);
-    const waker = harness === 'codex'
-      ? (deps.createWaker ?? createCodexWaker)({ files, threadId: sessionId }) : undefined;
+    const adapter = adapterFor(harness);
+    const createWaker = adapter?.waker && (deps.createWaker ?? adapter.waker);
+    const waker = createWaker?.({ files, threadId: sessionId });
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before
@@ -33,7 +35,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       async status(channel) {
         await initialize();
         const status = await (channel === undefined ? client.status() : client.status(channel));
-        return harness === 'claude' && ['connected', 'send_failed'].includes(status.state)
+        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(status.state)
           ? { ...status, watcherArmed: await monitorArmed(files) } : status;
       },
       async read(limit, before, channel) { await initialize(); return channel === undefined ? client.read(limit, before) : client.read(limit, before, channel); },

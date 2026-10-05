@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { codexHooksFragment, mergeCodexHooks } from '../../codex/hooks-config.mjs';
 import { bundle } from '../bundle';
+import { adapterFor } from '../harness';
 import { cursorPaths, installCursor } from './cursor';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
@@ -22,8 +23,10 @@ export type InstallDeps = {
   home?: string;
 };
 
-async function runCursorInstall(flags: readonly string[], deps: InstallDeps, env: NodeJS.ProcessEnv,
-  stdout: (line: string) => void, stderr: (line: string) => void): Promise<number> {
+export async function runCursorInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
   let uninstall = false;
   for (const flag of flags) {
     if (flag === '--uninstall') uninstall = true;
@@ -111,12 +114,10 @@ async function readOr(file: string, fallback: string): Promise<{ text: string; m
  * of paying npx resolution on every tool call, and the hook command line stays the same
  * across upgrades, so Codex keeps trusting it.
  */
-export async function runInstall(argv: readonly string[], deps: InstallDeps = {}): Promise<number> {
+export async function runCodexInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
   const env = deps.env ?? process.env;
   const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
   const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
-  const [target, ...flags] = argv;
-  if (target === 'cursor') return runCursorInstall(flags, deps, env, stdout, stderr);
   let codexHome = env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) ? env.CODEX_HOME : path.join(env.HOME ?? os.homedir(), '.codex');
   let uninstall = false;
   for (let i = 0; i < flags.length; i++) {
@@ -124,7 +125,6 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
     else if (flags[i] === '--codex-home' && flags[i + 1]) codexHome = path.resolve(flags[++i] as string);
     else { stderr(USAGE); return 1; }
   }
-  if (target !== 'codex') { stderr(USAGE); return 1; }
   const pkg = 'package' in deps ? deps.package : bundle;
   if (!pkg && !uninstall) {
     stderr('khala: install runs from the published package (npx -y <package> install codex); from a checkout follow packages/agent/docs/install-codex.md');
@@ -171,6 +171,15 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
     stdout('restart or resume Codex, then trust the three Khala hooks in "Hooks need review"');
   }
   return 0;
+}
+
+export async function runInstall(argv: readonly string[], deps: InstallDeps = {}): Promise<number> {
+  const [target = '', ...flags] = argv;
+  const adapter = adapterFor(target);
+  const run = adapter?.install;
+  if (run) return run(flags, deps);
+  (deps.stderr ?? (line => { process.stderr.write(line + '\n'); }))(USAGE);
+  return 1;
 }
 
 export default async function main(argv: readonly string[]): Promise<number> { return runInstall(argv); }
