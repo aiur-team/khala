@@ -406,6 +406,20 @@ export function TimelineScreen({
     }
   }, [controller, data.items, data.nextCursor, data.phase]);
 
+  // Raw history pages can project to very few visible rows. Keep paging until
+  // the reader can scroll, including when a resize creates more room.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const fillViewport = () => {
+      if (list.clientHeight > 0 && list.scrollHeight <= list.clientHeight + 80) void handleLoadOlder();
+    };
+    fillViewport();
+    const observer = new ResizeObserver(fillViewport);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [handleLoadOlder, isLoadingOlder]);
+
   async function handleSend(): Promise<void> {
     const body = draft.trim();
     if (!body || !canCompose || sendBlocked || pendingListRef.current.some(entry =>

@@ -38,6 +38,25 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.getByText('No messages yet', { exact: true }).waitFor();
     assert.equal(await page.getByRole('status', { name: 'Loading earlier messages' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Load earlier messages' }).count(), 0);
+    // A sparse first page must auto-fill without any possible scroll gesture.
+    // Resizing taller then exhausts the remaining history, once per raw page.
+    await page.goto(`${url}?sparse`);
+    await page.waitForFunction(() => {
+      const list = document.querySelector('.timeline__list')!;
+      return list.scrollHeight > list.clientHeight + 80;
+    });
+    const sparseCalls = await page.evaluate(() => window.__timelineHarness.historyCalls());
+    assert.ok(sparseCalls > 1 && sparseCalls < 40);
+    assert.equal(await page.getByRole('button', { name: 'Load earlier messages' }).count(), 0);
+    await page.setViewportSize({ width: 1024, height: 10000 });
+    await page.getByText('Historical message 0', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__timelineHarness.historyCalls()), 40);
+    assert.equal(await page.getByRole('status', { name: 'Loading earlier messages' }).count(), 0);
+    // Real name scanning caches older pages; auto-fill reveals those pages too.
+    await page.goto(`${url}?cached`);
+    await page.getByText('Historical message 0', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__timelineHarness.historyCalls()), 2);
+    await page.setViewportSize({ width: 1024, height: 900 });
     await page.goto(url);
 
     await page.locator('section.timeline').waitFor();

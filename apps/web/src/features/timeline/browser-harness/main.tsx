@@ -8,9 +8,11 @@ import { createFakeChannelPort } from './fake-channel-port';
 
 const navigation: NavigationItem[] = [{ id: 'timeline', label: 'Conversation', href: '#timeline', current: true }];
 
-const harness = createFakeChannelPort(new URLSearchParams(location.search).has('empty'));
-// Keep pagination observable here; name-history scanning has dedicated tests.
-const controller = { ...createTimelineController(harness.port, harness.roomId, { generation: 1, pageSize: 20 }), scanNameHistory: async () => {} };
+const params = new URLSearchParams(location.search);
+const harness = createFakeChannelPort(params.has('empty'));
+// Sparse raw pages exercise viewport filling; cached mode uses real name scanning.
+const baseController = createTimelineController(harness.port, harness.roomId, { generation: 1, pageSize: params.has('sparse') ? 1 : 20 });
+const controller = params.has('cached') ? baseController : { ...baseController, scanNameHistory: async () => {} };
 
 declare global {
   interface Window {

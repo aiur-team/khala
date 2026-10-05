@@ -511,3 +511,22 @@ it('undoes provisional unread counts when ciphertext becomes an event or is igno
   expect(controller.getSnapshot().newMessageCount).toBe(0);
   controller.dispose();
 });
+
+it('reveals cached name-history pages on back-scroll without another port request', async () => {
+  const fake = fakeChannelPort();
+  let requests = 0;
+  const controller = createTimelineController({ ...fake.port, timeline: async ({ cursor }) => {
+    requests += 1;
+    return ok({ items: [item(cursor === null ? 'newer' : 'older', 'alice', 'history')],
+      nextCursor: cursor === null ? 'older-page' : null, snapshotRevision: 'history' });
+  } }, roomId, { generation: 1, pageSize: 1 });
+  await controller.loadOlder();
+  await controller.scanNameHistory?.();
+  expect(controller.getSnapshot().items.map(entry => entry.ref.eventId)).toEqual(['newer']);
+  expect(controller.getSnapshot().nextCursor).toBe('cached');
+  await controller.loadOlder();
+  expect(controller.getSnapshot().items.map(entry => entry.ref.eventId)).toEqual(['older', 'newer']);
+  expect(controller.getSnapshot().nextCursor).toBeNull();
+  expect(requests).toBe(2);
+  controller.dispose();
+});
