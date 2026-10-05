@@ -648,6 +648,7 @@ describe('owner-map room participants', () => {
       if (path.includes('/state/m.room.member/')) return denied ? json(403, { errcode: 'M_FORBIDDEN' })
         : json(200, { membership: 'join' });
       if (path.endsWith('/joined_members')) return json(200, { joined });
+    if (path.endsWith('/state')) return json(200, []);
       throw new Error('unexpected participant request');
     });
     return { store, matrix: services(fetch, store), identity, joined, deny: () => { denied = true; } };
@@ -867,4 +868,104 @@ describe('browser-backed room participant reads', () => {
     expect(result).toEqual({ kind: 'ok', participants: [] });
     expect(seen).toHaveLength(2);
   });
+});
+
+it('uses the Matrix creator and removes only the selected human and their verified agents, retrying partial failure', async () => {
+  const roomId = '!removal:matrix.example.test' as RoomId;
+  const target = 'owner_bob' as OwnerId;
+  const creatorUser = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+  const targetUser = ownerMatrixUserId(target, 'matrix.example.test');
+  const joined: Record<string, object> = { [creatorUser]: {}, [targetUser]: {}, '@agent1:matrix.example.test': {}, '@agent2:matrix.example.test': {}, '@other:matrix.example.test': {} };
+  const store = memoryStore();
+  for (const [user, owner] of [['@agent1:matrix.example.test', target], ['@agent2:matrix.example.test', target], ['@other:matrix.example.test', principal.ownerId]]) {
+    await store.compareAndSet({ key: agentOwnerRecordKey(user!), expectedRevision: null, operationId: user!, next: { value: { matrixUserId: user!, ownerId: owner!, ownerLabel: 'Bob', harness: 'codex', label: 'Agent', createdAt: '2026-10-05T00:00:00Z' }, expiresAt: null } });
+  }
+  let fail = true;
+  const kicked: string[] = [];
+  const revoked: string[] = [];
+  const notices: { transaction: string; content: Record<string, unknown> }[] = [];
+  let lastLogin = '';
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+    const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+    if (path.endsWith('/login')) {
+      const value = JSON.parse(String(init?.body));
+      lastLogin = value.identifier.user;
+      return json(200, { user_id: value.identifier.user, device_id: value.device_id, access_token: value.identifier.user });
+    }
+    if (path.includes('/state/m.room.member/')) return json(200, { membership: 'join' });
+    if (path.includes('/state/m.room.create/')) return json(200, { creator: creatorUser });
+    if (path.endsWith('/joined_members')) return json(200, { joined });
+    if (path.endsWith('/state')) return json(200, []);
+    if (path.endsWith('/joined_rooms')) return json(200, { joined_rooms: [] });
+    if (path.endsWith('/logout/all')) { revoked.push(lastLogin); return json(200, {}); }
+    if (path.endsWith('/logout')) return json(200, {});
+    if (path.includes('/send/com.khala.event.v1/')) { notices.push({ transaction: path, content: JSON.parse(String(init?.body)) }); return json(200, { event_id: '$left' }); }
+    if (path.endsWith('/kick') || path.endsWith('/ban')) {
+      const user = JSON.parse(String(init?.body)).user_id;
+      if (user === '@agent2:matrix.example.test' && fail) return json(503, {});
+      kicked.push(user); delete joined[user]; return json(200, {});
+    }
+    throw new Error(path);
+  });
+  const matrix = services(fetch, store);
+  expect(await matrix.administration.creator(principal, roomId)).toEqual({ kind: 'ok', ownerId: principal.ownerId });
+  expect(await matrix.administration.removeHuman({ ...principal, ownerId: target }, roomId, principal.ownerId)).toEqual({ kind: 'forbidden' });
+  expect(await matrix.administration.removeHuman(principal, roomId, principal.ownerId)).toEqual({ kind: 'forbidden' });
+  expect(await matrix.administration.removeHuman(principal, roomId, 'missing' as OwnerId)).toEqual({ kind: 'not_found' });
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'unavailable' });
+  expect(joined[targetUser]).toBeUndefined();
+  fail = false;
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'ok' });
+  expect(kicked).toEqual([targetUser, '@agent1:matrix.example.test', '@agent2:matrix.example.test']);
+  expect(joined['@other:matrix.example.test']).toBeDefined();
+  expect(new Set(revoked)).toEqual(new Set(['@agent1:matrix.example.test', '@agent2:matrix.example.test']));
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.content.summary).toBe(`${targetUser} left`);
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'ok' });
+  expect(notices).toHaveLength(1);
+});
+
+it('serializes a second removal against a paused owner-authorized unban and then rejects the old generation', async () => {
+  const roomId = '!lease:matrix.example.test' as RoomId;
+  const target = 'owner_bob' as OwnerId;
+  const creatorUser = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
+  const targetUser = ownerMatrixUserId(target, 'matrix.example.test');
+  let targetMembership = 'join';
+  let unbanStarted!: () => void; let releaseUnban!: () => void;
+  const started = new Promise<void>(resolve => { unbanStarted = resolve; });
+  const pause = new Promise<void>(resolve => { releaseUnban = resolve; });
+  const mutations: string[] = [];
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+    const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+    if (path.endsWith('/login')) {
+      const value = JSON.parse(String(init?.body));
+      return json(200, { user_id: value.identifier.user, device_id: value.device_id, access_token: value.identifier.user });
+    }
+    if (path.includes('/state/m.room.member/')) return json(200, { membership: path.endsWith(encodeURIComponent(targetUser)) ? targetMembership : 'join' });
+    if (path.includes('/state/m.room.create/')) return json(200, { creator: creatorUser });
+    if (path.includes('/state/m.room.name/')) return json(200, { name: 'Room' });
+    if (path.endsWith('/joined_members')) return json(200, { joined: { [creatorUser]: {}, ...(targetMembership === 'join' ? { [targetUser]: {} } : {}) } });
+    if (path.endsWith('/state')) return json(200, []);
+    if (path.endsWith('/ban')) { mutations.push('ban'); targetMembership = 'ban'; return json(200, {}); }
+    if (path.endsWith('/unban')) { mutations.push('unban'); unbanStarted(); await pause; targetMembership = 'leave'; return json(200, {}); }
+    if (path.endsWith('/invite')) { mutations.push('invite'); targetMembership = 'invite'; return json(200, {}); }
+    if (path.includes('/v3/join/')) { mutations.push('join'); targetMembership = 'join'; return json(200, { room_id: roomId }); }
+    if (path.includes('/send/com.khala.event.v1/')) return json(200, { event_id: '$left' });
+    throw new Error(path);
+  });
+  const matrix = services(fetch);
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'ok' });
+  const input = { operationId: 'fresh', roomId, principal: { ...principal, ownerId: target }, deviceId: 'DEVICE' as DeviceId,
+    history: 'none' as const, inviteRevision: 'r1', removalGeneration: 1, inviteCreatorOwnerId: principal.ownerId };
+  const admission = matrix.gateway.admit(input);
+  await started;
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'unavailable' });
+  expect(mutations).toEqual(['ban', 'unban']);
+  releaseUnban();
+  expect((await admission).kind).toBe('joined');
+  expect(await matrix.administration.removeHuman(principal, roomId, target)).toEqual({ kind: 'ok' });
+  expect(targetMembership).toBe('ban');
+  expect(await matrix.gateway.admit(input)).toEqual({ kind: 'forbidden' });
+  expect(targetMembership).toBe('ban');
+  expect(mutations).toEqual(['ban', 'unban', 'invite', 'join', 'ban']);
 });

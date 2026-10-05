@@ -12,6 +12,8 @@ import {
   decodeAdmission,
   decodeAuthPrincipal,
   decodeDeviceId,
+  decodeOwnerId,
+  type ChannelAdministrationPort,
   decodeInviteState,
   decodeParticipantView,
   decodeShareGrant,
@@ -64,6 +66,7 @@ export type HumanBrowserApiOptions = Readonly<{
 }>;
 
 export type HumanBrowserApi = Readonly<{
+  administration: ChannelAdministrationPort;
   agentJoin: AgentJoinPort;
   agentNames: AgentNamesPort;
   profile: ProfilePort;
@@ -475,5 +478,29 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         ? { kind: 'ok', name: decoded.value.name } : { kind: 'error', code: 'unavailable' };
     },
   };
-  return { agentJoin, agentNames, profile, identity, admission, channelLinks, credentials, participants };
+  const administration: ChannelAdministrationPort = {
+    async creator(roomId, callOptions) {
+      try {
+        const response = await request(`${origin}/api/human/channels/creator?roomId=${encodeURIComponent(roomId)}`, {
+          method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' }, signal: requestSignal(callOptions?.signal),
+        });
+        if (response.status === 403) return rejected('forbidden');
+        if (response.status === 404) return rejected('not_found');
+        if (response.status !== 200) return unavailable();
+        const body = await jsonObject(response);
+        const owner = body && hasExactKeys(body, ['ownerId']) && decodeOwnerId(body.ownerId);
+        return owner && owner.ok ? { kind: 'ok', value: owner.value } : unavailable();
+      } catch { return unavailable(); }
+    },
+    async removeHuman(input, callOptions) {
+      const response = await mutation('/api/human/channels/remove-human', input, callOptions?.signal);
+      if (response?.status === 403) return rejected('forbidden');
+      if (response?.status === 404) return rejected('not_found');
+      if (response?.status === 400) return rejected('invalid_request');
+      if (response?.status !== 200) return unavailable();
+      const body = await jsonObject(response);
+      return body && hasExactKeys(body, ['kind']) && body.kind === 'ok' ? { kind: 'ok', value: null } : unavailable();
+    },
+  };
+  return { administration, agentJoin, agentNames, profile, identity, admission, channelLinks, credentials, participants };
 }

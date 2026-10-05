@@ -1,6 +1,7 @@
 import type { ContentLimits, RoomId } from '@khala/contracts/messaging/index';
 import { readHumanEntry, type EntryLocation } from '../human/entry';
 import type { HumanApplicationPorts } from '../human/application';
+import { createLocalAdministration } from './administration';
 import { createLocalHttp } from './http';
 import { LOCAL_PRINCIPAL, createLocalSession } from './session';
 import { createLocalProfilePort } from './profile';
@@ -30,7 +31,7 @@ export function createLocalHumanPorts(input: { origin: string; limits: ContentLi
     identity: session.identity,
     device: session.device,
     participant: () => session.participant(),
-    room: channel.room,
+    room: Object.assign(channel.room, { administration: createLocalAdministration(http) }),
     conversations,
     syncStatus: conversations.syncStatus,
     admission: localAdmission,

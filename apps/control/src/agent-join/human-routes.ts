@@ -1,3 +1,5 @@
+import { readRoomRemovals } from '../invitations/removals';
+import { rememberAgentSession, rememberRoomAgent } from './session-status';
 import { createHash } from 'node:crypto';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
 import { agentOwnerRecordKey, decodeAgentOwnerRecord, type AgentOwnerRecord } from '@khala/contracts/m1/participants';
@@ -23,6 +25,7 @@ export type AgentJoinHumanDeps = Readonly<{
   /** The display names the channel's joined members hold there, read as `ownerId`; `null` when unavailable. */
   roomMemberNames(ownerId: OwnerId, roomId: RoomId): Promise<readonly string[] | null>;
   provisioner: AgentProvisioner;
+  revokeAgentSession?: (userId: string, roomId: RoomId) => Promise<boolean>;
 }>;
 const json = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: {
   'cache-control': 'no-store', 'content-type': 'application/json', 'x-content-type-options': 'nosniff',
@@ -86,10 +89,21 @@ export function createAgentJoinHumanHandlers(deps: AgentJoinHumanDeps) {
         if (!names) return unavailable();
         name = freeAgentName(username, record.harness, names);
       }
+      const removal = await readRoomRemovals(deps.store, record.roomId as RoomId);
+      if (removal === 'unavailable' || removal?.owners[principal.ownerId] && !removal.owners[principal.ownerId]!.complete) return unavailable();
+      const issuedGeneration = removal?.generation ?? 0;
+      if (!await rememberRoomAgent(deps.store, record.roomId as RoomId, principal.ownerId, userId)) return unavailable();
       const provisioned = await deps.provisioner.provision({ joinId, ...(record.sessionId === undefined ? {} : { identityId }), ownerId: principal.ownerId, label: name, roomId: record.roomId });
       if (provisioned.kind !== 'ok') return unavailable();
       const { credentials } = provisioned;
       if (credentials.userId !== userId) return unavailable();
+      if (!await rememberAgentSession(deps.store, credentials, issuedGeneration)) return unavailable();
+      const after = await readRoomRemovals(deps.store, record.roomId as RoomId);
+      const deniedAfter = await membership(principal, record);
+      if (after === 'unavailable' || deniedAfter || (after?.owners[principal.ownerId]?.generation ?? 0) > issuedGeneration) {
+        if (!await deps.revokeAgentSession?.(credentials.userId, record.roomId as RoomId)) return unavailable();
+        return deniedAfter ?? error(403, 'not_member');
+      }
       const owner: AgentOwnerRecord = { matrixUserId: credentials.userId, ownerId: principal.ownerId,
         ownerLabel: username, harness: record.harness, label: name, createdAt: previous?.createdAt ?? new Date(deps.clock()).toISOString() };
       const mapped = await writeAndResolve(deps.store, { key: agentOwnerRecordKey(credentials.userId), expectedRevision: existing.kind === 'record' ? existing.record.revision : null,

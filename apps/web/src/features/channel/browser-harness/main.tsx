@@ -31,7 +31,7 @@ const harnesses: Record<string, 'claude' | 'codex'> = { agent_scout: 'claude', a
 const ownerLabels: Record<string, string> = { [mira]: 'Mira', [theo]: 'Theo', owner_zed: 'Zed' };
 
 let listeners: Array<(snapshot: AgentPresenceSnapshot) => void> = [];
-let snapshot: AgentPresenceSnapshot = { generation: 1, agents: params.has('crowd') ? crowd : base };
+let snapshot: AgentPresenceSnapshot = { generation: 1, agents: params.has('crowd') ? crowd : params.has('twoagents') ? [...base, agentOf('agent_atlas', theo, 'Atlas')] : base };
 // Renames stick, like an agent's Matrix display name.
 const renamed = new Map<string, string>();
 function publish(agents: readonly AgentPresence[]): void {
@@ -78,6 +78,12 @@ function Harness() {
     list={<p className="kh-cv-empty">Release channel</p>}
     main={<ChannelScreen title="Release channel" controller={controller}
       viewerOwnerId={mira} viewerName="Mira" viewerEmail="mira@example.com" viewerParticipantId={'p_mira' as ParticipantId}
+      creatorOwnerId={params.has('nonowner') ? theo : mira}
+      onRemoveHuman={async ownerId => {
+        setHumans(current => current.filter(human => human.ownerId !== ownerId));
+        publish(snapshot.agents.filter(agent => agent.ownerId !== ownerId));
+        return 'removed';
+      }}
       humanParticipants={humans} describeParticipant={describeParticipant}
       modeFor={participantId => modes[participantId] ?? 'sync'}
       onSetMode={async (participantId, mode) => {

@@ -34,6 +34,49 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     const page = await context.newPage();
     await page.goto(url);
 
+    // Creator authority, quiet removal confirmation, and responsive visual proof.
+    await page.locator('#kh-head-btn').click();
+    assert.equal(await page.locator('.kh-owner-tag').count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Remove Mira', exact: true }).count(), 0);
+    const removeTheo = page.getByRole('button', { name: 'Remove Theo Park', exact: true });
+    await removeTheo.click();
+    await page.getByRole('dialog', { name: 'Remove Theo Park' }).waitFor();
+    assert.match(await page.locator('.kh-remove-agents').textContent() ?? '', /Builder/);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(await removeTheo.count(), 1);
+    await removeTheo.click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getByRole('dialog', { name: 'Remove Theo Park' }).count(), 0);
+    await removeTheo.click();
+    await page.locator('.kh-brand').click({position:{x:10,y:10}});
+    assert.equal(await page.getByRole('dialog', { name: 'Remove Theo Park' }).count(), 0);
+    const screenshotDir = join(here, '../../../../../docs/screenshots/1095');
+    await mkdir(screenshotDir, {recursive:true});
+    for (const theme of ['light', 'dark']) {
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({width, height:900});
+        await page.goto(`${url}?theme=${theme}&twoagents`);
+        await page.locator('#kh-head-btn').click();
+        await page.waitForTimeout(300);
+        await page.screenshot({path:join(screenshotDir, `owner-roster-${theme}-${width}.png`)});
+        await removeTheo.click();
+        await page.getByRole('dialog', { name: 'Remove Theo Park' }).waitFor();
+        assert.match(await page.locator('.kh-remove-agents').textContent() ?? '', /Builder, Atlas/);
+        assert.equal(await noOverflow(page), true);
+        await page.waitForTimeout(300);
+        await page.screenshot({path:join(screenshotDir, `owner-remove-${theme}-${width}.png`)});
+      }
+    }
+    await page.getByRole('button', {name:'Remove', exact:true}).click();
+    await page.getByText('You · 1 human · 1 agent', {exact:true}).waitFor();
+    assert.equal(await removeTheo.count(), 0);
+    await page.goto(`${url}?nonowner`);
+    await page.locator('#kh-head-btn').click();
+    assert.equal(await page.locator('.kh-owner-tag').count(), 1);
+    assert.equal(await removeTheo.count(), 0);
+    await page.setViewportSize({width:1440,height:900});
+    await page.goto(url);
+
     // Header (§5).
     const headButton = page.locator('#kh-head-btn');
     await page.getByText('You, Theo · 2 humans · 2 agents').waitFor();
