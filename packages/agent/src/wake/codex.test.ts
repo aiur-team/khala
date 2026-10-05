@@ -134,9 +134,10 @@ it('runs exactly one coalesced reevaluation after an in-flight queue settles', a
     settle = () => resolve({ status: 'queued' });
   })).mockResolvedValue({ status: 'queued' });
   waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, pollMs: 100_000, now: () => time });
-  waker.notify(); await wait(); time += 10; await activity('idle', time);
+  waker.notify(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
+  time += 10; await activity('idle', time);
   for (let i = 0; i < 5; i++) waker.notify();
-  settle(); await wait(); expect(slow).toHaveBeenCalledTimes(2);
+  settle(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(2));
 });
 it('reports content-free errors and continues after a storage failure', async () => {
   await fs.mkdir(files.inbox); start(); await wait();
@@ -221,23 +222,23 @@ async function joinedB(mode = 'sync', messages = 1) {
 it('coalesces two sync channels and renews the composite budget after delivery in either', async () => {
   await append('a1'); await append('a2');
   const b = await joinedB('sync', 2);
-  await activity('idle'); start(); await wait();
-  expect(run).toHaveBeenCalledTimes(1);
+  await activity('idle'); start();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   await append('a3');
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   await appendEntries(b, [{ eventId: 'b3', roomId: 'room-b', ts: new Date(time).toISOString(), sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
   time += 60_000; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(2);
   await writeJsonAtomic(b.cursor, { lastDeliveredEventId: 'b0', deliveredCount: 1 });
   const cursor = await fs.readFile(b.cursor);
-  waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(3);
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
   expect(await fs.readFile(b.cursor)).toEqual(cursor);
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: 'a1', deliveredCount: 1 });
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(4);
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
 });
 it('does not wake for ten unread async messages beside an empty sync channel', async () => {
   await joinedB('async', 10);

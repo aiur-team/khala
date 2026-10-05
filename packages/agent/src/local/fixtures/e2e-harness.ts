@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { sessionFiles } from '../../state';
+import { listChannels } from '../../channels';
 import { readEntries } from '../../inbox';
 import { readListeningMode } from '../../mode';
 import { readHelperFile } from '../lifecycle';
@@ -101,7 +102,7 @@ export class McpProcess {
     agent.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const listed = await agent.rpc<{ tools?: { name: string }[] }>('tools/list', {});
     if (JSON.stringify(listed.tools?.map((tool: { name: string }) => tool.name)) !==
-      JSON.stringify(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_event'])) {
+      JSON.stringify(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event'])) {
       throw new Error('mcp_tool_set_changed');
     }
     return agent;
@@ -152,8 +153,13 @@ export async function cli(world: World, ...args: string[]) {
   try { data = JSON.parse(result.stdout); } catch { data = undefined; }
   return { ...result, data };
 }
-export const inbox = (agent: McpProcess) => readEntries(agent.files);
-export const mode = (agent: McpProcess) => readListeningMode(agent.files);
+export const inbox = async (agent: McpProcess) => (await Promise.all(
+  (await listChannels(agent.files)).map(channel => readEntries(channel.files)))).flat();
+export const mode = async (agent: McpProcess) => {
+  const channels = await listChannels(agent.files);
+  if (channels.length !== 1) throw new Error('expected_single_channel');
+  return readListeningMode(channels[0]!.files);
+};
 export const helperFile = (world: World) => readHelperFile(world.env);
 export async function codexCalls(world: World): Promise<string[]> {
   return (await readFile(path.join(world.root, 'bin/codex-calls.log'), 'utf8')).split('\n').filter(Boolean);
