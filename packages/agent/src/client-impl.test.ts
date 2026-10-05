@@ -788,3 +788,16 @@ it('cancels a hosted resume whose response body stalls during shutdown', async (
   expect(responseSignal!.aborted).toBe(true);
   expect(await readStateFile(dir, 'resume.json')).not.toBeNull();
 });
+
+
+it('coalesces a same-link join while startup restoration is still connecting', async () => {
+  await connected(); await client.close();
+  const response = deferred<Response>();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi,
+    fetch: vi.fn(() => response.promise) });
+  await client.resume!();
+  const joining = client.join(link, 'Codex');
+  response.resolve(Response.json({ ...credentials, deviceId: 'fresh', accessToken: 'NEW' }));
+  expect(await joining).toEqual({ state: 'connected', channelName: 'Release room' });
+  expect(joinApi.requestJoin).toHaveBeenCalledOnce();
+});

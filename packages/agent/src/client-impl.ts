@@ -336,6 +336,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         await initialize();
         if (closed) throw new KhalaClientError('not_connected');
         if (active?.joined && !active.controller.signal.aborted && active.link === link) return { state: 'connected' as const, channelName: status.channelName! };
+        if (active?.link === link && !active.controller.signal.aborted && active.created.joinId === '') {
+          const outcome = await settleAutoConfirmed(active);
+          if (outcome === 'connected') return { state: 'connected' as const, channelName: status.channelName! };
+          if (outcome === 'pending') throw new KhalaClientError('not_connected', 'resume_pending');
+        }
         if (active?.link === link && !active.controller.signal.aborted) return { state: 'awaiting_confirmation' as const, confirmUrl: active.created.confirmUrl, ...(active.created.autoConfirmed === true ? { autoConfirmed: true as const } : {}) };
         lastLabel = label;
         const wasJoined = active?.joined;
