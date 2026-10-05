@@ -37,17 +37,21 @@ export async function runMcpCommand(argv: readonly string[], deps: {
     return 2;
   }
   const clients = new Map<string, KhalaAgentClient>();
+  const clientForSession = (sessionId: string) => {
+    let client = clients.get(sessionId);
+    if (client === undefined) {
+      client = deps.createClient({ harness, sessionId });
+      clients.set(sessionId, client);
+    }
+    return client;
+  };
+  const startupSession = resolveSessionId(harness, undefined, env);
+  if (startupSession !== null && harness !== 'cursor') clientForSession(startupSession);
   const tools = createKhalaTools({
     harness,
     clientFor(meta) {
       const sessionId = resolveSessionId(harness, meta, env);
-      if (sessionId === null) return null;
-      let client = clients.get(sessionId);
-      if (client === undefined) {
-        client = deps.createClient({ harness, sessionId });
-        clients.set(sessionId, client);
-      }
-      return client;
+      return sessionId === null ? null : clientForSession(sessionId);
     },
   });
   try {

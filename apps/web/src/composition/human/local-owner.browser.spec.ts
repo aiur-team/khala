@@ -158,3 +158,21 @@ test('owner removes another human while their open channel silently disappears',
     assert.equal(await member.locator('.kh-list').getByText('refactor', {exact:true}).count(), 0);
   } finally { await context.close(); }
 });
+
+test('opening just after joining stays in the room while its first sync arrives late', { timeout: 60_000 }, async () => {
+  const page = await browser!.newPage();
+  try {
+    await page.goto(server!.resolvedUrls!.local[0]! + 'local-owner.html?late-channel&oauth');
+    await page.getByRole('heading', { level: 1, name: 'refactor' }).waitFor();
+    assert.equal(await page.getByText('Select a channel to read its messages.').count(), 0);
+  } finally { await page.close(); }
+});
+
+test('a definite control 403 returns to the channel list before Matrix reports a leave', { timeout: 60_000 }, async () => {
+  const page = await browser!.newPage();
+  try {
+    await page.goto(server!.resolvedUrls!.local[0]! + 'local-owner.html?forbidden&oauth');
+    await page.getByText('Select a channel to read its messages.').waitFor();
+    assert.equal(await page.getByRole('heading', { level: 1, name: 'refactor' }).count(), 0);
+  } finally { await page.close(); }
+});

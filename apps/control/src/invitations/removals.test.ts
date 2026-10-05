@@ -46,7 +46,7 @@ it('recognizes removed agent tokens, keeps other and freshly reissued tokens usa
   expect(await (await status(request(credentials.accessToken))).json()).toEqual({ removed: false });
   await recordRemoval(h.store.store, ROOM_ID, owner.ownerId, target.ownerId, [credentials.userId], 'Recipient');
   expect(await (await status(request(credentials.accessToken))).json()).toEqual({ removed: true });
-  expect(await (await status(request('unknown'))).json()).toEqual({ removed: false });
+  expect((await status(request('unknown'))).status).toBe(401);
   const fresh = { ...credentials, accessToken: 'new-secret-bearer' };
   expect(await rememberAgentSession(h.store.store, fresh)).toBe(true);
   expect(await (await status(request(fresh.accessToken))).json()).toEqual({ removed: false });
@@ -70,11 +70,42 @@ it('checks exact legacy agent identity and distinguishes revoked bearers from he
     url.searchParams.set('userId', user); url.searchParams.set('roomId', room);
     return new Request(url, { headers: { authorization: `Bearer ${token}` } });
   };
-  expect(await (await status(request('revoked'))).json()).toEqual({ removed: true });
+  expect((await status(request('revoked'))).status).toBe(401);
   expect(await (await status(request('healthy'))).json()).toEqual({ removed: false });
   expect(await (await status(request('healthy'))).json()).toEqual({ removed: false });
   expect(fetch).toHaveBeenCalledTimes(2); // The healthy bearer was verified once and durably indexed.
-  expect(await (await status(request('revoked', '@arbitrary:matrix.test'))).json()).toEqual({ removed: false });
-  expect(await (await status(request('revoked', userId, 'other-room'))).json()).toEqual({ removed: false });
+  expect((await status(request('revoked', '@arbitrary:matrix.test'))).status).toBe(401);
+  expect((await status(request('revoked', userId, 'other-room'))).status).toBe(401);
   expect(await (await status(request('healthy', '@arbitrary:matrix.test'))).json()).toEqual({ removed: false });
+});
+
+it('authenticates unknown and missing tokens identically for removed and active agents', async () => {
+  const h = harness();
+  const userId = '@agent:matrix.test';
+  const credentials = { homeserver: 'https://matrix.test', userId, roomId: ROOM_ID, deviceId: 'device', accessToken: 'valid' };
+  await rememberAgentSession(h.store.store, credentials);
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}', { status: 401 }));
+  const status = createAgentSessionStatusHandler(h.store.store, { homeserverOrigin: 'https://matrix.test', fetch });
+  const request = (token?: string) => new Request(`https://control.test/api/agent/session/status?roomId=${encodeURIComponent(ROOM_ID)}&userId=${encodeURIComponent(userId)}`,
+    { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const active = await status(request('invalid'));
+  expect(active.status).toBe(401);
+  const activeBody = await active.json();
+  await recordRemoval(h.store.store, ROOM_ID, principal().ownerId, principal('recipient').ownerId, [userId], 'Recipient');
+  const removed = await status(request('invalid'));
+  expect(removed.status).toBe(401);
+  expect(await removed.json()).toEqual(activeBody);
+  expect((await status(request())).status).toBe(401);
+  expect(await (await status(request('valid'))).json()).toEqual({ removed: true });
+});
+
+it('only discloses incomplete legacy removal after whoami authenticates the claimed agent', async () => {
+  const h = harness();
+  const userId = '@legacy:matrix.test';
+  await recordRemoval(h.store.store, ROOM_ID, principal().ownerId, principal('recipient').ownerId, [userId], 'Recipient');
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ user_id: userId })));
+  const status = createAgentSessionStatusHandler(h.store.store, { homeserverOrigin: 'https://matrix.test', fetch });
+  const url = `https://control.test/api/agent/session/status?roomId=${encodeURIComponent(ROOM_ID)}&userId=${encodeURIComponent(userId)}`;
+  expect(await (await status(new Request(url, { headers: { authorization: 'Bearer verified' } }))).json()).toEqual({ removed: true });
+  expect(fetch).toHaveBeenCalledOnce();
 });
