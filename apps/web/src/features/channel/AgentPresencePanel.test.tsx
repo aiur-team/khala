@@ -173,3 +173,14 @@ describe('channel creator authority', () => {
     expect(render('owner_theo')).not.toContain('aria-label="Remove Theo"');
   });
 });
+
+it('hides every remove button from a non-owner even when the parent supplies removal props', () => {
+  const roster = resolveMembers({ viewer: { ownerId: mira, name: 'Mira' }, humans: [
+    { participantId: 'p_theo', ownerId: 'owner_theo', displayName: 'Theo' },
+    { participantId: 'p_bob', ownerId: 'owner_bob', displayName: 'Bob' },
+  ], agents: [] });
+  const markup = renderToStaticMarkup(<ChannelRoster members={roster} phase="ready" onOpen={() => {}}
+    creatorOwnerId="owner_theo" onRemoveHuman={async () => 'removed'} />);
+  expect(markup).toContain('OWNER');
+  expect(markup).not.toContain('aria-label="Remove ');
+});
