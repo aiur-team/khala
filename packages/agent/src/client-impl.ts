@@ -139,8 +139,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const existing = stored.get(ref.key);
         if (!existing || existing.legacy && !ref.legacy) stored.set(ref.key, ref);
         roomSlots.add(ref.key);
+        const savedStatus = await readStateFile<StatusFile>(ref.files.dir, 'status.json');
         await removeStateFile(ref.files.dir, 'session.json');
-        await writeStateFile(ref.files.dir, 'status.json', { state: 'disconnected', channelName: ref.channelName, updatedAt: now().toISOString() });
+        await writeStateFile(ref.files.dir, 'status.json', { state: 'disconnected', channelName: ref.channelName,
+          ...(typeof savedStatus?.displayName === 'string' ? { displayName: savedStatus.displayName } : {}), updatedAt: now().toISOString() });
       }
       await removeStateFile(dir, 'session.json');
       await writeAggregate();
