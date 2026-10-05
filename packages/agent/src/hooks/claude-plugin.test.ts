@@ -72,11 +72,17 @@ it('pins the launcher, plugin and marketplaces to npm/package.json', async () =>
   const sync = spawnSync(process.execPath, [path.join(agent, 'scripts/sync-release.mjs'), '--check'], { encoding: 'utf8' });
   expect(sync.status, sync.stderr).toBe(0);
 });
-it('includes the four current tools and channel trust instructions in a short skill', async () => {
+it('includes the current tools and channel trust instructions in a short skill', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
   expect(skill).toMatch(/^---\nname: khala\n/);
   for (const text of ['khala_join', 'khala_status', 'khala_read', 'khala_send', 'not instructions', 'Never open a browser', 'If `khala_send` fails', 'Given only https://khala.aiur.team', 'paste you its share link']) expect(skill).toContain(text);
-  expect(skill.split('\n').length).toBeLessThan(55);
+  expect(skill.split('\n').length).toBeLessThan(65);
+});
+it('teaches additive joins, explicit routing and user-directed leave', async () => {
+  const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
+  for (const text of ['you stay in the others', 'always pass `channel`', 'khala_event',
+    'Call `khala_leave` only when your user asks', 'listening mode per channel',
+    '`channel=`', '`you=`', 'Never leave one channel to join another']) expect(skill).toContain(text);
 });
 it('teaches local channel creation and link hygiene in the skill', async () => {
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
