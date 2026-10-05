@@ -1,0 +1,16 @@
+import { createCodexWaker } from '../wake/codex';
+import type { HarnessAdapter } from './adapter';
+
+const install: NonNullable<HarnessAdapter['install']> = async (flags, deps) =>
+  (await import('../install/main')).runCodexInstall(flags, deps);
+
+export const codex: HarnessAdapter = {
+  id: 'codex',
+  // A string metadata id wins even when empty or invalid; validation happens after selection.
+  sessionSources: [(meta, env) => typeof meta?.threadId === 'string' ? meta.threadId : env.CODEX_THREAD_ID],
+  codec: undefined,
+  install,
+  uninstall: (flags, deps) => install([...flags, '--uninstall'], deps),
+  waker: createCodexWaker,
+  rejoinable: () => true,
+};
