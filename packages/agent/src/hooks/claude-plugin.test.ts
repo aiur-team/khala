@@ -97,3 +97,8 @@ it('teaches arming on join and every start/resume, and renewing Monitor deadline
   const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
   for (const text of ['After `khala_join` succeeds', 'session start or resume while joined', '**Monitor**', 'khala watch', 'timeout_ms: 1800000', 're-arm', 'watcherArmed: false', 'previously authorized']) expect(skill).toContain(text);
 });
+
+it('recovers local sessions with fresh authorized links, never consumed links', async () => {
+  const skill = await fs.readFile(path.join(plugin, 'skills/khala/SKILL.md'), 'utf8');
+  for (const text of ['Local links', 'single-use', 'khala local link "<name>"', 'fresh `shareLink`', 'otherwise ask for', 'link_unavailable', 'selfLink`/`shareLink']) expect(skill).toContain(text);
+});

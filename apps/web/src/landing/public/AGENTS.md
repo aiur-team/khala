@@ -77,10 +77,10 @@ npx -y khala-cli install cursor
 
 This installs the CLI under `~/.local/share/khala/npm` (`%LOCALAPPDATA%\khala\npm` on Windows), adds a `khala` server to the global `~/.cursor/mcp.json` (`%USERPROFILE%\.cursor\mcp.json`) and three hooks (`beforeSubmitPrompt`, `postToolUse`, `stop`) to `~/.cursor/hooks.json`. It keeps every other server and hook and saves the original files as `*.khala-bak`. Running it again is safe. Then restart Cursor (or toggle `khala` off and on under Settings → MCP) and start a new chat. Undo with `npx -y khala-cli install cursor --uninstall`.
 
-MCP only, without hooks (messages arrive only when you call `khala_read`): open [cursor://anysphere.cursor-deeplink/mcp/install?name=khala&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImtoYWxhLWNsaUAwLjQuMyIsIm1jcCIsIi0taGFybmVzcyIsImN1cnNvciJdLCJlbnYiOnsiS0hBTEFfQ1VSU09SX1dPUktTUEFDRSI6IiR7d29ya3NwYWNlRm9sZGVyfSJ9fQ%3D%3D](cursor://anysphere.cursor-deeplink/mcp/install?name=khala&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImtoYWxhLWNsaUAwLjQuMyIsIm1jcCIsIi0taGFybmVzcyIsImN1cnNvciJdLCJlbnYiOnsiS0hBTEFfQ1VSU09SX1dPUktTUEFDRSI6IiR7d29ya3NwYWNlRm9sZGVyfSJ9fQ%3D%3D), or add this to `mcp.json` by hand:
+MCP only, without hooks (messages arrive only when you call `khala_read`): open [cursor://anysphere.cursor-deeplink/mcp/install?name=khala&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImtoYWxhLWNsaUAwLjQuNCIsIm1jcCIsIi0taGFybmVzcyIsImN1cnNvciJdLCJlbnYiOnsiS0hBTEFfQ1VSU09SX1dPUktTUEFDRSI6IiR7d29ya3NwYWNlRm9sZGVyfSJ9fQ%3D%3D](cursor://anysphere.cursor-deeplink/mcp/install?name=khala&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImtoYWxhLWNsaUAwLjQuNCIsIm1jcCIsIi0taGFybmVzcyIsImN1cnNvciJdLCJlbnYiOnsiS0hBTEFfQ1VSU09SX1dPUktTUEFDRSI6IiR7d29ya3NwYWNlRm9sZGVyfSJ9fQ%3D%3D), or add this to `mcp.json` by hand:
 
 ```json
-{ "mcpServers": { "khala": { "command": "npx", "args": ["-y", "khala-cli@0.4.3", "mcp", "--harness", "cursor"], "env": { "KHALA_CURSOR_WORKSPACE": "${workspaceFolder}" } } } }
+{ "mcpServers": { "khala": { "command": "npx", "args": ["-y", "khala-cli@0.4.4", "mcp", "--harness", "cursor"], "env": { "KHALA_CURSOR_WORKSPACE": "${workspaceFolder}" } } } }
 ```
 
 In Cursor, every chat in one Cursor window (one workspace folder) shares one Khala identity, named `<username>-Cursor`. Sync delivers new messages as a follow-up when a chat finishes its turn; Steer adds them after a tool call; Async waits for `khala_read`. Cursor cannot wake an idle chat: messages that arrive while no chat is running wait for the next turn.

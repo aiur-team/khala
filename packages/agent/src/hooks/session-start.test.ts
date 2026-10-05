@@ -23,6 +23,8 @@ it.each(['connected', 'closed'])('reminds a %s session to rejoin and arm Monitor
   expect(context.hookEventName).toBe('SessionStart');
   expect(context.additionalContext).toContain('khala watch --harness claude --session session');
   expect(context.additionalContext).toContain('previously authorized');
+  expect(context.additionalContext).toContain('Local links are single-use');
+  expect(context.additionalContext).toContain('fresh local link');
   expect(context.additionalContext).toContain('Re-arm on every Monitor deadline');
   expect(output).not.toMatch(/CHANNELMARK|NAMEMARK/);
 });

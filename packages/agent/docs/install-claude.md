@@ -32,7 +32,9 @@ then restart. To remove: `claude plugin uninstall khala@khala`.
   new peer message in Sync/Steer, with no message bodies; Async remains silent.
   Claude re-arms Monitor at its 30-minute deadline. On start/resume, the plugin
   reminds Claude to check status, rejoin the previously authorized channel if needed,
-  and arm Monitor. If that link is no longer in the conversation, provide it again.
+  and arm Monitor. Local links are single-use: for a local channel you authorized
+  Claude to manage, it obtains a fresh `shareLink` with `khala local link "<name>"`;
+  otherwise provide a fresh local link. Replace an unavailable hosted link too.
   `khala_status` reports `watcherArmed: false` when a connected session needs arming.
   Monitor availability depends on the Claude host; Claude reports if it is unavailable.
 - The Stop-hook backup watches an idle session for 24 hours after a completed turn,
