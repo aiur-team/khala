@@ -69,7 +69,7 @@ Readers keep the first event per key in timeline order. The emitting session der
 
 ## Option B (supported now): agent forwarding
 
-An Aiur worker joins its Khala channel with `khala_join` in the same live session. After its own `emit_event`, or when it sees a PR/CI event, it calls `khala_event` with `{ aiur: <event>, ticketPrefix: "AIUR-" }`. Forward the full available event record, including its published `id`; an `emit_event` enqueue acknowledgement alone is not that record.
+An Aiur worker joins its Khala channel with `khala_join` in the same live session. After its own `emit_event`, or when it sees a PR/CI event, it calls `khala_event` with `{ aiur: <event>, ticketPrefix: "AIUR-" }`. When joined to multiple channels, pass `channel` as a name (optionally prefixed with `#`) or a room ID; omitting it returns `channel_required` with the available channels. Forward the full available event record, including its published `id`; an `emit_event` enqueue acknowledgement alone is not that record.
 
 Aiur's vocabulary is defined in `codex/dynamic_tool/emit_event.ex:12-53`: `progress`, `progress.<slug>`, `decision.<slug>`, `blocked`, `unblocked`, `attention.<slug>`, `attention.resolved`, `pause.request`, and `custom.<slug>`. `agent_runner/tool_executor.ex:355-372` constructs `ticket.<id>.agent.<name>` and the payload's `message`, `name`, `issue`, and agent source. Aiur caps bare progress emits at **2 per turn** (`codex/dynamic_tool/emit_event.ex:55`); forwarding does not bypass that cap. `system.*` and `executor.*` return `{ skipped: true }`.
 
@@ -77,9 +77,9 @@ The [C7 tool contract](../build/m1/contracts.md#c7-mcp-tools-packagesagentsrcmcp
 
 | Tool | Input | Result / errors |
 |---|---|---|
-| `khala_event` | `{ event?: object, aiur?: object, ticketPrefix?: string (0..16) }`, exactly one of `event` / `aiur` | `{ eventId }` or `{ skipped: true }`. Errors: `invalid_event` (with `path`, `code`), `not_connected`, `send_failed` |
+| `khala_event` | `{ event?: object, aiur?: object, ticketPrefix?: string (0..16), channel?: string }`, exactly one of `event` / `aiur` | `{ eventId }` or `{ skipped: true }`. Errors: `invalid_event` (with `path`, `code`), `not_connected`, `send_failed` |
 
-There is no channel argument: the live agent session supplies the joined channel. The merged MCP dispatcher also returns `session_unknown` when it cannot resolve the calling session; this is additional to the C7 event errors.
+The live agent session supplies the joined channels. `channel` is optional with one joined channel and required with several. The MCP dispatcher also returns `session_unknown` when it cannot resolve the calling session; this is additional to the C7 event errors.
 
 ### Example: review requested
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createKhalaAgentClient } from '../../client-impl';
 import { KhalaClientError } from '../../client';
-import { sessionFiles } from '../../state';
+import { channelFiles, sessionFiles } from '../../state';
 import { createLocalSession } from '../session';
 import { helperPaths } from '../lifecycle';
 import { readEntries } from '../../inbox';
@@ -41,8 +41,10 @@ if (hostile) {
     await claude.join(selfLink, 'claude');
     await codex.join(shareLink, 'codex');
     await wait(async () => (await claude.status()).state === 'connected' && (await codex.status()).state === 'connected');
+    const claudeFiles = channelFiles(sessionFiles('claude', `egress-${nonce}`), (await claude.status()).channels![0]!.roomId!);
+    const codexFiles = channelFiles(sessionFiles('codex', `egress-${nonce}`), (await codex.status()).channels![0]!.roomId!);
     for (const harness of ['claude', 'codex'] as const) {
-      const creds = JSON.parse(await readFile(sessionFiles(harness, `egress-${nonce}`).session, 'utf8')) as AgentCredentials;
+      const creds = JSON.parse(await readFile((harness === 'claude' ? claudeFiles : codexFiles).session, 'utf8')) as AgentCredentials;
       assert.equal(creds.transport, 'local');
       assert.ok(['127.0.0.1', 'localhost'].includes(new URL(creds.homeserver).hostname));
     }
@@ -51,11 +53,11 @@ if (hostile) {
     const codexId = (await codex.status()).agentUserId;
     await claude.send(ping);
     await wait(async () => (await codex.status()).unread >= 1
-      && (await readEntries(sessionFiles('codex', `egress-${nonce}`))).some(message => message.body === ping && message.sender === claudeId));
+      && (await readEntries(codexFiles)).some(message => message.body === ping && message.sender === claudeId));
     await wait(async () => (await codex.read(100)).messages.some(message => message.body === ping && message.sender === claudeId));
     await codex.send(pong);
     await wait(async () => (await claude.status()).unread >= 1
-      && (await readEntries(sessionFiles('claude', `egress-${nonce}`))).some(message => message.body === pong && message.sender === codexId));
+      && (await readEntries(claudeFiles)).some(message => message.body === pong && message.sender === codexId));
     await wait(async () => (await claude.read(100)).messages.some(message => message.body === pong && message.sender === codexId));
     const helper = JSON.parse(await readFile(helperPaths(process.env).helperFile, 'utf8')) as { origin: string; adminToken: string };
     const channelPath = '/api/local/channels/' + encodeURIComponent(roomId);

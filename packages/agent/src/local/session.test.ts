@@ -9,7 +9,7 @@ import { LOCAL_OWNER_USER_ID as owner, type LocalEvent, type LocalMember } from 
 import { createLocalSession, type LocalSessionOptions } from './session';
 import type { ChannelSession, SessionMessage } from '../transport';
 import { toInboxEntry } from '../sender';
-import { resolveStateDir } from '../state';
+import { channelFiles, filesForDir, resolveStateDir } from '../state';
 
 const self = '@agent-a1b2c3d4:local';
 const other = '@agent-11223344:local';
@@ -383,7 +383,7 @@ async function localClient(h: ReturnType<typeof fakeHelper>) {
     },
   });
   const statusTool = createKhalaTools({ harness: 'codex', clientFor: () => client }).find(t => t.name === 'khala_status')!;
-  return { client, dir: resolveStateDir('codex', 'local', { XDG_STATE_HOME: root }), status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
+  return { client, dir: channelFiles(filesForDir(resolveStateDir('codex', 'local', { XDG_STATE_HOME: root })), creds.roomId).dir, status: () => statusTool.call({}, { id: 1, notification: false, meta: undefined }), cleanup: async () => {
     await client.close(); await rm(root, { recursive: true, force: true });
   } };
 }
