@@ -1,4 +1,3 @@
-import { migrateLegacy } from './channels';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { applyListeningMode, readListeningMode } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
@@ -102,7 +101,6 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function initialize(): Promise<void> {
     return initialization ??= (async () => {
       await ensureStateDir(dir);
-      await migrateLegacy(filesForDir(dir));
       if (rejoinable) {
         // A missing, unparsable or malformed secret is replaced: the worst case is one fresh "-N" member.
         const saved = (await readStateFile<{ secret?: unknown } | null>(dir, 'rejoin.json'))?.secret;
