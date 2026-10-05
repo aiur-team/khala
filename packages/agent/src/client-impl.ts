@@ -136,7 +136,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       }
       // Re-joining requires fresh credentials; the server reuses membership by session.
       for (const ref of await listChannels(filesForDir(dir))) {
-        stored.set(ref.key, ref);
+        const existing = stored.get(ref.key);
+        if (!existing || existing.legacy && !ref.legacy) stored.set(ref.key, ref);
         roomSlots.add(ref.key);
         await removeStateFile(ref.files.dir, 'session.json');
         await writeStateFile(ref.files.dir, 'status.json', { state: 'disconnected', channelName: ref.channelName, updatedAt: now().toISOString() });
@@ -164,7 +165,18 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     await cleanup(attempt);
     if (attempts.get(attempt.link) === attempt) attempts.delete(attempt.link);
   }
+  function pendingAttempts(): Attempt[] {
+    return [...attempts.values()].filter(attempt => current(attempt) && !attempt.joined
+      && (!attempt.credentials || !stored.has(channelKey(attempt.credentials.roomId))));
+  }
   function select(channel?: string): ChannelRef {
+    const pending = pendingAttempts();
+    if (channel === undefined && stored.size + pending.length > 1) {
+      throw new KhalaClientError('channel_required', undefined, { channels: [
+        ...refs().map(ref => ({ channel: ref.channelName ?? ref.roomId, roomId: ref.roomId })),
+        ...pending.map(attempt => ({ channel: attempt.link, roomId: attempt.credentials?.roomId ?? attempt.link })),
+      ] });
+    }
     const result = resolveChannel(refs(), channel);
     if (!result.ok) {
       if (channel === undefined && stored.size === 0) throw new KhalaClientError('not_connected');
@@ -387,7 +399,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const selected = channel === undefined ? refs() : [select(channel)];
       await Promise.all(selected.map(ref => { const attempt = channels.get(ref.key); return attempt?.joined ? attempt.task : undefined; }));
       await Promise.all(selected.map(ref => channels.get(ref.key)?.appends));
-      const items = await Promise.all(selected.map(async ref => {
+      const items: import('./client').ChannelStatus[] = await Promise.all(selected.map(async ref => {
         const attempt = channels.get(ref.key);
         const session = attempt?.joined && current(attempt) ? attempt.session : undefined;
         const you = session ? ownName(session) : undefined;
@@ -396,8 +408,14 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           ...(you !== undefined ? { you } : {}), ...(session ? { agentUserId: session.userId } : {}),
           unread: (await unreadCount(ref.files.dir)).total, listeningMode: await readListeningMode(ref.files) };
       }));
+      if (channel === undefined) {
+        for (const attempt of pendingAttempts()) {
+          items.push({ channel: attempt.link, ...(attempt.credentials ? { roomId: attempt.credentials.roomId } : {}),
+            link: attempt.link, state: 'joining', unread: 0, listeningMode: 'sync' });
+        }
+      }
       await statusWrites;
-      const single = items.length === 1 ? items[0] : undefined;
+      const single = items.length === 1 && items[0]?.roomId ? items[0] : undefined;
       return { state: channel === undefined ? status.state : single!.state,
         ...(single?.detail !== undefined ? { detail: single.detail } : channel === undefined && status.detail ? { detail: status.detail } : {}),
         ...(single ? { channelName: single.channel, ...(single.you !== undefined ? { displayName: single.you } : {}),
@@ -459,7 +477,15 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         }
         await statusWrites;
         await ensureStateDir(ref.files.dir);
-        await fs.rm(ref.files.dir, { recursive: true, force: true });
+        if (ref.legacy) {
+          for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json', 'session.json']) {
+            await removeStateFile(ref.files.dir, name);
+          }
+        } else {
+          const expected = channelFiles(filesForDir(dir), ref.roomId).dir;
+          if (ref.files.dir !== expected) throw new KhalaClientError('internal_error', 'unsafe_state_dir');
+          await fs.rm(ref.files.dir, { recursive: true, force: true });
+        }
         channels.delete(ref.key);
         stored.delete(ref.key);
         roomSlots.delete(ref.key);

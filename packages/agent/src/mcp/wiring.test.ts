@@ -4,7 +4,7 @@ import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KhalaAgentClientOptions } from '../client-impl';
-import { ensureStateDir, readJoinFile, writeJoinFile, sessionFiles, writeStateFile } from '../state';
+import { ensureStateDir, readJoinFile, writeJoinFile, sessionFiles, writeJsonAtomic, writeStateFile } from '../state';
 import { createPlaceholderClient, runMcpCommand } from './main';
 import { createRealClientFactory } from './wiring';
 
@@ -158,5 +158,21 @@ it('clears pending joins at startup and forwards all channel selectors', async (
   expect(client.send).toHaveBeenCalledWith('hi', '#B');
   expect(client.sendChannelEvent).toHaveBeenCalledWith(event, 'B');
   expect(client.leave).toHaveBeenCalledWith('A');
+  await wrapped.close();
+});
+
+it('reports the active Monitor marker only for a joined Claude session', async () => {
+  const env = await environment();
+  const client = createPlaceholderClient();
+  client.status = async () => ({ state: 'connected', unread: 0, listeningMode: 'sync' });
+  const wrapped = createRealClientFactory(env, { createClient: () => client })({ harness: 'claude', sessionId: 'monitor' });
+  expect(await wrapped.status()).toMatchObject({ watcherArmed: false });
+  const files = sessionFiles('claude', 'monitor', env);
+  const nonce = '11111111-1111-1111-1111-111111111111';
+  await writeJsonAtomic(path.join(files.dir, `monitor-${nonce}.json`), { pid: process.pid, nonce });
+  await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { pid: process.pid, nonce });
+  expect(await wrapped.status()).toMatchObject({ watcherArmed: true });
+  await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { pid: -1, nonce: 'stale' });
+  expect(await wrapped.status()).toMatchObject({ watcherArmed: false });
   await wrapped.close();
 });

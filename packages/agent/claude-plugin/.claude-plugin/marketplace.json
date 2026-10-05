@@ -7,7 +7,7 @@
     {
       "name": "khala",
       "source": "./khala",
-      "version": "0.4.2",
+      "version": "0.4.4",
       "description": "Khala channels for Claude Code: MCP tools, delivery hooks, idle wake, skill"
     }
   ]

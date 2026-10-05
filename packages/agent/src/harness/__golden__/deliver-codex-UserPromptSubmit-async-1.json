@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "stdout": "",
+  "stderr": "",
+  "cursor": {
+    "lastDeliveredEventId": null,
+    "deliveredCount": 0
+  },
+  "activity": {
+    "state": "busy",
+    "updatedAt": "2026-10-05T12:00:00.000Z"
+  },
+  "unread": [
+    "$message-1"
+  ]
+}

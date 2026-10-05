@@ -41,8 +41,8 @@ if (hostile) {
     await claude.join(selfLink, 'claude');
     await codex.join(shareLink, 'codex');
     await wait(async () => (await claude.status()).state === 'connected' && (await codex.status()).state === 'connected');
-    const claudeFiles = channelFiles(sessionFiles('claude', `egress-${nonce}`), (await claude.status()).channels![0]!.roomId);
-    const codexFiles = channelFiles(sessionFiles('codex', `egress-${nonce}`), (await codex.status()).channels![0]!.roomId);
+    const claudeFiles = channelFiles(sessionFiles('claude', `egress-${nonce}`), (await claude.status()).channels![0]!.roomId!);
+    const codexFiles = channelFiles(sessionFiles('codex', `egress-${nonce}`), (await codex.status()).channels![0]!.roomId!);
     for (const harness of ['claude', 'codex'] as const) {
       const creds = JSON.parse(await readFile((harness === 'claude' ? claudeFiles : codexFiles).session, 'utf8')) as AgentCredentials;
       assert.equal(creds.transport, 'local');

@@ -13,6 +13,7 @@ import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import type { KhalaAgentClient } from './client';
 import { KhalaClientError } from './client';
 import { createKhalaAgentClient } from './client-impl';
+import { migrateLegacy } from './channels';
 import type { AgentMatrixSession, SessionModeCommand, SessionMessage } from './matrix/session';
 import { appendInbox } from './inbox';
 import { channelFiles, filesForDir, readJoinFile, writeJoinFile, joinFilePath, stateKey, ensureStateDir, readStateFile, resolveStateDir, writeStateFile } from './state';
@@ -20,6 +21,7 @@ import { toInboxEntry } from './sender';
 import { deliver } from '../hooks/deliver';
 
 vi.mock('node:fs/promises', { spy: true });
+vi.mock('./channels', { spy: true });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -112,6 +114,16 @@ it('preserves the connected channel and backlog while another link is pending', 
   handler!(message('$after'));
   expect((await entries()).map(entry => entry.eventId)).toEqual(['$old', '$after']);
   expect((await client.status()).state).toBe('connected');
+  expect((await client.status()).channels).toEqual(expect.arrayContaining([
+    expect.objectContaining({ channel: nextLink, link: nextLink, state: 'joining' }),
+  ]));
+  await expect(client.send('for pending B')).rejects.toMatchObject({ code: 'channel_required' });
+  await expect(client.read(20)).rejects.toMatchObject({ code: 'channel_required' });
+  await expect(client.sendChannelEvent({ v: 1, kind: 'test', summary: 'B', body: 'B' })).rejects.toMatchObject({ code: 'channel_required' });
+  expect(session.send).not.toHaveBeenCalled();
+  expect(session.sendChannelEvent).not.toHaveBeenCalled();
+  await client.send('explicit A', credentials.roomId);
+  expect(session.send).toHaveBeenCalledWith(credentials.roomId, 'explicit A');
 });
 it('filters own sender, other rooms and events; dedups and appends in order with labels', async () => {
   await connected();
@@ -861,4 +873,43 @@ it('returns not_connected when authoritative removal ends a failed send', async 
   vi.mocked(session.send).mockImplementation(async () => { ended('removed'); throw new Error('forbidden'); });
   await expect(client.send('hello')).rejects.toMatchObject({ code: 'not_connected' });
   await vi.waitFor(async () => expect(await client.status()).toMatchObject({ state: 'disconnected', detail: 'removed' }));
+});
+
+
+it.each([false, true])('legacy leave preserves root identity and other channels (collision=%s)', async collision => {
+  await client.close();
+  const files = filesForDir(dir);
+  const other = channelFiles(files, '!other:s');
+  await ensureStateDir(other.dir);
+  await writeStateFile(other.dir, 'channel.json', { roomId: '!other:s', channelName: 'Other' });
+  await fs.writeFile(other.inbox, 'other backlog\n');
+  if (collision) {
+    const nested = channelFiles(files, credentials.roomId);
+    await ensureStateDir(nested.dir);
+    await writeStateFile(nested.dir, 'channel.json', { roomId: credentials.roomId, channelName: 'Legacy' });
+    await fs.writeFile(nested.inbox, 'nested backlog\n');
+  }
+  const secret = 'S'.repeat(43);
+  await writeStateFile(dir, 'rejoin.json', { secret });
+  await writeStateFile(dir, 'status.json', { channelName: 'Legacy' });
+  await fs.writeFile(files.inbox, JSON.stringify({ roomId: credentials.roomId }) + '\n');
+  await fs.writeFile(path.join(dir, 'activity.json'), JSON.stringify({ alive: true }));
+  await fs.writeFile(path.join(dir, 'watcher.json'), JSON.stringify({ armed: true }));
+  const savedJoin = { ...created, link: 'https://khala.example/join/pending9' };
+  await writeJoinFile(files, savedJoin.link, savedJoin);
+  // Model a concurrent legacy writer after migration, keeping both layouts discoverable.
+  vi.mocked(migrateLegacy).mockResolvedValueOnce('none');
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  await client.leave('Legacy');
+  expect(await readStateFile(dir, 'rejoin.json')).toEqual({ secret });
+  expect(await readStateFile(dir, 'activity.json')).toEqual({ alive: true });
+  expect(await readStateFile(dir, 'watcher.json')).toEqual({ armed: true });
+  expect(await readJoinFile(files, savedJoin.link)).toMatchObject({ link: savedJoin.link });
+  expect(await fs.readFile(other.inbox, 'utf8')).toBe('other backlog\n');
+  if (collision) {
+    await expect(fs.stat(channelFiles(files, credentials.roomId).dir)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await fs.readFile(files.inbox, 'utf8')).toContain(credentials.roomId);
+  } else {
+    await expect(fs.stat(files.inbox)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
 });
