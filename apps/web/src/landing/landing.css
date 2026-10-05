@@ -475,7 +475,7 @@ a {
   text-decoration: underline;
 }
 
-.aside .gh-link { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; text-decoration: none; }
+.aside .gh-link { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .aside .gh-link svg { width: 14px; height: 14px; display: block; }
 
 .aside a:hover {
