@@ -2149,6 +2149,61 @@ The 2026-10-05 document review recorded these judgment calls instead of deciding
 
 ---
 
+## Ticket map
+
+Promoted to `aiur-team/khala` on 2026-10-05 from plan commit `6e573947`. After promotion, edits go to the tickets, not this plan. The tickets are members of the existing build order #828 through Aiur's pack (`builds/m1-external-chat/build-order.json`, ids `MH-<unit>`), because #828 already holds GitHub's maximum of 100 sub-issues. Dependencies are also linked as native GitHub "blocked by" relations.
+
+| Unit | Issue | Disposition | Depends on |
+|---|---|---|---|
+| U1 | #1110 | `agent:todo` (Codex) | none |
+| U2 | #1111 | `agent:todo` (Codex) | none |
+| U3 | #1119 | `agent:todo` (Codex) | #1110, #1111, #1102, #1103, #1104 |
+| U3b | #1127 | `agent:todo` (Codex) | #1119 |
+| U4 | #1128 | `agent:todo` (Codex) | #1127 |
+| U5 | #1120 | `agent:todo` (Codex) | #1110 |
+| U6 | #1122 | `agent:todo` (Codex) | #1110 |
+| U6b | #1123 | `agent:todo` (Codex) | #1110 |
+| U7 | #1124 | `agent:todo` (Codex) | #1110 |
+| U8 | #1129 | `agent:todo` (Codex) | #1127, #1120, #1122, #1123, #1124 |
+| U9 | #1132 | `agent:todo` (Codex) | #1128, #1130 |
+| U10 | #1145 | `agent:todo` (Codex) | #1132, #1134, #1137 |
+| U11 | #1130 | `agent:todo` (Codex) | #1127 |
+| U11b | #1133 | `agent:todo` (Codex) | #1130, #1131 |
+| U12 | #1131 | `agent:todo` (Codex) | #1127 |
+| U13 | #1134 | `agent:todo` (Codex) | #1130 |
+| U14 | #1135 | `agent:todo` (Codex) | #1130, #1131, #1118 |
+| U15 | #1137 | `agent:todo` (Codex) | #1135 |
+| U16 | #1112 | `human:todo` (operator or Executor) | none |
+| U17 | #1136 | `agent:todo` (Codex) | #1130, #1112 |
+| U18 | #1138 | `agent:todo` (Codex) | #1136 |
+| U19 | #1146 | `agent:todo` (Codex) | #1132, #1136, #1138 |
+| U20 | #1113 | `human:todo` (operator or Executor) | none |
+| U21 | #1139 | `agent:todo` (Codex) | #1129, #1132, #1113 |
+| U22 | #1147 | `agent:todo` (Codex) | #1130, #1135, #1139 |
+| U23 | #1114 | `human:todo` (operator or Executor) | none |
+| U24 | #1140 | `agent:todo` (Codex) | #1129, #1132, #1135, #1114 |
+| U25 | #1148 | `agent:todo` (Codex) | #1130, #1140 |
+| U26 | #1150 | `agent:todo` (Codex) | #1136, #1138, #1140 |
+| U27 | #1141 | `agent:todo` (Codex) | #1129, #1132, #1135 |
+| U28 | #1115 | `human:todo` (operator or Executor) | none |
+| U29 | #1151 | `agent:todo` (Codex) | #1141, #1115 |
+| U30 | #1116 | `human:todo` (operator or Executor) | none |
+| U31 | #1142 | `agent:todo` (Codex) | #1129, #1132, #1130, #1135, #1116 |
+| U32 | #1117 | `human:todo` (operator or Executor) | none |
+| U33 | #1143 | `agent:todo` (Codex) | #1129, #1132, #1135, #1117 |
+| U34 | #1144 | `agent:todo` (Codex) | #1129, #1132 |
+| U35 | #1157 | `agent:todo` (Codex) | #1124, #1133, #1131, #1134, #1137, #1146, #1147, #1148, #1150, #1151, #1142, #1143, #1144, #1152, #1156, #1154 |
+| U36 | #1158 | `human:todo` (operator or Executor) | #1145, #1157 |
+| U37 | #1159 | `human:todo` (operator or Executor) | #1158 |
+| U38 | #1118 | `human:todo` (operator or Executor) | none |
+| U39 | #1125 | `human:todo` (operator or Executor) | #1112 |
+| U40 | #1126 | `human:todo` (operator or Executor) | #1116, #1117 |
+| U41 | #1152 | `agent:todo` (Codex) | #1133, #1135, #1137, #1136, #1138, #1118 |
+| U42 | #1156 | `agent:todo` (Codex) | #1146, #1150, #1125 |
+| U43 | #1154 | `agent:todo` (Codex) | #1142, #1143, #1126 |
+
+---
+
 ## Sources and Research
 
 - **Research dossiers** in `docs/build/multi-harness/research/`:
