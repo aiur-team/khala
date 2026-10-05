@@ -76,7 +76,7 @@ for (const viewport of viewports) {
         await settingsCog(page).click();
         const menu = page.getByRole('menu', { name: 'Settings' });
         await menu.getByRole('menuitem', { name: /Profile/u }).waitFor();
-        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), [modeItem, 'Profile@kevin']);
+        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), [modeItem, '@Notify me when I’m mentionedOff', 'Profile@kevin']);
         assert.equal(await page.getByText('Log out').count(), 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
         await page.waitForTimeout(400); // the menu's open animation
@@ -87,7 +87,7 @@ for (const viewport of viewports) {
         await settingsCog(page).click();
         const menu = page.getByRole('menu', { name: 'Settings' });
         await menu.getByRole('menuitem', { name: 'Log out' }).waitFor();
-        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), [modeItem, 'Profile@kevin', 'Log out']);
+        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), [modeItem, '@Notify me when I’m mentionedOff', 'Profile@kevin', 'Log out']);
         await page.waitForTimeout(400);
         await shot(page, `oauth-menu-${viewport.width}-${theme}`);
       });
@@ -128,3 +128,53 @@ for (const viewport of viewports) {
     });
   });
 }
+
+for (const viewport of viewports) {
+  for (const account of ['', '?oauth']) {
+    test(`mention permission is requested only from Settings at ${viewport.width}px ${account || 'local'}`, { timeout: 60_000 }, async () => {
+      const context = await browser!.newContext({ viewport });
+      const page = await context.newPage();
+      await page.addInitScript(`window.__permissionRequests = 0;
+        class StubNotification {
+          static permission = localStorage.getItem('khala.mention-notifications.v1') === 'on' ? 'granted' : 'default';
+          static async requestPermission() { window.__permissionRequests++; this.permission = 'granted'; return 'granted'; }
+        }
+        window.Notification = StubNotification;`);
+      try {
+        await page.goto(server!.resolvedUrls!.local[0]! + 'local-owner.html' + account);
+        await settingsCog(page).waitFor();
+        assert.equal(await page.evaluate('window.__permissionRequests'), 0);
+        await settingsCog(page).click();
+        const toggle = page.getByRole('menuitem', { name: /Notify me when I’m mentioned/u });
+        await toggle.waitFor();
+        assert.match(await toggle.innerText(), /Off/u);
+        assert.equal(await page.evaluate('window.__permissionRequests'), 0);
+        const box = await toggle.boundingBox();
+        assert.ok(box && box.x >= 0 && box.x + box.width <= viewport.width, 'setting fits the viewport');
+        await toggle.click();
+        await settingsCog(page).click();
+        await page.getByRole('menuitem', { name: /mentioned.*On/u }).waitFor();
+        assert.equal(await page.evaluate('window.__permissionRequests'), 1);
+        assert.equal(await page.evaluate(() => localStorage.getItem('khala.mention-notifications.v1')), 'on');
+        await page.reload();
+        await settingsCog(page).click();
+        await page.getByRole('menuitem', { name: /mentioned.*On/u }).waitFor();
+        assert.equal(await page.evaluate('window.__permissionRequests'), 0);
+      } finally { await context.close(); }
+    });
+  }
+}
+
+test('Settings explains blocked mention permission', { timeout: 60_000 }, async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(`window.__permissionRequests = 0;
+    window.Notification = class { static permission = 'denied'; static requestPermission() { window.__permissionRequests++; } };`);
+  try {
+    await page.goto(server!.resolvedUrls!.local[0]! + 'local-owner.html');
+    await settingsCog(page).click();
+    const toggle = page.getByRole('menuitem', { name: /Notify me when I’m mentioned/u });
+    assert.equal(await toggle.isDisabled(), true);
+    assert.match(await toggle.innerText(), /Blocked in browser settings/u);
+    assert.equal(await page.evaluate('window.__permissionRequests'), 0);
+  } finally { await page.close(); }
+});
