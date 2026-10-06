@@ -30,7 +30,7 @@ describe('UsernameForm', () => {
   });
 
   it('rejects a name that collides with the agent naming rule', () => {
-    const html = fields('Kevin-Claude');
+    const html = fields('bob-Gemini');
     expect(html).toMatch(/role="alert">(That name is reserved\.|Use letters, numbers, \. _ or -, starting and ending with a letter or number\.)<\/p>/);
     expect(submitDisabled(html)).toBe(true);
   });
