@@ -2,28 +2,43 @@ import * as fs from 'node:fs/promises';
 import { watch as watchDirectory, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { monitorStorage, monitorStorageCandidates } from './monitor-storage';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
-import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, stateRoot, type SessionFiles } from './state';
-import { adapterFor } from './harness';
+import { readJson, readWatcherStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
+import { readActivity } from './activity';
+import { driverAllowed, readWakeState, wakeLine } from './wake/shared';
+import { MUSE_WAKE_REQUEST, type MuseWakeRequest } from './wake/muse-monitor';
 import { qwenInboundAllowed } from './wake/qwen-socket';
 import { readWakeSettings } from './wake/shared';
-import { resolveHarness, resolveSessionId } from './mcp/session-id';
 
 const MARKER = 'monitor.json';
 const OBSERVATION = 'monitor-cursor.json';
 const NONCE_PATTERN = /^[a-f0-9-]{36}$/;
-const leaseFile = (files: SessionFiles, nonce: string) => path.join(files.dir, `monitor-${nonce}.json`);
+const leaseFile = (dir: string, nonce: string) => path.join(dir, `monitor-${nonce}.json`);
 type Observation = { userId: string; roomId: string; count: number; lastEventId: string | null };
-type Owner = { nonce: string; pid: number };
+type Owner = { nonce: string; pid: number; heartbeatAt?: string; startedAt?: number };
+export async function monitorOwner(files: SessionFiles): Promise<Owner | undefined> {
+  const owners: Owner[] = [];
+  for (const dir of monitorStorageCandidates(files)) {
+    const owner = await readJson<Owner>(path.join(dir, MARKER));
+    if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.nonce !== 'string' || !NONCE_PATTERN.test(owner.nonce)) continue;
+    const lease = await readJson<Owner>(leaseFile(dir, owner.nonce));
+    if (lease?.nonce !== owner.nonce) continue;
+    if (lease.heartbeatAt !== undefined) {
+      const age = Date.now() - Date.parse(lease.heartbeatAt);
+      if (Number.isFinite(age) && age >= 0 && age < 60_000) owners.push(owner);
+      continue;
+    }
+    try { process.kill(owner.pid, 0); owners.push(owner); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') owners.push(owner); }
+  }
+  return owners.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+}
 export async function monitorArmed(files: SessionFiles): Promise<boolean> {
-  const owner = await readJson<Owner>(path.join(files.dir, MARKER));
-  if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.nonce !== 'string' || !NONCE_PATTERN.test(owner.nonce)) return false;
-  if ((await readJson<Owner>(leaseFile(files, owner.nonce)))?.nonce !== owner.nonce) return false;
-  try { process.kill(owner.pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+  return !!await monitorOwner(files);
 }
 
 export function mentions(entry: InboxEntry, name: string | undefined): boolean {
@@ -41,8 +56,11 @@ export async function watchSession(files: SessionFiles, io: {
   signal: AbortSignal;
   harness?: string;
   env?: NodeJS.ProcessEnv;
+  now?: () => number;
+  stderr?: (line: string) => void;
 }): Promise<number> {
   const nonce = randomUUID();
+  let storage = files.dir;
   const env = io.env ?? process.env;
   const qwen = io.harness === 'qwen';
   const wakeAllowed = async () => {
@@ -55,16 +73,39 @@ export async function watchSession(files: SessionFiles, io: {
   let running: Promise<void> | undefined;
   let dirty = false;
   let done = false;
+  let emittedRequest: string | undefined;
   let code = 0;
   let finish!: () => void;
   const finished = new Promise<void>(resolve => { finish = resolve; });
-  const stop = (exit = 0) => { done = true; code = exit; watcher?.close(); clearInterval(timer); finish(); };
+  const stop = (exit = 0, reason = 'stopped') => {
+    if (done) return;
+    done = true; code = exit; watcher?.close(); clearInterval(timer);
+    if (!qwen || exit !== 0) io.stderr?.(`khala watch: stopped (${reason}). Do not re-arm.`);
+    finish();
+  };
+  let lastHeartbeat = 0;
+  let exitReason = 'disconnected';
+  const errorReason = (error: unknown) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EROFS') return 'monitor_storage_read_only';
+    if (code === 'EACCES' || code === 'EPERM') return 'state_access_denied';
+    return error instanceof Error && error.message === 'unsafe_monitor_directory' ? 'unsafe_monitor_directory' : 'state_unreadable';
+  };
   const abort = () => stop();
   try {
-    const status = await readStatus(files);
+    const status = await readWatcherStatus(files);
     const initialSession = await readJson<{ userId: string; roomId: string }>(files.session);
     if (!['connected', 'send_failed'].includes(status?.state ?? '')
-      || (!initialSession && !(await listChannels(files)).length)) return 0;
+      || (!initialSession && !(await listChannels(files)).length)) {
+      stop(2, status?.detail ?? status?.state ?? 'session_missing'); return 2;
+    }
+    storage = await monitorStorage(files);
+    const storageDirs = new Map([[files.dir, storage]]);
+    const observationDir = async (target: SessionFiles) => {
+      let dir = storageDirs.get(target.dir);
+      if (!dir) { dir = await monitorStorage(target); storageDirs.set(target.dir, dir); }
+      return dir;
+    };
     const initialDelivered = new Map<string, { identity: string; cursor: Cursor }>();
     const seedBaseline = async (target: SessionFiles, session: { userId: string; roomId: string }) => {
       initialDelivered.set(target.dir, {
@@ -79,16 +120,21 @@ export async function watchSession(files: SessionFiles, io: {
     }
     const evaluate = async () => {
       const ownsSession = async () => {
-        const owner = await readJson<Owner>(path.join(files.dir, MARKER));
-        const status = await readJson<{ state: string }>(files.status);
-        return owner?.nonce === nonce && !['disconnected', 'closed'].includes(status?.state ?? '');
+        const owner = await monitorOwner(files);
+        const status = await readWatcherStatus(files);
+        exitReason = owner?.nonce !== nonce ? 'superseded' : status?.detail ?? status?.state ?? 'status_missing';
+        return owner?.nonce === nonce && ['connected', 'send_failed'].includes(status?.state ?? '');
       };
-      if (!await ownsSession()) { stop(); return; }
+      if (!await ownsSession()) { stop(2, exitReason); return; }
+      if (Date.now() - lastHeartbeat >= 15_000) {
+        lastHeartbeat = Date.now();
+        await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
+      }
       if (!await wakeAllowed()) return;
       for (const channel of await listChannels(files)) {
         const target = channel.files;
         const session = await readJson<{ userId: string; roomId: string }>(target.session);
-        const status = await readStatus(target);
+        const status = await readWatcherStatus(target);
         if (!session || session.roomId !== channel.roomId || typeof session.userId !== 'string'
           || !['connected', 'send_failed'].includes(status?.state ?? '')) continue;
         const identity = JSON.stringify([session.roomId, session.userId]);
@@ -97,7 +143,7 @@ export async function watchSession(files: SessionFiles, io: {
         }
         const mode = await readListeningMode(target);
         const entries = await readEntries(target);
-        const observed = await readJson<Observation>(path.join(target.dir, OBSERVATION));
+        const observed = await readJson<Observation>(path.join(await observationDir(target), OBSERVATION));
         const position = observed?.userId === session.userId && observed?.roomId === session.roomId
           && Number.isSafeInteger(observed.count) && observed.count >= 0 && observed.count <= entries.length
           && (observed.count === 0 || entries[observed.count - 1]?.eventId === observed.lastEventId) ? observed.count : 0;
@@ -109,28 +155,60 @@ export async function watchSession(files: SessionFiles, io: {
         const fresh = entries.slice(Math.max(initialCount, position));
         const latestMode = await readListeningMode(target);
         const latestSession = await readJson<{ userId: string; roomId: string }>(target.session);
-        const latestStatus = await readStatus(target);
-        if (!await ownsSession()) { stop(); return; }
+        const latestStatus = await readWatcherStatus(target);
+        if (!await ownsSession()) { stop(2, exitReason); return; }
         if (!await wakeAllowed()) return;
         if (latestSession?.userId !== session.userId || latestSession?.roomId !== session.roomId
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => entry.kind === 'message' && entry.sender !== session.userId
           && entry.roomId === session.roomId);
-        if (!done && mode !== 'async' && latestMode !== 'async' && messages.length) {
+        if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async' && messages.length) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
           if (qwen) { stop(); return; }
         }
-        // Observation is independent of delivery, and lives beside this channel's inbox.
+        // Observation is independent of delivery and may live in private temporary storage.
         // Recheck identity before persisting so leaving A never writes into another join.
         if (position !== entries.length && !done && await ownsSession()
           && JSON.stringify(await readJson(target.session)) === JSON.stringify(latestSession)) {
           try {
-            await writeJsonAtomic(path.join(target.dir, OBSERVATION), {
+            await writeJsonAtomic(path.join(await observationDir(target), OBSERVATION), {
               userId: session.userId, roomId: session.roomId, count: entries.length, lastEventId: entries.at(-1)?.eventId ?? null,
             });
           } catch (error) {
             if (await readJson(target.session)) throw error;
+          }
+        }
+      }
+      if (io.harness === 'muse' && !done && await ownsSession()) {
+        const request = await readJson<MuseWakeRequest>(path.join(files.dir, MUSE_WAKE_REQUEST));
+        const now = (io.now ?? Date.now)();
+        const wakeNonce = typeof request?.line === 'string' ? /\(k-([a-f0-9]{8})\)$/.exec(request.line)?.[1] : undefined;
+        if (request?.owner === nonce && wakeNonce && wakeLine(wakeNonce) === request.line
+          && request.line !== emittedRequest && now >= request.at && now < request.deadline
+          && await driverAllowed(stateRoot(io.env ?? process.env), 'muse', 'monitor', false)
+          && !(await readWakeState(files.dir)).monitor?.disabled
+          && (await readActivity(files)).state === 'idle') {
+          const channels = await listChannels(files);
+          let eligible = false;
+          for (const channel of channels) {
+            if (await readListeningMode(channel.files) === 'async') continue;
+            const session = await readJson<{ userId: string }>(channel.files.session);
+            const status = await readWatcherStatus(channel.files);
+            if (!['connected', 'send_failed'].includes(status?.state ?? '')) continue;
+            const cursor = await readCursor(channel.files);
+            eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
+              .some(entry => entry.kind === 'message' && entry.sender !== session?.userId);
+          }
+          const activity = await readActivity(files);
+          if (eligible && await ownsSession() && activity.state === 'idle') {
+            const epoch = activity.updatedAt;
+            const dedupFile = path.join(storage, 'monitor-wake-observed.json');
+            const observed = await readJson<{ epoch: string }>(dedupFile);
+            if (observed?.epoch === epoch) return;
+            await writeJsonAtomic(dedupFile, { epoch, line: request.line });
+            io.write(request.line + '\n');
+            emittedRequest = request.line;
           }
         }
       }
@@ -141,15 +219,18 @@ export async function watchSession(files: SessionFiles, io: {
       if (running) return;
       running = (async () => {
         do { dirty = false; await evaluate(); } while (dirty && !done);
-      })().catch(() => stop(1)).finally(() => { running = undefined; if (dirty && !done) notify(); });
+      })().catch(error => stop(3, errorReason(error))).finally(() => { running = undefined; if (dirty && !done) notify(); });
     };
-    await writeJsonAtomic(leaseFile(files, nonce), { nonce, pid: process.pid });
-    await writeJsonAtomic(path.join(files.dir, MARKER), { nonce, pid: process.pid });
+    let published = false;
     // Watch the directory rather than an inode: status/mode/session use atomic rename.
     watcher = watchDirectory(files.dir, (_event, filename) => {
-      if (filename === null || [MARKER, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename))) notify();
+      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename)))) notify();
     });
-    watcher.on('error', () => stop(1));
+    watcher.on('error', error => stop(3, errorReason(error)));
+    lastHeartbeat = Date.now();
+    await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
+    await writeJsonAtomic(path.join(storage, MARKER), { nonce, pid: process.pid, startedAt: Date.now() });
+    published = true;
     // Re-list on every tick: subdirectory writes and channels joined after startup
     // need observation even on platforms without recursive fs.watch.
     timer = setInterval(notify, 100);
@@ -158,26 +239,31 @@ export async function watchSession(files: SessionFiles, io: {
     await finished;
     await running;
     return code;
+  } catch (error) {
+    stop(3, errorReason(error));
+    return 3;
   } finally {
     clearInterval(timer);
     watcher?.close();
     io.signal.removeEventListener('abort', abort);
     // Remove only this generation's lease; comparing then unlinking the shared marker
     // could erase a replacement that races cleanup. The marker alone is not liveness.
-    await fs.unlink(leaseFile(files, nonce)).catch(error => {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await fs.unlink(leaseFile(storage, nonce)).catch(error => {
+      if (!['ENOENT', 'EACCES', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     });
   }
 }
 
-export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor|gemini|qwen --session <id>]';
+export const WATCH_USAGE = 'usage: khala watch [--harness <id>] [--session <id>]';
 
 export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
   const invalid = (reason: string) => { console.error(`khala: ${reason}\n${WATCH_USAGE}`); return 1; };
   // Explicit session id also works when Claude does not export its id to Monitor.
-  if (argv.length !== 0 && !(argv.length === 2 && argv[0] === '--session')
+  if (argv.length !== 0 && !(argv.length === 2 && ['--session', '--harness'].includes(argv[0]!))
     && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) return invalid('invalid_arguments');
+  const { resolveHarness, resolveSessionId } = await import('./mcp/session-id');
+  const { adapterFor } = await import('./harness');
   const harness = resolveHarness(argv, process.env);
   if (harness === 'invalid' || !adapterFor(harness)?.codec) return invalid('invalid_harness');
   const index = argv.indexOf('--session');
@@ -189,6 +275,6 @@ export default async function run(argv: readonly string[]): Promise<number> {
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness, env: process.env }); }
+  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness, env: process.env, stderr: line => { process.stderr.write(line + '\n'); } }); }
   finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
 }

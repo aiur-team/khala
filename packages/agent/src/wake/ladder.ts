@@ -125,7 +125,7 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
       const attemptAt = now();
       const nonce = newNonce();
       if (driver.verification !== 'none') {
-        await recordAttempt(deps.files.dir, { nonce, driver: driver.id, at: attemptAt, deadline: attemptAt + driver.deadlineMs, activityUpdatedAt: activity.updatedAt, ...(driver.verification === 'transcript' ? { verification: 'transcript' } : {}) });
+        await recordAttempt(deps.files.dir, { nonce, driver: driver.id, at: attemptAt, deadline: attemptAt + driver.deadlineMs, activityUpdatedAt: activity.updatedAt, ...(driver.startsActivity ? { startsActivity: true } : {}), ...(driver.verification === 'transcript' ? { verification: 'transcript' } : {}) });
         if (!await stillEligible()) {
           // No transport was used; void the journal entry rather than count a failure.
           await cancelAttempt(deps.files.dir, nonce);

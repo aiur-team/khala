@@ -26,7 +26,7 @@ describe('harness registry', () => {
     expect(harnessInfo('gemini')).toEqual({ id: 'gemini', displayName: 'Gemini CLI', modelName: 'Gemini', logoKey: 'gemini',
       steer: true, sync: true, idleWake: 'opt-in', registered: true });
   });
-  it.each(['antigravity', 'muse', 'generic'])('starts %s with capabilities off', id => {
+  it.each(['antigravity', 'generic'])('starts %s with capabilities off', id => {
     expect(harnessInfo(id)).toMatchObject({ steer: false, sync: false, idleWake: 'none', registered: true });
   });
   it('falls back safely for unregistered ids, including object property names', () => {

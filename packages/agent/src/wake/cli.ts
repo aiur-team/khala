@@ -35,7 +35,7 @@ export async function setWake(harness: string, drivers: readonly string[], on: b
 }
 export function consentLine(harness: string, drivers: readonly string[], on: boolean): string {
   return on
-    ? `Idle wake is on (${drivers.join(', ')}): Khala may send a fixed wake line into this agent's existing session when messages wait and the prompt is empty. Run \`khala wake off --harness ${harness}\` to turn it off.`
+    ? `Idle wake is on (${drivers.join(', ')}): Khala may send a fixed wake line into this agent's existing session when messages wait and ${harness === 'muse' ? 'the session is idle (through Muse’s native monitor)' : 'the prompt is empty'}. Run \`khala wake off --harness ${harness}\` to turn it off.`
     : `Idle wake is off for ${drivers.join(', ')}. Run \`khala wake on --harness ${harness}\` to turn it on.`;
 }
 async function currentSessionId(harness: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
