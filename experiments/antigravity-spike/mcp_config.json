@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "khala": {
+      "args": [
+        "mcp"
+      ],
+      "command": "khala",
+      "disabled": false
+    },
+    "khalaenv": {
+      "args": [
+        "/tmp/claude-1000/spike-1115/mcp-envlog.sh"
+      ],
+      "command": "/bin/sh",
+      "disabled": false
+    }
+  }
+}
