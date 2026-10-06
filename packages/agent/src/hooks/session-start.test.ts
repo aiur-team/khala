@@ -3,6 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile, writeStatus, type AgentState, type SessionFiles } from '../state';
+import * as proc from '../harness/proc';
+import { readPane } from '../wake/terminal/capture';
 import run from '../../hooks/session-start';
 
 let root: string;
@@ -91,4 +93,16 @@ it('reminds for an unnamed joined channel using its room identity', async () => 
   const output = String(stdout.mock.calls[0]?.[0]);
   expect(output).toContain('khala watch');
   expect(output).not.toContain('!unnamed:test');
+});
+
+
+it.each(['new', 'session'])('captures the pane before reminder handling for %s sessions', async sessionId => {
+  vi.stubEnv('TMUX', '/tmp/khala-test-socket,123,0');
+  vi.stubEnv('TMUX_PANE', '%7');
+  vi.spyOn(proc, 'nearestNonShellAncestor').mockResolvedValue({ pid: 456, ppid: 123, startTime: 'agent-start', command: 'claude' });
+  await run(JSON.stringify({ session_id: sessionId, hook_event_name: 'SessionStart' }), []);
+  expect(await readPane(await openSessionDir('claude', sessionId, process.env))).toMatchObject({
+    kind: 'tmux', paneId: '%7', socket: '/tmp/khala-test-socket', agentPid: 456, agentStartTime: 'agent-start',
+  });
+  expect(stdout).not.toHaveBeenCalled();
 });

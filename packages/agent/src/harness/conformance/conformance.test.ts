@@ -82,6 +82,14 @@ describe('Tier A conformance', () => {
     await expect(runConformance(invalid.adapter, invalid.probe, { capabilities: { ...capabilities, idleWake: 'opt-in' } }))
       .rejects.toThrow('idle wake');
   });
+  it('rejects mixed verified and unverified transports outside the Claude watcher exception', async () => {
+    const verified: WakeDriver = { id: 'verified', rung: 1, optIn: true, minIdleMs: 0, deadlineMs: 3_000,
+      verification: 'nonce', available: () => true, wake: () => {} };
+    const unverified: WakeDriver = { ...verified, id: 'watcher', verification: 'none' };
+    const adapter = { ...synthetic, wakeLadder: [verified, unverified] };
+    const probe = { ...driver, wakeProbe: () => ({ drivers: adapter.wakeLadder, prompt: () => undefined }) };
+    await expect(runConformance(adapter, probe, { capabilities })).rejects.toThrow('unverified transport');
+  });
   it('rejects an opt-in registry entry with an ungated driver', async () => {
     const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: () => {} };

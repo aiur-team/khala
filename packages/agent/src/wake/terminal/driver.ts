@@ -4,11 +4,11 @@ import { readActivity } from '../../activity';
 import { readJson, stateRoot } from '../../state';
 import { readProcess, type ProcessReader } from '../../harness/proc';
 import type { WakeDriver, WakeDriverContext } from '../driver';
-import { driverAllowed, readWakeState, wakeLine } from '../shared';
+import { driverAllowed, readWakeState, wakeLine, failAttempt } from '../shared';
 import { readPane, type PaneCapture } from './capture';
 import { isEmptyPrompt, type EmptyPrompt } from './prompt-guard';
 import { ownsTerminal, runTerminalCommand, type CommandRunner } from './process';
-import { inspectTmux, sendTmux, type PaneView } from './tmux';
+import { inspectTmux, sendTmux, tmuxArgv, type PaneView } from './tmux';
 import { inspectWezterm, sendWezterm } from './wezterm';
 
 export type TerminalDriverDeps = {
@@ -23,17 +23,18 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
   const run = deps.run ?? runTerminalCommand;
   const read = deps.readProcess ?? readProcess;
   const platform = deps.platform ?? process.platform;
-  const probe = async (ctx: WakeDriverContext, empty: boolean): Promise<{ pane?: PaneCapture; view?: PaneView; reason?: string }> => {
+  const probe = async (ctx: WakeDriverContext, empty: boolean, cleanup = false): Promise<{ pane?: PaneCapture; view?: PaneView; reason?: string }> => {
     if (ctx.signal.aborted) return { reason: 'terminal_aborted' };
     if (platform !== 'linux' && platform !== 'darwin') return { reason: 'terminal_unavailable_on_platform' };
     if (!guard) return { reason: 'terminal_empty_prompt_unavailable' };
-    if (!await driverAllowed(stateRoot(ctx.env), ctx.harness, 'terminal', true)) return { reason: 'terminal_consent_required' };
-    if ((await readWakeState(ctx.files.dir)).terminal?.disabled) return { reason: 'nonce_timeout' };
+    if (!cleanup && !await driverAllowed(stateRoot(ctx.env), ctx.harness, 'terminal', true)) return { reason: 'terminal_consent_required' };
+    if (!cleanup && (await readWakeState(ctx.files.dir)).terminal?.disabled) return { reason: 'nonce_timeout' };
     const pane = await readPane(ctx.files);
-    if (!pane) return { reason: 'no remote-control API' };
+    if (!pane) return { reason: ctx.harness === 'codex' && (ctx.env.TMUX || ctx.env.WEZTERM_PANE)
+      ? 'terminal_capture_pending_prompt' : 'no remote-control API' };
     const activity = await readActivity(ctx.files);
     // Do not let the test idle override weaken this transport's safety boundary.
-    if (activity.state !== 'idle' || ctx.now - Date.parse(activity.updatedAt) < 30_000) return { reason: 'terminal_not_idle' };
+    if (!cleanup && (activity.state !== 'idle' || ctx.now - Date.parse(activity.updatedAt) < 30_000)) return { reason: 'terminal_not_idle' };
     const agent = await read(pane.agentPid);
     if (!agent || (pane.agentStartTime !== undefined && pane.agentStartTime !== agent.startTime)) return { reason: 'terminal_agent_exited' };
     const inspection: { view?: PaneView | undefined; reason?: string } = pane.kind === 'tmux'
@@ -46,8 +47,8 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
     if (empty && !isEmptyPrompt(view.line, view.cursorX, guard)) return { reason: 'terminal_prompt_not_empty' };
     return { pane, view };
   };
-  const safeProbe = async (ctx: WakeDriverContext, empty: boolean) => {
-    try { return await probe(ctx, empty); }
+  const safeProbe = async (ctx: WakeDriverContext, empty: boolean, cleanup = false) => {
+    try { return await probe(ctx, empty, cleanup); }
     catch { return { reason: 'terminal_probe_failed' }; }
   };
   return {
@@ -65,20 +66,43 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
       if (beforeSend.state !== 'idle' || beforeSend.updatedAt !== activity.updatedAt) return 'skipped';
       const send = ready.pane.kind === 'tmux' ? sendTmux : sendWezterm;
       await send(ready.pane, line, false, run, ctx.env, ctx.signal);
-      await (deps.delay ?? (signal => delay(500, undefined, { signal })))(ctx.signal);
-      // The composer now contains our line. Recheck ownership/modes/consent/activity,
-      // and require this exact composer before Enter so an intervening draft is never submitted.
+      const sameComposer = (final: Awaited<ReturnType<typeof safeProbe>>) => {
+        if (!final.pane || !final.view || final.pane.agentPid !== ready.pane!.agentPid
+          || final.pane.agentStartTime !== ready.pane!.agentStartTime || final.pane.capturedAt !== ready.pane!.capturedAt
+          || final.view.tty !== ready.view!.tty || final.pane.kind !== ready.pane!.kind
+          || final.pane.paneId !== ready.pane!.paneId || final.pane.socket !== ready.pane!.socket) return false;
+        const text = final.view.line.replace(/\x1b\[[0-9;]*m/g, '').replace(/[ \r\n]+$/, '');
+        const prefix = ready.view!.line.replace(/\x1b\[[0-9;]*m/g, '').slice(0, guard!.cursorColumn);
+        return text === `${prefix}${line}` && final.view.cursorY === ready.view!.cursorY
+          && final.view.cursorX === guard!.cursorColumn + line.length;
+      };
+      // Revoked consent or new activity prohibits submission, but not removing our
+      // exact insertion. Cleanup still requires the original owner, normal modes,
+      // pane identity, row, cursor and unchanged composer; never erase a draft.
+      const cleanup = async () => {
+        const cleanupCtx = { ...ctx, signal: new AbortController().signal };
+        const current = await safeProbe(cleanupCtx, false, true);
+        if (!sameComposer(current)) return;
+        if (current.pane!.kind === 'tmux') {
+          await run('tmux', tmuxArgv(current.pane!, ['send-keys', '-t', current.pane!.paneId,
+            '-N', String(line.length), 'BSpace']), ctx.env, cleanupCtx.signal);
+        } else {
+          await sendWezterm(current.pane!, '\x7f'.repeat(line.length), false, run, ctx.env, cleanupCtx.signal);
+        }
+      };
+      try {
+        await (deps.delay ?? (signal => delay(500, undefined, { signal })))(ctx.signal);
+      } catch (error) {
+        try { await cleanup(); } finally { await failAttempt(ctx.files.dir, nonce, ctx.now + 500); }
+        throw error;
+      }
       const final = await safeProbe({ ...ctx, now: ctx.now + 500 }, false);
       const current = await readActivity(ctx.files);
-      if (!final.pane || !final.view || final.pane.agentPid !== ready.pane.agentPid
-        || final.pane.agentStartTime !== ready.pane.agentStartTime || final.pane.capturedAt !== ready.pane.capturedAt
-        || final.view.tty !== ready.view!.tty || final.pane.kind !== ready.pane.kind || final.pane.paneId !== ready.pane.paneId || final.pane.socket !== ready.pane.socket
-        || current.updatedAt !== activity.updatedAt || ctx.signal.aborted) return;
-      const text = final.view.line.replace(/\x1b\[[0-9;]*m/g, '').replace(/[ \r\n]+$/, '');
-      const prefix = ready.view!.line.replace(/\x1b\[[0-9;]*m/g, '').slice(0, guard!.cursorColumn);
-      if (text !== `${prefix}${line}` || final.view.cursorY !== ready.view!.cursorY
-        || final.view.cursorX !== guard!.cursorColumn + line.length) return;
-      await send(final.pane, line, true, run, ctx.env, ctx.signal);
+      if (!sameComposer(final) || current.updatedAt !== activity.updatedAt || ctx.signal.aborted) {
+        try { await cleanup(); } finally { await failAttempt(ctx.files.dir, nonce, ctx.now + 500); }
+        return;
+      }
+      await send(final.pane!, line, true, run, ctx.env, ctx.signal);
     },
   };
 }

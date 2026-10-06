@@ -19,8 +19,7 @@ const guard = { pattern: /^›$/, cursorColumn: 2 };
 const read: ProcessReader = async pid => pid === 100 ? { pid, ppid: 50, command: 'codex', startTime: '1' } : pid === 50 ? { pid, ppid: 1, command: 'shell', startTime: '2' } : null;
 const run: CommandRunner = async (_command, argv) => {
   calls.push([...argv]);
-  if (argv[0] === 'display-message') return `50\t${mode}\t0\t${column}\t${row}\t${tty}`;
-  if (argv[0] === 'show-window-options') return sync;
+  if (argv[0] === 'display-message') return `50|${mode}|0|${column}|${row}|${tty}|${sync === 'on' ? 1 : 0}`;
   if (argv[0] === 'capture-pane') return line;
   if (argv.includes('-l')) { line = `› ${argv.at(-1)}`; column = line.length; }
   return '';
@@ -76,7 +75,9 @@ it.each(['ownership', 'activity', 'consent', 'copy', 'draft', 'cursor-column', '
     capturedAt: new Date(at + (kind === 'capture' ? 1 : 0)).toISOString(),
   });
  } });
- await driver.wake(ctx, wakeLine('1234abcd')); expect(sends()).toHaveLength(1);
+ await driver.wake(ctx, wakeLine('1234abcd'));
+ expect(sends()).toHaveLength(['activity', 'consent'].includes(kind) ? 2 : 1);
+ if (['activity', 'consent'].includes(kind)) expect(sends().at(-1)).toEqual(['send-keys', '-t', '%7', '-N', String(wakeLine('1234abcd').length), 'BSpace']);
 });
 it('rejects hostile caller text before executing any terminal command', async () => {
  for (const text of ['$(touch /tmp/evil)', 'hello; Enter', wakeLine('1234abcd') + '\nother']) await expect(make().wake(ctx, text)).rejects.toThrow('invalid_terminal_wake_line');
@@ -160,6 +161,16 @@ it('aborts the default Enter delay without submitting the composer', async () =>
  try {
   const driver = createTerminalWakeDriver(guard, { run: abortingRun, readProcess: read, ownsTerminal: async () => true });
   await expect(driver.wake({ ...ctx, signal: controller.signal }, wakeLine('1234abcd'))).rejects.toMatchObject({ name: 'AbortError' });
-  expect(sends()).toHaveLength(1);
+  expect(sends()).toHaveLength(2);
+  expect(sends().at(-1)?.at(-1)).toBe('BSpace');
  } finally { if (timer) clearTimeout(timer); }
+});
+
+it('reports capture pending for Codex until its first prompt in a supported terminal', async () => {
+ await rm(path.join(ctx.files.dir, 'pane.json'));
+ ctx.env.TMUX = '/private/socket,1,0';
+ expect(await make().available(ctx)).toBe(false);
+ expect(await make().unavailableReason!(ctx)).toBe('terminal_capture_pending_prompt');
+ delete ctx.env.TMUX;
+ expect(await make().unavailableReason!(ctx)).toBe('no remote-control API');
 });

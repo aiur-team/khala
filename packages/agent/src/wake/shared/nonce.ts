@@ -126,3 +126,16 @@ export async function settleAttempts(dir: string, input: {
 export async function cancelAttempt(dir: string, nonce: string): Promise<void> {
   await locked(dir, data => { data.attempts = data.attempts.filter(attempt => attempt.nonce !== nonce); });
 }
+
+/** A transport inserted text but could not safely submit it. Settle only its nonce. */
+export async function failAttempt(dir: string, nonce: string, now: number): Promise<void> {
+  await locked(dir, data => {
+    const attempt = data.attempts.find(item => item.nonce === nonce);
+    if (!attempt) return;
+    data.attempts = data.attempts.filter(item => item.nonce !== nonce);
+    const failures = (data.state[attempt.driver]?.failures ?? 0) + 1;
+    data.state[attempt.driver] = failures >= 2
+      ? { failures, disabled: true, reason: 'nonce_timeout', at: new Date(now).toISOString() }
+      : { failures };
+  });
+}

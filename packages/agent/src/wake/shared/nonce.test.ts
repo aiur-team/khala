@@ -97,3 +97,18 @@ it('cancels only the unsent attempt and leaves another pending nonce intact', as
     expect(await readWakeState(dir)).toEqual({ queue: { failures: 1 } });
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
+
+it('fails only the inserted nonce immediately, once, despite changed activity', async () => {
+  const { failAttempt } = await import('./nonce');
+  await recordAttempt(root, { nonce: '00000001', driver: 'terminal', at: 1, deadline: 10 });
+  await recordAttempt(root, { nonce: '00000002', driver: 'queue', at: 1, deadline: 10 });
+  await failAttempt(root, '00000001', 2);
+  await failAttempt(root, '00000001', 2);
+  expect(await readWakeState(root)).toEqual({ terminal: { failures: 1 } });
+  expect(await settleAttempts(root, { now: 3, activity: { state: 'busy', updatedAt: 3 } })).toEqual([
+    { nonce: '00000002', driver: 'queue', status: 'void' },
+  ]);
+  await recordAttempt(root, { nonce: '00000003', driver: 'terminal', at: 3, deadline: 10 });
+  await failAttempt(root, '00000003', 4);
+  expect((await readWakeState(root)).terminal).toMatchObject({ failures: 2, disabled: true });
+});

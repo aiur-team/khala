@@ -4,7 +4,7 @@ The terminal rung uses the captured agent's controlling TTY and foreground proce
 
 ## Verified contracts
 
-- tmux 3.7b is installed in the agent workspace. A disposable detached tmux pane running an ownership-probe helper confirmed that the Linux `/proc/<pid>/stat` TTY encoding matches the pane device, and that the foreground helper is accepted while an unrelated TTY is rejected. No harness was launched and no focus changed.
+- tmux 3.7b is installed in the agent workspace. A disposable detached tmux pane running an ownership-probe helper confirmed that the Linux `/proc/<pid>/stat` TTY encoding matches the pane device, and that the foreground helper is accepted while an unrelated TTY is rejected. No harness was launched and no focus changed. A real private-server regression also exercises `inspectTmux` with a fake TUI at column 2: default configuration is accepted, while synchronization and copy mode are refused. The format uses a printable separator and reads `pane_synchronized` with the mode/input fields.
 - WezTerm is not installed here. The JSON, cursor-range and styled-capture contracts were checked against upstream revision `372548295b0b25c9a5400f0ea56f0e89f47e0524` (2026-10-05): [pane list](https://github.com/wezterm/wezterm/blob/372548295b0b25c9a5400f0ea56f0e89f47e0524/wezterm/src/cli/list.rs), [get-text](https://github.com/wezterm/wezterm/blob/372548295b0b25c9a5400f0ea56f0e89f47e0524/wezterm/src/cli/get_text.rs), and [styled renderer](https://github.com/wezterm/wezterm/blob/372548295b0b25c9a5400f0ea56f0e89f47e0524/lua-api-crates/termwiz-funcs/src/lib.rs). This is source-contract verification, not a live WezTerm version or wake result.
 - macOS `ps -o tty=,pgid=,tpgid=` is covered by parser tests and checked against [Apple's field definitions](https://github.com/apple-oss-distributions/adv_cmds/blob/main/ps/keyword.c); it was not run on macOS.
 - The empty-prompt patterns and dim styling use the [U38 captured evidence](../build/multi-harness/spikes/terminal-hosts.md). Cursor columns reject whitespace drafts; dim styling rejects a typed copy of a placeholder with the cursor moved Home.
@@ -15,7 +15,7 @@ Tests spawn fake tmux and WezTerm executables to assert exact literal argv and a
 
 The WezTerm styled-row test models `lines_to_escapes`' row CRLF, attribute reset and the CLI's final LF. It failed before framing normalization and passed after the fix. A driver test covers the same format before literal insertion and before Enter.
 
-Once the fixed notice is inserted, Enter requires the exact notice on the original row at its expected ending column. A narrow pane that wraps it, or a changed composer, fails closed and leaves the notice unsubmitted; the missing prompt-hook nonce then counts as a failure. Neither transport switches focus or uses a shell for terminal commands.
+Once the fixed notice is inserted, Enter requires the exact notice on the original row at its expected ending column. A narrow pane that wraps it, or a changed composer, fails closed. Cleanup removes exactly the inserted notice only if ownership, pane identity, row, ending column, and exact composer still match; otherwise it stops without deleting user input. The missing prompt-hook nonce counts as a failure either way. Neither transport switches focus or uses a shell for terminal commands.
 
 ## Live acceptance
 
