@@ -75,7 +75,7 @@ it('removes saved credentials idempotently', async () => {
 });
 it('writes status with deterministic timestamps and optional channel name', async () => {
   const now = () => new Date('2026-10-02T10:00:00Z');
-  const expected = { state: 'send_failed', detail: 'network', updatedAt: '2026-10-02T10:00:00.000Z' };
+  const expected = { state: 'send_failed', detail: 'network', owner: { pid: process.pid, startTime: expect.any(String) }, updatedAt: '2026-10-02T10:00:00.000Z' };
   expect(await writeStatus(files, 'send_failed', 'network', now)).toEqual(expected);
   expect(await readStatus(files)).toEqual(expected);
   await writeStatus(files, 'send_failed', 'network', now, 'Release room');
@@ -171,4 +171,11 @@ it.each(['opencode', 'cline'])('stores sessions and channels under the open harn
 });
 it.each(['Gemini', 'g', '../x', 'ab\n'])('rejects unsafe harness %s', harness => {
   expect(() => sessionFiles(harness, 'session-1')).toThrow(StateError);
+});
+
+it('rejects connected status from a dead writer, a reused PID, or a legacy snapshot', async () => {
+  for (const owner of [undefined, { pid: 2147483647, startTime: 'dead' }, { pid: process.pid, startTime: 'wrong' }]) {
+    await writeJsonAtomic(files.status, { state: 'connected', updatedAt: new Date().toISOString(), owner });
+    expect(await readStatus(files)).toMatchObject({ state: 'disconnected', detail: 'process_exited' });
+  }
 });

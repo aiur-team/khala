@@ -2,9 +2,10 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { channelFiles, ensureStateDir, openSessionDir, writeStateFile } from '../state';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import main, { createPlaceholderClient, runMcpCommand } from './main';
+import main, { createPlaceholderClient, runMcpCommand, type ClientFactory } from './main';
 
 const call = (name: string, threadId?: string, args = {}) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
   name, arguments: args, ...(threadId === undefined ? {} : { _meta: { threadId } }),
@@ -103,10 +104,10 @@ describe('MCP command lifecycle', () => {
     writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
-        env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        env: { ...process.env, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: undefined, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
         input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
       });
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
         .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
@@ -228,4 +229,30 @@ it.each(['generic', 'cline'])('routes %s MCP requests through the resolved envir
   expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'stable', rejoinable: true });
   expect(io.responses().map(response => response.result.structuredContent.you)).toEqual(['kevin-Agent', 'kevin-Agent']);
   expect(client.close).toHaveBeenCalledOnce();
+});
+
+it('restores every authorized Codex session in this workspace before input without guessing tool identity', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'khala-daemon-restore-'));
+  const env = { XDG_STATE_HOME: root, PWD: process.cwd() };
+  for (const [id, workspace] of [['first', process.cwd()], ['second', process.cwd()], ['other', '/other']] as const) {
+    const files = await openSessionDir('codex', id, env);
+    const nested = channelFiles(files, '!room:local');
+    await ensureStateDir(nested.dir);
+    await writeStateFile(nested.dir, 'channel.json', { roomId: '!room:local' });
+    await writeStateFile(nested.dir, 'resume.json', { workspace });
+  }
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
+  const running = runMcpCommand(['--harness', 'codex'], { env, input, output, createClient });
+  try {
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledTimes(2));
+    expect(createClient.mock.calls.map(([session]) => session.sessionId).sort()).toEqual(['first', 'second']);
+    input.end(JSON.stringify(call('khala_status')) + '\n' + JSON.stringify(call('khala_status', 'second')) + '\n');
+    await running;
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(output.read().toString()).toContain('session_unknown');
+  } finally {
+    input.end(); await running; output.destroy(); rmSync(root, { recursive: true, force: true });
+  }
 });
