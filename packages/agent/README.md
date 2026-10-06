@@ -2,7 +2,7 @@
 
 ## Install
 
-Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No checkout needed.
+Published to npm as [`khala-cli`](npm/package.json) (Node 22.18 or later in the 22.x series, or Node 24.11 or newer). No checkout needed.
 
 - **Claude Code**: `claude plugin marketplace add aiur-team/khala`, then
   `claude plugin install khala@khala`, then restart. [Details](docs/install-claude.md)
@@ -20,8 +20,9 @@ Then tell the agent "Join this Khala channel: <link>".
 - `npm/`: the published package. `npm/package.json` is the single source of truth for the
   published name and version; `pnpm --filter @khala/agent build` bundles `src/cli-bundle.ts`
   with esbuild into `npm/dist/` (plain ESM, `@khala/contracts` inlined, no tsx) and copies
-  the local web app to `npm/dist/web/`. `matrix-js-sdk` (and its Rust crypto wasm), `indexeddbshim` and `proper-lockfile` stay
-  runtime dependencies.
+  the local web app to `npm/dist/web/`. `matrix-js-sdk` (and its Rust crypto wasm), `better-sqlite3` and `proper-lockfile` stay
+  runtime dependencies. The Node IndexedDB shim is bundled, avoiding its unused canvas and
+  static-server installation dependencies.
 - `claude-plugin/`: the Claude plugin and the checkout marketplace `khala-m1`; the
   repository-root `.claude-plugin/marketplace.json` (`khala`) serves the same plugin from
   GitHub. `claude-plugin/khala/bin/khala` pins `<name>@<version>`;

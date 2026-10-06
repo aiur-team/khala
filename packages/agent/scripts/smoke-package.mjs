@@ -82,6 +82,52 @@ try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
   const bin = path.join(binDir, windows ? 'khala.cmd' : 'khala');
   const script = path.join(prefix, ...(windows ? [] : ['lib']), 'node_modules', 'khala-cli', 'dist', 'khala.mjs');
+  // Exercise the installed bundle's actual SQLite-backed Rust store in two fresh processes.
+  // Looking up its shared chunk keeps this check tied to the code shipped in the tarball.
+  const dist = path.dirname(script);
+  let cryptoChunk;
+  for (const name of await fs.readdir(dist)) {
+    if (!name.endsWith('.mjs') || name === 'khala.mjs') continue;
+    const file = path.join(dist, name);
+    if (/export\s*\{[^}]*\bopenCryptoStore\b/s.test(await fs.readFile(file, 'utf8'))) cryptoChunk = file;
+  }
+  if (!cryptoChunk) throw new Error('packed bundle is missing the persistent crypto store');
+  const cryptoProbe = `
+    import { pathToFileURL } from 'node:url';
+    import { createRequire } from 'node:module';
+    import { mkdir } from 'node:fs/promises';
+    import path from 'node:path';
+    const [chunk, root] = process.argv.slice(1);
+    const { openCryptoStore } = await import(pathToFileURL(chunk));
+    const require = createRequire(pathToFileURL(chunk));
+    const { createClient } = await import(pathToFileURL(require.resolve('matrix-js-sdk')));
+    const { logger } = await import(pathToFileURL(require.resolve('matrix-js-sdk/lib/logger.js')));
+    logger.disableAll();
+    const dir = path.join(root, 'channel');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const credentials = { homeserver: 'https://matrix.invalid', userId: '@smoke:test', deviceId: 'SMOKE', accessToken: 'unused', roomId: '!smoke:test' };
+    const store = await openCryptoStore(dir, root, credentials);
+    const client = createClient({ baseUrl: credentials.homeserver, userId: credentials.userId, deviceId: credentials.deviceId,
+      accessToken: credentials.accessToken, store: store.sync, fetchFn: async () => Response.json({}, { status: 404 }),
+      logger: { trace() {}, debug() {}, info() {}, log() {}, warn() {}, error() {}, getChild() { return this; } } });
+    await store.sync.startup();
+    await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: store.prefix });
+    const keys = await client.getCrypto().getOwnDeviceKeys();
+    const cursor = await store.sync.getSavedSyncToken();
+    await store.sync.setSyncData({ next_batch: 'packed-offline-position', rooms: { join: {} } });
+    await store.sync.save(true);
+    client.stopClient();
+    await store.close();
+    console.log(JSON.stringify({ keys, cursor, restored: store.restored }));
+  `;
+  const cryptoRoot = path.join(root, 'crypto');
+  await fs.mkdir(cryptoRoot, { mode: 0o700 });
+  const firstCrypto = JSON.parse(check('packed crypto initialization', process.execPath,
+    ['--input-type=module', '--eval', cryptoProbe, cryptoChunk, cryptoRoot], { shell: false }));
+  const secondCrypto = JSON.parse(check('packed crypto restart', process.execPath,
+    ['--input-type=module', '--eval', cryptoProbe, cryptoChunk, cryptoRoot], { shell: false }));
+  if (firstCrypto.restored || !secondCrypto.restored || secondCrypto.cursor !== 'packed-offline-position'
+    || JSON.stringify(firstCrypto.keys) !== JSON.stringify(secondCrypto.keys)) throw new Error('packed crypto restart lost keys or sync cursor');
   const reported = check('khala --version', quote(bin), ['--version']).trim();
   if (reported !== version) throw new Error(`khala --version printed ${reported}, expected ${version}`);
   check('hook deliver', quote(bin), ['hook', 'deliver', '--harness', 'claude'], { input: '{}' });
@@ -107,7 +153,10 @@ try {
   const again = JSON.parse(await fs.readFile(path.join(cursorDir, 'hooks.json'), 'utf8'));
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
-  const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
+  const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return '{}';
+    throw error;
+  }));
   if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
@@ -122,7 +171,10 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin !== undefined) throw new Error('uninstall left OpenCode plugin');
+  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return '{}';
+    throw error;
+  })).plugin !== undefined) throw new Error('uninstall left OpenCode plugin');
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.

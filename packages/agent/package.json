@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.23.2"
+    "node": "^22.18.0 || >=24.11.0"
   },
   "bin": {
     "khala": "./bin/khala.mjs"
@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",
+    "better-sqlite3": "13.0.3",
     "indexeddbshim": "19.0.7",
     "matrix-js-sdk": "42.4.0",
     "proper-lockfile": "4.1.2",
