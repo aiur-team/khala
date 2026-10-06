@@ -18,7 +18,7 @@ describe.skipIf(process.env.KHALA_E2E_LIVE !== '1')('hosted encryption across pr
       });
       expect(stdout).not.toContain(secret);
       const result = stdout.split('\n').find(line => line.startsWith('{"initialDecrypted"'));
-      expect(result && JSON.parse(result)).toEqual({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true, unusedTokenRevoked: true, removalWiped: true, sameProcessReinvite: true, corruptIdentityRecovered: true, corruptDatabaseRecovered: true });
+      expect(result && JSON.parse(result)).toEqual({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true, unusedTokenRevoked: true, removalWiped: true, removedTokenRevoked: true, sameProcessReinvite: true, corruptIdentityRecovered: true, corruptDatabaseRecovered: true });
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 270_000);
 });

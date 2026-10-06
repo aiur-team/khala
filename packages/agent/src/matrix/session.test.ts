@@ -12,7 +12,7 @@ vi.mock('matrix-js-sdk', () => ({
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
   MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
-  Direction: { Backward: 'b' }, Method: { Get: 'GET' },
+  Direction: { Backward: 'b' }, Method: { Get: 'GET', Post: 'POST' },
 }));
 import { createAgentMatrixSession } from './session';
 
@@ -296,6 +296,7 @@ it.each(['leave', 'ban'])('ends a joined hosted session once when membership bec
   client.emit('membership', client.room, next, 'join');
   client.emit('membership', client.room, next, 'join');
   expect(ended).toHaveBeenCalledExactlyOnceWith('removed');
+  await s.stop();
   expect(ignored).not.toHaveBeenCalled(); expect(client.stopClient).toHaveBeenCalledOnce();
   expect(client.eventNames()).toEqual([]);
   await expect(s.send('!r:hs', 'after removal')).rejects.toThrow('session_stopped');
@@ -382,6 +383,7 @@ it('uses persistent crypto and delivers offline messages and mode commands on re
   expect(messages).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$offline' }));
   expect(modes).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$mode-offline' }));
   await session.stop(); expect(store.close).toHaveBeenCalledOnce(); expect(store.wipe).not.toHaveBeenCalled();
+  expect(client.http.authedRequest).not.toHaveBeenCalled();
 });
 it.each(['removed', 'unauthorized'] as const)('wipes persistent crypto on %s before releasing the lease', async reason => {
   const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
@@ -413,6 +415,26 @@ it('recovers a mode command omitted from a limited sync tail before newer messag
   await session.join('!r:hs');
   expect(delivered).toEqual(['$gap-mode', '$tail']);
   expect(client.createMessagesRequest).toHaveBeenNthCalledWith(2, '!r:hs', 'gap', 100, 'b');
+});
+it.each([1, 2])('stops restored history at the durable inbox tail in %s pages in a long room', async pageCount => {
+  sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn() }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  membership = 'join';
+  const log = vi.fn();
+  const tail = event('$seen', '@owner:hs', 5000);
+  const gap = event('$gap', '@owner:hs', 5001);
+  const command = event('$mode', '@owner:hs', 5002, 'com.khala.listening_mode.v1', { mode: 'async' });
+  if (pageCount === 2) client.createMessagesRequest.mockResolvedValueOnce({ chunk: [command], end: 'gap' });
+  client.createMessagesRequest.mockResolvedValueOnce({ chunk: [...(pageCount === 1 ? [command] : []), gap, tail,
+    event('$older', '@owner:hs', 4999)], end: 'thousands-more' });
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' }, restoreStopAtEventId: '$seen', log });
+  const delivered: string[] = [];
+  session.onMessage(m => delivered.push(m.eventId)); session.onListeningModeCommand(c => delivered.push(c.eventId));
+  await session.join('!r:hs');
+  expect(client.createMessagesRequest).toHaveBeenCalledTimes(pageCount);
+  expect(delivered).toEqual(['$gap', '$mode']);
+  expect(client.decryptEventIfNeeded.mock.calls.map(([e]) => e.getId())).not.toContain('$older');
+  expect(log.mock.calls.flat().join(' ')).not.toContain('restore_catchup_truncated');
 });
 it.each([false, true])('bounds the persistent join recovery walk (join boundary on final page: %s)', async reachedJoin => {
   sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
@@ -463,7 +485,7 @@ it('uses different transaction IDs for successive rejoins on the same device', a
 });
 
 
-it('removes persisted credentials immediately but waits for sync completion before destroying stores', async () => {
+it('logs out before removing persisted credentials and waits for sync completion before destroying stores', async () => {
   const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
     sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
     forgetIdentity: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
@@ -473,9 +495,15 @@ it('removes persisted credentials immediately but waits for sync completion befo
   // Model an in-flight sync save: stopClient aborts polling but STOPPED only
   // arrives after the response currently being processed has finished saving.
   client.stopClient.mockImplementation(() => {});
+  let finishLogout!: () => void;
+  client.http.authedRequest.mockImplementationOnce(() => new Promise<void>(resolve => { finishLogout = resolve; }));
   client.emit('membership', client.room, 'leave');
   await flush();
+  expect(store.forgetIdentity).not.toHaveBeenCalled();
+  finishLogout(); await flush();
   expect(store.forgetIdentity).toHaveBeenCalledOnce();
+  expect(client.http.authedRequest).toHaveBeenCalledWith('POST', '/logout', undefined, {}, { localTimeoutMs: 5000 });
+  expect(client.http.authedRequest.mock.invocationCallOrder[0]).toBeLessThan(store.forgetIdentity.mock.invocationCallOrder[0]!);
   expect(store.wipe).not.toHaveBeenCalled();
   expect(store.close).not.toHaveBeenCalled();
   client.emit('sync', 'STOPPED');
@@ -496,6 +524,22 @@ it('still stops and releases the store when the first identity deletion fails', 
   expect(client.stopClient).toHaveBeenCalledOnce();
   expect(store.wipe).toHaveBeenCalledOnce();
   expect(store.close).toHaveBeenCalledOnce();
+});
+it('still deletes credentials and releases the store when logout fails', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn() }, rememberJoin: vi.fn(), forgetIdentity: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  sdk.store = store;
+  const log = vi.fn();
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' }, log });
+  await session.join('!r:hs');
+  client.http.authedRequest.mockRejectedValueOnce(new Error('offline'));
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    client.emit('membership', client.room, 'leave'); await session.stop();
+    expect(store.forgetIdentity).toHaveBeenCalledOnce();
+    expect(store.wipe).toHaveBeenCalledOnce(); expect(store.close).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith('discarded_device_logout_failed');
+  } finally { stderr.mockRestore(); }
 });
 
 
