@@ -53,17 +53,25 @@ export async function installOpenCode(input: {
   stdout: (line: string) => void; stderr: (line: string) => void;
 }): Promise<number> {
   const { paths, uninstall, stdout, stderr } = input;
-  try {
-    await fs.stat(paths.configFile.replace(/\.json$/u, '.jsonc'));
-    stderr(`khala: opencode.jsonc exists in ${paths.configDir}; ${uninstall ? 'remove' : 'merge'} the Khala config manually or convert it to opencode.json before retrying`);
-    return 1;
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  let configFile = paths.configFile.replace(/\.json$/u, '.jsonc');
   let text: string | null = null;
-  try { text = await fs.readFile(paths.configFile, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  try { text = await fs.readFile(configFile, 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    configFile = paths.configFile;
+    try { text = await fs.readFile(configFile, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
   let config: unknown;
+  // Strict JSON accepts OpenCode's generated schema-only JSONC while refusing
+  // comments and other syntax we cannot preserve when serializing the merge.
   try { config = text?.trim() ? JSON.parse(text.replace(/^\uFEFF/u, '')) : {}; }
-  catch { stderr(`khala: invalid JSON in ${paths.configFile}`); return 1; }
+  catch {
+    stderr(configFile.endsWith('.jsonc')
+      ? `khala: opencode.jsonc exists in ${paths.configDir} and is not plain JSON; ${uninstall ? 'remove' : 'merge'} the Khala config manually or convert it to opencode.json before retrying`
+      : `khala: invalid JSON in ${configFile}`);
+    return 1;
+  }
   // Remember an arbitrary test override so reinstall/uninstall can remove it without
   // guessing ownership from a local tarball's filename.
   const marker = paths.configFile + '.khala-plugin';
@@ -71,10 +79,10 @@ export async function installOpenCode(input: {
   try { previousOverride = (await fs.readFile(marker, 'utf8')).trim(); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const merged = mergeOpenCodeConfig(config, uninstall ? null : input.plugin, previousOverride ?? input.plugin ?? undefined);
-  if ('error' in merged) { stderr(`khala: invalid config in ${paths.configFile}`); return 1; }
+  if ('error' in merged) { stderr(`khala: invalid config in ${configFile}`); return 1; }
   if (!uninstall && input.plugin === null) {
     if (isObject(config) && isObject(config.mcp) && Object.hasOwn(config.mcp, 'khala') && !isMcp(config.mcp.khala)) {
-      stderr(`khala: refusing to overwrite existing mcp.khala in ${paths.configFile}; remove or rename it before retrying`);
+      stderr(`khala: refusing to overwrite existing mcp.khala in ${configFile}; remove or rename it before retrying`);
       return 1;
     }
     merged.config.mcp = { ...(merged.config.mcp as Record<string, unknown> | undefined), khala: opencodeMcpEntry(input.platform, paths.bin) };
@@ -83,15 +91,15 @@ export async function installOpenCode(input: {
   if (uninstall && text === null) return 0;
   await fs.mkdir(paths.configDir, { recursive: true });
   if (!uninstall && text !== null) {
-    try { await fs.writeFile(paths.configFile + '.khala-bak', text, { flag: 'wx' }); }
+    try { await fs.writeFile(configFile + '.khala-bak', text, { flag: 'wx' }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   }
   const next = JSON.stringify(merged.config, null, 2) + '\n';
-  if (next !== text) await fs.writeFile(paths.configFile, next);
+  if (next !== text) await fs.writeFile(configFile, next);
   if (uninstall || input.plugin === null) await fs.rm(marker, { force: true });
   else await fs.writeFile(marker, input.plugin + '\n');
-  stdout(uninstall ? `removed the Khala plugin and MCP entry from ${paths.configFile}; delete ${paths.prefix} to remove the CLI`
-    : input.plugin ? `configured ${paths.configFile}; restart OpenCode to load the Khala plugin`
+  stdout(uninstall ? `removed the Khala plugin and MCP entry from ${configFile}; delete ${paths.prefix} to remove the CLI`
+    : input.plugin ? `configured ${configFile}; restart OpenCode to load the Khala plugin`
       : 'OpenCode installed in MCP-only mode (Async, no wake); re-run khala install opencode after updating');
   return 0;
 }

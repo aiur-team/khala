@@ -49,8 +49,8 @@ npx -y khala-cli install opencode
 This installs a stable CLI and, when published on npm, pins `khala-opencode` at the same version in the global
 `~/.config/opencode/opencode.json` (or under `XDG_CONFIG_HOME`). The plugin registers
 Khala's MCP server. If the version is unpublished or the registry check fails, it configures
-MCP-only mode (Async, no wake); re-run `khala install opencode` after updating. Existing
-`opencode.jsonc` files require a manual merge or conversion to JSON before retrying. Restart OpenCode after installation. Existing settings and sibling
+MCP-only mode (Async, no wake); re-run `khala install opencode` after updating.
+Plain-JSON `opencode.jsonc` files, including OpenCode’s auto-created schema-only config, are updated in place. JSONC with comments or other non-JSON syntax requires a manual merge or conversion to JSON before retrying. Restart OpenCode after installation. Existing settings and sibling
 plugins are preserved. Undo with `npx -y khala-cli install opencode --uninstall`.
 
 For unpublished-build testing only, `KHALA_INSTALL_SPEC` selects a CLI tarball and
