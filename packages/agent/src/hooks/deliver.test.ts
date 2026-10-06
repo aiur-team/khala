@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as processReader from '../harness/proc';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,8 @@ import * as channels from '../channels';
 import { readActivity, writeActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
+
+vi.mock('../harness/proc', { spy: true });
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 let root: string;
@@ -674,4 +677,25 @@ it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$
     expect(outputs.at(-1)).toBe(expected ? JSON.stringify(expected) + '\n' : '');
   }
   expect(outputs[1]).toBe(outputs[0]);
+});
+
+it.each(['UserPromptSubmit', 'PostToolUse'])('reads connected Codex display metadata without subprocesses on %s', async event => {
+  await seed([message()], 'codex');
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'steer' }));
+  // Observe the actual identity reader, including execFile's custom promisify path.
+  const read = vi.spyOn(processReader, 'readProcess').mockClear();
+  // Force the platform that previously launched ps for every status read.
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  const output: string[] = [];
+  const errors: string[] = [];
+  try {
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: event }), ['--harness', 'codex'], {
+      env: { XDG_STATE_HOME: root }, now: () => new Date(),
+      stdout: { write: text => output.push(text) }, stderr: { write: text => errors.push(text) },
+    });
+  } finally { Object.defineProperty(process, 'platform', { value: platform }); }
+  expect(errors).toEqual([]);
+  expect(read).not.toHaveBeenCalled();
+  expect(output.join('')).toContain('Docs are a go');
 });
