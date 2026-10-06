@@ -131,3 +131,39 @@ it('refuses to wipe through a symlinked state directory', async () => {
   await expect(wipeCryptoStore(dir, base, vi.fn<typeof fetch>())).rejects.toThrow('unsafe_state_dir');
   expect(await readFile(target, 'utf8')).toBe('secret');
 });
+
+it('persists a bounded retry set across fresh processes and join metadata updates', async () => {
+  const dir = await root();
+  await exec(process.execPath, ['--import', 'tsx', 'fixtures/crypto-store/restart.ts', dir, 'DEVICE', 'retry-ids'], { cwd: path.resolve(import.meta.dirname, '../..') });
+  const second = await restart(dir);
+  const saved = JSON.parse(await readFile(path.join(second.dir, 'crypto.json'), 'utf8'));
+  expect(saved.undecryptableEventIds.map((entry: { id: string }) => entry.id)).toEqual(Array.from({ length: 100 }, (_, i) => `$missing-${i + 5}`));
+  expect(saved.joinedAt).toBe(100);
+}, 20_000);
+
+it('drops legacy and expired retry entries on load and persists pruning without resetting keys', async () => {
+  const dir = await root(); const first = await restart(dir);
+  const file = path.join(first.dir, 'crypto.json');
+  const identity = JSON.parse(await readFile(file, 'utf8'));
+  for (const entries of [['$legacy'], [{ id: '$expired', firstSeen: Date.now() - 8 * 24 * 60 * 60 * 1000 }]]) {
+    await writeFile(file, JSON.stringify({ ...identity, undecryptableEventIds: entries }), { mode: 0o600 });
+    const restored = await restart(dir);
+    expect(restored.restored).toBe(true); expect(restored.keys).toEqual(first.keys);
+    expect(JSON.parse(await readFile(file, 'utf8')).undecryptableEventIds).toEqual([]);
+  }
+}, 20_000);
+it.each([{ id: '$bad', firstSeen: 'yesterday' }, { id: 1, firstSeen: 1 }, { id: '$bad', firstSeen: -1 }, { id: '$bad', firstSeen: 1e20 }])('rejects malformed retry metadata: %j', async entry => {
+  const dir = await root();
+  await writeFile(path.join(dir, 'crypto.json'), JSON.stringify({ homeserver: 'https://hs', userId: '@agent:hs', deviceId: 'D', undecryptableEventIds: [entry] }), { mode: 0o600 });
+  expect(await validateCryptoToken(dir)).toBe('corrupt');
+});
+
+it('drops future retry hints after a clock step without resetting device keys', async () => {
+  const dir = await root(); const first = await restart(dir);
+  const file = path.join(first.dir, 'crypto.json');
+  const identity = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify({ ...identity, undecryptableEventIds: [{ id: '$future', firstSeen: Date.now() + 60_000 }] }), { mode: 0o600 });
+  const restored = await restart(dir);
+  expect(restored.restored).toBe(true); expect(restored.keys).toEqual(first.keys);
+  expect(JSON.parse(await readFile(file, 'utf8')).undecryptableEventIds).toEqual([]);
+}, 20_000);

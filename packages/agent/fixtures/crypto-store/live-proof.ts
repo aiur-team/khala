@@ -8,19 +8,13 @@ import { createClient, ClientEvent, SyncState, Preset } from 'matrix-js-sdk';
 import { logger } from 'matrix-js-sdk/lib/logger';
 import { LISTENING_MODE_COMMAND_TYPE } from '@khala/contracts/m1/listening-mode';
 import { rateLimitSafe } from './rate-limit';
+import { proofRequest } from './request';
 logger.disableAll();
 const root = path.join(process.argv[3]!, 'crypto-' + randomBytes(4).toString('hex'));
 await mkdir(root, { recursive: true, mode: 0o700 });
 const homeserver = process.argv[2]!;
 const secret = process.env.KHALA_CRYPTO_TEST_SECRET!;
-async function request(endpoint: string, body?: unknown) {
-  return rateLimitSafe(async () => {
-    const res = await fetch(homeserver + endpoint, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json();
-    if (!res.ok) throw Object.assign(new Error(`request_${res.status}_${endpoint}`), { errcode: data.errcode, data });
-    return data;
-  });
-}
+const request = (endpoint: string, body?: unknown) => proofRequest(homeserver, endpoint, body);
 async function register(label: string, deviceId: string) {
   const username = label + randomBytes(4).toString('hex'), password = randomBytes(24).toString('hex');
   const { nonce } = await request('/_synapse/admin/v1/register');
