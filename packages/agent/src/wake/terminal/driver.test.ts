@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import { appendEntries } from '../../inbox';
 import { createWakeLadder } from '../ladder';
 import { writeActivity } from '../../activity';
 import { wakeLine, readWakeState, recordAttempt, settleAttempts } from '../shared';
-import { createClaudeWatcherDriver, createTerminalWakeDriver } from './driver';
+import { createClaudeWatcherDriver, createTerminalWakeDriver, promptPrefix } from './driver';
 import type { WakeDriverContext } from '../driver';
 import type { ProcessReader } from '../../harness/proc';
 import type { CommandRunner } from './process';
@@ -21,7 +21,8 @@ const read: ProcessReader = async pid => pid === 100 ? { pid, ppid: 50, command:
 const run: CommandRunner = async (_command, argv) => {
   calls.push([...argv]);
   if (argv[0] === 'display-message') return `50|${mode}|0|${column}|${row}|${tty}|${sync === 'on' ? 1 : 0}`;
-  if (argv[0] === 'capture-pane') return line;
+  // Real tmux drops trailing blank cells from captured rows.
+  if (argv[0] === 'capture-pane') return line.replace(/ +$/, '');
   if (argv.includes('-l')) { line = `› ${argv.at(-1)}`; column = line.length; }
   return '';
 };
@@ -75,6 +76,68 @@ it.each(['submit', 'activity', 'consent', 'draft', 'ownership', 'row', 'column']
   expect(line).toBe(' >');
  } else expect(sends()).toHaveLength(1);
  expect(sends()).toHaveLength(['submit', 'activity', 'consent'].includes(kind) ? 2 : 1);
+});
+describe('trimmed prompt captures', () => {
+ // Each case: guard, the on-screen empty prompt, and what a trimming capture returns for it.
+ const cases = [
+  ['❯', { pattern: /^❯[  ]?(Try ".*")?$/u, cursorColumn: 2 }, '❯ '],
+  ['›', { pattern: /^› ?(Ask Codex to do anything)?$/u, cursorColumn: 2 }, '› '],
+  [' >', { pattern: /^ > ?$/u, cursorColumn: 3 }, ' > '],
+  ['❯ ', { pattern: /^❯[  ]?(Try ".*")?$/u, cursorColumn: 2 }, '❯ '],
+ ] as const;
+ const fake = (screen: string, column0: number) => {
+  let composer = screen, cursor = column0;
+  const commands: string[][] = [];
+  const fakeRun: CommandRunner = async (_command, argv) => {
+   commands.push([...argv]);
+   if (argv[0] === 'display-message') return `50|0|0|${cursor}|3|/dev/pts/1|0`;
+   if (argv[0] === 'capture-pane') return composer.replace(/ +$/, '');
+   if (argv.includes('-l')) { composer += argv.at(-1)!; cursor += argv.at(-1)!.length; }
+   if (argv.includes('BSpace')) { const n = Number(argv[argv.indexOf('-N') + 1]); composer = composer.slice(0, -n); cursor -= n; }
+   return '';
+  };
+  return { fakeRun, commands, composer: () => composer, keys: () => commands.filter(args => args[0] === 'send-keys') };
+ };
+ it.each(cases)('submits from a captured empty %j prompt', async (_name, promptGuard, screen) => {
+  const { fakeRun, keys } = fake(screen, promptGuard.cursorColumn);
+  const driver = createTerminalWakeDriver(promptGuard, { run: fakeRun, readProcess: read, ownsTerminal: async () => true, delay: async () => {} });
+  expect(await driver.available(ctx)).toBe(true);
+  await driver.wake(ctx, wakeLine('1234abcd'));
+  expect(keys()).toEqual([['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')], ['send-keys', '-t', '%7', 'Enter']]);
+ });
+ it.each(cases)('cleans up only its own line from a captured empty %j prompt', async (_name, promptGuard, screen) => {
+  const { fakeRun, keys, composer } = fake(screen, promptGuard.cursorColumn);
+  const driver = createTerminalWakeDriver(promptGuard, { run: fakeRun, readProcess: read, ownsTerminal: async () => true, delay: async () => {
+   await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: {}, off: {} });
+  } });
+  await driver.wake(ctx, wakeLine('1234abcd'));
+  expect(keys()).toEqual([
+   ['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')],
+   ['send-keys', '-t', '%7', '-N', String(wakeLine('1234abcd').length), 'BSpace'],
+  ]);
+  expect(composer()).toBe(screen);
+ });
+ it.each(cases)('never submits or cleans a user draft typed after a captured empty %j prompt', async (_name, promptGuard, screen) => {
+  const { fakeRun, keys, composer } = fake(screen, promptGuard.cursorColumn);
+  let typed = false;
+  const typing: CommandRunner = async (command, argv, env, signal) => {
+   const out = await fakeRun(command, argv, env, signal);
+   if (argv.includes('-l') && !typed) { typed = true; await fakeRun(command, ['send-keys', '-t', '%7', '-l', ' draft'], env, signal); }
+   return out;
+  };
+  const driver = createTerminalWakeDriver(promptGuard, { run: typing, readProcess: read, ownsTerminal: async () => true, delay: async () => {
+   await writeActivity(ctx.files, 'busy', () => new Date(at));
+  } });
+  await driver.wake(ctx, wakeLine('1234abcd'));
+  expect(keys()).toEqual([['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')], ['send-keys', '-t', '%7', '-l', ' draft']]);
+  expect(composer()).toBe(`${screen}${wakeLine('1234abcd')} draft`);
+ });
+ it('does not treat a regular space as Claude\'s U+00A0 prompt cell', () => {
+  expect(promptPrefix('❯ ', 2)).toBe('❯ ');
+  expect(promptPrefix('❯', 2)).toBe('❯ ');
+  expect(promptPrefix('\x1b[1m›\x1b[0m', 2)).toBe('› ');
+  expect(promptPrefix(' >', 3)).toBe(' > ');
+ });
 });
 it.each(['consent', 'busy', 'recent', 'guard', 'exited', 'reused', 'copy', 'sync', 'draft', 'space', 'abort'])('refuses unsafe %s without recording a failure', async kind => {
  let driver = make();
