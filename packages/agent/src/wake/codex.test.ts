@@ -186,12 +186,24 @@ it('uses the real no-shell process runner with scrubbed env and no message marke
 });
 
 it('requires a strictly later hook timestamp and retries at exactly 60 seconds', async () => {
-  await append('1'); await activity('idle'); start(); await wait();
-  await activity('idle', time); waker!.notify(); await wait();
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const listChannels = vi.spyOn(channels, 'listChannels');
+  const reevaluate = async () => {
+    const before = listChannels.mock.calls.length;
+    waker!.notify();
+    await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(before + 1));
+    // The next evaluation cannot start until the preceding one has finished.
+    waker!.notify();
+    await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(before + 2));
+  };
+  await append('1'); await activity('idle'); start(100_000);
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  await activity('idle', time); await reevaluate();
   expect(run).toHaveBeenCalledTimes(1);
-  time += 59_999; waker!.notify(); await wait();
+  time += 59_999; await reevaluate();
   expect(run).toHaveBeenCalledTimes(1);
-  time += 1; waker!.notify(); await wait();
+  time += 1; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   expect(run).toHaveBeenCalledTimes(2);
 });
 
