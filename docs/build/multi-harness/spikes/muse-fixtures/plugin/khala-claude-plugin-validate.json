@@ -1,0 +1,76 @@
+{
+  "valid": true,
+  "diagnostics": [
+    {
+      "code": "unsupported-capability",
+      "message": "foreign `Stop` hook `hook-069c23674bb6d2cb` declares `asyncRewake: true`; Muse does not wake the model from a hook, so this hook is not run",
+      "severity": "warning"
+    },
+    {
+      "code": "unsupported-field",
+      "message": "Claude manifest field `author` is presentation-only and is not imported",
+      "severity": "warning"
+    }
+  ],
+  "compatibility": {
+    "declarations": [
+      {
+        "classification": "supported",
+        "id": "skill:khala",
+        "kind": "skill"
+      },
+      {
+        "classification": "supported",
+        "id": "hook:hook-c993dc49e57221ee",
+        "kind": "hook"
+      },
+      {
+        "classification": "supported",
+        "id": "hook:hook-405d08260a5f3dec",
+        "kind": "hook"
+      },
+      {
+        "classification": "supported",
+        "id": "hook:hook-b258121852313f55",
+        "kind": "hook"
+      },
+      {
+        "classification": "supported",
+        "id": "hook:hook-9699b33d0e161457",
+        "kind": "hook"
+      },
+      {
+        "classification": "supported",
+        "id": "hook:hook-1f9edad99260283f",
+        "kind": "hook"
+      },
+      {
+        "classification": "supported",
+        "id": "mcp:khala",
+        "kind": "mcp"
+      },
+      {
+        "classification": "unsupported",
+        "id": "hook:hook-069c23674bb6d2cb",
+        "kind": "hook"
+      }
+    ],
+    "summary": "partial"
+  },
+  "manifest_family": "claude-compatible",
+  "mcp_servers": [
+    {
+      "command": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/khala",
+        "mcp",
+        "--harness",
+        "claude"
+      ],
+      "id": "khala",
+      "source_path": null,
+      "source_relative_path": null,
+      "transport": "stdio",
+      "url": null
+    }
+  ]
+}

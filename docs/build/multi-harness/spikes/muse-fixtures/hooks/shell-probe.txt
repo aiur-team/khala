@@ -1,0 +1,1 @@
+dollar0=/usr/bin/zsh exe=/usr/bin/zsh ppexe=/home/everdred/.local/bin/muse-bin-1.4.3-R5018.1 SHELL=/usr/bin/zsh

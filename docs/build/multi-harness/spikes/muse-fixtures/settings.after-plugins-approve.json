@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "provider": "meta",
+  "model": "muse-spark-1.3",
+  "reasoning_effort": "minimal",
+  "tui": {
+    "foreign_context_notice_shown": true
+  },
+  "mcpServers": {
+    "spike": {
+      "transport": "stdio",
+      "command": "python3",
+      "args": [
+        "/tmp/claude-1000/s1117/mcp.py"
+      ]
+    }
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/tmp/claude-1000/s1117/hook.sh PostToolUse",
+            "type": "command"
+          }
+        ],
+        "matcher": "mcp__spike__.*"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "/tmp/claude-1000/s1117/hook.sh SessionStart",
+            "type": "command"
+          },
+          {
+            "command": "echo \"dollar0=$0 exe=$(readlink /proc/$$/exe) ppexe=$(readlink /proc/$PPID/exe) SHELL=$SHELL\" >> /tmp/claude-1000/s1117/logs/shellprobe",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "/tmp/claude-1000/s1117/hook.sh Stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "/tmp/claude-1000/s1117/hook.sh UserPromptSubmit",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "runtime_capabilities": {
+    "plugin:khala-spike:hook:session-start-log": {
+      "enabled": true,
+      "trusted_definition_hash": "sha256:a4dd69201c039654d2cbb5434658b22169b25a0f36e29b7bf2e12206b5c6ae88"
+    },
+    "plugin:khala-spike:mcp_server:khala-spike": {
+      "enabled": true,
+      "trusted_definition_hash": "sha256:7ee43589790b4de87b405f5e3a94b2e9ff24209e78982c20b0cbb4a29647b013"
+    }
+  }
+}
