@@ -166,7 +166,7 @@ export default async function run(argv: readonly string[]): Promise<number> {
   const harness = resolveHarness(argv, process.env);
   if (harness === 'invalid') return invalid('invalid_harness');
   const index = argv.indexOf('--session');
-  const id = index === -1 ? resolveSessionId(harness, undefined, process.env) : argv[index + 1];
+  const id = index === -1 ? await resolveSessionId(harness, undefined, process.env) : argv[index + 1];
   if (!id) return invalid('session_unknown');
   if (!SESSION_ID_PATTERN.test(id)) return invalid('invalid_session_id');
   const files = sessionFiles(harness, id, process.env);

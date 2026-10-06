@@ -29,17 +29,17 @@ describe('harness adapters', () => {
     entries.length = 0;
     expect(registry.resolve('claude')).toBe(claude);
   });
-  it('retains Codex precedence even for invalid string metadata', () => {
+  it('retains Codex precedence even for invalid string metadata', async () => {
     for (const threadId of ['', '../unsafe', 'a\n']) {
-      expect(resolveSessionId('codex', { threadId }, { CODEX_THREAD_ID: 'valid' })).toBeNull();
+      expect(await resolveSessionId('codex', { threadId }, { CODEX_THREAD_ID: 'valid' })).toBeNull();
     }
-    expect(resolveSessionId('codex', { threadId: 123 }, { CODEX_THREAD_ID: 'valid' })).toBe('valid');
+    expect(await resolveSessionId('codex', { threadId: 123 }, { CODEX_THREAD_ID: 'valid' })).toBe('valid');
   });
   it('keeps shared Cursor identities non-rejoinable and workspace identities rejoinable', () => {
-    expect(adapterFor('cursor')!.rejoinable(CURSOR_DEFAULT_SESSION)).toBe(false);
-    expect(adapterFor('cursor')!.rejoinable(cursorSessionId('/work/project'))).toBe(true);
-    expect(adapterFor('claude')!.rejoinable('session')).toBe(true);
-    expect(adapterFor('codex')!.rejoinable('session')).toBe(true);
+    expect(adapterFor('cursor')!.sessionSources[0]!.rejoinable(CURSOR_DEFAULT_SESSION)).toBe(false);
+    expect(adapterFor('cursor')!.sessionSources[0]!.rejoinable(cursorSessionId('/work/project'))).toBe(true);
+    expect(adapterFor('claude')!.sessionSources[0]!.rejoinable('session')).toBe(true);
+    expect(adapterFor('codex')!.sessionSources[0]!.rejoinable('session')).toBe(true);
   });
   it('exposes only the existing waker, watcher and installer capabilities', () => {
     expect(adapterFor('codex')!.wakeLadder?.map(driver => driver.rung)).toEqual([1]);

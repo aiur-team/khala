@@ -26,7 +26,7 @@ describe('MCP command lifecycle', () => {
     const createClient = vi.fn(() => clients[createClient.mock.calls.length - 1]!);
     const io = streams([call('khala_status', 'a'), call('khala_status', 'b'), call('khala_status', 'a')]);
     expect(await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient })).toBe(0);
-    expect(createClient.mock.calls).toEqual([[{ harness: 'codex', sessionId: 'a' }], [{ harness: 'codex', sessionId: 'b' }]]);
+    expect(createClient.mock.calls).toEqual([[{ harness: 'codex', sessionId: 'a', rejoinable: true }], [{ harness: 'codex', sessionId: 'b', rejoinable: true }]]);
     for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
   });
   it('returns the placeholder results through the real server', async () => {
@@ -41,7 +41,7 @@ describe('MCP command lifecycle', () => {
     const createClient = vi.fn(createPlaceholderClient);
     await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient });
     expect(createClient).not.toHaveBeenCalled();
-    expect(io.responses().map(response => response.result.structuredContent)).toEqual([{ error: 'session_unknown' }, { error: 'session_unknown' }]);
+    expect(io.responses().map(response => response.result.structuredContent)).toEqual([{ error: 'session_unknown', hint: 'Send the agent one message first, then retry.' }, { error: 'session_unknown', hint: 'Send the agent one message first, then retry.' }]);
   });
   it('rejects invalid harness before reading input', async () => {
     const input = new Readable({ read() { throw new Error('must not read'); } });
@@ -189,7 +189,8 @@ it.each(['codex', 'claude'] as const)('creates the %s startup client without inp
   const createClient = vi.fn(() => client);
   const env = harness === 'codex' ? { CODEX_THREAD_ID: 'resume' } : { CLAUDE_CODE_SESSION_ID: 'resume' };
   const running = runMcpCommand(['--harness', harness], { input, output, signal: controller.signal, createClient, env });
-  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume' });
+  await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
+  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume', rejoinable: true });
   input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
   await running;
   expect(createClient).toHaveBeenCalledOnce();

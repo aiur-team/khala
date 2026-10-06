@@ -215,6 +215,16 @@ it.each(['khala_status', 'khala_read', 'khala_send', 'khala_event', 'khala_leave
   }
 });
 
+it('preserves update-required guidance through khala_join stdio', async () => {
+  const client = fake();
+  const message = "Khala's hosted service does not accept Gemini CLI agents yet. Local channels work now.";
+  client.join = vi.fn(async () => { throw new KhalaClientError('update_required', message); });
+  const { responses } = await exchange([call('khala_join', { link })], client);
+  expect(responses[0].result).toEqual({
+    isError: true, structuredContent: { error: 'update_required', message },
+    content: [{ type: 'text', text: JSON.stringify({ message, error: 'update_required' }) }],
+  });
+});
 
 it('hints to rejoin an old-control restore using the previously authorized link', async () => {
   const client = fake();

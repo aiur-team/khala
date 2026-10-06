@@ -222,7 +222,7 @@ it('keeps different pending links independent when one expires', async () => {
   joinApi.requestJoin.mockResolvedValueOnce(nextCreated);
   expect(await client.join(nextLink, 'Codex')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
-  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, {});
+  expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, { env: { XDG_STATE_HOME: root } });
   expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(false);
   oldPoll.reject(new KhalaClientError('join_expired')); poll.resolve(credentials);
   await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
@@ -249,7 +249,7 @@ it('falls back to the room id and propagates injected fetch and invite timeout',
   vi.mocked(session.roomName).mockReturnValue(undefined);
   await connected();
   expect((await client.status()).channelName).toBe(credentials.roomId);
-  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, { fetch: fakeFetch });
+  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, { fetch: fakeFetch, env: { XDG_STATE_HOME: root } });
   expect(joinApi.pollJoin.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(joinApi.reportReady.mock.calls[0]![1]?.fetch).toBe(fakeFetch);
   expect(session.waitForInvite).toHaveBeenCalledWith(credentials.roomId, 321);
@@ -530,13 +530,13 @@ it('replaces a rejoin.json that parses but holds an invalid secret instead of fa
   const secret = (await readStateFile<{ secret: string }>(dir, 'rejoin.json'))!.secret;
   expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   expect((await fs.stat(path.join(dir, 'rejoin.json'))).mode & 0o777).toBe(0o600);
-  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: secret }, {});
+  expect(joinApi.requestJoin).toHaveBeenCalledWith({ link, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: secret }, { env: { XDG_STATE_HOME: root } });
   expect((await client.status()).state).not.toBe('error');
   await client.close();
   const restarted = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
   try {
     await restarted.join(link, 'Codex');
-    expect(joinApi.requestJoin).toHaveBeenLastCalledWith(expect.objectContaining({ rejoinSecret: secret }), {});
+    expect(joinApi.requestJoin).toHaveBeenLastCalledWith(expect.objectContaining({ rejoinSecret: secret }), { env: { XDG_STATE_HOME: root } });
   } finally { await restarted.close(); }
 });
 
@@ -552,6 +552,19 @@ it('never sends a rejoin identity for Cursor windows that share cursor-default o
     ]);
     expect(await readStateFile(resolveStateDir('cursor', 'cursor-default', env), 'rejoin.json')).toBeNull();
   } finally { await Promise.all(windows.map(window => window.close())); }
+});
+
+it('process sources create fresh hosted members and never persist a rejoin secret', async () => {
+  const env = { XDG_STATE_HOME: root };
+  const clients = [0, 1].map(() => createKhalaAgentClient({ harness: 'codex', sessionId: 'proc-100-start-100',
+    rejoinable: false, env, now, startSession, joinApi }));
+  try {
+    for (const client of clients) await client.join(link, 'Codex');
+    expect(joinApi.requestJoin.mock.calls.map(call => call[0])).toEqual([
+      { link, harness: 'codex', label: 'Codex' }, { link, harness: 'codex', label: 'Codex' },
+    ]);
+    expect(await readStateFile(resolveStateDir('codex', 'proc-100-start-100', env), 'rejoin.json')).toBeNull();
+  } finally { await Promise.all(clients.map(client => client.close())); }
 });
 
 it('delivers member renames once, including self changes, without waking on events', async () => {

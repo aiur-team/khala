@@ -16,9 +16,9 @@ it('keeps POSIX paths case-sensitive and falls back to the default session', () 
   for (const value of [undefined, '', '  ', '${workspaceFolder}']) expect(cursorSessionId(value)).toBe(CURSOR_DEFAULT_SESSION);
 });
 
-it('resolves the cursor harness and its workspace session for MCP', () => {
+it('resolves the cursor harness and its workspace session for MCP', async () => {
   expect(resolveHarness(['--harness', 'cursor'], {})).toBe('cursor');
   expect(resolveHarness([], { KHALA_MCP_HARNESS: 'cursor' })).toBe('cursor');
-  expect(resolveSessionId('cursor', { threadId: 'ignored' }, { KHALA_CURSOR_WORKSPACE: '/w' })).toBe(cursorSessionId('/w'));
-  expect(resolveSessionId('cursor', undefined, {})).toBe(CURSOR_DEFAULT_SESSION);
+  expect(await resolveSessionId('cursor', { threadId: 'ignored' }, { KHALA_CURSOR_WORKSPACE: '/w' })).toBe(cursorSessionId('/w'));
+  expect(await resolveSessionId('cursor', undefined, {})).toBe(CURSOR_DEFAULT_SESSION);
 });

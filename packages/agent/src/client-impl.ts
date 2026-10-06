@@ -22,7 +22,7 @@ import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identit
 import { TERMINAL_SESSION_DETAILS, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
-  harness: Harness; sessionId: string; env?: NodeJS.ProcessEnv;
+  harness: Harness; sessionId: string; rejoinable?: boolean; env?: NodeJS.ProcessEnv;
   now?: () => Date; startSession?: StartSession;
   joinApi?: { requestJoin: typeof requestJoin; pollJoin: typeof pollJoin; reportReady: typeof reportReady };
   fetch?: typeof fetch; inviteTimeoutMs?: number; autoConfirmWaitMs?: number; onInboxAppend?: (entry: InboxEntry) => void;
@@ -53,9 +53,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   const api = options.joinApi ?? { requestJoin, pollJoin, reportReady };
   let status: StatusFile = { state: 'idle', updatedAt: now().toISOString() };
   let initialization: Promise<void> | undefined;
-  // Only a session id that names one agent instance may carry a rejoin identity. Every Cursor window
-  // without a folder shares `cursor-default` (and its state dir), so it keeps one fresh member per join.
-  const rejoinable = adapterFor(options.harness)?.rejoinable(options.sessionId) ?? false;
+  const rejoinable = options.rejoinable ?? adapterFor(options.harness)?.sessionSources[0]?.rejoinable(options.sessionId) ?? false;
   let rejoinSecret: string | undefined;
   let savedSecret: string | undefined;
   let resuming: Promise<void> | undefined;
@@ -404,7 +402,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             if (signal.aborted) releaseAbort();
           });
           const request = restore?.localCredentials ? Promise.resolve({ ...attempt.created, origin: new URL(link).origin, autoConfirmed: true as const })
-            : api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, restore ? { fetch: (input, init) => (options.fetch ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }) } : fetchDeps);
+            : api.requestJoin({ link, harness: options.harness, label, ...(rejoinSecret === undefined ? {} : { sessionId: options.sessionId, rejoinSecret }) }, { ...(options.env ? { env: options.env } : {}), ...(restore ? { fetch: (input, init) => (options.fetch ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }) } : fetchDeps) });
           const created = await Promise.race([request, aborted]).finally(() => { if (releaseAbort) signal.removeEventListener('abort', releaseAbort); });
           if (closed) throw new KhalaClientError('not_connected');
           if (restore && created.autoConfirmed !== true) {

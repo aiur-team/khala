@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { deliverCore, type HookIO } from './deliver-core';
 import { adapterFor } from './index';
+import { hookMapSource } from './session-sources';
 import type { DeliverCodec } from './adapter';
 import { openSessionDir, type SessionFiles } from '../state';
 import { appendEntries, readCursor } from '../inbox';
@@ -69,6 +70,19 @@ it.each(['claude', 'cursor'])('preserves %s closed-pipe handling without rejecti
     ? '{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}\n' : '');
 });
 
+it('suppresses mapping storage failures and still delivers the joined session frame', async () => {
+  await fs.mkdir(path.join(path.dirname(files.dir), '.by-pid', '100.json'), { recursive: true, mode: 0o700 });
+  io.pid = 300;
+  io.readProcess = async pid => pid === 300
+    ? { pid: 300, ppid: 100, startTime: '300', command: 'hook' }
+    : pid === 100 ? { pid: 100, ppid: 0, startTime: '100', command: 'harness' } : null;
+  expect(await deliverCore('{"session_id":"session","hook_event_name":"UserPromptSubmit"}',
+    { ...adapterFor('codex')!, sessionSources: [hookMapSource] }, io)).toBe(0);
+  expect(stdout).toContain('CI passed');
+  expect((await readCursor(files)).deliveredCount).toBe(1);
+  expect(JSON.parse(stderr)).toEqual({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' });
+});
+
 it('verifies the prompt nonce before recording busy activity', async () => {
   const { recordAttempt, readWakeState, settleAttempts } = await import('../wake/shared/nonce');
   const { writeActivity } = await import('../activity');
@@ -120,4 +134,16 @@ it.each(['codex', 'claude', 'cursor'] as const)('leaves both wake files unchange
   expect(after).toEqual(before);
   await expect(fs.stat(path.join(active.dir, 'wake.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect((await readActivity(active)).state).toBe('busy');
+});
+
+it.each(['claude', 'codex', 'cursor'])('does not walk processes or create hook mappings for registered %s hooks', async harness => {
+  const readProcess = vi.fn<NonNullable<HookIO['readProcess']>>();
+  io.readProcess = readProcess;
+  for (const hook_event_name of harness === 'cursor' ? ['beforeSubmitPrompt'] : ['SessionStart', 'UserPromptSubmit']) {
+    expect(await deliverCore(JSON.stringify({ session_id: 'unjoined', hook_event_name,
+      conversation_id: 'unjoined', workspace_roots: ['/work/unjoined'] }), adapterFor(harness)!, io)).toBe(0);
+  }
+  expect(readProcess).not.toHaveBeenCalled();
+  await expect(fs.stat(path.join(root, 'khala', harness, '.by-pid'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(stderr).toBe('');
 });

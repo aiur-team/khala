@@ -231,7 +231,7 @@ describe('agentJoinRoutes', () => {
     await f.create({ link, harness: 'claude' });
   });
 
-  it.each(['gemini', undefined, 42])('rejects bad harness %j before consuming', async harness => {
+  it.each(['Gemini', 'g', 'bad_id', 'bad\n', 'a' + 'b'.repeat(24), undefined, 42])('rejects bad harness %j before consuming', async harness => {
     const f = fixture(), link = f.link();
     expect(await f.call({ url: joinPath, body: { link, harness } })).toEqual({ status: 400, json: { error: 'invalid_harness' } });
     await f.create({ link, harness: 'claude' });

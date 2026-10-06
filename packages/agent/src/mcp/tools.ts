@@ -1,13 +1,14 @@
+import { SESSION_UNKNOWN_HINT } from '../harness/session-sources';
 import { resolveEventInput } from '../events/emit';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { MODEL_NAMES } from '@khala/contracts/m1/names';
 import { KhalaClientError, type KhalaAgentClient, type KhalaErrorCode } from '../client';
 import { failure, hasOnly, success, toolError, type McpTool, type McpToolDefinition } from './tool';
 
-export type ClientLookup = (meta: Readonly<Record<string, unknown>> | undefined) => KhalaAgentClient | null;
+export type ClientLookup = (meta: Readonly<Record<string, unknown>> | undefined) => KhalaAgentClient | null | Promise<KhalaAgentClient | null>;
 
 const ERROR_CODES: readonly KhalaErrorCode[] = [
-  'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'internal_error',
+  'update_required', 'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'internal_error',
 ];
 
 export function errorCode(error: unknown): KhalaErrorCode {
@@ -32,12 +33,15 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       async call(args, context) {
         if (!hasOnly(args, Object.keys(properties)) || !validate(args)) return failure(context.id, -32602, 'Invalid params');
         try {
-          const client = input.clientFor(context.meta);
-          if (client === null) return success(context.id, toolError('session_unknown'));
+          const client = await input.clientFor(context.meta);
+          if (client === null) return success(context.id, toolError('session_unknown', { hint: SESSION_UNKNOWN_HINT }));
           const structuredContent = await invoke(client, args);
           return success(context.id, { content: [{ type: 'text', text: render(structuredContent) }], structuredContent });
         } catch (error) {
-          return success(context.id, toolError(errorCode(error), error instanceof KhalaClientError ? error.extra : undefined));
+          const code = errorCode(error);
+          const extra = error instanceof KhalaClientError
+            ? { ...error.extra, ...(code === 'update_required' ? { message: error.message } : {}) } : undefined;
+          return success(context.id, toolError(code, extra));
         }
       },
     };
@@ -101,12 +105,15 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
           return success(context.id, { content: [{ type: 'text', text: 'Skipped channel event.' }], structuredContent: { skipped: true } });
         }
         try {
-          const client = input.clientFor(context.meta);
-          if (client === null) return success(context.id, toolError('session_unknown'));
+          const client = await input.clientFor(context.meta);
+          if (client === null) return success(context.id, toolError('session_unknown', { hint: SESSION_UNKNOWN_HINT }));
           const sent = await (channel === undefined ? client.sendChannelEvent(resolved.content) : client.sendChannelEvent(resolved.content, channel as string));
           return success(context.id, { content: [{ type: 'text', text: `Posted channel event: ${resolved.content.body}` }], structuredContent: sent });
         } catch (error) {
-          return success(context.id, toolError(errorCode(error), error instanceof KhalaClientError ? error.extra : undefined));
+          const code = errorCode(error);
+          const extra = error instanceof KhalaClientError
+            ? { ...error.extra, ...(code === 'update_required' ? { message: error.message } : {}) } : undefined;
+          return success(context.id, toolError(code, extra));
         }
       },
     },

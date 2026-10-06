@@ -1,7 +1,7 @@
 import { setTimeout as sleepDefault } from 'node:timers/promises';
 import { isLocalRoomId, type HelperFile, type LocalChannelsPage } from '@khala/contracts/m1/local';
 import { StateError } from '../state';
-import { ensureHelper, readHelperFile } from './lifecycle';
+import { ensureHelper, readHelperFile, olderHelperVersion } from './lifecycle';
 import { runHelper, type RunHelperOptions } from './serve';
 
 export type LocalCliDeps = {
@@ -23,12 +23,12 @@ export async function runLocalCommand(argv: readonly string[], deps: LocalCliDep
   const fetchImpl = deps.fetch ?? globalThis.fetch;
   const now = deps.now ?? Date.now;
   const print = (value: unknown) => stdout(JSON.stringify(value) + '\n');
-  async function health(file: HelperFile): Promise<{ version: string } | null> {
+  async function health(file: HelperFile): Promise<{ version?: string } | null> {
     try {
       const response = await fetchImpl(file.origin + '/healthz', { signal: AbortSignal.timeout(500) });
       if (response.status !== 200) { await response.body?.cancel(); return null; }
       const body = await response.json();
-      return body?.ok === true && body.pid === file.pid && typeof body.version === 'string' ? body : null;
+      return body?.ok === true && body.pid === file.pid ? body : null;
     } catch { return null; }
   }
   try {
@@ -38,7 +38,7 @@ export async function runLocalCommand(argv: readonly string[], deps: LocalCliDep
     if (command === 'serve') return await (deps.serve ?? runHelper)({ env });
     let connection: { origin: string; adminToken: string };
     let file: HelperFile | null = null;
-    let healthy: { version: string } | null = null;
+    let healthy: { version?: string } | null = null;
     if (command === 'status' || command === 'stop') {
       file = await (deps.readHelperFile ?? readHelperFile)(env);
       healthy = file ? await health(file) : null;
@@ -97,7 +97,7 @@ export async function runLocalCommand(argv: readonly string[], deps: LocalCliDep
         await call('DELETE', `/api/local/channels/${encodeURIComponent(roomId)}`);
         result = { deleted: roomId }; break;
       }
-      case 'status': result = { running: true, origin: file!.origin, pid: file!.pid, version: healthy!.version, channels: (await channels()).length }; break;
+      case 'status': result = { running: true, origin: file!.origin, pid: file!.pid, version: healthy!.version, ...(olderHelperVersion(healthy!.version) ? { detail: 'older helper in use' } : {}), channels: (await channels()).length }; break;
       case 'stop': {
         if (await call('POST', '/api/local/shutdown') !== null) throw new CliError('internal_error');
         const deadline = now() + 2000;
