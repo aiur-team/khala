@@ -303,7 +303,7 @@ it('Muse join and status supply an absolute watcher command with explicit sessio
     const text = JSON.stringify(result);
     expect(text).toContain('--session');
     expect(text).toContain('muse-explicit');
-    expect(text).toContain(process.execPath);
+    expect(text).toContain('/khala/npm/bin/khala');
     expect(text).toContain('wake_delay_ms: 0');
   }
 });

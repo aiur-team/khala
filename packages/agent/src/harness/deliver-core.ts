@@ -198,7 +198,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
           if (statuses.some(status => status && !(status.state === 'disconnected'
             && TERMINAL_SESSION_DETAILS.some(detail => detail === status.detail)))) {
             output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart',
-              additionalContext: adapter.startContext(input.sessionId) } }) + '\n';
+              additionalContext: adapter.startContext(input.sessionId, io.env) } }) + '\n';
           }
         }
         if (input.event === 'stop' && adapter.stopWakeText) {

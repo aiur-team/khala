@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { cursorPaths } from '../install/cursor';
 import { readActivity } from '../activity';
 import { monitorArmed } from '../watch';
 import { readJson, writeJsonAtomic, type SessionFiles } from '../state';
@@ -11,9 +12,13 @@ import type { WakeDriver } from './driver';
 export const MUSE_WAKE_REQUEST = 'muse-monitor-wake.json';
 export type MuseWakeRequest = { owner: string; line: string; at: number; deadline: number; journalOffset: number };
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-export function museWatchCommand(sessionId?: string, node = process.execPath, script = process.argv[1]): string {
-  if (!script || !path.isAbsolute(script)) throw new Error('muse_cli_path_unknown');
-  return `${shellQuote(node)} ${shellQuote(script)} watch --harness muse --session ${shellQuote(sessionId ?? '<current session id from khala_status>')}`;
+export function museCliPath(env: NodeJS.ProcessEnv = process.env): string {
+  const home = env.HOME || env.USERPROFILE || os.homedir();
+  const { prefix } = cursorPaths({ platform: process.platform, path, home, env });
+  return process.platform === 'win32' ? path.join(prefix, 'khala.cmd') : path.join(prefix, 'bin', 'khala');
+}
+export function museWatchCommand(sessionId?: string, bin = museCliPath()): string {
+  return `${shellQuote(bin)} watch --harness muse --session ${shellQuote(sessionId ?? '<current session id from khala_status>')}`;
 }
 export function museMonitorInstruction(sessionId?: string, command = museWatchCommand(sessionId)): string {
   return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; re-arm if it stops while joined. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;

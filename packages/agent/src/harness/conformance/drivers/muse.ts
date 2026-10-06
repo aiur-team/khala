@@ -25,7 +25,8 @@ export const museDriver: FakeHarnessDriver = {
       drivers: adapter.wakeLadder ?? [], prompt: () => prompt, stop,
       async prepare(files: SessionFiles) {
         await stop();
-        if (!await readStatus(files)) await writeStatus(files, 'connected');
+        const status = await readStatus(files);
+        await writeStatus(files, status?.state ?? 'connected', status?.detail, undefined, status?.channelName, status?.displayName);
         controller = new AbortController();
         dataHome = await fs.mkdtemp(path.join(path.dirname(files.dir), 'muse-data-'));
         env.XDG_DATA_HOME = dataHome;

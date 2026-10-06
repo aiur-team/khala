@@ -5,8 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mergeMuseSettings, musePaths, museMcpEntry, museHookCommand } from './muse';
 import { runInstall } from './main';
 
-const entry = museMcpEntry('/node', '/khala.mjs');
-const command = museHookCommand('linux', '/node', '/khala.mjs');
+const entry = museMcpEntry('linux', '/prefix/bin/khala');
+const command = museHookCommand('linux', '/prefix/bin/khala');
 it.each(['mcp_servers', 'mcpServers'])('preserves schema, siblings, %s spelling and foreign hook handlers', key => {
   const original = { schema_version: 1, model: 'custom', [key]: { other: { command: 'other' } }, hooks: {
     Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'other-hook', timeout: 7 }] }],
@@ -37,8 +37,8 @@ it('uses absolute XDG config and platform npm layouts', () => {
     .toMatchObject({ settingsFile: '/config/muse/settings.json', prefix: '/data/khala/npm', script: '/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' });
   expect(musePaths({ platform: 'win32', path: path.win32, home: 'C:\\Users\\Ada', env: {} }).settingsFile)
     .toBe('C:\\Users\\Ada\\.config\\muse\\settings.json');
-  expect(museHookCommand('win32', 'C:\\Node\\node.exe', 'C:\\Ada Lovelace\\khala.mjs'))
-    .toBe('node "C:/Ada Lovelace/khala.mjs" hook deliver --harness muse');
+  expect(museHookCommand('win32', 'C:\\Ada Lovelace\\khala.cmd'))
+    .toBe('cmd /c "C:/Ada Lovelace/khala.cmd" hook deliver --harness muse');
 });
 
 let home: string;
@@ -55,8 +55,12 @@ it('installs in one step, backs up once, reinstalls and uninstalls only its own 
   expect(await runInstall(['muse'], deps)).toBe(0);
   expect(npmInstall).toHaveBeenCalledWith(path.join(home, '.local/share/khala/npm'), 'khala-cli@1.2.3');
   const config = JSON.parse(await fs.readFile(settingsFile, 'utf8'));
-  expect(config.mcp_servers.khala).toMatchObject({ transport: 'stdio', command: '/node', env: { XDG_STATE_HOME: path.join(home, 'state') }, args: expect.arrayContaining(['mcp', '--harness', 'muse']) });
-  expect(await fs.readFile(path.join(home, '.config/muse/skills/khala/SKILL.md'), 'utf8')).toContain('wake_delay_ms: 0');
+  expect(config.mcp_servers.khala).toMatchObject({ transport: 'stdio', command: path.join(home, '.local/share/khala/npm/bin/khala'), env: { XDG_STATE_HOME: path.join(home, 'state') }, args: expect.arrayContaining(['mcp', '--harness', 'muse']) });
+  const skill = await fs.readFile(path.join(home, '.config/muse/skills/khala/SKILL.md'), 'utf8');
+  expect(skill).toContain('wake_delay_ms: 0');
+  expect(skill).toContain(path.join(home, '.local/share/khala/npm/bin/khala'));
+  expect(skill).not.toContain('/node');
+  expect(JSON.stringify(config.hooks)).toContain(path.join(home, '.local/share/khala/npm/bin/khala'));
   expect(Object.keys(config.hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']);
   expect(await fs.readFile(settingsFile + '.khala-bak', 'utf8')).toBe(original);
   expect(await runInstall(['muse', '--no-wake'], deps)).toBe(0);
@@ -107,10 +111,11 @@ it.each([{ model: 'custom' }, { mcp_servers: {}, hooks: { Stop: [] } }, { mcpSer
 it('removes settings created by install after reinstall, without leaving backup or skill directory', async () => {
   const deps = installDeps(), file = settingsPath();
   expect(await runInstall(['muse'], deps)).toBe(0);
+  expect(JSON.parse(await fs.readFile(file, 'utf8')).schema_version).toBe(1);
   expect(await fs.readFile(file + '.khala-bak', 'utf8')).toBe('');
   expect(await runInstall(['muse'], deps)).toBe(0);
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
-  for (const target of [file, file + '.khala-bak', path.join(path.dirname(file), 'skills/khala')]) {
+  for (const target of [file, file + '.khala-bak', file + '.khala-meta', path.join(path.dirname(file), 'skills')]) {
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   }
 });
@@ -130,7 +135,7 @@ it.each(['mcpServers', 'mcp_servers'])('preserves Muse runtime edits after movin
   await fs.writeFile(path.join(skillDirectory, 'user-note.md'), 'retain me');
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
-    [alias]: { user: { command: 'user-tool' } }, model: 'muse-spark', runtime_option: { enabled: true }, schema_version: 1,
+    [alias]: { user: { command: 'user-tool' } }, model: 'muse-spark', runtime_option: { enabled: true },
     hooks: { Stop: [{ hooks: [{ type: 'command', command: 'user-stop' }] }] },
   });
   expect(await fs.readFile(path.join(skillDirectory, 'user-note.md'), 'utf8')).toBe('retain me');
@@ -159,4 +164,32 @@ it('preserves a user replacement of the managed server during uninstall', async 
   expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
     mcp_servers: { khala: { command: 'user-replacement', args: [] } },
   });
+});
+
+it.each(['{ "model": "custom", "schema_version": 1 }', '\uFEFF{\n\t"model": "custom",\n\t"schema_version": 1\n}\n'])('restores the original settings bytes exactly: %s', async original => {
+  const file = settingsPath();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, original);
+  const deps = installDeps();
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
+});
+it('preserves original indentation and lack of trailing newline after user edits', async () => {
+  const file = settingsPath(), deps = installDeps();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, '{\n\t"model": "original"\n}');
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  config.model = 'edited';
+  await fs.writeFile(file, JSON.stringify(config, null, 2) + '\n');
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(await fs.readFile(file, 'utf8')).toBe('{\n\t"model": "edited"\n}');
+});
+it('retains a preexisting empty skills parent', async () => {
+  const parent = path.join(home, '.config/muse/skills'), deps = installDeps();
+  await fs.mkdir(parent, { recursive: true });
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(await fs.readdir(parent)).toEqual([]);
 });

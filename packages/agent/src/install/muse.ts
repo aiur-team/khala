@@ -1,10 +1,11 @@
 import * as fs from 'node:fs/promises';
 import nodePath from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { renderMuseSkill, MUSE_SKILL_MARKER } from './muse-skill';
 import { museWatchCommand } from '../wake/muse-monitor';
 import { cursorPaths, type CursorPlatform } from './cursor';
 
-export type MusePaths = { settingsFile: string; prefix: string; script: string; stateHome: string; dataHome: string; customEnv: NodeJS.ProcessEnv };
+export type MusePaths = { settingsFile: string; prefix: string; script: string; bin: string; stateHome: string; dataHome: string; customEnv: NodeJS.ProcessEnv };
 const SUFFIX = ' hook deliver --harness muse';
 export const MUSE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'] as const;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -20,17 +21,18 @@ export function musePaths(input: CursorPlatform, packageName = 'khala-cli'): Mus
   const customEnv: NodeJS.ProcessEnv = {};
   if (input.env.XDG_STATE_HOME) customEnv.XDG_STATE_HOME = stateHome;
   if (input.env.XDG_DATA_HOME) customEnv.XDG_DATA_HOME = dataHome;
-  return { stateHome, dataHome, customEnv, settingsFile: input.path.join(configHome, 'muse', 'settings.json'), prefix, script };
+  const bin = input.platform === 'win32' ? input.path.join(prefix, 'khala.cmd') : input.path.join(prefix, 'bin', 'khala');
+  return { stateHome, dataHome, customEnv, bin, settingsFile: input.path.join(configHome, 'muse', 'settings.json'), prefix, script };
 }
 const quote = (value: string) => /^[A-Za-z0-9_./:-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
-export function museHookCommand(platform: NodeJS.Platform, node: string, script: string, roots?: Pick<MusePaths, 'stateHome' | 'dataHome'>): string {
+export function museHookCommand(platform: NodeJS.Platform, bin: string, roots?: Pick<MusePaths, 'stateHome' | 'dataHome'>): string {
   const pathQuote = platform === 'win32' ? (value: string) => `"${value.replaceAll('\\', '/')}"` : quote;
   const flags = roots ? ` --state-home ${pathQuote(roots.stateHome)} --data-home ${pathQuote(roots.dataHome)}` : '';
-  if (platform === 'win32') return `node "${script.replaceAll('\\', '/')}"${SUFFIX}${flags}`;
-  return `${quote(node)} ${quote(script)}${SUFFIX}${flags}`;
+  return `${platform === 'win32' ? 'cmd /c ' : ''}${pathQuote(bin)}${SUFFIX}${flags}`;
 }
-export function museMcpEntry(node: string, script: string, env: NodeJS.ProcessEnv = {}) {
-  return { transport: 'stdio', command: node, args: [script, 'mcp', '--harness', 'muse'], env };
+export function museMcpEntry(platform: NodeJS.Platform, bin: string, env: NodeJS.ProcessEnv = {}) {
+  return { transport: 'stdio', command: platform === 'win32' ? 'cmd' : bin,
+    args: [...(platform === 'win32' ? ['/c', bin] : []), 'mcp', '--harness', 'muse'], env };
 }
 const ours = (entry: unknown) => object(entry) && Array.isArray(entry.args)
   && entry.args.includes('mcp') && entry.args[entry.args.indexOf('--harness') + 1] === 'muse';
@@ -82,13 +84,19 @@ export async function installMuse(input: {
 }): Promise<number> {
   const { paths, uninstall, stdout, stderr } = input;
   let before: string | null = null;
-  let config: unknown = {};
+  let config: unknown = { schema_version: 1 };
   try { before = await fs.readFile(paths.settingsFile, 'utf8'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   if (before !== null) {
     try { config = JSON.parse(before.replace(/^\uFEFF/u, '')); } catch { config = undefined; }
   }
   const backupFile = paths.settingsFile + '.khala-bak';
+  const metadataFile = paths.settingsFile + '.khala-meta';
+  let skillsParentCreated = false;
+  if (uninstall) {
+    try { skillsParentCreated = JSON.parse(await fs.readFile(metadataFile, 'utf8')).skillsParentCreated === true; }
+    catch (error) { if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
   let backup: string | null = null;
   let original: Record<string, unknown> | undefined;
   if (uninstall) {
@@ -102,8 +110,9 @@ export async function installMuse(input: {
       } catch { /* An unreadable backup must never replace the user's current settings. */ }
     }
   }
-  const merged = mergeMuseSettings(config, uninstall ? null : museMcpEntry(input.node, paths.script, paths.customEnv),
-    uninstall ? null : museHookCommand(input.platform, input.node, paths.script, paths), original);
+  const merged = mergeMuseSettings(config, uninstall ? null : museMcpEntry(input.platform, paths.bin, paths.customEnv),
+    uninstall ? null : museHookCommand(input.platform, paths.bin, paths), original);
+  if ('config' in merged && uninstall && backup === '' && merged.config.schema_version === 1) delete merged.config.schema_version;
   if ('error' in merged) {
     stderr(merged.error === 'muse_mcp_exists'
       ? `khala: ${paths.settingsFile} already has a "khala" server that is not this CLI; remove it and run this again`
@@ -120,11 +129,17 @@ export async function installMuse(input: {
   }
   if (uninstall && before === null && skill === null) {
     await fs.rm(backupFile, { force: true });
+    await fs.rm(metadataFile, { force: true });
     return 0;
   }
   if (!uninstall && input.install && !input.install()) return 1;
   await fs.mkdir(nodePath.dirname(paths.settingsFile), { recursive: true });
   if (!uninstall) {
+    const skillsParent = nodePath.dirname(nodePath.dirname(skillFile));
+    try { await fs.stat(skillsParent); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; skillsParentCreated = true; }
+    try { await fs.writeFile(metadataFile, JSON.stringify({ skillsParentCreated }), { flag: 'wx', mode: 0o600 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     try { await fs.writeFile(backupFile, before ?? '', { flag: 'wx', mode: 0o600 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   }
@@ -133,19 +148,30 @@ export async function installMuse(input: {
       await fs.unlink(skillFile);
       try { await fs.rmdir(nodePath.dirname(skillFile)); }
       catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+      if (skillsParentCreated) {
+        try { await fs.rmdir(nodePath.dirname(nodePath.dirname(skillFile))); }
+        catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+      }
     }
   } else {
     await fs.mkdir(nodePath.dirname(skillFile), { recursive: true });
-    const nextSkill = renderMuseSkill(museWatchCommand(undefined, input.node, paths.script));
+    const nextSkill = renderMuseSkill(museWatchCommand(undefined, paths.bin));
     if (skill !== nextSkill) await fs.writeFile(skillFile, nextSkill, { mode: 0o600 });
   }
-  const text = JSON.stringify(merged.config, null, 2) + '\n';
+  const style = uninstall && backup !== null && backup !== '' ? backup : before;
+  const indent = style?.match(/\n([ \t]+)"/u)?.[1];
+  const newline = style === null || style?.endsWith('\n') ? '\n' : '';
+  const text = uninstall && backup !== null && backup !== '' && original && isDeepStrictEqual(merged.config, original)
+    ? backup : (style?.startsWith('\uFEFF') ? '\uFEFF' : '') + JSON.stringify(merged.config, null, indent ?? (style === null ? 2 : undefined)) + newline;
   if (uninstall && backup === '' && Object.keys(merged.config).length === 0) {
     await fs.rm(paths.settingsFile, { force: true });
   } else if (text !== before && (!uninstall || before !== null)) {
     await fs.writeFile(paths.settingsFile, text, { mode: 0o600 });
   }
-  if (uninstall) await fs.rm(backupFile, { force: true });
+  if (uninstall) {
+    await fs.rm(backupFile, { force: true });
+    await fs.rm(metadataFile, { force: true });
+  }
   stdout(uninstall ? `removed Khala from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`
     : `configured ${paths.settingsFile}; restart or resume Muse, then ask it to join your Khala channel`);
   return 0;

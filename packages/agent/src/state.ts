@@ -9,7 +9,7 @@ import { readProcess, type ProcessReader } from './harness/proc';
 
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 /** `displayName` is the agent's own current name in the channel; hooks show it as `you=`. */
-export type StatusFile = { owner?: { pid: number; startTime: string }; state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };
+export type StatusFile = { heartbeatAt?: string; owner?: { pid: number; startTime: string }; state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };
 export type JoinFile = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; link: string };
 export type SessionFiles = { dir: string; join: string; session: string; inbox: string; cursor: string; status: string; mode: string };
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -157,6 +157,7 @@ export async function saveSession(files: SessionFiles, credentials: AgentCredent
 export async function removeSession(files: SessionFiles): Promise<void> { await removeStateFile(files.dir, 'session.json'); }
 export async function writeStatus(files: SessionFiles, state: AgentState, detail?: string, now: () => Date = () => new Date(), channelName?: string, displayName?: string): Promise<StatusFile> {
   const status: StatusFile = { state, ...(channelName ? { channelName } : {}), ...(displayName ? { displayName } : {}), ...(detail ? { detail } : {}), updatedAt: now().toISOString() };
+  if (['connected', 'send_failed'].includes(state)) status.heartbeatAt = status.updatedAt;
   const snapshot = await ownStatus(status);
   await writeJsonAtomic(files.status, snapshot);
   return snapshot;
@@ -176,6 +177,22 @@ export async function readStatus(files: SessionFiles, read: ProcessReader = read
     ? await read(owner.pid) : null;
   return writer && writer.startTime === owner?.startTime ? status
     : { ...status, state: 'disconnected', detail: 'process_exited' };
+}
+/** A sandbox may not see the MCP PID. A heartbeat is authoritative when present. */
+export async function readWatcherStatus(files: SessionFiles, read: ProcessReader = readProcess, now: () => Date = () => new Date()): Promise<StatusFile | null> {
+  const status = await readJson<StatusFile>(files.status);
+  if (!status || !['connected', 'send_failed'].includes(status.state)) return status;
+  if (status.heartbeatAt !== undefined) {
+    const age = now().getTime() - Date.parse(status.heartbeatAt);
+    return Number.isFinite(age) && age >= 0 && age < 60_000 ? status
+      : { ...status, state: 'disconnected', detail: 'heartbeat_stale' };
+  }
+  const owner = status.owner;
+  const writer = owner && Number.isSafeInteger(owner.pid) && owner.pid > 0 && typeof owner.startTime === 'string'
+    ? await read(owner.pid) : null;
+  // Invisible owners are not evidence of death in a separate PID namespace.
+  return writer && writer.startTime !== owner?.startTime
+    ? { ...status, state: 'disconnected', detail: 'process_exited' } : status;
 }
 export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json' | 'channel.json' | 'resume.json', value: unknown): Promise<void> {
   if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json', 'channel.json', 'resume.json'].includes(name)) throw new StateError('storage_failed');

@@ -317,3 +317,25 @@ it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', a
   expect((await readCursor(files)).deliveredCount).toBe(2);
   expect(stderr).toBe('');
 });
+
+it('keeps a watcher alive across PID namespaces and reports stale heartbeat once', async () => {
+  await writeJsonAtomic(files.status, { state: 'connected', owner: { pid: 2147483647, startTime: 'invisible' }, heartbeatAt: new Date().toISOString() });
+  const errors: string[] = [];
+  result = watchSession(files, { signal: controller.signal, write: line => lines.push(line), stderr: line => errors.push(line) });
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await appendEntries(files, [entry(1)]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  expect(errors).toEqual([]);
+  await writeJsonAtomic(files.status, { state: 'connected', heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
+  await expect(result).resolves.toBe(0);
+  expect(errors).toEqual(['khala watch: heartbeat_stale']);
+});
+it('uses a fresh monitor lease across PID namespaces', async () => {
+  const nonce = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { nonce, pid: 2147483647 });
+  const lease = path.join(files.dir, `monitor-${nonce}.json`);
+  await writeJsonAtomic(lease, { nonce, pid: 2147483647, heartbeatAt: new Date().toISOString() });
+  expect(await monitorArmed(files)).toBe(true);
+  await writeJsonAtomic(lease, { nonce, pid: 2147483647, heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
+  expect(await monitorArmed(files)).toBe(false);
+});

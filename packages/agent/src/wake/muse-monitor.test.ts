@@ -125,11 +125,14 @@ it('polls native ingress before activity voiding and confirms late Stop with ing
   expect((await readWakeState(files.dir)).monitor).toEqual({ failures: 0 });
 });
 
-it('runs an absolute watcher command with neither PATH nor MUSE_SESSION_ID', () => {
+it('runs the stable watcher bin without khala on PATH or inherited MUSE_SESSION_ID', async () => {
   const script = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
-  const command = museWatchCommand('unjoined-muse', process.execPath, script);
+  const bin = path.join(root, 'bin', 'khala');
+  await fs.mkdir(path.dirname(bin), { recursive: true });
+  await fs.symlink(script, bin);
+  const command = museWatchCommand('unjoined-muse', bin);
   expect(command).toContain(' --session ');
-  const result = spawnSync('/bin/sh', ['-c', command], { env: { HOME: root, XDG_STATE_HOME: root, PATH: '' }, encoding: 'utf8' });
+  const result = spawnSync('/bin/sh', ['-c', command], { env: { HOME: root, XDG_STATE_HOME: root, PATH: path.dirname(process.execPath) }, encoding: 'utf8' });
   expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).not.toContain('session_unknown');
 });

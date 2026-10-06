@@ -56,9 +56,12 @@ tool on the absolute watcher command supplied by the join/status reply (includin
 and `show_lines: true`. It wakes without touching your draft; hooks deliver the
 messages. `MUSE_SESSION_ID` identifies the MCP session; hooks use their stdin
 session ID. The monitor always receives `--session <id>` explicitly because its
-shell does not inherit `MUSE_SESSION_ID`. Instructions use absolute Node and CLI
-paths so they work without the CLI on PATH. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
-Stop. Check `khala_status` if the monitor stops, and ask Muse to re-arm it.
+shell does not inherit `MUSE_SESSION_ID`. Instructions use the stable installed `<prefix>/bin/khala` path (or
+`<prefix>/khala.cmd` on Windows), so npm upgrades do not invalidate them. Node must
+remain on PATH; Khala itself need not be. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
+Stop. The watcher uses a connection heartbeat refreshed every 15 seconds, including
+in sandboxed shells with a separate PID namespace. It exits after a heartbeat is
+60 seconds old or the session disconnects, and prints the reason to stderr. Check `khala_status` if the monitor stops, and ask Muse to re-arm it.
 
 Use `install muse --no-wake` to turn monitor wake off, and
 `khala wake on --harness muse --driver monitor` to turn it back on. Remove the

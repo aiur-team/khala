@@ -38,7 +38,7 @@ export type HarnessAdapter = Readonly<{
   /** Native notification proof, scoped to the run that reached Stop. */
   stopWakeText?: (stdin: string, files: SessionFiles, env: NodeJS.ProcessEnv) => Promise<{ text: string; at: number } | undefined>;
   /** Context for a joined session at startup, without channel content. */
-  startContext?: (sessionId: string) => string;
+  startContext?: (sessionId: string, env: NodeJS.ProcessEnv) => string;
   /** Claude's status exposes the external watcher lease. */
   watcherStatus?: boolean;
 }>;
