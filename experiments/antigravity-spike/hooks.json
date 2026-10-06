@@ -1,0 +1,19 @@
+{
+  "khala": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /tmp/claude-1000/spike-1115/khala-hook.mjs PreToolUse", "timeout": 10 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /tmp/claude-1000/spike-1115/khala-hook.mjs PostToolUse", "timeout": 10 }] }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "node /tmp/claude-1000/spike-1115/khala-hook.mjs PreInvocation", "timeout": 10 }
+    ],
+    "PostInvocation": [
+      { "type": "command", "command": "node /tmp/claude-1000/spike-1115/khala-hook.mjs PostInvocation", "timeout": 10 }
+    ],
+    "Stop": [
+      { "type": "command", "command": "node /tmp/claude-1000/spike-1115/khala-hook.mjs Stop", "timeout": 10 }
+    ]
+  }
+}

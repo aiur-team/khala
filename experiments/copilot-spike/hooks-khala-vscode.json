@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [{ "type": "command", "bash": "/tmp/claude-1000/spike-1114/hooklog.sh khala-vscode.json SessionStart", "timeoutSec": 10 }],
+    "UserPromptSubmit": [{ "type": "command", "bash": "/tmp/claude-1000/spike-1114/hooklog.sh khala-vscode.json UserPromptSubmit", "timeoutSec": 10 }],
+    "Stop": [{ "type": "command", "bash": "/tmp/claude-1000/spike-1114/hooklog.sh khala-vscode.json Stop", "timeoutSec": 10 }]
+  }
+}

@@ -23,7 +23,9 @@ async function atomic(file: string, value: unknown): Promise<void> {
 async function locked<T>(dir: string, work: (data: SessionData) => T): Promise<T> {
   return withWakeLock(dir, 'wake.lock', async () => {
     const data = await readJson<SessionData>(path.join(dir, 'wake-journal.json'), { attempts: [], state: {} });
+    const before = JSON.stringify(data);
     const result = work(data);
+    if (JSON.stringify(data) === before) return result;
     await atomic(path.join(dir, 'wake-journal.json'), data);
     await atomic(path.join(dir, 'wake-state.json'), data.state);
     return result;

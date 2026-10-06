@@ -14,4 +14,4 @@ In-process client and hook checks against fake transport boundaries. Pending is 
 | steer | PASS | PASS | PASS |
 | sync | PASS | PASS | PASS |
 | async | PASS | PASS | PASS |
-| idle wake | PENDING — Known pending: U14 #1135 adds Claude wakeLadder; current verification mode: no wakeLadder | PENDING — Known pending: U13 #1134 enables nonce verification; current verification mode: queue='none' | ABSENT (asserted) |
+| idle wake | PENDING — Known pending: U14 #1135 adds Claude wakeLadder; current verification mode: no wakeLadder | PASS | ABSENT (asserted) |

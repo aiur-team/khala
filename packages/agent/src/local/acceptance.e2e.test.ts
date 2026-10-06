@@ -216,8 +216,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
       const codexWake = message('ae4-wake-codex');
       expect(toolData(await wakeWorld.claude.call('khala_send', { text: codexWake })), context('AE4')).toHaveProperty('eventId');
       await eventually(async () => (await codexCalls(wakeWorld)).length === before + 1);
-      expect((await codexCalls(wakeWorld)).at(-1), context('AE4')).toBe('queue --thread e2e-codex --message Khala: channel messages are waiting. Continue.');
-      expect(frameText(await deliver(wakeWorld.codex, 'UserPromptSubmit')), context('AE4')).toContain(`kevin-Claude (agent): ${codexWake}`);
+      expect((await codexCalls(wakeWorld)).at(-1), context('AE4')).toMatch(/^queue --thread e2e-codex --message Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/);
+      expect(frameText(await deliver(wakeWorld.codex, 'UserPromptSubmit', (await codexCalls(wakeWorld)).at(-1)!.split('--message ')[1])), context('AE4')).toContain(`kevin-Claude (agent): ${codexWake}`);
       expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
       const selfBefore = (await codexCalls(wakeWorld)).length;
       expect(toolData(await wakeWorld.codex.call('khala_send', { text: message('ae4-self-codex') })), context('AE4')).toHaveProperty('eventId');
@@ -257,7 +257,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     expect(await received(world.codex, message('ae5-human')), context('AE5')).toMatchObject({ senderKind: 'human', senderLabel: 'kevin' });
     expect((await wake.exited).code, context('AE5')).toBe(2);
-    await eventually(async () => await deniedCodexCount() > queues);
+    // The no-egress guard denies the cached capability probe, so no queue is attempted.
+    expect(toolData(await world.codex.call('khala_status')), context('AE5')).toMatchObject({
+      idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is unavailable.' },
+    });
+    expect(await deniedCodexCount(), context('AE5')).toBe(queues);
     expect((await codexCalls(world)).length, context('AE5')).toBe(0);
     await page.setViewportSize({ width: 1280, height: 900 }); await screenshot('ae5-channel-1280.png');
     await page.setViewportSize({ width: 390, height: 844 }); await screenshot('ae5-channel-390.png');

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
@@ -38,6 +38,21 @@ describe('real MCP client wiring', () => {
     expect(client.sendChannelEvent).toHaveBeenCalledWith(content);
     await wrapped.close();
     expect(order).toEqual(['close', 'stop']);
+  });
+
+  it.each(['codex', 'claude'] as const)('preserves %s connection status when wake diagnostics are corrupt', async harness => {
+    const env = await environment();
+    const files = sessionFiles(harness, 'thread', env);
+    await ensureStateDir(files.dir);
+    await writeFile(path.join(files.dir, 'wake-journal.json'), 'not-json');
+    const client = createRealClientFactory(env, {
+      createClient: () => createPlaceholderClient(),
+      createWaker: () => ({ notify() {}, async stop() {} }),
+    })({ harness, sessionId: 'thread' });
+    try {
+      expect(await client.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync',
+        idleWake: { driver: harness === 'codex' ? 'queue' : 'watcher', state: 'unavailable', reason: 'Wake status is unavailable.' } });
+    } finally { await client.close(); }
   });
 
   it('passes no inbox callback and creates no waker for Claude', async () => {

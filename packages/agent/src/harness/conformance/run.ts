@@ -98,11 +98,6 @@ export function pendingWake(adapter: HarnessAdapter): string | undefined {
     assert.equal(adapter.wakeLadder, undefined, 'Claude pending skip expired: U14 #1135 must require idle wake');
     return 'Known pending: U14 #1135 adds Claude wakeLadder; current verification mode: no wakeLadder';
   }
-  if (adapter.id === 'codex') {
-    assert.deepEqual(adapter.wakeLadder?.map(driver => ({ id: driver.id, verification: driver.verification })),
-      [{ id: 'queue', verification: 'none' }], 'Codex pending skip expired: U13 #1134 must require idle wake');
-    return "Known pending: U13 #1134 enables nonce verification; current verification mode: queue='none'";
-  }
   return undefined;
 }
 
@@ -188,13 +183,17 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       return hook(capabilities.sync ? 'stop' : 'tool');
     };
     await row('you=', async () => {
+      assert.equal((await client.read(10)).you, defaultAgentName('kevin', adapter.id));
+      assert.equal((await client.status()).you, defaultAgentName('kevin', adapter.id));
       const output = await identityHook();
       if (hookSupported) assert(output.frame?.includes(` you="${defaultAgentName('kevin', adapter.id)}" `));
       else assert.equal(output.kind, 'none');
-    }, hookSupported ? 'pass' : 'absent');
+    });
     await row('rename event', async () => {
       await emit('$rename', local.own(), 'Reviewer');
       await emit('$after-rename');
+      assert.equal((await client.read(10)).you, 'Reviewer');
+      assert.equal((await client.status()).you, 'Reviewer');
       const pending = (await unread(channel)).entries;
       assert(pending.some(entry => entry.kind === 'event' && entry.body.endsWith(' is now Reviewer')));
       const output = await identityHook();

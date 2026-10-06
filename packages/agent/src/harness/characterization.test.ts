@@ -1,3 +1,4 @@
+import { createCodexWakeDriver } from '../wake/codex';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -146,7 +147,12 @@ it.each(harnesses)('%s waker selection is observable through the factory', async
     createClient.mock.calls[0]![0].onInboxAppend?.(entry(1));
     if (harness === 'codex') expect(createWaker).toHaveBeenCalledWith({ files: sessionFiles(harness, 'session', { XDG_STATE_HOME: root }), threadId: 'session' });
   } finally { await client.close(); }
+  const run = vi.fn().mockResolvedValue({ status: 'queued' });
+  if (harness === 'codex') await createCodexWakeDriver({ port: { run }, probe: async () => ({ available: true }) }).wake({
+    files: sessionFiles(harness, 'session', { XDG_STATE_HOME: root }), harness, sessionId: 'session', env: {}, now: 0, signal: new AbortController().signal,
+  }, 'Khala: channel messages are waiting. Continue. (k-12345678)');
   await golden(`waker-${harness}`, {
+    ...(harness === 'codex' ? { argv: run.mock.calls[0]![0] } : {}),
     threads: createWaker.mock.calls.map(() => 'session'),
     notified: notify.mock.calls.length, stopped: stop.mock.calls.length,
     hasInboxCallback: typeof createClient.mock.calls[0]![0].onInboxAppend === 'function',

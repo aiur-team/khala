@@ -55,29 +55,6 @@ it('requires a live valid PID for an armed Claude watcher', async () => {
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-it.skipIf(process.platform === 'win32')('memoizes queue availability for each environment including concurrent probes', async () => {
-  const fs = await import('node:fs/promises');
-  const os = await import('node:os');
-  const path = await import('node:path');
-  const { wakeStatus } = await import('./status');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-queue-cache-'));
-  const calls = path.join(root, 'calls');
-  try {
-    await fs.writeFile(path.join(root, 'codex'), `#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ] || exit 1\nprintf 'probe\\n' >> "$PROBE_CALLS"\n`, { mode: 0o700 });
-    const env = { PATH: root, XDG_STATE_HOME: root, PROBE_CALLS: calls };
-    await Promise.all([wakeStatus('codex', { env }), wakeStatus('codex', { env })]);
-    await wakeStatus('codex', { env });
-    expect(await fs.readFile(calls, 'utf8')).toBe('probe\n');
-    await wakeStatus('codex', { env: { ...env } });
-    expect(await fs.readFile(calls, 'utf8')).toBe('probe\nprobe\n');
-    env.PATH = '';
-    expect((await wakeStatus('codex', { env })).find(row => row.driver === 'queue')!.state).toBe('unavailable');
-    env.PATH = root;
-    await wakeStatus('codex', { env });
-    expect(await fs.readFile(calls, 'utf8')).toBe('probe\nprobe\nprobe\n');
-  } finally { await fs.rm(root, { recursive: true, force: true }); }
-});
-
 it('reports a missing Codex queue instead of active', async () => {
   const { wakeStatus } = await import('./status');
   const rows = await wakeStatus('codex', { env: { PATH: '', XDG_STATE_HOME: '/nonexistent-khala-u1133-status' } });
@@ -91,7 +68,7 @@ it.skipIf(process.platform === 'win32')('probes only queue help and reports an a
   const { wakeStatus } = await import('./status');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-queue-probe-'));
   try {
-    await fs.writeFile(path.join(root, 'codex'), '#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ]\n', { mode: 0o700 });
+    await fs.writeFile(path.join(root, 'codex'), '#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ] || exit 1\nprintf "%s\\n" "--thread --message\\n"\n', { mode: 0o700 });
     const rows = await wakeStatus('codex', { env: { PATH: root, XDG_STATE_HOME: root } });
     expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'active', reason: WAKE_STATES.active.reason });
   } finally { await fs.rm(root, { recursive: true, force: true }); }

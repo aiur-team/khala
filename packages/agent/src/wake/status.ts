@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { execFile } from 'node:child_process';
 import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import { adapterFor } from '../harness';
 import { filesForDir, readStateFile, stateRoot, type SessionFiles } from '../state';
@@ -10,7 +9,11 @@ export const WAKE_STATES = {
   active: { reason: 'Idle wake is on.', remedy: '' },
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
   unavailable: { reason: 'No remote-control API is available.', remedy: '', reasons: {
+    wake_status_unavailable: 'Wake status is unavailable.',
     queue_missing: 'Codex queue is missing.',
+    codex_binary_missing: 'Codex queue is missing.',
+    codex_queue_unavailable: 'Codex queue is unavailable.',
+    nonce_timeout: 'The wake verification deadline passed.',
     windows: 'Windows has no supported remote-control API.',
     driver_missing: 'No wake driver is installed for this transport.',
     watcher_missing: 'The Claude watcher is not armed.',
@@ -36,17 +39,6 @@ export function wakeDrivers(harness: string): WakeDescriptor[] {
   for (const driver of adapter?.wakeConsentDrivers ?? []) if (!drivers.some(item => item.id === driver.id)) drivers.push(driver);
   if (harness === 'claude') drivers.unshift({ id: 'watcher', rung: 2, optIn: false });
   return drivers.sort((a, b) => a.rung - b.rung);
-}
-/** A bounded read-only probe; no queue command sends a message here. */
-const queueAvailability = new WeakMap<NodeJS.ProcessEnv, { path: string | undefined; result: Promise<boolean> }>();
-function codexQueueAvailable(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const cached = queueAvailability.get(env);
-  if (cached && cached.path === env.PATH) return cached.result;
-  const result = new Promise<boolean>(resolve => {
-    execFile('codex', ['queue', '--help'], { env, timeout: 1000, maxBuffer: 16 * 1024, windowsHide: true }, error => resolve(error === null));
-  });
-  queueAvailability.set(env, { path: env.PATH, result });
-  return result;
 }
 function watcherAlive(pid: unknown): boolean {
   if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -74,9 +66,12 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
     } else if (driver.runtime) {
       const files = options.files ?? filesForDir(path.join(stateRoot(env), harness, 'status'));
       const ctx = { files, harness, sessionId: options.sessionId ?? 'status', env, signal: new AbortController().signal, now: Date.now() };
-      const available = await driver.runtime.available(ctx) && (harness !== 'codex' || driver.id !== 'queue' || await codexQueueAvailable(env));
+      const available = await driver.runtime.available(ctx);
       state = available ? 'active' : 'unavailable';
-      if (!available && harness === 'codex' && driver.id === 'queue') unavailableReason = 'queue_missing';
+      if (!available) {
+        const reason = await driver.runtime.unavailableReason?.(ctx);
+        if (reason && Object.hasOwn(WAKE_STATES.unavailable.reasons, reason)) unavailableReason = reason as WakeUnavailableReason;
+      }
     } else {
       state = 'unavailable';
       unavailableReason = process.platform === 'win32' && driver.id === 'terminal' ? 'windows' : 'driver_missing';

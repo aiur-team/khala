@@ -5,7 +5,7 @@ import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import type { createCodexWaker } from '../wake/codex';
 import { createWakeLadder } from '../wake/ladder';
 import { adapterFor } from '../harness';
-import { wakeStatus, selectedWakeStatus, wakeDisableNotice } from '../wake/status';
+import { wakeStatus, selectedWakeStatus, wakeDisableNotice, wakeStatusText } from '../wake/status';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
@@ -39,9 +39,13 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       async join(link, label) { await initialize(); return client.join(link, label); },
       async status(channel) {
         await initialize();
-        const status = { ...await (channel === undefined ? client.status() : client.status(channel)), idleWake: selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })) };
-        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(status.state)
-          ? { ...status, watcherArmed: await monitorArmed(files) } : status;
+        const status = await (channel === undefined ? client.status() : client.status(channel));
+        let idleWake;
+        try { idleWake = selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })); }
+        catch { idleWake = wakeStatusText(drivers?.[0]?.id ?? 'watcher', 'unavailable', 'wake_status_unavailable'); }
+        const withWake = { ...status, idleWake };
+        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
+          ? { ...withWake, watcherArmed: await monitorArmed(files) } : withWake;
       },
       async read(limit, before, channel) {
         await initialize();

@@ -258,3 +258,16 @@ it.each([['opencode', 'OpenCode'], ['cline', 'Agent']])('uses registry model lab
   await exchange([call('khala_join', { link })], client, harness);
   expect(client.join).toHaveBeenCalledWith(link, label);
 });
+
+it.each(['generic', 'cline'])('returns current you through %s MCP read and status', async harness => {
+  const client = fake();
+  client.status = vi.fn(async () => ({ state: 'connected', unread: 0, you: 'kevin-Agent', displayName: 'kevin-Agent', listeningMode: 'async' as const }));
+  client.read = vi.fn(async () => ({ you: 'kevin-Agent', messages: [] }));
+  const { responses } = await exchange([call('khala_join', { link }), call('khala_read'), call('khala_status'), call('khala_send', { text: 'hello' })], client, harness);
+  expect(client.join).toHaveBeenCalledWith(link, 'Agent');
+  for (const response of responses.slice(1, 3)) {
+    expect(response.result.structuredContent.you).toBe('kevin-Agent');
+    expect(JSON.parse(response.result.content[0].text).you).toBe('kevin-Agent');
+  }
+  expect(client.send).toHaveBeenCalledWith('hello');
+});
