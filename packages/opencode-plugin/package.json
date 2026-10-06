@@ -1,0 +1,38 @@
+{
+  "name": "khala-opencode",
+  "version": "0.4.9",
+  "description": "Khala delivery and idle wake for OpenCode",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiur-team/khala.git",
+    "directory": "packages/opencode-plugin"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./server": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "vitest run --config ../../vitest.config.ts",
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@khala/agent": "workspace:*",
+    "@opencode-ai/plugin": "1.15.6",
+    "esbuild": "0.28.2"
+  },
+  "main": "./dist/index.js"
+}
