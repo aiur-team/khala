@@ -108,9 +108,8 @@ try {
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
   for (const file of ['mcp.json', 'hooks.json']) {
-    try { await fs.access(path.join(cursorDir, file)); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-    throw new Error(`uninstall did not restore absent Cursor ${file}`);
+    try { await fs.stat(path.join(cursorDir, file)); throw new Error(`uninstall left ${file}, which was originally absent`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
@@ -125,7 +124,7 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  try { await fs.access(opencodeConfig); throw new Error('uninstall did not restore absent OpenCode config'); }
+  try { await fs.stat(opencodeConfig); throw new Error('uninstall left OpenCode config, which was originally absent'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path

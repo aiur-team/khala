@@ -5,11 +5,12 @@ import type { WakeDriver } from '../wake/driver';
 import type { EmptyPrompt } from '../wake/terminal/prompt-guard';
 
 import type { SessionSource } from './session-sources';
+import type { HookIO } from './deliver-core';
 export type { SessionSource } from './session-sources';
 
 /** Hook dialect parsing and stdout, separate from shared delivery state. */
 export type DeliverCodec = Readonly<{
-  parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string; transcriptPath?: string } | null;
+  parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string; replay?: boolean; transcriptPath?: string } | null;
   render(kind: 'prompt' | 'tool' | 'stop', frame: string): string;
   noop(kind?: 'start' | 'prompt' | 'tool' | 'stop'): string;
   /** Some prompt hooks can only record activity, without injecting context. */
@@ -27,6 +28,8 @@ export type HarnessAdapter = Readonly<{
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   wakeLadder?: readonly WakeDriver[];
+  /** Native plugins poll through delivery hooks rather than an external transport. */
+  pollIdleWake?: (files: SessionFiles, io: HookIO, replay?: boolean) => Promise<string | undefined>;
   /** Measured empty input text and cursor column for safe terminal wakes. */
   emptyPrompt?: EmptyPrompt;
   /** Planned consent-gated fallbacks; runtime availability remains explicit. */
