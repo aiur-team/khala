@@ -9,9 +9,10 @@ import { adapterFor } from '../harness';
 import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
 import { cursorPaths, installCursor } from './cursor';
+import { opencodePaths, installOpenCode } from './opencode';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -20,7 +21,7 @@ export type InstallDeps = {
   npmInstall?: (prefix: string, spec: string) => boolean;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
-  /** Cursor only: the platform whose paths and hook shell to target, and its Node binary. */
+  /** Target the platform whose paths and hook shell to target, and its Node binary. */
   platform?: NodeJS.Platform;
   node?: string;
   home?: string;
@@ -48,6 +49,32 @@ export async function runCursorInstall(flags: readonly string[], deps: InstallDe
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   return installCursor({
     paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
+
+export async function runOpenCodeInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) {
+    stderr('khala: install runs from the published package (npx -y khala-cli install opencode)');
+    return 1;
+  }
+  const platform = deps.platform ?? process.platform;
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = opencodePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env });
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installOpenCode({ paths, uninstall, stdout, stderr,
+    plugin: env.KHALA_OPENCODE_PLUGIN_SPEC || `khala-opencode@${pkg?.version ?? '0.0.0'}`,
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
