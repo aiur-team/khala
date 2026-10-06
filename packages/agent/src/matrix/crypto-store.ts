@@ -86,7 +86,7 @@ async function readIdentity(file: string): Promise<Identity | null> {
     if (!value || typeof value.homeserver !== 'string' || typeof value.userId !== 'string' || typeof value.deviceId !== 'string'
       || (value.accessToken !== undefined && typeof value.accessToken !== 'string')
       || (value.joinedAt !== undefined && !Number.isFinite(value.joinedAt))
-      || (value.undecryptableEventIds !== undefined && (!Array.isArray(value.undecryptableEventIds) || value.undecryptableEventIds.length > 100 || value.undecryptableEventIds.some(entry => typeof entry !== 'string' && (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || typeof entry.firstSeen !== 'number' || !Number.isFinite(entry.firstSeen) || entry.firstSeen < 0 || entry.firstSeen > Date.now()))))) throw new CryptoStoreCorruptError();
+      || (value.undecryptableEventIds !== undefined && (!Array.isArray(value.undecryptableEventIds) || value.undecryptableEventIds.length > 100 || value.undecryptableEventIds.some(entry => typeof entry !== 'string' && (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || typeof entry.firstSeen !== 'number' || !Number.isFinite(entry.firstSeen) || entry.firstSeen < 0 || entry.firstSeen > Number.MAX_SAFE_INTEGER))))) throw new CryptoStoreCorruptError();
     // Legacy IDs have no reliable age; discard them without resetting keys.
     if (value.undecryptableEventIds) value.undecryptableEventIds = value.undecryptableEventIds.filter(entry => typeof entry !== 'string' && retryUnexpired(entry));
     return value;

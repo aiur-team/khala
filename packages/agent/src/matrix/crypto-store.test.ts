@@ -157,3 +157,13 @@ it.each([{ id: '$bad', firstSeen: 'yesterday' }, { id: 1, firstSeen: 1 }, { id: 
   await writeFile(path.join(dir, 'crypto.json'), JSON.stringify({ homeserver: 'https://hs', userId: '@agent:hs', deviceId: 'D', undecryptableEventIds: [entry] }), { mode: 0o600 });
   expect(await validateCryptoToken(dir)).toBe('corrupt');
 });
+
+it('drops future retry hints after a clock step without resetting device keys', async () => {
+  const dir = await root(); const first = await restart(dir);
+  const file = path.join(first.dir, 'crypto.json');
+  const identity = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify({ ...identity, undecryptableEventIds: [{ id: '$future', firstSeen: Date.now() + 60_000 }] }), { mode: 0o600 });
+  const restored = await restart(dir);
+  expect(restored.restored).toBe(true); expect(restored.keys).toEqual(first.keys);
+  expect(JSON.parse(await readFile(file, 'utf8')).undecryptableEventIds).toEqual([]);
+}, 20_000);
