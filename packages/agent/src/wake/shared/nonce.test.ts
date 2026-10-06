@@ -76,3 +76,10 @@ it('waits for a live owner rather than reclaiming its lock', async () => {
   await pending;
   expect(finished).toBe(true);
 });
+
+it('does not create wake files or acquire a lock when no journal exists', async () => {
+  await fs.mkdir(path.join(root, 'wake.lock'));
+  await fs.writeFile(path.join(root, 'wake.lock', `owner-${process.pid}-1234567890abcdef`), '');
+  expect(await settleAttempts(root, { now: 100, activity: idle, promptText: 'hello' })).toEqual([]);
+  expect((await fs.readdir(root)).sort()).toEqual(['wake.lock']);
+});

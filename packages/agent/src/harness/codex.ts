@@ -15,4 +15,5 @@ export const codex: HarnessAdapter = {
   install,
   uninstall: (flags, deps) => install([...flags, '--uninstall'], deps),
   wakeLadder: [codexWakeDriver],
+  wakeWarningName: 'codex',
 };
