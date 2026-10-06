@@ -35,3 +35,10 @@ it('requires nullable canonical initials in profile views', () => {
   for (const initials of [null, 'KW']) expect(decodeProfileView({ ...view, initials })).toEqual({ ok: true, value: { ...view, initials } });
   for (const initials of ['kw', '', 42, 'ßa']) expect(decodeProfileView({ ...view, initials }).ok).toBe(false);
 });
+
+it('loads existing usernames with newly reserved registry suffixes', () => {
+  const stored = { ...record, username: 'bob-Gemini' };
+  expect(decodeProfileRecord(stored)).toEqual({ ok: true, value: stored });
+  const view = { username: stored.username, suggestion: 'Bob', color: 'blue', initials: null };
+  expect(decodeProfileView(view)).toEqual({ ok: true, value: view });
+});

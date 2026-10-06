@@ -2,7 +2,7 @@
 // and the colour, with one Save that saves only what changed. Focus is trapped
 // while it is open and returns to whatever opened it (the cog).
 
-import { checkName, USERNAME_MAX } from '@khala/contracts/m1/names';
+import { checkNewUsername, USERNAME_MAX } from '@khala/contracts/m1/names';
 import { defaultHumanColor, HUMAN_COLOR_IDS, type HumanColorId } from '@khala/contracts/m1/colors';
 import { normalizeInitials } from '@khala/contracts/m1/initials';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
@@ -108,7 +108,7 @@ export function ProfileDialog({ ownerId, onClose }: Readonly<{ ownerId?: string;
     return () => { opener?.focus(); };
   }, []);
 
-  const checked = checkName(name, 'username');
+  const checked = checkNewUsername(name);
   const draft = { name, color: selected, initials: initialsDraft };
   // A colour shown but never saved is the default the human already has, so it isn't a change.
   const saved = { username, color: initialColor(color, ownerId), initials: savedInitials };
@@ -162,7 +162,7 @@ export function ProfileDialog({ ownerId, onClose }: Readonly<{ ownerId?: string;
   }
 
   const { solid } = HUMAN_PALETTE[selected];
-  const canSave = checked.ok && !initialsInvalid && (changed.name || changed.color || changed.initials) && !saving;
+  const canSave = (!changed.name || checked.ok) && !initialsInvalid && (changed.name || changed.color || changed.initials) && !saving;
   return <div className="kh-dlg-scrim" onPointerDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={dialog} className="kh-dlg kh-prof" role="dialog" aria-modal="true" aria-labelledby={headingId} onKeyDown={onKeyDown}>
       <h2 id={headingId} className="kh-prof-h">Profile</h2>

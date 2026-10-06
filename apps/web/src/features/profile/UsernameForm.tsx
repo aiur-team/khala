@@ -2,7 +2,7 @@
 // and the save.
 
 import { useId, useState } from 'react';
-import { checkName, USERNAME_MAX, USERNAME_MIN, type NameError } from '@khala/contracts/m1/names';
+import { checkNewUsername, USERNAME_MAX, USERNAME_MIN, type NameError } from '@khala/contracts/m1/names';
 import { useProfile, type ProfileSaveResult } from './ProfileProvider';
 import './profile.css';
 
@@ -20,7 +20,7 @@ export type UsernameSubmit = { kind: 'saved'; username: string } | { kind: 'erro
 
 /** Saves a valid name and words the outcome; an invalid one never reaches `save`. */
 export async function submitUsername(value: string, save: (username: string) => Promise<ProfileSaveResult>): Promise<UsernameSubmit> {
-  const checked = checkName(value, 'username');
+  const checked = checkNewUsername(value);
   if (!checked.ok) return { kind: 'error', message: nameErrors[checked.error] };
   let result: ProfileSaveResult;
   try {
@@ -50,7 +50,7 @@ export type UsernameFieldsProps = Readonly<{
 export function UsernameFields({ value, submitLabel, saving, error, onChange, onSubmit, onCancel }: UsernameFieldsProps) {
   const hintId = useId();
   const errorId = useId();
-  const checked = checkName(value, 'username');
+  const checked = checkNewUsername(value);
   const message = checked.ok ? error : nameErrors[checked.error];
   return <form className="kh-uname" noValidate onSubmit={event => { event.preventDefault(); if (checked.ok && !saving) onSubmit(); }}>
     <div className="kh-uname-field">
