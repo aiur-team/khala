@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { ancestors, nearestNonShellAncestor, parseDarwinPs, parseLinuxStat, parseWindowsCsv, readProcess } from './proc';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ancestors, cachedProcessReader, nearestNonShellAncestor, parseDarwinPs, parseLinuxStat, parseWindowsCsv, readProcess } from './proc';
 import type { ProcessInfo, ProcessReader } from './proc';
 
 function tree(rows: ProcessInfo[]): ProcessReader {
@@ -52,4 +52,20 @@ describe('process inspection', () => {
     expect(first?.startTime).toMatch(/^\d+$/);
     expect((await readProcess(process.pid))?.startTime).toBe(first?.startTime);
   });
+});
+
+afterEach(() => vi.restoreAllMocks());
+it('caches concurrent owner probes only within one hook', async () => {
+  const identity = { pid: 42, ppid: 1, startTime: 'start', command: 'node' };
+  const read = vi.fn(async () => identity);
+  const cached = cachedProcessReader(read);
+  expect(await Promise.all([cached(42), cached(42)])).toEqual([identity, identity]);
+  expect(read).toHaveBeenCalledOnce();
+  await cachedProcessReader(read)(42);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+it('skips expensive identity probes when the cheap liveness check fails', async () => {
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw new Error('ESRCH'); });
+  expect(await readProcess(42)).toBeNull();
+  expect(kill).toHaveBeenCalledExactlyOnceWith(42, 0);
 });

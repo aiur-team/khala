@@ -76,6 +76,7 @@ export function parseWindowsCsv(text: string, pid: number): ProcessInfo | null {
 export async function readProcess(pid: number): Promise<ProcessInfo | null> {
   if (!validPid(pid)) return null;
   try {
+    process.kill(pid, 0);
     if (process.platform === 'linux') return parseLinuxStat(pid, await readFile(`/proc/${pid}/stat`, 'utf8'));
     if (process.platform === 'darwin') {
       const { stdout } = await execFileAsync('ps', ['-o', 'ppid=,lstart=,comm=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' }, timeout: 5000 });
@@ -112,4 +113,14 @@ export async function nearestNonShellAncestor(pid: number, read: ProcessReader =
     if (!/^(?:sh|bash|dash|zsh|fish|ksh|csh|tcsh|ash|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)$/.test(name)) return ancestor;
   }
   return null;
+}
+
+/** Scope this cache to one hook invocation; long-running readers must probe afresh. */
+export function cachedProcessReader(read: ProcessReader = readProcess): ProcessReader {
+  const cache = new Map<number, Promise<ProcessInfo | null>>();
+  return pid => {
+    let result = cache.get(pid);
+    if (!result) { result = read(pid); cache.set(pid, result); }
+    return result;
+  };
 }

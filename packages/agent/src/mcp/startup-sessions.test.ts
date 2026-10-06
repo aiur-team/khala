@@ -35,3 +35,24 @@ it.skipIf(process.platform === 'win32')('rejects unsafe root or harness permissi
     await fs.chmod(dir, 0o700);
   }
 });
+
+it('restores only the newest thread and breaks simultaneous timestamps consistently', async () => {
+  const time = new Date('2026-10-06T10:00:00Z');
+  for (const id of ['first', 'second', 'old']) {
+    const files = await openSessionDir('codex', id, env);
+    for (const roomId of ['!one:local', '!two:local']) {
+      const channel = channelFiles(files, roomId);
+      await ensureStateDir(channel.dir);
+      await writeStateFile(channel.dir, 'channel.json', { roomId });
+      await writeStateFile(channel.dir, 'resume.json', { workspace: process.cwd() });
+      await fs.utimes(path.join(channel.dir, 'resume.json'), time, time);
+    }
+  }
+  const expected = [{ sessionId: 'first', rejoinable: true }];
+  expect(await codexStartupSessions(env)).toEqual(expected);
+  expect(await codexStartupSessions(env)).toEqual(expected);
+  const latest = channelFiles(await openSessionDir('codex', 'second', env), '!two:local');
+  const newer = new Date(time.getTime() + 1000);
+  await fs.utimes(path.join(latest.dir, 'resume.json'), newer, newer);
+  expect(await codexStartupSessions(env)).toEqual([{ sessionId: 'second', rejoinable: true }]);
+});

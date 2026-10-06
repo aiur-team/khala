@@ -122,16 +122,18 @@ export function updateCodexToml(text: string, block: string | null): { text: str
   return { text: out ? out + '\n' : '' };
 }
 
-export function codexMcpBlock(bin: string, env: NodeJS.ProcessEnv): string {
+export function codexMcpBlock(bin: string, env: NodeJS.ProcessEnv, codexHome?: string): string {
   const home = env.HOME && path.isAbsolute(env.HOME) ? env.HOME : os.homedir();
   const state = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : path.join(home, '.local/state');
+  const customHome = codexHome && codexHome !== path.join(home, '.codex')
+    ? `, CODEX_HOME = ${JSON.stringify(codexHome)}` : '';
   // JSON string escapes are valid TOML basic strings.
   return [
     MCP_MARKER,
     '[mcp_servers.khala]',
     `command = ${JSON.stringify(bin)}`,
     'args = ["mcp", "--harness", "codex"]',
-    `env = { HOME = ${JSON.stringify(home)}, XDG_STATE_HOME = ${JSON.stringify(state)} }`,
+    `env = { HOME = ${JSON.stringify(home)}, XDG_STATE_HOME = ${JSON.stringify(state)}${customHome} }`,
   ].join('\n');
 }
 
@@ -177,7 +179,7 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
   let merged: { config: unknown; warnings: string[] };
   try { merged = mergeCodexHooks(parsed, uninstall ? 'uninstall' : 'install', codexHooksFragment(command)); }
   catch { stderr('khala: invalid hooks.json in ' + codexHome); return 1; }
-  const nextToml = updateCodexToml(toml.text, uninstall ? null : codexMcpBlock(bin, env));
+  const nextToml = updateCodexToml(toml.text, uninstall ? null : codexMcpBlock(bin, env, codexHome));
   if ('error' in nextToml) {
     stderr(`khala: ${tomlFile} already has an unmanaged [mcp_servers.khala] table; remove it and run this again`);
     return 1;

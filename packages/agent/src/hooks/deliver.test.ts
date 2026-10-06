@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as childProcess from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,8 @@ import * as channels from '../channels';
 import { readActivity, writeActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
+
+vi.mock('node:child_process', { spy: true });
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 let root: string;
@@ -598,4 +601,27 @@ it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$
     expect(outputs.at(-1)).toBe(expected ? JSON.stringify(expected) + '\n' : '');
   }
   expect(outputs[1]).toBe(outputs[0]);
+});
+
+it.each(['UserPromptSubmit', 'PostToolUse'])('reads connected Codex display metadata without subprocesses on %s', async event => {
+  await seed([message()], 'codex');
+  const exec = vi.spyOn(childProcess, 'execFile');
+  const spawnProcess = vi.spyOn(childProcess, 'spawn');
+  const fork = vi.spyOn(childProcess, 'fork');
+  // Force the platform that previously launched ps for every status read.
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  const output: string[] = [];
+  const errors: string[] = [];
+  try {
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: event }), ['--harness', 'codex'], {
+      env: { XDG_STATE_HOME: root }, now: () => new Date(),
+      stdout: { write: text => output.push(text) }, stderr: { write: text => errors.push(text) },
+    });
+  } finally { Object.defineProperty(process, 'platform', { value: platform }); }
+  expect(errors).toEqual([]);
+  expect(exec).not.toHaveBeenCalled();
+  expect(spawnProcess).not.toHaveBeenCalled();
+  expect(fork).not.toHaveBeenCalled();
+  if (event === 'UserPromptSubmit') expect(output.join('')).toContain('Docs are a go');
 });

@@ -230,7 +230,7 @@ it.each(['generic', 'cline'])('routes %s MCP requests through the resolved envir
   expect(client.close).toHaveBeenCalledOnce();
 });
 
-it('restores every authorized Codex session in this workspace before input without guessing tool identity', async () => {
+it('restores only the latest authorized Codex session in this workspace before input without guessing tool identity', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'khala-daemon-restore-'));
   const env = { XDG_STATE_HOME: root, PWD: process.cwd() };
   for (const [id, workspace] of [['first', process.cwd()], ['second', process.cwd()], ['other', '/other']] as const) {
@@ -239,17 +239,19 @@ it('restores every authorized Codex session in this workspace before input witho
     await ensureStateDir(nested.dir);
     await writeStateFile(nested.dir, 'channel.json', { roomId: '!room:local' });
     await writeStateFile(nested.dir, 'resume.json', { workspace });
+    const time = new Date(id === 'first' ? '2026-10-05T10:00:00Z' : '2026-10-06T10:00:00Z');
+    await (await import('node:fs/promises')).utimes(path.join(nested.dir, 'resume.json'), time, time);
   }
   const input = new PassThrough();
   const output = new PassThrough();
   const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
   const running = runMcpCommand(['--harness', 'codex'], { env, input, output, createClient });
   try {
-    await vi.waitFor(() => expect(createClient).toHaveBeenCalledTimes(2));
-    expect(createClient.mock.calls.map(([session]) => session.sessionId).sort()).toEqual(['first', 'second']);
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
+    expect(createClient.mock.calls.map(([session]) => session.sessionId)).toEqual(['second']);
     input.end(JSON.stringify(call('khala_status')) + '\n' + JSON.stringify(call('khala_status', 'second')) + '\n');
     await running;
-    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(createClient).toHaveBeenCalledOnce();
     expect(output.read().toString()).toContain('session_unknown');
   } finally {
     input.end(); await running; output.destroy(); rmSync(root, { recursive: true, force: true });

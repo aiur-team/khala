@@ -100,3 +100,23 @@ it('does not consent after a failed install', async () => {
   expect(await run(['codex'], false)).toBe(1);
   expect((await readWakeSettings(stateRoot({ HOME: home }))).consent).toEqual({});
 });
+
+it('passes a custom Codex home to MCP and removes it on uninstall', async () => {
+  const custom = path.join(home, 'custom codex');
+  expect(await run(['codex', '--codex-home', custom])).toBe(0);
+  const config = () => fs.readFile(path.join(custom, 'config.toml'), 'utf8');
+  expect(parse(await config())).toMatchObject({ mcp_servers: { khala: { env: { CODEX_HOME: custom } } } });
+  expect(await run(['codex', '--codex-home', custom])).toBe(0);
+  expect(parse(await config())).toMatchObject({ mcp_servers: { khala: { env: { CODEX_HOME: custom } } } });
+  expect(await run(['codex', '--codex-home', custom, '--uninstall'])).toBe(0);
+  expect(await config()).not.toContain('CODEX_HOME');
+});
+it('passes an environment-selected custom home to MCP', async () => {
+  const custom = path.join(home, 'env-codex');
+  expect(await runInstall(['codex'], {
+    env: { HOME: home, CODEX_HOME: custom }, package: { name: 'khala-cli', version: '9.8.7' },
+    npmInstall: () => true, stdout: () => {},
+  })).toBe(0);
+  expect(parse(await fs.readFile(path.join(custom, 'config.toml'), 'utf8')))
+    .toMatchObject({ mcp_servers: { khala: { env: { CODEX_HOME: custom } } } });
+});
