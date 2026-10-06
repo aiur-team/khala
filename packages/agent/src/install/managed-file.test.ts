@@ -146,3 +146,8 @@ describe('khala install codex (TOML and JSON)', () => {
     expect(await exists(path.join(codex(), 'hooks.json'))).toBe(false);
   });
 });
+
+it.skipIf(process.platform === 'win32')('creates private recording directories', async () => {
+  await install(path.join(home, 'config.json'));
+  expect((await fs.stat(state)).mode & 0o077).toBe(0);
+});
