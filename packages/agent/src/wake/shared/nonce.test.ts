@@ -83,3 +83,21 @@ it('does not create wake files or acquire a lock when no journal exists', async 
   expect(await settleAttempts(root, { now: 100, activity: idle, promptText: 'hello' })).toEqual([]);
   expect((await fs.readdir(root)).sort()).toEqual(['wake.lock']);
 });
+
+it('does not write wake files for empty re-consent or notice claims', async () => {
+  const { resetWakeDriver, takeWakeDisableNotices } = await import('./nonce');
+  await resetWakeDriver(root, 'queue');
+  expect(await takeWakeDisableNotices(root)).toEqual([]);
+  for (const name of ['wake-journal.json', 'wake-state.json']) {
+    await expect(fs.stat(path.join(root, name))).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+  await attempt();
+  const snapshot = async () => Promise.all(['wake-journal.json', 'wake-state.json'].map(async name => {
+    const file = path.join(root, name);
+    return [await fs.readFile(file, 'utf8'), (await fs.stat(file)).mtimeMs];
+  }));
+  const before = await snapshot();
+  await resetWakeDriver(root, 'terminal');
+  expect(await takeWakeDisableNotices(root)).toEqual([]);
+  expect(await snapshot()).toEqual(before);
+});

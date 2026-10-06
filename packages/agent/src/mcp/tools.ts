@@ -78,7 +78,10 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       { limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, before: { type: 'string', minLength: 1 }, channel: channelProperty }, [],
       args => validChannel(args) && (!Object.hasOwn(args, 'limit') || typeof args.limit === 'number' && Number.isInteger(args.limit) && args.limit >= 1 && args.limit <= 100)
         && (!Object.hasOwn(args, 'before') || typeof args.before === 'string' && args.before.length > 0),
-      (client, args) => args.channel === undefined ? client.read(args.limit as number ?? 30, args.before as string | undefined) : client.read(args.limit as number ?? 30, args.before as string | undefined, args.channel as string | undefined)),
+      (client, args) => args.channel === undefined ? client.read(args.limit as number ?? 30, args.before as string | undefined) : client.read(args.limit as number ?? 30, args.before as string | undefined, args.channel as string | undefined), result => {
+        const read = result as Awaited<ReturnType<KhalaAgentClient['read']>>;
+        return JSON.stringify(read) + (read.wakeNotice ? '\n' + read.wakeNotice : '');
+      }),
     tool('khala_send', 'Send a message to the channel. Select channel by name or channel ID; required when joined to more than one channel. Never include secrets.',
       { text: { type: 'string', minLength: 1, maxLength: 8000 }, channel: channelProperty }, ['text'],
       args => validChannel(args) && typeof args.text === 'string' && args.text.length >= 1 && args.text.length <= 8000,

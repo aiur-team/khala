@@ -13,5 +13,6 @@ process.exitCode = await runCli(process.argv.slice(2), {
   watch: () => () => import('./watch'),
   local: () => () => import('./local/cli'),
   install: () => () => import('./install/main'),
+  wake: () => () => import('./wake/cli'),
   hook: name => Object.hasOwn(hooks, name) ? hooks[name] : undefined,
 });

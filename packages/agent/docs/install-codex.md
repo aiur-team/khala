@@ -19,6 +19,13 @@ Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
    `hooks.json.khala-bak` once. Hooks run the installed copy directly (about 30 ms) rather
    than `npx` (about 0.7 s per tool call). `--codex-home <dir>` targets another Codex home.
 
+   The installer also records consent for the terminal fallback and prints how to
+   withdraw it. Use `--no-wake` to withhold consent, or `--wake` to renew it.
+   Inspect transport availability with `khala wake status --harness codex`; turn
+   wake off with `khala wake off --harness codex`, or renew terminal consent with
+   `khala wake on --harness codex --driver terminal`. Consent alone does not make
+   an unavailable terminal transport available.
+
 3. Exit the existing Codex session, then run `codex resume <thread id>`.
    In **Hooks need review**, trust the **three** Khala hooks with command
    `…/khala/npm/bin/khala hook deliver --harness codex` (UserPromptSubmit, PostToolUse and
@@ -39,7 +46,7 @@ hooks; delete `~/.local/share/khala/npm` to remove the CLI). The backup is retai
 ## Behaviour and known limits
 
 Untrusted hooks prevent delivery; queued notices cannot deliver messages until the hooks
-are trusted, and the waker caps attempts at two per cursor position. Queue support is probed before waking; `khala_status.wakeDrivers` reports a missing binary or queue command. Two notices that are not verified by the prompt hook disable queue for that session. Sync delivers at the
+are trusted, and the waker caps attempts at two per cursor position. Queue support is probed before waking; `khala_status.idleWake` reports a missing binary or queue command. Two notices that are not verified by the prompt hook disable queue for that session. Sync delivers at the
 turn's Stop; Steer delivers at the next tool boundary without aborting the tool. Without
 trusting the `PostToolUse` hook, Steer works like Sync. Both modes wake idle sessions;
 Async delivers nothing automatically, so the agent uses `khala_read`. The waker acts only
