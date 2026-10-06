@@ -43,6 +43,13 @@ it('selects the nearer nested harness entry ahead of the outer one', async () =>
   expect(await resolve(600)).toEqual({ sessionId: 'inner', rejoinable: true });
   expect(await resolve()).toEqual({ sessionId: 'outer', rejoinable: true });
 });
+it('does not resolve an outer session before the nested harness records its own', async () => {
+  await record('outer');
+  expect(await resolve(600)).toBeNull();
+  expect(await resolve(560)).toBeNull();
+  await record('inner', 560);
+  expect(await resolve(600)).toEqual({ sessionId: 'inner', rejoinable: true });
+});
 it('does not cache missing entries and does not create state on a miss', async () => {
   expect(await resolve()).toBeNull();
   await expect(fs.stat(path.dirname(file()))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -93,7 +100,7 @@ it.each(['SessionStart', 'UserPromptSubmit'])('records %s before a session has j
 it('retries per tool call after hook delivery and switches to the newer session through the real MCP server', async () => {
   // Only OS ancestry is simulated; codec, hook persistence, adapter resolution, tools and transport are real.
   const source = { ...hookMapSource, resolve: (meta: Readonly<Record<string, unknown>> | undefined, sourceEnv: NodeJS.ProcessEnv) =>
-    hookMapSource.resolve(meta, sourceEnv, context()) };
+    hookMapSource.resolve(meta, sourceEnv, context(600)) };
   const adapter = { ...claude, id: 'codex', sessionSources: [source], restoreAtStartup: false };
   const original = registry.adapterFor;
   vi.spyOn(registry, 'adapterFor').mockImplementation(id => id === 'codex' ? adapter : original(id));
@@ -101,6 +108,7 @@ it('retries per tool call after hook delivery and switches to the newer session 
   let text = '';
   const output = new Writable({ write(chunk, _encoding, done) { text += chunk.toString(); done(); } });
   const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
+  await record('outer');
   const running = runMcpCommand(['--harness', 'codex'], { input, output, env, createClient });
   const call = (id: number) => input.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'khala_status', arguments: {} } }) + '\n');
   try {
@@ -108,7 +116,7 @@ it('retries per tool call after hook delivery and switches to the newer session 
     const first = JSON.parse(text.trim());
     expect(first.result.structuredContent).toEqual({ error: 'session_unknown', hint: 'Send the agent one message first, then retry.' });
     expect(createClient).not.toHaveBeenCalled();
-    const hookIO = { stdout: { write: vi.fn() }, stderr: { write: vi.fn() }, env, now, pid: 300, readProcess };
+    const hookIO = { stdout: { write: vi.fn() }, stderr: { write: vi.fn() }, env, now, pid: 560, readProcess };
     await deliverCore('{"hook_event_name":"UserPromptSubmit","session_id":"joined"}', adapter, hookIO);
     call(2); await vi.waitFor(() => expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: 'joined', rejoinable: true }));
     await deliverCore('{"hook_event_name":"UserPromptSubmit","session_id":"second"}', adapter, hookIO);
