@@ -1,7 +1,8 @@
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" --ensure-installed", "timeout": 10 }, { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook session-start", "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" --ensure-installed", "timeout": 10 }, { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook session-start", "timeout": 10 }] },
+      { "matcher": "startup|resume", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook claude-wake", "asyncRewake": true, "timeout": 86700 }] }
     ],
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/khala\" hook deliver --harness claude", "timeout": 10 }] }
