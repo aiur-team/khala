@@ -6,13 +6,13 @@ import { resolveHarness, resolveSessionId } from '../mcp/session-id';
 
 describe('harness adapters', () => {
   it('registers the native and generic harnesses, all with metadata', () => {
-    expect(ADAPTERS.map(adapter => adapter.id)).toEqual(['claude', 'codex', 'cursor', 'opencode', 'muse', 'generic']);
+    expect(ADAPTERS.map(adapter => adapter.id)).toEqual(['claude', 'codex', 'cursor', 'opencode', 'muse', 'gemini', 'generic']);
     for (const adapter of ADAPTERS) {
       expect(HARNESS_REGISTRY.some(row => row.id === adapter.id)).toBe(true);
       expect(adapterFor(adapter.id)).toBe(adapter);
       if (adapter.id === 'generic') expect(adapter.codec).toBeUndefined();
       else expect(adapter.codec?.parse).toBeTypeOf('function');
-      expect(adapter.restoreAtStartup).toBe(!['cursor', 'opencode'].includes(adapter.id));
+      expect(adapter.restoreAtStartup).toBe(!['cursor', 'opencode', 'gemini'].includes(adapter.id));
     }
     expect(adapterFor('gemini')?.id).toBe('gemini');
     expect(adapterFor('toString')).toBeUndefined();

@@ -194,3 +194,8 @@ it('creates private install state that MCP can use', async () => {
   await managed.record(path.join(home, 'settings.json'));
   await expect(openSessionDir('muse', 'installed', env)).resolves.toHaveProperty('dir');
 });
+
+it.skipIf(process.platform === 'win32')('creates private recording directories', async () => {
+  await install(path.join(home, 'config.json'));
+  expect((await fs.stat(state)).mode & 0o077).toBe(0);
+});

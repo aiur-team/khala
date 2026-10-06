@@ -12,6 +12,8 @@ export type HookEvent = 'prompt' | 'tool' | 'stop';
 
 /** Harness syntax and transport seams only; the runner owns assertions and policy. */
 export interface FakeHarnessDriver {
+  /** Cursor guards allow a new batch during a retry, but never replay a delivered batch. */
+  syncGuard?: 'cursor';
   newSession(): FakeSession;
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;
   readHookStdout(stdout: string): { kind: 'context' | 'continue' | 'none'; frame?: string };
