@@ -57,6 +57,7 @@ export async function runMcpCommand(argv: readonly string[], deps: {
   }
   const tools = createKhalaTools({
     harness,
+    ...(startupSession ? { museSessionId: startupSession.sessionId } : {}),
     async clientFor(meta) {
       const session = await resolveSession(harness, meta, env);
       return session === null ? null : clientForSession(session);

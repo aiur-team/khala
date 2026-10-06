@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { readActivity } from '../activity';
 import { monitorArmed } from '../watch';
 import { readJson, writeJsonAtomic, type SessionFiles } from '../state';
 import { wakeLine, settleAttempts } from './shared';
@@ -9,15 +10,19 @@ import type { WakeDriver } from './driver';
 
 export const MUSE_WAKE_REQUEST = 'muse-monitor-wake.json';
 export type MuseWakeRequest = { owner: string; line: string; at: number; deadline: number; journalOffset: number };
-export function museMonitorInstruction(sessionId?: string): string {
-  const command = `khala watch --harness muse${sessionId ? ` --session ${sessionId}` : ''}`;
-  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Keep one monitor per session; re-arm if it stops while joined. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+export function museWatchCommand(sessionId?: string, node = process.execPath, script = process.argv[1]): string {
+  if (!script || !path.isAbsolute(script)) throw new Error('muse_cli_path_unknown');
+  return `${shellQuote(node)} ${shellQuote(script)} watch --harness muse --session ${shellQuote(sessionId ?? '<current session id from khala_status>')}`;
+}
+export function museMonitorInstruction(sessionId?: string, command = museWatchCommand(sessionId)): string {
+  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; re-arm if it stops while joined. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;
 }
 
 /** The agent arms the native monitor; this driver supplies its sparse stdout events. */
 export function createMuseMonitorDriver(): WakeDriver {
   return {
-    id: 'monitor', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 30_000, verification: 'nonce',
+    id: 'monitor', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 30_000, verification: 'nonce', startsActivity: true,
     available: ctx => monitorArmed(ctx.files),
     unavailableReason: () => 'monitor_missing',
     async verify(ctx) {
@@ -28,7 +33,7 @@ export function createMuseMonitorDriver(): WakeDriver {
     async wake(ctx, line) {
       const nonce = /\(k-([a-f0-9]{8})\)$/.exec(line)?.[1];
       if (!nonce || wakeLine(nonce) !== line) throw new TypeError('invalid_monitor_wake_line');
-      if (ctx.signal.aborted || !await monitorArmed(ctx.files)) return 'skipped';
+      if (ctx.signal.aborted || (await readActivity(ctx.files)).state !== 'idle' || !await monitorArmed(ctx.files)) return 'skipped';
       const owner = await readJson<{ nonce: string }>(path.join(ctx.files.dir, 'monitor.json'));
       if (!owner) return 'skipped';
       const journal = museJournalPath(ctx.sessionId, ctx.env);

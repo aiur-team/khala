@@ -12,5 +12,7 @@ export type WakeDriverContext = Readonly<{
 
 export type WakeDriver = SharedWakeDriver<WakeDriverContext> & {
   /** Native ingress proof must settle before activity-only polling voids attempts. */
+  /** Native monitor emission itself starts activity before journal proof arrives. */
+  startsActivity?: boolean;
   verify?: (ctx: WakeDriverContext) => Promise<void>;
 };

@@ -7,7 +7,7 @@ import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
 import { readJson, readStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
-import { readActivity } from './activity';
+import { readActivity, writeActivity } from './activity';
 import { driverAllowed, readWakeState, wakeLine } from './wake/shared';
 import { MUSE_WAKE_REQUEST, type MuseWakeRequest } from './wake/muse-monitor';
 
@@ -146,6 +146,7 @@ export async function watchSession(files: SessionFiles, io: {
               .some(entry => entry.kind === 'message' && entry.sender !== session?.userId);
           }
           if (eligible && await ownsSession() && (await readActivity(files)).state === 'idle') {
+            await writeActivity(files, 'busy', () => new Date(now));
             io.write(request.line + '\n');
             emittedRequest = request.line;
           }

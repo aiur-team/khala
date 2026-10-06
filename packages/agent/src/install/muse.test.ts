@@ -63,7 +63,7 @@ it('installs in one step, backs up once, reinstalls and uninstalls only its own 
   expect(await fs.readFile(settingsFile + '.khala-bak', 'utf8')).toBe(original);
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   await expect(fs.stat(path.join(home, '.config/muse/skills/khala/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(JSON.parse(await fs.readFile(settingsFile, 'utf8'))).toEqual({ schema_version: 1, model: 'custom', mcp_servers: { other: {} }, hooks: {} });
+  expect(JSON.parse(await fs.readFile(settingsFile, 'utf8'))).toEqual({ schema_version: 1, model: 'custom', mcp_servers: { other: {} } });
 });
 it.each(['{bad', '', 'null', '{"schema_version":2}', '{"hooks":{"Stop":false}}'])('refuses malformed file %s without writing or installing', async text => {
   const settingsFile = path.join(home, '.config/muse/settings.json');
@@ -86,4 +86,77 @@ it('refuses an existing user skill before installing or writing settings', async
   expect(npmInstall).not.toHaveBeenCalled();
   expect(await fs.readFile(skillFile, 'utf8')).toBe('user skill');
   await expect(fs.stat(path.join(home, '.config/muse/settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+const installDeps = () => ({ home, env: { HOME: home, XDG_STATE_HOME: path.join(home, 'state') }, package: { name: 'khala-cli', version: '1' }, platform: 'linux' as const,
+  node: '/node', npmInstall: vi.fn(() => true), stdout: vi.fn(), stderr: vi.fn() });
+const settingsPath = () => path.join(home, '.config/muse/settings.json');
+it.each([{ model: 'custom' }, { mcp_servers: {}, hooks: { Stop: [] } }, { mcpServers: {}, hooks: {} }])
+  ('restores preexisting settings structure without adding a schema or empty tables: %j', async original => {
+    const file = settingsPath();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(original));
+    const deps = installDeps();
+    expect(await runInstall(['muse'], deps)).toBe(0);
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).not.toHaveProperty('schema_version');
+    expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual(original);
+    await expect(fs.stat(file + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(path.join(path.dirname(file), 'skills/khala'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+it('removes settings created by install after reinstall, without leaving backup or skill directory', async () => {
+  const deps = installDeps(), file = settingsPath();
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  expect(await fs.readFile(file + '.khala-bak', 'utf8')).toBe('');
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  for (const target of [file, file + '.khala-bak', path.join(path.dirname(file), 'skills/khala')]) {
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
+it.each(['mcpServers', 'mcp_servers'])('preserves Muse runtime edits after moving its managed server to %s', async alias => {
+  const deps = installDeps(), file = settingsPath();
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  const server = config.mcp_servers.khala;
+  delete config.mcp_servers;
+  config[alias] = { khala: server, user: { command: 'user-tool' } };
+  config.model = 'muse-spark';
+  config.runtime_option = { enabled: true };
+  config.schema_version = 1;
+  config.hooks.Stop[0].hooks.push({ type: 'command', command: 'user-stop' });
+  await fs.writeFile(file, JSON.stringify(config));
+  const skillDirectory = path.join(path.dirname(file), 'skills/khala');
+  await fs.writeFile(path.join(skillDirectory, 'user-note.md'), 'retain me');
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
+    [alias]: { user: { command: 'user-tool' } }, model: 'muse-spark', runtime_option: { enabled: true }, schema_version: 1,
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: 'user-stop' }] }] },
+  });
+  expect(await fs.readFile(path.join(skillDirectory, 'user-note.md'), 'utf8')).toBe('retain me');
+  await expect(fs.stat(file + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('cleans managed entries from both aliases without removing current user settings', async () => {
+  const deps = installDeps(), file = settingsPath();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ model: 'original' }));
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  config.mcpServers = { khala: config.mcp_servers.khala };
+  config.model = 'edited';
+  await fs.writeFile(file, JSON.stringify(config));
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ model: 'edited' });
+});
+
+it('preserves a user replacement of the managed server during uninstall', async () => {
+  const deps = installDeps(), file = settingsPath();
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  config.mcp_servers.khala = { command: 'user-replacement', args: [] };
+  await fs.writeFile(file, JSON.stringify(config));
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
+    mcp_servers: { khala: { command: 'user-replacement', args: [] } },
+  });
 });

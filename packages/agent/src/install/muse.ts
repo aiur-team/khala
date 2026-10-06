@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import nodePath from 'node:path';
-import { MUSE_SKILL, MUSE_SKILL_MARKER } from './muse-skill';
+import { renderMuseSkill, MUSE_SKILL_MARKER } from './muse-skill';
+import { museWatchCommand } from '../wake/muse-monitor';
 import { cursorPaths, type CursorPlatform } from './cursor';
 
 export type MusePaths = { settingsFile: string; prefix: string; script: string; stateHome: string; dataHome: string; customEnv: NodeJS.ProcessEnv };
@@ -35,14 +36,14 @@ const ours = (entry: unknown) => object(entry) && Array.isArray(entry.args)
   && entry.args.includes('mcp') && entry.args[entry.args.indexOf('--harness') + 1] === 'muse';
 
 /** Both accepted MCP spellings are preserved; never write a competing second table. */
-export function mergeMuseSettings(config: unknown, entry: object | null, command: string | null):
+export function mergeMuseSettings(config: unknown, entry: object | null, command: string | null, original?: Record<string, unknown>):
   { config: Record<string, unknown> } | { error: 'invalid_config' | 'muse_mcp_exists' } {
   if (!object(config) || (config.schema_version !== undefined && config.schema_version !== 1)) return { error: 'invalid_config' };
   const keys = ['mcp_servers', 'mcpServers'].filter(key => Object.hasOwn(config, key));
   for (const key of keys) {
     const servers = config[key];
     if (!object(servers)) return { error: 'invalid_config' };
-    if (Object.hasOwn(servers, 'khala') && !ours(servers.khala)) return { error: 'muse_mcp_exists' };
+    if (entry && Object.hasOwn(servers, 'khala') && !ours(servers.khala)) return { error: 'muse_mcp_exists' };
   }
   const hooks = Object.hasOwn(config, 'hooks') ? config.hooks : {};
   if (!object(hooks)) return { error: 'invalid_config' };
@@ -55,18 +56,22 @@ export function mergeMuseSettings(config: unknown, entry: object | null, command
       const handlers = group.hooks.filter(item => !(typeof item.command === 'string' && (item.command.endsWith(SUFFIX) || item.command.includes(SUFFIX + ' --state-home '))));
       if (handlers.length || handlers.length === group.hooks.length) kept.push({ ...group, hooks: handlers });
     }
-    if (kept.length) nextHooks[event] = kept;
+    const wasEmpty = object(original?.hooks) && Array.isArray(original.hooks[event]) && original.hooks[event].length === 0;
+    if (kept.length || (groups.length === 0 && command !== null) || wasEmpty) nextHooks[event] = kept;
   }
   if (command) for (const event of MUSE_HOOK_EVENTS) {
     nextHooks[event] = [...nextHooks[event] ?? [], { hooks: [{ type: 'command', command, timeout: 10 }] }];
   }
-  const next: Record<string, unknown> = { schema_version: 1, ...config, hooks: nextHooks };
+  const next: Record<string, unknown> = { ...config };
+  if (Object.keys(nextHooks).length || object(original?.hooks)) next.hooks = nextHooks;
+  else delete next.hooks;
   const target = keys.includes('mcp_servers') ? 'mcp_servers' : keys[0] ?? 'mcp_servers';
   for (const key of new Set([...keys, target])) {
     const servers = { ...(config[key] as Record<string, unknown> | undefined) };
-    delete servers.khala;
+    if (ours(servers.khala)) delete servers.khala;
     if (key === target && entry) servers.khala = entry;
-    next[key] = servers;
+    if (Object.keys(servers).length || entry !== null || object(original?.[key])) next[key] = servers;
+    else delete next[key];
   }
   return { config: next };
 }
@@ -83,8 +88,22 @@ export async function installMuse(input: {
   if (before !== null) {
     try { config = JSON.parse(before.replace(/^\uFEFF/u, '')); } catch { config = undefined; }
   }
+  const backupFile = paths.settingsFile + '.khala-bak';
+  let backup: string | null = null;
+  let original: Record<string, unknown> | undefined;
+  if (uninstall) {
+    try { backup = await fs.readFile(backupFile, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (backup !== null) {
+      // An empty backup records that installation created settings; existing empty files are refused.
+      try {
+        const parsed: unknown = backup === '' ? {} : JSON.parse(backup.replace(/^\uFEFF/u, ''));
+        if (object(parsed)) original = parsed;
+      } catch { /* An unreadable backup must never replace the user's current settings. */ }
+    }
+  }
   const merged = mergeMuseSettings(config, uninstall ? null : museMcpEntry(input.node, paths.script, paths.customEnv),
-    uninstall ? null : museHookCommand(input.platform, input.node, paths.script, paths));
+    uninstall ? null : museHookCommand(input.platform, input.node, paths.script, paths), original);
   if ('error' in merged) {
     stderr(merged.error === 'muse_mcp_exists'
       ? `khala: ${paths.settingsFile} already has a "khala" server that is not this CLI; remove it and run this again`
@@ -99,21 +118,34 @@ export async function installMuse(input: {
     stderr(`khala: ${skillFile} already exists and is not managed by this CLI; move it and run this again (nothing written)`);
     return 1;
   }
-  if (uninstall && before === null && skill === null) return 0;
+  if (uninstall && before === null && skill === null) {
+    await fs.rm(backupFile, { force: true });
+    return 0;
+  }
   if (!uninstall && input.install && !input.install()) return 1;
   await fs.mkdir(nodePath.dirname(paths.settingsFile), { recursive: true });
-  if (!uninstall && before !== null) {
-    try { await fs.writeFile(paths.settingsFile + '.khala-bak', before, { flag: 'wx', mode: 0o600 }); }
+  if (!uninstall) {
+    try { await fs.writeFile(backupFile, before ?? '', { flag: 'wx', mode: 0o600 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   }
   if (uninstall) {
-    if (skill?.includes(MUSE_SKILL_MARKER)) await fs.unlink(skillFile);
+    if (skill?.includes(MUSE_SKILL_MARKER)) {
+      await fs.unlink(skillFile);
+      try { await fs.rmdir(nodePath.dirname(skillFile)); }
+      catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+    }
   } else {
     await fs.mkdir(nodePath.dirname(skillFile), { recursive: true });
-    if (skill !== MUSE_SKILL) await fs.writeFile(skillFile, MUSE_SKILL, { mode: 0o600 });
+    const nextSkill = renderMuseSkill(museWatchCommand(undefined, input.node, paths.script));
+    if (skill !== nextSkill) await fs.writeFile(skillFile, nextSkill, { mode: 0o600 });
   }
   const text = JSON.stringify(merged.config, null, 2) + '\n';
-  if (text !== before && (!uninstall || before !== null)) await fs.writeFile(paths.settingsFile, text, { mode: 0o600 });
+  if (uninstall && backup === '' && Object.keys(merged.config).length === 0) {
+    await fs.rm(paths.settingsFile, { force: true });
+  } else if (text !== before && (!uninstall || before !== null)) {
+    await fs.writeFile(paths.settingsFile, text, { mode: 0o600 });
+  }
+  if (uninstall) await fs.rm(backupFile, { force: true });
   stdout(uninstall ? `removed Khala from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`
     : `configured ${paths.settingsFile}; restart or resume Muse, then ask it to join your Khala channel`);
   return 0;

@@ -51,15 +51,20 @@ writing. The first install saves the original settings as `settings.json.khala-b
 Restart or resume Muse, then paste your channel link and ask it to join.
 
 After joining and at startup, the skill tells Muse to arm its native `monitor`
-tool on `khala watch --harness muse`, with `persistent: true`, `wake_delay_ms: 0`
+tool on the absolute watcher command supplied by the join/status reply (including
+`--harness muse --session <id>`), with `persistent: true`, `wake_delay_ms: 0`
 and `show_lines: true`. It wakes without touching your draft; hooks deliver the
 messages. `MUSE_SESSION_ID` identifies the MCP session; hooks use their stdin
-session ID. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
+session ID. The monitor always receives `--session <id>` explicitly because its
+shell does not inherit `MUSE_SESSION_ID`. Instructions use absolute Node and CLI
+paths so they work without the CLI on PATH. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
 Stop. Check `khala_status` if the monitor stops, and ask Muse to re-arm it.
 
 Use `install muse --no-wake` to turn monitor wake off, and
 `khala wake on --harness muse --driver monitor` to turn it back on. Remove the
-managed settings and skill with `install muse --uninstall`. Peer messaging is
+managed settings and skill with `install muse --uninstall`. Uninstall also removes
+the backup and empty managed directories, preserving settings changed since install.
+Peer messaging is
 gated off in Muse 1.4.3 and is not used. Native Windows monitor wake still needs
 the live U36 matrix check; no terminal typing fallback is installed.
 

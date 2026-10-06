@@ -48,7 +48,7 @@ it('reminds a joined session at startup without leaking channel content and stay
   expect(output).toContain('wake_delay_ms: 0');
   expect(output).toContain('persistent: true');
   expect(output).toContain('show_lines: true');
-  expect(output).toContain('khala watch --harness muse --session session');
+  expect(output).toContain("watch --harness muse --session 'session'");
   expect(output).not.toContain('CHANNELMARK');
   await writeStatus(files, 'disconnected', 'removed');
   output = '';

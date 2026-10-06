@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,7 +11,7 @@ import { watchSession, monitorArmed } from '../watch';
 import { recordAttempt, readWakeState, writeWakeSettings, settleAttempts } from './shared';
 import { deliverCore } from '../harness/deliver-core';
 import { muse } from '../harness/muse';
-import { createMuseMonitorDriver, MUSE_WAKE_REQUEST, museJournalPath, museStopWakeText } from './muse-monitor';
+import { createMuseMonitorDriver, museWatchCommand, MUSE_WAKE_REQUEST, museJournalPath, museStopWakeText } from './muse-monitor';
 
 const sessionId = '01a10fee-e403-7390-b3a0-dd772e9d2ef7';
 const line = 'Khala: channel messages are waiting. Continue. (k-deadbeef)';
@@ -71,6 +73,12 @@ it('sends only the fixed nonce notice through the live watcher, without raw cont
   expect(lines).toEqual([]);
   await writeActivity(files, 'idle', () => new Date(at));
   await vi.waitFor(() => expect(lines).toEqual([line + '\n']));
+  expect((await readActivity(files)).state).toBe('busy');
+  await driver.wake(context(), line.replace('deadbeef', '12345678'));
+  await new Promise(resolve => setTimeout(resolve, 150));
+  expect(lines).toEqual([line + '\n']);
+  await settleAttempts(files.dir, { now: at + 60_000, activity: await readActivity(files) });
+  expect((await readWakeState(files.dir)).monitor?.failures ?? 0).toBe(0);
   await expect(driver.wake(context(), 'BODYMARK')).rejects.toThrow('invalid_monitor_wake_line');
 });
 it('settles the nonce only at Stop for a drained native notification in the same run, even after tool activity', async () => {
@@ -117,10 +125,11 @@ it('polls native ingress before activity voiding and confirms late Stop with ing
   expect((await readWakeState(files.dir)).monitor).toEqual({ failures: 0 });
 });
 
-it('accepts the skill watcher command with the session id inherited from Muse', async () => {
-  const { default: run } = await import('../watch');
-  vi.stubEnv('MUSE_SESSION_ID', 'unjoined-muse');
-  vi.stubEnv('XDG_STATE_HOME', root);
-  try { expect(await run(['--harness', 'muse'])).toBe(0); }
-  finally { vi.unstubAllEnvs(); }
+it('runs an absolute watcher command with neither PATH nor MUSE_SESSION_ID', () => {
+  const script = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
+  const command = museWatchCommand('unjoined-muse', process.execPath, script);
+  expect(command).toContain(' --session ');
+  const result = spawnSync('/bin/sh', ['-c', command], { env: { HOME: root, XDG_STATE_HOME: root, PATH: '' }, encoding: 'utf8' });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).not.toContain('session_unknown');
 });
