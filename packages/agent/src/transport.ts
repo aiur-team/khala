@@ -1,11 +1,17 @@
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 
+// Bound restart work when a saved intake boundary is unavailable.
+export const RESTORE_HISTORY_MAX_PAGES = 20;
+
 export type SessionMessage = { eventId: string; roomId: string; sender: string; ts: number; type: 'm.room.message' | 'com.khala.event.v1' | 'm.room.member'; body: string; content: Record<string, unknown>; previousContent?: Record<string, unknown> };
 export type SessionModeCommand = { eventId: string; roomId: string; sender: string; ts: number; content: unknown };
 export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
   readonly userId: string;
+  readonly cryptoReset?: boolean;
+  // join() replays missed messages and owner commands through the subscriptions.
+  readonly recoversOnJoin?: boolean;
   listeningMode?(roomId: string): ListeningMode;
   onEnded?(handler: (reason: SessionEndReason) => void): () => void;
   inviter(roomId: string): string | undefined;
@@ -23,7 +29,7 @@ export interface ChannelSession {
   stop(): Promise<void>;
 }
 
-export type SessionOptions = { checkRemoved?: () => Promise<boolean> };
+export type SessionOptions = { cryptoStore?: { dir: string; root: string }; checkRemoved?: () => Promise<boolean> };
 export type StartSession = (creds: AgentCredentials, options?: SessionOptions) => Promise<ChannelSession>;
 export const startChannelSession: StartSession = async (creds, options) => creds.transport === 'local'
   ? (await import('./local/session')).createLocalSession(creds)
