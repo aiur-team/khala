@@ -22,7 +22,7 @@ const env = {
   // Windows processes need the system environment (SystemRoot, ComSpec, PATHEXT, …).
   ...(windows ? process.env : {}),
   PATH: [binDir, path.dirname(process.execPath), ...(windows ? [process.env.PATH ?? ''] : ['/usr/bin', '/bin'])].join(path.delimiter),
-  HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(root, 'localappdata'),
+  HOME: home, USERPROFILE: home, COPILOT_HOME: path.join(home, '.copilot'), LOCALAPPDATA: path.join(root, 'localappdata'),
   XDG_CONFIG_HOME: path.join(root, 'config'), XDG_STATE_HOME: path.join(root, 'state'), XDG_DATA_HOME: path.join(root, 'data'),
   npm_config_cache: path.join(root, 'npm-cache'), npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false',
 };
