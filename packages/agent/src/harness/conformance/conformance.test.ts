@@ -69,7 +69,7 @@ describe('Tier A conformance', () => {
       .rejects.toThrow('absent sync must not consume backlog');
   });
   it.each(['claude', 'codex'] as const)('%s pending skip fails once nonce support lands', id => {
-    const nonceDriver: WakeDriver = { id: 'queue', rung: 1, optIn: false, minIdleMs: 0,
+    const nonceDriver: WakeDriver = { id: 'queue', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: () => {} };
     expect(() => pendingWake({ ...(id === 'claude' ? claude : codex), wakeLadder: [nonceDriver] }))
       .toThrow('pending skip expired');
@@ -77,7 +77,7 @@ describe('Tier A conformance', () => {
   it('requires verified delivery, records opt-in consent, and rejects an unverified prompt', async () => {
     function nonceFixture(wrongNonce: boolean) {
       let prompt: string | undefined;
-      const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: true, minIdleMs: 0,
+      const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: true, minIdleMs: 0, deadlineMs: 3_000,
         verification: 'nonce', available: () => true,
         wake: (_ctx, line) => { prompt = wrongNonce ? line.replace(/k-([0-9a-f])/, (_match, digit: string) => `k-${digit === '0' ? '1' : '0'}`) : line; } };
       const adapter = { ...synthetic, wakeLadder: [wake] };
@@ -92,7 +92,7 @@ describe('Tier A conformance', () => {
       .rejects.toThrow('idle wake');
   });
   it('rejects an opt-in registry entry with an ungated driver', async () => {
-    const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0,
+    const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: () => {} };
     const adapter = { ...synthetic, wakeLadder: [wake] };
     const probe = { ...driver, wakeProbe: () => ({ drivers: [wake], prompt: () => undefined }) };
@@ -101,7 +101,7 @@ describe('Tier A conformance', () => {
   });
   it('does not count transport acceptance without prompt nonce verification', async () => {
     let prompt: string | undefined;
-    const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0,
+    const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: (_ctx, line) => { prompt = line; } };
     const codec = { ...codex.codec!, parse(stdin: string) {
       const parsed = codex.codec!.parse(stdin);
