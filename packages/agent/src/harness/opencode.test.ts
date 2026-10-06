@@ -37,7 +37,8 @@ it.each(['sync', 'steer', 'async'] as const)('delivers frames across all OpenCod
     await deliverCore(JSON.stringify({ session_id: `ses_${event}`, event }), opencode,
       { env, now, pid: 300, readProcess, stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } } });
     const delivers = mode !== 'async' && event !== 'session-start' && (event !== 'post-tool' || mode === 'steer');
-    expect(stdout.startsWith('<khala-channel-messages')).toBe(delivers);
+    expect(stdout.includes('<khala-channel-messages')).toBe(delivers);
+    if (delivers && ['idle', 'turn-end'].includes(event)) expect(stdout).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)\n/);
     expect((await readCursor(files)).deliveredCount).toBe(delivers ? 1 : 0);
     expect(stderr).toBe('');
   }

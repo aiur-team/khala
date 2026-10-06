@@ -13,8 +13,7 @@ import { renderConformanceReport, writeConformanceReport } from './report';
 import type { FakeHarnessDriver } from './driver';
 
 const results: ConformanceResult[] = [];
-// U22 supplies OpenCode's plugin driver and native idle wake. U21 covers the CLI directly.
-const testedAdapters = ADAPTERS.filter(adapter => adapter.id !== 'opencode');
+const testedAdapters = ADAPTERS;
 const synthetic: HarnessAdapter = { ...codex, id: 'cursor', wakeLadder: [] };
 // Until U8 opens wire/state ids, exercise synthetic adapters under a legacy id
 // without its pending exception. The adapter syntax and capabilities remain independent.
@@ -22,7 +21,6 @@ const capabilities = { ...harnessInfo('codex'), id: 'cursor' };
 const driver = conformanceDrivers.codex!;
 
 describe('Tier A conformance', () => {
-  it.skip('OpenCode plugin conformance pending U22 #1147', () => {});
   for (const adapter of testedAdapters) {
     it(`${adapter.id} passes required rows`, async () => {
       const harnessDriver = conformanceDrivers[adapter.id];

@@ -235,12 +235,19 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
           if (input.event === 'stop' && input.continuation) {
             await writeActivity(files, 'idle', io.now);
           } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
+            let wake: string | undefined;
+            if (input.event === 'stop' && adapter.pollIdleWake) {
+              if ((await readActivity(files)).state !== 'idle') await writeActivity(files, 'idle', io.now);
+              wake = await adapter.pollIdleWake(files, io, input.replay);
+              if (!wake) return 0;
+              if (input.replay) { io.stdout.write(wake); return 0; }
+            }
             const frame = await channelFrames(files, steerOnly,
               input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
             if (frame) {
-              await writeActivity(files, 'busy', io.now);
+              if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);
-              output = codec.render(input.event, frame + (notice ? '\n' + notice : ''));
+              output = (wake ? wake + '\n' : '') + codec.render(input.event, frame + (notice ? '\n' + notice : ''));
             } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
           }
         }
