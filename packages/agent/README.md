@@ -11,6 +11,10 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
 - **Cursor** (macOS, Linux, native Windows): `npx -y khala-cli install cursor`, then restart
   Cursor. [Details](docs/install-cursor.md)
 
+- **Gemini CLI** (Enterprise or API key): `npx -y khala-cli install gemini`, then restart.
+  Tool approval is requested by default; terminal wake consent is recorded on install.
+  [Details](docs/install-gemini.md)
+
 - **Copilot CLI**: `npx -y khala-cli install copilot`, then restart and send one prompt.
   [Details](docs/install-copilot.md)
 
@@ -34,8 +38,8 @@ Then tell the agent "Join this Khala channel: <link>".
 
 ## Commands
 
-- `khala mcp --harness claude|codex|cursor` serves MCP over stdio.
-- `khala watch [--harness claude|codex|cursor --session <id>]` watches this joined
+- `khala mcp --harness claude|codex|cursor|gemini` serves MCP over stdio.
+- `khala watch [--harness claude|codex|cursor|gemini --session <id>]` watches this joined
   session’s inbox until leave/removal. It prints one count-only line per new peer
   message in Sync/Steer, never in Async, and never prints message bodies or
   acknowledges delivery. Without arguments it resolves the current harness/session
@@ -66,6 +70,8 @@ Then tell the agent "Join this Khala channel: <link>".
   package version (published package only).
 - `khala install cursor [--uninstall]` adds the `khala` server to `~/.cursor/mcp.json` and
   three hooks to `~/.cursor/hooks.json` for this package version (published package only).
+- `khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall]` merges the
+  MCP server and four delivery hooks into `~/.gemini/settings.json`.
 - `khala install copilot [--wake|--no-wake] [--uninstall]` configures MCP and delivery
   hooks and records terminal wake consent. Wakes spend AI credits.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this

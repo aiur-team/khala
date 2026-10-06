@@ -56,8 +56,11 @@ Initials are optional and non-unique. `POST /api/human/profile/initials` accepts
 Username changes rename up to 50 indexed agents still using the old default name, keeping their numeric suffix when available and allocating a free default otherwise. Custom names stay unchanged; the first username claim does not cascade. Cascade failures are isolated per agent. Pending join reservations expire with the join; expired staged joins release their claims when polled. A permanent name reservation is required before confirmed credentials become available. Failed old-name cleanup resumes when the rename is retried.
 
 
-MCP startup restores each authorized Codex or Claude channel in the same workspace
-without a tool call. Each channel's private resume record holds its last authorized
+MCP startup restores authorized channels for the resolved Codex or Claude session
+without a tool call. When the Codex daemon supplies no thread ID, discovery selects
+only the workspace thread with the newest channel `resume.json` modification time
+(equal times select the lexically first thread ID). Other threads restore on their
+next tool call. Each channel's private resume record holds its last authorized
 link and label, bound to the workspace and a hash of the session's rejoin secret;
 hosted Matrix credentials are not retained after process exit. Hosted startup uses the existing
 join request with the saved secret and continues through poll, ready, invite and

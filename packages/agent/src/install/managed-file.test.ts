@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManagedFiles, formatJson, jsonFormat, pruneCreated, readManaged, textFormat } from './managed-file';
 import { runInstall } from './main';
+import { ensureStateDir, sessionFiles, stateRoot } from '../state';
 import { createRealClientFactory } from '../mcp/wiring';
 
 let home: string;
@@ -127,6 +128,20 @@ describe('khala install codex (TOML and JSON)', () => {
     npmInstall: () => true, stdout: () => undefined, stderr: () => undefined,
   });
 
+  it('creates private state on a fresh install that later sessions can use', async () => {
+    const env = { HOME: home, XDG_STATE_HOME: state };
+    expect(await runInstall(['codex', '--no-wake'], {
+      env, package: { name: 'khala-cli', version: '9.8.7' },
+      npmInstall: () => true, stdout: () => undefined, stderr: () => undefined,
+    })).toBe(0);
+    const root = stateRoot(env);
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(root)).mode & 0o777).toBe(0o700);
+      expect((await fs.stat(path.join(root, 'install-originals.json'))).mode & 0o777).toBe(0o600);
+    }
+    await expect(ensureStateDir(sessionFiles('codex', 'after-install', env).dir)).resolves.toBeUndefined();
+  });
+
   it('leaves absent config files and the Codex directory absent', async () => {
     expect(await run(['codex', '--no-wake'])).toBe(0);
     expect((await fs.readdir(codex())).sort()).toEqual(['config.toml', 'hooks.json']);
@@ -158,4 +173,9 @@ describe('khala install codex (TOML and JSON)', () => {
     expect(await fs.readFile(path.join(codex(), 'config.toml'), 'utf8')).toBe('model = "y"\n');
     expect(await exists(path.join(codex(), 'hooks.json'))).toBe(false);
   });
+});
+
+it.skipIf(process.platform === 'win32')('creates private recording directories', async () => {
+  await install(path.join(home, 'config.json'));
+  expect((await fs.stat(state)).mode & 0o077).toBe(0);
 });

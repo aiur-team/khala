@@ -236,9 +236,18 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       }
       if (capabilities.sync) {
         assert(output.frame?.includes('$sync'));
+        // Repeated callbacks cannot replay the delivered batch, even without a retry flag.
+        assert.equal((await hook('stop')).kind, 'none');
         await emit('$continuation');
-        assert.equal((await hook('stop', { continuation: true })).kind, 'none');
-        assert((await unread(channel)).entries.some(entry => entry.body === '$continuation'));
+        const retry = await hook('stop', { continuation: true });
+        if (driver.syncGuard === 'cursor') {
+          assert.equal(retry.kind, 'continue');
+          assert(retry.frame?.includes('$continuation'));
+          assert.equal((await hook('stop', { continuation: true })).kind, 'none');
+        } else {
+          assert.equal(retry.kind, 'none');
+          assert((await unread(channel)).entries.some(entry => entry.body === '$continuation'));
+        }
         assert.equal((await readActivity(files)).state, 'idle');
       }
     }, capabilities.sync ? 'pass' : 'absent');

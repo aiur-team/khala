@@ -56,8 +56,9 @@ const describeParticipant = (participantId: string): Participant | undefined => 
     displayName: agent.displayName, ownerLabel: ownerLabels[agent.ownerId ?? ''] ?? 'Owner', harness: harnesses[participantId]! };
 };
 const admission = { share: async () => ({ kind: 'ok' as const, value: { inviteRef: 'visual', shareUrl: 'https://khala.example/c/release', expiresAt: null } }) };
-declare global { interface Window { __copied: string[] } }
+declare global { interface Window { __copied: string[]; __modeRequests: Array<{ participantId: string; mode: ListeningMode }> } }
 window.__copied = [];
+window.__modeRequests = [];
 const onCopy = async (url: string) => {
   if (params.has('copyfail')) return { ok: false as const, reason: 'denied' as const };
   window.__copied.push(url);
@@ -87,6 +88,7 @@ function Harness() {
       humanParticipants={humans} describeParticipant={describeParticipant}
       modeFor={participantId => modes[participantId] ?? 'sync'}
       onSetMode={async (participantId, mode) => {
+        window.__modeRequests.push({ participantId, mode });
         if (!params.has('offline')) setTimeout(() => setModes(current => ({ ...current, [participantId]: mode })), 300);
         return 'sent';
       }}
