@@ -9,7 +9,13 @@ export default async function run(stdin: string, argv: readonly string[]): Promi
 export async function deliver(stdin: string, argv: readonly string[], io: HookIO = {
   stdout: process.stdout, stderr: process.stderr, env: process.env, now: () => new Date(),
 }): Promise<number> {
-  const adapter = argv.length === 2 && argv[0] === '--harness' ? adapterFor(argv[1]!) : undefined;
+  const antigravityEvent = argv.length === 4 && argv[0] === '--harness' && argv[1] === 'antigravity'
+    && argv[2] === '--event' && ['PreInvocation', 'Stop'].includes(argv[3]!) ? argv[3] : undefined;
+  const adapter = (argv.length === 2 || antigravityEvent) && argv[0] === '--harness' ? adapterFor(argv[1]!) : undefined;
+  if (antigravityEvent) {
+    try { stdin = JSON.stringify({ ...JSON.parse(stdin), khalaHookEvent: antigravityEvent }); }
+    catch { stdin = '{}'; }
+  }
   if (!adapter?.codec) {
     diagnostic(io, 'invalid_harness');
     return 0;

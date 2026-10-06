@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { registerAntigravityWake } from './antigravity';
 import { adapterFor } from '../harness';
 import { resolveSources } from '../harness/session-sources';
 import { CURSOR_DEFAULT_SESSION } from '../cursor';
@@ -9,7 +10,7 @@ import { resetWakeDriver } from './shared/nonce';
 import { WAKE_HARNESSES, wakeDrivers, wakeStatus } from './status';
 
 export type WakeCliDeps = { env?: NodeJS.ProcessEnv; stdout?: (line: string) => void; stderr?: (line: string) => void };
-export const WAKE_USAGE = 'usage: khala wake on|off|status [--driver <d>] [--harness <id>] [--json]';
+export const WAKE_USAGE = 'usage: khala wake on|off|status|register [--driver <d>] [--harness <id>] [--json]';
 export async function sessionIds(harness: string, env: NodeJS.ProcessEnv): Promise<string[]> {
   try { return (await fs.readdir(path.join(stateRoot(env), harness), { withFileTypes: true })).filter(entry => entry.isDirectory() && SESSION_ID_PATTERN.test(entry.name)).map(entry => entry.name); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
@@ -30,6 +31,7 @@ export async function setWake(harness: string, drivers: readonly string[], on: b
   }
 }
 export function consentLine(harness: string, drivers: readonly string[], on: boolean): string {
+  if (harness === 'antigravity' && on) return `Idle wake is on (${drivers.join(', ')}): native wake preserves drafts; terminal fallback requires an empty prompt. Wake and Sync continuation use billed model turns. Run \`khala wake off --harness antigravity\` to turn it off.`;
   return on
     ? `Idle wake is on (${drivers.join(', ')}): Khala may send a fixed wake line into this agent's existing session when messages wait and the prompt is empty. Run \`khala wake off --harness ${harness}\` to turn it off.`
     : `Idle wake is off for ${drivers.join(', ')}. Run \`khala wake on --harness ${harness}\` to turn it on.`;
@@ -55,6 +57,11 @@ export async function runWake(argv: readonly string[], deps: WakeCliDeps = {}): 
       const value = flags[++i]!;
       if (flag === '--harness') harness = value; else driver = value;
     } else { err(WAKE_USAGE); return 2; }
+  }
+  if (command === 'register') {
+    if (harness !== 'antigravity' || driver || json) { err(WAKE_USAGE); return 2; }
+    try { await registerAntigravityWake(env); out('Registered Antigravity native wake for this session.'); return 0; }
+    catch { err('khala: Antigravity wake registration unavailable; run this command through the agent shell.'); return 1; }
   }
   if (!['on', 'off', 'status'].includes(command ?? '')) { err(WAKE_USAGE); return 2; }
   if (harness && !WAKE_HARNESSES.includes(harness)) { err(`Unknown harness ${harness}. Valid harnesses: ${WAKE_HARNESSES.join(', ')}`); return 2; }

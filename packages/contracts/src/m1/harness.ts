@@ -25,8 +25,8 @@ export const HARNESS_REGISTRY: readonly HarnessInfo[] = [
   { id: 'copilot', displayName: 'Copilot CLI', modelName: 'Copilot', logoKey: 'copilot', steer: true, sync: true, idleWake: 'opt-in', registered: true },
   { id: 'vscode', displayName: 'Copilot (VS Code)', modelName: 'VSCode', logoKey: 'copilot', steer: true, sync: true, idleWake: 'opt-in', registered: true },
   { id: 'gemini', displayName: 'Gemini CLI', modelName: 'Gemini', logoKey: 'gemini', steer: true, sync: true, idleWake: 'opt-in', registered: true },
-  // U29 and U33 establish these capabilities after their spikes.
-  { id: 'antigravity', displayName: 'Antigravity CLI', modelName: 'Antigravity', logoKey: null, steer: false, sync: false, idleWake: 'none', registered: true },
+  // Spike-backed capabilities; transport availability is reported per session.
+  { id: 'antigravity', displayName: 'Antigravity CLI', modelName: 'Antigravity', logoKey: null, steer: true, sync: true, idleWake: 'opt-in', registered: true },
   { id: 'qwen', displayName: 'Qwen Code', modelName: 'Qwen', logoKey: 'qwen', steer: true, sync: true, idleWake: 'default', registered: true },
   { id: 'muse', displayName: 'Muse Code', modelName: 'Muse', logoKey: null, steer: false, sync: false, idleWake: 'none', registered: true },
   { id: 'generic', displayName: 'MCP agent', modelName: 'Agent', logoKey: null, steer: false, sync: false, idleWake: 'none', registered: true },

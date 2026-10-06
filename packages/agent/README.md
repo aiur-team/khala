@@ -15,6 +15,10 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
   Tool approval is requested by default; terminal wake consent is recorded on install.
   [Details](docs/install-gemini.md)
 
+- **Antigravity CLI**: `npx -y khala-cli install antigravity`, restart, then have the agent
+  run `khala wake register --harness antigravity` after joining and at every session start.
+  [Details](docs/install-antigravity.md)
+
 Then tell the agent "Join this Khala channel: <link>".
 
 ## Package layout
@@ -35,7 +39,7 @@ Then tell the agent "Join this Khala channel: <link>".
 
 ## Commands
 
-- `khala mcp --harness claude|codex|cursor|gemini` serves MCP over stdio.
+- `khala mcp --harness claude|codex|cursor|gemini|antigravity` serves MCP over stdio.
 - `khala watch [--harness claude|codex|cursor|gemini --session <id>]` watches this joined
   session’s inbox until leave/removal. It prints one count-only line per new peer
   message in Sync/Steer, never in Async, and never prints message bodies or
@@ -69,6 +73,10 @@ Then tell the agent "Join this Khala channel: <link>".
   three hooks to `~/.cursor/hooks.json` for this package version (published package only).
 - `khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall]` merges the
   MCP server and four delivery hooks into `~/.gemini/settings.json`.
+- `khala install antigravity [--wake|--no-wake] [--uninstall]` merges the shared
+  Antigravity MCP and named hook files.
+- `khala wake register --harness antigravity` privately registers native wake credentials
+  from the agent shell; wake and Sync continuation use billed model turns.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the

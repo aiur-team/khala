@@ -1,0 +1,36 @@
+{
+  "event": "PostToolUse",
+  "hookEnv": {
+    "TERM_PROGRAM_VERSION": "3.7b",
+    "TMUX": "/tmp/tmux-1000/spike-1115,1700737,0",
+    "PWD": "/tmp/claude-1000/spike-1115/home/.gemini/config",
+    "TERMINAL": "xdg-terminal-exec",
+    "ANTIGRAVITY_CONVERSATION_ID": "875f669c-2fc9-4d22-989d-ce1395307566",
+    "TERM": "tmux-256color",
+    "TMUX_PANE": "%0",
+    "TERM_PROGRAM": "tmux"
+  },
+  "hookCwd": "/tmp/claude-1000/spike-1115/home/.gemini/config",
+  "stdin": {
+    "artifactDirectoryPath": "/tmp/claude-1000/spike-1115/home/.gemini/antigravity-cli/brain/875f669c-2fc9-4d22-989d-ce1395307566",
+    "conversationId": "875f669c-2fc9-4d22-989d-ce1395307566",
+    "error": "",
+    "modelName": "gemini-3.8-flash-low",
+    "stepIdx": 4,
+    "toolCall": {
+      "args": {
+        "Arguments": {},
+        "ServerName": "khalaenv",
+        "ToolName": "khala_status",
+        "toolAction": "Checking khala status",
+        "toolSummary": "Call khala_status"
+      },
+      "name": "call_mcp_tool"
+    },
+    "transcriptPath": "/tmp/claude-1000/spike-1115/home/.gemini/antigravity-cli/brain/875f669c-2fc9-4d22-989d-ce1395307566/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/tmp/claude-1000/spike-1115/proj"
+    ]
+  },
+  "stdout": {}
+}

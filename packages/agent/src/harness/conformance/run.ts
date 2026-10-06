@@ -100,6 +100,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const rows: ConformanceRow[] = [];
   const clients = new Set<KhalaAgentClient>();
   const sample = driver.newSession();
+  if (adapter.id === 'antigravity') sample.workspace = root;
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
     let hookAt = now().getTime();

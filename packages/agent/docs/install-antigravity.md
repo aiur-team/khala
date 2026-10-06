@@ -1,0 +1,13 @@
+# Antigravity CLI
+
+Run `npx -y khala-cli install antigravity`, restart `agy`, then ask the agent to join your Khala channel. At every session start and after `khala_join`, the agent must run `khala wake register --harness antigravity` through its own shell tool. Keep launching `agy` as usual.
+
+The installer merges the MCP server into `~/.gemini/config/mcp_config.json` and the named `khala` hook into `~/.gemini/config/hooks.json`. These files are shared with Antigravity desktop and IDE, so those surfaces also load the entry. Commands use absolute paths because hooks run from the config directory. JSONC comments and trailing commas are accepted; reinstall is idempotent. Uninstall restores the original bytes when there are no subsequent user changes, otherwise it preserves changes and removes only Khala's entries. Foreign entries named `khala` are refused.
+
+Steer delivers channel context through `PreInvocation` after tools. Sync continues from `Stop` once per unread batch. Async leaves messages for `khala_read`. Each conversation resolves its own identity from Antigravity's MCP metadata, even when one MCP child serves several conversations.
+
+Installation records wake consent by default; pass `--no-wake` to decline or run `khala wake off --harness antigravity` later. Native wake uses `agy agentapi send-message` with only Khala's fixed wake line, preserves typed drafts, and never moves focus. **Native wake and Sync continuation use billed model turns.** Registration reads the local server address and CSRF token from the agent shell, stores them in the private session directory with mode `0600`, and prints neither. Register again after a local server restart or a status reminder; never paste these variables into chat.
+
+If registration is missing or the local server rejects the credentials, status reports native wake unavailable and the ladder uses terminal fallback where supported (tmux or WezTerm with verified pane ownership and an empty prompt). A hook verifies the nonce from the transcript; transport acceptance alone does not count. Two unverified wakes disable that driver for the session until re-enabled. Windows installation paths are supported, but native Antigravity wake and hook execution there still require live matrix validation. The captured hook contract is from agy 1.2.17.
+
+Inspect with `khala wake status --harness antigravity`. Uninstall with `npx -y khala-cli install antigravity --uninstall`; the shared CLI package and joined channel state remain until you remove them.

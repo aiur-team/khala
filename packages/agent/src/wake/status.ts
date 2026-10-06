@@ -12,6 +12,8 @@ export const WAKE_STATES = {
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
   unavailable: { reason: 'No remote-control API is available.', remedy: '', reasons: {
     wake_status_unavailable: 'Wake status is unavailable.',
+    antigravity_credentials_missing: 'Antigravity native wake credentials are missing; run khala wake register --harness antigravity through the agent shell.',
+    antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected; run khala wake register --harness antigravity through the agent shell.',
     queue_missing: 'Codex queue is missing.',
     codex_binary_missing: 'Codex queue is missing.',
     codex_queue_unavailable: 'Codex queue is unavailable.',
@@ -94,6 +96,7 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
       unavailableReason = process.platform === 'win32' && driver.id === 'terminal' ? 'windows' : 'driver_missing';
     }
     rows.push({ harness, rung: driver.rung, ...wakeStatusText(driver.id, state, unavailableReason),
+      ...(harness === 'antigravity' && driver.id === 'antigravity-native' ? { note: 'Native wake and Sync continuation use billed model turns.' } : {}),
       ...(harness === 'codex' && driver.id === 'queue' ? { note: CODEX_DAEMON_WAKE_NOTE } : {}) });
   }
   return rows;

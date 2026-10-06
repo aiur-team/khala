@@ -207,7 +207,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
               && !await claudeTranscriptInterrupted(input.transcriptPath, activity.updatedAt);
             try {
               await settleAttempts(files.dir, { now: io.now().getTime(), activity,
-                promptText: input.promptText ?? '' });
+                promptText: adapter.hookPromptText ? await adapter.hookPromptText(input, files) : input.promptText ?? '' });
             } catch { diagnostic(io, 'wake_verification_failed'); }
             await writeActivity(files, 'busy', io.now);
           }
