@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { cursorPaths, type CursorPlatform } from './cursor';
+import { ManagedFiles, formatJson, jsonFormat } from './managed-file';
 
 export type OpenCodePaths = { configDir: string; configFile: string; prefix: string; bin: string };
 
@@ -50,6 +51,8 @@ export function mergeOpenCodeConfig(config: unknown, plugin: string | null, prev
 
 export async function installOpenCode(input: {
   paths: OpenCodePaths; plugin: string | null; platform: NodeJS.Platform; uninstall: boolean; install?: () => boolean;
+  /** Khala's state directory, where the original config file is recorded. */
+  stateDir: string;
   stdout: (line: string) => void; stderr: (line: string) => void;
 }): Promise<number> {
   const { paths, uninstall, stdout, stderr } = input;
@@ -97,16 +100,18 @@ export async function installOpenCode(input: {
     merged.config.mcp = { ...(merged.config.mcp as Record<string, unknown> | undefined), khala: opencodeMcpEntry(input.platform, paths.bin) };
   }
   if (!uninstall && input.install && !input.install()) return 1;
-  if (uninstall && text === null) return 0;
-  await fs.mkdir(paths.configDir, { recursive: true });
-  if (!uninstall && text !== null) {
-    try { await fs.writeFile(configFile + '.khala-bak', text, { flag: 'wx' }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  const managed = new ManagedFiles(input.stateDir);
+  const current = { file: configFile, text };
+  if (uninstall) {
+    // The marker goes first so a config directory Khala created is empty when restored.
+    await fs.rm(marker, { force: true });
+    await managed.restore(current, jsonFormat, value => (mergeOpenCodeConfig(value, null, previousOverride) as { config: unknown }).config);
+    if (text === null) return 0;
+  } else {
+    await managed.write([{ current, text: formatJson(merged.config, text) }]);
+    if (input.plugin === null) await fs.rm(marker, { force: true });
+    else await fs.writeFile(marker, input.plugin + '\n');
   }
-  const next = JSON.stringify(merged.config, null, 2) + '\n';
-  if (next !== text) await fs.writeFile(configFile, next);
-  if (uninstall || input.plugin === null) await fs.rm(marker, { force: true });
-  else await fs.writeFile(marker, input.plugin + '\n');
   stdout(uninstall ? `removed the Khala plugin and MCP entry from ${configFile}; delete ${paths.prefix} to remove the CLI`
     : input.plugin ? `configured ${configFile}; restart OpenCode to load the Khala plugin`
       : 'OpenCode installed in MCP-only mode (Async, no wake); re-run khala install opencode after updating');

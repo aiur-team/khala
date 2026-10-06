@@ -17,8 +17,8 @@ does not give a Cursor agent the tools.
    - `hooks.json`: `beforeSubmitPrompt`, `postToolUse` and `stop` handlers running
      `… hook deliver --harness cursor`.
 
-   Other servers and hooks are kept; the first run saves `mcp.json.khala-bak` and
-   `hooks.json.khala-bak`. Running it again replaces only Khala's entries. The installer
+   Other servers and hooks are kept; the first run records the original files in Khala's
+   state directory, and `--uninstall` writes them back byte for byte. Running it again replaces only Khala's entries. The installer
    refuses to replace a `khala` server that does not run this CLI; remove it first.
 
 2. Restart Cursor (or toggle `khala` off and on under Settings → MCP) and check that `khala`
