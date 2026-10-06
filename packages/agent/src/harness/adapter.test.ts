@@ -5,17 +5,18 @@ import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
 import { resolveHarness, resolveSessionId } from '../mcp/session-id';
 
 describe('harness adapters', () => {
-  it('registers only the three existing harnesses, all with metadata', () => {
-    expect(ADAPTERS.map(adapter => adapter.id)).toEqual(['claude', 'codex', 'cursor']);
+  it('registers the native and generic harnesses, all with metadata', () => {
+    expect(ADAPTERS.map(adapter => adapter.id)).toEqual(['claude', 'codex', 'cursor', 'generic']);
     for (const adapter of ADAPTERS) {
       expect(HARNESS_REGISTRY.some(row => row.id === adapter.id)).toBe(true);
       expect(adapterFor(adapter.id)).toBe(adapter);
-      expect(adapter.codec?.parse).toBeTypeOf('function');
+      if (adapter.id === 'generic') expect(adapter.codec).toBeUndefined();
+      else expect(adapter.codec?.parse).toBeTypeOf('function');
       expect(adapter.restoreAtStartup).toBe(adapter.id !== 'cursor');
     }
-    expect(adapterFor('gemini')).toBeUndefined();
+    expect(adapterFor('gemini')?.id).toBe('gemini');
     expect(adapterFor('toString')).toBeUndefined();
-    expect(resolveHarness(['--harness', 'gemini'], {})).toBe('invalid');
+    expect(resolveHarness(['--harness', 'gemini'], {})).toBe('gemini');
   });
   it('fails loudly on duplicate or unregistered ids', () => {
     const claude = adapterFor('claude')!;

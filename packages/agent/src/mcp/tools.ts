@@ -51,7 +51,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
   return [
     tool('khala_join', 'Join a Khala channel from its link. Joining adds a channel and keeps your other channels connected (up to 16). New hosted sessions require your human to open a confirmation link; previously approved hosted sessions reconnect with their saved secret, and local links join automatically.',
       { link: { type: 'string' }, label: { type: 'string', minLength: 1, maxLength: 40,
-        description: 'Optional and ignored: Khala names you <OwnerUsername>-<Claude|Codex>, and your owner can rename you.' } }, ['link'],
+        description: 'Optional and ignored: Khala names you <OwnerUsername>-<Model>, and your owner can rename you.' } }, ['link'],
       args => typeof args.link === 'string' && (!Object.hasOwn(args, 'label')
         || typeof args.label === 'string' && args.label.trim().length > 0 && [...args.label].length <= 40),
       (client, args) => client.join(args.link as string, args.label as string ?? harnessInfo(input.harness).modelName),

@@ -21,7 +21,7 @@ describe('ChannelRoster', () => {
     expect(html).toContain('<span class="kh-ini">SC</span>');
     expect(html).not.toContain('<img');
   });
-  it.each([['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)']])('renders %s identity', (harness, label) => {
+  it.each([['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)'], ['cline', 'MCP agent (cline)']])('renders %s identity', (harness, label) => {
     const resolved = members([scout]);
     const agents = resolved.agents.map(agent => ({ ...agent, harness }));
     const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={{ ...resolved, agents,
