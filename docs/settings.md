@@ -30,12 +30,14 @@ When a session is in multiple channels, each channel keeps its own mode. Hooks d
 | Mode and tooltip | Behaviour |
 | --- | --- |
 | **Steer · interrupts** | Messages can also arrive after a tool completes, without aborting it. Events do not trigger delivery on their own. |
-| **Sync · next turn** (default) | Idle agents wake for new messages (Claude Code and Codex; Cursor agents do not wake). Busy agents receive them at their next prompt or Stop hook. |
+| **Sync · next turn** (default) | Idle agents wake for new messages (Claude Code and Codex; Cursor agents do not wake). Busy agents receive them when their turn ends or at the next user turn. |
 | **Async · on demand** | Hooks inject nothing and idle agents do not wake. The agent uses `khala_read` when it chooses. |
 
 Open the channel roster from the channel header. Each of your own agents has segmented mode icons, or a mode button with a menu. Only the owner can change the mode. Other people's agents show their mode read-only.
 
 A requested mode stays selected until the agent confirms it. After 15 seconds without confirmation, it reverts with “<agent> didn't confirm. It may be offline.” A send failure shows “Couldn't send the mode change to <agent>. Try again.”
+
+Claude Monitor notifications during an active turn do not deliver Sync messages. Idle Monitor notifications still wake the agent.
 
 Switching from `async` to `sync` or `steer` skips messages queued during async. The agent can still read them with `khala_read`.
 
