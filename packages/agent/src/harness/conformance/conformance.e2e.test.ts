@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { LocalChannelCreated } from '@khala/contracts/m1/local';
 import { harnessInfo } from '@khala/contracts/m1/harness';
 import { defaultAgentName } from '@khala/contracts/m1/names';
-import { adapterFor } from '../index';
+import { ADAPTERS, adapterFor } from '../index';
 import { cursorSessionId } from '../../cursor';
 import { channelFiles, stateRoot } from '../../state';
 import { readCursor, unread } from '../../inbox';
@@ -23,7 +23,7 @@ import { eventually } from '../../local/fixtures/egress';
 // fake transport boundary as Tier A inside a spawned CLI/MCP process; this does
 // not claim live Matrix or model verification (U36 owns that evidence).
 const features: Feature[] = ['join (local)', 'join (hosted)', 'read', 'send', 'you=', 'rename event', 'rejoin', 'steer', 'sync', 'async', 'idle wake'];
-type Result = { harness: string; feature: Feature; status: 'PASS' | 'FAIL' | 'ABSENT' | 'NOT RUN'; durationMs: number };
+type Result = { harness: string; feature: Feature; status: 'PASS' | 'FAIL' | 'ABSENT' | 'NOT RUN'; durationMs: number; reason?: string };
 const results: Result[] = [];
 const data = (value: { structuredContent: Record<string, unknown> }) => value.structuredContent;
 const fixedLine = /^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/;
@@ -41,7 +41,7 @@ function isolatedDriver(harness: string, root: string): FakeHarnessDriver {
 }
 
 describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process local conformance', () => {
-  it.each(['claude', 'codex', 'cursor'] as const)('%s passes the local matrix', async harness => {
+  it.each(ADAPTERS.map(adapter => adapter.id))('%s passes the local matrix', async harness => {
     let world: World | undefined;
     const row = async (feature: Feature, check: () => Promise<void>, absent = false) => {
       const result: Result = { harness, feature, status: 'FAIL', durationMs: 0 };
@@ -56,7 +56,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       const driver = isolatedDriver(harness, world.root);
       const adapter = adapterFor(harness)!;
       const capabilities = harnessInfo(harness);
+      const terminalWake = ['claude', 'copilot', 'gemini', 'antigravity'].includes(harness);
       let agent = await McpProcess.start(world, adapter, driver);
+      if (harness === 'copilot') await hook(agent, 'prompt');
       let peer = world.claude;
       let channel!: LocalChannelCreated;
       let userId!: string;
@@ -69,7 +71,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       const setMode = async (next: 'async' | 'sync' | 'steer') => {
         expect((await admin(world!, 'POST', `/api/local/channels/${encodeURIComponent(channel.roomId)}/mode`,
           { agent: userId, mode: next, txnId: `conformance-${++transaction}` })).status).toBe(200);
-        await eventually(async () => await mode(agent) === next);
+        const effective = next === 'sync' && !capabilities.sync || next === 'steer' && !capabilities.steer ? 'async' : next;
+        await eventually(async () => await mode(agent) === effective);
       };
       const files = () => channelFiles(agent.files, channel.roomId);
       await row('join (local)', async () => {
@@ -89,6 +92,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const hosted = await McpProcess.start(world!, adapter, hostedDriver, sample,
           fileURLToPath(new URL('./hosted-mcp.mjs', import.meta.url)));
         try {
+          if (harness === 'copilot') await hook(hosted, 'prompt');
           expect(data(await hosted.call('khala_join', { link: 'https://khala.example/join/abcdefgh' }))).toMatchObject({ state: 'awaiting_confirmation' });
           await eventually(async () => data(await hosted.call('khala_status')).state === 'connected');
           expect(data(await hosted.call('khala_status'))).toMatchObject({ displayName: defaultAgentName('kevin', harness), you: defaultAgentName('kevin', harness) });
@@ -109,7 +113,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const you = (await status()).you;
         expect(data(await agent.call('khala_read')).you).toBe(you);
         await setMode('sync');
-        expect((await hook(agent, 'stop')).frame).toContain(` you="${you}" `);
+        const output = await hook(agent, 'stop');
+        if (capabilities.sync) expect(output.frame).toContain(` you="${you}" `);
+        else expect(output.kind).toBe('none');
       });
       await row('rename event', async () => {
         expect((await admin(world!, 'POST', `/api/local/agents/${encodeURIComponent(userId)}/name`, { name: 'Reviewer' })).status).toBe(200);
@@ -117,7 +123,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         await publish('tier-b-renamed');
         expect(data(await agent.call('khala_read')).you).toBe('Reviewer');
         const output = await hook(agent, 'stop');
-        expect(output.frame).toContain(' you="Reviewer" '); expect(output.frame).toContain(' is now Reviewer');
+        if (capabilities.sync) { expect(output.frame).toContain(' you="Reviewer" '); expect(output.frame).toContain(' is now Reviewer'); }
+        else expect(output.kind).toBe('none');
       });
       await row('rejoin', async () => {
         await agent.close(); agent = await McpProcess.start(world!, adapter, driver);
@@ -134,55 +141,81 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
       await row('sync', async () => {
         await setMode('sync'); await publish('tier-b-sync');
         expect((await hook(agent, 'tool')).kind).toBe('none');
-        const output = await hook(agent, 'stop'); expect(output.kind).toBe('continue'); expect(output.frame).toContain('tier-b-sync');
+        const output = await hook(agent, 'stop');
+        if (!capabilities.sync) {
+          expect(output.kind).toBe('none');
+          expect((await unread(files())).entries.some(entry => entry.body === 'tier-b-sync')).toBe(true);
+          return;
+        }
+        expect(output.kind).toBe('continue'); expect(output.frame).toContain('tier-b-sync');
         expect((await hook(agent, 'stop')).kind).toBe('none');
         await publish('tier-b-continuation');
         expect((await hook(agent, 'stop', { continuation: true })).kind).toBe(driver.syncGuard === 'cursor' ? 'continue' : 'none');
         expect((await hook(agent, 'stop', { continuation: true })).kind).toBe('none');
-      });
+      }, !capabilities.sync);
       await row('async', async () => {
         await setMode('async'); await publish('tier-b-async');
         const before = await readCursor(files());
         for (const event of ['prompt', 'tool', 'stop'] as const) expect((await hook(agent, event)).kind).toBe('none');
         expect(await readCursor(files())).toEqual(before);
-        const calls = await wakeCalls(world!);
-        await delay(1000); expect(await wakeCalls(world!)).toEqual(calls);
       });
-      await row('idle wake', async () => {
+      const nativeWakeReason: Record<string, string> = {
+        opencode: 'NOT RUN: U10 native OpenCode plugin acknowledgement has no spawned-process fixture',
+        muse: 'NOT RUN: U10 native Muse monitor journal acknowledgement has no spawned-process fixture',
+        qwen: 'NOT RUN: U10 Qwen messaging socket/transcript acknowledgement has no spawned-process fixture',
+      };
+      if (nativeWakeReason[harness]) results.push({ harness, feature: 'idle wake', status: 'NOT RUN', durationMs: 0, reason: nativeWakeReason[harness] });
+      else await row('idle wake', async () => {
         await cleanupWorld(world!);
         world = await createWorld({ guard: false });
         const wakeDriver = isolatedDriver(harness, world.root);
-        agent = await McpProcess.start(world, adapter, wakeDriver); peer = world.claude;
+        agent = await McpProcess.start(world, adapter, wakeDriver);
+        if (harness === 'copilot') await hook(agent, 'prompt');
+        peer = world.claude;
         channel = (await cli(world, 'create', 'wake-conformance')).data as LocalChannelCreated;
         expect(data(await peer.call('khala_join', { link: channel.selfLink }))).toMatchObject({ state: 'connected' });
         expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         userId = (await status()).agentUserId as string;
         // Start with async suppression on a clean wake budget.
         await setMode('async'); await hook(agent, 'prompt'); await hook(agent, 'stop');
-        if (harness === 'claude') {
-          await writeWakeSettings(stateRoot(world!.env), { consent: { 'claude/terminal': { at: new Date().toISOString() } }, off: {} });
+        if (terminalWake) {
+          await writeWakeSettings(stateRoot(world!.env), { consent: { [`${harness}/terminal`]: { at: new Date().toISOString() } }, off: {} });
           await prepareTmux(agent);
         }
         await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
         const quiet = await wakeCalls(world);
-        await publish('tier-b-async-wake'); await delay(1000);
+        await publish('tier-b-async-wake'); await delay(2200);
         expect(await wakeCalls(world)).toEqual(quiet); expect(await readWakeState(agent.files.dir)).toEqual({});
         await writeActivity(agent.files, 'busy');
         await setMode('sync'); await hook(agent, 'prompt'); await hook(agent, 'stop');
-        if (harness === 'claude') await prepareTmux(agent);
+        if (terminalWake) await prepareTmux(agent);
         await writeActivity(agent.files, 'busy', () => new Date(Date.now() - 31_000));
         const busyCalls = await wakeCalls(world!);
-        await publish('tier-b-busy'); await delay(1000);
+        await publish('tier-b-busy'); await delay(2200);
         expect(await wakeCalls(world!)).toEqual(busyCalls); expect(await readWakeState(agent.files.dir)).toEqual({});
-        if (harness === 'claude') {
-          await writeWakeSettings(stateRoot(world!.env), { consent: {}, off: {} });
+        if (terminalWake) {
+          // A fresh MCP clears the ladder's in-memory pending batch. Drain the
+          // busy backlog while consent exists, then restore an eligible prompt.
+          await agent.close(); agent = await McpProcess.start(world!, adapter, wakeDriver);
+          expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
+          await hook(agent, 'prompt'); await hook(agent, 'stop');
+          await prepareTmux(agent);
           await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
-          await publish('tier-b-no-consent'); await delay(1000);
-          expect(await wakeCalls(world!)).toEqual(busyCalls); expect(await readWakeState(agent.files.dir)).toEqual({});
+          await writeWakeSettings(stateRoot(world!.env), { consent: {}, off: {} });
+          const noConsentCalls = await wakeCalls(world!);
+          await publish('tier-b-no-consent'); await delay(2200);
+          expect((await wakeCalls(world!)).slice(noConsentCalls.length).filter(call => call.argv.includes('send-keys'))).toEqual([]);
+          expect(await readWakeState(agent.files.dir)).toEqual({});
+          // Keep exactly the same idle prompt and unread batch: granting consent
+          // alone must make this previously suppressed batch wake successfully.
+          await writeWakeSettings(stateRoot(world!.env), { consent: { [`${harness}/terminal`]: { at: new Date().toISOString() } }, off: {} });
+          await eventually(async () => (await wakeCalls(world!)).slice(noConsentCalls.length).some(call => call.command === 'tmux' && call.argv.at(-1) === 'Enter'));
+          await agent.close(); agent = await McpProcess.start(world!, adapter, wakeDriver);
+          expect(data(await agent.call('khala_join', { link: channel.shareLink }))).toMatchObject({ state: 'connected' });
         }
         await hook(agent, 'prompt'); await hook(agent, 'stop');
-        if (harness === 'claude') {
-          await writeWakeSettings(stateRoot(world!.env), { consent: { 'claude/terminal': { at: new Date().toISOString() } }, off: {} });
+        if (terminalWake) {
+          await writeWakeSettings(stateRoot(world!.env), { consent: { [`${harness}/terminal`]: { at: new Date().toISOString() } }, off: {} });
           await prepareTmux(agent);
         }
         // Exercise the 30s safety boundary without spending 30s per harness.
@@ -190,10 +223,10 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         const before = await wakeCalls(world!);
         expect(data(await agent.call('khala_send', { text: 'tier-b-self-idle' }))).toHaveProperty('eventId');
         await eventually(async () => (await inbox(peer)).some(entry => entry.body === 'tier-b-self-idle'));
-        await delay(1000); expect(await wakeCalls(world!)).toEqual(before);
+        await delay(2200); expect(await wakeCalls(world!)).toEqual(before);
         await publish('tier-b-idle');
         if (capabilities.idleWake === 'none') {
-          await delay(1000); expect(await wakeCalls(world!)).toEqual(before); expect(adapter.wakeLadder ?? []).toHaveLength(0); return;
+          await delay(2200); expect(await wakeCalls(world!)).toEqual(before); expect(adapter.wakeLadder ?? []).toHaveLength(0); return;
         }
         const transport = harness === 'codex' ? 'codex' : 'tmux';
         await eventually(async () => (await wakeCalls(world!)).slice(before.length).some(call => call.command === transport &&
@@ -218,7 +251,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
     } finally {
       if (world) await cleanupWorld(world);
       for (const feature of features) if (!results.some(row => row.harness === harness && row.feature === feature))
-        results.push({ harness, feature, status: 'NOT RUN', durationMs: 0 });
+        results.push({ harness, feature, status: 'NOT RUN', durationMs: 0, reason: 'An earlier row failed; inspect the failed assertion above' });
     }
   }, 120_000);
   afterAll(async () => {
@@ -226,6 +259,6 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
     const directory = path.resolve('test-results/local-e2e'); await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, 'conformance-results.json'), JSON.stringify({ version: 1, tier: 'B', transport: 'local + hosted fixture', results }, null, 2) + '\n');
     process.stdout.write('\nHarness   Feature         Result    Duration\n' + results.map(row =>
-      `${row.harness.padEnd(10)}${row.feature.padEnd(16)}${row.status.padEnd(10)}${row.durationMs}ms`).join('\n') + '\n');
+      `${row.harness.padEnd(12)}${row.feature.padEnd(16)}${row.status.padEnd(10)}${row.durationMs}ms${row.reason ? ` — ${row.reason}` : ''}`).join('\n') + '\n');
   });
 });

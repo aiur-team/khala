@@ -17,7 +17,7 @@
     "build": "node scripts/build-package.mjs",
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests --exclude '**/*.live.test.ts'",
-    "test:local-e2e": "KHALA_LOCAL_E2E=1 vitest run --config ../../vitest.config.ts --pool=forks src/local/acceptance.e2e.test.ts src/local/restore.e2e.test.ts src/harness/conformance/conformance.e2e.test.ts",
+    "test:local-e2e": "KHALA_LOCAL_E2E=1 vitest run --config ../../vitest.config.ts --pool=forks src/local/acceptance.e2e.test.ts src/local/restore.e2e.test.ts src/harness/conformance/conformance.e2e.test.ts src/harness/conformance/terminal.e2e.test.ts",
     "test:live": "KHALA_E2E_LIVE=1 NODE_EXTRA_CA_CERTS=../../.khala-local/certs/tls.crt vitest run --config ../../vitest.config.ts --pool=forks src/matrix/session.live.test.ts src/matrix/crypto-persistence.live.test.ts"
   },
   "dependencies": {

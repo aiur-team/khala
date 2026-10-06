@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import type { Harness } from '@khala/contracts/m1/agent-join';
+import { kittyLsFixture } from '../../wake/terminal/kitty-fixture';
 import { sessionFiles } from '../../state';
 import { adapterFor } from '../../harness';
 import type { HarnessAdapter } from '../../harness/adapter';
@@ -108,7 +109,10 @@ export class McpProcess {
   }
   static async start(world: World, adapter: HarnessAdapter, driver: FakeHarnessDriver,
     session: FakeSession = driver.newSession(world.root), entrypoint?: string): Promise<McpProcess> {
-    await driver.prepareSession?.(session, { ...world.env, ...session.mcpEnv });
+    const env = { ...world.env, ...session.mcpEnv };
+    await driver.prepareSession?.(session, env);
+    // Session preparation can add runtime wiring (for example Qwen settings).
+    session = { ...session, mcpEnv: env };
     const agent = new McpProcess(world, adapter, driver, session, entrypoint); world.agents.push(agent);
     await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'local-acceptance', version: '1' } });
     agent.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
@@ -144,13 +148,34 @@ const root = __dirname, command = path.basename(__filename), argv = process.argv
 if (command === 'codex' && argv.join(' ') === 'queue --help') { console.log('--thread --message'); process.exit(0); }
 fs.appendFileSync(path.join(root, 'wake-calls.jsonl'), JSON.stringify({ command, argv }) + '\\n');
 if (command === 'codex') { fs.appendFileSync(path.join(root, 'codex-calls.log'), argv.join(' ') + '\\n'); process.exit(0); }
-if (command !== 'tmux') process.exit(1);
+
 const file = path.join(root, 'terminal.json');
 if (!fs.existsSync(file)) process.exit(1);
 const pane = JSON.parse(fs.readFileSync(file, 'utf8'));
+const save = () => fs.writeFileSync(file, JSON.stringify(pane));
+const send = text => { if (text === '\\r' || text === '\\\\r') { pane.submitted = pane.composer; pane.composer = ''; } else pane.composer = text; save(); };
+if (command === 'wezterm') {
+ if (argv[1] === 'list') console.log(JSON.stringify([{pane_id: 7, tty_name: pane.tty, cursor_x: (pane.cursorColumn || 2) + (pane.composer || '').length, cursor_y: 0}]));
+ else if (argv[1] === 'get-text') process.stdout.write((pane.prefix || '❯ ') + (pane.composer || '') + '\\r\\n\\x1b[0m\\n');
+ else if (argv[1] === 'send-text') send(argv.at(-1)); else process.exit(1);
+ process.exit(0);
+}
+if (command === 'kitten') {
+ if (argv[3] === 'ls') console.log(JSON.stringify(pane.kittyLs));
+ else if (argv[3] === 'get-text') process.stdout.write((pane.prefix || '❯ ') + (pane.composer || '') + '\\x1b[?25h\\x1b[1;' + (1 + (pane.cursorColumn || 2) + (pane.composer || '').length) + 'H\\x1b[?12h');
+ else if (argv[3] === 'send-text') send(argv.at(-1)); else process.exit(1);
+ process.exit(0);
+}
+if (command === 'python3') {
+ const view = {tty: '/dev/ttys007', cursorX: (pane.cursorColumn || 2) + (pane.composer || '').length, cursorY: 0, line: (pane.prefix || '❯ ') + (pane.composer || '')};
+ if (argv.length === 2) console.log(JSON.stringify(view));
+ else if (JSON.stringify(JSON.parse(argv[3])) !== JSON.stringify(view)) console.log(JSON.stringify({status:'not_empty'}));
+ else { send(argv[2]); console.log(JSON.stringify({status:'sent'})); }
+ process.exit(0);
+}
 const action = argv[0] === '-S' ? argv[2] : argv[0];
-if (action === 'display-message') console.log([pane.pid, 0, 0, 2 + (pane.composer || '').length, 0, pane.tty, 0].join('|'));
-else if (action === 'capture-pane') console.log('❯' + (pane.composer ? ' ' + pane.composer : ''));
+if (action === 'display-message') console.log([pane.pid, 0, 0, (pane.cursorColumn || 2) + (pane.composer || '').length, 0, pane.tty, 0].join('|'));
+else if (action === 'capture-pane') console.log((pane.prefix || '❯ ') + (pane.composer || ''));
 else if (action === 'send-keys') {
   if (argv.includes('-l')) pane.composer = argv[argv.indexOf('-l') + 1];
   else if (argv.at(-1) === 'Enter') { pane.submitted = pane.composer; pane.composer = ''; }
@@ -213,7 +238,7 @@ export async function wakeCalls(world: World): Promise<{ command: string; argv: 
   return (await readFile(path.join(world.root, 'bin/wake-calls.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
 }
 /** Real PTY ownership plus a fake remote-control binary; no user terminal is touched. */
-export async function prepareTmux(agent: McpProcess): Promise<void> {
+export async function prepareTerminal(agent: McpProcess, kind: 'tmux' | 'wezterm' | 'kitty' | 'iterm2'): Promise<void> {
   if (process.platform !== 'linux' || agent.world.guard) throw new Error('terminal_fixture_requires_unguarded_linux');
   const file = path.join(agent.world.root, 'bin/terminal.json');
   const source = `const fs = require('node:fs'); fs.writeFileSync(process.argv[1], JSON.stringify({pid: process.pid, tty: fs.readlinkSync('/proc/self/fd/0')})); setInterval(() => {}, 1000);`;
@@ -234,9 +259,11 @@ export async function prepareTmux(agent: McpProcess): Promise<void> {
   const { readProcess } = await import('../../harness/proc');
   const identity = await readProcess(pane.pid);
   if (!identity) throw new Error('terminal_fixture_exited');
-  await writeFile(path.join(agent.files.dir, 'pane.json'), JSON.stringify({ kind: 'tmux', paneId: '%7',
-    socket: path.join(agent.world.root, 'tmux.sock'), agentPid: pane.pid, agentStartTime: identity.startTime, capturedAt: new Date().toISOString() }));
+  await writeFile(file, JSON.stringify({ ...pane, prefix: agent.harness === 'gemini' ? ' > ' : agent.harness === 'antigravity' ? '> ' : '❯ ', cursorColumn: agent.adapter.emptyPrompt?.cursorColumn ?? 2, kittyLs: kittyLsFixture([pane.pid]) }));
+  await writeFile(path.join(agent.files.dir, 'pane.json'), JSON.stringify({ kind, paneId: kind === 'tmux' ? '%7' : kind === 'kitty' ? '9' : kind === 'iterm2' ? '12345678-1234-1234-1234-123456789abc' : '7',
+    ...(kind === 'kitty' ? { socket: `unix:${agent.world.root}/kitty.sock` } : kind === 'tmux' ? { socket: path.join(agent.world.root, 'tmux.sock') } : {}), agentPid: pane.pid, agentStartTime: identity.startTime, capturedAt: new Date().toISOString() }));
 }
+export const prepareTmux = (agent: McpProcess) => prepareTerminal(agent, 'tmux');
 export async function deliver(agent: McpProcess, event: 'PostToolUse' | 'UserPromptSubmit' | 'Stop', prompt?: string): Promise<HookFrame | null> {
   const result = await runRuntime(agent.world, [bin, 'hook', 'deliver', '--harness', agent.harness],
     agent.driver.hookStdin(({ PostToolUse: 'tool', UserPromptSubmit: 'prompt', Stop: 'stop' } as const)[event],

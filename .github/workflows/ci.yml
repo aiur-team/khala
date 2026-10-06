@@ -75,6 +75,37 @@ jobs:
           if-no-files-found: ignore
       - run: pnpm build
 
+  local-e2e:
+    name: local E2E conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium for local acceptance tests
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install PTY test tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y util-linux
+          command -v script
+      - name: Local acceptance and spawned-process conformance
+        run: |
+          CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"
+          export CHROMIUM_PATH
+          pnpm --filter @khala/agent test:local-e2e
+      - name: Upload local E2E results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-e2e-results
+          path: packages/agent/test-results/local-e2e/
+          if-no-files-found: ignore
+
   # The published CLI must install and serve MCP on native Windows too (Cursor on Windows
   # runs it directly, not through WSL). Pack once on Linux, smoke on Linux and Windows.
   package:
