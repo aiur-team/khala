@@ -2,7 +2,7 @@
 // first and other humans in member order, each holding the agents it owns.
 // An agent whose owner is not a member trails under a synthetic owner group.
 
-import type { Harness } from '@khala/contracts/m1/agent-join';
+import type { HarnessId } from '@khala/contracts/m1/harness';
 
 export type RosterHuman = Readonly<{ participantId?: string; ownerId: string; displayName: string }>;
 
@@ -11,7 +11,7 @@ export type RosterAgent = Readonly<{
   /** Server-attested owner binding; an agent without one cannot be placed under a member. */
   ownerId?: string;
   displayName: string;
-  harness?: Harness;
+  harness?: HarnessId;
   /** C3 `ownerLabel`: names the synthetic group of an owner who is not a member. */
   ownerLabel?: string;
 }>;
@@ -48,5 +48,3 @@ export function ownerOfLabel(count: number): string {
 export function memberCountLabel(humans: number, agents: number): string {
   return `${humans} ${humans > 1 ? 'humans' : 'human'} · ${agents} ${agents === 1 ? 'agent' : 'agents'}`;
 }
-
-export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };

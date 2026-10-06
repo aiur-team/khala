@@ -1,3 +1,4 @@
+import opencodeLogo from './assets/opencode.svg';
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -24,6 +25,16 @@ function hosts(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   return [...(typeof node.type === 'string' ? [node] : []), ...hosts(node.props.children as ReactNode)];
 }
 const mentionButton = (tree: ReactNode, id: string) => hosts(tree).find(element => element.props['data-kh-mention'] === id)!;
+
+describe('registry mention avatars', () => {
+  it('shows the OpenCode logo and retains unknown client names', () => {
+    const tree = <MentionChips {...props({ targets: [{ ...claude, harness: 'opencode' as NonNullable<MentionTarget['harness']> }] })} />;
+    expect(hosts(tree).find(element => element.type === 'img')?.props.src).toBe(opencodeLogo);
+    const unknown = html({ targets: [{ ...claude, harness: 'cline' as NonNullable<MentionTarget['harness']> }] });
+    expect(unknown).not.toContain('<img');
+    expect(unknown).toContain('@Claude');
+  });
+});
 
 describe('insertMention', () => {
   it('follows the khInsert spacing rule', () => {

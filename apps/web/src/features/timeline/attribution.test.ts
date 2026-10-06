@@ -7,11 +7,11 @@ const attribution: Attribution = { participantId: 'human_maya' as ParticipantId,
   displayName: 'Maya', kind: 'human', isLocalEcho: false, isViewerOwned: false };
 
 describe('rowLabels', () => {
-  it.each(['codex', 'claude'] as const)('labels %s agents from C3 details', harness => {
+  it.each(['codex', 'claude', 'cline'] as const)('labels %s agents from C3 details', harness => {
     const detail: Participant = { matrixUserId: '@bot:hs', participantId: 'agent_bot', ownerId: 'owner_maya',
-      displayName: 'Codex · Maya', kind: 'agent', ownerLabel: 'Maya', harness };
+      displayName: 'Codex · Maya', kind: 'agent', ownerLabel: 'Maya', harness: harness as Extract<Participant, { kind: 'agent' }>['harness'] };
     expect(rowLabels(attribution, detail)).toEqual({ author: detail.displayName,
-      kindLabel: harness === 'codex' ? 'Codex agent' : 'Claude Code agent' });
+      kindLabel: harness === 'codex' ? 'Codex agent' : harness === 'cline' ? 'Cline agent' : 'Claude Code agent' });
   });
   it('labels unknown members', () => {
     expect(rowLabels(attribution, { matrixUserId: '@stranger:hs', displayName: '@stranger:hs', kind: 'unknown' }))

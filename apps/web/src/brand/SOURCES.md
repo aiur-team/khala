@@ -39,3 +39,31 @@ Khala imports Bungee, Space Grotesk, and JetBrains Mono from the pinned
 That package owns the font files, `@font-face` declarations, SIL Open Font
 License notices, theme tokens, and shared control styles. `fonts.css` here is
 only a compatibility import for existing Khala browser harnesses.
+
+## Harness identity marks
+
+The web resolves `harnessInfo(id).logoKey` to locally bundled SVGs. Unknown
+clients and registry entries without an approved mark use avatar initials.
+
+Copied from [Simple Icons](https://github.com/simple-icons/simple-icons/tree/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d)
+commit `98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d` on 2026-10-05.
+SVG fills are adapted: neutral gray for monochrome marks (visible on both
+themes), and the catalog brand colors for Gemini and Qwen. Paths below are relative to that repository; local files are in
+`../ui/khala/assets/`. The CC0 and Copilot MIT notices are bundled alongside them.
+These marks identify clients; they do not imply vendor endorsement.
+
+| Local asset | Source | Licence |
+| --- | --- | --- |
+| `cursor.svg` | `icons/cursor.svg` (upstream: https://cursor.com/brand) | CC0-1.0 |
+| `opencode.svg` | `icons/opencode.svg` (upstream: anomalyco/opencode `packages/identity/mark.svg`) | CC0-1.0 |
+| `copilot.svg` | `icons/githubcopilot.svg` (upstream: Primer Octicons `copilot-24`) | MIT, GitHub, Inc. |
+| `gemini.svg` | `icons/googlegemini.svg` (upstream: https://gemini.google.com) | CC0-1.0 |
+| `qwen.svg` | `icons/qwen.svg` (upstream: https://qwen.ai) | CC0-1.0 |
+
+Copilot CLI and Copilot in VS Code share the Copilot mark (`logoKey: copilot`).
+No redistributable Antigravity or Meta Muse Code mark was established for this
+unit, so their registry `logoKey` is `null` and they render initials. No substitute
+or unrelated product mark is bundled.
+
+The existing `claude-symbol.svg` and `codex-color.svg` are unchanged legacy
+assets; this unit does not establish new licence provenance for those files.
