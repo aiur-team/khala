@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Harness } from '@khala/contracts/m1/agent-join';
-import { channelFiles, channelsDir, joinFilePath, readJoinFile, removeJoinFile, writeJoinFile, ensureStateDir, filesForDir, openSessionDir, readJoin, readJson, readStateFile, readStatus, removeSession, removeStateFile, resolveStateDir, saveJoin, saveSession, sessionFiles, StateError, stateRoot, writeJsonAtomic, writeStateFile, writeStatus, type SessionFiles } from './state';
+import { channelFiles, channelsDir, joinFilePath, readJoinFile, removeJoinFile, writeJoinFile, ensureStateDir, filesForDir, openSessionDir, readJoin, readJson, readStateFile, readStatus, readWatcherStatus, removeSession, removeStateFile, resolveStateDir, saveJoin, saveSession, sessionFiles, StateError, stateRoot, writeJsonAtomic, writeStateFile, writeStatus, type SessionFiles } from './state';
 
 let root: string;
 let files: SessionFiles;
@@ -77,7 +77,7 @@ it('removes saved credentials idempotently', async () => {
 });
 it('writes status with deterministic timestamps and optional channel name', async () => {
   const now = () => new Date('2026-10-02T10:00:00Z');
-  const expected = { state: 'send_failed', detail: 'network', owner: { pid: process.pid, startTime: expect.any(String) }, updatedAt: '2026-10-02T10:00:00.000Z' };
+  const expected = { state: 'send_failed', detail: 'network', heartbeatAt: '2026-10-02T10:00:00.000Z', owner: { pid: process.pid, startTime: expect.any(String) }, updatedAt: '2026-10-02T10:00:00.000Z' };
   expect(await writeStatus(files, 'send_failed', 'network', now)).toEqual(expected);
   expect(await readStatus(files)).toEqual(expected);
   await writeStatus(files, 'send_failed', 'network', now, 'Release room');
@@ -202,6 +202,25 @@ it('reports aggregate and channel status disconnected after their writer is kill
     child.kill('SIGKILL'); await exited;
     for (const target of [files, nested]) expect(await readStatus(target)).toMatchObject({ state: 'disconnected', detail: 'process_exited' });
   } finally { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; } }
+});
+
+it('trusts fresh watcher heartbeats across PID namespaces and expires them even with a visible writer', async () => {
+  const clock = () => new Date('2026-10-06T12:00:00Z');
+  const status = { state: 'connected', updatedAt: clock().toISOString(), heartbeatAt: '2026-10-06T11:59:01Z', owner: { pid: 123, startTime: '1' } };
+  await writeJsonAtomic(files.status, status);
+  expect(await readWatcherStatus(files, async () => null, clock)).toMatchObject({ state: 'connected' });
+  await writeJsonAtomic(files.status, { ...status, heartbeatAt: '2026-10-06T11:59:00Z' });
+  expect(await readWatcherStatus(files, async () => ({ pid: 123, startTime: '1' }) as never, clock)).toMatchObject({ state: 'disconnected', detail: 'heartbeat_stale' });
+  await writeJsonAtomic(files.status, { ...status, heartbeatAt: 'invalid' });
+  expect(await readWatcherStatus(files, async () => null, clock)).toMatchObject({ detail: 'heartbeat_stale' });
+});
+it('uses visible PID identity only for legacy watcher statuses and honors explicit disconnects', async () => {
+  const legacy = { state: 'connected', updatedAt: new Date().toISOString(), owner: { pid: 123, startTime: '1' } };
+  await writeJsonAtomic(files.status, legacy);
+  expect(await readWatcherStatus(files, async () => null)).toMatchObject({ state: 'connected' });
+  expect(await readWatcherStatus(files, async () => ({ pid: 123, startTime: '2' }) as never)).toMatchObject({ detail: 'process_exited' });
+  await writeJsonAtomic(files.status, { ...legacy, state: 'disconnected', heartbeatAt: new Date().toISOString() });
+  expect(await readWatcherStatus(files, async () => null)).toMatchObject({ state: 'disconnected' });
 });
 
 const posix = process.platform !== 'win32';

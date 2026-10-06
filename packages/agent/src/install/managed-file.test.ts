@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManagedFiles, formatJson, jsonFormat, pruneCreated, readManaged, textFormat } from './managed-file';
+import { openSessionDir } from '../state';
 import { runInstall } from './main';
 import { ensureStateDir, sessionFiles, stateRoot } from '../state';
 import { createRealClientFactory } from '../mcp/wiring';
@@ -173,6 +174,25 @@ describe('khala install codex (TOML and JSON)', () => {
     expect(await fs.readFile(path.join(codex(), 'config.toml'), 'utf8')).toBe('model = "y"\n');
     expect(await exists(path.join(codex(), 'hooks.json'))).toBe(false);
   });
+});
+
+it('adopts a harness-specific absent-file sentinel without restoring an empty file', async () => {
+  const file = path.join(home, 'settings.json'), managed = new ManagedFiles(state);
+  await fs.writeFile(file, '{"managed":true}');
+  await fs.writeFile(file + '.khala-bak', '');
+  await managed.record(file, { original: null });
+  expect(await managed.original(file)).toBeNull();
+  await managed.record(file, { original: Buffer.from('do not replace the first recording') });
+  await managed.restore(await readManaged(file), jsonFormat, () => ({}));
+  expect(await exists(file)).toBe(false);
+  expect(await exists(file + '.khala-bak')).toBe(false);
+});
+
+it('creates private install state that MCP can use', async () => {
+  const env = { XDG_STATE_HOME: path.join(home, 'runtime') };
+  const managed = new ManagedFiles(path.join(env.XDG_STATE_HOME, 'khala'));
+  await managed.record(path.join(home, 'settings.json'));
+  await expect(openSessionDir('muse', 'installed', env)).resolves.toHaveProperty('dir');
 });
 
 it.skipIf(process.platform === 'win32')('creates private recording directories', async () => {

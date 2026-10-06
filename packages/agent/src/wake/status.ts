@@ -18,6 +18,7 @@ export const WAKE_STATES = {
     nonce_timeout: 'The wake verification deadline passed.',
     windows: 'Windows has no supported remote-control API.',
     driver_missing: 'No wake driver is installed for this transport.',
+    monitor_missing: 'The Muse monitor is not armed; start monitor on khala watch with persistent: true, wake_delay_ms: 0, show_lines: true.',
     watcher_missing: 'The Claude watcher is not armed.',
     terminal_aborted: 'The terminal wake check was cancelled.',
     terminal_unavailable_on_platform: 'This platform has no supported terminal remote-control API.',

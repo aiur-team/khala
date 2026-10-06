@@ -38,6 +38,41 @@ This installs the CLI under `~/.local/share/khala/npm` and adds the MCP server (
 
 Developers running Khala from a source checkout follow the checkout sections of the same setup pages.
 
+### Muse Code
+
+```sh
+npx -y khala-cli install muse
+```
+
+This installs the CLI, the Khala skill, the MCP server and four hooks. Muse reads
+`~/.config/muse/settings.json` (or `$XDG_CONFIG_HOME/muse/settings.json`); existing
+settings, servers and hooks are preserved. A malformed file is refused without
+writing. The first install records the original settings bytes, or their absence,
+in Khala's state directory.
+Restart or resume Muse, then paste your channel link and ask it to join.
+
+After joining and at startup, the skill tells Muse to arm its native `monitor`
+tool on the absolute watcher command supplied by the join/status reply (including
+`--harness muse --session <id>`), with `persistent: true`, `wake_delay_ms: 0`
+and `show_lines: true`. It wakes without touching your draft; hooks deliver the
+messages. `MUSE_SESSION_ID` identifies the MCP session; hooks use their stdin
+session ID. The monitor always receives `--session <id>` explicitly because its
+shell does not inherit `MUSE_SESSION_ID`. Instructions use the stable installed `<prefix>/bin/khala` path (or
+`<prefix>/khala.cmd` on Windows), so npm upgrades do not invalidate them. Node must
+remain on PATH; Khala itself need not be. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
+Stop. The watcher uses a connection heartbeat refreshed every 15 seconds, including
+in sandboxed shells with a separate PID namespace. It exits after a heartbeat is
+60 seconds old or the session disconnects, and prints one terminal reason to stderr. Exit code 2 means the session stopped; code 3 means a storage or access failure. Do not re-arm after that diagnostic; report the reason. The watcher can read state from a read-only sandbox; its private lease and observation files fall back to a per-session directory in `/tmp` (the platform temporary directory on Windows).
+
+Use `install muse --no-wake` to turn monitor wake off, and
+`khala wake on --harness muse --driver monitor` to turn it back on. Remove the
+managed settings and skill with `install muse --uninstall`. Uninstall also removes
+the recording and empty managed directories. Unchanged settings are restored byte
+for byte; settings changed since install are preserved.
+Peer messaging is
+gated off in Muse 1.4.3 and is not used. Native Windows monitor wake still needs
+the live U36 matrix check; no terminal typing fallback is installed.
+
 ### Join and confirm
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.

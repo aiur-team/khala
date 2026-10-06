@@ -164,7 +164,7 @@ it('guards read/send and recovers from sanitized send failures', async () => {
   await connected();
   vi.mocked(session.send).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.send('x')).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', heartbeatAt: now().toISOString(), owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.send('x')).toEqual({ eventId: '$sent' }); expect((await statusFile())?.state).toBe('connected');
 });
 it.each([new KhalaClientError('invalid_link'), new KhalaClientError('internal_error', 'rate_limited'), new Error('SECRET')])('sanitizes request failure %s', async error => {
@@ -340,7 +340,7 @@ it('guards event sends and restores connected status after retry', async () => {
   await connected();
   vi.mocked(session.sendChannelEvent).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.sendChannelEvent(content)).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', heartbeatAt: now().toISOString(), owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.sendChannelEvent(content)).toEqual({ eventId: '$event' });
   expect((await statusFile())?.state).toBe('connected');
 });
@@ -1271,6 +1271,24 @@ it('keeps an MCP-only client Async and returns its current identity', async () =
   expect((await client.read(10)).you).toBe('kevin-Agent');
 });
 
+it('refreshes connected heartbeats every 15 seconds and stops on close', async () => {
+  let timestamp = now().getTime();
+  await client.close();
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now: () => new Date(timestamp), startSession, joinApi });
+  await connected();
+  try {
+    timestamp += 15_000;
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(async () => expect(await statusFile()).toMatchObject({ heartbeatAt: new Date(timestamp).toISOString() }));
+    expect(await readStateFile(channelDir(), 'status.json')).toMatchObject({ heartbeatAt: new Date(timestamp).toISOString() });
+    await client.close();
+    timestamp += 60_000;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: 'closed' });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
 
 it('ignores duplicate and older owner mode commands replayed from the saved sync', async () => {
   await connected(); modeHandler!(modeCommand()); await client.status();

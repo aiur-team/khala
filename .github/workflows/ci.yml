@@ -33,6 +33,21 @@ jobs:
       - run: pnpm lint
       - name: Install Chromium for browser tests
         run: pnpm exec playwright install --with-deps chromium
+      - name: Install sandbox test tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor
+          # Ubuntu 24.04 restricts unprivileged user namespaces. Allow this
+          # test tool explicitly, following the Ubuntu release-note guidance.
+          sudo tee /etc/apparmor.d/khala-ci-bwrap >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile khala-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/khala-ci-bwrap
+          bwrap --unshare-pid --ro-bind / / --proc /proc --dev /dev /bin/true
       - run: pnpm test
       - name: Browser tests
         run: |

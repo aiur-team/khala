@@ -71,6 +71,22 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let closing: Promise<void> | undefined;
   const joins = new Map<string, Promise<unknown>>();
   let statusWrites: Promise<void> = Promise.resolve();
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let heartbeatTask: Promise<void> = Promise.resolve();
+  function startHeartbeat(): void {
+    if (heartbeatTimer || closed) return;
+    heartbeatTimer = setInterval(() => {
+      heartbeatTask = heartbeatTask.catch(() => {}).then(async () => {
+        for (const attempt of channels.values()) {
+          if (current(attempt) && ['connected', 'send_failed'].includes(attempt.status.state)) {
+            await setStatus(attempt, attempt.status.state, attempt.status.detail);
+          }
+        }
+      });
+      void heartbeatTask.catch(() => {});
+    }, 15_000);
+    heartbeatTimer.unref();
+  }
 
   function inboxEntry(message: SessionMessage, session: ChannelSession, acceptKey: ReturnType<typeof createEventKeyFilter>): InboxEntry | null {
     const entry = toInboxEntry(message, session.displayName(message.sender));
@@ -97,6 +113,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     status = { state, ...(single?.channelName !== undefined ? { channelName: single.channelName } : {}),
       ...(single?.displayName !== undefined ? { displayName: single.displayName } : {}),
       ...(detail !== undefined ? { detail } : single?.detail !== undefined ? { detail: single.detail } : {}), updatedAt: now().toISOString() };
+    if (['connected', 'send_failed'].includes(state)) status.heartbeatAt = status.updatedAt;
     const next = status;
     statusWrites = statusWrites.catch(() => {}).then(() => writeStateFile(dir, 'status.json', next));
     return statusWrites;
@@ -105,6 +122,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     attempt.status = { state, ...(attempt.status.channelName !== undefined ? { channelName: attempt.status.channelName } : {}),
       ...(attempt.status.displayName !== undefined ? { displayName: attempt.status.displayName } : {}),
       ...(detail !== undefined ? { detail } : {}), updatedAt: now().toISOString() };
+    if (['connected', 'send_failed'].includes(state)) {
+      attempt.status.heartbeatAt = attempt.status.updatedAt;
+      startHeartbeat();
+    }
     const snapshot = attempt.status;
     if (attempt.files) {
       statusWrites = statusWrites.catch(() => {}).then(() => writeStateFile(attempt.files!.dir, 'status.json', snapshot));
@@ -661,8 +682,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     close() {
       if (closing) return closing;
       closed = true;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
       for (const attempt of attempts.values()) attempt.controller.abort();
       closing = (async () => {
+        await heartbeatTask.catch(() => {});
         await initialize();
         await Promise.all([...joins.values()].map(task => task.catch(() => {})));
         await Promise.all([...roomChanges.values()].map(task => task.catch(() => {})));
