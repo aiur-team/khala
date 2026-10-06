@@ -167,23 +167,26 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
   const request = useRef(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pending, setPending] = useState<ListeningMode | null>(null);
-  const [status, setStatus] = useState('');
+  const [statusKind, setStatus] = useState<'waiting' | 'offline' | 'failed' | null>(null);
+  const status = statusKind === 'waiting' ? `Waiting for ${label} to switch…`
+    : statusKind === 'offline' ? `${label} didn't confirm. It may be offline.`
+    : statusKind === 'failed' ? `Couldn't send the mode change to ${label}. Try again.` : '';
   const shown = pending ?? mode;
 
   useEffect(() => {
     if (pending === null || mode !== pending) return;
     setPending(null);
-    setStatus('');
+    setStatus(null);
   }, [mode, pending]);
   useEffect(() => {
     if (pending === null) return undefined;
     const timer = setTimeout(() => {
       request.current += 1;
       setPending(null);
-      setStatus(`${label} didn't confirm. It may be offline.`);
+      setStatus('offline');
     }, MODE_CONFIRM_MS);
     return () => clearTimeout(timer);
-  }, [label, pending]);
+  }, [pending]);
   useEffect(() => {
     if (menuOpen) activeItem.current?.focus();
   }, [menuOpen]);
@@ -199,14 +202,15 @@ function ModeControl({ agent, mode, onSetMode, rename, children }: Readonly<{
 
   async function choose(next: ListeningMode): Promise<void> {
     setMenuOpen(false);
-    if (next === shown) return;
+    // The displayed member state may still be the SDK's stale reload cache.
+    // An explicit selection must send even when it matches that display.
     const id = ++request.current;
     setPending(next);
-    setStatus(`Waiting for ${label} to switch…`);
+    setStatus('waiting');
     const result = await onSetMode(agent.participantId, next).catch(() => 'failed' as const);
     if (result === 'sent' || id !== request.current) return;
     setPending(null);
-    setStatus(`Couldn't send the mode change to ${label}. Try again.`);
+    setStatus('failed');
   }
 
   /** A menu pick closes the menu and returns focus to the trigger, as Escape does. */

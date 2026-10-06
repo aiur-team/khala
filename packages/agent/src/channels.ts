@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { appendEntries, readCursor, unread } from './inbox';
-import { channelFiles, channelsDir, ensureStateDir, filesForDir, readJson, readStatus, removeStateFile, stateKey, StateError, writeStateFile, type SessionFiles } from './state';
+import { channelFiles, channelsDir, ensureStateDir, filesForDir, readJson, type StatusFile, removeStateFile, stateKey, StateError, writeStateFile, type SessionFiles } from './state';
 
 export type ChannelRef = { key: string; roomId: string; channelName?: string; files: SessionFiles; legacy: boolean };
 type ChannelMetadata = { roomId: string; channelName?: string; joinedAt: string };
@@ -47,7 +47,7 @@ export async function listChannels(files: SessionFiles): Promise<ChannelRef[]> {
   if (await exists(files.inbox)) {
     const id = await legacyRoomId(files);
     if (id) {
-      const status = await readStatus(files);
+      const status = await readJson<StatusFile>(files.status);
       channels.push({ key: channelKey(id), roomId: id, ...(typeof status?.channelName === 'string' ? { channelName: status.channelName } : {}), files, legacy: true });
     }
   }
@@ -76,7 +76,7 @@ export async function migrateLegacy(files: SessionFiles): Promise<'none' | 'move
       console.warn(`Khala cursor migration: conflicting cursors for ${id}; using earlier position ${safe.deliveredCount} to avoid skipping messages (legacy=${legacyCursor.deliveredCount}, channel=${channelCursor.deliveredCount}).`);
     }
   }
-  const status = await readStatus(files);
+  const status = await readJson<StatusFile>(files.status);
   // Publish metadata before moving the inbox, which is the legacy-presence marker.
   // A restart after any rename can reuse the root credentials or remaining inbox.
   const metadata = await readJson<ChannelMetadata>(path.join(nested.dir, 'channel.json'));
