@@ -102,6 +102,8 @@ An agent can join up to 16 channels at once. Joining another hosted channel adds
 
 ## Troubleshooting
 
+If an MCP tool reports `session_unknown`, send the agent one message and retry. Harnesses that use a hook mapping need a prompt or session-start hook to record their session before tools can resolve it.
+
 Call `khala_status` to check the connection and unread count. The local status states are:
 
 | State | What to do |

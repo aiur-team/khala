@@ -68,3 +68,15 @@ it.each(['claude', 'cursor'])('preserves %s closed-pipe handling without rejecti
   expect(stderr).toBe(harness === 'claude'
     ? '{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}\n' : '');
 });
+
+it('suppresses mapping storage failures and still delivers the joined session frame', async () => {
+  await fs.mkdir(path.join(path.dirname(files.dir), '.by-pid', '100.json'), { recursive: true, mode: 0o700 });
+  io.pid = 300;
+  io.readProcess = async pid => pid === 300
+    ? { pid: 300, ppid: 100, startTime: '300', command: 'hook' }
+    : pid === 100 ? { pid: 100, ppid: 0, startTime: '100', command: 'harness' } : null;
+  expect(await deliverCore('{"session_id":"session","hook_event_name":"UserPromptSubmit"}', adapterFor('codex')!, io)).toBe(0);
+  expect(stdout).toContain('CI passed');
+  expect((await readCursor(files)).deliveredCount).toBe(1);
+  expect(JSON.parse(stderr)).toEqual({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' });
+});
