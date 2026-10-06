@@ -221,7 +221,7 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
   }
 });
 
-test('a real MCP restart preserves Steer and confirms a later owner switch to Async', async ({ browser }) => {
+test('an agent rename and real MCP restart preserve Steer and confirm a later owner switch to Async', async ({ browser }) => {
   test.setTimeout(180_000);
   const environment = readLiveHumanEnvironment();
   const stateHome = await mkdtemp(path.join(os.tmpdir(), 'khala-mode-restore-'));
@@ -274,6 +274,16 @@ test('a real MCP restart preserves Steer and confirms a later owner switch to As
     await expect(modeStatus).toBeHidden({ timeout: 30_000 });
     const before = await memberState();
     expect(typeof before['com.khala.invited_by']).toBe('string');
+    const renamed = `Reviewer-${sessionId.slice(-8)}`;
+    await row.getByRole('button', { name: `Rename ${channel.you}`, exact: true }).click();
+    await alice.getByRole('textbox', { name: `Name for ${channel.you}`, exact: true }).fill(renamed);
+    await alice.getByRole('button', { name: 'Rename', exact: true }).click();
+    await expect.poll(async () => (await memberState()).displayname, { timeout: 30_000 }).toBe(renamed);
+    expect((await memberState())['com.khala.invited_by']).toBe(before['com.khala.invited_by']);
+    expect((await memberState())['com.khala.listening_mode']).toBe('steer');
+    await alice.getByRole('button', { name: 'Close details', exact: true }).click();
+    const renamedRow = alice.locator('.kh-rrow').filter({ has: alice.getByText(renamed, { exact: true }) });
+    const renamedModeStatus = renamedRow.locator('+ .kh-mode-status');
     await agent.close();
     mcp = startMcp({ env });
     // Startup must restore without any tool call before the owner's next command.
@@ -282,10 +292,11 @@ test('a real MCP restart preserves Steer and confirms a later owner switch to As
     const restored = await memberState();
     expect(restored['com.khala.invited_by']).toBe(before['com.khala.invited_by']);
     expect(restored['com.khala.listening_mode']).toBe('steer');
-    await row.locator('[role="radio"][data-v="async"]').click();
+    expect(restored.displayname).toBe(renamed);
+    await renamedRow.locator('[role="radio"][data-v="async"]').click();
     await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe('async');
-    await expect(modeStatus).toBeHidden({ timeout: 30_000 });
-    await expect(row.locator('[role="radio"][data-v="async"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(renamedModeStatus).toBeHidden({ timeout: 30_000 });
+    await expect(renamedRow.locator('[role="radio"][data-v="async"]')).toHaveAttribute('aria-checked', 'true');
     expect((await mcp.call('khala_status', {})).structuredContent.listeningMode).toBe('async');
   } finally {
     try { await mcp?.close(); }
