@@ -433,6 +433,55 @@ describe('multi-channel delivery', () => {
     expect(await readActivity(files)).toEqual({ state: 'busy', updatedAt: now.toISOString() });
     expect(stderr.write).not.toHaveBeenCalled();
   });
+  it.each(['[Request interrupted by user]', '[Request interrupted by user for tool use]'])('delivers Sync immediately after transcript interrupt %s', async marker => {
+    const sync = await channel('Next-turn', 'sync', [message(1)]);
+    const now = new Date('2026-10-06T12:00:00Z');
+    await writeActivity(files, 'busy', () => new Date(now.getTime() - 2_000));
+    const transcript = path.join(root, 'transcript.jsonl');
+    await fs.writeFile(transcript, JSON.stringify({ type: 'user', timestamp: new Date(now.getTime() - 1_000).toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: marker }] } }) + '\n');
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', transcript_path: transcript, prompt: 'Continue' }),
+      ['--harness', 'claude'], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => now });
+    expect(stdout.write.mock.calls[0]?.[0]).toContain('Next-turn');
+    expect((await readCursor(sync)).deliveredCount).toBe(1);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+  it.each(['stale interrupt', 'subsequent normal entry'])('keeps mid-turn Monitor Sync deferred with %s in transcript', async scenario => {
+    const sync = await channel('Next-turn', 'sync', [message(1)]);
+    const now = new Date('2026-10-06T12:00:00Z');
+    await writeActivity(files, 'busy', () => new Date(now.getTime() - 2_000));
+    const transcript = path.join(root, 'transcript.jsonl');
+    const interrupted = { type: 'user', timestamp: new Date(now.getTime() - (scenario === 'stale interrupt' ? 3_000 : 1_000)).toISOString(),
+      message: { role: 'user', content: '[Request interrupted by user]' } };
+    const normal = { type: 'assistant', timestamp: now.toISOString(), message: { role: 'assistant', content: 'Working' } };
+    await fs.writeFile(transcript, JSON.stringify(interrupted) + '\n' + (scenario === 'subsequent normal entry' ? JSON.stringify(normal) + '\n' : ''));
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', transcript_path: transcript, prompt: 'Monitor notification' }),
+      ['--harness', 'claude'], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => now });
+    expect(stdout.write).not.toHaveBeenCalled();
+    expect((await readCursor(sync)).deliveredCount).toBe(0);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+  it('preserves idle after background PostToolUse so the next real prompt delivers Sync', async () => {
+    const now = new Date('2026-10-06T12:00:00Z');
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    const io = { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => now };
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'Stop' }), ['--harness', 'claude'], io);
+    const idle = await readActivity(files);
+    expect(idle).toEqual({ state: 'idle', updatedAt: now.toISOString() });
+    const sync = await channel('Next-turn', 'sync', [message(1)]);
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'PostToolUse' }),
+      ['--harness', 'claude'], { ...io, now: () => new Date(now.getTime() + 21_000) });
+    expect(await readActivity(files)).toEqual(idle);
+    expect(stdout.write).not.toHaveBeenCalled();
+    expect((await readCursor(sync)).deliveredCount).toBe(0);
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', prompt: 'Continue' }),
+      ['--harness', 'claude'], { ...io, now: () => new Date(now.getTime() + 22_000) });
+    expect(stdout.write.mock.calls[0]?.[0]).toContain('Next-turn');
+    expect((await readCursor(sync)).deliveredCount).toBe(1);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
   it('refreshes empty PostToolUse activity so a mid-turn Monitor prompt still defers Sync', async () => {
     const sync = await channel('Next-turn', 'sync', [message(1)]);
     const now = new Date('2026-10-06T12:00:00Z');
