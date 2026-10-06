@@ -110,7 +110,8 @@ export async function installMuse(input: {
   }
   const merged = mergeMuseSettings(config, uninstall ? null : museMcpEntry(input.platform, paths.bin, paths.customEnv),
     uninstall ? null : museHookCommand(input.platform, paths.bin, paths), original);
-  if ('config' in merged && uninstall && originalBytes === null && merged.config.schema_version === 1) delete merged.config.schema_version;
+  if ('config' in merged && uninstall && originalBytes === null && merged.config.schema_version === 1
+    && Object.keys(merged.config).length === 1) delete merged.config.schema_version;
   if ('error' in merged) {
     stderr(merged.error === 'muse_mcp_exists'
       ? `khala: ${paths.settingsFile} already has a "khala" server that is not this CLI; remove it and run this again`

@@ -62,7 +62,7 @@ shell does not inherit `MUSE_SESSION_ID`. Instructions use the stable installed 
 remain on PATH; Khala itself need not be. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
 Stop. The watcher uses a connection heartbeat refreshed every 15 seconds, including
 in sandboxed shells with a separate PID namespace. It exits after a heartbeat is
-60 seconds old or the session disconnects, and prints the reason to stderr. Check `khala_status` if the monitor stops, and ask Muse to re-arm it.
+60 seconds old or the session disconnects, and prints one terminal reason to stderr. Exit code 2 means the session stopped; code 3 means a storage or access failure. Do not re-arm after that diagnostic; report the reason. The watcher can read state from a read-only sandbox; its private lease and observation files fall back to a per-session directory in `/tmp` (the platform temporary directory on Windows).
 
 Use `install muse --no-wake` to turn monitor wake off, and
 `khala wake on --harness muse --driver monitor` to turn it back on. Remove the

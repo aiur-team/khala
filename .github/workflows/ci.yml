@@ -33,6 +33,10 @@ jobs:
       - run: pnpm lint
       - name: Install Chromium for browser tests
         run: pnpm exec playwright install --with-deps chromium
+      - name: Install sandbox test tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
       - run: pnpm test
       - name: Browser tests
         run: |

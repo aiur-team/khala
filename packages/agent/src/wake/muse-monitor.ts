@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { cursorPaths } from '../install/cursor';
 import { readActivity } from '../activity';
-import { monitorArmed } from '../watch';
+import { monitorArmed, monitorOwner } from '../watch';
+import { monitorStorageCandidates } from '../monitor-storage';
 import { readJson, writeJsonAtomic, type SessionFiles } from '../state';
 import { wakeLine, settleAttempts } from './shared';
 import type { WakeDriver } from './driver';
@@ -21,7 +22,7 @@ export function museWatchCommand(sessionId?: string, bin = museCliPath()): strin
   return `${shellQuote(bin)} watch --harness muse --session ${shellQuote(sessionId ?? '<current session id from khala_status>')}`;
 }
 export function museMonitorInstruction(sessionId?: string, command = museWatchCommand(sessionId)): string {
-  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; re-arm if it stops while joined. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;
+  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; If it prints "Do not re-arm", report the reason and do not restart it. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;
 }
 
 /** The agent arms the native monitor; this driver supplies its sparse stdout events. */
@@ -39,7 +40,11 @@ export function createMuseMonitorDriver(): WakeDriver {
       const nonce = /\(k-([a-f0-9]{8})\)$/.exec(line)?.[1];
       if (!nonce || wakeLine(nonce) !== line) throw new TypeError('invalid_monitor_wake_line');
       if (ctx.signal.aborted || (await readActivity(ctx.files)).state !== 'idle' || !await monitorArmed(ctx.files)) return 'skipped';
-      const owner = await readJson<{ nonce: string }>(path.join(ctx.files.dir, 'monitor.json'));
+      const epoch = (await readActivity(ctx.files)).updatedAt;
+      for (const dir of monitorStorageCandidates(ctx.files)) {
+        if ((await readJson<{ epoch: string }>(path.join(dir, 'monitor-wake-observed.json')))?.epoch === epoch) return 'skipped';
+      }
+      const owner = await monitorOwner(ctx.files);
       if (!owner) return 'skipped';
       const journal = museJournalPath(ctx.sessionId, ctx.env);
       let journalOffset = 0;

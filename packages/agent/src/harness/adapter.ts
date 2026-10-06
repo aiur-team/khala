@@ -6,7 +6,6 @@ import type { EmptyPrompt } from '../wake/terminal/prompt-guard';
 
 import type { SessionSource } from './session-sources';
 import type { HookIO } from './deliver-core';
-import type { SessionFiles } from '../state';
 export type { SessionSource } from './session-sources';
 
 /** Hook dialect parsing and stdout, separate from shared delivery state. */

@@ -128,6 +128,8 @@ it.each(['mcpServers', 'mcp_servers'])('preserves Muse runtime edits after movin
   delete config.mcp_servers;
   config[alias] = { khala: server, user: { command: 'user-tool' } };
   config.model = 'muse-spark';
+  config.provider = 'muse';
+  config.reasoning_effort = 'minimal';
   config.runtime_option = { enabled: true };
   config.schema_version = 1;
   config.hooks.Stop[0].hooks.push({ type: 'command', command: 'user-stop' });
@@ -136,6 +138,7 @@ it.each(['mcpServers', 'mcp_servers'])('preserves Muse runtime edits after movin
   await fs.writeFile(path.join(skillDirectory, 'user-note.md'), 'retain me');
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
+    schema_version: 1, provider: 'muse', reasoning_effort: 'minimal',
     [alias]: { user: { command: 'user-tool' } }, model: 'muse-spark', runtime_option: { enabled: true },
     hooks: { Stop: [{ hooks: [{ type: 'command', command: 'user-stop' }] }] },
   });
@@ -163,7 +166,7 @@ it('preserves a user replacement of the managed server during uninstall', async 
   await fs.writeFile(file, JSON.stringify(config));
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
-    mcp_servers: { khala: { command: 'user-replacement', args: [] } },
+    schema_version: 1, mcp_servers: { khala: { command: 'user-replacement', args: [] } },
   });
 });
 

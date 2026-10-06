@@ -73,8 +73,8 @@ it('sends only the fixed nonce notice through the live watcher, without raw cont
   expect(lines).toEqual([]);
   await writeActivity(files, 'idle', () => new Date(at));
   await vi.waitFor(() => expect(lines).toEqual([line + '\n']));
-  expect((await readActivity(files)).state).toBe('busy');
-  await driver.wake(context(), line.replace('deadbeef', '12345678'));
+  expect((await readActivity(files)).state).toBe('idle');
+  expect(await driver.wake(context(), line.replace('deadbeef', '12345678'))).toBe('skipped');
   await new Promise(resolve => setTimeout(resolve, 150));
   expect(lines).toEqual([line + '\n']);
   await settleAttempts(files.dir, { now: at + 60_000, activity: await readActivity(files) });
@@ -133,6 +133,6 @@ it('runs the stable watcher bin without khala on PATH or inherited MUSE_SESSION_
   const command = museWatchCommand('unjoined-muse', bin);
   expect(command).toContain(' --session ');
   const result = spawnSync('/bin/sh', ['-c', command], { env: { HOME: root, XDG_STATE_HOME: root, PATH: path.dirname(process.execPath) }, encoding: 'utf8' });
-  expect(result.status, result.stderr).toBe(0);
+  expect(result.status, result.stderr).toBe(2);
   expect(result.stderr).not.toContain('session_unknown');
 });

@@ -2,32 +2,41 @@ import * as fs from 'node:fs/promises';
 import { watch as watchDirectory, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { monitorStorage, monitorStorageCandidates } from './monitor-storage';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
 import { readJson, readWatcherStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
-import { readActivity, writeActivity } from './activity';
+import { readActivity } from './activity';
 import { driverAllowed, readWakeState, wakeLine } from './wake/shared';
 import { MUSE_WAKE_REQUEST, type MuseWakeRequest } from './wake/muse-monitor';
 
 const MARKER = 'monitor.json';
 const OBSERVATION = 'monitor-cursor.json';
 const NONCE_PATTERN = /^[a-f0-9-]{36}$/;
-const leaseFile = (files: SessionFiles, nonce: string) => path.join(files.dir, `monitor-${nonce}.json`);
+const leaseFile = (dir: string, nonce: string) => path.join(dir, `monitor-${nonce}.json`);
 type Observation = { userId: string; roomId: string; count: number; lastEventId: string | null };
-type Owner = { nonce: string; pid: number; heartbeatAt?: string };
-export async function monitorArmed(files: SessionFiles): Promise<boolean> {
-  const owner = await readJson<Owner>(path.join(files.dir, MARKER));
-  if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.nonce !== 'string' || !NONCE_PATTERN.test(owner.nonce)) return false;
-  const lease = await readJson<Owner>(leaseFile(files, owner.nonce));
-  if (lease?.nonce !== owner.nonce) return false;
-  if (lease.heartbeatAt !== undefined) {
-    const age = Date.now() - Date.parse(lease.heartbeatAt);
-    return Number.isFinite(age) && age >= 0 && age < 60_000;
+type Owner = { nonce: string; pid: number; heartbeatAt?: string; startedAt?: number };
+export async function monitorOwner(files: SessionFiles): Promise<Owner | undefined> {
+  const owners: Owner[] = [];
+  for (const dir of monitorStorageCandidates(files)) {
+    const owner = await readJson<Owner>(path.join(dir, MARKER));
+    if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.nonce !== 'string' || !NONCE_PATTERN.test(owner.nonce)) continue;
+    const lease = await readJson<Owner>(leaseFile(dir, owner.nonce));
+    if (lease?.nonce !== owner.nonce) continue;
+    if (lease.heartbeatAt !== undefined) {
+      const age = Date.now() - Date.parse(lease.heartbeatAt);
+      if (Number.isFinite(age) && age >= 0 && age < 60_000) owners.push(owner);
+      continue;
+    }
+    try { process.kill(owner.pid, 0); owners.push(owner); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') owners.push(owner); }
   }
-  try { process.kill(owner.pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+  return owners.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+}
+export async function monitorArmed(files: SessionFiles): Promise<boolean> {
+  return !!await monitorOwner(files);
 }
 
 export function mentions(entry: InboxEntry, name: string | undefined): boolean {
@@ -49,6 +58,7 @@ export async function watchSession(files: SessionFiles, io: {
   stderr?: (line: string) => void;
 }): Promise<number> {
   const nonce = randomUUID();
+  let storage = files.dir;
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let running: Promise<void> | undefined;
@@ -61,18 +71,31 @@ export async function watchSession(files: SessionFiles, io: {
   const stop = (exit = 0, reason = 'stopped') => {
     if (done) return;
     done = true; code = exit; watcher?.close(); clearInterval(timer);
-    io.stderr?.(`khala watch: ${reason}`); finish();
+    io.stderr?.(`khala watch: stopped (${reason}). Do not re-arm.`); finish();
   };
   let lastHeartbeat = 0;
   let exitReason = 'disconnected';
+  const errorReason = (error: unknown) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EROFS') return 'monitor_storage_read_only';
+    if (code === 'EACCES' || code === 'EPERM') return 'state_access_denied';
+    return error instanceof Error && error.message === 'unsafe_monitor_directory' ? 'unsafe_monitor_directory' : 'state_unreadable';
+  };
   const abort = () => stop();
   try {
     const status = await readWatcherStatus(files);
     const initialSession = await readJson<{ userId: string; roomId: string }>(files.session);
     if (!['connected', 'send_failed'].includes(status?.state ?? '')
       || (!initialSession && !(await listChannels(files)).length)) {
-      stop(0, status?.detail ?? status?.state ?? 'session_missing'); return 0;
+      stop(2, status?.detail ?? status?.state ?? 'session_missing'); return 2;
     }
+    storage = await monitorStorage(files);
+    const storageDirs = new Map([[files.dir, storage]]);
+    const observationDir = async (target: SessionFiles) => {
+      let dir = storageDirs.get(target.dir);
+      if (!dir) { dir = await monitorStorage(target); storageDirs.set(target.dir, dir); }
+      return dir;
+    };
     const initialDelivered = new Map<string, { identity: string; cursor: Cursor }>();
     const seedBaseline = async (target: SessionFiles, session: { userId: string; roomId: string }) => {
       initialDelivered.set(target.dir, {
@@ -87,15 +110,15 @@ export async function watchSession(files: SessionFiles, io: {
     }
     const evaluate = async () => {
       const ownsSession = async () => {
-        const owner = await readJson<Owner>(path.join(files.dir, MARKER));
+        const owner = await monitorOwner(files);
         const status = await readWatcherStatus(files);
         exitReason = owner?.nonce !== nonce ? 'superseded' : status?.detail ?? status?.state ?? 'status_missing';
         return owner?.nonce === nonce && ['connected', 'send_failed'].includes(status?.state ?? '');
       };
-      if (!await ownsSession()) { stop(0, exitReason); return; }
+      if (!await ownsSession()) { stop(2, exitReason); return; }
       if (Date.now() - lastHeartbeat >= 15_000) {
         lastHeartbeat = Date.now();
-        await writeJsonAtomic(leaseFile(files, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
+        await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
       }
       for (const channel of await listChannels(files)) {
         const target = channel.files;
@@ -109,7 +132,7 @@ export async function watchSession(files: SessionFiles, io: {
         }
         const mode = await readListeningMode(target);
         const entries = await readEntries(target);
-        const observed = await readJson<Observation>(path.join(target.dir, OBSERVATION));
+        const observed = await readJson<Observation>(path.join(await observationDir(target), OBSERVATION));
         const position = observed?.userId === session.userId && observed?.roomId === session.roomId
           && Number.isSafeInteger(observed.count) && observed.count >= 0 && observed.count <= entries.length
           && (observed.count === 0 || entries[observed.count - 1]?.eventId === observed.lastEventId) ? observed.count : 0;
@@ -122,7 +145,7 @@ export async function watchSession(files: SessionFiles, io: {
         const latestMode = await readListeningMode(target);
         const latestSession = await readJson<{ userId: string; roomId: string }>(target.session);
         const latestStatus = await readWatcherStatus(target);
-        if (!await ownsSession()) { stop(0, exitReason); return; }
+        if (!await ownsSession()) { stop(2, exitReason); return; }
         if (latestSession?.userId !== session.userId || latestSession?.roomId !== session.roomId
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => entry.kind === 'message' && entry.sender !== session.userId
@@ -131,12 +154,12 @@ export async function watchSession(files: SessionFiles, io: {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
         }
-        // Observation is independent of delivery, and lives beside this channel's inbox.
+        // Observation is independent of delivery and may live in private temporary storage.
         // Recheck identity before persisting so leaving A never writes into another join.
         if (position !== entries.length && !done && await ownsSession()
           && JSON.stringify(await readJson(target.session)) === JSON.stringify(latestSession)) {
           try {
-            await writeJsonAtomic(path.join(target.dir, OBSERVATION), {
+            await writeJsonAtomic(path.join(await observationDir(target), OBSERVATION), {
               userId: session.userId, roomId: session.roomId, count: entries.length, lastEventId: entries.at(-1)?.eventId ?? null,
             });
           } catch (error) {
@@ -164,8 +187,13 @@ export async function watchSession(files: SessionFiles, io: {
             eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
               .some(entry => entry.kind === 'message' && entry.sender !== session?.userId);
           }
-          if (eligible && await ownsSession() && (await readActivity(files)).state === 'idle') {
-            await writeActivity(files, 'busy', () => new Date(now));
+          const activity = await readActivity(files);
+          if (eligible && await ownsSession() && activity.state === 'idle') {
+            const epoch = activity.updatedAt;
+            const dedupFile = path.join(storage, 'monitor-wake-observed.json');
+            const observed = await readJson<{ epoch: string }>(dedupFile);
+            if (observed?.epoch === epoch) return;
+            await writeJsonAtomic(dedupFile, { epoch, line: request.line });
             io.write(request.line + '\n');
             emittedRequest = request.line;
           }
@@ -178,17 +206,17 @@ export async function watchSession(files: SessionFiles, io: {
       if (running) return;
       running = (async () => {
         do { dirty = false; await evaluate(); } while (dirty && !done);
-      })().catch(() => stop(1, 'watch_error')).finally(() => { running = undefined; if (dirty && !done) notify(); });
+      })().catch(error => stop(3, errorReason(error))).finally(() => { running = undefined; if (dirty && !done) notify(); });
     };
     let published = false;
     // Watch the directory rather than an inode: status/mode/session use atomic rename.
     watcher = watchDirectory(files.dir, (_event, filename) => {
       if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename)))) notify();
     });
-    watcher.on('error', () => stop(1, 'watch_error'));
+    watcher.on('error', error => stop(3, errorReason(error)));
     lastHeartbeat = Date.now();
-    await writeJsonAtomic(leaseFile(files, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
-    await writeJsonAtomic(path.join(files.dir, MARKER), { nonce, pid: process.pid });
+    await writeJsonAtomic(leaseFile(storage, nonce), { nonce, pid: process.pid, heartbeatAt: new Date(lastHeartbeat).toISOString() });
+    await writeJsonAtomic(path.join(storage, MARKER), { nonce, pid: process.pid, startedAt: Date.now() });
     published = true;
     // Re-list on every tick: subdirectory writes and channels joined after startup
     // need observation even on platforms without recursive fs.watch.
@@ -198,17 +226,17 @@ export async function watchSession(files: SessionFiles, io: {
     await finished;
     await running;
     return code;
-  } catch {
-    stop(1, 'watch_error');
-    return 1;
+  } catch (error) {
+    stop(3, errorReason(error));
+    return 3;
   } finally {
     clearInterval(timer);
     watcher?.close();
     io.signal.removeEventListener('abort', abort);
     // Remove only this generation's lease; comparing then unlinking the shared marker
     // could erase a replacement that races cleanup. The marker alone is not liveness.
-    await fs.unlink(leaseFile(files, nonce)).catch(error => {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await fs.unlink(leaseFile(storage, nonce)).catch(error => {
+      if (!['ENOENT', 'EACCES', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     });
   }
 }
