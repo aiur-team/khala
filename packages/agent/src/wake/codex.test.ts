@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
 import * as activityState from '../activity';
+import * as listeningMode from '../mode';
+import * as channels from '../channels';
 import { appendEntries } from '../inbox';
 import { channelFiles, ensureStateDir, openSessionDir, saveSession, writeJsonAtomic, stateRoot, type SessionFiles } from '../state';
 import { createCodexWakeDriver, createCodexWaker, type CodexWaker } from './codex';
@@ -32,8 +34,8 @@ async function append(id: string, kind: 'message' | 'event' = 'message') {
 async function activity(state: 'idle' | 'busy', at = time - 1) {
   await writeActivity(session, state, () => new Date(at));
 }
-function start() {
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, probe: async () => ({ available: true }), pollMs: 20,
+function start(pollMs = 20) {
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, probe: async () => ({ available: true }), pollMs,
     now: () => time, stderr: line => diagnostics.push(line) });
   waker.notify();
 }
@@ -50,7 +52,7 @@ beforeEach(async () => {
   outcome = { status: 'queued' };
   run.mockClear(); diagnostics.length = 0;
 });
-afterEach(async () => { await waker?.stop(); waker = undefined; vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
+afterEach(async () => { await waker?.stop(); waker = undefined; vi.useRealTimers(); vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 
 it('queues the fixed notice once for a burst of five appends', async () => {
   await activity('idle'); start();
@@ -285,13 +287,25 @@ it('joining and rejoining an empty channel preserves the other channel wake budg
 });
 
 it('does not renew an exhausted cursor budget by toggling async', async () => {
-  await append('a1'); await activity('idle'); start(); await wait();
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  // Drive evaluations explicitly while filesystem I/O and waitFor use real timers.
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const readMode = vi.spyOn(listeningMode, 'readListeningMode');
+  await append('a1'); await activity('idle'); start(100_000);
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   await writeJsonAtomic(files.mode, { mode: 'async' });
-  waker!.notify(); await wait();
+  waker!.notify();
+  // Observe the async evaluation before switching back; a sleep can skip it.
+  await vi.waitFor(() => expect(readMode.mock.settledResults).toContainEqual({ type: 'fulfilled', value: 'async' }));
+  const listChannels = vi.spyOn(channels, 'listChannels');
   await writeJsonAtomic(files.mode, { mode: 'sync' });
-  time += 60_000; waker!.notify(); await wait();
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(1));
+  // Starting a second evaluation proves the first finished, including any wake.
+  waker!.notify();
+  await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(2));
+  await waker!.stop();
   expect(run).toHaveBeenCalledTimes(2);
 });
 
