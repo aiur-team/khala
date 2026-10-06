@@ -1,0 +1,106 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "server/discover",
+    "params": {
+      "_meta": {
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {
+            "form": {},
+            "url": {}
+          },
+          "roots": {
+            "listChanged": true
+          }
+        },
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "antigravity-client",
+          "version": "v1.0.0"
+        },
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "initialize",
+    "params": {
+      "clientInfo": {
+        "name": "antigravity-client",
+        "version": "v1.0.0"
+      },
+      "protocolVersion": "2025-11-25",
+      "capabilities": {
+        "elicitation": {
+          "form": {},
+          "url": {}
+        },
+        "roots": {
+          "listChanged": true
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/list",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "_meta": {
+        "antigravity.google/artifacts_dir": "/tmp/claude-1000/spike-1115/home/.gemini/antigravity-cli/brain/875f669c-2fc9-4d22-989d-ce1395307566",
+        "antigravity.google/conversation_id": "875f669c-2fc9-4d22-989d-ce1395307566",
+        "progressToken": "99899414-94f4-429f-bf48-a4ad9932e4c6:4"
+      },
+      "name": "khala_status",
+      "arguments": {}
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "notifications/roots/list_changed",
+    "params": {}
+  }
+]
