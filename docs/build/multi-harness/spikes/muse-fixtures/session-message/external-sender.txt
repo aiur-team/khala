@@ -1,0 +1,36 @@
+# External (non-Muse) sender: `muse session-message` run from a plain shell, Muse 1.4.3-R5018.1, Linux.
+# Receiver: an idle interactive Muse TUI in a private tmux server, same user, same isolated HOME.
+
+## A. Default build, no overrides (receiver TUI session auburn-nova idle)
+$ muse session-message list --json
+{"schema_version":1,"status":"unavailable","error_code":"external_agent_ingress_closed"}
+external agent ingress is unavailable
+exit=1
+
+$ printf 'probe' | muse session-message send --target cedar-sinope --json
+{"schema_version":1,"status":"unavailable","error_code":"external_agent_ingress_closed","receipts":[]}
+external agent ingress is unavailable
+exit=1
+
+## B. Undocumented experimental override on the SENDER only (MUSE_EXPERIMENTAL_EXTERNAL_AGENT_INGRESS=1)
+$ MUSE_EXPERIMENTAL_EXTERNAL_AGENT_INGRESS=1 muse session-message list --json
+{"schema_version":1,"sessions":[{"session_id":"01a10fd6-0593-79f2-81da-eed39a2b37d1","session_name":"auburn-nova","workspace_label":"ws"}]}
+exit=0
+
+$ printf 'Khala spike 1117: please reply with exactly WAKE-ACK-1117.' | MUSE_EXPERIMENTAL_EXTERNAL_AGENT_INGRESS=1 muse session-message send --target 01a10fd6-0593-79f2-81da-eed39a2b37d1 --json
+{"schema_version":1,"status":"unavailable","target_session_id":"01a10fd6-...","error_code":"external_agent_ingress_closed",
+ "receipts":[{"stage":"target_resolved","disposition":"confirmed"},{"stage":"transport_accepted","disposition":"confirmed"}]}
+exit=1        # receiver TUI: no change, still idle
+
+## C. Override on BOTH sender and receiver (receiver TUI relaunched with the env var; session wool-deimos idle)
+$ printf 'Khala spike 1117: please reply with exactly WAKE-ACK-1117.' | MUSE_EXPERIMENTAL_EXTERNAL_AGENT_INGRESS=1 muse session-message send --target wool-deimos --json
+{"schema_version":1,"status":"unavailable","target_session_id":"01a10fd7-0920-7243-a04b-7323948b880a",
+ "error_code":"unverified_target_receipt","target_verification":"unverified_kernel_peer",
+ "receipts":[{"stage":"target_resolved","disposition":"confirmed"},{"stage":"transport_accepted","disposition":"confirmed"}],
+ "claimed_outcome":{"status":"rejected","error_code":"containment_limited",
+   "receipts":[...,{"stage":"target_admission","disposition":"refused"}],"containment_reason":"causal_metadata_invalid"}}
+session-message send failed: unverified_target_receipt
+exit=1        # receiver TUI: no change, still idle, no approval prompt shown
+
+# Same result with --display-context '{}' and with MUSE_SESSION_ID set to another (finished) session id or to the target's own id.
+# --display-context '{"sender_session_name":"khala"}' and '{"workspace_label":"khala"}' -> invalid_display_context (not attempted).

@@ -1,0 +1,1 @@
+NONCE-STDOUT-9058: the hook says the secret fruit is loquat.

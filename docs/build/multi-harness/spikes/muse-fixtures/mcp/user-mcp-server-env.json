@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "/tmp/claude-1000/s1117/mcp.py"
+  ],
+  "ppid": 2490076,
+  "env_subset": {
+    "HOME": "/tmp/claude-1000/s1117/home",
+    "MUSE_SESSION_ID": "01a10fd4-1959-7940-80e1-db5f5189fe43",
+    "SHELL": "/usr/bin/zsh"
+  }
+}
