@@ -2,6 +2,7 @@
 // rename section the agent detail pane shows for the viewer's own agents.
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { harnessInfo } from '@khala/contracts/m1/harness';
 import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/names';
@@ -245,24 +246,29 @@ function AgentRow({ agent, mode, onOpen, onRename, onSetMode }: Readonly<{
   onRename?: ((participantId: string) => void) | undefined;
   onSetMode?: SetModeHandler | undefined;
 }>) {
+  const capabilities = agent.harness ? harnessInfo(agent.harness) : null;
+  const asyncOnly = capabilities !== null && !capabilities.steer && !capabilities.sync;
+  // Generic-tier clients cannot apply mode changes, even if member state is stale.
+  const shownMode = asyncOnly ? 'async' : mode;
+  const fixedModeTip = asyncOnly ? 'This client has no hooks or wake.' : undefined;
   const label = agentLabel(agent);
   const opener = <button type="button" className="kh-rai" data-kh-agent={agent.participantId} onClick={() => onOpen(agent.participantId)}>
     <MemberAvatar member={agent} /><span><AgentName agent={agent} /><em>{harnessName(agent)}</em></span>
   </button>;
   const rename = agent.isViewerOwned && onRename ? <button type="button" className="kh-ib sm kh-rename-btn" aria-label={`Rename ${label}`}
     data-tip="Rename" onClick={() => onRename(agent.participantId)}><PencilIcon /></button> : null;
-  if (agent.isViewerOwned && onSetMode) {
-    return <ModeControl agent={agent} mode={mode} onSetMode={onSetMode} rename={rename}>{opener}</ModeControl>;
+  if (agent.isViewerOwned && onSetMode && !asyncOnly) {
+    return <ModeControl agent={agent} mode={shownMode} onSetMode={onSetMode} rename={rename}>{opener}</ModeControl>;
   }
   return <div className="kh-rrow">
     {opener}
     <span className="kh-racts">{agent.isViewerOwned ? <>
       {rename}
-      {/* No mode port (fixtures, harnesses): the reported mode, locked. */}
-      <Segmented icon locked label={`Listening mode for ${label}`} value={mode} options={MODES} />
-      <button type="button" className="kh-ib sm kh-mode-btn" disabled data-tip={modeTip(mode)}
-        aria-label={`Listening mode for ${label}: ${modeTip(mode)}`}><ModeIcon mode={mode} /></button>
-    </> : <span className="kh-mode-ro" role="img" data-tip={modeTip(mode)} aria-label={modeTip(mode)}><ModeIcon mode={mode} /></span>}</span>
+      {/* Async-only clients and rows without a mode port have fixed controls. */}
+      <Segmented icon locked {...(fixedModeTip ? { title: fixedModeTip } : {})} label={`Listening mode for ${label}`} value={shownMode} options={MODES} />
+      <button type="button" className="kh-ib sm kh-mode-btn" disabled data-tip={fixedModeTip ?? modeTip(shownMode)}
+        aria-label={`Listening mode for ${label}: ${modeTip(shownMode)}`}><ModeIcon mode={shownMode} /></button>
+    </> : <span className="kh-mode-ro" role="img" data-tip={modeTip(shownMode)} aria-label={modeTip(shownMode)}><ModeIcon mode={shownMode} /></span>}</span>
   </div>;
 }
 
