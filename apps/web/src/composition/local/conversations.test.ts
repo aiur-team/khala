@@ -1,7 +1,7 @@
 import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type LocalChannelSummary, type LocalEvent } from '@khala/contracts/m1/local';
-import { decodeRoomId, decodeOwnerId } from '@khala/contracts/messaging/ids';
+import { decodeRoomId, decodeOwnerId, type EventId } from '@khala/contracts/messaging/ids';
 import type { LocalHttp, LocalHttpResult } from './http';
 import { createLocalConversations, LAST_SEEN_KEY_PREFIX, type LocalConversations } from './conversations';
 
@@ -127,17 +127,30 @@ describe('local conversations', () => {
     s.unread()[1]!.answer({ kind: 'ok', value: page([event(301, LOCAL_OWNER_USER_ID)]) }); await flush();
     expect(s.snapshot()?.[0]?.unreadCount).toBeNull();
   });
-  it('clears unread while viewed and follows latest sequence until all holders release', async () => {
+  it('persists only the seen event, keeping later arrivals unread until explicitly read', async () => {
     const s = setup({ initialSeen: '5' }); s.snapshot(); await s.list();
     s.unread()[0]!.answer({ kind: 'ok', value: page([event(8)]) }); await flush();
-    const release = s.port.viewing(roomId); const other = s.port.viewing(roomId);
+    s.port.rememberEvent(event(8));
+    s.port.markRead!(ownerId, 1, roomId, event(8).eventId as EventId);
     expect(s.snapshot()?.[0]?.unreadCount).toBeNull(); expect(s.data.get(LAST_SEEN_KEY_PREFIX + roomId)).toBe('8');
     await s.list([{ ...summary, lastSeq: 9 }], 43);
-    expect(s.data.get(LAST_SEEN_KEY_PREFIX + roomId)).toBe('9'); expect(s.unread()).toHaveLength(1);
-    release(); release(); await s.list([{ ...summary, lastSeq: 10 }], 44);
-    expect(s.data.get(LAST_SEEN_KEY_PREFIX + roomId)).toBe('10'); expect(s.unread()).toHaveLength(1);
-    other(); await s.list([{ ...summary, lastSeq: 11 }], 45);
-    expect(s.unread()).toHaveLength(2); expect(s.unread()[1]?.path).toContain('after=10&wait=0');
+    expect(s.data.get(LAST_SEEN_KEY_PREFIX + roomId)).toBe('8');
+    s.unread()[1]!.answer({ kind: 'ok', value: page([event(9)]) }); await flush();
+    expect(s.snapshot()?.[0]?.unreadCount).toBe(1);
+    s.port.rememberEvent(event(9)); s.port.markRead!(ownerId, 1, roomId, event(9).eventId as EventId);
+    expect(s.snapshot()?.[0]?.unreadCount).toBeNull();
+    const reloaded = setup({ initialSeen: s.data.get(LAST_SEEN_KEY_PREFIX + roomId) });
+    reloaded.snapshot(); await reloaded.list([{ ...summary, lastSeq: 9 }]);
+    expect(reloaded.unread()).toHaveLength(0);
+    expect(reloaded.snapshot()?.[0]?.unreadCount).toBeNull();
+  });
+  it('retains the latest sequence after paging more than 200 older events', async () => {
+    const s = setup(); s.snapshot(); await s.list([{ ...summary, lastSeq: 500 }]);
+    s.port.rememberEvent(event(500));
+    for (let seq = 1; seq <= 201; seq++) s.port.rememberEvent(event(seq));
+    s.port.markRead!(ownerId, 1, roomId, event(500).eventId as EventId);
+    expect(s.data.get(LAST_SEEN_KEY_PREFIX + roomId)).toBe('500');
+    expect(s.snapshot()?.[0]?.unreadCount).toBeNull();
   });
   it('ignores late unread answers after viewing or a newer summary', async () => {
     const s = setup(); s.snapshot(); await s.list();
@@ -147,7 +160,7 @@ describe('local conversations', () => {
     s.unread()[0]!.answer({ kind: 'ok', value: page([event(8)]) }); await flush();
     expect(s.snapshot()?.[0]?.unreadCount).toBe(2);
     await s.list([{ ...summary, lastSeq: 10 }], 44);
-    const release = s.port.viewing(roomId); release();
+    s.port.rememberEvent(event(10)); s.port.markRead!(ownerId, 1, roomId, event(10).eventId as EventId);
     s.unread()[2]!.answer({ kind: 'ok', value: page([event(10)]) }); await flush();
     expect(s.snapshot()?.[0]?.unreadCount).toBeNull();
   });
@@ -176,9 +189,9 @@ describe('local conversations', () => {
     await s.list(); expect(s.unread()).toHaveLength(1); expect(s.snapshot()?.[0]?.unreadCount).toBeNull();
   });
   it.each([null, { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); } }])(
-    'keeps viewing markers when storage is unavailable', async storage => {
-      const s = setup({ storage }); const release = s.port.viewing(roomId); s.snapshot(); await s.list();
-      expect(s.unread()).toHaveLength(0); release(); await s.list([{ ...summary, lastSeq: 9 }], 43);
+    'keeps read markers when storage is unavailable', async storage => {
+      const s = setup({ storage }); s.port.rememberEvent(event(8)); s.port.markRead!(ownerId, 1, roomId, event(8).eventId as EventId); s.snapshot(); await s.list();
+      expect(s.unread()).toHaveLength(0); await s.list([{ ...summary, lastSeq: 9 }], 43);
       expect(s.unread()[0]?.path).toContain('after=8&wait=0');
     });
   it('isolates owners, subscribers and disposal of pending polls and unread reads', async () => {

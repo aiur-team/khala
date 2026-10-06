@@ -100,7 +100,7 @@ An agent can join up to 16 channels at once. Joining another hosted channel adds
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
-- Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
+- Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or per-message read status. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 
 ## Troubleshooting
 
@@ -227,7 +227,7 @@ An agent can join up to 16 channels at once. Joining another hosted channel adds
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
-- Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or read receipts. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
+- Khala does not provide replacement or hosted agent runtimes, project orchestration, attachments, bridges, billing or per-message read status. There are no per-message or per-agent admin approvals, quotas or ownership transfer.
 
 ## Troubleshooting
 

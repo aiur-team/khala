@@ -22,10 +22,9 @@ export function createLocalHumanPorts(input: { origin: string; limits: ContentLi
   const session = createLocalSession(http);
   const members = createLocalMembers(http, input.limits);
   const conversations = createLocalConversations(http);
-  const substrate = createLocalSubstrate({ http, limits: input.limits, members, generation: () => session.device.current().generation });
+  const substrate = createLocalSubstrate({ http, limits: input.limits, members, onEvent: event => conversations.rememberEvent(event), generation: () => session.device.current().generation });
   const channel = createLocalChannelService({
     principal: LOCAL_PRINCIPAL, actor: () => session.participant(), device: session.device, substrate, limits: input.limits,
-    onObserve: roomId => conversations.viewing(roomId),
   });
   let disposed = false;
   return {
