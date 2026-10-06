@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManagedFiles, formatJson, jsonFormat, pruneCreated, readManaged, textFormat } from './managed-file';
 import { runInstall } from './main';
+import { ensureStateDir, sessionFiles } from '../state';
 
 let home: string;
 let state: string;
@@ -28,6 +29,16 @@ const uninstall = async (file: string) => {
 const exists = (file: string) => fs.stat(file).then(() => true, () => false);
 
 describe('managed JSON file', () => {
+  it('allows the runtime to open its state directory after an installer recording', async () => {
+    const env = { XDG_STATE_HOME: path.join(home, 'runtime-state') };
+    const files = sessionFiles('cursor', 'smoke', env);
+    const file = path.join(home, 'settings.json');
+    await new ManagedFiles(path.join(env.XDG_STATE_HOME, 'khala')).write([
+      { current: await readManaged(file), text: '{}' },
+    ]);
+    await expect(ensureStateDir(files.dir)).resolves.toBeUndefined();
+  });
+
   it('leaves an absent file absent, with the directories it created', async () => {
     const file = path.join(home, 'cfg', 'tool', 'settings.json');
     await install(file);
