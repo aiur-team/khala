@@ -110,6 +110,29 @@ try {
   const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
   if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
 
+  // Copilot: execute the installed shell command with the CLI's event-less camelCase payload.
+  const copilotDir = path.join(home, '.copilot');
+  await fs.mkdir(copilotDir, { recursive: true });
+  await fs.writeFile(path.join(copilotDir, 'mcp-config.json'), JSON.stringify({ mcpServers: { other: { command: 'other' } } }));
+  check('install copilot', process.execPath, [script, 'install', 'copilot'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const cp = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
+  if (cp.mcpServers?.khala?.type !== 'local' || cp.mcpServers?.other?.command !== 'other') throw new Error('Copilot MCP config');
+  await mcpSmoke('copilot mcp-config.json server', cp.mcpServers.khala.command, cp.mcpServers.khala.args);
+  const cpHooks = JSON.parse(await fs.readFile(path.join(copilotDir, 'hooks', 'khala.json'), 'utf8'));
+  for (const event of ['sessionStart', 'userPromptSubmitted', 'postToolUse', 'agentStop']) {
+    const handler = cpHooks.hooks?.[event]?.[0];
+    if (handler?.type !== 'command' || !handler.bash || !handler.powershell) throw new Error(`Copilot hook ${event}`);
+    const hookArgs = windows ? ['-NoProfile', '-NonInteractive', '-Command', handler.powershell] : ['-c', handler.bash];
+    const hookOut = check(`copilot ${event} hook`, windows ? 'powershell.exe' : 'bash', hookArgs,
+      { shell: false, input: JSON.stringify({ sessionId: 'smoke-session', cwd: root }) }).trim();
+    if (hookOut !== '{}') throw new Error(`copilot hook printed ${hookOut}`);
+  }
+  check('install copilot (again)', process.execPath, [script, 'install', 'copilot'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  if (JSON.stringify(JSON.parse(await fs.readFile(path.join(copilotDir, 'hooks', 'khala.json'), 'utf8'))) !== JSON.stringify(cpHooks)) throw new Error('install copilot is not idempotent');
+  check('install copilot --uninstall', process.execPath, [script, 'install', 'copilot', '--uninstall'], { shell: false });
+  const cpRemoved = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
+  if (cpRemoved.mcpServers.khala || cpRemoved.mcpServers.other?.command !== 'other') throw new Error('Copilot uninstall');
+
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
   check('install opencode', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball, KHALA_OPENCODE_PLUGIN_SPEC: `khala-opencode@${version}` } });
