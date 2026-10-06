@@ -1,6 +1,8 @@
+import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import { resolveStateDir } from '../src/state';
+import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -68,9 +70,7 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     const input = JSON.parse(stdin);
     if (input?.hook_event_name !== 'Stop' || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
-    const root = io.env.XDG_STATE_HOME && path.isAbsolute(io.env.XDG_STATE_HOME)
-      ? io.env.XDG_STATE_HOME : path.join(io.env.HOME ?? os.homedir(), '.local/state');
-    const dir = path.join(root, 'khala', 'claude', input.session_id);
+    const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
     const nonce = randomBytes(6).toString('hex');
     const owner = path.join(dir, 'watcher.json');

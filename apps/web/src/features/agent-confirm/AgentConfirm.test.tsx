@@ -1,3 +1,4 @@
+import opencodeLogo from '../../ui/khala/assets/opencode.svg';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
@@ -11,6 +12,15 @@ function render(snapshot: AgentConfirmSnapshot) {
   return renderToStaticMarkup(<AgentConfirm controller={controller} roomHref={id => `/channels/${encodeURIComponent(id)}`} onOpenRoom={vi.fn()} />);
 }
 describe('AgentConfirm', () => {
+  it.each([['opencode', 'OpenCode'], ['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)']])(
+    'renders registry identity for %s', (harness, name) => {
+      // Wire contracts widen in U2; this tests the web rendering boundary independently.
+      const html = render({ state: 'review', view: { ...view, harness: harness as AgentJoinView['harness'] } });
+      expect(html).toContain(`Helper (${name}) wants to join Launch.`);
+      expect(html).toContain(`${name}</span>`);
+      if (harness === 'opencode') expect(html).toContain(renderToStaticMarkup(<img src={opencodeLogo} alt="" />));
+      if (harness === 'claude-code') expect(html).not.toContain('Claude Code');
+    });
   it('shows the label, harness and channel for review', () => {
     const html = render({ state: 'review', view });
     expect(html).toContain('Confirm agent');

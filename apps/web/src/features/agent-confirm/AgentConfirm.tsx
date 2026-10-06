@@ -2,17 +2,16 @@
 // card `.kh-fin` on a full-viewport page, below the brand row (§1.4).
 
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { AgentJoinView, Harness } from '@khala/contracts/m1/agent-join';
+import type { AgentJoinView } from '@khala/contracts/m1/agent-join';
 import { persistTheme, resolveInitialTheme } from '../../shell/theme';
 import type { ThemeChoice } from '../../shell/types';
 import { CheckIcon } from '../../ui/khala/icons';
-import { harnessLogo } from '../../ui/khala/identity';
+import { harnessDisplayName, harnessLogo } from '../../ui/khala/identity';
 import { Brand } from '../../ui/khala/KhalaApp';
 import type { AgentConfirmController, AgentConfirmError } from './controller';
 import '../../ui/khala/khala-app.css';
 import './agent-confirm.css';
 
-const harnessNames: Record<Harness, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 const errors: Record<AgentConfirmError, string> = {
   not_member: 'You are not a member of this channel.',
   not_found: 'This confirmation link is not valid.',
@@ -33,7 +32,7 @@ function initialTheme(): ThemeChoice {
 function Agent({ view }: Readonly<{ view: AgentJoinView }>) {
   const logo = harnessLogo(view.harness);
   return <>
-    <span className="kh-mchip" aria-hidden="true">{logo ? <img src={logo} alt="" /> : null}{harnessNames[view.harness]}</span>
+    <span className="kh-mchip" aria-hidden="true">{logo ? <img src={logo} alt="" /> : null}{harnessDisplayName(view.harness)}</span>
     <h1 className="kh-fin-n">{view.label}</h1>
   </>;
 }
@@ -90,7 +89,7 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: Page
       </> : null}
       {snapshot.state === 'review' ? <>
         <p className="kh-fin-p" aria-hidden="true">wants to join <b>{snapshot.view.channelName}</b></p>
-        <span className="kh-fin-sr">{snapshot.view.label} ({harnessNames[snapshot.view.harness]}) wants to join {snapshot.view.channelName}.</span>
+        <span className="kh-fin-sr">{snapshot.view.label} ({harnessDisplayName(snapshot.view.harness)}) wants to join {snapshot.view.channelName}.</span>
         <button type="button" className="kh-btn pri" onClick={() => void controller.confirm()}>Confirm</button>
       </> : null}
       {snapshot.state === 'connecting' ? <>

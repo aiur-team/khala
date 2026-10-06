@@ -214,3 +214,12 @@ it.each(['khala_status', 'khala_read', 'khala_send', 'khala_event', 'khala_leave
     expect(responses[0].error.code).toBe(-32602);
   }
 });
+
+
+it('hints to rejoin an old-control restore using the previously authorized link', async () => {
+  const client = fake();
+  client.status = vi.fn(async () => ({ state: 'disconnected' as const, unread: 0,
+    channels: [{ channel: 'A', state: 'disconnected' as const, detail: 'rejoin_needed', unread: 0, listeningMode: 'sync' as const }] }));
+  const { responses } = await exchange([call('khala_status')], client);
+  expect(responses[0].result.content[0].text).toContain('previously authorized');
+});

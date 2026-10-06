@@ -3,8 +3,14 @@
 
 import { createContext, createElement, useCallback, useContext, type ReactNode } from 'react';
 import { fnv1a } from '@khala/contracts/m1/colors';
+import { harnessInfo } from '@khala/contracts/m1/harness';
 import claudeSymbol from './assets/claude-symbol.svg';
 import codexColor from './assets/codex-color.svg';
+import cursorLogo from './assets/cursor.svg';
+import opencodeLogo from './assets/opencode.svg';
+import copilotLogo from './assets/copilot.svg';
+import geminiLogo from './assets/gemini.svg';
+import qwenLogo from './assets/qwen.svg';
 
 /** The viewer's own hue (`source:4080`). */
 export const VIEWER_HUE = 214;
@@ -102,9 +108,19 @@ export function buildIdBadgeResolver(participants: readonly BadgeSubject[]): (pa
   return participant => (ownersByName.get(participant.displayName)?.size ?? 0) > 1 ? `#${participant.ownerId.slice(-4)}` : undefined;
 }
 
-/** The bundled logo URL for a harness, or `null` for one Khala has no logo for. */
+/** Names for identity surfaces distinguish unregistered MCP clients. */
+export function harnessDisplayName(id: string): string {
+  const info = harnessInfo(id);
+  return info.registered ? info.displayName : `MCP agent (${id})`;
+}
+
+const harnessLogos = new Map<string, string>([
+  ['claude', claudeSymbol], ['codex', codexColor], ['cursor', cursorLogo],
+  ['opencode', opencodeLogo], ['copilot', copilotLogo], ['gemini', geminiLogo], ['qwen', qwenLogo],
+]);
+
+/** The bundled logo URL for the registry's logo key, or initials fallback. */
 export function harnessLogo(harness: string): string | null {
-  if (harness === 'claude') return claudeSymbol;
-  if (harness === 'codex') return codexColor;
-  return null;
+  const key = harnessInfo(harness).logoKey;
+  return key === null ? null : harnessLogos.get(key) ?? null;
 }

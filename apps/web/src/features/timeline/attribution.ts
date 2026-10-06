@@ -1,4 +1,4 @@
-import type { Harness } from '@khala/contracts/m1/agent-join';
+import { harnessInfo } from '@khala/contracts/m1/harness';
 import type { Participant } from '@khala/contracts/m1/participants';
 // Attribution uses the authenticated `ParticipantView` (kind,
 // ownerId, displayName), the viewer's own `ownerId` and local send/echo state
@@ -61,10 +61,8 @@ export function buildDisplayNameResolver(participants: readonly ParticipantView[
   };
 }
 
-export const HARNESS_NAMES: Readonly<Record<Harness, string>> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
-
 export function rowLabels(attribution: Attribution, detail: Participant | undefined): Readonly<{ author: string | null; kindLabel: string }> {
-  if (detail?.kind === 'agent') return { author: detail.displayName, kindLabel: `${HARNESS_NAMES[detail.harness]} agent` };
+  if (detail?.kind === 'agent') return { author: detail.displayName, kindLabel: `${harnessInfo(detail.harness).displayName} agent` };
   if (detail?.kind === 'unknown') return { author: 'Unknown', kindLabel: 'Unknown' };
   return { author: null, kindLabel: ownershipLabel(attribution) };
 }
