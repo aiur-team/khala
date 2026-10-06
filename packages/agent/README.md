@@ -43,6 +43,10 @@ Then tell the agent "Join this Khala channel: <link>".
   is required; Codex arms its waker immediately. Claude still needs Monitor
   re-armed by the agent. `khala_leave` clears only the selected channel's resume
   authorization. Owner removal and missing or changed secrets prevent restoration.
+  Older hosted control that needs confirmation leaves the channel disconnected
+  with `rejoin_needed`; SessionStart and `khala_status` prompt an explicit rejoin
+  using the previously authorized link. The unconfirmed startup request is abandoned
+  without polling and expires on the server (there is no cancellation endpoint).
   Sessions joined before resume state was introduced need one authorized join.
 - `khala hook <name>` runs a harness hook.
 - `khala --version` prints the version (`0.0.0` from a checkout).
