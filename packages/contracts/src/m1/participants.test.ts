@@ -23,14 +23,14 @@ it('enforces each variant exact keys', () => {
   }
   expect(decodeParticipant({ ...unknown, ownerId: 'owner' }).ok).toBe(false);
   expect(decodeParticipant({ ...human, harness: 'claude' }).ok).toBe(false);
-  expect(decodeParticipant({ ...agent, harness: 'bad' }).ok).toBe(false);
+  expect(decodeParticipant({ ...agent, harness: 'Bad' }).ok).toBe(false);
   expect(decodeParticipant({ ...human, displayName: 'a\nb' }).ok).toBe(false);
   expect(decodeParticipant({ kind: 'other' }).ok).toBe(false);
   expect(decodeParticipant(null).ok).toBe(false);
 });
 it('decodes owner records with nonempty owner labels and valid agent labels', () => {
   expect(decodeAgentOwnerRecord(record)).toEqual({ ok: true, value: record });
-  for (const patch of [{ ownerLabel: '' }, { label: ' Claude' }, { harness: 'bad' }, { createdAt: '2026-02-30T00:00:00Z' }, { extra: true }]) expect(decodeAgentOwnerRecord({ ...record, ...patch }).ok).toBe(false);
+  for (const patch of [{ ownerLabel: '' }, { label: ' Claude' }, { harness: 'Bad' }, { createdAt: '2026-02-30T00:00:00Z' }, { extra: true }]) expect(decodeAgentOwnerRecord({ ...record, ...patch }).ok).toBe(false);
   expect(decodeAgentOwnerRecord({}).ok).toBe(false);
 });
 it('enforces byte limits on display and owner labels', () => {
@@ -43,7 +43,7 @@ it('bounds lists, rejects duplicates and preserves element error paths', () => {
   expect(decodeParticipantsResponse({ participants }).ok).toBe(true);
   expect(decodeParticipantsResponse({ participants: [...participants, human] })).toEqual({ ok: false, error: { path: 'participants', code: 'too_long' } });
   expect(decodeParticipantsResponse({ participants: [human, human] })).toEqual({ ok: false, error: { path: 'participants[1]', code: 'duplicate' } });
-  expect(decodeParticipantsResponse({ participants: [human, { ...agent, harness: 'bad' }] })).toEqual({ ok: false, error: { path: 'participants[1].harness', code: 'invalid_value' } });
+  expect(decodeParticipantsResponse({ participants: [human, { ...agent, harness: 'Bad' }] })).toEqual({ ok: false, error: { path: 'participants[1].harness', code: 'invalid_value' } });
   expect(decodeParticipantsResponse({ participants: [] })).toEqual({ ok: true, value: { participants: [] } });
   expect(decodeParticipantsResponse({ participants: 'bad' }).ok).toBe(false);
   expect(decodeParticipantsResponse({ participants: [], extra: true }).ok).toBe(false);
@@ -81,4 +81,9 @@ it('accepts canonical chosen initials only on the appropriate participant kind',
     expect(decodeParticipant(value).ok).toBe(false);
   }
   expect(decodeParticipantsResponse({ participants: [{ ...human, initials: 'kw' }] })).toEqual({ ok: false, error: { path: 'participants[0].initials', code: 'invalid_value' } });
+});
+
+it('decodes Muse in participants and owner records', () => {
+  expect(decodeParticipantsResponse({ participants: [{ ...agent, harness: 'muse' }] })).toMatchObject({ ok: true });
+  expect(decodeAgentOwnerRecord({ ...record, harness: 'muse' })).toMatchObject({ ok: true });
 });

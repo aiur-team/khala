@@ -16,7 +16,7 @@ import { durableStores } from './testing/store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
 
-async function fixture(options: { username?: string; harness?: 'claude' | 'codex'; email?: string } = {}) {
+async function fixture(options: { username?: string; harness?: string; email?: string } = {}) {
   let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
   const blobs = durableStores();
   const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
@@ -455,4 +455,14 @@ it('does not reuse an approval in another room or provision on unavailable/corru
   await expect(f.handlers.autoConfirm(nextId)).rejects.toThrow('unavailable');
   corrupt.mockRestore();
   expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(1);
+});
+
+it('confirms an unregistered Cline agent through the hosted join store', async () => {
+  const f = await fixture({ username: 'kevin', harness: 'cline' });
+  const response = await f.handlers.confirm(f.request('POST'));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ label: 'kevin-Agent', harness: 'cline', state: 'confirmed' });
+  expect(f.deps.provisioner.provision).toHaveBeenCalledWith(expect.objectContaining({ label: 'kevin-Agent' }));
+  const map = await f.store.read(agentOwnerRecordKey(credentials.userId));
+  expect(map.kind === 'record' && map.record.value).toMatchObject({ label: 'kevin-Agent', harness: 'cline' });
 });

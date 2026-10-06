@@ -65,7 +65,8 @@ function fakeHelper() {
     if (override !== undefined) return override;
     if (h.down) throw network('ECONNREFUSED');
     const tail = url.pathname.split('/').at(-1);
-    if (url.searchParams.get('wire') === '2') {
+    if (['events', 'messages', 'members'].includes(tail!) && call.method === 'GET') {
+      expect(url.searchParams.get('wire')).toBe('2');
       const content = { user: other, membership: 'join', displayname: 'kevin-Gemini', kind: 'agent', harness: 'gemini' };
       const event = { ...events[0]!, type: 'm.room.member', content };
       if (tail === 'events') harnessWireProbes.push(decodeLocalEventsPage({ events: [event], next: event.seq }).ok);

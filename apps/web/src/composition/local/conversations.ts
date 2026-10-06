@@ -69,7 +69,7 @@ export function createLocalConversations(http: LocalHttp, options?: Readonly<{
     const marker = { lastSeq: s.lastSeq, lastSeen: lastSeen(s.roomId) };
     reads.set(s.roomId, marker);
     try {
-      const result = await http.get(localRoomPath(s.roomId, `/events?after=${marker.lastSeen}&wait=0`), decodeLocalEventsPage, abort.signal);
+      const result = await http.get(localRoomPath(s.roomId, `/events?after=${marker.lastSeen}&wait=0&wire=2`), decodeLocalEventsPage, abort.signal);
       // A newer summary or an intervening view invalidates this answer.
       if (abort.signal.aborted || result.kind !== 'ok' || reads.get(s.roomId) !== marker
         || lastSeen(s.roomId) !== marker.lastSeen || !needsUnread(s)
@@ -105,7 +105,7 @@ export function createLocalConversations(http: LocalHttp, options?: Readonly<{
     let backoff = 1000;
     while (!abort.signal.aborted) {
       try {
-        const result = await http.get(`${LOCAL_CHANNELS_PATH}?${revision === null ? '' : `since=${revision}&`}wait=25`,
+        const result = await http.get(`${LOCAL_CHANNELS_PATH}?${revision === null ? '' : `since=${revision}&`}wait=25&wire=2`,
           decodeLocalChannelsPage, abort.signal, 35_000);
         if (abort.signal.aborted) return;
         if (result.kind === 'ok') {

@@ -6,7 +6,7 @@ import { localChannelPath, type LocalHttp } from './http';
 export function createLocalAdministration(http: LocalHttp): ChannelAdministrationPort {
   return {
     async creator(roomId, options) {
-      const result = await http.get(localChannelPath(roomId), decodeLocalChannelSummary, options?.signal);
+      const result = await http.get(localChannelPath(roomId, '?wire=2'), decodeLocalChannelSummary, options?.signal);
       if (result.kind === 'ok') return ok(LOCAL_OWNER_ID as OwnerId);
       return result.kind === 'error' && result.status === 404 ? rejected('not_found') : unavailable();
     },

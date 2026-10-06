@@ -1,7 +1,9 @@
 import { type Decoded, type DecodeError, decodeWith, fail, identifier, label, literal, object, utcTimestamp, utf8Length } from '../messaging/decode';
 import { validateAgentName } from '../messaging/agent-names';
 
-export type Harness = 'claude' | 'codex' | 'cursor';
+import { isHarnessId, type HarnessId } from './harness';
+
+export type Harness = HarnessId;
 
 // POST /api/agent/join            (no auth; rate-limited per IP)
 export type AgentJoinRequest = { link: string; harness: Harness; label: string; sessionId?: string; rejoinSecret?: string };   // label 1..40 chars, validateAgentName rules
@@ -43,7 +45,6 @@ export type AgentJoinView = { joinId: string; label: string; harness: Harness; c
  * - **Origin header.** Every agent-client POST sends `Origin: <app origin>`, the origin of the channel link. The gateway rejects a POST whose Origin is foreign (`apps/control/src/auth/csrf.ts:14-20`).
  * - **Confirm URL.** The `confirmUrl` is `<app origin>/agent/confirm?joinId=<joinId>`.
  */
-export const HARNESSES = ['claude', 'codex', 'cursor'] as const;
 export const AGENT_LABEL_MAX_CHARS = 40;
 export const M1_LABEL_MAX_BYTES = 512;
 export const CHANNEL_LINK_MAX_BYTES = 2048;
@@ -59,7 +60,9 @@ export const humanAgentJoinStatusPath = (id: string): string => `/api/human/agen
 export const agentConfirmPagePath = (id: string): string => `/agent/confirm?joinId=${encodeURIComponent(id)}`;
 
 export function readHarness(input: unknown, path: string): Harness {
-  return literal(input, path, HARNESSES);
+  if (typeof input !== 'string') fail(path, 'wrong_type');
+  if (!isHarnessId(input)) fail(path, 'invalid_value');
+  return input;
 }
 
 export function readAgentLabel(input: unknown, path: string): string {
