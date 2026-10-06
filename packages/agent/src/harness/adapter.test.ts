@@ -43,6 +43,7 @@ describe('harness adapters', () => {
   });
   it('exposes only the existing waker, watcher and installer capabilities', () => {
     expect(adapterFor('codex')!.wakeLadder?.map(driver => driver.rung)).toEqual([1]);
+    expect(adapterFor('codex')!.wakeWarningName).toBe('codex');
     expect(adapterFor('claude')!.wakeLadder).toBeUndefined();
     expect(adapterFor('cursor')!.wakeLadder).toBeUndefined();
     expect(adapterFor('claude')!.watcherStatus).toBe(true);

@@ -86,6 +86,10 @@ export async function settleAttempts(dir: string, input: {
   activity: { state: string; updatedAt: string | number } | null;
   promptText?: string;
 }): Promise<WakeSettlement[]> {
+  // The atomic journal is authoritative. An attempt published after this read
+  // remains pending for the next hook or poll; never overwrite it from this snapshot.
+  const snapshot = await readJson<SessionData>(path.join(dir, 'wake-journal.json'), { attempts: [], state: {} });
+  if (!snapshot.attempts.length) return [];
   return locked(dir, data => {
     const results: WakeSettlement[] = [];
     const remaining: WakeAttempt[] = [];

@@ -100,3 +100,18 @@ it('keeps prompt delivery and busy activity when verification state is corrupt',
   expect((await readActivity(files)).state).toBe('busy');
   expect(stderr).toContain('wake_verification_failed');
 });
+
+it.each(['codex', 'claude', 'cursor'] as const)('leaves both wake files unchanged on a %s prompt with no pending wake', async harness => {
+  const adapter = adapterFor(harness)!;
+  const codec: DeliverCodec = { ...adapter.codec!, parse: () => ({ sessionId: 'session', event: 'prompt', continuation: false, promptText: 'hello' }) };
+  const active = await openSessionDir(harness, 'session', io.env);
+  const journal = path.join(active.dir, 'wake-journal.json');
+  const state = path.join(active.dir, 'wake-state.json');
+  await fs.writeFile(journal, '{ "attempts": [], "state": {"native":{"failures":1}} }');
+  await fs.writeFile(state, '{ "native": {"failures":1} }');
+  const before = await Promise.all([journal, state].map(async file => ({ body: await fs.readFile(file, 'utf8'), stat: await fs.stat(file) })));
+  expect(await deliverCore('prompt', { ...adapter, codec }, io)).toBe(0);
+  const after = await Promise.all([journal, state].map(async file => ({ body: await fs.readFile(file, 'utf8'), stat: await fs.stat(file) })));
+  expect(after).toEqual(before);
+  expect((await readActivity(active)).state).toBe('busy');
+});

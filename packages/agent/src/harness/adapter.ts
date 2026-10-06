@@ -24,6 +24,8 @@ export type HarnessAdapter = Readonly<{
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   wakeLadder?: readonly WakeDriver[];
+  /** Diagnostic prefix for wake errors; defaults to wake. */
+  wakeWarningName?: string;
   rejoinable(source: string): boolean;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;

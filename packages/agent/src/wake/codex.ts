@@ -17,7 +17,7 @@ export type CodexWaker = WakeLadder;
 
 export function createCodexWakeDriver(deps: Pick<CodexWakerDeps, 'port' | 'stderr'> = {}): WakeDriver {
   return {
-    id: 'queue', rung: 1, optIn: false, minIdleMs: 0,
+    id: 'queue', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 30_000,
     // U13 introduces the nonce-bearing argv. Preserve U2 queue goldens until then.
     verification: 'none',
     available: () => true,
