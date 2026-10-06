@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ClientEvent, SyncState, createClient, type MatrixClient } from 'matrix-js-sdk';
 import { createBrowserDeviceService, type BrowserDeviceDependencies } from '@khala/messaging/browser-device/index';
 import { createMatrixBrowserPorts } from './matrix-browser';
+import { guardedListeningModeSetter } from './listening-modes';
 
 vi.mock('matrix-js-sdk', async importOriginal => ({
   ...await importOriginal<typeof import('matrix-js-sdk')>(), createClient: vi.fn(),
@@ -21,9 +22,14 @@ it('opens locally and completes device start while cross-signing bootstrap never
     userHasCrossSigningKeys: vi.fn(async () => false), bootstrapCrossSigning,
   };
   let synced: ((state: SyncState) => void) | undefined;
+  let membership = 'join';
+  const roomId = '!room:test' as never;
+  const sendEvent = vi.fn(async () => ({ event_id: '$mode' }));
   const client = {
     initRustCrypto: vi.fn(async () => {}), getCrypto: () => crypto,
     getUserId: () => '@bob:test', stopClient: vi.fn(),
+    getRoom: (id: string) => id === roomId ? { getMyMembership: () => membership, hasEncryptionStateEvent: () => true } : null,
+    sendEvent,
     on: vi.fn((event, listener) => { if (event === ClientEvent.Sync) synced = listener; }),
     off: vi.fn(), startClient: vi.fn(async () => { synced?.(SyncState.Prepared); }),
   } as unknown as MatrixClient;
@@ -34,6 +40,7 @@ it('opens locally and completes device start while cross-signing bootstrap never
   }, limits: {} as never, participants: {
     resolve: vi.fn(async () => new Map([['@bob:test', { participantId: 'bob', kind: 'human', ownerId: 'bob', displayName: 'Bob', deviceIds: [] } as never]])),
   } });
+  expect(ports.isJoined(roomId)).toBe(false);
   const deps = vi.mocked(createBrowserDeviceService).mock.calls[0]![0] as BrowserDeviceDependencies;
   const signal = new AbortController().signal;
   await deps.credentials.resolve(principal, signal);
@@ -50,11 +57,25 @@ it('opens locally and completes device start while cross-signing bootstrap never
   await expect(engine.identity()).resolves.toEqual({ fingerprint: 'fingerprint', created: false });
   await expect(engine.start(signal)).resolves.toBeUndefined();
   expect(ports.participant()).toMatchObject({ participantId: 'bob' });
+  // No timeline has loaded: owner commands use current SDK membership.
+  expect(ports.isJoined(roomId)).toBe(true);
+  expect(ports.isJoined('!unknown:test' as never)).toBe(false);
+  const setMode = guardedListeningModeSetter({ roomId, viewer: ports.participant()!, ownerOf: () => 'bob',
+    joined: () => ports.isJoined(roomId), matrixUserId: () => '@agent:test', send: ports.setListeningMode });
+  await expect(setMode('agent', 'async')).resolves.toBe('sent');
+  expect(sendEvent).toHaveBeenCalledOnce();
+  for (const next of ['leave', 'ban', 'invite']) {
+    membership = next;
+    await expect(setMode('agent', 'steer')).resolves.toBe('failed');
+  }
+  expect(sendEvent).toHaveBeenCalledOnce();
+  membership = 'join';
   await vi.advanceTimersByTimeAsync(0);
   expect(bootstrapCrossSigning).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(10_000);
   expect(vi.getTimerCount()).toBe(0);
   await engine.close();
+  expect(ports.isJoined(roomId)).toBe(false);
 });
 
 it('reports the Live sync state from client sync events, scoped to the active owner and generation', async () => {
