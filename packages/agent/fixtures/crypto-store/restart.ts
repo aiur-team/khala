@@ -38,7 +38,7 @@ if (process.argv[4] === 'wipe-during-save') {
 }
 const undecryptableEventIds = store.undecryptableEventIds ?? [];
 if (process.argv[4] === 'retry-ids') {
-  await store.rememberUndecryptable(Array.from({ length: 105 }, (_, i) => `$missing-${i}`));
+  await store.rememberUndecryptable(Array.from({ length: 105 }, (_, i) => ({ id: `$missing-${i}`, firstSeen: Date.now() })));
   await store.rememberJoin(100);
 }
 client.stopClient();

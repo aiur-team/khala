@@ -572,7 +572,7 @@ it.each([{ errcode: 'M_UNKNOWN_TOKEN' }, { httpStatus: 401 }])('quietly cleans u
 it('retries saved undecryptable events older than the inbox cursor and retains failures', async () => {
   const rememberUndecryptable = vi.fn();
   sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
-    undecryptableEventIds: ['$retry', '$still-missing'], rememberUndecryptable,
+    undecryptableEventIds: ['$retry', '$still-missing'].map(id => ({ id, firstSeen: Date.now() })), rememberUndecryptable,
     sync: { startup: vi.fn() }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
   membership = 'join';
   const retry = event('$retry', '@owner:hs', 120);
@@ -585,5 +585,24 @@ it('retries saved undecryptable events older than the inbox cursor and retains f
   await session.join('!r:hs'); await session.stop();
   expect(received).toEqual(['$retry']); expect(fetchRoomEvent).toHaveBeenCalledTimes(2);
   expect(client.createMessagesRequest).toHaveBeenCalledOnce();
-  expect(rememberUndecryptable).toHaveBeenLastCalledWith(['$still-missing']);
+  expect(rememberUndecryptable).toHaveBeenLastCalledWith([{ id: '$still-missing', firstSeen: expect.any(Number) }]);
+});
+
+it.each(['expired', 'not-found', 'forbidden', '404', 'before-join', 'transient'] as const)('persists retry pruning on restore: %s', async kind => {
+  const firstSeen = Date.now() - (kind === 'expired' ? 8 * 24 * 60 * 60 * 1000 : 1000);
+  const rememberUndecryptable = vi.fn();
+  sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    undecryptableEventIds: [{ id: '$retry', firstSeen }], rememberUndecryptable,
+    sync: { startup: vi.fn() }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  membership = 'join';
+  const fetchRoomEvent = vi.fn();
+  if (kind === 'before-join') fetchRoomEvent.mockResolvedValue(event('$retry', '@owner:hs', 99));
+  else fetchRoomEvent.mockRejectedValue(kind === 'not-found' ? { errcode: 'M_NOT_FOUND' } : kind === 'forbidden' ? { errcode: 'M_FORBIDDEN' } : { httpStatus: kind === '404' ? 404 : 503 });
+  Object.assign(client, { fetchRoomEvent });
+  client.createMessagesRequest.mockResolvedValueOnce({ chunk: [event('$cursor', '@owner:hs', 150)], end: 'older' });
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' }, restoreStopAtEventId: '$cursor' });
+  await session.join('!r:hs'); await session.stop();
+  expect(fetchRoomEvent).toHaveBeenCalledTimes(kind === 'expired' ? 0 : 1);
+  if (kind === 'transient') expect(rememberUndecryptable).not.toHaveBeenCalled();
+  else expect(rememberUndecryptable).toHaveBeenLastCalledWith([]);
 });

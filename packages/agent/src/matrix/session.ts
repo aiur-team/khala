@@ -1,3 +1,4 @@
+import { retryUnexpired } from './decryption-retry';
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
@@ -36,16 +37,19 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const emitted = new Set<string>();
   // Only events originating in a live timeline may later be emitted by Decrypted.
   const liveEvents = new Set<MatrixEvent>();
-  const undecryptableIds = new Set(persistent?.undecryptableEventIds ?? []);
+  const undecryptableIds = new Map((persistent?.undecryptableEventIds ?? []).map(entry => [entry.id, entry]));
   let retrySave = Promise.resolve();
+  const saveRetries = () => {
+    const entries = [...undecryptableIds.values()];
+    retrySave = retrySave.then(() => persistent?.rememberUndecryptable(entries)).catch(() => log('decryption_retry_save_failed'));
+  };
   const rememberDecryption = (event: MatrixEvent) => {
     const id = event.getId();
     if (stopped || !persistent || !id) return;
     const failed = event.getType() === 'm.room.encrypted' || event.isDecryptionFailure();
-    if (failed) { if (undecryptableIds.has(id)) return; undecryptableIds.add(id); } else if (!undecryptableIds.delete(id)) return;
-    if (undecryptableIds.size > 100) undecryptableIds.delete(undecryptableIds.values().next().value!);
-    const ids = [...undecryptableIds];
-    retrySave = retrySave.then(() => persistent.rememberUndecryptable(ids)).catch(() => log('decryption_retry_save_failed'));
+    if (failed) { if (undecryptableIds.has(id)) return; undecryptableIds.set(id, { id, firstSeen: Date.now() }); } else if (!undecryptableIds.delete(id)) return;
+    if (undecryptableIds.size > 100) undecryptableIds.delete(undecryptableIds.keys().next().value!);
+    saveRetries();
   };
   const joinTimes = new Map<string, number>();
   const cancellations = new Set<() => void>();
@@ -302,17 +306,26 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
         // A limited /sync can omit an offline command. Replay to the durable
         // inbox tail, falling back to the original join when it is unavailable.
         // Inbox IDs and command metadata keep saved-sync replay idempotent.
-        for (const id of [...undecryptableIds]) {
+        let pruned = false;
+        for (const [id, entry] of [...undecryptableIds]) {
           if (stopped) throw new Error('session_stopped');
+          if (!retryUnexpired(entry)) { undecryptableIds.delete(id); pruned = true; continue; }
           try {
             const raw = await client.fetchRoomEvent(roomId, id);
             const event = client.getEventMapper()({ ...raw, room_id: roomId });
-            if (event.getTs() < joinedAt) { undecryptableIds.delete(id); continue; }
+            if (event.getTs() < joinedAt) { undecryptableIds.delete(id); pruned = true; continue; }
             liveEvents.add(event);
             await client.decryptEventIfNeeded(event).catch(() => log('recovery_decryption_failed'));
             rememberDecryption(event);
-          } catch { log('recovery_event_retry_failed'); }
+          } catch (error) {
+            const status = typeof error === 'object' && error !== null && 'httpStatus' in error ? error.httpStatus : undefined;
+            if (matrixCode(error) === 'M_NOT_FOUND' || matrixCode(error) === 'M_FORBIDDEN' || status === 404 || status === 403) {
+              undecryptableIds.delete(id); pruned = true;
+            }
+            log('recovery_event_retry_failed');
+          }
         }
+        if (pruned) saveRetries();
         let token: string | null = null;
         const seenTokens = new Set<string>();
         let pages = 0;
