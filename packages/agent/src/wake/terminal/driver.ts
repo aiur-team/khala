@@ -10,6 +10,8 @@ import { isEmptyPrompt, type EmptyPrompt } from './prompt-guard';
 import { ownsTerminal, runTerminalCommand, type CommandRunner } from './process';
 import { inspectTmux, sendTmux, tmuxArgv, type PaneView } from './tmux';
 import { inspectWezterm, sendWezterm } from './wezterm';
+import { inspectKitty, sendKitty } from './kitty';
+import { inspectIterm2, sendIterm2 } from './iterm2';
 
 export type TerminalDriverDeps = {
   run?: CommandRunner;
@@ -30,15 +32,19 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
     if (!cleanup && !await driverAllowed(stateRoot(ctx.env), ctx.harness, 'terminal', true)) return { reason: 'terminal_consent_required' };
     if (!cleanup && (await readWakeState(ctx.files.dir)).terminal?.disabled) return { reason: 'nonce_timeout' };
     const pane = await readPane(ctx.files);
-    if (!pane) return { reason: ctx.harness === 'codex' && (ctx.env.TMUX || ctx.env.WEZTERM_PANE)
-      ? 'terminal_capture_pending_prompt' : 'no remote-control API' };
+    if (!pane) return { reason: ctx.env.ITERM_SESSION_ID && !/^w\d+t\d+p\d+:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(ctx.env.ITERM_SESSION_ID)
+      ? 'iterm2_session_id_invalid' : ctx.harness === 'codex' && (ctx.env.TMUX || ctx.env.WEZTERM_PANE || ctx.env.KITTY_WINDOW_ID || ctx.env.ITERM_SESSION_ID)
+      ? 'terminal_capture_pending_prompt' : ctx.env.ITERM_SESSION_ID ? 'iterm2_session_id_invalid' : 'no remote-control API' };
     const activity = await readActivity(ctx.files);
     // Do not let the test idle override weaken this transport's safety boundary.
     if (!cleanup && (activity.state !== 'idle' || ctx.now - Date.parse(activity.updatedAt) < 30_000)) return { reason: 'terminal_not_idle' };
     const agent = await read(pane.agentPid);
     if (!agent || (pane.agentStartTime !== undefined && pane.agentStartTime !== agent.startTime)) return { reason: 'terminal_agent_exited' };
+    if (pane.kind === 'iterm2' && platform !== 'darwin') return { reason: 'iterm2_requires_macos' };
     const inspection: { view?: PaneView | undefined; reason?: string } = pane.kind === 'tmux'
       ? { view: await inspectTmux(pane, run, ctx.env, ctx.signal, read) ?? undefined }
+      : pane.kind === 'kitty' ? await inspectKitty(pane, run, ctx.env, ctx.signal, read)
+      : pane.kind === 'iterm2' ? await inspectIterm2(pane, run, ctx.env, ctx.signal)
       : await inspectWezterm(pane, run, ctx.env, ctx.signal);
     const view = inspection.view;
     if (!view) return { reason: inspection.reason ?? 'terminal_pane_unsafe' };
@@ -64,8 +70,9 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
       if (!ready.pane || ctx.signal.aborted) return 'skipped';
       const beforeSend = await readActivity(ctx.files);
       if (beforeSend.state !== 'idle' || beforeSend.updatedAt !== activity.updatedAt) return 'skipped';
-      const send = ready.pane.kind === 'tmux' ? sendTmux : sendWezterm;
-      await send(ready.pane, line, false, run, ctx.env, ctx.signal);
+      const send = ready.pane.kind === 'tmux' ? sendTmux : ready.pane.kind === 'kitty' ? sendKitty
+        : ready.pane.kind === 'iterm2' ? sendIterm2 : sendWezterm;
+      if (await send(ready.pane, line, false, run, ctx.env, ctx.signal, ready.view) === 'skipped') return 'skipped';
       const sameComposer = (final: Awaited<ReturnType<typeof safeProbe>>) => {
         if (!final.pane || !final.view || final.pane.agentPid !== ready.pane!.agentPid
           || final.pane.agentStartTime !== ready.pane!.agentStartTime || final.pane.capturedAt !== ready.pane!.capturedAt
@@ -87,7 +94,7 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
           await run('tmux', tmuxArgv(current.pane!, ['send-keys', '-t', current.pane!.paneId,
             '-N', String(line.length), 'BSpace']), ctx.env, cleanupCtx.signal);
         } else {
-          await sendWezterm(current.pane!, '\x7f'.repeat(line.length), false, run, ctx.env, cleanupCtx.signal);
+          await send(current.pane!, '\x7f'.repeat(line.length), false, run, ctx.env, cleanupCtx.signal, current.view);
         }
       };
       try {
@@ -102,7 +109,9 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
         try { await cleanup(); } finally { await failAttempt(ctx.files.dir, nonce, ctx.now + 500); }
         return;
       }
-      await send(final.pane!, line, true, run, ctx.env, ctx.signal);
+      if (await send(final.pane!, line, true, run, ctx.env, ctx.signal, final.view) === 'skipped') {
+        try { await cleanup(); } finally { await failAttempt(ctx.files.dir, nonce, ctx.now + 500); }
+      }
     },
   };
 }

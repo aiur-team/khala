@@ -4,7 +4,7 @@ import { readJson, writeJsonAtomic, type SessionFiles } from '../../state';
 import { nearestNonShellAncestor, readProcess, type ProcessReader } from '../../harness/proc';
 
 export type PaneCapture = {
-  kind: 'tmux' | 'wezterm';
+  kind: 'tmux' | 'wezterm' | 'kitty' | 'iterm2';
   paneId: string;
   socket?: string;
   agentPid: number;
@@ -12,13 +12,17 @@ export type PaneCapture = {
   agentStartTime?: string;
 };
 
+export const sessionUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
 function validPane(value: unknown): value is PaneCapture {
   if (!value || typeof value !== 'object') return false;
   const pane = value as PaneCapture;
-  return typeof pane.paneId === 'string' && (pane.kind === 'tmux' ? /^%\d+$/.test(pane.paneId) : pane.kind === 'wezterm' && /^\d+$/.test(pane.paneId))
+  return typeof pane.paneId === 'string' && (pane.kind === 'tmux' ? /^%\d+$/.test(pane.paneId)
+    : pane.kind === 'iterm2' ? sessionUuid.test(pane.paneId) : ['wezterm', 'kitty'].includes(pane.kind) && /^\d+$/.test(pane.paneId))
     && Number.isSafeInteger(pane.agentPid) && pane.agentPid > 0
     && typeof pane.capturedAt === 'string' && Number.isFinite(Date.parse(pane.capturedAt))
-    && (pane.socket === undefined || (pane.kind === 'tmux' && typeof pane.socket === 'string' && pane.socket.startsWith('/') && !pane.socket.includes('\0')))
+    && (pane.socket === undefined || (typeof pane.socket === 'string' && !pane.socket.includes('\0')
+      && (pane.kind === 'kitty' || (pane.kind === 'tmux' && pane.socket.startsWith('/')))))
     && (pane.agentStartTime === undefined || (typeof pane.agentStartTime === 'string' && pane.agentStartTime.length > 0));
 }
 
@@ -43,6 +47,14 @@ export async function capturePane(files: SessionFiles, env: NodeJS.ProcessEnv,
     if (!socket?.startsWith('/') || socket.includes('\0') || !/^%\d+$/.test(env.TMUX_PANE ?? '')) return clear();
     target = { kind: 'tmux', paneId: env.TMUX_PANE!, socket };
   } else if (/^\d+$/.test(env.WEZTERM_PANE ?? '')) target = { kind: 'wezterm', paneId: env.WEZTERM_PANE! };
+  else if (env.KITTY_WINDOW_ID !== undefined) {
+    if (!/^\d+$/.test(env.KITTY_WINDOW_ID)) return clear();
+    target = { kind: 'kitty', paneId: env.KITTY_WINDOW_ID, ...(env.KITTY_LISTEN_ON === undefined ? {} : { socket: env.KITTY_LISTEN_ON }) };
+  } else if (env.ITERM_SESSION_ID !== undefined) {
+    const uuid = /^w\d+t\d+p\d+:(.+)$/.exec(env.ITERM_SESSION_ID)?.[1];
+    if (!uuid || !sessionUuid.test(uuid)) return clear();
+    target = { kind: 'iterm2', paneId: uuid };
+  }
   else return clear();
   const agent = await nearestNonShellAncestor(options.pid ?? process.pid, options.readProcess ?? readProcess);
   if (!agent) return clear();

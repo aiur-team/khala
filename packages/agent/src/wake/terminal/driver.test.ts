@@ -174,3 +174,88 @@ it('reports capture pending for Codex until its first prompt in a supported term
  delete ctx.env.TMUX;
  expect(await make().unavailableReason!(ctx)).toBe('no remote-control API');
 });
+
+it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and submission guards', async kind => {
+ const paneId = kind === 'kitty' ? '9' : '12345678-abcd-abcd-abcd-123456789abc';
+ await writeJsonAtomic(path.join(ctx.files.dir, 'pane.json'), { kind, paneId, ...(kind === 'kitty' ? { socket: 'unix:/tmp/kitty' } : {}),
+  agentPid: 100, agentStartTime: '1', capturedAt: new Date(at).toISOString() });
+ let text = '› ', cursorX = 2, cursorY = 1, owned = true, skipEnter = false;
+ const sent: string[] = [];
+ const hostRun: CommandRunner = async (_command, args) => {
+  if (kind === 'iterm2') {
+   const view = { tty: '/dev/ttys001', line: text, cursorX, cursorY };
+   if (args.length === 2) return JSON.stringify(view);
+   if (skipEnter && args[2] === '\r') { text += ' draft'; cursorX = text.length; return '{"status":"not_empty"}'; }
+   if (JSON.stringify(view) !== args[3]) return '{"status":"not_empty"}';
+   const value = args[2]!; sent.push(value);
+   if (/^\x7f+$/.test(value)) text = text.slice(0, -value.length);
+   else if (value !== '\r') text += value;
+   cursorX = text.length;
+   return '{"status":"sent"}';
+  }
+  if (args.at(-1) === 'ls') return JSON.stringify([{ tabs: [{ windows: [{ id: 9, foreground_processes: [{ pid: 100 }] }] }] }]);
+  if (args[0] === '-o') return 'ttys001';
+  if (args.includes('get-text')) return `transcript\n${text}\nfooter\x1b[?25h\x1b[${cursorY + 1};${cursorX + 1}H\x1b[?12h`;
+  if (args.includes('send-text')) {
+   const value = args.at(-1)!; sent.push(value);
+   if (/^\x7f+$/.test(value)) text = text.slice(0, -value.length);
+   else if (value !== '\\r') text += value;
+   cursorX = text.length;
+  }
+  return '';
+ };
+ const driver = make({ run: hostRun, platform: 'darwin', ownsTerminal: async () => owned });
+ text = '› draft'; cursorX = 7;
+ expect(await driver.wake(ctx, wakeLine('1234abcd'))).toBe('skipped');
+ expect(sent).toEqual([]); expect(await readWakeState(ctx.files.dir)).toEqual({});
+ for (const body of ['$(evil);\n\r', '"`shell`💬', '\x1b[2J']) {
+  await expect(driver.wake(ctx, body)).rejects.toThrow('invalid_terminal_wake_line');
+ }
+ text = '› '; cursorX = 2;
+ await driver.wake(ctx, wakeLine('1234abcd'));
+ expect(sent).toEqual([wakeLine('1234abcd'), kind === 'kitty' ? '\\r' : '\r']);
+ // As in U14, exercise arbitrary inbox bodies through the real ladder.
+ const alphabet = ['$(evil)', '; Enter', '\n\r', '"', '`shell`', '💬', '\x1b[2J'];
+ for (let seed = 0; seed < 12; seed++) {
+  const files = await openSessionDir('codex', `${kind}-fuzz-${seed}`, ctx.env);
+  await writeJsonAtomic(path.join(files.dir, 'pane.json'), { kind, paneId, ...(kind === 'kitty' ? { socket: 'unix:/tmp/kitty' } : {}),
+   agentPid: 100, agentStartTime: '1', capturedAt: new Date(at).toISOString() });
+  await writeActivity(files, 'idle', () => new Date(at - 30_000));
+  const body = Array.from({ length: 8 }, (_, i) => alphabet[(seed * 7 + i * 3) % alphabet.length]).join('');
+  await appendEntries(files, [{ eventId: `event-${seed}`, roomId: 'room', ts: 'now', sender: 'peer', senderLabel: body,
+   senderKind: 'human', body, kind: 'message' }]);
+  text = '› '; cursorX = 2; sent.length = 0;
+  const loop = createWakeLadder({ files, harness: 'codex', sessionId: `${kind}-fuzz-${seed}`, env: ctx.env,
+   drivers: [driver], pollMs: 100_000, now: () => at });
+  try {
+   loop.notify(); await vi.waitFor(() => expect(sent).toHaveLength(2));
+   expect(sent[0]).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/);
+   expect(sent[1]).toBe(kind === 'kitty' ? '\\r' : '\r');
+  } finally { await loop.stop(); }
+ }
+ for (const change of ['activity', 'consent', 'draft', 'row', 'owner', 'abort', ...(kind === 'iterm2' ? ['enter-skip'] : [])]) {
+  const files = await openSessionDir('codex', `${kind}-cleanup-${change}`, ctx.env);
+  await writeJsonAtomic(path.join(files.dir, 'pane.json'), { kind, paneId, ...(kind === 'kitty' ? { socket: 'unix:/tmp/kitty' } : {}),
+   agentPid: 100, agentStartTime: '1', capturedAt: new Date(at).toISOString() });
+  await writeActivity(files, 'idle', () => new Date(at - 30_000));
+  await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: { 'codex/terminal': { at: 'now' } }, off: {} });
+  text = '› '; cursorX = 2; cursorY = 1; owned = true; skipEnter = false; sent.length = 0;
+  const controller = new AbortController();
+  const cancelled = make({ run: hostRun, platform: 'darwin', ownsTerminal: async () => owned, delay: async () => {
+   if (change === 'activity') await writeActivity(files, 'busy', () => new Date(at));
+   if (change === 'consent') await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: {}, off: {} });
+   if (change === 'draft') { text += ' draft'; cursorX = text.length; }
+   if (change === 'row') cursorY++;
+   if (change === 'owner') owned = false;
+   if (change === 'abort') controller.abort();
+   if (change === 'enter-skip') skipEnter = true;
+  } });
+  await recordAttempt(files.dir, { nonce: '1234abcd', driver: 'terminal', at, deadline: at + 10_000 });
+  await cancelled.wake({ ...ctx, files, signal: controller.signal }, wakeLine('1234abcd'));
+  const cleanupExpected = ['activity', 'consent', 'abort'].includes(change);
+  expect(sent).toEqual(cleanupExpected ? [wakeLine('1234abcd'), '\x7f'.repeat(wakeLine('1234abcd').length)] : [wakeLine('1234abcd')]);
+  expect(text).toBe(cleanupExpected ? '› ' : '› ' + wakeLine('1234abcd') + (['draft', 'enter-skip'].includes(change) ? ' draft' : ''));
+  expect((await readWakeState(files.dir)).terminal?.failures).toBe(1);
+ }
+
+});

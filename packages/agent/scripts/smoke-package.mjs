@@ -82,6 +82,8 @@ try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
   const bin = path.join(binDir, windows ? 'khala.cmd' : 'khala');
   const script = path.join(prefix, ...(windows ? [] : ['lib']), 'node_modules', 'khala-cli', 'dist', 'khala.mjs');
+  await fs.access(path.join(path.dirname(script), 'iterm2_send.py'));
+  console.log('ok packaged iTerm2 helper');
   const reported = check('khala --version', quote(bin), ['--version']).trim();
   if (reported !== version) throw new Error(`khala --version printed ${reported}, expected ${version}`);
   check('hook deliver', quote(bin), ['hook', 'deliver', '--harness', 'claude'], { input: '{}' });

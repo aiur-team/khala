@@ -42,6 +42,7 @@ const result = await build({
   logLevel: 'warning',
   metafile: true,
 });
+await fs.copyFile(`${agent}src/wake/terminal/iterm2_send.py`, `${dist}/iterm2_send.py`);
 const entry = `${dist}/khala.mjs`;
 await fs.writeFile(entry, '#!/usr/bin/env node\n' + await fs.readFile(entry, 'utf8'));
 await fs.chmod(entry, 0o755);
