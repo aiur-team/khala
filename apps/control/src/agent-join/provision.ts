@@ -41,10 +41,23 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
         if (typeof body?.access_token !== 'string' || !body.access_token) return false;
         token = body.access_token;
         if (body.user_id !== userId || body.device_id !== deviceId) return false;
-        const response = await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
-          method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ displayname: name }) });
-        return response.status === 200;
+        // Global profile PUTs make Synapse regenerate bare member events and
+        // erase Khala's inviter and listening mode. Rename each membership instead.
+        const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+        const joined = await request('/_matrix/client/v3/joined_rooms', { headers });
+        if (joined.status !== 200) return false;
+        const rooms = await joined.json() as { joined_rooms?: unknown } | null;
+        if (!Array.isArray(rooms?.joined_rooms) || !rooms.joined_rooms.every(room => typeof room === 'string' && room)) return false;
+        for (const roomId of rooms.joined_rooms) {
+          const path = `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(userId)}`;
+          const current = await request(path, { headers });
+          if (current.status !== 200) return false;
+          const content = await current.json() as Record<string, unknown> | null;
+          if (!content || Array.isArray(content) || typeof content !== 'object' || content.membership !== 'join') return false;
+          const response = await request(path, { method: 'PUT', headers, body: JSON.stringify({ ...content, displayname: name }) });
+          if (response.status !== 200) return false;
+        }
+        return true;
       } catch { return false; }
       finally {
         if (token) {
