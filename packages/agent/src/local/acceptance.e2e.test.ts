@@ -24,7 +24,7 @@ import { ensureStateDir, channelFiles, readJson, writeJsonAtomic } from '../stat
 import { readEntries } from '../inbox';
 import { eventually, readEgressLog, nonLoopbackAttempts, matrixModules } from './fixtures/egress';
 import { createWorld, cleanupWorld, cli, raw, admin, deliver, armClaudeWake, inbox, mode, codexCalls, helperFile,
-  openBrowser, ownerOpen, McpProcess, type World } from './fixtures/e2e-harness';
+  openBrowser, ownerOpen, McpProcess, startAgent, type World } from './fixtures/e2e-harness';
 
 const owners: Record<string, string> = { AE1: 'KI-120/KI-136/KI-137', AE2: 'KI-120/KI-121/KI-133', AE3: 'KI-121/KI-133',
   AE4: 'KI-121', AE5: 'KI-140/KI-141/KI-142/KI-143/KI-144', AE6: 'KI-121/KI-133/KI-134/KI-142',
@@ -351,7 +351,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await world.page!.keyboard.press('Escape');
   });
   acceptance('AE9', 'single-use and expired links fail while browser GET preserves a link', async () => {
-    probe = await McpProcess.start(world, 'claude', 'e2e-probe'); world.probe = probe;
+    probe = await startAgent(world, 'claude', 'e2e-probe'); world.probe = probe;
     expect(toolData(await probe.call('khala_join', { link: channel.selfLink })), context('AE9')).toEqual({ error: 'link_unavailable' });
     const expired = ((await cli(world, 'link', 'refactor')).data as { shareLink: string }).shareLink;
     await cli(world, 'stop');
@@ -583,7 +583,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       const rejoinFile = path.join(agent.files.dir, 'rejoin.json');
       const rejoin = await readFile(rejoinFile, 'utf8');
       await agent.close();
-      agent = await McpProcess.start(multi, 'claude', agent.sessionId);
+      agent = await startAgent(multi, 'claude', agent.sessionId);
       // Local capabilities are single-use; fresh links preserve the same shared
       // rejoin secret and test identity continuity without replaying consumed links.
       for (const target of [ecosystem, optimism]) {

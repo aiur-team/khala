@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LocalChannelCreated } from '@khala/contracts/m1/local';
-import { createWorld, cleanupWorld, cli, admin, deliver, inbox, armClaudeWake, McpProcess } from './fixtures/e2e-harness';
+import { createWorld, cleanupWorld, cli, admin, deliver, inbox, armClaudeWake, startAgent } from './fixtures/e2e-harness';
 import { eventually, readEgressLog } from './fixtures/egress';
 
 // Real helper, MCP process, inbox, hooks and wake path; the egress guard records
@@ -28,7 +28,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('MCP restore delivery', () 
       const body = `@kevin-${harness === 'codex' ? 'Codex' : 'Claude'} missed-during-MCP-gap`;
       expect((await send(body)).status).toBe(200);
       expect((await inbox(agent)).some(entry => entry.body === body)).toBe(false);
-      const restarted = await McpProcess.start(world, harness, agent.sessionId);
+      const restarted = await startAgent(world, harness, agent.sessionId);
       world[harness] = restarted;
       if (harness === 'codex') await restarted.call('khala_status');
       await eventually(async () => (await inbox(restarted)).some(entry => entry.body === body));

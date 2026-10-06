@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { sessionFiles } from '../../state';
+import { adapterFor } from '../../harness';
+import type { HarnessAdapter } from '../../harness/adapter';
+import { conformanceDrivers } from '../../harness/conformance/drivers';
+import type { FakeHarnessDriver, FakeSession, HookEvent } from '../../harness/conformance/driver';
 import { listChannels } from '../../channels';
 import { readEntries } from '../../inbox';
 import { readListeningMode } from '../../mode';
@@ -27,17 +31,19 @@ export type World = {
 
 // The recording lane is explicitly outside AE10; never inherit the runner's guard into it.
 function runtimeEnv(world: World, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  if (world.guard) return guardedEnv(world.log, { ...world.env, ...extra });
   const env = { ...world.env, ...extra };
+  // Runner color settings must not add Node warnings to hook diagnostics.
+  if (env.NO_COLOR !== undefined) env.FORCE_COLOR = undefined;
+  if (world.guard) return guardedEnv(world.log, env);
   delete env.NODE_OPTIONS; delete env.KHALA_EGRESS_LOG;
   return env;
 }
 function trackGroup(world: World, child: ChildProcessWithoutNullStreams): void {
   if (!world.guard && child.pid) world.processGroups.add(child.pid);
 }
-function runRuntime(world: World, args: string[], stdin = ''): Promise<ProcessResult> {
+function runRuntime(world: World, args: string[], stdin = '', extra: NodeJS.ProcessEnv = {}): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { env: runtimeEnv(world), stdio: 'pipe', detached: !world.guard });
+    const child = spawn(process.execPath, args, { env: runtimeEnv(world, extra), stdio: 'pipe', detached: !world.guard });
     trackGroup(world, child);
     let stdout = ''; let stderr = '';
     const timeout = setTimeout(() => child.kill('SIGKILL'), 30_000);
@@ -57,10 +63,12 @@ export class McpProcess {
   readonly closed: Promise<void>;
   private nextId = 0;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  private constructor(readonly world: World, readonly harness: Harness, readonly sessionId: string) {
-    this.files = sessionFiles(harness, sessionId, world.env);
-    this.child = spawn(process.execPath, [bin, 'mcp', '--harness', harness], {
-      env: runtimeEnv(world, { CLAUDE_CODE_SESSION_ID: sessionId }), stdio: 'pipe', detached: !world.guard,
+  private constructor(readonly world: World, readonly adapter: HarnessAdapter, readonly driver: FakeHarnessDriver,
+    readonly session: FakeSession, entrypoint = bin) {
+    const harness = adapter.id as Harness; const sessionId = session.id;
+    this.files = sessionFiles(harness, sessionId, { ...world.env, ...session.mcpEnv });
+    this.child = spawn(process.execPath, [entrypoint, 'mcp', '--harness', harness], {
+      env: runtimeEnv(world, session.mcpEnv), stdio: 'pipe', detached: !world.guard,
     });
     trackGroup(world, this.child);
     this.child.stderr.setEncoding('utf8').on('data', chunk => { this.stderr += chunk; });
@@ -82,6 +90,8 @@ export class McpProcess {
     this.child.once('error', () => this.fail(new Error('mcp_spawn_failed')));
     this.closed = new Promise(resolve => this.child.once('close', () => { this.fail(new Error('mcp_closed')); resolve(); }));
   }
+  get harness(): Harness { return this.adapter.id as Harness; }
+  get sessionId(): string { return this.session.id; }
   get pid(): number { return this.child.pid!; }
   private fail(error: Error) {
     for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
@@ -96,8 +106,10 @@ export class McpProcess {
       this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
-  static async start(world: World, harness: Harness, sessionId: string): Promise<McpProcess> {
-    const agent = new McpProcess(world, harness, sessionId); world.agents.push(agent);
+  static async start(world: World, adapter: HarnessAdapter, driver: FakeHarnessDriver,
+    session: FakeSession = driver.newSession(world.root), entrypoint?: string): Promise<McpProcess> {
+    await driver.prepareSession?.(session, { ...world.env, ...session.mcpEnv });
+    const agent = new McpProcess(world, adapter, driver, session, entrypoint); world.agents.push(agent);
     await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'local-acceptance', version: '1' } });
     agent.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const listed = await agent.rpc<{ tools?: { name: string }[] }>('tools/list', {});
@@ -108,7 +120,7 @@ export class McpProcess {
     return agent;
   }
   call(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
-    return this.rpc<ToolResult>('tools/call', { name, arguments: args, ...(this.harness === 'codex' ? { _meta: { threadId: this.sessionId } } : {}) });
+    return this.rpc<ToolResult>('tools/call', { name, arguments: args, ...(this.session.mcpMeta ? { _meta: this.session.mcpMeta } : {}) });
   }
   async close(): Promise<void> {
     this.child.stdin.end();
@@ -121,13 +133,32 @@ export async function createWorld(options: { guard?: boolean } = {}): Promise<Wo
   const root = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-local-e2e-'));
   const state = path.join(root, 'state'); const fakeBin = path.join(root, 'bin');
   await mkdir(state, { mode: 0o700 }); await mkdir(fakeBin, { mode: 0o700 });
+  await writeFile(path.join(fakeBin, 'package.json'), JSON.stringify({ type: 'commonjs' }));
   const calls = path.join(fakeBin, 'codex-calls.log');
-  // Resolve the log relative to the executable: queue intentionally receives a restricted environment.
-  await writeFile(path.join(fakeBin, 'codex'), `#!/bin/sh
-if [ "$*" = "queue --help" ]; then echo '--thread --message'; exit 0; fi
-printf '%s\\n' "$*" >> "$(dirname "$0")/codex-calls.log"
-exit 0
+  await writeFile(path.join(fakeBin, 'wake-calls.jsonl'), '', { mode: 0o600 });
+  // Executables resolve their logs beside themselves, even under restricted wake envs.
+  for (const command of ['codex', 'tmux', 'wezterm', 'kitten', 'python3']) {
+    await writeFile(path.join(fakeBin, command), `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+const root = __dirname, command = path.basename(__filename), argv = process.argv.slice(2);
+if (command === 'codex' && argv.join(' ') === 'queue --help') { console.log('--thread --message'); process.exit(0); }
+fs.appendFileSync(path.join(root, 'wake-calls.jsonl'), JSON.stringify({ command, argv }) + '\\n');
+if (command === 'codex') { fs.appendFileSync(path.join(root, 'codex-calls.log'), argv.join(' ') + '\\n'); process.exit(0); }
+if (command !== 'tmux') process.exit(1);
+const file = path.join(root, 'terminal.json');
+if (!fs.existsSync(file)) process.exit(1);
+const pane = JSON.parse(fs.readFileSync(file, 'utf8'));
+const action = argv[0] === '-S' ? argv[2] : argv[0];
+if (action === 'display-message') console.log([pane.pid, 0, 0, 2 + (pane.composer || '').length, 0, pane.tty, 0].join('|'));
+else if (action === 'capture-pane') console.log('❯' + (pane.composer ? ' ' + pane.composer : ''));
+else if (action === 'send-keys') {
+  if (argv.includes('-l')) pane.composer = argv[argv.indexOf('-l') + 1];
+  else if (argv.at(-1) === 'Enter') { pane.submitted = pane.composer; pane.composer = ''; }
+  else process.exit(1);
+  fs.writeFileSync(file, JSON.stringify(pane));
+} else process.exit(1);
 `, { mode: 0o755 });
+  }
   await writeFile(calls, '', { mode: 0o600 });
   const port = await freePort(); const log = path.join(root, 'egress.jsonl');
   await writeFile(log, '', { mode: 0o600 });
@@ -146,10 +177,20 @@ exit 0
   if (!guard) { delete env.NODE_OPTIONS; delete env.KHALA_EGRESS_LOG; }
   const world = { guard, processGroups: new Set<number>(), root, state, port, origin: `http://127.0.0.1:${port}`, log, env, agents: [], watchers: [], requests: [], blocked: [] } as unknown as World;
   try {
-    world.claude = await McpProcess.start(world, 'claude', 'e2e-claude');
-    world.codex = await McpProcess.start(world, 'codex', 'e2e-codex');
+    world.claude = await startAgent(world, 'claude', 'e2e-claude');
+    world.codex = await startAgent(world, 'codex', 'e2e-codex');
     return world;
   } catch (error) { await cleanupWorld(world); throw error; }
+}
+/** Legacy acceptance identities use the same driver syntax as Tier B. */
+export async function startAgent(world: World, harness: Harness, sessionId: string): Promise<McpProcess> {
+  const driver = conformanceDrivers[harness]!;
+  const sample = driver.newSession(world.root);
+  const session = { ...sample, id: sessionId,
+    mcpEnv: Object.fromEntries(Object.entries(sample.mcpEnv).map(([key, value]) => [key, value === sample.id ? sessionId : value])),
+    ...(sample.mcpMeta ? { mcpMeta: Object.fromEntries(Object.entries(sample.mcpMeta).map(([key, value]) => [key, value === sample.id ? sessionId : value])) } : {}),
+  };
+  return McpProcess.start(world, adapterFor(harness)!, driver, session);
 }
 export async function cli(world: World, ...args: string[]) {
   const result = await runRuntime(world, [bin, 'local', ...args]);
@@ -168,11 +209,46 @@ export const helperFile = (world: World) => readHelperFile(world.env);
 export async function codexCalls(world: World): Promise<string[]> {
   return (await readFile(path.join(world.root, 'bin/codex-calls.log'), 'utf8')).split('\n').filter(Boolean);
 }
+export async function wakeCalls(world: World): Promise<{ command: string; argv: string[] }[]> {
+  return (await readFile(path.join(world.root, 'bin/wake-calls.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+}
+/** Real PTY ownership plus a fake remote-control binary; no user terminal is touched. */
+export async function prepareTmux(agent: McpProcess): Promise<void> {
+  if (process.platform !== 'linux' || agent.world.guard) throw new Error('terminal_fixture_requires_unguarded_linux');
+  const file = path.join(agent.world.root, 'bin/terminal.json');
+  const source = `const fs = require('node:fs'); fs.writeFileSync(process.argv[1], JSON.stringify({pid: process.pid, tty: fs.readlinkSync('/proc/self/fd/0')})); setInterval(() => {}, 1000);`;
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  if (!existsSync(file)) {
+  const child = spawn('script', ['-q', '-c', `stty raw -echo; exec ${quote(process.execPath)} -e ${quote(source)} ${quote(file)}`, '/dev/null'],
+    { env: runtimeEnv(agent.world), stdio: 'pipe', detached: !agent.world.guard });
+  trackGroup(agent.world, child); child.stdout.resume(); child.stderr.resume();
+  let spawnError: Error | undefined;
+  child.once('error', error => { spawnError = error; });
+  await eventually(async () => {
+    if (spawnError || child.exitCode !== null) throw new Error('terminal_fixture_exited');
+    return existsSync(file);
+  });
+  }
+  const pane = JSON.parse(await readFile(file, 'utf8')) as { pid: number; tty: string };
+  agent.world.processGroups.add(pane.pid);
+  const { readProcess } = await import('../../harness/proc');
+  const identity = await readProcess(pane.pid);
+  if (!identity) throw new Error('terminal_fixture_exited');
+  await writeFile(path.join(agent.files.dir, 'pane.json'), JSON.stringify({ kind: 'tmux', paneId: '%7',
+    socket: path.join(agent.world.root, 'tmux.sock'), agentPid: pane.pid, agentStartTime: identity.startTime, capturedAt: new Date().toISOString() }));
+}
 export async function deliver(agent: McpProcess, event: 'PostToolUse' | 'UserPromptSubmit' | 'Stop', prompt?: string): Promise<HookFrame | null> {
   const result = await runRuntime(agent.world, [bin, 'hook', 'deliver', '--harness', agent.harness],
-    JSON.stringify({ session_id: agent.sessionId, hook_event_name: event, ...(prompt ? { prompt } : {}) }));
+    agent.driver.hookStdin(({ PostToolUse: 'tool', UserPromptSubmit: 'prompt', Stop: 'stop' } as const)[event],
+      { ...agent.session, ...(prompt !== undefined ? { promptText: prompt } : {}) }), agent.session.mcpEnv);
   if (result.code !== 0) throw new Error('deliver_failed');
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
+}
+export async function hook(agent: McpProcess, event: HookEvent, extra: { continuation?: boolean; promptText?: string } = {}) {
+  const result = await runRuntime(agent.world, [bin, 'hook', 'deliver', '--harness', agent.harness],
+    agent.driver.hookStdin(event, { ...agent.session, ...extra }), agent.session.mcpEnv);
+  if (result.code !== 0) throw new Error('deliver_failed');
+  return agent.driver.readHookStdout(result.stdout.trim());
 }
 export type WakeWatcher = { child: ChildProcessWithoutNullStreams; exited: Promise<{ code: number | null; stderr: string }>; running: boolean; kill: () => void };
 export async function armClaudeWake(agent: McpProcess): Promise<WakeWatcher> {
