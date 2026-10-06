@@ -28,6 +28,8 @@ export type HarnessAdapter = Readonly<{
   wakeLadder?: readonly WakeDriver[];
   /** Measured empty input text and cursor column for safe terminal wakes. */
   emptyPrompt?: EmptyPrompt;
+  /** Planned consent-gated fallbacks; runtime availability remains explicit. */
+  wakeConsentDrivers?: readonly Pick<WakeDriver, 'id' | 'rung' | 'optIn'>[];
   /** Diagnostic prefix for wake errors; defaults to wake. */
   wakeWarningName?: string;
   /** Restore a known session before the first MCP request. */

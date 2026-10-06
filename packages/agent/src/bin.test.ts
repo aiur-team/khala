@@ -21,7 +21,7 @@ afterEach(async () => { await rm(fixture, { recursive: true, force: true }); });
 
 function run(args: string[], stdin = '') {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [join(fixture, 'bin/khala.mjs'), ...args], { stdio: 'pipe' });
+    const child = spawn(process.execPath, [join(fixture, 'bin/khala.mjs'), ...args], { stdio: 'pipe', env: { ...process.env, FORCE_COLOR: '0' } });
     let stdout = ''; let stderr = '';
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
@@ -41,7 +41,7 @@ const echo = `export default async function run(stdin: string, argv: readonly st
 describe('C12 source dispatcher', () => {
   it('prints the version and reports usage for unknown commands', async () => {
     expect(await run(['--version'])).toEqual({ code: 0, stdout: '0.0.0\n', stderr: '' });
-    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala install opencode | khala install mcp --print [--harness <id>] | khala --version\n' });
+    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala install opencode | khala install mcp --print [--harness <id>] | khala --version\n' });
   });
   it('reports absent MCP modules and passes argv and the module exit code', async () => {
     expect(await run(['mcp'])).toEqual({ code: 1, stdout: '', stderr: 'khala: mcp not available\n' });
@@ -90,4 +90,11 @@ describe('C12 source dispatcher', () => {
     await hook('nested', 'import { value } from "./value"; export default async function run(): Promise<number> { return value; }');
     expect(await run(['hook', 'nested'])).toEqual({ code: 0, stdout: '', stderr: '' });
   });
+});
+
+it('dispatches wake commands lazily and preserves invalid-choice exit 2', async () => {
+  expect(await run(['wake', 'status'])).toEqual({ code: 1, stdout: '', stderr: 'khala: wake not available\n' });
+  await mkdir(join(fixture, 'src/wake'));
+  await writeFile(join(fixture, 'src/wake/cli.ts'), `export default async function run(argv: readonly string[]) { console.log(JSON.stringify(argv)); return 2; }`);
+  expect(await run(['wake', 'on', '--driver', 'bad'])).toEqual({ code: 2, stdout: '["on","--driver","bad"]\n', stderr: '' });
 });

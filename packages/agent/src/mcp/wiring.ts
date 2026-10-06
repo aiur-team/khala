@@ -5,7 +5,7 @@ import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import type { createCodexWaker } from '../wake/codex';
 import { createWakeLadder } from '../wake/ladder';
 import { adapterFor } from '../harness';
-import { readWakeState } from '../wake/shared';
+import { wakeStatus, selectedWakeStatus, wakeDisableNotice, wakeStatusText } from '../wake/status';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
@@ -40,26 +40,19 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       async status(channel) {
         await initialize();
         const status = await (channel === undefined ? client.status() : client.status(channel));
-        let wakeDrivers: Awaited<ReturnType<typeof client.status>>['wakeDrivers'];
-        if (drivers?.length) {
-          try {
-            const states = await readWakeState(files.dir);
-            wakeDrivers = await Promise.all(drivers.map(async driver => {
-              const ctx = { files, harness, sessionId, env, now: Date.now(), signal: new AbortController().signal };
-              const available = !states[driver.id]?.disabled && await driver.available(ctx);
-              const reason = states[driver.id]?.disabled ? states[driver.id]?.reason : available ? undefined : await driver.unavailableReason?.(ctx);
-              return { id: driver.id, available, ...(reason ? { reason } : {}) };
-            }));
-          } catch {
-            // Diagnostics must not hide the channel's connection state.
-            wakeDrivers = drivers.map(driver => ({ id: driver.id, available: false, reason: 'wake_status_unavailable' }));
-          }
-        }
-        const withWake = wakeDrivers ? { ...status, wakeDrivers } : status;
-        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(status.state)
+        let idleWake;
+        try { idleWake = selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })); }
+        catch { idleWake = wakeStatusText(drivers?.[0]?.id ?? 'watcher', 'unavailable', 'wake_status_unavailable'); }
+        const withWake = { ...status, idleWake };
+        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
           ? { ...withWake, watcherArmed: await monitorArmed(files) } : withWake;
       },
-      async read(limit, before, channel) { await initialize(); return channel === undefined ? client.read(limit, before) : client.read(limit, before, channel); },
+      async read(limit, before, channel) {
+        await initialize();
+        const result = await (channel === undefined ? client.read(limit, before) : client.read(limit, before, channel));
+        const wakeNotice = await wakeDisableNotice(files.dir);
+        return { ...result, ...(wakeNotice ? { wakeNotice } : {}) };
+      },
       async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
       async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
       async leave(channel) { await initialize(); return client.leave(channel); },

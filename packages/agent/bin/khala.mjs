@@ -15,5 +15,6 @@ process.exitCode = await runCli(process.argv.slice(2), {
   watch: () => found('../src/watch.ts'),
   local: () => found('../src/local/cli.ts'),
   install: () => found('../src/install/main.ts'),
+  wake: () => found('../src/wake/cli.ts'),
   hook: name => found(`../hooks/${name}.ts`),
 });

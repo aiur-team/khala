@@ -20,3 +20,7 @@ Once the fixed notice is inserted, Enter requires the exact notice on the origin
 ## Live acceptance
 
 U36 (#1158) owns real tmux and WezTerm wake rows, including WezTerm binary version, draft preservation and focus checks. These local results do not claim R2 parity or accept any live-host gap. Older WezTerm without `tty_name` or cursor coordinates reports an unavailable rung rather than sending without evidence.
+
+## Wake-control integration
+
+Terminal consent is recorded through `khala wake on --harness claude --driver terminal` or the equivalent `--harness codex`, never by editing settings by hand. A CLI check in an isolated state root recorded Codex terminal consent and `khala wake status --harness codex --driver terminal --json` explained that capture waits for the first prompt. Status rows share the `idleWake` policy with MCP and retain one watcher and one terminal row for Claude. Re-enabling terminal wake clears failures, pending attempts, and the single disable notice.

@@ -184,13 +184,13 @@ it('uses the real no-shell process runner with scrubbed env and no message marke
 });
 
 it('requires a strictly later hook timestamp and retries at exactly 60 seconds', async () => {
-  await append('1'); await activity('idle'); start(); await wait();
+  await append('1'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   await activity('idle', time); waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(1);
   time += 59_999; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(1);
-  time += 1; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  time += 1; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 });
 
 it('suppresses async wakes and resumes on sync without moving the cursor', async () => {

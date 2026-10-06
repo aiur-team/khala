@@ -82,9 +82,7 @@ describe('MCP command lifecycle', () => {
       });
       const completed = (async () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
-        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
-          wakeDrivers: [{ id: 'watcher', available: false },
-            { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill('SIGTERM');
         expect(await closed).toEqual({ code: 0, signal: null });
@@ -125,9 +123,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
-          wakeDrivers: [{ id: 'watcher', available: false },
-            { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
       expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -161,15 +157,12 @@ describe('MCP command lifecycle', () => {
     const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-main-'));
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
-        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        env: { ...process.env, PATH: '', XDG_STATE_HOME: stateHome },
         encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      const status = JSON.parse(result.stdout).result.structuredContent;
-      expect(status).toMatchObject({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
-        wakeDrivers: [{ id: 'queue', available: expect.any(Boolean) },
-          { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.' } });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
