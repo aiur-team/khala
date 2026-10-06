@@ -57,7 +57,7 @@ function transportFixture(adapter: HarnessAdapter, transport: 'local' | 'matrix'
       return { eventId: '$sent' };
     },
     sendChannelEvent: async () => ({ eventId: '$event' }),
-    roomName: () => 'Conformance room',
+    roomName: () => 'Conformance channel',
     displayName: id => id === creds.userId ? ownName : 'Maya',
     stop: async () => {},
   });
