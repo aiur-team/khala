@@ -15,8 +15,8 @@ beforeEach(async () => {
   stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 });
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await fs.rm(root, { recursive: true, force: true }); });
-it.each(['connected', 'closed'])('reminds a %s session to rejoin and arm Monitor before Stop', async state => {
-  await writeStatus(files, state === 'closed' ? 'disconnected' : 'connected', state === 'closed' ? 'closed' : undefined, undefined, 'CHANNELMARK', 'NAMEMARK');
+it.each(['connected', 'closed', 'rejoin_needed'])('reminds a %s session to rejoin and arm Monitor before Stop', async state => {
+  await writeStatus(files, state === 'connected' ? 'connected' : 'disconnected', state === 'connected' ? undefined : state, undefined, 'CHANNELMARK', 'NAMEMARK');
   expect(await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'resume' }), [])).toBe(0);
   const output = String(stdout.mock.calls[0]?.[0]);
   const context = JSON.parse(output).hookSpecificOutput;

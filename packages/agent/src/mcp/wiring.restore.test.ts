@@ -44,3 +44,36 @@ it('restores a Codex channel and queues an owner message without any tool call',
     expect(queue.mock.calls[0]).toEqual([['queue', '--thread', 'thread', '--message', expect.any(String)], expect.any(AbortSignal)]);
   } finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
 });
+
+it('keeps the Claude SessionStart reminder after old control returns an unconfirmed restore', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-old-control-'));
+  const env = { XDG_STATE_HOME: root };
+  const files = await openSessionDir('claude', 'thread', env);
+  const roomId = '!channel:hosted';
+  const nested = channelFiles(files, roomId);
+  const secret = 'S'.repeat(43);
+  await ensureStateDir(nested.dir);
+  await writeStateFile(files.dir, 'rejoin.json', { secret });
+  await writeStateFile(nested.dir, 'channel.json', { roomId, channelName: 'Release', joinedAt: new Date().toISOString() });
+  await writeStateFile(nested.dir, 'resume.json', { link: 'https://khala.example/join/abcdefgh', label: 'Agent', roomId,
+    workspace: process.cwd(), secretHash: createHash('sha256').update(secret).digest('hex') });
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ joinId: 'pending', pollSecret: 'private',
+    confirmUrl: 'https://khala.example/agent/confirm?joinId=pending', expiresAt: new Date(Date.now() + 600_000).toISOString() }), { status: 201 }));
+  const start = vi.fn();
+  const factory = createRealClientFactory(env, {
+    createClient: options => createKhalaAgentClient({ ...options, fetch: fetcher, startSession: start }),
+  });
+  const client = factory({ harness: 'claude', sessionId: 'thread' });
+  try {
+    await vi.waitFor(async () => expect(await readStatus(nested)).toMatchObject({ state: 'disconnected', detail: 'rejoin_needed' }));
+    expect(fetcher).toHaveBeenCalledOnce(); // No polling of the abandoned server request.
+    expect(start).not.toHaveBeenCalled();
+    vi.stubEnv('XDG_STATE_HOME', root);
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const { default: sessionStart } = await import('../../hooks/session-start');
+      await sessionStart(JSON.stringify({ session_id: 'thread', hook_event_name: 'SessionStart' }), []);
+      expect(String(stdout.mock.calls[0]?.[0])).toContain('previously authorized');
+    } finally { stdout.mockRestore(); vi.unstubAllEnvs(); }
+  } finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
+});

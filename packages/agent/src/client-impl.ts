@@ -408,9 +408,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const created = await Promise.race([request, aborted]).finally(() => { if (releaseAbort) signal.removeEventListener('abort', releaseAbort); });
           if (closed) throw new KhalaClientError('not_connected');
           if (restore && created.autoConfirmed !== true) {
-            await removeStateFile(attempt.files!.dir, 'resume.json');
-            await setStatus(attempt, 'disconnected', 'unauthorized');
-            throw new KhalaClientError('not_connected', 'unauthorized');
+            // Old control has no cancellation endpoint. Abandon this unconfirmed
+            // request without polling; it expires server-side. Keep authorization
+            // and the reminder so an explicit authorized join can still proceed.
+            throw new KhalaClientError('not_connected', 'rejoin_needed');
           }
           attempt.created = created;
           const { joinId, pollSecret, confirmUrl, expiresAt } = created;
