@@ -30,6 +30,8 @@ describe('channelNameSuggestion', () => {
 
 it('picks the lowest free default agent name in a channel', () => {
   expect(freeAgentName('kevin', 'claude', [])).toBe('kevin-Claude');
+  expect(freeAgentName('kevin', 'gemini', [' kevin-gemini '])).toBe('kevin-Gemini-2');
+  expect(freeAgentName('kevin', 'custom-harness', [])).toBe('kevin-Agent');
   expect(freeAgentName('kevin', 'claude', ['kevin-claude'])).toBe('kevin-Claude-2');
   expect(freeAgentName('kevin', 'claude', ['kevin-Claude', 'kevin-Claude-3'])).toBe('kevin-Claude-2');
 });

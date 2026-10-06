@@ -1,3 +1,4 @@
+import type { LocalEvent, LocalMemberContent } from './types';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
   LOCAL_OWNER_USER_ID, LOCAL_LINK_TTL_MS, isLocalRoomId, localRoomKey, newLocalEventId,
-  type LocalEvent, type LocalMemberContent, type OwnerProfile,
+  type OwnerProfile,
 } from '@khala/contracts/m1/local';
 import { StateError } from '../state';
 import { openLocalStore, LocalStoreError, type OpenedLocalStore } from './store';
@@ -631,4 +632,35 @@ test('a per-channel owner name shows in that channel only, persists and clears b
   expect((await store.setOwnerChannelName(here, null))?.content['displayname']).toBe('kevin');
   await reopen();
   expect(owner(here)).toBe('kevin');
+});
+
+
+test('keeps sidecar ids through harness-less writes and ignores malformed sidecar entries', async () => {
+  const { roomId } = await store.createChannel('sidecar');
+  await membership(roomId, { harness: 'gemini', displayname: 'kevin-Gemini' });
+  await store.append(roomId, { type: 'm.room.member', sender: agent,
+    content: { user: agent, membership: 'join', displayname: 'renamed', kind: 'agent' } });
+  expect(store.member(roomId, agent)?.harness).toBe('gemini');
+  await reopen();
+  expect(store.member(roomId, agent)).toMatchObject({ harness: 'gemini', displayName: 'renamed' });
+  expect(store.channelSummary(roomId)?.members.find(m => m.userId === agent)?.harness).toBe('gemini');
+  await store.close();
+  await fs.writeFile(path.join(roomDir(roomId), 'harness.json'), JSON.stringify({ [agent]: 'bad_id', extra: 42 }));
+  await reopen();
+  expect(store.member(roomId, agent)?.harness).toBeUndefined();
+});
+
+test('does not append an event when its sidecar cannot be saved; retry recovers without a seq gap', async () => {
+  const { roomId } = await store.createChannel('sidecar failure');
+  const before = await fs.readFile(logPath(roomId), 'utf8');
+  const revision = store.revision();
+  await fs.mkdir(path.join(roomDir(roomId), 'harness.json'));
+  await expect(membership(roomId, { harness: 'gemini' })).rejects.toMatchObject({ code: 'storage_failed' });
+  expect(await fs.readFile(logPath(roomId), 'utf8')).toBe(before);
+  expect(store.member(roomId, agent)).toBeUndefined();
+  expect(store.revision()).toBe(revision);
+  await fs.rmdir(path.join(roomDir(roomId), 'harness.json'));
+  expect((await membership(roomId, { harness: 'gemini' })).seq).toBe(3);
+  await reopen();
+  expect(store.member(roomId, agent)?.harness).toBe('gemini');
 });

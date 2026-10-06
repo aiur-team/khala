@@ -1,3 +1,4 @@
+import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { expect, it } from 'vitest';
 import { LOCAL_OWNER_ID } from '@khala/contracts/m1/local';
 import type { OwnerId, RoomId } from '@khala/contracts/messaging/index';
@@ -7,7 +8,8 @@ import { createLocalAdministration } from './administration';
 const roomId = '!c7Kq2vXbT1nP0aZ9yW3eQw:local' as RoomId;
 const http: LocalHttp = {
   origin: 'http://127.0.0.1:47830',
-  get: async (_path, decode) => {
+  get: async (path, decode) => {
+    assertHarnessWireSupport(path, decode);
     const value = decode({ roomId, name: 'Channel', createdAt: '2026-10-05T00:00:00.000Z', lastSeq: 1, lastTs: 1, preview: null, members: [] });
     return value.ok ? { kind: 'ok', value: value.value } : { kind: 'unavailable' };
   },
