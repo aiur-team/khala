@@ -17,6 +17,21 @@ export const WAKE_STATES = {
     windows: 'Windows has no supported remote-control API.',
     driver_missing: 'No wake driver is installed for this transport.',
     watcher_missing: 'The Claude watcher is not armed.',
+    terminal_aborted: 'The terminal wake check was cancelled.',
+    terminal_unavailable_on_platform: 'This platform has no supported terminal remote-control API.',
+    terminal_empty_prompt_unavailable: 'This harness has no verified empty-prompt pattern.',
+    terminal_consent_required: 'Terminal wake needs consent; run khala wake on --driver terminal.',
+    terminal_capture_pending_prompt: 'Terminal capture is pending; send the first Codex prompt.',
+    'no remote-control API': 'No terminal remote-control API is available.',
+    terminal_not_idle: 'The agent must be idle for at least 30 seconds before a terminal wake.',
+    terminal_agent_exited: 'The captured agent process has exited or changed.',
+    terminal_pane_unsafe: 'The terminal pane is unavailable or its input mode is unsafe.',
+    terminal_pane_not_owned: 'The agent does not own the terminal pane foreground process group.',
+    terminal_prompt_not_empty: 'The terminal prompt contains a draft or its cursor has moved.',
+    terminal_probe_failed: 'The terminal remote-control check failed.',
+    wezterm_pane_missing: 'The captured WezTerm pane is no longer available.',
+    wezterm_tty_unavailable: 'WezTerm did not report the pane terminal device; ownership cannot be verified.',
+    wezterm_cursor_unavailable: 'WezTerm did not report the cursor position; an empty prompt cannot be verified.',
   } },
   disabled: { reason: 'Idle wake is off.', remedy: 'khala wake on --driver <d>' },
   disabled_after_failures: { reason: 'Idle wake was disabled after two unverified wakes.', remedy: 'khala wake on --driver <d>' },
@@ -37,7 +52,7 @@ export function wakeDrivers(harness: string): WakeDescriptor[] {
   const adapter = adapterFor(harness);
   const drivers: WakeDescriptor[] = (adapter?.wakeLadder ?? []).map(driver => ({ ...driver, runtime: driver }));
   for (const driver of adapter?.wakeConsentDrivers ?? []) if (!drivers.some(item => item.id === driver.id)) drivers.push(driver);
-  if (harness === 'claude') drivers.unshift({ id: 'watcher', rung: 2, optIn: false });
+  if (harness === 'claude' && !drivers.some(driver => driver.id === 'watcher')) drivers.unshift({ id: 'watcher', rung: 2, optIn: false });
   return drivers.sort((a, b) => a.rung - b.rung);
 }
 function watcherAlive(pid: unknown): boolean {

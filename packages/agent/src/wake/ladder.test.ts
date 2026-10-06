@@ -6,7 +6,7 @@ import { chooseWakeDriver, createWakeLadder, type WakeLadder } from './ladder';
 import type { WakeDriver, WakeDriverContext } from './driver';
 import { openSessionDir, saveSession, writeJsonAtomic, stateRoot } from '../state';
 import { appendEntries } from '../inbox';
-import { writeActivity } from '../activity';
+import { readActivity, writeActivity } from '../activity';
 import { recordAttempt, settleAttempts, readWakeState } from './shared';
 
 let root: string;
@@ -126,4 +126,20 @@ it.each([1, 4])('uses a companion deadline independent of rung %s', async rung =
   loop.notify(); await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
   const journal = JSON.parse(await fs.readFile(path.join(ctx.files.dir, 'wake-journal.json'), 'utf8'));
   expect(journal.attempts[0]).toMatchObject({ driver: 'companion', at, deadline: at + 10_000 });
+});
+
+it('does not spend a delivery budget or fail a nonce when transport is skipped', async () => {
+  await saveSession(ctx.files, { homeserver: 'https://example.test', roomId: 'room', userId: 'self', accessToken: 'token', deviceId: 'd' });
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 60_000));
+  await appendEntries(ctx.files, [{ eventId: 'skip', roomId: 'room', ts: 'now', sender: 'peer', senderLabel: 'peer', senderKind: 'human', body: 'hello', kind: 'message' }]);
+  const wake = vi.fn().mockResolvedValue('skipped');
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
+    drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  for (let i = 0; i < 3; i++) {
+    loop.notify();
+    await new Promise(resolve => setTimeout(resolve, 70));
+  }
+  expect(wake).toHaveBeenCalledTimes(3);
+  expect(await settleAttempts(ctx.files.dir, { now: at + 120_000, activity: await readActivity(ctx.files) })).toEqual([]);
+  expect(await readWakeState(ctx.files.dir)).toEqual({});
 });
