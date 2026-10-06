@@ -20,7 +20,7 @@ export type CliModules = {
 
 const HOOK_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const STDIN_CAP = 1024 * 1024;
-export const USAGE = 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala install opencode | khala install mcp --print [--harness <id>] | khala --version';
+export const USAGE = 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala install opencode | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>] | khala --version';
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
