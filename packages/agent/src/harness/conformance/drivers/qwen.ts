@@ -1,6 +1,7 @@
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
+import { createQwenBackgroundDriver } from '../../qwen';
 import { createQwenSocketDriver } from '../../../wake/qwen-socket';
 
 export const qwenDriver: FakeHarnessDriver = (() => {
@@ -28,7 +29,7 @@ export const qwenDriver: FakeHarnessDriver = (() => {
             await fs.writeFile(transcript!, JSON.stringify({ type: 'user', provenance: 'system', subtype: 'notification', deliveredTurn: true,
               message: { role: 'user', parts: [{ text: line }] } }) + '\n');
             return 'delivered';
-          } })],
+          } }), createQwenBackgroundDriver('linux')],
         prepare: async files => { transcript = path.join(files.dir, 'qwen-transcript.jsonl'); },
         prompt: () => prompt,
       };

@@ -2,8 +2,8 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { qwen, qwenCodec } from './qwen';
-import { filesForDir } from '../state';
+import { qwen, qwenCodec, createQwenBackgroundDriver } from './qwen';
+import { filesForDir, writeJsonAtomic, stateRoot } from '../state';
 import { confirmWakeText, readWakeState, recordAttempt, settleAttempts } from '../wake/shared/nonce';
 
 it('uses nested Claude envelopes and ignores background subagents', () => {
@@ -33,5 +33,30 @@ it('keeps a socket nonce across tool activity and verifies only a delivered noti
     await recordAttempt(root, { nonce: '87654321', driver: 'socket', at: 10, deadline: 20, verification: 'transcript' });
     await confirmWakeText(root, 'socket', '(k-87654321)', 21);
     expect(await settleAttempts(root, { now: 21, activity: { state: 'idle', updatedAt: 10 } })).toMatchObject([{ status: 'failure' }]);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('advertises the Windows background shell only while its agent-owned lease is live', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qw-background-'));
+  const files = filesForDir(root);
+  const env = { QWEN_HOME: root, XDG_STATE_HOME: root, PWD: root };
+  const ctx = { files, env, harness: 'qwen', sessionId: 's', now: 1, signal: new AbortController().signal };
+  const driver = createQwenBackgroundDriver('win32');
+  const nonce = '11111111-1111-1111-1111-111111111111';
+  try {
+    expect(await driver.available(ctx)).toBe(false);
+    expect(await driver.unavailableReason!(ctx)).toBe('qwen_watcher_missing');
+    await writeJsonAtomic(path.join(root, 'monitor.json'), { nonce, pid: process.pid });
+    await writeJsonAtomic(path.join(root, `monitor-${nonce}.json`), { nonce, pid: process.pid });
+    expect(await driver.available(ctx)).toBe(true);
+    expect(await createQwenBackgroundDriver('linux').available(ctx)).toBe(false);
+    await fs.mkdir(stateRoot(env), { recursive: true });
+    await writeJsonAtomic(path.join(stateRoot(env), 'wake-settings.json'), { consent: {}, off: { 'qwen/socket': { at: 'now' } } });
+    expect(await driver.available(ctx)).toBe(false);
+    await fs.unlink(path.join(stateRoot(env), 'wake-settings.json'));
+    await fs.mkdir(path.join(root, '.qwen'));
+    await writeJsonAtomic(path.join(root, '.qwen', 'settings.json'), { agents: { crossSessionInbound: 'hold' } });
+    expect(await driver.available(ctx)).toBe(false);
+    expect(await driver.unavailableReason!(ctx)).toBe('qwen_held');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

@@ -256,7 +256,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert(probe?.drivers.length, 'idle wake declared but not delivered');
       assert.deepEqual(probe.drivers.map(d => [d.id, d.verification, d.optIn]),
         adapter.wakeLadder?.map(d => [d.id, d.verification, d.optIn]), 'probe must preserve wake policy');
-      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')),
+      // Agent-armed watcher completion is a native tool notification, not a typed wake.
+      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')
+        || (adapter.id === 'qwen' && d.id === 'background-shell')),
         'idle wake declared but not delivered: unverified transport');
       if (capabilities.idleWake === 'opt-in') assert(probe.drivers.every(d => d.optIn),
         'opt-in idle wake must require recorded consent for every driver');

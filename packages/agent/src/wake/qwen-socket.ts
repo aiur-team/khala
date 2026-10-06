@@ -9,6 +9,14 @@ import { verifyQwenTranscript } from './qwen-transcript';
 import { cancelAttempt, failAttempt } from './shared/nonce';
 
 export const qwenHome = (env: NodeJS.ProcessEnv) => env.QWEN_HOME ? path.resolve(env.QWEN_HOME) : path.join(env.HOME ?? os.homedir(), '.qwen');
+/** Any explicit opt-out in user or workspace settings must survive fallback selection. */
+export async function qwenInboundAllowed(env: NodeJS.ProcessEnv, workspace = env.PWD ?? process.cwd()): Promise<boolean> {
+  for (const file of [path.join(qwenHome(env), 'settings.json'), path.join(workspace, '.qwen', 'settings.json')]) {
+    const config = await readJson<{ agents?: { crossSessionInbound?: string; crossSessionMessaging?: boolean } }>(file);
+    if (['hold', 'refuse'].includes(config?.agents?.crossSessionInbound ?? '') || config?.agents?.crossSessionMessaging === false) return false;
+  }
+  return true;
+}
 export const qwenControllerFile = (env: NodeJS.ProcessEnv) => path.join(stateRoot(env), 'qwen', 'controller.json');
 export type QwenTarget = { socket: string; sessionId: string; token: string };
 export type QwenReceipt = 'delivered' | 'held' | 'refused' | 'denied' | 'expired' | 'misaddressed' | 'dropped' | 'failed';
@@ -118,12 +126,14 @@ export function createQwenSocketDriver(deps: {
     return config?.agents;
   };
   const reason = async (ctx: Parameters<WakeDriver['available']>[0]) => {
-    if ((deps.platform ?? process.platform) === 'win32') return 'windows';
     const config = await policy(ctx.env);
+    if (config?.crossSessionInbound === 'hold') return 'qwen_held';
+    if ((deps.platform ?? process.platform) === 'win32') return 'windows';
     const receipt = await readJson<{ status?: string }>(path.join(ctx.files.dir, 'qwen-receipt.json'));
     if (config?.crossSessionInbound === 'hold') return 'qwen_held';
     if (receipt?.status === 'held' && config?.crossSessionInbound !== 'accept') return 'qwen_held';
     if (config?.crossSessionMessaging === false || config?.crossSessionInbound === 'refuse') return 'qwen_refused';
+    if (!deps.resolve && !ctx.env.QWEN_CODE_MESSAGING_SOCKET) return 'qwen_session_missing';
     return await resolve(ctx.env) ? undefined : 'qwen_socket_missing';
   };
   return {

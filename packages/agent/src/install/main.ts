@@ -28,6 +28,8 @@ export type InstallDeps = {
   platform?: NodeJS.Platform;
   node?: string;
   home?: string;
+  qwenList?: () => string[] | undefined;
+  qwenRemove?: (id: string) => boolean;
   qwenMint?: () => { id: string; token: string } | undefined;
 };
 
@@ -103,14 +105,39 @@ export async function runQwenInstall(flags: readonly string[], deps: InstallDeps
   const node = deps.node ?? process.execPath;
   const command = platform === 'win32' ? `node "${paths.script.replaceAll('\\', '/')}" hook deliver --harness qwen`
     : `${shellQuote(node)} ${shellQuote(paths.script)} hook deliver --harness qwen`;
-  return installQwen({ env, uninstall, command, backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
+  return installQwen({ env, uninstall, command, watchCommand: platform === 'win32'
+    ? `"${node.replaceAll('\\', '/')}" "${paths.script.replaceAll('\\', '/')}" watch --harness qwen`
+    : `${shellQuote(node)} ${shellQuote(paths.script)} watch --harness qwen`, backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
     install: () => (deps.npmInstall ?? defaultNpmInstall)(paths.prefix, env.KHALA_INSTALL_SPEC || `${pkg!.name}@${pkg!.version}`),
-    ...(platform === 'win32' ? {} : { mint: deps.qwenMint ?? (() => {
+    ...(platform === 'win32' ? {} : {
+      list: deps.qwenList ?? (() => {
+        const result = spawnSync('qwen', ['sessions', 'controllers', 'list', '--json'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+        try {
+          return result.status === 0 ? parseQwenControllerIds(result.stdout) : undefined;
+        } catch { return undefined; }
+      }),
+      remove: deps.qwenRemove ?? ((id: string) => {
+        const result = spawnSync('qwen', ['sessions', 'controllers', 'remove', id], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+        if (result.error && (result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+          stderr('khala: Qwen executable unavailable; controller could not be revoked'); return true;
+        }
+        return result.status === 0;
+      }),
+      mint: deps.qwenMint ?? (() => {
       // Capture both streams; Qwen diagnostics must never reveal the credential.
       const result = spawnSync('qwen', ['sessions', 'controllers', 'add', '--label', 'khala', '--json'],
         { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
       try { return result.status === 0 ? JSON.parse(result.stdout) : undefined; } catch { return undefined; }
     }) }),
+  });
+}
+
+/** Qwen emits one controller JSON object per line, including no lines for an empty list. */
+export function parseQwenControllerIds(stdout: string): string[] {
+  return stdout.split(/\r?\n/u).filter(line => line.trim()).map(line => {
+    const value: unknown = JSON.parse(line);
+    if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') throw new Error('invalid controller list');
+    return value.id;
   });
 }
 

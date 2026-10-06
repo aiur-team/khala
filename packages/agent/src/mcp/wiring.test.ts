@@ -4,7 +4,7 @@ import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KhalaAgentClientOptions } from '../client-impl';
-import { ensureStateDir, readJoinFile, writeJoinFile, sessionFiles, writeJsonAtomic, writeStateFile } from '../state';
+import { ensureStateDir, readJoinFile, writeJoinFile, sessionFiles, writeJsonAtomic, writeStateFile, stateRoot } from '../state';
 import { createPlaceholderClient, runMcpCommand } from './main';
 import { createRealClientFactory } from './wiring';
 
@@ -226,4 +226,22 @@ it('shares status text with the CLI and attaches one auto-disable notice to a re
     expect((await wrapped.read(30)).wakeNotice).toBeUndefined();
     expect((await readWakeState(files.dir)).queue?.noticeShown).toBe(true);
   } finally { await wrapped.close(); }
+});
+
+it('offers the installed private-prefix Qwen background command on Windows and respects hold', async () => {
+  const env = { ...await environment(), QWEN_HOME: await mkdtemp(path.join(os.tmpdir(), 'qwen-wiring-')) };
+  directories.push(env.QWEN_HOME);
+  const command = '"C:\\private prefix\\node.exe" "C:\\private prefix\\cli.js" watch --harness qwen';
+  await ensureStateDir(path.join(stateRoot(env), 'qwen'));
+  await writeJsonAtomic(path.join(stateRoot(env), 'qwen', 'watch-command.json'), { command });
+  const client = createPlaceholderClient();
+  client.status = async () => ({ state: 'connected', unread: 0 });
+  client.join = async () => ({ state: 'connected', channelName: 'test' });
+  const wrapped = createRealClientFactory(env, { platform: 'win32', createClient: () => client })({ harness: 'qwen', sessionId: 'windows-session' });
+  expect(await wrapped.status()).toMatchObject({ watcherArmed: false, watcherHint: expect.stringContaining('is_background') });
+  expect((await wrapped.status()).watcherHint).toContain(JSON.stringify(command + ' --session windows-session'));
+  expect(await wrapped.join('link', 'name')).toMatchObject({ watcherHint: expect.stringContaining('run_shell_command') });
+  await writeJsonAtomic(path.join(env.QWEN_HOME, 'settings.json'), { agents: { crossSessionInbound: 'hold' } });
+  expect((await wrapped.status()).watcherHint).toBeUndefined();
+  await wrapped.close();
 });

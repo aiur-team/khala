@@ -6,8 +6,10 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
-import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
+import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, stateRoot, type SessionFiles } from './state';
 import { adapterFor } from './harness';
+import { qwenInboundAllowed } from './wake/qwen-socket';
+import { readWakeSettings } from './wake/shared';
 import { resolveHarness, resolveSessionId } from './mcp/session-id';
 
 const MARKER = 'monitor.json';
@@ -37,8 +39,17 @@ function channelLabel(name: string): string {
 export async function watchSession(files: SessionFiles, io: {
   write: (line: string) => void;
   signal: AbortSignal;
+  harness?: string;
+  env?: NodeJS.ProcessEnv;
 }): Promise<number> {
   const nonce = randomUUID();
+  const env = io.env ?? process.env;
+  const qwen = io.harness === 'qwen';
+  const wakeAllowed = async () => {
+    if (!qwen) return true;
+    const wake = await readWakeSettings(stateRoot(env));
+    return await qwenInboundAllowed(env) && !wake.off['qwen/socket'] && !wake.off['qwen/background-shell'];
+  };
   let watcher: FSWatcher | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let running: Promise<void> | undefined;
@@ -73,6 +84,7 @@ export async function watchSession(files: SessionFiles, io: {
         return owner?.nonce === nonce && !['disconnected', 'closed'].includes(status?.state ?? '');
       };
       if (!await ownsSession()) { stop(); return; }
+      if (!await wakeAllowed()) return;
       for (const channel of await listChannels(files)) {
         const target = channel.files;
         const session = await readJson<{ userId: string; roomId: string }>(target.session);
@@ -99,6 +111,7 @@ export async function watchSession(files: SessionFiles, io: {
         const latestSession = await readJson<{ userId: string; roomId: string }>(target.session);
         const latestStatus = await readStatus(target);
         if (!await ownsSession()) { stop(); return; }
+        if (!await wakeAllowed()) return;
         if (latestSession?.userId !== session.userId || latestSession?.roomId !== session.roomId
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => entry.kind === 'message' && entry.sender !== session.userId
@@ -106,6 +119,7 @@ export async function watchSession(files: SessionFiles, io: {
         if (!done && mode !== 'async' && latestMode !== 'async' && messages.length) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
+          if (qwen) { stop(); return; }
         }
         // Observation is independent of delivery, and lives beside this channel's inbox.
         // Recheck identity before persisting so leaving A never writes into another join.
@@ -156,7 +170,7 @@ export async function watchSession(files: SessionFiles, io: {
   }
 }
 
-export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor --session <id>]';
+export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor|qwen --session <id>]';
 
 export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
@@ -175,6 +189,6 @@ export default async function run(argv: readonly string[]): Promise<number> {
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal }); }
+  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness, env: process.env }); }
   finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
 }
