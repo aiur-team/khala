@@ -147,3 +147,25 @@ it('preserves existing empty containers without a usable backup and avoids creat
   expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
   expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual({ security: { auth: {} } });
 });
+
+it('restores the exact original bytes after an unchanged install cycle', async () => {
+  const original = '{\n    "security": {\n        "auth": {}\n    }\n}';
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  await fs.writeFile(settingsFile(), original);
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
+});
+
+it.each(['', '\n', '\r\n'])('preserves current indentation and trailing newline after sibling edits (%j)', async newline => {
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  await fs.writeFile(settingsFile(), '{"theme":"dark"}');
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  const current = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
+  current.theme = 'light';
+  current.mcpServers.other = { command: 'other' };
+  await fs.writeFile(settingsFile(), JSON.stringify(current, null, '\t').replace(/\n/gu, newline === '\r\n' ? '\r\n' : '\n') + newline);
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(await fs.readFile(settingsFile(), 'utf8')).toBe(JSON.stringify({ theme: 'light', mcpServers: { other: { command: 'other' } } }, null, '\t')
+    .replace(/\n/gu, newline === '\r\n' ? '\r\n' : '\n') + newline);
+});

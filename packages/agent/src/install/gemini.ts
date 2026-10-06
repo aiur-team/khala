@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import type { CursorPlatform } from './cursor';
 import { cursorPaths } from './cursor';
 import { nodeScriptCommand } from './command';
@@ -72,14 +73,16 @@ export async function installGemini(input: {
       : `khala: invalid JSON or hooks in ${paths.settingsFile}`);
     return 1;
   }
+  let restoredText: string | null = null;
   if (uninstall) {
-    // The backup supplies only container provenance, never settings to restore:
-    // users may have added siblings since installation. Without it, preserve
-    // existing containers rather than guessing whether Khala introduced them.
+    // Use the backup for container provenance, and restore its exact bytes only
+    // when stripping Khala leaves the same settings. Keep later user edits.
     let original = config;
+    let backupText: string | null = null;
     try {
-      const backup: unknown = JSON.parse((await fs.readFile(paths.settingsFile + '.khala-bak', 'utf8')).replace(/^\uFEFF/u, ''));
-      if (isObject(backup)) original = backup;
+      const text = await fs.readFile(paths.settingsFile + '.khala-bak', 'utf8');
+      const backup: unknown = JSON.parse(text.replace(/^\uFEFF/u, ''));
+      if (isObject(backup)) { original = backup; backupText = text; }
     } catch (error) {
       if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -87,6 +90,7 @@ export async function installGemini(input: {
       const container = merged.config[key];
       if (!Object.hasOwn(original, key) && isObject(container) && Object.keys(container).length === 0) delete merged.config[key];
     }
+    if (backupText !== null && isDeepStrictEqual(merged.config, original)) restoredText = backupText;
   }
   if (!uninstall && input.install && !input.install()) return 1;
   if (!(uninstall && before === null)) {
@@ -95,7 +99,10 @@ export async function installGemini(input: {
       try { await fs.writeFile(paths.settingsFile + '.khala-bak', before, { flag: 'wx' }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     }
-    const text = JSON.stringify(merged.config, null, 2) + '\n';
+    const indent = before === null ? 2 : before.match(/\n([ \t]+)"/u)?.[1];
+    const newline = before?.includes('\r\n') ? '\r\n' : '\n';
+    const trailing = before === null || before.endsWith('\n') ? newline : '';
+    const text = restoredText ?? JSON.stringify(merged.config, null, indent).replace(/\n/gu, newline) + trailing;
     if (text !== before) await fs.writeFile(paths.settingsFile, text);
   }
   if (uninstall) stdout(`removed the Khala MCP server and hooks from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`);

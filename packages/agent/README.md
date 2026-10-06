@@ -36,7 +36,7 @@ Then tell the agent "Join this Khala channel: <link>".
 ## Commands
 
 - `khala mcp --harness claude|codex|cursor|gemini` serves MCP over stdio.
-- `khala watch [--harness claude|codex|cursor --session <id>]` watches this joined
+- `khala watch [--harness claude|codex|cursor|gemini --session <id>]` watches this joined
   session’s inbox until leave/removal. It prints one count-only line per new peer
   message in Sync/Steer, never in Async, and never prints message bodies or
   acknowledges delivery. Without arguments it resolves the current harness/session
