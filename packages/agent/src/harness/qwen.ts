@@ -36,7 +36,7 @@ export function createQwenBackgroundDriver(platform: NodeJS.Platform = process.p
 }
 
 export const qwen: HarnessAdapter = {
-  id: 'qwen', watcherStatus: true, codec: qwenCodec, restoreAtStartup: true,
+  id: 'qwen', codec: qwenCodec, restoreAtStartup: true,
   sessionSources: [{ kind: 'meta', resolve: meta => meta?.khala_session, rejoinable: () => true }, { kind: 'env', resolve: (_meta, env) => qwenSession(env), rejoinable: () => true }, hookMapSource],
   install: async (flags, deps) => (await import('../install/main')).runQwenInstall(flags, deps),
   uninstall: async (flags, deps) => (await import('../install/main')).runQwenInstall([...flags, '--uninstall'], deps),

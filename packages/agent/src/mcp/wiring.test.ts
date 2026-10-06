@@ -260,3 +260,19 @@ it('cancels a pending startup restore before waiting for initialization during c
   expect(client.close).toHaveBeenCalledOnce();
   expect(waker.stop).toHaveBeenCalledOnce();
 });
+it.each(['linux', 'darwin'] as const)('omits Qwen watcher status and hints on %s', async platform => {
+  const env = { ...await environment(), QWEN_HOME: await mkdtemp(path.join(os.tmpdir(), 'qwen-status-')), QWEN_CODE_MESSAGING_SOCKET: '/unused/qwen.sock' };
+  directories.push(env.QWEN_HOME);
+  await ensureStateDir(path.join(env.QWEN_HOME, 'sessions'));
+  await writeJsonAtomic(path.join(env.QWEN_HOME, 'sessions', '123.json'), { ipcPath: env.QWEN_CODE_MESSAGING_SOCKET, sessionId: 'socket-session' });
+  await ensureStateDir(path.join(stateRoot(env), 'qwen'));
+  await writeJsonAtomic(path.join(stateRoot(env), 'qwen', 'controller.json'), { token: 'qpc_' + '1'.repeat(64) });
+  const client = createPlaceholderClient();
+  client.status = async () => ({ state: 'connected', unread: 0 });
+  const wrapped = createRealClientFactory(env, { platform, createClient: () => client })({ harness: 'qwen', sessionId: 'socket-session' });
+  const status = await wrapped.status();
+  expect(status.idleWake).toMatchObject({ driver: 'socket', state: 'active' });
+  expect(status).not.toHaveProperty('watcherArmed');
+  expect(status).not.toHaveProperty('watcherHint');
+  await wrapped.close();
+});

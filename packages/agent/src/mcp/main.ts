@@ -56,6 +56,21 @@ export async function runMcpCommand(argv: readonly string[], deps: {
   else if (harness === 'codex' && env.CODEX_THREAD_ID === undefined) {
     for (const session of await codexStartupSessions(env)) clientForSession(session);
   }
+  // Plugin hooks can identify a resumed session after MCP has already started.
+  // Follow only the live parent's validated mapping, never a workspace guess.
+  let stopped = false;
+  let polling: Promise<void> | undefined;
+  const restoreMappedSession = () => {
+    if (stopped || polling) return;
+    polling = (async () => {
+      try {
+        const session = await resolveSession(harness, undefined, env);
+        if (!stopped && session) clientForSession(session);
+      } catch { /* A late or unavailable hook mapping can be retried on the next poll. */ }
+    })().finally(() => { polling = undefined; });
+  };
+  const restoreTimer = harness === 'opencode' ? setInterval(restoreMappedSession, 1_000) : undefined;
+  restoreTimer?.unref();
   const tools = createKhalaTools({
     harness,
     museBin: museCliPath(env),
@@ -68,6 +83,9 @@ export async function runMcpCommand(argv: readonly string[], deps: {
   try {
     await runMcpServer({ input: deps.input ?? process.stdin, output: deps.output ?? process.stdout, signal: deps.signal, tools: createToolRegistry(tools) });
   } finally {
+    stopped = true;
+    clearInterval(restoreTimer);
+    await polling;
     await Promise.allSettled([...clients.values()].map(client => Promise.resolve().then(() => client.close())));
   }
   return 0;

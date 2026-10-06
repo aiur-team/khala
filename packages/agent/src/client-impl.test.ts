@@ -1022,6 +1022,28 @@ it.each(['local', 'hosted'] as const)('reports connected on the first status aft
   await client.resume!();
   expect((await client.status()).channels?.map(item => item.state)).toEqual(['connected', 'connected']);
 });
+it.each(['request', 'membership'] as const)('keeps healthy channel tools available while a hosted restore %s never settles and bounds status waiting', async stalled => {
+  const f = await multiClient(['A', 'B', 'C']);
+  delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await Promise.all([f.join(0), f.join(1)]);
+  await client.close();
+  f.api.requestJoin.mockImplementation(async input => {
+    if (stalled === 'request' && input.link.endsWith('/0')) return new Promise(() => {});
+    return { ...created, joinId: input.link, autoConfirmed: true as const };
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
+  if (stalled === 'membership') f.controls[0]!.session.join = vi.fn(() => new Promise<void>(() => {}));
+  // Resume registers each restoration without waiting for the unavailable host.
+  await client.resume!();
+  expect(await client.status('B')).toMatchObject({ state: 'connected' });
+  await expect(client.read(20, undefined, 'B')).resolves.toMatchObject({ messages: [] });
+  await expect(f.join(2)).resolves.toMatchObject({ state: 'connected' });
+  // The selected unavailable restore is still joining after the status deadline.
+  const started = performance.now();
+  expect(await client.status('A')).toMatchObject({ state: 'joining' });
+  expect(performance.now() - started).toBeLessThan(2_000);
+  expect(await client.status('B')).toMatchObject({ state: 'connected' });
+});
 it('leaving one channel only restores the other on the next startup', async () => {
   const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
   await client.leave('A'); await restartMulti(f);

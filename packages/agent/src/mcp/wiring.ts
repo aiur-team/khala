@@ -20,6 +20,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
     const files = sessionFiles(harness, sessionId, env);
     const adapter = adapterFor(harness);
     const drivers = adapter?.wakeLadder;
+    const watcherStatus = harness === 'qwen' ? (deps.platform ?? process.platform) === 'win32' : adapter?.watcherStatus;
     const waker = drivers?.length ? deps.createWaker
       ? deps.createWaker({ files, threadId: sessionId })
       : createWakeLadder({ files, harness, sessionId, drivers, env,
@@ -62,7 +63,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
         catch { idleWake = wakeStatusText(drivers?.[0]?.id ?? 'watcher', 'unavailable', 'wake_status_unavailable'); }
         const withWake = { ...status, idleWake };
         const hint = await watcherHint();
-        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
+        return watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
           ? { ...withWake, watcherArmed: await monitorArmed(files), ...(hint ? { watcherHint: hint } : {}) } : withWake;
       },
       async read(limit, before, channel) {
