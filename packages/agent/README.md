@@ -42,8 +42,10 @@ Then tell the agent "Join this Khala channel: <link>".
   channels, or saved helper credentials for local channels. No tool call
   is required; Codex arms its waker immediately. Claude still needs Monitor
   re-armed by the agent. Its backup `asyncRewake` watcher also arms at
-  SessionStart in the interactive CLI when a channel is connected, covering the
-  interval before the first Stop. Stop replaces that watcher through shared nonce
+  SessionStart in the interactive CLI when a channel is connected or has valid
+  saved authorization to restore in this workspace, covering the interval before
+  the first Stop. It waits for connection before waking and exits when no channel
+  remains connected or restorable. Stop replaces that watcher through shared nonce
   ownership and a 24-hour deadline. SessionStart does not arm this backup in
   headless (`-p`), SDK or desktop hosts. `khala_leave` clears only the selected channel's resume
   authorization. Owner removal and missing or changed secrets prevent restoration.

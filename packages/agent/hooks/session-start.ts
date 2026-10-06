@@ -1,3 +1,4 @@
+import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { writeActivity } from '../src/activity';
 import { listChannels } from '../src/channels';
 import { TERMINAL_SESSION_DETAILS, readStatus, sessionFiles } from '../src/state';
@@ -16,7 +17,7 @@ export default async function run(stdin: string, argv: readonly string[]): Promi
     // This synchronous hook completes before the first user prompt. The async
     // watcher must never reset busy activity after that prompt starts.
     if (process.env.CLAUDE_CODE_ENTRYPOINT === 'cli' && ['startup', 'resume'].includes(input.source)
-      && statuses.some(({ status }) => status?.state === 'connected' || status?.state === 'send_failed')) {
+      && (await sessionStartWakeChannels(files, process.env)).length) {
       await writeActivity(files, 'idle');
     }
     const needsReminder = statuses.some(({ status, channelName }) =>

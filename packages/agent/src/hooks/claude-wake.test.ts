@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -376,4 +377,100 @@ it('fails closed when the SessionStart host entrypoint is missing', async () => 
   expect(await watch(sessionStart, [], { env: { XDG_STATE_HOME: root }, now, stderr: { write: vi.fn() } })).toBe(0);
   expect(now).not.toHaveBeenCalled();
   expect(await owner()).toBeUndefined();
+});
+
+async function restorableChannel() {
+  const target = await joinedChannel('disconnected');
+  await writeStatus(target, 'disconnected', 'closed');
+  const secret = 'a'.repeat(43);
+  await writeStateFile(files.dir, 'rejoin.json', { secret });
+  const authorization = { roomId: '!joined:local', workspace: path.resolve(process.env.PWD ?? process.cwd()),
+    secretHash: createHash('sha256').update(secret).digest('hex'), link: 'https://khala.example/channel', label: 'Agent' };
+  await writeStateFile(target.dir, 'resume.json', authorization);
+  return { target, authorization };
+}
+it('arms a cleanly closed resume, waits through joining, then wakes before its first Stop', async () => {
+  await seed('busy');
+  const { target } = await restorableChannel();
+  vi.stubEnv('XDG_STATE_HOME', root);
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+  const resume = JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'resume' });
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  await sessionStartHook(resume, []);
+  stdout.mockRestore();
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'activity.json'), 'utf8')).state).toBe('idle');
+  await appendEntries(target, [entry()]);
+  const running = start(resume);
+  await armed();
+  const nonce = await owner();
+  await sleep(150);
+  expect(running.child.exitCode).toBeNull();
+  await writeStatus(target, 'joining');
+  await sleep(150);
+  expect(running.child.exitCode).toBeNull();
+  expect(await owner()).toBe(nonce);
+  await writeStatus(target, 'connected');
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('Stop supersedes a restorable SessionStart owner without resetting busy activity', async () => {
+  await seed('busy');
+  const { target } = await restorableChannel();
+  const activity = await fs.readFile(path.join(files.dir, 'activity.json'));
+  const first = start(sessionStart);
+  await armed();
+  const nonce = await owner();
+  const second = start();
+  await armed(nonce);
+  expect(await first.result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await fs.readFile(path.join(files.dir, 'activity.json'))).toEqual(activity);
+  await writeStatus(target, 'connected');
+  await appendEntries(target, [entry()]);
+  await writeActivity(files, 'idle');
+  expect(await second.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it.each(['room', 'workspace', 'hash', 'secret', 'link', 'label', 'localTransport', 'localRoom', 'missing'])(
+  'rejects %s resume authorization in both SessionStart gates', async invalid => {
+    await seed('busy');
+    const { target, authorization } = await restorableChannel();
+    const altered: Record<string, unknown> = { ...authorization };
+    if (invalid === 'room') altered.roomId = '!other:local';
+    if (invalid === 'workspace') altered.workspace = '/other';
+    if (invalid === 'hash') altered.secretHash = 'wrong';
+    if (invalid === 'link') altered.link = null;
+    if (invalid === 'label') altered.label = null;
+    if (invalid === 'localTransport') altered.localCredentials = { transport: 'hosted', roomId: authorization.roomId };
+    if (invalid === 'localRoom') altered.localCredentials = { transport: 'local', roomId: '!other:local' };
+    if (invalid === 'secret') await writeStateFile(files.dir, 'rejoin.json', { secret: 'invalid' });
+    await writeStateFile(target.dir, 'resume.json', altered);
+    if (invalid === 'missing') await fs.unlink(path.join(target.dir, 'resume.json'));
+    vi.stubEnv('XDG_STATE_HOME', root);
+    vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await sessionStartHook(sessionStart, []);
+    stdout.mockRestore();
+    expect(JSON.parse(await fs.readFile(path.join(files.dir, 'activity.json'), 'utf8')).state).toBe('busy');
+    expect(await start(sessionStart).result).toEqual({ code: 0, stdout: '', stderr: '' });
+    expect(await owner()).toBeUndefined();
+  },
+);
+it.each(['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'])(
+  'exits an armed restore when the channel becomes %s, despite stale unread messages', async detail => {
+    await seed();
+    const { target } = await restorableChannel();
+    const running = start(sessionStart);
+    await armed();
+    await writeStatus(target, 'disconnected', detail);
+    await appendEntries(target, [entry()]);
+    expect(await running.result).toEqual({ code: 0, stdout: '', stderr: '' });
+    expect((await watcher()).state).toBe('exited');
+    expect(await start(sessionStart).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  },
+);
+it('exits when the last restorable channel is removed', async () => {
+  await seed();
+  const { target } = await restorableChannel();
+  const running = start(sessionStart);
+  await armed();
+  await fs.rm(target.dir, { recursive: true });
+  expect(await running.result).toEqual({ code: 0, stdout: '', stderr: '' });
 });
