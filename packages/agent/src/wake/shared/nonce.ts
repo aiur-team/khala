@@ -2,9 +2,10 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { wakeLine } from './rules';
+import { withWakeLock } from './lock';
 
 export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number }
-export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string }
+export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string; noticeShown?: boolean }
 export type WakeState = Record<string, WakeDriverState>;
 export interface WakeSettlement { nonce: string; driver: string; status: 'success' | 'failure' | 'void' }
 interface SessionData { attempts: WakeAttempt[]; state: WakeState }
@@ -17,58 +18,18 @@ async function atomic(file: string, value: unknown): Promise<void> {
   try { await fs.writeFile(temp, JSON.stringify(value), { mode: 0o600 }); await fs.rename(temp, file); }
   finally { await fs.rm(temp, { force: true }); }
 }
-async function clearAbandonedLock(lock: string): Promise<void> {
-  let entries: string[];
-  try { entries = await fs.readdir(lock); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  for (const entry of entries) {
-    const owner = /^owner-(\d+)-[a-f0-9]{16}$/.exec(entry);
-    if (!owner) continue;
-    try { process.kill(Number(owner[1]), 0); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue;
-      // Delete only the observed generation. A replacement lock's owner has
-      // a different filename, so competing reclaimers cannot remove it.
-      await fs.rm(path.join(lock, entry), { force: true });
-    }
-  }
-  // Acquisition publishes a populated directory atomically. rmdir therefore
-  // cannot delete a successor, even if another process reclaimed this lock.
-  try { await fs.rmdir(lock); }
-  catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
-}
 // Both hook and MCP use the same lock. State and attempts live in one atomic
 // journal; wake-state.json is a status projection, never the source of truth.
 async function locked<T>(dir: string, work: (data: SessionData) => T): Promise<T> {
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  const lock = path.join(dir, 'wake.lock');
-  const owner = `owner-${process.pid}-${randomBytes(8).toString('hex')}`;
-  const candidate = path.join(dir, `.${owner}`);
-  await fs.mkdir(candidate, { mode: 0o700 });
-  await fs.writeFile(path.join(candidate, owner), '', { mode: 0o600 });
-  let acquired = false;
-  try {
-    for (let tries = 0; tries < 200; tries++) {
-      try { await fs.rename(candidate, lock); acquired = true; break; }
-      catch (error) { if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
-      await clearAbandonedLock(lock);
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-  } finally {
-    if (!acquired) await fs.rm(candidate, { recursive: true, force: true });
-  }
-  if (!acquired) throw new Error('wake_state_locked');
-  try {
+  return withWakeLock(dir, 'wake.lock', async () => {
     const data = await readJson<SessionData>(path.join(dir, 'wake-journal.json'), { attempts: [], state: {} });
+    const before = JSON.stringify(data);
     const result = work(data);
+    if (JSON.stringify(data) === before) return result;
     await atomic(path.join(dir, 'wake-journal.json'), data);
     await atomic(path.join(dir, 'wake-state.json'), data.state);
     return result;
-  } finally {
-    await fs.rm(path.join(lock, owner), { force: true });
-    try { await fs.rmdir(lock); }
-    catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
-  }
+  });
 }
 export async function readWakeState(dir: string): Promise<WakeState> {
   return (await readJson<SessionData>(path.join(dir, 'wake-journal.json'), { attempts: [], state: {} })).state;
@@ -119,5 +80,25 @@ export async function settleAttempts(dir: string, input: {
     }
     data.attempts = remaining;
     return results;
+  });
+}
+
+/** Re-consent clears attempts as well as failures so an old deadline cannot disable again. */
+export async function resetWakeDriver(dir: string, driver: string): Promise<void> {
+  await locked(dir, data => {
+    delete data.state[driver];
+    data.attempts = data.attempts.filter(attempt => attempt.driver !== driver);
+  });
+}
+/** Claim notice generations under the same lock as settlement and re-consent. */
+export async function takeWakeDisableNotices(dir: string): Promise<string[]> {
+  return locked(dir, data => {
+    const drivers: string[] = [];
+    for (const [driver, state] of Object.entries(data.state)) {
+      if (!state.disabled || state.noticeShown) continue;
+      state.noticeShown = true;
+      drivers.push(driver);
+    }
+    return drivers;
   });
 }

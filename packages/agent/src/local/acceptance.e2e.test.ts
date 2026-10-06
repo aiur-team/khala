@@ -259,7 +259,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect((await wake.exited).code, context('AE5')).toBe(2);
     // The no-egress guard denies the cached capability probe, so no queue is attempted.
     expect(toolData(await world.codex.call('khala_status')), context('AE5')).toMatchObject({
-      wakeDrivers: [{ id: 'queue', available: false, reason: 'codex_queue_unavailable' }],
+      idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is unavailable.' },
     });
     expect(await deniedCodexCount(), context('AE5')).toBe(queues);
     expect((await codexCalls(world)).length, context('AE5')).toBe(0);
