@@ -28,11 +28,18 @@ describe('JoinScreen normal path', () => {
     expect(html).not.toContain('room_1');
   });
 
-  test('joined shows the room id and no setup controls', () => {
+  test('joined hides the room id and no setup controls', () => {
     const html = render({ phase: 'joined', email: 'person@example.com', roomId: 'room_1', retryAllowed: false, errorCode: null });
-    expect(html).toContain('room_1');
+    expect(html).not.toContain('room_1');
+    expect(html).toContain('a Khala channel');
     expect(html).toContain('Signed in as person@example.com');
   });
+});
+
+test.each(['Launch plans', '  Launch plans  '])('joined shows the channel title %s', channelName => {
+  const html = render({ phase: 'joined', email: null, roomId: '!raw:server', channelName, retryAllowed: false, errorCode: null });
+  expect(html).toContain('Channel: Launch plans');
+  expect(html).not.toContain('!raw:server');
 });
 
 describe('JoinScreen error states', () => {
@@ -69,4 +76,10 @@ describe('JoinScreen error states', () => {
     expect(html).not.toContain('Try again');
     expect(html).not.toContain('<button');
   });
+});
+
+test.each([null, undefined, '', '   '])('joined falls back for unknown channel name %s', channelName => {
+  const html = render({ phase: 'joined', email: null, roomId: '!raw:server', ...(channelName === undefined ? {} : { channelName }), retryAllowed: false, errorCode: null });
+  expect(html).toContain('a Khala channel');
+  expect(html).not.toContain('!raw:server');
 });

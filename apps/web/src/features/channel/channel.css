@@ -15,9 +15,9 @@
 .channel-share__feedback{position:absolute;right:0;top:calc(100% + .35rem);z-index:2;width:max-content;max-width:min(15rem,80vw);margin:0;padding:.35rem .55rem;border:1px solid var(--khala-line);border-radius:.45rem;background:var(--khala-fill-raised);color:var(--khala-ink);box-shadow:0 4px 12px #0003;font-size:.75rem;line-height:1.35}
 .channel-share__fallback{width:min(20rem,80vw);max-width:none;display:grid;gap:.35rem}
 
-/* `ChannelNameDialog`: a name for this channel only, over the channel pane. */
-.kh-cname-scrim{position:absolute;inset:0;z-index:40;display:grid;place-items:center;padding:16px;background:rgb(0 0 0 / .4)}
-.kh-cname{width:min(380px,100%);box-sizing:border-box;display:flex;flex-direction:column;gap:.55rem;padding:1.2rem 1.1rem 1.05rem;border-radius:14px;background:var(--surface);border:1px solid var(--line-strong);box-shadow:var(--shadow-lg);color:var(--fg)}
+/* `ChannelNameDialog`: a name for this channel only, in an inline, dismissible notice. */
+.khala-app .kh-main > .kh-cname-banner{flex:0 0 auto;max-height:45%;overflow:auto;padding:16px;border-top:1px solid var(--line)}
+.kh-cname{width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:.55rem;padding:1.2rem 1.1rem 1.05rem;border-radius:14px;background:var(--surface);border:1px solid var(--line-strong);box-shadow:var(--shadow-lg);color:var(--fg)}
 .kh-cname h2{margin:0;font-size:.98rem;font-weight:700;letter-spacing:-.01em}
 .kh-cname-note{margin:0;font-size:.84rem;color:var(--muted);overflow-wrap:anywhere}
 .kh-cname-form{display:flex;flex-direction:column;gap:.45rem;margin-top:.2rem}
@@ -26,8 +26,8 @@
 .kh-cname-field .kh-txt{flex:1;min-width:0;padding-left:1.55rem}
 .kh-cname-err{margin:0;font-size:.76rem;color:var(--block-ink);overflow-wrap:anywhere}
 .kh-cname .kh-txt[aria-invalid="true"]{border-color:var(--block-line)}
-.kh-cname-actions{display:flex;justify-content:flex-end;margin-top:.2rem}
-@media (max-width:480px){.kh-cname-scrim{place-items:start stretch}.kh-cname{width:100%}.kh-cname-actions .kh-btn{flex:1;height:44px}}
+.kh-cname-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.2rem}
+@media (max-width:480px){.kh-cname{width:100%}.kh-cname-actions .kh-btn{flex:1;height:44px}}
 
 .kh-owner-tag { display: inline-block; margin-left: .4rem; padding: .1rem .3rem; border: 1px solid var(--line-strong); border-radius: 4px; font-size: .55rem; letter-spacing: .05em; color: var(--faint); vertical-align: middle; }
 .kh-remove-agents { color: var(--faint); font-size: .75rem; overflow-wrap: anywhere; }

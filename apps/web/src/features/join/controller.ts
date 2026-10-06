@@ -40,7 +40,7 @@ function joinedView(admission: Admission, email: string | null): JoinView {
   switch (admission.outcome) {
     case 'joined':
     case 'already_joined':
-      return { phase: 'joined', email, roomId: admission.room.roomId, retryAllowed: false, errorCode: null };
+      return { phase: 'joined', email, roomId: admission.room.roomId, channelName: admission.room.title, retryAllowed: false, errorCode: null };
     default: {
       const exhaustive: never = admission.outcome;
       throw new Error(`unhandled admission outcome: ${String(exhaustive)}`);

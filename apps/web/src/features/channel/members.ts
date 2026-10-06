@@ -127,9 +127,9 @@ export function resolveMembers({ viewer, humans, agents, currentNames, describeP
       kind: 'agent', participantId: agent.participantId, ownerId, name,
       idBadge: badgeFor({ ownerId: ownerId ?? agent.participantId, displayName: threadName(agent) }) ?? null,
       hue: ownerHue, ownerHue, ownerColor,
-      // The viewer's own badge reads `YO` everywhere (§3), as in the design's roster, until they choose initials.
+      // Own-agent badges use the agent name until the viewer chooses initials.
       // Another owner's member initials already carry their choice.
-      ownerName, ownerInitials: owner?.isViewer ? viewerMember.initials : described?.ownerInitials ?? owner?.initials ?? initials(ownerName), harness: described?.harness ?? null,
+      ownerName, ownerInitials: owner?.isViewer ? viewer.initials ?? initials(name) : described?.ownerInitials ?? owner?.initials ?? initials(ownerName), harness: described?.harness ?? null,
       isViewerOwned: Boolean(viewer.ownerId && agent.ownerId === viewer.ownerId), agent,
     };
   });

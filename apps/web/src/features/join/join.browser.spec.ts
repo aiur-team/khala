@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -33,6 +33,23 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
       args: ['--no-sandbox'],
       env: { ...process.env, TMPDIR: chromiumProfileRoot },
     });
+
+    for (const theme of ['light', 'dark']) {
+      for (const width of [390, 1280]) {
+        const page = await browser.newPage({ viewport: { width, height: 844 } });
+        for (const title of ['Launch plans', '']) {
+          await page.goto(`${url}?invite=test-invite&identity=signed_in&state=eligible&theme=${theme}&title=${encodeURIComponent(title)}`);
+          await page.getByText("You're in.").waitFor();
+          assert.equal(await page.getByText(`Channel: ${title || 'a Khala channel'}`, { exact: true }).count(), 1);
+          assert.doesNotMatch(await page.locator('body').innerText(), /room_1/);
+          if (process.env.KHALA_SCREENSHOT_DIR) {
+            await mkdir(process.env.KHALA_SCREENSHOT_DIR, { recursive: true });
+            await page.screenshot({ path: join(process.env.KHALA_SCREENSHOT_DIR, `join-${title ? 'named' : 'fallback'}-${theme}-${width}.png`) });
+          }
+        }
+        await page.close();
+      }
+    }
 
     // Browser back from sign-in does not auto-redirect forever: sign in,
     // land on the synthetic OAuth page, go back, and confirm we are on the
