@@ -1,7 +1,7 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { sessionFiles, readStatus, StateError, type SessionFiles } from '../state';
+import { sessionFiles, readJson, StateError, type StatusFile, type SessionFiles } from '../state';
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity } from '../activity';
@@ -106,7 +106,7 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
     if (mode === 'async' || (steerOnly && mode !== 'steer')) continue;
-    const [status, pending] = await Promise.all([readStatus(channel.files), unread(channel.files)]);
+    const [status, pending] = await Promise.all([readJson<StatusFile>(channel.files.status), unread(channel.files)]);
     groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
       ...pending, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
   }
@@ -219,12 +219,19 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
           if (input.event === 'stop' && input.continuation) {
             await writeActivity(files, 'idle', io.now);
           } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
+            let wake: string | undefined;
+            if (input.event === 'stop' && adapter.pollIdleWake) {
+              if ((await readActivity(files)).state !== 'idle') await writeActivity(files, 'idle', io.now);
+              wake = await adapter.pollIdleWake(files, io, input.replay);
+              if (!wake) return 0;
+              if (input.replay) { io.stdout.write(wake); return 0; }
+            }
             const frame = await channelFrames(files, steerOnly,
               input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
             if (frame) {
-              await writeActivity(files, 'busy', io.now);
+              if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);
-              output = codec.render(input.event, frame + (notice ? '\n' + notice : ''));
+              output = (wake ? wake + '\n' : '') + codec.render(input.event, frame + (notice ? '\n' + notice : ''));
             } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
           }
         }

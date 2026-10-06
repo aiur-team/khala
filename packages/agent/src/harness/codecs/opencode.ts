@@ -12,7 +12,8 @@ export const opencodeCodec: DeliverCodec = {
       const input = JSON.parse(stdin.replace(/^\uFEFF/u, ''));
       if (!input || typeof input.session_id !== 'string' || typeof input.event !== 'string'
         || !Object.hasOwn(events, input.event)) return null;
-      return { sessionId: input.session_id, event: events[input.event as keyof typeof events], continuation: false,
+      return { sessionId: input.session_id, event: events[input.event as keyof typeof events], continuation: input.continuation === true,
+        ...(input.replay === true ? { replay: true } : {}),
         ...(typeof input.prompt === 'string' ? { promptText: input.prompt } : {}) };
     } catch { return null; }
   },
