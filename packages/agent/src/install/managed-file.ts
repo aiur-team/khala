@@ -99,7 +99,7 @@ export class ManagedFiles {
 
   private async save(recordings: Recordings): Promise<void> {
     if (!Object.keys(recordings).length) { await fs.rm(this.store, { force: true }); return; }
-    await fs.mkdir(path.dirname(this.store), { recursive: true });
+    await fs.mkdir(path.dirname(this.store), { recursive: true, mode: 0o700 });
     const temp = `${this.store}.${process.pid}.tmp`;
     await fs.writeFile(temp, JSON.stringify(recordings, null, 2) + '\n', { mode: 0o600 });
     await fs.rename(temp, this.store);

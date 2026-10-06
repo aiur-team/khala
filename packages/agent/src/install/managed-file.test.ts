@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManagedFiles, formatJson, jsonFormat, pruneCreated, readManaged, textFormat } from './managed-file';
+import { openSessionDir } from '../state';
 import { runInstall } from './main';
 
 let home: string;
@@ -157,4 +158,11 @@ it('adopts a harness-specific absent-file sentinel without restoring an empty fi
   await managed.restore(await readManaged(file), jsonFormat, () => ({}));
   expect(await exists(file)).toBe(false);
   expect(await exists(file + '.khala-bak')).toBe(false);
+});
+
+it('creates private install state that MCP can use', async () => {
+  const env = { XDG_STATE_HOME: path.join(home, 'runtime') };
+  const managed = new ManagedFiles(path.join(env.XDG_STATE_HOME, 'khala'));
+  await managed.record(path.join(home, 'settings.json'));
+  await expect(openSessionDir('muse', 'installed', env)).resolves.toHaveProperty('dir');
 });

@@ -78,6 +78,12 @@ async function mcpSmoke(label, command, args, callStatus = false) {
   }
 }
 
+async function expectAbsent(file) {
+  try { await fs.lstat(file); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  throw new Error(`uninstall left installer-created file: ${file}`);
+}
+
 try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
   const bin = path.join(binDir, windows ? 'khala.cmd' : 'khala');
@@ -107,8 +113,8 @@ try {
   const again = JSON.parse(await fs.readFile(path.join(cursorDir, 'hooks.json'), 'utf8'));
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
-  const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
-  if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
+  await expectAbsent(path.join(cursorDir, 'mcp.json'));
+  await expectAbsent(path.join(cursorDir, 'hooks.json'));
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
@@ -122,7 +128,7 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin !== undefined) throw new Error('uninstall left OpenCode plugin');
+  await expectAbsent(opencodeConfig);
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
