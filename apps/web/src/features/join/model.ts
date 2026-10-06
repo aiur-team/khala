@@ -22,6 +22,7 @@ export type JoinView = Readonly<{
   phase: JoinPhase;
   email: string | null;
   roomId: string | null;
+  channelName?: string | null;
   retryAllowed: boolean;
   errorCode: string | null;
 }>;

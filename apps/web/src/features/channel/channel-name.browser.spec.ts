@@ -16,7 +16,7 @@ const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.
 
 test('a human who meets someone with the same name picks a name for this channel only', { timeout: 120_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-channel-name-dist-'));
-  const chromiumProfileRoot = await mkdtemp('/tmp/khala-channel-name-profile-');
+  const chromiumProfileRoot = await mkdtemp('/tmp/khala-1225-name-profile-');
   let server: PreviewServer | undefined;
   let browser: Browser | undefined;
   try {
@@ -32,25 +32,39 @@ test('a human who meets someone with the same name picks a name for this channel
     await page.goto(`${url}?as=first`);
     await page.getByText('alice: Shall we ship on Friday?').waitFor();
     assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.getByRole('button', { name: /Launch plans/ }).click();
+    await page.locator('.kh-roster .kh-aav').first().waitFor();
+    const avatar = page.locator('.kh-stack .kh-aav');
+    assert.equal(await avatar.locator('.kh-ini').textContent(), 'AC');
+    assert.equal(await avatar.locator('.kh-own').textContent(), 'AC');
+    if (screenshots) {
+      await mkdir(screenshots, { recursive: true });
+      for (const theme of ['light', 'dark']) {
+        for (const width of [390, 1280]) {
+          await page.setViewportSize({ width, height: 844 });
+          await page.goto(`${url}?as=first&theme=${theme}`);
+          await page.getByRole('button', { name: /Launch plans/ }).click();
+          await page.locator('.kh-roster .kh-aav').first().waitFor();
+          await page.screenshot({ path: join(screenshots, `agent-initials-${theme}-${width}.png`) });
+        }
+      }
+    }
 
-    // The later one is, with the name plus the lowest free number already filled in and selected.
+    // The later one is, with the name plus the lowest free number already filled in.
     await page.goto(url);
-    const dialog = page.getByRole('dialog', { name: 'Your name in this channel' });
+    const dialog = page.getByRole('region', { name: 'Your name in this channel' });
     await dialog.waitFor();
-    assert.equal(await dialog.getAttribute('aria-modal'), 'true');
+    assert.equal(await page.getByRole('dialog').count(), 0);
     assert.equal(await dialog.locator('.kh-cname-note').textContent(), 'Someone here is already alice.');
     const field = dialog.getByRole('textbox', { name: 'Your name in this channel' });
     assert.equal(await field.inputValue(), 'alice2');
-    assert.equal(await focused(page), 'input');
-    assert.equal(await field.evaluate(input => { const box = input as HTMLInputElement; return (box.selectionEnd ?? 0) - (box.selectionStart ?? 0); }), 6);
-    const save = dialog.getByRole('button', { name: 'Save' });
-    assert.equal(await dialog.getByRole('button').count(), 1, 'Save is the only action');
-
-    // Focus stays inside the modal.
-    await page.keyboard.press('Tab');
-    assert.equal(await focused(page), 'button');
-    await page.keyboard.press('Tab');
-    assert.equal(await focused(page), 'input');
+    assert.notEqual(await focused(page), 'input', 'notice does not steal focus');
+    const save = dialog.getByRole('button', { name: 'Save', exact: true });
+    await field.focus();
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await dialog.evaluate(notice => notice.contains(document.activeElement)), false, 'Tab can leave the notice');
+    await page.getByRole('button', { name: /Launch plans/ }).click();
+    assert.equal(await dialog.isVisible(), true, 'channel remains usable with the notice open');
 
     // A name someone here holds, or an invalid one, cannot be saved.
     await field.fill('Alice');
@@ -67,7 +81,7 @@ test('a human who meets someone with the same name picks a name for this channel
         for (const width of [390, 1280]) {
           const shot = await browser.newPage({ viewport: { width, height: width === 390 ? 844 : 800 } });
           await shot.goto(`${url}?theme=${theme}`);
-          await shot.getByRole('dialog').waitFor();
+          await shot.getByRole('region', { name: 'Your name in this channel' }).waitFor();
           assert.equal(await noOverflow(shot), true, `no horizontal scroll at ${width}px`);
           await shot.screenshot({ path: join(screenshots, `channel-name-${theme}-${width}.png`) });
           await shot.close();
@@ -83,16 +97,20 @@ test('a human who meets someone with the same name picks a name for this channel
 
     // Existing numbered names are skipped: with an alice2 here, the suggestion is alice3.
     await page.goto(`${url}?gap`);
-    await page.getByRole('dialog').waitFor();
+    await page.getByRole('region', { name: 'Your name in this channel' }).waitFor();
     assert.equal(await page.getByRole('textbox', { name: 'Your name in this channel' }).inputValue(), 'alice3');
 
-    // Phone width: the modal fits without horizontal scrolling and Save is full width.
+    // Phone width: the notice fits without horizontal scrolling and Save is full width.
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(url);
-    await page.getByRole('dialog').waitFor();
+    await page.getByRole('region', { name: 'Your name in this channel' }).waitFor();
     assert.equal(await noOverflow(page), true);
     const box = (await page.locator('.kh-cname').boundingBox())!;
     assert.ok(box.x >= 15 && box.x + box.width <= 390 - 15, 'keeps a 16px gutter');
+    await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+    assert.equal(await page.getByRole('region', { name: 'Your name in this channel' }).count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.__saved), [], 'dismiss does not rename');
+    await page.getByRole('button', { name: /Launch plans/ }).click();
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

@@ -43,7 +43,7 @@ export interface TimelineScreenProps {
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
   viewer: ParticipantView;
-  /** The viewer's chosen initials; without them the viewer and their agents read `YO`. */
+  /** The viewer's chosen initials; own-agent badges otherwise use the agent name. */
   viewerInitials?: string | null;
   extraParticipants?: readonly NameParticipant[];
   /** The channel's members in member order: the mention chips follow it, and owner badges name them (§3, §9). */
@@ -541,8 +541,8 @@ export function TimelineScreen({
 
   const ownerCandidates = [...rosterParticipants.values()].filter(participant => participant.kind === 'human')
     .map(participant => ({ ownerId: participant.ownerId, displayName: fullNameFor(participant, null), initials: chosenInitialsOf(participant) }));
-  /** The `.kh-own` badge: `YO` (or the viewer's chosen initials) for the viewer's agents, else the owner's initials (§3). */
-  const ownerBadge = (identity: Identity) => identity.isViewerOwned ? viewerInitials ?? 'YO'
+  /** The `.kh-own` badge uses chosen initials or the agent name for own agents, and the owner's initials for others. */
+  const ownerBadge = (identity: Identity) => identity.isViewerOwned ? viewerInitials ?? (identity.kind === 'agent' ? initials(identity.label) : 'YO')
     : identity.kind === 'agent' ? ownerInitials({ ownerId: identity.ownerId, label: identity.ownerLabel ?? '?', chosen: identity.ownerChosenInitials },
       ownerCandidates)
     : humanInitials(identity.label, identity.chosenInitials);

@@ -50,11 +50,11 @@ describe('resolveMembers initials', () => {
     expect(kaisAgent.ownerInitials).toBe('KW');
   });
 
-  it('reads `YO` for the viewer and their agents until they choose', () => {
+  it('derives own-agent initials until the viewer chooses', () => {
     for (const viewerInitials of [undefined, null]) {
       const { viewer, mirasAgent } = resolve({ viewerInitials });
       expect(viewer.initials).toBe('YO');
-      expect(mirasAgent.ownerInitials).toBe('YO');
+      expect(mirasAgent.ownerInitials).toBe('SC');
     }
     const { viewer, mirasAgent } = resolve({ viewerInitials: 'MZ' });
     expect(viewer.initials).toBe('MZ');
