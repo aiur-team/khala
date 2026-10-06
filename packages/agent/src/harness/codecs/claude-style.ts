@@ -15,7 +15,8 @@ export const claudeStyleCodec: DeliverCodec = {
         || typeof input.hook_event_name !== 'string' || !Object.hasOwn(events, input.hook_event_name)
         || (input.stop_hook_active !== undefined && typeof input.stop_hook_active !== 'boolean')) return null;
       return { sessionId: input.session_id, event: events[input.hook_event_name as keyof typeof events],
-        continuation: input.stop_hook_active === true };
+        continuation: input.stop_hook_active === true,
+        ...(typeof input.prompt === 'string' ? { promptText: input.prompt } : {}) };
     } catch { return null; }
   },
   noop: () => '',

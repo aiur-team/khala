@@ -5,7 +5,8 @@
 // or types into a screen, and never signals the user's Codex process.
 
 /** The only message text a wake ever queues. */
-export const CODEX_IDLE_WAKE_NOTICE = 'Khala: channel messages are waiting. Continue.';
+import { CODEX_IDLE_WAKE_NOTICE } from './shared/rules';
+export { CODEX_IDLE_WAKE_NOTICE } from './shared/rules';
 
 export type CodexIdleWakeOutcome =
   | Readonly<{ status: 'queued' }>

@@ -68,3 +68,35 @@ it.each(['claude', 'cursor'])('preserves %s closed-pipe handling without rejecti
   expect(stderr).toBe(harness === 'claude'
     ? '{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}\n' : '');
 });
+
+it('verifies the prompt nonce before recording busy activity', async () => {
+  const { recordAttempt, readWakeState, settleAttempts } = await import('../wake/shared/nonce');
+  const { writeActivity } = await import('../activity');
+  const at = instant.getTime();
+  await writeActivity(files, 'idle', () => new Date(at - 1000));
+  await recordAttempt(files.dir, { driver: 'native', nonce: '12345678', at: at - 500, deadline: at - 100 });
+  await settleAttempts(files.dir, { now: at - 100, activity: await readActivity(files) });
+  expect((await readWakeState(files.dir)).native?.failures).toBe(1);
+  await recordAttempt(files.dir, { driver: 'native', nonce: '87654321', at: at - 50, deadline: at + 30_000 });
+  await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit',
+    prompt: 'Khala: channel messages are waiting. Continue. (k-87654321)' }), adapterFor('codex')!, io);
+  expect((await readWakeState(files.dir)).native?.failures).toBe(0);
+  expect((await readActivity(files)).state).toBe('busy');
+});
+
+it('voids an unverified wake when a user prompt arrives', async () => {
+  const { recordAttempt, readWakeState } = await import('../wake/shared/nonce');
+  await recordAttempt(files.dir, { driver: 'terminal', nonce: '12345678',
+    at: instant.getTime() - 100, deadline: instant.getTime() + 10_000 });
+  await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit',
+    prompt: 'Please continue my task' }), adapterFor('codex')!, io);
+  expect((await readWakeState(files.dir)).terminal?.failures ?? 0).toBe(0);
+});
+
+it('keeps prompt delivery and busy activity when verification state is corrupt', async () => {
+  await fs.writeFile(path.join(files.dir, 'wake-journal.json'), 'not-json');
+  await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', prompt: 'hello' }), adapterFor('codex')!, io);
+  expect(stdout).toContain('CI passed');
+  expect((await readActivity(files)).state).toBe('busy');
+  expect(stderr).toContain('wake_verification_failed');
+});

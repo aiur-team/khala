@@ -1,5 +1,5 @@
 import { claudeStyleCodec } from './codecs/claude-style';
-import { createCodexWaker } from '../wake/codex';
+import { codexWakeDriver } from '../wake/codex';
 import type { HarnessAdapter } from './adapter';
 
 const install: NonNullable<HarnessAdapter['install']> = async (flags, deps) =>
@@ -13,6 +13,6 @@ export const codex: HarnessAdapter = {
   restoreAtStartup: true,
   install,
   uninstall: (flags, deps) => install([...flags, '--uninstall'], deps),
-  waker: createCodexWaker,
+  wakeLadder: [codexWakeDriver],
   rejoinable: () => true,
 };

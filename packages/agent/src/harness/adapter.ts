@@ -1,6 +1,6 @@
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
-import type { CodexWaker, CodexWakerDeps } from '../wake/codex';
+import type { WakeDriver } from '../wake/driver';
 
 export type SessionSource = (meta: Readonly<Record<string, unknown>> | undefined, env: NodeJS.ProcessEnv) => unknown;
 
@@ -23,7 +23,7 @@ export type HarnessAdapter = Readonly<{
   codec: DeliverCodec | undefined;
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
-  waker?: (deps: CodexWakerDeps) => CodexWaker;
+  wakeLadder?: readonly WakeDriver[];
   rejoinable(source: string): boolean;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;

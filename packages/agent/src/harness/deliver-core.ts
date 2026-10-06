@@ -4,7 +4,8 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { sessionFiles, readStatus, StateError, type SessionFiles } from '../state';
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
-import { writeActivity } from '../activity';
+import { readActivity, writeActivity } from '../activity';
+import { settleAttempts } from '../wake/shared/nonce';
 import { readListeningMode } from '../mode';
 import { isWakeEntry } from '../events/receive';
 import type { HarnessAdapter } from './adapter';
@@ -175,7 +176,13 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     }
     if (files) {
       try {
-        if (input.event === 'prompt') await writeActivity(files, 'busy', io.now);
+        if (input.event === 'prompt') {
+          try {
+            await settleAttempts(files.dir, { now: io.now().getTime(), activity: await readActivity(files),
+              promptText: input.promptText ?? '' });
+          } catch { diagnostic(io, 'wake_verification_failed'); }
+          await writeActivity(files, 'busy', io.now);
+        }
         if (input.event === 'stop' && input.continuation) {
           await writeActivity(files, 'idle', io.now);
         } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
