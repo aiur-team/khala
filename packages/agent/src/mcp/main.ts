@@ -8,6 +8,7 @@ import { resolveHarness, resolveSessionId } from './session-id';
 import { createKhalaTools } from './tools';
 import { createRealClientFactory } from './wiring';
 import { readStatus, sessionFiles } from '../state';
+import { adapterFor } from '../harness';
 
 export type ClientFactory = (input: { harness: Harness; sessionId: string }) => KhalaAgentClient;
 
@@ -46,7 +47,7 @@ export async function runMcpCommand(argv: readonly string[], deps: {
     return client;
   };
   const startupSession = resolveSessionId(harness, undefined, env);
-  if (startupSession !== null && harness !== 'cursor') clientForSession(startupSession);
+  if (startupSession !== null && adapterFor(harness)?.restoreAtStartup) clientForSession(startupSession);
   const tools = createKhalaTools({
     harness,
     clientFor(meta) {
