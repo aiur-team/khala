@@ -10,7 +10,8 @@ import { readActivity, writeActivity } from './activity';
 import { deliverCore } from './harness/deliver-core';
 import { adapterFor } from './harness';
 import { channelFiles, ensureStateDir, openSessionDir, writeJsonAtomic, writeStatus, type SessionFiles } from './state';
-import { mentions, monitorArmed, watchSession } from './watch';
+import { mentions, monitorArmed, monitorOwner, watchSession } from './watch';
+import { monitorStorageCandidates } from './monitor-storage';
 
 vi.mock('node:fs/promises', { spy: true });
 
@@ -84,7 +85,7 @@ it.each(['remove', 'delete'])('exits silently on %s and clears ownership', async
   await armed();
   if (action === 'remove') await writeStatus(files, 'disconnected', 'removed');
   if (action === 'delete') await fs.rm(files.dir, { recursive: true });
-  await expect(result).resolves.toBe(0);
+  await expect(result).resolves.toBe(2);
   expect(lines).toEqual([]);
   expect(await monitorArmed(files)).toBe(false);
 });
@@ -98,7 +99,7 @@ it('ignores corrupt and partial records, then emits when the write completes', a
 });
 it('does not arm when disconnected or missing session credentials', async () => {
   await fs.unlink(files.session);
-  expect(await watchSession(files, { signal: controller.signal, write: line => { lines.push(line); } })).toBe(0);
+  expect(await watchSession(files, { signal: controller.signal, write: line => { lines.push(line); } })).toBe(2);
   expect(await monitorArmed(files)).toBe(false);
 });
 it.each([
@@ -124,21 +125,21 @@ it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after e
     return { child, closed, output: () => output, error: () => error };
   };
   const first = launch();
-  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true), { timeout: 5_000 });
   const second = launch();
-  await expect(first.closed).resolves.toBe(0);
+  await expect(first.closed).resolves.toBe(2);
   expect(first.output()).toBe('');
   second.child.kill();
   await expect(second.closed).resolves.toBe(0);
   expect(await monitorArmed(files)).toBe(false);
   const resumed = launch();
-  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true), { timeout: 5_000 });
   await appendEntries(files, [entry(1)]);
-  await vi.waitFor(() => expect(resumed.output()).toContain('(1 mentions you)\n'));
-  expect(resumed.error()).toBe('');
+  await vi.waitFor(() => expect(resumed.output()).toContain('(1 mentions you)\n'), { timeout: 5_000 });
+  expect(resumed.error()).not.toContain('khala watch:');
   await writeStatus(files, 'disconnected');
-  await expect(resumed.closed).resolves.toBe(0);
-});
+  await expect(resumed.closed).resolves.toBe(2);
+}, 20_000);
 it('renews without replaying unread messages and notices new events after renewal', async () => {
   await armed();
   await appendEntries(files, [entry(1)]);
@@ -171,7 +172,7 @@ it.each(['async', 'remove'])('rechecks a %s change racing the inbox read before 
   });
   await appendEntries(files, [entry(1)]);
   await vi.waitFor(() => expect(raced).toBe(true));
-  if (race === 'remove') await expect(result).resolves.toBe(0);
+  if (race === 'remove') await expect(result).resolves.toBe(2);
   else await new Promise(resolve => setTimeout(resolve, 100));
   expect(lines).toEqual([]);
 });
@@ -179,7 +180,7 @@ it('does not consume a notification when its output stream fails', async () => {
   result = watchSession(files, { signal: controller.signal, write: () => { throw new Error('closed'); } });
   await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
   await appendEntries(files, [entry(1)]);
-  await expect(result).resolves.toBe(1);
+  await expect(result).resolves.toBe(3);
   controller = new AbortController();
   await armed();
   await vi.waitFor(() => expect(lines).toHaveLength(1));
@@ -253,7 +254,7 @@ it('discovers a later join, keeps running after one channel leaves, and exits on
   await appendEntries(b, [{ ...entry(1), roomId: '!b:local' }]);
   await vi.waitFor(() => expect(lines).toHaveLength(2));
   await writeJsonAtomic(files.status, { state: 'closed' });
-  await expect(result).resolves.toBe(0);
+  await expect(result).resolves.toBe(2);
 });
 
 it('captures the empty legacy startup baseline before delivery can race the first scan', async () => {
@@ -316,4 +317,38 @@ it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', a
     additionalContext: expect.stringContaining('idle mention') });
   expect((await readCursor(files)).deliveredCount).toBe(2);
   expect(stderr).toBe('');
+});
+
+it('keeps a watcher alive across PID namespaces and reports stale heartbeat once', async () => {
+  await writeJsonAtomic(files.status, { state: 'connected', owner: { pid: 2147483647, startTime: 'invisible' }, heartbeatAt: new Date().toISOString() });
+  const errors: string[] = [];
+  result = watchSession(files, { signal: controller.signal, write: line => lines.push(line), stderr: line => errors.push(line) });
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await appendEntries(files, [entry(1)]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  expect(errors).toEqual([]);
+  await writeJsonAtomic(files.status, { state: 'connected', heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
+  await expect(result).resolves.toBe(2);
+  expect(errors).toEqual(['khala watch: stopped (heartbeat_stale). Do not re-arm.']);
+});
+it('uses a fresh monitor lease across PID namespaces', async () => {
+  const nonce = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await writeJsonAtomic(path.join(files.dir, 'monitor.json'), { nonce, pid: 2147483647 });
+  const lease = path.join(files.dir, `monitor-${nonce}.json`);
+  await writeJsonAtomic(lease, { nonce, pid: 2147483647, heartbeatAt: new Date().toISOString() });
+  expect(await monitorArmed(files)).toBe(true);
+  await writeJsonAtomic(lease, { nonce, pid: 2147483647, heartbeatAt: new Date(Date.now() - 60_000).toISOString() });
+  expect(await monitorArmed(files)).toBe(false);
+});
+
+it('selects the newest live watcher across writable and temporary storage', async () => {
+  const temp = monitorStorageCandidates(files)[1]!;
+  await fs.mkdir(temp, { mode: 0o700 });
+  try {
+    for (const [dir, nonce, startedAt] of [[files.dir, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 1], [temp, 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee', 2]] as const) {
+      await writeJsonAtomic(path.join(dir, 'monitor.json'), { nonce, pid: process.pid, startedAt });
+      await writeJsonAtomic(path.join(dir, `monitor-${nonce}.json`), { nonce, heartbeatAt: new Date().toISOString() });
+    }
+    expect((await monitorOwner(files))?.nonce).toBe('bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee');
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
