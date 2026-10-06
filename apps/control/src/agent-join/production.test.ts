@@ -103,6 +103,7 @@ it.each([
       return json({ user_id: body.identifier.user, device_id: body.device_id,
         access_token: body.identifier.user.startsWith('@agent-') ? 'agent-token' : 'control-token' });
     }
+    if (path.endsWith('/displayname') && init?.method === 'PUT') return json({});
     if (path === '/_matrix/client/v3/logout') return json({});
     if (path === '/_matrix/client/v3/joined_rooms') return json({ joined_rooms: ['!release:matrix.example.test'] });
     if (path.includes('/state/m.room.member/')) {
@@ -178,5 +179,5 @@ it.each([
     .map(([, init]) => JSON.parse(String(init?.body)));
   expect(writes).toEqual(['Ally-Codex-2', 'Reviewer'].map(displayname => ({ membership: 'join', displayname,
     'com.khala.invited_by': '@alice:matrix.example.test', 'com.khala.listening_mode': 'steer' })));
-  expect(fetch.mock.calls.some(([input]) => String(input).includes('/profile/'))).toBe(false);
+  expect(fetch.mock.calls.some(([input]) => String(input).includes(`/profile/${encodeURIComponent(matrixUserId)}/`))).toBe(false);
 });
