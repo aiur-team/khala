@@ -3,7 +3,7 @@ import { isHumanColorId } from '@khala/contracts/m1/colors';
 import { normalizeInitials } from '@khala/contracts/m1/initials';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_MEMBER_KEY } from '@khala/contracts/m1/listening-mode';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type OwnerProfileView } from '@khala/contracts/m1/local';
-import { checkName } from '@khala/contracts/m1/names';
+import { checkName, checkNewUsername } from '@khala/contracts/m1/names';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
 import { serial, type SerialQueue } from './owner';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, LocalStore } from '../types';
@@ -83,7 +83,7 @@ export function profileRoutes(options: { queue?: SerialQueue } = {}): LocalRoute
     route('POST', /^\/api\/local\/profile\/username$/u, async (req, ctx) => {
       const parsed = field(req.body, 'username');
       if (!parsed.ok) return fail(400, 'invalid_request');
-      const checked = checkName(parsed.value, 'username');
+      const checked = checkNewUsername(parsed.value);
       if (!checked.ok) return { status: 400, json: { error: 'invalid_username', reason: checked.error } };
       const username = checked.name;
       const p = ctx.store.owner();

@@ -11,7 +11,7 @@ import {
   LOCAL_OWNER_DEVICE_ID, LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, isLocalTxnId,
   type LocalChannelSummary, type LocalEvent, type LocalEventType, type LocalMember, type OwnerProfileView,
 } from '@khala/contracts/m1/local';
-import { checkName, isDefaultAgentName } from '@khala/contracts/m1/names';
+import { checkName, checkNewUsername, isDefaultAgentName } from '@khala/contracts/m1/names';
 
 function harnessView<T extends object>(content: T, query: URLSearchParams): T {
   if (query.get('wire') === '2' || !('harness' in content) || content.harness === undefined
@@ -283,7 +283,7 @@ export function createFakeLocalHelper(seed?: { maxWaitMs?: number }): FakeLocalH
     }
     if ((match = profileFieldRoute.exec(path))) {
       if (match[1] === 'username') {
-        const checked = checkName(body['username'], 'username');
+        const checked = checkNewUsername(body['username']);
         if (!checked.ok) return error(400, 'invalid_username', checked.error);
         const previous = owner.username;
         owner.username = checked.name;

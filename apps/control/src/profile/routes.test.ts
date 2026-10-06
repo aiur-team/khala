@@ -391,3 +391,13 @@ it('clears chosen initials with a stored null record', async () => {
   expect(read.kind === 'record' && read.record.value).toEqual({ v: 1, ownerId: 'own_abc', initials: null });
   expect(await (await f.handlers.get(f.request())).json()).toMatchObject({ initials: null });
 });
+
+it('rejects registry model suffixes on username changes, allowing generic Agent', async () => {
+  const f = fixture();
+  for (const name of ['bob-Gemini', 'bob-qwen-2', 'bob-antigravity']) {
+    const response = await f.set(name);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_username', reason: 'reserved' });
+  }
+  expect((await f.set('secret-agent')).status).toBe(200);
+});

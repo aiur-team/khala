@@ -33,6 +33,7 @@ export function createLocalHumanPorts(input: { origin: string; limits: ContentLi
     device: session.device,
     participant: () => session.participant(),
     room: Object.assign(channel.room, { administration: createLocalAdministration(http) }),
+    observeNotificationEntries: channel.observeBackgroundEntries,
     conversations,
     syncStatus: conversations.syncStatus,
     admission: localAdmission,
