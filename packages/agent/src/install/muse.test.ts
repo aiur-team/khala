@@ -59,6 +59,9 @@ it('installs in one step, backs up once, reinstalls and uninstalls only its own 
   expect(config.mcp_servers.khala).toMatchObject({ transport: 'stdio', command: path.join(home, '.local/share/khala/npm/bin/khala'), env: { XDG_STATE_HOME: path.join(home, 'state') }, args: expect.arrayContaining(['mcp', '--harness', 'muse']) });
   const skill = await fs.readFile(path.join(home, '.config/muse/skills/khala/SKILL.md'), 'utf8');
   expect(skill).toContain('wake_delay_ms: 0');
+  expect(skill).toContain('Do not call khala_read or reply to the wake notice');
+  expect(skill).toContain('do not reply again when the same message appears in a hook frame');
+  expect(skill).not.toContain('use khala_read for channel content');
   expect(skill).toContain(path.join(home, '.local/share/khala/npm/bin/khala'));
   expect(skill).not.toContain('/node');
   expect(JSON.stringify(config.hooks)).toContain(path.join(home, '.local/share/khala/npm/bin/khala'));

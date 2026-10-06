@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { readActivity, writeActivity } from '../activity';
-import { appendEntries } from '../inbox';
+import { appendEntries, readCursor } from '../inbox';
 import { openSessionDir, writeJsonAtomic, writeStatus, type SessionFiles } from '../state';
 import { watchSession, monitorArmed } from '../watch';
 import { recordAttempt, readWakeState, writeWakeSettings, settleAttempts } from './shared';
@@ -89,6 +89,24 @@ it('settles the nonce only at Stop for a drained native notification in the same
   await deliverCore(stop(), muse, { env, now: () => new Date(at + 20), stdout: { write: () => {} }, stderr: { write: () => {} } });
   expect((await readWakeState(files.dir)).monitor).toEqual({ failures: 0 });
   expect((await readActivity(files)).state).toBe('idle');
+});
+it.each(['sync', 'steer'])('delivers an idle wake through %s hooks once without UserPromptSubmit', async mode => {
+  await writeJsonAtomic(files.mode, { mode });
+  await appendEntries(files, [{ kind: 'message', eventId: '$mention', roomId: '!room:test',
+    ts: new Date(at).toISOString(), sender: '@peer:test', senderLabel: 'Peer', senderKind: 'human', body: '@Scout BODYMARK' }]);
+  await writeJsonAtomic(path.join(files.dir, MUSE_WAKE_REQUEST), { owner: 'lease', line, at, deadline: at + 30_000, journalOffset: 0 });
+  await journal();
+  await recordAttempt(files.dir, { nonce: 'deadbeef', driver: 'monitor', at, deadline: at + 30_000 });
+  const outputs: string[] = [];
+  const io = { env, now: () => new Date(at + 20), stdout: { write: (text: string) => { outputs.push(text); } }, stderr: { write: () => {} } };
+  await deliverCore(JSON.stringify({ session_id: sessionId, hook_event_name: 'PostToolUse' }), muse, io);
+  expect(outputs.some(text => text.includes('BODYMARK'))).toBe(mode === 'steer');
+  await deliverCore(stop(), muse, io);
+  await deliverCore(JSON.stringify({ session_id: sessionId, hook_event_name: 'Stop', turn_id: 'run', stop_hook_active: true }), muse, io);
+  await deliverCore(stop(), muse, io);
+  expect(outputs.filter(text => text.includes('BODYMARK'))).toHaveLength(1);
+  expect(await readCursor(files)).toEqual({ lastDeliveredEventId: '$mention', deliveredCount: 1 });
+  expect((await readWakeState(files.dir)).monitor).toEqual({ failures: 0 });
 });
 it.each(['wrong-run', 'wrong-session', 'queued', 'foreign-source', 'wrong-nonce', 'stale'])('rejects %s evidence', async kind => {
   await writeJsonAtomic(path.join(files.dir, MUSE_WAKE_REQUEST), { owner: 'lease', line, at, deadline: at + 30_000, journalOffset: 0 });
