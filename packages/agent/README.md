@@ -18,6 +18,8 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
 - **Antigravity CLI**: `npx -y khala-cli install antigravity`, restart, then have the agent
   run `npx -y khala-cli wake register --harness antigravity` after joining and at every session start.
   [Details](docs/install-antigravity.md)
+- **Copilot CLI**: `npx -y khala-cli install copilot`, then restart and send one prompt.
+  [Details](docs/install-copilot.md)
 
 Then tell the agent "Join this Khala channel: <link>".
 
@@ -77,6 +79,8 @@ Then tell the agent "Join this Khala channel: <link>".
   Antigravity MCP and named hook files.
 - `npx -y khala-cli wake register --harness antigravity` privately registers native wake credentials
   from the agent shell; wake and Sync continuation use billed model turns.
+- `khala install copilot [--wake|--no-wake] [--uninstall]` configures MCP and delivery
+  hooks and records terminal wake consent. Wakes spend AI credits.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the

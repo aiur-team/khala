@@ -1,3 +1,4 @@
+import { createCopilotCodec } from '../src/harness/codecs/copilot';
 import { adapterFor } from '../src/harness';
 import { deliverCore, diagnostic, type HookIO } from '../src/harness/deliver-core';
 
@@ -11,11 +12,12 @@ export async function deliver(stdin: string, argv: readonly string[], io: HookIO
 }): Promise<number> {
   const antigravityEvent = argv.length === 4 && argv[0] === '--harness' && argv[1] === 'antigravity'
     && argv[2] === '--event' && ['PreInvocation', 'Stop'].includes(argv[3]!) ? argv[3] : undefined;
-  const adapter = (argv.length === 2 || antigravityEvent) && argv[0] === '--harness' ? adapterFor(argv[1]!) : undefined;
+  let adapter = (argv.length === 2 || antigravityEvent || (argv.length === 4 && argv[1] === 'copilot' && argv[2] === '--event')) && argv[0] === '--harness' ? adapterFor(argv[1]!) : undefined;
   if (antigravityEvent) {
     try { stdin = JSON.stringify({ ...JSON.parse(stdin), khalaHookEvent: antigravityEvent }); }
     catch { stdin = '{}'; }
   }
+  if (adapter?.id === 'copilot' && argv.length === 4) adapter = { ...adapter, codec: createCopilotCodec(argv[3]) };
   if (!adapter?.codec) {
     diagnostic(io, 'invalid_harness');
     return 0;
