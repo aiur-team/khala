@@ -3,6 +3,7 @@ import type { HarnessAdapter } from './adapter';
 import { claude } from './claude';
 import { codex } from './codex';
 import { cursor } from './cursor';
+import { opencode } from './opencode';
 import { generic, genericAdapter } from './generic';
 
 /** Never silently replaces an adapter or registers an id absent from the metadata registry. */
@@ -16,7 +17,7 @@ export function createAdapterRegistry(adapters: readonly HarnessAdapter[]) {
   return Object.freeze({ resolve: (id: string) => byId.get(id) });
 }
 
-export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, generic]);
+export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, opencode, generic]);
 const registry = createAdapterRegistry(ADAPTERS);
 export function adapterFor(id: string): HarnessAdapter | undefined {
   return registry.resolve(id) ?? (isHarnessId(id) ? genericAdapter(id) : undefined);

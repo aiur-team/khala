@@ -23,7 +23,7 @@ const env = {
   ...(windows ? process.env : {}),
   PATH: [binDir, path.dirname(process.execPath), ...(windows ? [process.env.PATH ?? ''] : ['/usr/bin', '/bin'])].join(path.delimiter),
   HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(root, 'localappdata'),
-  XDG_STATE_HOME: path.join(root, 'state'), XDG_DATA_HOME: path.join(root, 'data'),
+  XDG_CONFIG_HOME: path.join(root, 'config'), XDG_STATE_HOME: path.join(root, 'state'), XDG_DATA_HOME: path.join(root, 'data'),
   npm_config_cache: path.join(root, 'npm-cache'), npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false',
 };
 await fs.mkdir(home, { recursive: true });
@@ -110,10 +110,25 @@ try {
   const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
   if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
 
+  // U20(a) passed: OpenCode's plugin owns MCP registration; install writes only the pin.
+  const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
+  check('install opencode', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const oc = JSON.parse(await fs.readFile(opencodeConfig, 'utf8'));
+  if (JSON.stringify(oc) !== JSON.stringify({ plugin: [`khala-opencode@${version}`] })) throw new Error(`opencode.json: ${JSON.stringify(oc)}`);
+  check('install opencode (again)', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  if (JSON.stringify(JSON.parse(await fs.readFile(opencodeConfig, 'utf8'))) !== JSON.stringify(oc)) throw new Error('install opencode is not idempotent');
+  await mcpSmoke('mcp --harness opencode', process.execPath, [script, 'mcp', '--harness', 'opencode']);
+  const ocHook = check('opencode session-start', process.execPath, [script, 'hook', 'deliver', '--harness', 'opencode'],
+    { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
+  if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
+  check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
+  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin.length) throw new Error('uninstall left OpenCode plugin');
+
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
-  // against the nearest package.json ancestor, not cwd. Copy the tarball into the smoke root, which has none.
+  // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
   const npxDir = path.join(root, 'npx');
   await fs.mkdir(npxDir, { recursive: true });
+  await fs.writeFile(path.join(npxDir, 'package.json'), JSON.stringify({ private: true }));
   await fs.copyFile(tarball, path.join(npxDir, path.basename(tarball)));
   const viaNpx = check('npx -y <tgz> --version', 'npx', ['-y', `./${path.basename(tarball)}`, '--version'], { cwd: npxDir }).trim();
   if (viaNpx !== version) throw new Error(`npx printed ${viaNpx}`);

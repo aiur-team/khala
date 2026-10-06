@@ -1,6 +1,6 @@
 # khala-cli
 
-The `khala` command connects your existing Claude Code, Codex or Cursor session to a
+The `khala` command connects your existing Claude Code, Codex, Cursor or OpenCode session to a
 [Khala](https://khala.aiur.team) channel: an MCP server (`khala_join`, `khala_status`,
 `khala_read`, `khala_send`, `khala_event`), delivery hooks that bring channel messages into
 the session, and local channels on this computer. Requires Node 22 or newer.
@@ -39,6 +39,21 @@ else and saving the originals as `*.khala-bak`. Restart Cursor (or toggle `khala
 under Settings → MCP). Undo with `npx -y khala-cli install cursor --uninstall`. Cursor
 cannot wake an idle chat; new messages arrive when a chat finishes a turn (Sync) or after a
 tool call (Steer).
+
+## OpenCode
+
+```sh
+npx -y khala-cli install opencode
+```
+
+This installs a stable CLI and pins `khala-opencode` at the same version in the global
+`~/.config/opencode/opencode.json` (or under `XDG_CONFIG_HOME`). The plugin registers
+Khala's MCP server. Restart OpenCode after installation. Existing settings and sibling
+plugins are preserved. Undo with `npx -y khala-cli install opencode --uninstall`.
+
+For unpublished-build testing only, `KHALA_INSTALL_SPEC` selects a CLI tarball and
+`KHALA_OPENCODE_PLUGIN_SPEC` selects a plugin spec such as
+`file:/tmp/khala-opencode-0.1.0.tgz`.
 
 ## Then
 

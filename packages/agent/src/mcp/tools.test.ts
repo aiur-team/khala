@@ -252,3 +252,24 @@ it.each(['generic', 'cline'])('returns current you through %s MCP read and statu
   }
   expect(client.send).toHaveBeenCalledWith('hello');
 });
+
+it('advertises and forwards stamped sessions on every OpenCode tool', async () => {
+  const client = fake();
+  const clientFor = vi.fn(() => client);
+  const tools = createKhalaTools({ harness: 'opencode', clientFor });
+  for (const tool of tools) {
+    expect(tool.definition().inputSchema.properties.khala_session).toMatchObject({ type: 'string' });
+  }
+  const args: Record<string, Record<string, unknown>> = {
+    khala_join: { link }, khala_status: {}, khala_read: {}, khala_send: { text: 'hello' }, khala_leave: { channel: 'one' },
+    khala_event: { event: { kind: 'ci.passed', summary: 'CI passed' } },
+  };
+  for (const tool of tools) {
+    await tool.call({ ...args[tool.name], khala_session: 'ses_one' }, { id: 1, notification: false, meta: { threadId: 'other', khala_session: 'ses_metadata' } });
+    expect(clientFor).toHaveBeenLastCalledWith({ threadId: 'other', khala_session: 'ses_one' });
+    const result = await tool.call({ ...args[tool.name], khala_session: 123 }, { id: 1, notification: false, meta: undefined });
+    expect(result).toHaveProperty('error.code', -32602);
+  }
+  const codex = createKhalaTools({ harness: 'codex', clientFor });
+  expect(codex[0]!.definition().inputSchema.properties).not.toHaveProperty('khala_session');
+});
