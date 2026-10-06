@@ -1,0 +1,50 @@
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                                    │
+│  ╭─╮╭─╮                            │  Getting started                                                                                                                                              │
+│  ╰─╯╰─╯  Copilot v1.0.92 uses AI.  │  Use the tabs above to explore your sessions and pull requests                                                                                                │
+│  █ ▘▝ █  Check for mistakes.       │  /init — Initialize Copilot instructions for this repository                                                                                                  │
+│   ▔▔▔▔                             │  /model — Switch models across providers, or use Auto                                                                                                         │
+│                                                                                                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ● No copilot-instructions.md found. Run /init to generate.
+
+ ● Tip: /app
+   └ Prefer a visual workspace? Try out the GitHub Copilot desktop app
+      https://github.com/features/ai/github-app 
+
+ ● MCP Servers reloaded: 1 server connected
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ~/work [⎇ master]                                                                                                                                                                  Session: 0 AIC used
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ draft text
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Interactive · Manual Approval · @ files · # issues                                                                                                                                       GPT-5.6 Terra
