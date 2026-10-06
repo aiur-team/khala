@@ -19,7 +19,7 @@ import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { hostedUsernameFromAgentName, saveHostedUsername } from './local/identity';
-import { TERMINAL_SESSION_DETAILS, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
+import { TERMINAL_SESSION_DETAILS, stateRoot, ensureStateDir, filesForDir, readStateFile, removeStateFile, resolveStateDir, writeStateFile, StateError, channelFiles, readJoinFile, writeJoinFile, removeJoinFile, type SessionFiles, type StatusFile } from './state';
 
 export type KhalaAgentClientOptions = {
   harness: Harness; sessionId: string; rejoinable?: boolean; env?: NodeJS.ProcessEnv;
@@ -168,7 +168,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     const session = attempt.session;
     delete attempt.session;
     await session?.stop().catch(() => {});
-    if (attempt.files) await removeStateFile(attempt.files.dir, 'session.json');
+    if (attempt.files) {
+      await removeStateFile(attempt.files.dir, 'session.json');
+      if (terminal.includes(attempt.status.detail ?? '') && attempt.credentials?.transport !== 'local' && !attempt.restore?.localCredentials) {
+        await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files.dir, stateRoot(options.env));
+      }
+    }
   }
   async function cancel(attempt: Attempt): Promise<void> {
     attempt.controller.abort();
@@ -230,10 +235,13 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     const wait = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, aborted]);
     try {
       const input = { origin: attempt.created.origin, joinId: attempt.created.joinId, pollSecret: attempt.created.pollSecret };
-      const credentials = attempt.restore?.localCredentials ?? await wait(api.pollJoin(input, { signal, ...fetchDeps }));
+      let credentials = attempt.restore?.localCredentials ?? await wait(api.pollJoin(input, { signal, ...fetchDeps }));
       if (attempt.restore && credentials.roomId !== attempt.restore.roomId) {
         await removeStateFile(attempt.files!.dir, 'resume.json');
         throw new KhalaClientError('not_connected', 'unauthorized');
+      }
+      if (attempt.restore && !attempt.restore.localCredentials) {
+        credentials = await (await import('./matrix/crypto-store')).restoredCredentials(attempt.files!.dir, credentials);
       }
       if (!current(attempt)) return;
       const key = channelKey(credentials.roomId);
@@ -262,7 +270,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const channelDir = attempt.files.dir;
       await writeStateFile(channelDir, 'session.json', credentials);
       if (!current(attempt)) return;
-      const starting = (options.startSession ?? startChannelSession)(credentials, { checkRemoved: async () => {
+      const starting = (options.startSession ?? startChannelSession)(credentials, { ...(credentials.transport === 'local' ? {} : { cryptoStore: { dir: channelDir, root: stateRoot(options.env) } }), checkRemoved: async () => {
         try {
           const url = new URL('/api/agent/session/status', attempt.created.origin);
           url.searchParams.set('userId', credentials.userId);
@@ -313,9 +321,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (!decoded.ok || decoded.value.agent !== session.userId) return;
         attempt.appends = attempt.appends.then(async () => {
           if (!current(attempt)) return;
+          const previous = await readStateFile<{ eventId?: string; eventTs?: number }>(channelDir, 'mode.json');
+          if (previous?.eventId === command.eventId || (previous?.eventTs !== undefined && command.ts < previous.eventTs)) return;
           const mode = asyncOnly ? 'async' : decoded.value.mode;
-          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId }, now);
           await publishMode(attempt, session, credentials.roomId, mode);
+          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts }, now);
         }).catch(async () => {
           if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {});
         });
@@ -329,8 +339,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (asyncOnly) {
         await writeStateFile(channelDir, 'mode.json', { mode: 'async' });
         await publishMode(attempt, session, credentials.roomId, 'async');
-      } else if (session.listeningMode) await writeStateFile(channelDir, 'mode.json', { mode: session.listeningMode(credentials.roomId) });
-      else await removeStateFile(channelDir, 'mode.json');
+      } else if (session.listeningMode) {
+        const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');
+        await writeStateFile(channelDir, 'mode.json', { ...previous, mode: session.listeningMode(credentials.roomId) });
+      } else await removeStateFile(channelDir, 'mode.json');
       attempt.joined = true;
       attempt.status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       stored.set(key, { ...stored.get(key)!, channelName: attempt.status.channelName });
@@ -400,6 +412,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         attempts.set(link, attempt);
         if (restore) { channels.set(channelKey(restore.roomId), attempt); await setStatus(attempt, 'joining'); }
         try {
+          if (restore && !restore.localCredentials) {
+            const state = await (await import('./matrix/crypto-store')).validateCryptoToken(attempt.files!.dir, options.fetch ?? fetch);
+            if (state === 'revoked') throw new KhalaClientError('not_connected', 'unauthorized');
+            if (state === 'unavailable') throw new KhalaClientError('not_connected', 'link_unavailable');
+          }
           const signal = restore ? AbortSignal.any([attempt.controller.signal, AbortSignal.timeout(10_000)]) : attempt.controller.signal;
           let releaseAbort: (() => void) | undefined;
           const aborted = new Promise<never>((_, reject) => {
@@ -424,7 +441,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           attempt.task = background(attempt).catch(() => {});
           if (created.autoConfirmed !== true) return { state: 'awaiting_confirmation' as const, confirmUrl };
         } catch (error) {
-          if (restore && terminal.includes(safeError(error).message)) await removeStateFile(attempt.files!.dir, 'resume.json');
+          if (restore && terminal.includes(safeError(error).message)) {
+            await removeStateFile(attempt.files!.dir, 'resume.json');
+            if (!restore.localCredentials) await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env));
+          }
           if (restore && !closed && !attempt.controller.signal.aborted) await setStatus(attempt, 'disconnected', safeError(error).message);
           attempts.delete(link);
           if (!closed) await writeAggregate(safeError(error).message);
@@ -453,7 +473,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const authorization = await readStateFile<ResumeAuthorization>(ref.files.dir, 'resume.json');
           if (!authorization) return;
           const previous = priorStatuses.get(ref.key);
-          if (terminal.includes(previous?.detail ?? '')) { await removeStateFile(ref.files.dir, 'resume.json'); return; }
+          if (terminal.includes(previous?.detail ?? '')) {
+            await removeStateFile(ref.files.dir, 'resume.json');
+            if (!authorization.localCredentials) await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env));
+            return;
+          }
           if (!savedSecret || authorization.secretHash !== secretHash() || authorization.workspace !== workspace || authorization.roomId !== ref.roomId || authorization.localCredentials && (authorization.localCredentials.transport !== 'local' || authorization.localCredentials.roomId !== ref.roomId) || typeof authorization.link !== 'string' || typeof authorization.label !== 'string') {
             await removeStateFile(ref.files.dir, 'resume.json');
             return;
