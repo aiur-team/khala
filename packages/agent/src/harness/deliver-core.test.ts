@@ -132,6 +132,27 @@ it('delivers a disable notice on the next frame only once', async () => {
   expect(stdout).not.toContain('Idle wake (terminal)');
 });
 
+it.each(['codex', 'claude', 'cursor'] as const)('leaves both wake files unchanged on a %s prompt with no pending wake', async harness => {
+  const adapter = adapterFor(harness)!;
+  const codec: DeliverCodec = { ...adapter.codec!, parse: () => ({ sessionId: 'session', event: 'prompt', continuation: false, promptText: 'hello' }) };
+  const active = await openSessionDir(harness, 'session', io.env);
+  const journal = path.join(active.dir, 'wake-journal.json');
+  const state = path.join(active.dir, 'wake-state.json');
+  await fs.writeFile(journal, '{ "attempts": [], "state": {"native":{"failures":1}} }');
+  await fs.writeFile(state, '{ "native": {"failures":1} }');
+  const snapshot = async (file: string) => {
+    const body = await fs.readFile(file, 'utf8');
+    const { mtimeMs, ctimeMs, ino } = await fs.stat(file);
+    return { body, mtimeMs, ctimeMs, ino };
+  };
+  const before = await Promise.all([journal, state].map(snapshot));
+  expect(await deliverCore('prompt', { ...adapter, codec }, io)).toBe(0);
+  const after = await Promise.all([journal, state].map(snapshot));
+  expect(after).toEqual(before);
+  await expect(fs.stat(path.join(active.dir, 'wake.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect((await readActivity(active)).state).toBe('busy');
+});
+
 it.each(['claude', 'codex', 'cursor'])('does not walk processes or create hook mappings for registered %s hooks', async harness => {
   const readProcess = vi.fn<NonNullable<HookIO['readProcess']>>();
   io.readProcess = readProcess;

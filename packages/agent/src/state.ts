@@ -1,9 +1,10 @@
+import { isHarnessId } from '@khala/contracts/m1/harness';
 import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { HARNESSES, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
+import { type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 /** `displayName` is the agent's own current name in the channel; hooks show it as `you=`. */
@@ -73,7 +74,7 @@ export async function removeJoinFile(files: SessionFiles, link: string): Promise
   }
 }
 export function sessionFiles(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): SessionFiles {
-  if (!(HARNESSES as readonly string[]).includes(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
+  if (!isHarnessId(harness) || !SESSION_ID_PATTERN.test(sessionId)) throw new StateError('invalid_session_id');
   return filesForDir(path.join(stateRoot(env), harness, sessionId));
 }
 export function resolveStateDir(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): string {
@@ -84,10 +85,12 @@ export async function ensureStateDir(dir: string): Promise<void> {
     // Check parents before descending so a pre-existing symlink is never followed.
     let sessionDir = dir;
     if (path.basename(path.dirname(dir)) === 'channels' && /^[a-f0-9]{24}$/.test(path.basename(dir))
-      && (HARNESSES as readonly string[]).includes(path.basename(path.dirname(path.dirname(path.dirname(dir)))))) {
+      && isHarnessId(path.basename(path.dirname(path.dirname(path.dirname(dir)))))
+      && path.basename(path.dirname(path.dirname(path.dirname(path.dirname(dir))))) === 'khala') {
       sessionDir = path.dirname(path.dirname(dir));
     } else if (['channels', 'joins'].includes(path.basename(dir))
-      && (HARNESSES as readonly string[]).includes(path.basename(path.dirname(path.dirname(dir))))) {
+      && isHarnessId(path.basename(path.dirname(path.dirname(dir))))
+      && path.basename(path.dirname(path.dirname(path.dirname(dir)))) === 'khala') {
       sessionDir = path.dirname(dir);
     }
     const directories = [path.dirname(path.dirname(sessionDir)), path.dirname(sessionDir), sessionDir];

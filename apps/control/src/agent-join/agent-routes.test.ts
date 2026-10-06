@@ -182,3 +182,10 @@ it('accepts registry and generic harness ids at the control boundary', async () 
     if (read.kind === 'found') expect(read.record.harness).toBe(harness);
   }
 });
+
+it.each(['Gemini', 'g', '../x'])('rejects malformed harness %s with invalid_harness', async harness => {
+  const f = await fixture();
+  const response = await f.handlers.create(f.createRequest({ link: `${origin}/join/inv_abcdefgh`, harness, label: 'Agent' }));
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: 'invalid_harness' });
+});

@@ -19,7 +19,7 @@ const fake = (): KhalaAgentClient => ({
   close: vi.fn(async () => {}),
 });
 const call = (name: string, args: unknown = {}) => ({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args, _meta: { threadId: '019a-thread' } } });
-async function exchange(messages: unknown[], client: KhalaAgentClient | null = fake(), harness: 'claude' | 'codex' = 'codex') {
+async function exchange(messages: unknown[], client: KhalaAgentClient | null = fake(), harness: string = 'codex') {
   let text = '';
   const clientFor = vi.fn(() => client);
   await runMcpServer({
@@ -251,4 +251,10 @@ it('puts the once-per-disable read notice in agent-facing text as well as struct
   client.read = async () => ({ messages: [], wakeNotice: 'Idle wake (terminal): Run `khala wake on --driver terminal` to re-enable it.' });
   const { responses } = await exchange([call('khala_read')], client);
   expect(responses[0].result.content[0].text).toContain('\nIdle wake (terminal):');
+});
+
+it.each([['opencode', 'OpenCode'], ['cline', 'Agent']])('uses registry model labels for %s in khala_join', async (harness, label) => {
+  const client = fake();
+  await exchange([call('khala_join', { link })], client, harness);
+  expect(client.join).toHaveBeenCalledWith(link, label);
 });

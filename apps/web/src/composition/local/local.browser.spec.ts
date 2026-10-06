@@ -340,6 +340,9 @@ test('an unconfirmed mode request reverts after 15 s', { timeout: 180_000 }, asy
       const wired = await wire(context, fake, origin);
       const page = await context.newPage();
       await page.clock.install();
+      // Freeze before setup: network and assertion latency must not consume the
+      // confirmation window before we advance it ourselves.
+      await page.clock.pauseAt(Date.now() + 60_000);
       await guarded(wired, async () => {
         await page.goto(`${origin}${R1_PATH}`);
         await page.locator('#kh-head-btn').click();
@@ -351,9 +354,9 @@ test('an unconfirmed mode request reverts after 15 s', { timeout: 180_000 }, asy
         await expect.poll(() => fake.modeCommands.length).toBe(1);
         assert.equal(await checkedMode(page, FAKE_CODEX), 'steer');
         // No echo: the agent stays on `async`, and the UI reverts at MODE_CONFIRM_MS.
-        await page.clock.fastForward(14_000);
+        await page.clock.runFor(14_999);
         assert.equal(await checkedMode(page, FAKE_CODEX), 'steer');
-        await page.clock.fastForward(1_100);
+        await page.clock.runFor(1);
         await expect(status.filter({ hasText: 'kevin-Codex didn\'t confirm. It may be offline.' })).toBeVisible();
         assert.equal(await checkedMode(page, FAKE_CODEX), 'async');
         const members = await read(fake, `/api/local/rooms/${enc(FAKE_R1)}/members`) as { members: { userId: string; listeningMode?: string }[] };

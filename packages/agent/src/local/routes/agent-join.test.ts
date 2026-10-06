@@ -367,3 +367,12 @@ describe('agentJoinRoutes', () => {
     await f.create();
   });
 });
+
+it('completes a Cline join with the generic model name', async () => {
+  const f = fixture();
+  const joined = await requestJoin({ link: f.link(), harness: 'cline', label: 'Cline' }, { fetch: f.fetchVia });
+  const credentials = await pollJoin(joined, { fetch: f.fetchVia, sleep: async () => {} });
+  expect(f.store.members(roomId)).toEqual(expect.arrayContaining([expect.objectContaining({ userId: credentials.userId, harness: 'cline', displayName: 'kevin-Agent' })]));
+  await reportReady(joined, { fetch: f.fetchVia });
+  expect(f.ctx.joins.get(joined.joinId)?.state).toBe('ready');
+});

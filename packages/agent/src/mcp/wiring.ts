@@ -20,7 +20,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
     const waker = drivers?.length ? deps.createWaker
       ? deps.createWaker({ files, threadId: sessionId })
       : createWakeLadder({ files, harness, sessionId, drivers, env,
-        ...(harness === 'codex' ? { warningPrefix: 'codex' } : {}) }) : undefined;
+        warningPrefix: adapter?.wakeWarningName ?? 'wake' }) : undefined;
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, ...(rejoinable !== undefined ? { rejoinable } : {}), env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before

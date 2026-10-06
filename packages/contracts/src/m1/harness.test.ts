@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { HARNESSES } from './agent-join';
 import { validateAgentName } from '../messaging/agent-names';
 import { AGENT_NAME_MAX, checkName } from './names';
 import { HARNESS_ID, HARNESS_REGISTRY, LEGACY_HARNESSES, harnessInfo, isHarnessId } from './harness';
@@ -12,7 +11,7 @@ describe('harness ids', () => {
     expect(isHarnessId(id)).toBe(false);
   });
   it('keeps the legacy ids independent of the open registry', () => {
-    expect(LEGACY_HARNESSES).toEqual(HARNESSES);
+    expect(LEGACY_HARNESSES).toEqual(['claude', 'codex', 'cursor']);
   });
 });
 
