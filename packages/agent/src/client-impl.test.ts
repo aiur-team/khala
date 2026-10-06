@@ -1102,12 +1102,21 @@ it('backfills paginated gap mentions before live traffic, dedupes, and keeps the
   expect((await client.status()).unread).toBe(4);
   expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap1', '$gap2', '$live']);
   expect(history).toHaveBeenCalledTimes(2);
-  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toHaveProperty('joinedAt', now().toISOString());
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toMatchObject({ originalJoinedAt: now().toISOString(), joinedAt: new Date(now().getTime() + 10_000).toISOString() });
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now: () => new Date(now().getTime() + 20_000), joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$seen', '$gap1', '$gap2', '$live']);
+  expect(wake).toHaveBeenCalledTimes(3);
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toMatchObject({ originalJoinedAt: now().toISOString(), joinedAt: new Date(now().getTime() + 20_000).toISOString() });
 });
 
 it('backfills a restored channel with an empty inbox but excludes pre-join messages', async () => {
   const f = await multiClient(['A']); await f.join(0); await client.close();
   const control = f.controls[0]!;
+  // Older versions have only joinedAt; migrate that boundary on restore.
+  await writeStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json', { roomId: control.creds.roomId, joinedAt: now().toISOString() });
   vi.mocked(control.session.history).mockResolvedValue({ messages: [
     { ...message('$prejoin'), roomId: control.creds.roomId, ts: now().getTime() - 1 },
     { ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 },

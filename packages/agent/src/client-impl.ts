@@ -229,12 +229,14 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     void aborted.catch(() => {});
     const wait = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, aborted]);
     try {
-      let joinedAt = now().toISOString();
+      // joinedAt renews wake budgets on reconnect; keep a separate history boundary.
+      let originalJoinedAt = now().toISOString();
       let savedEntries: InboxEntry[] = [];
       let savedJoinBoundary = false;
       if (attempt.restore && attempt.files) {
-        const metadata = await readStateFile<{ joinedAt?: string }>(attempt.files.dir, 'channel.json');
-        if (metadata?.joinedAt && Number.isFinite(Date.parse(metadata.joinedAt))) { joinedAt = metadata.joinedAt; savedJoinBoundary = true; }
+        const metadata = await readStateFile<{ joinedAt?: string; originalJoinedAt?: string }>(attempt.files.dir, 'channel.json');
+        const boundary = metadata?.originalJoinedAt ?? metadata?.joinedAt;
+        if (boundary && Number.isFinite(Date.parse(boundary))) { originalJoinedAt = boundary; savedJoinBoundary = true; }
         savedEntries = await readEntries(attempt.files);
       }
       const input = { origin: attempt.created.origin, joinId: attempt.created.joinId, pollSecret: attempt.created.pollSecret };
@@ -259,7 +261,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         channels.set(key, attempt);
         const old = stored.get(key);
         stored.set(key, { key, roomId: credentials.roomId, ...(old?.channelName ? { channelName: old.channelName } : {}), files: attempt.files, legacy: false });
-        await writeStateFile(attempt.files.dir, 'channel.json', { roomId: credentials.roomId, channelName: old?.channelName, joinedAt });
+        await writeStateFile(attempt.files.dir, 'channel.json', { roomId: credentials.roomId, channelName: old?.channelName, joinedAt: now().toISOString(), originalJoinedAt });
       });
       roomChanges.set(key, claim);
       try { await wait(claim); } catch (error) {
@@ -335,7 +337,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;
       const membershipTime = session.joinedAt?.(credentials.roomId);
-      if (!savedJoinBoundary && membershipTime !== undefined) joinedAt = new Date(membershipTime).toISOString();
+      if (!savedJoinBoundary && membershipTime !== undefined) originalJoinedAt = new Date(membershipTime).toISOString();
       if (asyncOnly) {
         await writeStateFile(channelDir, 'mode.json', { mode: 'async' });
         await publishMode(attempt, session, credentials.roomId, 'async');
@@ -346,7 +348,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const missed: SessionMessage[][] = [];
       if (attempt.restore) {
         const lastEventId = savedEntries.at(-1)?.eventId;
-        const cutoff = Date.parse(joinedAt);
+        const cutoff = Date.parse(originalJoinedAt);
         let before: string | undefined;
         const visited = new Set<string>();
         while (current(attempt)) {
@@ -361,7 +363,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (!current(attempt)) return;
       attempt.status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       stored.set(key, { ...stored.get(key)!, channelName: attempt.status.channelName });
-      await writeStateFile(channelDir, 'channel.json', { roomId: credentials.roomId, channelName: attempt.status.channelName, joinedAt });
+      await writeStateFile(channelDir, 'channel.json', { roomId: credentials.roomId, channelName: attempt.status.channelName, joinedAt: now().toISOString(), originalJoinedAt });
       const own = ownName(session);
       if (own !== undefined) attempt.status.displayName = own;
       attempt.joined = true;
