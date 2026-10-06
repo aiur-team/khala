@@ -245,9 +245,16 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       const messages: SessionMessage[] = [];
       let undecryptable = 0;
       let oldest: string | undefined;
+      let oldestTs: number | undefined;
+      let reachedBoundary = false;
       for (const raw of res.chunk) {
         const event = client.getEventMapper()({ ...raw, room_id: roomId });
         oldest = event.getId();
+        oldestTs = Math.min(oldestTs ?? event.getTs(), event.getTs());
+        if (options?.stopAtEventId && oldest === options.stopAtEventId) {
+          reachedBoundary = true;
+          break;
+        }
         try { await client.decryptEventIfNeeded(event); } catch { /* Report decryption failures below. */ }
         if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
           undecryptable++;
@@ -264,11 +271,14 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         const m = message(event);
         if (m && m.eventId !== before) messages.push(m);
       }
-      log(`history_undecryptable=${undecryptable}`);
+      const count = `history_undecryptable=${undecryptable}`;
+      log(count);
+      if (options?.includeUnavailable === false && undecryptable > 0 && !opts?.log) process.stderr.write(`${count}\n`);
       messages.reverse();
       // Unsupported state/command events still advance pagination. Otherwise an
       // empty projected page would hide older messages during restore catch-up.
-      return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest } : { messages };
+      return { messages, ...(typeof res.end === 'string' && oldest ? { nextBefore: oldest } : {}),
+        ...(options?.includeUnavailable === false || options?.stopAtEventId ? { ...(oldestTs === undefined ? {} : { oldestTs }), reachedBoundary } : {}) };
     },
     async send(roomId, text) { if (stopped) throw new Error('session_stopped'); const res = await guarded(roomId, () => client.sendTextMessage(roomId, text)); return { eventId: res.event_id }; },
     async sendChannelEvent(roomId, content, txnId) {

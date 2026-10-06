@@ -352,23 +352,23 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         let before: string | undefined;
         const visited = new Set<string>();
         while (current(attempt)) {
-          const page = await wait(session.history(credentials.roomId, 100, before, { includeUnavailable: false }));
+          const page = await wait(session.history(credentials.roomId, 100, before, { includeUnavailable: false, ...(lastEventId ? { stopAtEventId: lastEventId } : {}) }));
           const boundary = page.messages.findIndex(message => message.eventId === lastEventId);
           missed.push(page.messages.slice(boundary + 1).filter(message => message.ts >= cutoff));
-          if (boundary !== -1 || page.messages.some(message => message.ts < cutoff) || !page.nextBefore || visited.has(page.nextBefore)) break;
+          if (page.reachedBoundary || (page.oldestTs !== undefined && page.oldestTs < cutoff) || boundary !== -1 || page.messages.some(message => message.ts < cutoff) || !page.nextBefore || visited.has(page.nextBefore)) break;
           visited.add(page.nextBefore);
           before = page.nextBefore;
         }
       }
       if (!current(attempt)) return;
+      attempt.joined = true;
+      for (const page of missed.reverse()) for (const message of page) intake(message);
+      for (const deliver of buffered) deliver();
       attempt.status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       stored.set(key, { ...stored.get(key)!, channelName: attempt.status.channelName });
       await writeStateFile(channelDir, 'channel.json', { roomId: credentials.roomId, channelName: attempt.status.channelName, joinedAt: now().toISOString(), originalJoinedAt });
       const own = ownName(session);
       if (own !== undefined) attempt.status.displayName = own;
-      attempt.joined = true;
-      for (const page of missed.reverse()) for (const message of page) intake(message);
-      for (const deliver of buffered) deliver();
       if (credentials.transport !== 'local') {
         const username = own === undefined ? null : hostedUsernameFromAgentName(own, options.harness);
         if (username !== null) attempt.appends = attempt.appends.then(() => saveHostedUsername(username, options.env)).catch(() => {});

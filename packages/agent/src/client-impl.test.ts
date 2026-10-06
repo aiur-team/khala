@@ -1164,6 +1164,23 @@ it('requests confirmed history on restore and wakes only for the decrypted gap m
   expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap']);
 });
 
+it.each(['tail', 'cutoff'])('stops restored encrypted history at its raw %s boundary', async boundary => {
+  const f = await multiClient(['A']); await f.join(0);
+  const control = f.controls[0]!;
+  if (boundary === 'tail') { control.receive({ ...message('$tail'), roomId: control.creds.roomId }); await client.status(); }
+  await client.close();
+  const wake = vi.fn();
+  vi.mocked(control.session.history).mockResolvedValue({ messages: [], nextBefore: '$older',
+    ...(boundary === 'tail' ? { reachedBoundary: true, oldestTs: now().getTime() } : { oldestTs: now().getTime() - 1 }) });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(control.session.history).toHaveBeenCalledExactlyOnceWith(control.creds.roomId, 100, undefined, { includeUnavailable: false, ...(boundary === 'tail' ? { stopAtEventId: '$tail' } : {}) });
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(boundary === 'tail' ? ['$tail'] : []);
+  expect((await client.status()).unread).toBe(boundary === 'tail' ? 1 : 0);
+  expect(wake).not.toHaveBeenCalled();
+});
+
 it('keeps restore disconnected when catch-up fails rather than claiming a complete inbox', async () => {
   const f = await multiClient(['A']); await f.join(0); await client.close();
   vi.mocked(f.controls[0]!.session.history).mockRejectedValue(new Error('history unavailable'));
