@@ -4,7 +4,8 @@ import { codexDriver } from './codex';
 import { genericDriver } from './generic';
 import { qwenDriver } from './qwen';
 import { cursorDriver } from './cursor';
+import { geminiDriver } from './gemini';
 import { opencodeDriver } from './opencode';
 export const conformanceDrivers: Readonly<Record<string, FakeHarnessDriver>> = {
-  claude: claudeDriver, codex: codexDriver, cursor: cursorDriver, opencode: opencodeDriver, generic: genericDriver, qwen: qwenDriver,
+  claude: claudeDriver, codex: codexDriver, cursor: cursorDriver, gemini: geminiDriver, opencode: opencodeDriver, generic: genericDriver, qwen: qwenDriver,
 };

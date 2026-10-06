@@ -2,7 +2,7 @@ import { capturePane } from '../src/wake/terminal/capture';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { writeActivity } from '../src/activity';
 import { listChannels } from '../src/channels';
-import { TERMINAL_SESSION_DETAILS, readStatus, openSessionDir } from '../src/state';
+import { TERMINAL_SESSION_DETAILS, readJson, type StatusFile, openSessionDir } from '../src/state';
 
 /** Remind the resumed agent before its first Stop; never expose channel credentials. */
 export default async function run(stdin: string, argv: readonly string[]): Promise<number> {
@@ -14,8 +14,8 @@ export default async function run(stdin: string, argv: readonly string[]): Promi
     await capturePane(files, process.env);
     const channels = await listChannels(files);
     const statuses = channels.length
-      ? await Promise.all(channels.map(async channel => ({ status: await readStatus(channel.files), channelName: channel.channelName ?? channel.roomId })))
-      : [{ status: await readStatus(files), channelName: undefined }];
+      ? await Promise.all(channels.map(async channel => ({ status: await readJson<StatusFile>(channel.files.status), channelName: channel.channelName ?? channel.roomId })))
+      : [{ status: await readJson<StatusFile>(files.status), channelName: undefined }];
     // This synchronous hook completes before the first user prompt. The async
     // watcher must never reset busy activity after that prompt starts.
     if (process.env.CLAUDE_CODE_ENTRYPOINT === 'cli' && ['startup', 'resume'].includes(input.source)

@@ -2,8 +2,8 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as processReader from '../harness/proc';
 import { spawn } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { channelFiles, openSessionDir, sessionFiles, StateError, writeStatus, type SessionFiles } from '../state';
@@ -13,6 +13,8 @@ import * as channels from '../channels';
 import { readActivity, writeActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
+
+vi.mock('../harness/proc', { spy: true });
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 let root: string;
@@ -195,11 +197,23 @@ it('rejects invalid harness arguments without throwing', async () => {
   expect(stdout.write).not.toHaveBeenCalled();
   expect(stderr.write).toHaveBeenCalledWith('{"ok":false,"warning":"khala_hook_suppressed","code":"invalid_harness"}\n');
 });
-it('runs under one second on a thousand-line inbox', async () => {
+it('delivers a thousand-line inbox within the in-process performance budget', async () => {
   await seed(Array.from({ length: 1000 }, (_, i) => message(i)));
-  const start = performance.now();
-  expect((await hook()).code).toBe(0);
-  expect(performance.now() - start).toBeLessThan(1000);
+  const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+  const stdin = JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit' });
+  const io = { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() };
+  // Delivery uses ~7.6 ms CPU locally (6.3–10.9 ms across five samples).
+  // A ~10x budget catches large regressions without counting startup or CPU contention waits.
+  const start = process.cpuUsage();
+  const code = await deliver(stdin, ['--harness', 'claude'], io);
+  const cpu = process.cpuUsage(start);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
+  expect(code).toBe(0);
+  expect(stderr.write).not.toHaveBeenCalled();
+  expect(stdout.write).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(stdout.write.mock.calls[0]![0]).hookSpecificOutput.additionalContext).toContain('count="50"');
+  expect((await readCursor(files)).deliveredCount).toBe(50);
+  expect(cpuMs).toBeLessThan(75);
 });
 
 it('recomputes once after a cursor conflict', async () => {
@@ -674,4 +688,25 @@ it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$
     expect(outputs.at(-1)).toBe(expected ? JSON.stringify(expected) + '\n' : '');
   }
   expect(outputs[1]).toBe(outputs[0]);
+});
+
+it.each(['UserPromptSubmit', 'PostToolUse'])('reads connected Codex display metadata without subprocesses on %s', async event => {
+  await seed([message()], 'codex');
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'steer' }));
+  // Observe the actual identity reader, including execFile's custom promisify path.
+  const read = vi.spyOn(processReader, 'readProcess').mockClear();
+  // Force the platform that previously launched ps for every status read.
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  const output: string[] = [];
+  const errors: string[] = [];
+  try {
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: event }), ['--harness', 'codex'], {
+      env: { XDG_STATE_HOME: root }, now: () => new Date(),
+      stdout: { write: text => output.push(text) }, stderr: { write: text => errors.push(text) },
+    });
+  } finally { Object.defineProperty(process, 'platform', { value: platform }); }
+  expect(errors).toEqual([]);
+  expect(read).not.toHaveBeenCalled();
+  expect(output.join('')).toContain('Docs are a go');
 });

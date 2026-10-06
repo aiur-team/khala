@@ -20,7 +20,7 @@ async function inbox(file: string): Promise<InboxEntry[]> {
 async function send(page: Page, text: string) {
   await page.getByLabel('Message', { exact: true }).fill(text);
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: text })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: text }).first()).toBeVisible({ timeout: 30_000 });
 }
 
 async function chooseUsername(page: Page) {

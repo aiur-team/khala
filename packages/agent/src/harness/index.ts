@@ -4,6 +4,7 @@ import { claude } from './claude';
 import { codex } from './codex';
 import { cursor } from './cursor';
 import { qwen } from './qwen';
+import { gemini } from './gemini';
 import { opencode } from './opencode';
 import { generic, genericAdapter } from './generic';
 
@@ -18,7 +19,7 @@ export function createAdapterRegistry(adapters: readonly HarnessAdapter[]) {
   return Object.freeze({ resolve: (id: string) => byId.get(id) });
 }
 
-export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, opencode, qwen, generic]);
+export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, opencode, gemini, qwen, generic]);
 const registry = createAdapterRegistry(ADAPTERS);
 export function adapterFor(id: string): HarnessAdapter | undefined {
   return registry.resolve(id) ?? (isHarnessId(id) ? genericAdapter(id) : undefined);

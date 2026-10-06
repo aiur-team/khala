@@ -170,7 +170,7 @@ export async function watchSession(files: SessionFiles, io: {
   }
 }
 
-export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor|qwen --session <id>]';
+export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor|gemini|qwen --session <id>]';
 
 export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
