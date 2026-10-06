@@ -352,8 +352,9 @@ transport. `refuse` and disabled cross-session messaging also prevent wakes.
 
 On native Windows, Qwen uses an agent-armed background shell watcher. After
 joining, follow the command in Khala's join/status hint with `run_shell_command`
-and `is_background: true`. The command uses the installed private CLI path;
-install grants a narrow permission for that command. The watcher exits after the
+and `is_background: true`. The command uses the private npm launcher
+(`khala.cmd` on Windows); install grants a narrow permission for that watcher
+command, including when the install path contains spaces. The watcher exits after the
 first message notification, so re-arm it after processing messages. It observes
 the inbox without consuming it; Qwen's hooks deliver the channel content.
 `agents.crossSessionInbound: hold` prevents the watcher from notifying or arming.

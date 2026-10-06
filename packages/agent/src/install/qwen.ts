@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { stateRoot } from '../state';
+import { ensureStateDir, stateRoot } from '../state';
 import { ManagedFiles, formatJson, jsonFormat, readManaged } from './managed-file';
 import { qwenControllerFile, qwenHome } from '../wake/qwen-socket';
 
@@ -14,7 +14,7 @@ const ours = (server: unknown) => object(server) && Array.isArray(server.args)
   && server.args[server.args.indexOf('--harness') + 1] === 'qwen';
 
 /** Validate before any install side effect; preserve unrelated MCP entries and hook groups. */
-export function mergeQwenSettings(config: unknown, entry: object | null, command: string | null, backgroundWake = false, watchCommand = 'khala watch --harness qwen'):
+export function mergeQwenSettings(config: unknown, entry: object | null, command: string | null, backgroundWake = false, watchCommand = 'khala watch --harness qwen', watchPermission = `Bash(${watchCommand} --session *)`, previousPermission?: string):
   { config: Record<string, unknown> } | { error: 'invalid_config' | 'qwen_mcp_exists' } {
   if (!object(config) || config.mcpServers !== undefined && !object(config.mcpServers)
     || config.hooks !== undefined && !object(config.hooks)) return { error: 'invalid_config' };
@@ -46,8 +46,8 @@ export function mergeQwenSettings(config: unknown, entry: object | null, command
     const permissions = { ...(config.permissions as Record<string, unknown> ?? {}) };
     if (permissions.allow !== undefined && (!Array.isArray(permissions.allow) || permissions.allow.some(rule => typeof rule !== 'string'))) return { error: 'invalid_config' };
     const allow = (permissions.allow as string[] ?? []).filter(rule => rule !== QWEN_WATCH_PERMISSION);
-    const permission = `Bash(${watchCommand} --session *)`;
-    const scoped = allow.filter(rule => rule !== permission);
+    const permission = watchPermission;
+    const scoped = allow.filter(rule => rule !== permission && rule !== previousPermission);
     if (command) scoped.push(permission);
     permissions.allow = scoped;
     Object.assign(next, { permissions });
@@ -56,7 +56,7 @@ export function mergeQwenSettings(config: unknown, entry: object | null, command
 }
 
 export async function installQwen(input: {
-  env: NodeJS.ProcessEnv; backgroundWake?: boolean; watchCommand?: string; entry: object; command: string; uninstall: boolean;
+  env: NodeJS.ProcessEnv; backgroundWake?: boolean; watchCommand?: string; watchPermission?: string; entry: object; command: string; uninstall: boolean;
   install?: () => boolean; mint?: () => { id: string; token: string } | undefined;
   list?: () => string[] | undefined; remove?: (id: string) => boolean;
   stdout: (line: string) => void; stderr: (line: string) => void;
@@ -68,20 +68,26 @@ export async function installQwen(input: {
   let config;
   try { config = before?.trim() ? JSON.parse(before.replace(/^\uFEFF/u, '')) : {}; }
   catch { input.stderr('khala: invalid Qwen settings.json'); return 1; }
-  const merged = mergeQwenSettings(config, input.uninstall ? null : input.entry, input.uninstall ? null : input.command, input.backgroundWake, input.watchCommand);
+  const watchFile = path.join(path.dirname(qwenControllerFile(input.env)), 'watch-command.json');
+  let previousPermission: string | undefined;
+  try {
+    const previous = JSON.parse(await fs.readFile(watchFile, 'utf8'));
+    // Remove only the exact rule recorded by our earlier install.
+    if (typeof previous.command === 'string') previousPermission = typeof previous.permission === 'string'
+      ? previous.permission : `Bash(${previous.command} --session *)`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      input.stderr('khala: invalid saved Qwen watcher command'); return 1;
+    }
+  }
+  const merged = mergeQwenSettings(config, input.uninstall ? null : input.entry, input.uninstall ? null : input.command, input.backgroundWake, input.watchCommand, input.watchPermission, previousPermission);
   if ('error' in merged) { input.stderr(`khala: ${merged.error}`); return 1; }
   const credentialFile = qwenControllerFile(input.env);
   let minted: { id: string; token: string } | undefined;
   try {
     // XDG_STATE_HOME may be shared; only Khala-owned directories must be private.
     if (!input.uninstall && (input.mint || input.backgroundWake)) {
-      await fs.mkdir(path.dirname(stateRoot(input.env)), { recursive: true });
-      for (const dir of [stateRoot(input.env), path.dirname(credentialFile)]) {
-        try { await fs.mkdir(dir, { mode: 0o700 }); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-        const stat = await fs.lstat(dir);
-        if (!stat.isDirectory() || stat.isSymbolicLink() || process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new Error('unsafe state directory');
-      }
+      await ensureStateDir(path.dirname(credentialFile));
     }
     if (!input.uninstall && input.install && !input.install()) { input.stderr('khala: npm install failed'); return 1; }
     if (!input.uninstall && input.mint) {
@@ -106,7 +112,7 @@ export async function installQwen(input: {
     }
     if (input.uninstall) {
       await managed.restore(current, jsonFormat, (value, original) => {
-        const removed = mergeQwenSettings(value, null, null, input.backgroundWake, input.watchCommand);
+        const removed = mergeQwenSettings(value, null, null, input.backgroundWake, input.watchCommand, input.watchPermission, previousPermission);
         if ('error' in removed) throw new Error(removed.error);
         // Empty containers that predate Khala belong to the user.
         for (const key of ['mcpServers', 'hooks']) {
@@ -119,11 +125,10 @@ export async function installQwen(input: {
       await managed.write([{ current, text: formatJson(merged.config, before), mode: 0o600 }]);
     }
     if (input.backgroundWake) {
-      const watchFile = path.join(path.dirname(credentialFile), 'watch-command.json');
       if (input.uninstall) await fs.rm(watchFile, { force: true });
       else if (input.watchCommand) {
         await fs.mkdir(path.dirname(watchFile), { recursive: true, mode: 0o700 });
-        await fs.writeFile(watchFile, JSON.stringify({ command: input.watchCommand }) + '\n', { mode: 0o600 });
+        await fs.writeFile(watchFile, JSON.stringify({ command: input.watchCommand, permission: input.watchPermission ?? `Bash(${input.watchCommand} --session *)` }) + '\n', { mode: 0o600 });
       }
     }
     if (input.uninstall) {

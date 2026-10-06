@@ -165,9 +165,11 @@ export async function runQwenInstall(flags: readonly string[], deps: InstallDeps
   const node = deps.node ?? process.execPath;
   const command = platform === 'win32' ? `node "${paths.script.replaceAll('\\', '/')}" hook deliver --harness qwen`
     : `${shellQuote(node)} ${shellQuote(paths.script)} hook deliver --harness qwen`;
-  return installQwen({ env, uninstall, command, watchCommand: platform === 'win32'
-    ? `"${node.replaceAll('\\', '/')}" "${paths.script.replaceAll('\\', '/')}" watch --harness qwen`
-    : `${shellQuote(node)} ${shellQuote(paths.script)} watch --harness qwen`, backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
+  const launcher = opencodePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix,
+    home: deps.home ?? env.HOME ?? os.homedir(), env }).bin.replaceAll('\\', '/');
+  const watchCommand = `${/\s/u.test(launcher) ? `"${launcher}"` : launcher} watch --harness qwen`;
+  return installQwen({ env, uninstall, command, watchCommand, watchPermission: `Bash(${launcher} watch --harness qwen --session *)`,
+    backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
     install: () => (deps.npmInstall ?? defaultNpmInstall)(paths.prefix, env.KHALA_INSTALL_SPEC || `${pkg!.name}@${pkg!.version}`),
     ...(platform === 'win32' ? {} : {
       list: deps.qwenList ?? (() => {

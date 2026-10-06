@@ -154,17 +154,48 @@ it('reports and tolerates a missing Qwen executable during uninstall', async () 
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-it('Windows install grants the exact persisted private CLI watcher command', async () => {
+it.each(['Example', 'Example User'])('Windows install pairs the stable launcher with Qwen permission semantics (%s)', async user => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qw-win-command-'));
-  const env = { HOME: root, QWEN_HOME: path.join(root, 'qwen'), XDG_STATE_HOME: path.join(root, 'state'), LOCALAPPDATA: 'C:\\Users\\Example User\\AppData\\Local' };
+  const env = { HOME: root, QWEN_HOME: path.join(root, 'qwen'), XDG_STATE_HOME: path.join(root, 'state'), LOCALAPPDATA: `C:/Users/${user}/AppData/Local` };
+  const launcher = `${env.LOCALAPPDATA}/khala/npm/khala.cmd`;
   try {
-    expect(await runQwenInstall([], { env, platform: 'win32', node: 'C:\\Program Files\\nodejs\\node.exe', package: { name: 'khala-cli', version: '0.4.8' }, npmInstall: () => true, stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(await runQwenInstall([], { env, platform: 'win32', node: 'C:/Program Files/nodejs/node.exe', package: { name: 'khala-cli', version: '0.4.8' }, npmInstall: () => true, stdout: () => {}, stderr: () => {} })).toBe(0);
     const installed = JSON.parse(await fs.readFile(path.join(env.XDG_STATE_HOME, 'khala/qwen/watch-command.json'), 'utf8'));
-    expect(installed.command).toContain('"C:/Program Files/nodejs/node.exe"');
-    expect(installed.command).toContain('khala.mjs" watch --harness qwen');
+    expect(installed.command).toBe(`${user.includes(' ') ? `"${launcher}"` : launcher} watch --harness qwen`);
     const settings = JSON.parse(await fs.readFile(path.join(env.QWEN_HOME, 'settings.json'), 'utf8'));
-    expect(settings.permissions.allow).toEqual([`Bash(${installed.command} --session *)`]);
-    expect(settings.permissions.allow).not.toContain(QWEN_WATCH_PERMISSION);
+    expect(settings.permissions.allow).toEqual([`Bash(${launcher} watch --harness qwen --session *)`]);
+    expect(installed.permission).toBe(settings.permissions.allow[0]);
+    // Qwen 0.25 normalizes quotes in commands, but matches the rule's prefix literally.
+    const prefix = installed.permission.slice('Bash('.length, -2);
+    const command = `${installed.command} --session session-1`.replaceAll('"', '');
+    expect(command.startsWith(prefix)).toBe(true);
+    expect(`${launcher} mcp --harness qwen`.startsWith(prefix)).toBe(false);
+    expect(`node other.mjs watch --harness qwen --session session-1`.startsWith(prefix)).toBe(false);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('reinstall replaces the recorded legacy watcher rule and preserves unrelated permissions', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qw-win-migrate-'));
+  const env = { HOME: root, QWEN_HOME: path.join(root, 'qwen'), XDG_STATE_HOME: path.join(root, 'state'), LOCALAPPDATA: 'C:/Users/Example/AppData/Local' };
+  const deps = { env, platform: 'win32' as const, package: { name: 'khala-cli', version: '0.4.8' }, npmInstall: () => true, stdout: () => {}, stderr: () => {} };
+  const file = path.join(env.QWEN_HOME, 'settings.json');
+  const watchFile = path.join(env.XDG_STATE_HOME, 'khala/qwen/watch-command.json');
+  try {
+    await fs.mkdir(env.QWEN_HOME);
+    const original = JSON.stringify({ permissions: { allow: ['Bash(git status)'] } });
+    await fs.writeFile(file, original);
+    expect(await runQwenInstall([], deps)).toBe(0);
+    const settings = JSON.parse(await fs.readFile(file, 'utf8'));
+    const legacy = '"C:/Program Files/nodejs/node.exe" "C:/khala/khala.mjs" watch --harness qwen';
+    settings.permissions.allow = ['Bash(git status)', `Bash(${legacy} --session *)`];
+    await fs.writeFile(file, JSON.stringify(settings));
+    await fs.writeFile(watchFile, JSON.stringify({ command: legacy }));
+    expect(await runQwenInstall([], deps)).toBe(0);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).permissions.allow).toEqual([
+      'Bash(git status)', 'Bash(C:/Users/Example/AppData/Local/khala/npm/khala.cmd watch --harness qwen --session *)',
+    ]);
+    expect(await runQwenInstall(['--uninstall'], deps)).toBe(0);
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

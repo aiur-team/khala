@@ -130,7 +130,6 @@ export function createQwenSocketDriver(deps: {
     if (config?.crossSessionInbound === 'hold') return 'qwen_held';
     if ((deps.platform ?? process.platform) === 'win32') return 'windows';
     const receipt = await readJson<{ status?: string }>(path.join(ctx.files.dir, 'qwen-receipt.json'));
-    if (config?.crossSessionInbound === 'hold') return 'qwen_held';
     if (receipt?.status === 'held' && config?.crossSessionInbound !== 'accept') return 'qwen_held';
     if (config?.crossSessionMessaging === false || config?.crossSessionInbound === 'refuse') return 'qwen_refused';
     if (!deps.resolve && !ctx.env.QWEN_CODE_MESSAGING_SOCKET) return 'qwen_session_missing';
