@@ -208,16 +208,16 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     if (closed || !attempt?.joined || attempt.controller.signal.aborted || !attempt.session || !attempt.credentials) throw new KhalaClientError('not_connected');
     return { session: attempt.session, credentials: attempt.credentials, attempt };
   }
-  async function publishMode(attempt: Attempt, session: ChannelSession, roomId: string, mode: ListeningMode): Promise<void> {
+  async function publishMode(attempt: Attempt, session: ChannelSession, roomId: string, mode: ListeningMode): Promise<boolean> {
     const controller = new AbortController();
     let release = () => {};
-    const aborted = new Promise<void>(resolve => { release = resolve; });
+    const aborted = new Promise<boolean>(resolve => { release = () => resolve(false); });
     const abort = () => { controller.abort(); release(); };
     const timer = setTimeout(abort, 5000);
     attempt.controller.signal.addEventListener('abort', abort, { once: true });
     try {
-      if (attempt.controller.signal.aborted) { abort(); return; }
-      await Promise.race([session.publishListeningMode(roomId, mode, controller.signal).catch(() => {}), aborted]);
+      if (attempt.controller.signal.aborted) { abort(); return false; }
+      return await Promise.race([session.publishListeningMode(roomId, mode, controller.signal).then(() => true, () => false), aborted]);
     } finally {
       clearTimeout(timer);
       attempt.controller.signal.removeEventListener('abort', abort);
@@ -321,11 +321,11 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (!decoded.ok || decoded.value.agent !== session.userId) return;
         attempt.appends = attempt.appends.then(async () => {
           if (!current(attempt)) return;
-          const previous = await readStateFile<{ eventId?: string; eventTs?: number }>(channelDir, 'mode.json');
-          if (previous?.eventId === command.eventId || (previous?.eventTs !== undefined && command.ts < previous.eventTs)) return;
+          const previous = await readStateFile<{ eventId?: string; eventTs?: number; pendingPublish?: boolean }>(channelDir, 'mode.json');
+          if ((previous?.eventId === command.eventId && !previous.pendingPublish) || (previous?.eventTs !== undefined && command.ts < previous.eventTs)) return;
           const mode = asyncOnly ? 'async' : decoded.value.mode;
-          await publishMode(attempt, session, credentials.roomId, mode);
-          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts }, now);
+          const published = await publishMode(attempt, session, credentials.roomId, mode);
+          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId, eventTs: command.ts, ...(published ? {} : { pendingPublish: true }) }, now);
         }).catch(async () => {
           if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {});
         });

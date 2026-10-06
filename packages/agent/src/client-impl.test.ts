@@ -1140,3 +1140,22 @@ it('wipes a token revoked while offline before automatic rejoin can renew it', a
   expect(await readStateFile(channelDir, 'crypto.json')).toBeNull();
   expect(await readStateFile(channelDir, 'resume.json')).toBeNull();
 });
+
+it.each(['reject', 'timeout'] as const)('retries a replayed mode command after publish %s without checkpointing it', async failure => {
+  await connected();
+  if (failure === 'reject') vi.mocked(session.publishListeningMode).mockRejectedValueOnce(new Error('offline'));
+  else { vi.useFakeTimers(); vi.mocked(session.publishListeningMode).mockImplementationOnce(() => new Promise(() => {})); }
+  try {
+    modeHandler!(modeCommand());
+    if (failure === 'timeout') {
+      await vi.waitFor(() => expect(session.publishListeningMode).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+    await client.status();
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ eventId: '$mode', pendingPublish: true });
+    modeHandler!(modeCommand());
+    expect((await client.status()).listeningMode).toBe('async');
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ eventId: '$mode', mode: 'async' });
+    expect(await readStateFile(channelDir(), 'mode.json')).not.toHaveProperty('pendingPublish');
+  } finally { vi.useRealTimers(); }
+});
