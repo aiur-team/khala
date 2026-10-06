@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { wakeLine } from './rules';
 import { withWakeLock } from './lock';
 
-export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number }
+export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number; verification?: 'transcript' }
 export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string; noticeShown?: boolean }
 export type WakeState = Record<string, WakeDriverState>;
 export interface WakeSettlement { nonce: string; driver: string; status: 'success' | 'failure' | 'void' }
@@ -62,7 +62,10 @@ export async function settleAttempts(dir: string, input: {
       const activityChanged = input.activity && (input.activity.state !== 'idle' || activityAt > baselineAt);
       // Prompt integrations settle before writing their own busy boundary.
       // Any changed activity here therefore belongs to prior user activity.
-      if (activityChanged) status = 'void';
+      if (attempt.verification === 'transcript') {
+        if (input.now >= attempt.deadline && input.activity?.state === 'idle') status = 'failure';
+      }
+      else if (activityChanged) status = 'void';
       else if (verified && input.now <= attempt.deadline) status = 'success';
       else if (input.now >= attempt.deadline && input.activity?.state === 'idle') status = 'failure';
       else if (input.promptText !== undefined) status = 'void';
@@ -119,5 +122,16 @@ export async function takeWakeDisableNotices(dir: string): Promise<string[]> {
       drivers.push(driver);
     }
     return drivers;
+  });
+}
+
+/** Confirm only a native driver's outstanding nonce, independently of tool activity. */
+export async function confirmWakeText(dir: string, driver: string, text: string, now: number): Promise<void> {
+  await locked(dir, data => {
+    data.attempts = data.attempts.filter(attempt => {
+      if (attempt.driver !== driver || now > attempt.deadline || !text.includes(`(k-${attempt.nonce})`)) return true;
+      data.state[driver] = { failures: 0 };
+      return false;
+    });
   });
 }

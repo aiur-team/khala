@@ -8,11 +8,12 @@ import { runMcpInstall } from './mcp';
 import { adapterFor } from '../harness';
 import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
+import { installQwen } from './qwen';
 import { cursorPaths, installCursor } from './cursor';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install qwen [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -27,6 +28,7 @@ export type InstallDeps = {
   platform?: NodeJS.Platform;
   node?: string;
   home?: string;
+  qwenMint?: () => { id: string; token: string } | undefined;
 };
 
 export async function runCursorInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
@@ -84,6 +86,31 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
       stderr('khala: npm install failed for ' + spec);
       return false;
     },
+  });
+}
+
+export async function runQwenInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env: NodeJS.ProcessEnv = { ...(deps.env ?? process.env), ...(deps.home ? { HOME: deps.home } : {}) };
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) { stderr('khala: install runs from the published package (npx -y khala-cli install qwen)'); return 1; }
+  const platform = deps.platform ?? process.platform;
+  const paths = cursorPaths({ platform, path: platform === 'win32' ? path.win32 : path.posix,
+    home: deps.home ?? env.HOME ?? os.homedir(), env }, pkg?.name);
+  const node = deps.node ?? process.execPath;
+  const command = platform === 'win32' ? `node "${paths.script.replaceAll('\\', '/')}" hook deliver --harness qwen`
+    : `${shellQuote(node)} ${shellQuote(paths.script)} hook deliver --harness qwen`;
+  return installQwen({ env, uninstall, command, backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
+    install: () => (deps.npmInstall ?? defaultNpmInstall)(paths.prefix, env.KHALA_INSTALL_SPEC || `${pkg!.name}@${pkg!.version}`),
+    ...(platform === 'win32' ? {} : { mint: deps.qwenMint ?? (() => {
+      // Capture both streams; Qwen diagnostics must never reveal the credential.
+      const result = spawnSync('qwen', ['sessions', 'controllers', 'add', '--label', 'khala', '--json'],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+      try { return result.status === 0 ? JSON.parse(result.stdout) : undefined; } catch { return undefined; }
+    }) }),
   });
 }
 
@@ -215,7 +242,7 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
     const wake = !flags.includes('--no-wake');
     const result = await run(flags.filter(flag => flag !== '--wake' && flag !== '--no-wake'), deps);
     if (result === 0 && !flags.includes('--uninstall')) {
-      const drivers = wakeDrivers(target).filter(driver => driver.optIn).map(driver => driver.id);
+      const drivers = wakeDrivers(target).filter(driver => driver.optIn || target === 'qwen').map(driver => driver.id);
       if (drivers.length) {
         await setWake(target, drivers, wake, deps.env ?? process.env);
         (deps.stdout ?? console.log)(consentLine(target, drivers, wake));

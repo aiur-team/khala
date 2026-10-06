@@ -13,11 +13,13 @@ export type HookEvent = 'prompt' | 'tool' | 'stop';
 /** Harness syntax and transport seams only; the runner owns assertions and policy. */
 export interface FakeHarnessDriver {
   newSession(): FakeSession;
+  prepareSession?(session: FakeSession, env: NodeJS.ProcessEnv): Promise<void>;
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;
   readHookStdout(stdout: string): { kind: 'context' | 'continue' | 'none'; frame?: string };
   /** Replace only external I/O, keeping the adapter's real wake implementation. */
   wakeProbe?(adapter: HarnessAdapter): {
     drivers: readonly WakeDriver[];
+    verificationEvent?: HookEvent;
     prompt(): string | undefined;
     prepare?(files: SessionFiles): Promise<void>;
   };

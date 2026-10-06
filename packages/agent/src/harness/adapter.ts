@@ -1,3 +1,4 @@
+import type { SessionFiles } from '../state';
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
 import type { WakeDriver } from '../wake/driver';
@@ -34,6 +35,8 @@ export type HarnessAdapter = Readonly<{
   wakeWarningName?: string;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;
+  /** Native wakes may verify outside UserPromptSubmit. */
+  verifyWake?: (stdin: string, files: SessionFiles, now: number) => Promise<void>;
   /** Claude's status exposes the external watcher lease. */
   watcherStatus?: boolean;
 }>;

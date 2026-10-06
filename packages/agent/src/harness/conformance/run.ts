@@ -102,6 +102,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const sample = driver.newSession();
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
+    await driver.prepareSession?.(sample, env);
     let hookAt = now().getTime();
     const resolved = await resolveSources(adapter.sessionSources, sample.mcpMeta, env, { harness: adapter.id });
     assert.equal(resolved?.sessionId, sample.id, 'driver session must resolve through the adapter');
@@ -294,7 +295,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         await until(async () => probe.prompt() !== undefined, 'idle wake declared but not delivered');
         assert.match(probe.prompt()!, /^Khala: channel messages are waiting\. Continue\. \(k-[0-9a-f]{8}\)$/);
         hookAt = now().getTime() + 60_001;
-        await hook('prompt', { promptText: probe.prompt()! });
+        await hook(probe.verificationEvent ?? 'prompt', { promptText: probe.prompt()! });
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');
       } finally { await ladder.stop(); }

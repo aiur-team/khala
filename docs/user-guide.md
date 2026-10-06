@@ -316,3 +316,34 @@ fixed wake line in an existing idle session with an empty prompt. It does not
 make an unavailable transport available; check `khala wake status` for the actual
 state. The Codex terminal fallback is currently declared for consent while its
 runtime is built in the following wake unit.
+
+
+### Qwen Code
+
+Run `npx -y khala-cli install qwen`, then restart or resume Qwen. The installer
+merges the Khala MCP server and SessionStart, UserPromptSubmit, PostToolUse, and
+Stop hooks into `$QWEN_HOME/settings.json` (default `~/.qwen/settings.json`),
+keeping other servers and hooks. `khala install qwen --uninstall` removes those
+entries and the local controller credential; it leaves the installed CLI intact.
+
+On Linux and macOS, install mints a trusted Qwen controller credential and stores
+it with mode 0600 under Khala's state directory. Native socket idle wake is on by
+default. The socket carries only Khala's fixed wake line and a verification nonce;
+channel messages arrive through the hooks. Stop verifies the nonce in Qwen's
+transcript because socket wakes do not fire UserPromptSubmit. The waker also
+checks the recorded transcript while a long woken turn is running. Two failed or
+unverified wakes disable the socket driver for that session.
+
+Use `khala install qwen --no-wake` to disable wakes, or
+`khala wake off --harness qwen`; re-enable with
+`khala wake on --harness qwen --driver socket`. Inspect
+`khala wake status --harness qwen` or the agent's `khala_status` tool for the
+current state. Qwen's `agents.crossSessionInbound: hold` is respected: status
+reports “Held by your Qwen setting” and suggests `/peers accept` or changing the
+setting. Khala does not repeatedly send held messages or bypass hold with another
+transport. `refuse` and disabled cross-session messaging also prevent wakes.
+
+Qwen disables its socket on native Windows. The installer reserves the narrow
+`Bash(khala watch --harness qwen --session *)` permission for the agent-armed
+background watcher integration; socket status reports unavailable there. The
+Windows/background watcher and terminal fallback integration are tracked in U43.
