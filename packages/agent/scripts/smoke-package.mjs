@@ -54,7 +54,10 @@ async function assertRestored(originals) {
 
 /** Starts an MCP server, runs initialize + tools/list and stops it. */
 async function mcpSmoke(label, command, args, callStatus = false, childEnv = env) {
-  const child = spawn(command, args, { env: childEnv, cwd: root, stdio: ['pipe', 'pipe', 'inherit'] });
+  // npm's Windows launcher is a command shim and needs cmd.exe; executable MCP servers do not.
+  const commandShim = windows && /\.(?:cmd|bat)$/iu.test(command);
+  const child = spawn(commandShim ? quote(command) : command, args, { env: childEnv, cwd: root,
+    shell: commandShim, stdio: ['pipe', 'pipe', 'inherit'] });
   const replies = new Map();
   let buffer = '';
   child.stdout.setEncoding('utf8').on('data', data => {
