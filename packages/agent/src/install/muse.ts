@@ -152,7 +152,7 @@ export async function installMuse(input: {
   } else {
     await managed.write([
       { current: { file: paths.settingsFile, text: before }, text: formatJson(merged.config, before), mode: 0o600 },
-      { current: { file: skillFile, text: skill }, text: renderMuseSkill(museWatchCommand(undefined, paths.bin)), mode: 0o600 },
+      { current: { file: skillFile, text: skill }, text: renderMuseSkill(museWatchCommand(undefined, paths.bin, input.platform)), mode: 0o600 },
     ]);
   }
   stdout(uninstall ? `removed Khala from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`
