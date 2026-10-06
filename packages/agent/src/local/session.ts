@@ -78,6 +78,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
   let name: string | undefined;
   let invitedBy: string | undefined;
   let after = 0;
+  let joinedAt: number | undefined;
   function check(roomId: string): void {
     if (stopped) throw new Error('session_stopped');
     if (roomId !== creds.roomId) throw new Error('unknown_room');
@@ -230,6 +231,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
       joining ??= (async () => {
         const result = decoded(await withHelper(() => request('POST', 'join', {})), decodeLocalJoined);
         after = result.seq;
+        joinedAt = result.ts;
         await me();
         const members = decoded(await withHelper(() => request('GET', 'members?wire=2')), decodeLocalMembersResponse);
         check(roomId);
@@ -243,6 +245,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
       })();
       try { await joining; } finally { joining = undefined; }
     },
+    joinedAt: roomId => roomId === creds.roomId ? joinedAt : undefined,
     async history(roomId, limit, before) {
       check(roomId);
       const page = decoded(await withHelper(() => request('GET', `messages?wire=2&limit=${limit}${before !== undefined ? `&before=${encodeURIComponent(before)}` : ''}`)), decodeLocalHistoryPage);

@@ -11,10 +11,10 @@ import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { createEventKeyFilter, isWakeEntry, toEventInboxEntry } from './events/receive';
 import { memberRenameContent } from './events/member-rename';
 import { KhalaClientError, type KhalaAgentClient } from './client';
-import { appendInbox, unreadCount } from './inbox';
+import { appendInbox, readEntries, unreadCount } from './inbox';
 import { requestJoin, pollJoin, reportReady } from './join';
 import { adapterFor } from './harness';
-import type { ChannelSession, SessionMessage, SessionModeCommand, StartSession } from './transport';
+import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionMessage, type SessionModeCommand, type StartSession } from './transport';
 import { startChannelSession } from './transport';
 import { toInboxEntry } from './sender';
 import { LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
@@ -255,6 +255,16 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     void aborted.catch(() => {});
     const wait = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, aborted]);
     try {
+      // joinedAt renews wake budgets on reconnect; keep a separate history boundary.
+      let originalJoinedAt = now().toISOString();
+      let savedEntries: InboxEntry[] = [];
+      let savedJoinBoundary = false;
+      if (attempt.restore && attempt.files) {
+        const metadata = await readStateFile<{ joinedAt?: string; originalJoinedAt?: string }>(attempt.files.dir, 'channel.json');
+        const boundary = metadata?.originalJoinedAt ?? metadata?.joinedAt;
+        if (boundary && Number.isFinite(Date.parse(boundary))) { originalJoinedAt = boundary; savedJoinBoundary = true; }
+        savedEntries = await readEntries(attempt.files);
+      }
       const input = { origin: attempt.created.origin, joinId: attempt.created.joinId, pollSecret: attempt.created.pollSecret };
       const issuedCredentials = attempt.restore?.localCredentials ?? await wait(api.pollJoin(input, { signal, ...fetchDeps }));
       let credentials = issuedCredentials;
@@ -287,7 +297,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         channels.set(key, attempt);
         const old = stored.get(key);
         stored.set(key, { key, roomId: credentials.roomId, ...(old?.channelName ? { channelName: old.channelName } : {}), files: attempt.files, legacy: false });
-        await writeStateFile(attempt.files.dir, 'channel.json', { roomId: credentials.roomId, channelName: old?.channelName, joinedAt: now().toISOString() });
+        await writeStateFile(attempt.files.dir, 'channel.json', { roomId: credentials.roomId, channelName: old?.channelName, joinedAt: now().toISOString(), originalJoinedAt });
       });
       roomChanges.set(key, claim);
       try { await wait(claim); } catch (error) {
@@ -377,6 +387,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;
+      const membershipTime = session.joinedAt?.(credentials.roomId);
+      if (!savedJoinBoundary && membershipTime !== undefined) originalJoinedAt = new Date(membershipTime).toISOString();
       if (asyncOnly) {
         await writeStateFile(channelDir, 'mode.json', { mode: 'async' });
         await publishMode(attempt, session, credentials.roomId, 'async');
@@ -384,17 +396,41 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         const previous = await readStateFile<Record<string, unknown>>(channelDir, 'mode.json');
         await writeStateFile(channelDir, 'mode.json', { ...previous, mode: session.listeningMode(credentials.roomId) });
       } else await removeStateFile(channelDir, 'mode.json');
+      // Subscribe first and hold live events until older gap messages are queued.
+      // The inbox tail (not the delivery cursor) is the durable intake boundary.
+      const missed: SessionMessage[][] = [];
+      if (attempt.restore && !session.recoversOnJoin) {
+        const lastEventId = savedEntries.at(-1)?.eventId;
+        const cutoff = Date.parse(originalJoinedAt);
+        let before: string | undefined;
+        const visited = new Set<string>();
+        while (current(attempt)) {
+          const page = await wait(session.history(credentials.roomId, 100, before, { includeUnavailable: false, ...(lastEventId ? { stopAtEventId: lastEventId } : {}) }));
+          const boundary = page.messages.findIndex(message => message.eventId === lastEventId);
+          missed.push(page.messages.slice(boundary + 1).filter(message => message.ts >= cutoff));
+          if (page.reachedBoundary || (page.oldestTs !== undefined && page.oldestTs < cutoff) || boundary !== -1 || page.messages.some(message => message.ts < cutoff) || !page.nextBefore || visited.has(page.nextBefore)) break;
+          if (missed.length >= RESTORE_HISTORY_MAX_PAGES) {
+            process.stderr.write(`restore_catchup_truncated pages=${missed.length}\n`);
+            break;
+          }
+          visited.add(page.nextBefore);
+          before = page.nextBefore;
+        }
+      }
+      if (!current(attempt)) return;
       attempt.joined = true;
+      for (const page of missed.reverse()) for (const message of page) intake(message);
+      for (const deliver of buffered) deliver();
       attempt.status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
       stored.set(key, { ...stored.get(key)!, channelName: attempt.status.channelName });
-      await writeStateFile(channelDir, 'channel.json', { roomId: credentials.roomId, channelName: attempt.status.channelName, joinedAt: now().toISOString() });
+      await writeStateFile(channelDir, 'channel.json', { roomId: credentials.roomId, channelName: attempt.status.channelName, joinedAt: now().toISOString(), originalJoinedAt });
       const own = ownName(session);
       if (own !== undefined) attempt.status.displayName = own;
-      for (const deliver of buffered) deliver();
       if (credentials.transport !== 'local') {
         const username = own === undefined ? null : hostedUsernameFromAgentName(own, options.harness);
         if (username !== null) attempt.appends = attempt.appends.then(() => saveHostedUsername(username, options.env)).catch(() => {});
       }
+      await wait(attempt.appends);
       await removeJoinFile(filesForDir(dir), attempt.link);
       if (current(attempt)) {
         if (rejoinable && rejoinSecret) await writeStateFile(channelDir, 'resume.json', { link: attempt.link, label: attempt.label, workspace, secretHash: secretHash(), roomId: credentials.roomId, ...(credentials.transport === 'local' ? { localCredentials: credentials } : {}) } satisfies ResumeAuthorization);
