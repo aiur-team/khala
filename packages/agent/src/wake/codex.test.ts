@@ -323,12 +323,13 @@ it('does not renew an exhausted cursor budget by toggling async', async () => {
 
 it('renews a rejoined channel with the same credentials while preserving other channels', async () => {
   const b = await joinedB();
-  await activity('idle'); start(); await wait();
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  await activity('idle'); start();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   await writeJsonAtomic(path.join(b.dir, 'channel.json'), { roomId: 'room-b', channelName: 'B', joinedAt: new Date(time).toISOString() });
-  waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(3);
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(3));
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
