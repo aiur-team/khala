@@ -17,7 +17,7 @@ const readProcess = async (pid: number) => pid === 300 || pid === 400
 beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-opencode-')); });
 afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
 
-it.each(['session-start', 'prompt'])('records the %s mapping and prefers stamped metadata', async event => {
+it.each(['session-start', 'prompt', 'idle'])('records the %s mapping and prefers stamped metadata', async event => {
   const env = { XDG_STATE_HOME: root };
   const io = { env, now, pid: 300, readProcess, stdout: { write() {} }, stderr: { write() {} } };
   await deliverCore(JSON.stringify({ session_id: 'ses_hook', event }), opencode, io);

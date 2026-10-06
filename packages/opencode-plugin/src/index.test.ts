@@ -293,3 +293,18 @@ it('packs discoverable OpenCode server entrypoints and its license', async () =>
     expect(files.split('\n')).toContain('package/LICENSE');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }, 15_000);
+
+it('polls an explicitly resumed session without a session event or user prompt', async () => {
+  vi.useFakeTimers();
+  const deliver = vi.fn().mockResolvedValueOnce('').mockResolvedValueOnce(line + '\n' + frame);
+  const promptAsync = vi.fn(async () => ({}));
+  const hooks = createHooks({ session: { promptAsync } }, deliver, [], 'ses_resumed');
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deliver).toHaveBeenCalledWith({ session_id: 'ses_resumed', event: 'idle', continuation: false });
+    expect(promptAsync).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(promptAsync).toHaveBeenCalledOnce();
+    expect(promptAsync.mock.calls[0]).toEqual([expect.objectContaining({ path: { id: 'ses_resumed' } })]);
+  } finally { hooks.dispose(); vi.useRealTimers(); }
+});
