@@ -1,3 +1,4 @@
+import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type LocalChannelSummary, type LocalEvent } from '@khala/contracts/m1/local';
 import { decodeRoomId, decodeOwnerId } from '@khala/contracts/messaging/ids';
@@ -38,6 +39,7 @@ function setup(options?: { initialSeen?: string | undefined; storage?: Pick<Stor
     setItem: (key: string, value: string) => { data.set(key, value); } } : options.storage;
   const http: LocalHttp = { origin: 'http://localhost:47830',
     get: (path, decode, signal, timeoutMs) => new Promise(resolve => {
+      assertHarnessWireSupport(path, decode);
       requests.push({ path, signal, timeoutMs, answer(result) {
         if (result.kind !== 'ok') { resolve(result); return; }
         const decoded = decode(result.value);

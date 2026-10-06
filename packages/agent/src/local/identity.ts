@@ -1,16 +1,16 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { checkName, isDefaultAgentName, MODEL_NAMES } from '@khala/contracts/m1/names';
-import type { Harness } from '@khala/contracts/m1/agent-join';
+import { checkName, isDefaultAgentName } from '@khala/contracts/m1/names';
+import { harnessInfo, type HarnessId } from '@khala/contracts/m1/harness';
 import { readJson, StateError, stateRoot, writeJsonAtomic } from '../state';
 
 export const HOSTED_PROFILE_FILE = 'hosted-profile.json';
 export type HostedProfileFile = { v: 1; username: string; savedAt: string };
 export const LOCAL_OWNER_FALLBACK_NAME = 'User';
 
-export function hostedUsernameFromAgentName(displayName: string, harness: Harness): string | null {
-  const suffix = new RegExp(`-${MODEL_NAMES[harness]}(?:-\\d+)?$`, 'iu');
+export function hostedUsernameFromAgentName(displayName: string, harness: HarnessId): string | null {
+  const suffix = new RegExp(`-${harnessInfo(harness).modelName}(?:-\\d+)?$`, 'iu');
   if (!suffix.test(displayName)) return null;
   const candidate = displayName.replace(suffix, '');
   const checked = checkName(candidate, 'username');

@@ -1,4 +1,6 @@
-import { HARNESSES, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
+import { type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { harnessInfo, isHarnessId, type HarnessId } from '@khala/contracts/m1/harness';
+import { restartHelper } from './local/lifecycle';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { KhalaClientError } from './client';
 
@@ -13,7 +15,7 @@ export function parseChannelLink(link: string): { origin: string } | null {
 }
 
 type JoinSession = { origin: string; joinId: string; pollSecret: string };
-type FetchDeps = { fetch?: typeof fetch };
+type FetchDeps = { fetch?: typeof fetch; env?: NodeJS.ProcessEnv; restartHelper?: (origin: string) => Promise<boolean> };
 type PollOptions = FetchDeps & {
   intervalMs?: number; timeoutMs?: number; signal?: AbortSignal;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number;
@@ -53,10 +55,10 @@ async function post(url: URL, origin: string, body: unknown, deps: FetchDeps, po
   } catch { return fail('network'); }
 }
 
-export async function requestJoin(input: { link: string; harness: Harness; label: string; sessionId?: string; rejoinSecret?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
+export async function requestJoin(input: { link: string; harness: HarnessId; label: string; sessionId?: string; rejoinSecret?: string }, deps: FetchDeps = {}): Promise<AgentJoinCreated & { origin: string }> {
   const parsed = parseChannelLink(input.link);
   if (!parsed) throw new KhalaClientError('invalid_link', 'invalid_link');
-  if (!HARNESSES.includes(input.harness)) fail('invalid_harness');
+  if (!isHarnessId(input.harness)) fail('invalid_harness');
   const label = validateAgentName(input.label);
   if (!label.ok || [...label.name].length > 40) fail('invalid_label');
   const { origin } = parsed;
@@ -75,6 +77,21 @@ export async function requestJoin(input: { link: string; harness: Harness; label
     response = await post(url, origin, base, deps);
     body = await json(response);
     code = serverCode(body);
+  }
+  if (response.status === 400 && code === 'invalid_harness') {
+    if (new URL(origin).protocol === 'https:') {
+      throw new KhalaClientError('update_required', `Khala's hosted service does not accept ${harnessInfo(input.harness).displayName} agents yet. Local channels work now.`);
+    }
+    if (await (deps.restartHelper ?? (origin => restartHelper(origin, deps.env, deps.fetch ? { fetch: deps.fetch } : {})))(origin)) {
+      response = await post(url, origin, rejoin ? { ...base, sessionId: input.sessionId, rejoinSecret: input.rejoinSecret } : base, deps);
+      body = await json(response);
+      code = serverCode(body);
+      if (rejoin && response.status === 400 && code === 'invalid_link') {
+        response = await post(url, origin, base, deps);
+        body = await json(response);
+        code = serverCode(body);
+      }
+    }
   }
   if (response.status !== 201) {
     if (response.status === 400 && code === 'invalid_link') throw new KhalaClientError('invalid_link', 'invalid_link');

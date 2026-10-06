@@ -172,7 +172,7 @@ it('only folderless Cursor omits persistent rejoin identity', async () => {
       expect(await readStateFile(files.dir, 'rejoin.json')).toEqual(saved);
       await expect(restarted.join('https://khala.example/join/abcdefgh', 'Scout')).rejects.toThrow();
       expect(join).toHaveBeenCalledWith({ link: 'https://khala.example/join/abcdefgh', harness, label: 'Scout',
-        ...(saved ? { sessionId: id, rejoinSecret: saved.secret } : {}) }, {});
+        ...(saved ? { sessionId: id, rejoinSecret: saved.secret } : {}) }, { env: { XDG_STATE_HOME: root } });
     } finally { await restarted.close(); }
   }
   await golden('rejoin-identity', observed);
