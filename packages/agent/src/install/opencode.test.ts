@@ -36,7 +36,7 @@ it('has fresh, sibling, reinstall and uninstall config goldens', () => {
 it.each([null, [], { plugin: 'bad' }, { plugin: [1] }, { mcp: [] }])('refuses invalid config %s', config => {
   expect(mergeOpenCodeConfig(config, 'khala-opencode@1')).toEqual({ error: 'invalid_config' });
 });
-it('installs, replaces the pin with a test override, preserves backup and uninstalls', async () => {
+it('installs, replaces the pin with a test override and uninstalls to the exact original', async () => {
   const npmInstall = vi.fn(() => true);
   const env = { HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), KHALA_INSTALL_SPEC: '/test/cli.tgz' };
   const deps = { home, env, package: { name: 'khala-cli', version: '1.2.3' }, npmInstall, fetchRegistry: vi.fn(async () => new Response('{}')), stdout: vi.fn(), stderr: vi.fn() };
@@ -53,9 +53,9 @@ it('installs, replaces the pin with a test override, preserves backup and uninst
   const override = 'file:/test/custom-plugin.tgz';
   expect(await runInstall(['opencode'], { ...deps, env: { ...env, KHALA_OPENCODE_PLUGIN_SPEC: override } })).toBe(0);
   expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8')).plugin).toEqual(['sibling', override]);
-  expect(await fs.readFile(paths.configFile + '.khala-bak', 'utf8')).toBe(original);
   expect(await runInstall(['opencode', '--uninstall'], { ...deps, package: undefined })).toBe(0);
-  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({ plugin: ['sibling'], model: 'mine' });
+  expect(await fs.readFile(paths.configFile, 'utf8')).toBe(original);
+  expect(await fs.readdir(paths.configDir)).toEqual(['opencode.json']);
 });
 it('does not install or modify invalid JSON or a failed package install', async () => {
   const deps = { home, env: { HOME: home }, package: { name: 'khala-cli', version: '1' }, fetchRegistry: vi.fn(async () => new Response('{}')), npmInstall: vi.fn(() => false), stdout: vi.fn(), stderr: vi.fn() };
@@ -95,7 +95,8 @@ it.each(['missing', 'network'] as const)('falls back on %s, reinstalls and clean
   fetchRegistry.mockClear();
   expect(await runInstall(['opencode', '--uninstall'], deps)).toBe(0);
   expect(fetchRegistry).not.toHaveBeenCalled();
-  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({});
+  // The config did not exist before install, so uninstall removes it and the directory Khala created.
+  await expect(fs.stat(paths.configDir)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it('checks the exact version with a short timeout', async () => {
   const timeout = vi.spyOn(AbortSignal, 'timeout');
@@ -121,9 +122,8 @@ it('merges a single comment-free JSONC in place', async () => {
   const installed = await fs.readFile(jsonc, 'utf8');
   expect(await runInstall(['opencode'], deps)).toBe(0);
   expect(await fs.readFile(jsonc, 'utf8')).toBe(installed);
-  expect(await fs.readFile(jsonc + '.khala-bak', 'utf8')).toBe(original);
   expect(await runInstall(['opencode', '--uninstall'], deps)).toBe(0);
-  expect(JSON.parse(await fs.readFile(jsonc, 'utf8'))).toEqual({ $schema: 'https://opencode.ai/config.json' });
+  expect(await fs.readFile(jsonc, 'utf8')).toBe(original);
   await expect(fs.stat(paths.configFile)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it.each(['plugin', 'mcp', 'uninstall'] as const)('refuses both config files before any mutation in %s mode', async mode => {

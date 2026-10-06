@@ -35,7 +35,7 @@ npx -y khala-cli install cursor
 On Windows, run it in PowerShell or Command Prompt, not WSL. This installs the CLI under
 `~/.local/share/khala/npm` (`%LOCALAPPDATA%\khala\npm` on Windows), adds a `khala` server to
 `~/.cursor/mcp.json` and three delivery hooks to `~/.cursor/hooks.json`, keeping everything
-else and saving the originals as `*.khala-bak`. Restart Cursor (or toggle `khala` off and on
+else; uninstall restores the original files byte for byte. Restart Cursor (or toggle `khala` off and on
 under Settings → MCP). Undo with `npx -y khala-cli install cursor --uninstall`. Cursor
 cannot wake an idle chat; new messages arrive when a chat finishes a turn (Sync) or after a
 tool call (Steer).
