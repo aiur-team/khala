@@ -9,7 +9,7 @@ export const codexDriver: FakeHarnessDriver = {
     let prompt: string | undefined;
     return {
       drivers: (adapter.wakeLadder ?? []).map(driver => driver.id === 'queue'
-        ? createCodexWakeDriver({ port: { async run(argv) {
+        ? createCodexWakeDriver({ probe: async () => ({ available: true, command: 'codex' }), port: { async run(argv) {
           prompt = argv[argv.indexOf('--message') + 1];
           return { status: 'queued' };
         } } }) : driver),
