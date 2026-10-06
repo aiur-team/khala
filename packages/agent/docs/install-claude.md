@@ -15,7 +15,7 @@ pnpm.
    `claude --resume <session id>` using its existing ID.
 
 3. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
-   returns and confirm. Claude checks `khala_status` to finish joining.
+   returns and confirm. Claude checks that channel’s `khala_status` entry to finish joining; another channel may already be connected.
 
 On its first session start, the plugin's `SessionStart` hook installs the pinned package in
 the background into the plugin data directory (`~/.claude/plugins/data/…/npm-<version>`).

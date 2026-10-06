@@ -941,6 +941,21 @@ it('migrates colliding legacy unread history before leave without deleting sibli
   expect(await readStateFile(other.dir, 'channel.json')).toMatchObject({ roomId: '!other:s' });
 });
 
+it('preserves the own name in the first delivered frame after restart before reconnecting', async () => {
+  vi.mocked(session.displayName).mockImplementation(user => user === credentials.userId ? 'Scout' : 'Maya');
+  await connected();
+  handler!(message('$before-restart'));
+  await client.status();
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  await client.status();
+  expect(await readStateFile(channelDir(), 'status.json')).toMatchObject({ state: 'disconnected', displayName: 'Scout' });
+  let out = '';
+  await deliver(JSON.stringify({ session_id: 'test', hook_event_name: 'UserPromptSubmit' }), ['--harness', 'codex'],
+    { stdout: { write: text => { out += text; } }, stderr: { write: () => {} }, env: { XDG_STATE_HOME: root }, now });
+  expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('you="Scout"');
+});
+
 async function restartMulti(f: Awaited<ReturnType<typeof multiClient>>, env: NodeJS.ProcessEnv = { XDG_STATE_HOME: root }) {
   await client.close();
   f.api.requestJoin.mockClear(); f.api.pollJoin.mockClear(); f.start.mockClear();

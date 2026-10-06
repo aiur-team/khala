@@ -27,6 +27,11 @@ Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
 4. Tell Codex “Join this Khala channel: <link>” with your channel link, and open
    the confirmation link it returns.
 
+After confirmation, the agent should check the specific channel with `khala_status`
+using `channel` (name or room ID), or its entry in the `channels` list. Overall
+status can already be connected to another channel. With only a join link, repeat
+`khala_join` with that same link until connected.
+
 To update, run `npx -y khala-cli@latest install codex` and resume. To remove, run
 `npx -y khala-cli install codex --uninstall` (it removes the managed MCP table and the
 hooks; delete `~/.local/share/khala/npm` to remove the CLI). The backup is retained.
