@@ -93,11 +93,6 @@ async function mcpSmoke(label, command, args, callStatus = false, childEnv = env
   }
 }
 
-async function expectAbsent(file) {
-  try { await fs.lstat(file); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  throw new Error(`uninstall left installer-created file: ${file}`);
-}
 
 try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
