@@ -87,3 +87,32 @@ it.each(['terminal', 'rejected-native'] as const)('passes Tier A through %s fall
   const result = await runConformance(antigravity, createAntigravityConformanceDriver(transport));
   expect(result.rows.find(row => row.feature === 'idle wake')?.status).toBe('pass');
 });
+
+it('resolves the resumed CLI conversation at startup without guessing from workspace state', async () => {
+  const readProcess = async (pid: number) => ({ pid, ppid: pid === 300 ? 200 : 0, command: pid === 200 ? '/usr/bin/agy' : 'node', startTime: '1' });
+  for (const args of [['agy', '--conversation', 'older-session'], ['agy', '--conversation=older-session']]) {
+    expect(await resolveSources(antigravity.sessionSources, undefined, {}, {
+      harness: 'antigravity', pid: 300, readProcess, readArguments: async () => args,
+    })).toEqual({ sessionId: 'older-session', rejoinable: true });
+  }
+  for (const args of [['agy'], ['agy', '--conversation', '../unsafe'], ['agy', '--conversation', '', 'other'], ['agy', '--', '--conversation', 'other'], ['agy', '-p', '--conversation older-session']]) {
+    expect(await resolveSources(antigravity.sessionSources, undefined, {}, {
+      harness: 'antigravity', pid: 300, readProcess, readArguments: async () => args,
+    })).toBeNull();
+  }
+});
+
+it('refuses missing arguments, a replaced process, and an outer resumed CLI behind a fresh inner CLI', async () => {
+  const tree = async (pid: number) => ({ pid, ppid: pid === 300 ? 200 : pid === 200 ? 100 : 0,
+    command: pid === 300 ? 'node' : 'agy', startTime: '1' });
+  const context = { harness: 'antigravity' as const, pid: 300, readProcess: tree };
+  expect(await resolveSources(antigravity.sessionSources, undefined, {}, { ...context, readArguments: async () => null })).toBeNull();
+  expect(await resolveSources(antigravity.sessionSources, undefined, {}, { ...context,
+    readArguments: async pid => pid === 200 ? ['agy'] : ['agy', '--conversation', 'outer'],
+  })).toBeNull();
+  let replaced = false;
+  expect(await resolveSources(antigravity.sessionSources, undefined, {}, {
+    ...context, readProcess: async pid => ({ ...await tree(pid), startTime: replaced ? '2' : '1' }),
+    readArguments: async () => { replaced = true; return ['agy', '--conversation', 'wrong']; },
+  })).toBeNull();
+});

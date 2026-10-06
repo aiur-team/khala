@@ -130,3 +130,10 @@ export function cachedProcessReader(read: ProcessReader = readProcess): ProcessR
     return result;
   };
 }
+
+/** Linux exposes exact argument boundaries; unsupported hosts fail closed. */
+export async function readProcessArguments(pid: number): Promise<readonly string[] | null> {
+  if (!validPid(pid) || process.platform !== 'linux') return null;
+  try { return (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').slice(0, -1); }
+  catch { return null; }
+}

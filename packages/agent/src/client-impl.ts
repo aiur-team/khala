@@ -577,7 +577,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
-          void join(authorization.link, authorization.label, authorization).catch(() => {});
+          await join(authorization.link, authorization.label, authorization).catch(() => {});
         }));
       })();
     },

@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ancestors, cachedProcessReader, nearestNonShellAncestor, parseDarwinPs, parseLinuxStat, parseWindowsCsv, readProcess } from './proc';
+import { ancestors, cachedProcessReader, nearestNonShellAncestor, parseDarwinPs, parseLinuxStat, parseWindowsCsv, readProcess, readProcessArguments } from './proc';
 import type { ProcessInfo, ProcessReader } from './proc';
 
 function tree(rows: ProcessInfo[]): ProcessReader {
@@ -75,4 +77,19 @@ it.skipIf(process.platform !== 'linux')('reads process identity when the cheap l
   const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' }); });
   expect(await readProcess(process.pid)).toEqual(identity);
   expect(kill).toHaveBeenCalledExactlyOnceWith(process.pid, 0);
+});
+
+it.skipIf(process.platform !== 'linux')('reads exact Linux process argument boundaries and refuses unsafe pids', async () => {
+  expect(await readProcessArguments(process.pid)).toEqual([process.argv[0], ...process.execArgv, ...process.argv.slice(1)]);
+  expect(await readProcessArguments(-1)).toBeNull();
+});
+
+it.skipIf(process.platform !== 'linux')('preserves empty process arguments instead of shifting conversation identity', async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', '--conversation', '', 'other']);
+  await once(child, 'spawn');
+  try {
+    expect((await readProcessArguments(child.pid!))?.slice(-3)).toEqual(['--conversation', '', 'other']);
+  } finally {
+    const exited = once(child, 'exit'); child.kill(); await exited;
+  }
 });

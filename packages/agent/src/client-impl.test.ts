@@ -1013,6 +1013,15 @@ it('restores two hosted channels through fresh secret-confirmed joins without st
   expect(f.api.requestJoin).toHaveBeenCalledTimes(2); expect(f.api.pollJoin).toHaveBeenCalledTimes(2);
   expect((await client.status()).channels?.map(item => item.state)).toEqual(['connected', 'connected']);
 });
+it.each(['local', 'hosted'] as const)('reports connected on the first status after awaiting %s restore', async transport => {
+  const f = await multiClient();
+  if (transport === 'hosted') for (const control of f.controls) delete (control.creds as AgentCredentials).transport;
+  await Promise.all([f.join(0), f.join(1)]);
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
+  await client.resume!();
+  expect((await client.status()).channels?.map(item => item.state)).toEqual(['connected', 'connected']);
+});
 it('leaving one channel only restores the other on the next startup', async () => {
   const f = await multiClient(); await Promise.all([f.join(0), f.join(1)]);
   await client.leave('A'); await restartMulti(f);
@@ -1070,13 +1079,14 @@ it('preserves per-channel name metadata during startup and transient hosted fail
   const pending = deferred<Awaited<ReturnType<typeof requestJoin>>>();
   (f.api.requestJoin as Mock<typeof requestJoin>).mockImplementation(() => pending.promise);
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
-  await client.resume!();
+  const restoration = client.resume!();
   const directory = channelFiles(f.files, '!A:local').dir;
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'joining', channelName: 'A', displayName: 'owner-Codex-0' }));
   // Joining status is written before the request starts; wait until the client
   // has attached its request handler before rejecting the deferred response.
   await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
   pending.reject(new KhalaClientError('internal_error', 'network'));
+  await restoration;
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'network', channelName: 'A', displayName: 'owner-Codex-0' }));
 });
 it('delivers restored-channel wake entries without a tool call', async () => {
@@ -1242,10 +1252,10 @@ it('leaves a channel while restoration is requesting authorization without recre
   const pending = deferred<Awaited<ReturnType<typeof requestJoin>>>();
   (f.api.requestJoin as Mock<typeof requestJoin>).mockImplementation(() => pending.promise);
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start });
-  await client.resume!();
+  const restoration = client.resume!();
   await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
   await client.leave('A'); pending.resolve({ ...created, autoConfirmed: true });
-  await client.close();
+  await client.close(); await restoration;
   await expect(fs.stat(channelFiles(f.files, '!A:local').dir)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as const)('forgets local restoration after terminal helper response %i', async (status, detail) => {

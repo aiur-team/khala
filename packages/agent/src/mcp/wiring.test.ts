@@ -246,3 +246,18 @@ it('offers the installed private-prefix Qwen background command on Windows and r
   expect((await wrapped.status()).watcherHint).toBeUndefined();
   await wrapped.close();
 });
+
+it('cancels a pending startup restore before waiting for initialization during close', async () => {
+  const env = await environment();
+  const client = createPlaceholderClient();
+  let restored!: () => void;
+  const restoring = new Promise<void>(resolve => { restored = resolve; });
+  client.resume = vi.fn(() => restoring);
+  client.close = vi.fn(async () => { restored(); });
+  const waker = { notify: vi.fn(), stop: vi.fn(async () => {}) };
+  const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker: () => waker })({ harness: 'antigravity', sessionId: 'resume' });
+  await vi.waitFor(() => expect(client.resume).toHaveBeenCalledOnce());
+  await wrapped.close();
+  expect(client.close).toHaveBeenCalledOnce();
+  expect(waker.stop).toHaveBeenCalledOnce();
+});
