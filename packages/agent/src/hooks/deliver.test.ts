@@ -4,7 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as processReader from '../harness/proc';
 import { spawn } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { channelFiles, openSessionDir, sessionFiles, StateError, writeStatus, type SessionFiles } from '../state';
@@ -198,11 +197,23 @@ it('rejects invalid harness arguments without throwing', async () => {
   expect(stdout.write).not.toHaveBeenCalled();
   expect(stderr.write).toHaveBeenCalledWith('{"ok":false,"warning":"khala_hook_suppressed","code":"invalid_harness"}\n');
 });
-it('runs under one second on a thousand-line inbox', async () => {
+it('delivers a thousand-line inbox within the in-process performance budget', async () => {
   await seed(Array.from({ length: 1000 }, (_, i) => message(i)));
-  const start = performance.now();
-  expect((await hook()).code).toBe(0);
-  expect(performance.now() - start).toBeLessThan(1000);
+  const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+  const stdin = JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit' });
+  const io = { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() };
+  // Delivery uses ~7.6 ms CPU locally (6.3–10.9 ms across five samples).
+  // A ~10x budget catches large regressions without counting startup or CPU contention waits.
+  const start = process.cpuUsage();
+  const code = await deliver(stdin, ['--harness', 'claude'], io);
+  const cpu = process.cpuUsage(start);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
+  expect(code).toBe(0);
+  expect(stderr.write).not.toHaveBeenCalled();
+  expect(stdout.write).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(stdout.write.mock.calls[0]![0]).hookSpecificOutput.additionalContext).toContain('count="50"');
+  expect((await readCursor(files)).deliveredCount).toBe(50);
+  expect(cpuMs).toBeLessThan(75);
 });
 
 it('recomputes once after a cursor conflict', async () => {
