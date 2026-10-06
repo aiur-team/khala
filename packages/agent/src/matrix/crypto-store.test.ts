@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm, stat, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, readFile, readdir, symlink, writeFile, chmod } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -93,3 +93,41 @@ it('wipes after an in-flight SDK save finishes, and tolerates a repeated wipe', 
   for (const name of ['crypto.json', 'crypto.sqlite', 'sync.sqlite']) expect(await readdir(saved.dir)).not.toContain(name);
   expect(result.stderr).not.toContain('degrading');
 }, 20_000);
+
+
+it.skipIf(process.platform === 'win32').each(['symlink', 'readable', 'unreadable', 'corrupt'] as const)('unlinks %s crypto identity without reading or logging out its token', async kind => {
+  vi.resetModules();
+  const { wipeCryptoStore } = await import('./crypto-store');
+  const { ensureStateDir } = await import('../state');
+  const base = await root();
+  const cryptoRoot = path.join(base, 'khala');
+  const dir = path.join(cryptoRoot, 'channel');
+  await ensureStateDir(dir);
+  const target = path.join(base, 'identity.json');
+  const identity = JSON.stringify({ homeserver: 'https://matrix.test', userId: '@agent:test', deviceId: 'D', accessToken: 'secret' });
+  await writeFile(target, identity, { mode: 0o600 });
+  const file = path.join(dir, 'crypto.json');
+  if (kind === 'symlink') await symlink(target, file);
+  else {
+    await writeFile(file, kind === 'corrupt' ? '{broken' : identity, { mode: 0o600 });
+    if (kind === 'readable') await chmod(file, 0o644);
+    if (kind === 'unreadable') await chmod(file, 0o000);
+  }
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({}));
+  await wipeCryptoStore(dir, cryptoRoot, fetcher);
+  expect(await readdir(dir)).not.toContain('crypto.json');
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(await readFile(target, 'utf8')).toBe(identity);
+});
+
+it('refuses to wipe through a symlinked state directory', async () => {
+  vi.resetModules();
+  const { wipeCryptoStore } = await import('./crypto-store');
+  const base = await root();
+  const target = path.join(base, 'crypto.json');
+  await writeFile(target, 'secret', { mode: 0o600 });
+  const dir = path.join(base, 'alias');
+  await symlink(base, dir);
+  await expect(wipeCryptoStore(dir, base, vi.fn<typeof fetch>())).rejects.toThrow('unsafe_state_dir');
+  expect(await readFile(target, 'utf8')).toBe('secret');
+});

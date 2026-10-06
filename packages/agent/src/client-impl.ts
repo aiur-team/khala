@@ -182,7 +182,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   function current(attempt: Attempt): boolean {
     return attempts.get(attempt.link) === attempt && !closed && !attempt.controller.signal.aborted;
   }
-  async function cleanup(attempt: Attempt): Promise<void> {
+  async function cleanup(attempt: Attempt, discardResume = terminal.includes(attempt.status.detail ?? '')): Promise<void> {
     attempt.unsubscribe?.();
     attempt.unsubscribeMode?.();
     attempt.unsubscribeEnded?.();
@@ -191,7 +191,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     await session?.stop().catch(() => { console.error('khala: crypto_cleanup_failed'); });
     if (attempt.files) {
       await removeStateFile(attempt.files.dir, 'session.json');
-      if (terminal.includes(attempt.status.detail ?? '') && attempt.credentials?.transport !== 'local' && !attempt.restore?.localCredentials) {
+      if (discardResume) await removeStateFile(attempt.files.dir, 'resume.json');
+      if (discardResume && attempt.credentials?.transport !== 'local' && !attempt.restore?.localCredentials) {
         await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files.dir, stateRoot(options.env), options.fetch ?? fetch);
       }
     }
@@ -333,7 +334,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         // Serialize terminal writes with intake so a new room claim waits for
         // all old-attempt writes before creating its replacement session.
         attempt.appends = attempt.appends.then(async () => {
-          if (terminal.includes(reason) && attempt.files) await removeStateFile(attempt.files.dir, 'resume.json');
+          if (terminal.includes(reason)) await cleanup(attempt, true);
           await setStatus(attempt, 'disconnected', reason);
         }).catch(() => {});
         attempt.controller.abort();
@@ -420,8 +421,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           ? new KhalaClientError('not_connected', localStatus === 401 ? 'unauthorized' : localStatus === 403 ? 'removed' : 'channel_deleted') : safeError(error);
         const inviteTimeout = error instanceof Error && error.message === 'invite_timeout';
         attempt.failure = new KhalaClientError(failure.code, failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(failure, failure.code));
-        if (terminal.includes(failure.message) && attempt.files) await removeStateFile(attempt.files.dir, 'resume.json');
-        await cleanup(attempt);
+        await cleanup(attempt, terminal.includes(failure.message));
         await setStatus(attempt, failure.code === 'join_expired' ? 'idle' : 'disconnected',
           failure.code === 'join_expired' ? 'join_expired' : inviteTimeout ? 'invite_timeout' : errorDetail(failure, failure.code));
         attempt.controller.abort();

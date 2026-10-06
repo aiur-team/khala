@@ -1245,3 +1245,38 @@ it.each(['reject', 'timeout'] as const)('retries a replayed mode command after p
     expect(await readStateFile(channelDir(), 'mode.json')).not.toHaveProperty('pendingPublish');
   } finally { vi.useRealTimers(); }
 });
+
+
+it.each(['ended', 'join-failed'] as const)('closes the session before wiping credentials when resume is discarded after %s', async kind => {
+  vi.resetModules();
+  const f = await multiClient(['A']);
+  const control = f.controls[0]!;
+  delete (control.creds as AgentCredentials).transport;
+  await client.close();
+  const savedDir = channelFiles(f.files, control.creds.roomId).dir;
+  let stopped = false;
+  control.session.stop.mockImplementation(async () => { stopped = true; });
+  const fetcher = vi.fn<typeof fetch>(async () => {
+    expect(stopped).toBe(true);
+    return Response.json({});
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
+    joinApi: f.api, startSession: f.start, fetch: fetcher });
+  if (kind === 'join-failed') {
+    vi.mocked(control.session.join).mockImplementation(async () => {
+      await fs.writeFile(path.join(savedDir, 'crypto.json'), JSON.stringify(control.creds), { mode: 0o600 });
+      await writeStateFile(savedDir, 'resume.json', { roomId: control.creds.roomId });
+      throw new KhalaClientError('not_connected', 'removed');
+    });
+    await expect(f.join(0)).rejects.toMatchObject({ message: 'removed' });
+  } else {
+    await f.join(0);
+    await fs.writeFile(path.join(savedDir, 'crypto.json'), JSON.stringify(control.creds), { mode: 0o600 });
+    control.ended();
+  }
+  await vi.waitFor(async () => expect((await client.status()).channels?.[0]).toMatchObject({ state: 'disconnected', detail: 'removed' }));
+  expect(await readStateFile(savedDir, 'crypto.json')).toBeNull();
+  expect(await readStateFile(savedDir, 'resume.json')).toBeNull();
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${control.creds.homeserver}/_matrix/client/v3/logout`,
+    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: `Bearer ${control.creds.accessToken}` }) }));
+});

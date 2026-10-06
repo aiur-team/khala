@@ -109,6 +109,10 @@ try {
   await eventually(() => third.events.some(e => e.message?.body === 'after-reinvite'), 'reinvite_decryption');
   third.child.send('close'); await new Promise(resolve => third.child.once('exit', resolve));
   for (const file of ['crypto.json', 'crypto.sqlite']) {
+    const previousIdentity = JSON.parse(await readFile(path.join(channelDir, 'crypto.json'), 'utf8'));
+    const deviceResponse = await fetch(homeserver + '/_matrix/client/v3/devices', { headers: { authorization: 'Bearer ' + previousIdentity.accessToken } });
+    if (!deviceResponse.ok) throw new Error('device_count_unavailable');
+    const previousDevices = (await deviceResponse.json()).devices.length;
     // Preserve the SQLite header so recovery must also handle a Rust/SQLite
     // open failure, rather than only the inexpensive header check.
     const corrupt = file === 'crypto.sqlite' ? Buffer.alloc(4096, 0x41) : Buffer.from('corrupt fixture');
@@ -117,6 +121,12 @@ try {
     const recovered = await boot(true); await recovered.ready();
     const identity = JSON.parse(await readFile(path.join(channelDir, 'crypto.json'), 'utf8'));
     if (identity.deviceId !== agent.deviceId) throw new Error('corruption_kept_old_device');
+    if (file === 'crypto.sqlite') {
+      const oldToken = await fetch(homeserver + '/_matrix/client/v3/account/whoami', { headers: { authorization: 'Bearer ' + previousIdentity.accessToken } });
+      if (oldToken.status !== 401) throw new Error('corrupt_database_token_still_valid');
+      const currentDevices = await fetch(homeserver + '/_matrix/client/v3/devices', { headers: { authorization: 'Bearer ' + identity.accessToken } });
+      if (!currentDevices.ok || (await currentDevices.json()).devices.length !== previousDevices) throw new Error('corrupt_database_device_count_changed');
+    }
     recovered.child.send('status');
     await eventually(() => recovered.events.some(e => e.status?.detail === 'crypto_reset'), 'corruption_status');
     await human.getCrypto()!.forceDiscardSession(roomId);

@@ -213,7 +213,9 @@ export async function wipeCryptoStore(dir: string, root: string, fetcher: typeof
   try {
     let identity: Identity | null;
     try { identity = await readIdentity(path.join(dir, 'crypto.json')); }
-    catch (error) { if (!(error instanceof CryptoStoreCorruptError)) throw error; identity = null; }
+    // The directory was validated above. An unsafe or unreadable identity can
+    // still be unlinked without following it or trusting its token for logout.
+    catch { identity = null; }
     if (identity?.accessToken) {
       // Retire the device before discarding the only saved copy of its token.
       // Offline logout must not prevent removal of local credentials.
