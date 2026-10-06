@@ -1,10 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
-import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId } from '@khala/contracts/messaging/index';
-import { inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
+import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
+import { markMatrixRoomRead, inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
+  it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
+    const event = new MatrixEvent({ event_id: '$latest', room_id: '!room:example.test', type: EventType.RoomMessage });
+    const events = [event];
+    const room = { getMyMembership: () => 'join', getLiveTimeline: () => ({ getEvents: () => events }), setUnreadNotificationCount: vi.fn() } as unknown as Room;
+    const client = { getRoom: () => room, setRoomReadMarkers: vi.fn(async () => ({})) };
+    await markMatrixRoomRead(client, '!room:example.test' as RoomId, '$latest' as EventId);
+    expect(client.setRoomReadMarkers).toHaveBeenCalledExactlyOnceWith('!room:example.test', '$latest', event);
+    expect(room.setUnreadNotificationCount).toHaveBeenCalledWith('total', 0);
+    room.setUnreadNotificationCount = vi.fn();
+    client.setRoomReadMarkers.mockImplementationOnce(async () => {
+      events.push(new MatrixEvent({ event_id: '$new', type: EventType.RoomMessage })); return {};
+    });
+    await markMatrixRoomRead(client, '!room:example.test' as RoomId, '$latest' as EventId);
+    expect(room.setUnreadNotificationCount).not.toHaveBeenCalled();
+  });
+
   it('attempts all initial ciphertext and keeps a failed event available for later key recovery', async () => {
     const encrypted = (id: string) => new MatrixEvent({
       event_id: id, room_id: '!room:example.test', sender: '@sender:example.test',
@@ -106,7 +122,7 @@ describe('Matrix browser safety boundaries', () => {
       getMyMembership: () => membership,
       hasEncryptionStateEvent: () => encrypted,
       getLastLiveEvent: () => event,
-      getUnreadNotificationCount: () => 0,
+      hasUserReadEvent: () => false, getUnreadNotificationCount: () => 0,
       getLiveTimeline: () => ({ getEvents: () => [event, new MatrixEvent({ event_id: '$channel-event', sender: '@agent:test',
         type: 'com.khala.event.v1', content: { v: 1, kind: 'deploy.finished', summary: 'deployed', body: 'deployed' },
         origin_server_ts: Date.parse('2026-10-01T00:00:00Z') })] }),
@@ -138,16 +154,17 @@ describe('Matrix browser safety boundaries', () => {
       getId: () => `$from-${sender}`,
       getSender: () => sender,
     });
-    const room = (sender: string) => ({
+    const room = (sender: string, read = false) => ({
       roomId: '!r1:khala.local', name: 'Release 0.9 go / no-go',
       getMember: (userId: string) => joined.find(member => member.userId === userId) ?? null,
       getJoinedMembers: () => joined,
       getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
-      getLastLiveEvent: () => null, getUnreadNotificationCount: () => 3,
+      getLastLiveEvent: () => null, hasUserReadEvent: () => read, getUnreadNotificationCount: () => 3,
       getLiveTimeline: () => ({ getEvents: () => [message(sender)] }),
     }) as unknown as Room;
     const project = (sender: string) => projectJoinedEncryptedRooms({ getUserId: () => '@me:khala.local', getRooms: () => [room(sender)] }, limits.value)[0]!;
 
+    expect(projectJoinedEncryptedRooms({ getUserId: () => '@me:khala.local', getRooms: () => [room(agentId, true)] }, limits.value)[0]?.unreadCount).toBeNull();
     expect(project(agentId)).toMatchObject({
       members: [
         { id: '@maya:khala.local', kind: 'human', displayName: 'Maya Chen' },
@@ -183,7 +200,7 @@ describe('Matrix browser safety boundaries', () => {
     const room = {
       roomId: 'room_1', name: 'Recovered channel',
       getMember: () => null, getJoinedMembers: () => [], getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
-      getLastLiveEvent: () => event, getUnreadNotificationCount: () => 1,
+      getLastLiveEvent: () => event, hasUserReadEvent: () => false, getUnreadNotificationCount: () => 1,
       getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
     const client = {
@@ -195,6 +212,7 @@ describe('Matrix browser safety boundaries', () => {
       preview: null, timestamp: '2026-09-28T12:00:00.000Z',
     });
     expect(decryptListeners.size).toBe(1);
+    expect(client.on).toHaveBeenCalledWith(RoomEvent.Receipt, expect.any(Function));
     notify.mockClear();
     decrypted = true;
     for (const callback of decryptListeners) callback();
@@ -509,7 +527,7 @@ describe('browser cross-signing and shared history', () => {
     const event = new MatrixEvent({ event_id: '$old', type: 'm.room.encrypted', content: {}, origin_server_ts: 900 });
     const room = { roomId: '!room:test', name: 'Room', getMyMembership: () => 'join', hasEncryptionStateEvent: () => true,
       getMember: () => ({ membership: 'join', events: { member: { getTs: () => 1000 } } }), getJoinedMembers: () => [],
-      getLastLiveEvent: () => event, getUnreadNotificationCount: () => 0, getLiveTimeline: () => ({ getEvents: () => [event] }),
+      getLastLiveEvent: () => event, hasUserReadEvent: () => false, getUnreadNotificationCount: () => 0, getLiveTimeline: () => ({ getEvents: () => [event] }),
     } as unknown as Room;
     expect(projectJoinedEncryptedRooms({ getRooms: () => [room], getUserId: () => '@me:test' }, limits.value)[0])
       .toMatchObject({ preview: null, timestamp: null });
