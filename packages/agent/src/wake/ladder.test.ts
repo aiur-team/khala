@@ -133,11 +133,11 @@ it('does not spend a delivery budget or fail a nonce when transport is skipped',
   await writeActivity(ctx.files, 'idle', () => new Date(at - 60_000));
   await appendEntries(ctx.files, [{ eventId: 'skip', roomId: 'room', ts: 'now', sender: 'peer', senderLabel: 'peer', senderKind: 'human', body: 'hello', kind: 'message' }]);
   const wake = vi.fn().mockResolvedValue('skipped');
-  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
+  const ladder = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
     drivers: [driver({ wake })], pollMs: 100_000, now: () => at });
+  loop = ladder;
   for (let i = 0; i < 3; i++) {
-    loop.notify();
-    await new Promise(resolve => setTimeout(resolve, 70));
+    await ladder.poll();
   }
   expect(wake).toHaveBeenCalledTimes(3);
   expect(await settleAttempts(ctx.files.dir, { now: at + 120_000, activity: await readActivity(ctx.files) })).toEqual([]);
