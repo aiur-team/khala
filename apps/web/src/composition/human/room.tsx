@@ -281,7 +281,7 @@ function HumanRoom({ context, roomId, navigate, routes }: {
       modeFor={modeFor}
       {...(context.setListeningMode ? { onSetMode: guardedListeningModeSetter({ roomId, viewer, matrixUserId,
         ownerOf: participantId => room.getSnapshot().agents.find(agent => agent.participantId === participantId)?.ownerId,
-        joined: () => timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
+        joined: () => context.isJoined?.(roomId) ?? timeline.getSnapshot().membership === 'joined', send: context.setListeningMode }) } : {})}
       {...(context.agentNames ? { renameAgent: async (participantId: ParticipantId, name: string, signal?: AbortSignal) => {
         const result = await renameChannelAgent(context, room, viewer, participantId, name, signal, roomId);
         if (result.kind === 'ok') {
