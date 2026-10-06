@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManagedFiles, formatJson, jsonFormat, pruneCreated, readManaged, textFormat } from './managed-file';
 import { runInstall } from './main';
+import { createRealClientFactory } from '../mcp/wiring';
 
 let home: string;
 let state: string;
@@ -28,6 +29,18 @@ const uninstall = async (file: string) => {
 const exists = (file: string) => fs.stat(file).then(() => true, () => false);
 
 describe('managed JSON file', () => {
+  it('keeps installer state private and usable by the real MCP client', async () => {
+    const env = { XDG_STATE_HOME: state };
+    const stateDir = path.join(state, 'khala');
+    const file = path.join(home, 'settings.json');
+    const current = await readManaged(file);
+    await new ManagedFiles(stateDir).write([{ current, text: '{"mcpServers":{}}' }]);
+    if (process.platform !== 'win32') expect((await fs.stat(stateDir)).mode & 0o077).toBe(0);
+    const client = createRealClientFactory(env)({ harness: 'cursor', sessionId: 'installed', rejoinable: false });
+    try { expect(await client.status()).toMatchObject({ state: 'idle', unread: 0 }); }
+    finally { await client.close(); }
+  });
+
   it('leaves an absent file absent, with the directories it created', async () => {
     const file = path.join(home, 'cfg', 'tool', 'settings.json');
     await install(file);
