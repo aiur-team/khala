@@ -55,13 +55,16 @@ describe('real MCP client wiring', () => {
     } finally { await client.close(); }
   });
 
-  it('passes no inbox callback and creates no waker for Claude', async () => {
+  it('wires the Claude watcher and terminal ladder to inbox notifications', async () => {
     const env = await environment();
-    const createWaker = vi.fn();
-    const createClient = vi.fn(() => createPlaceholderClient());
+    const waker = { notify: vi.fn(), stop: vi.fn(async () => {}) };
+    const createWaker = vi.fn(() => waker);
+    const createClient = vi.fn<(options: KhalaAgentClientOptions) => ReturnType<typeof createPlaceholderClient>>(() => createPlaceholderClient());
     const client = createRealClientFactory(env, { createClient, createWaker })({ harness: 'claude', sessionId: 'session-1' });
-    expect(createClient.mock.calls).toEqual([[{ harness: 'claude', sessionId: 'session-1', env }]]);
-    expect(createWaker).not.toHaveBeenCalled();
+    expect(createClient.mock.calls[0]![0]).toMatchObject({ harness: 'claude', sessionId: 'session-1', env });
+    createClient.mock.calls[0]![0].onInboxAppend?.({} as Parameters<NonNullable<KhalaAgentClientOptions['onInboxAppend']>>[0]);
+    expect(waker.notify).toHaveBeenCalledOnce();
+    expect(createWaker).toHaveBeenCalledOnce();
     await client.close();
   });
 
@@ -201,8 +204,7 @@ it.each(['codex', 'claude'] as const)('starts restoring %s before any tool call'
   const createWaker = vi.fn(() => waker);
   const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker })({ harness, sessionId: 'startup' });
   await vi.waitFor(() => expect(client.resume).toHaveBeenCalledOnce());
-  if (harness === 'codex') expect(createWaker).toHaveBeenCalledOnce();
-  else expect(createWaker).not.toHaveBeenCalled();
+  expect(createWaker).toHaveBeenCalledOnce();
   await wrapped.close();
 });
 

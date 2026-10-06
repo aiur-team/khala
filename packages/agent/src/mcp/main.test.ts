@@ -103,10 +103,10 @@ describe('MCP command lifecycle', () => {
     writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
-        env: { ...process.env, XDG_STATE_HOME: dir, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'console-diagnostic' }, encoding: 'utf8',
         input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
       });
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
         .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
