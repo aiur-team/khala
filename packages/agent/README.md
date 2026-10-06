@@ -78,3 +78,16 @@ explicitly pending: Codex until U13 (#1134) replaces queue verification `none`,
 and Claude until U14 (#1135) adds its wake ladder. Their guards fail when those
 implementations change; the enabling units must remove the pending guard and
 provide a nonce-capable transport probe. Pending rows do not claim wake parity.
+
+### Other MCP clients
+
+Run `npx -y khala-cli install mcp --print` to print an `mcpServers` JSON snippet
+and its raw command line. Copy the JSON into your client's MCP configuration;
+the command prints only and writes no files. Add `--harness cline` (or another
+lowercase harness ID) to preserve the client's identity in messages and the roster.
+Clients without a native adapter use MCP tools in Async mode, with no hooks or idle wakes.
+
+For a stable session across restarts, set `KHALA_SESSION_ID` in the MCP server's
+environment to a unique ID for each conversation. Without it, the server uses an
+ephemeral process identity. Call `khala_join`, `khala_read`, `khala_send` and
+`khala_status`; read and status return your current display name as `you`.

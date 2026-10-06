@@ -47,6 +47,8 @@ function errorDetail(error: unknown, fallback: string): string {
 }
 
 export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaAgentClient {
+  const asyncOnly = !adapterFor(options.harness)?.codec;
+  const defaultMode: ListeningMode = asyncOnly ? 'async' : 'sync';
   const dir = resolveStateDir(options.harness, options.sessionId, options.env);
   const now = options.now ?? (() => new Date());
   const fetchDeps = options.fetch ? { fetch: options.fetch } : {};
@@ -311,8 +313,9 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         if (!decoded.ok || decoded.value.agent !== session.userId) return;
         attempt.appends = attempt.appends.then(async () => {
           if (!current(attempt)) return;
-          await applyListeningMode(attempt.files!, decoded.value.mode, { changedBy: 'owner', eventId: command.eventId }, now);
-          await publishMode(attempt, session, credentials.roomId, decoded.value.mode);
+          const mode = asyncOnly ? 'async' : decoded.value.mode;
+          await applyListeningMode(attempt.files!, mode, { changedBy: 'owner', eventId: command.eventId }, now);
+          await publishMode(attempt, session, credentials.roomId, mode);
         }).catch(async () => {
           if (current(attempt)) await setStatus(attempt, 'disconnected', 'internal_error').catch(() => {});
         });
@@ -323,7 +326,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       await wait(session.waitForInvite(credentials.roomId, options.inviteTimeoutMs ?? 120_000));
       await wait(session.join(credentials.roomId));
       if (!current(attempt)) return;
-      if (session.listeningMode) await writeStateFile(channelDir, 'mode.json', { mode: session.listeningMode(credentials.roomId) });
+      if (asyncOnly) {
+        await writeStateFile(channelDir, 'mode.json', { mode: 'async' });
+        await publishMode(attempt, session, credentials.roomId, 'async');
+      } else if (session.listeningMode) await writeStateFile(channelDir, 'mode.json', { mode: session.listeningMode(credentials.roomId) });
       else await removeStateFile(channelDir, 'mode.json');
       attempt.joined = true;
       attempt.status.channelName = session.roomName(credentials.roomId) ?? credentials.roomId;
@@ -473,17 +479,17 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       if (channel === undefined) {
         for (const attempt of pendingAttempts()) {
           items.push({ channel: attempt.link, ...(attempt.credentials ? { roomId: attempt.credentials.roomId } : {}),
-            link: attempt.link, state: 'joining', unread: 0, listeningMode: 'sync' });
+            link: attempt.link, state: 'joining', unread: 0, listeningMode: defaultMode });
         }
       }
       await statusWrites;
       const single = items.length === 1 && items[0]?.roomId ? items[0] : undefined;
       return { state: channel === undefined ? status.state : single!.state,
         ...(single?.detail !== undefined ? { detail: single.detail } : channel === undefined && status.detail ? { detail: status.detail } : {}),
-        ...(single ? { channelName: single.channel, ...(single.you !== undefined ? { displayName: single.you } : {}),
+        ...(single ? { channelName: single.channel, ...(single.you !== undefined ? { displayName: single.you, you: single.you } : {}),
           ...(single.agentUserId !== undefined ? { agentUserId: single.agentUserId } : {}) } : {}),
         unread: items.reduce((sum, item) => sum + item.unread, 0),
-        ...(single ? { listeningMode: single.listeningMode } : items.length === 0 ? { listeningMode: 'sync' as const } : {}), channels: items };
+        ...(single ? { listeningMode: single.listeningMode } : items.length === 0 ? { listeningMode: defaultMode } : {}), channels: items };
     },
     async read(limit, before, channel) {
       await initialize();

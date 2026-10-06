@@ -6,11 +6,11 @@ describe('harness selection', () => {
     expect(resolveHarness(['--harness', 'codex'], { KHALA_MCP_HARNESS: 'claude' })).toBe('codex');
     expect(resolveHarness([], { KHALA_MCP_HARNESS: 'claude' })).toBe('claude');
     expect(resolveHarness([], { KHALA_MCP_HARNESS: 'codex', CLAUDE_CODE_SESSION_ID: 'a' })).toBe('codex');
-    expect(resolveHarness([], { KHALA_MCP_HARNESS: 'bad', CLAUDE_CODE_SESSION_ID: '' })).toBe('claude');
+    expect(resolveHarness([], { KHALA_MCP_HARNESS: 'BAD', CLAUDE_CODE_SESSION_ID: '' })).toBe('claude');
     expect(resolveHarness([], {})).toBe('codex');
     expect(resolveHarness(['--harness', 'claude'], {})).toBe('claude');
   });
-  it.each([['--harness'], ['--harness', 'gemini']])('rejects invalid flag %j', (...argv) => {
+  it.each([['--harness'], ['--harness', '../unsafe']])('rejects invalid flag %j', (...argv) => {
     expect(resolveHarness(argv, {})).toBe('invalid');
   });
 });

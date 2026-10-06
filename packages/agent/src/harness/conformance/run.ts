@@ -188,13 +188,17 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       return hook(capabilities.sync ? 'stop' : 'tool');
     };
     await row('you=', async () => {
+      assert.equal((await client.read(10)).you, defaultAgentName('kevin', adapter.id));
+      assert.equal((await client.status()).you, defaultAgentName('kevin', adapter.id));
       const output = await identityHook();
       if (hookSupported) assert(output.frame?.includes(` you="${defaultAgentName('kevin', adapter.id)}" `));
       else assert.equal(output.kind, 'none');
-    }, hookSupported ? 'pass' : 'absent');
+    });
     await row('rename event', async () => {
       await emit('$rename', local.own(), 'Reviewer');
       await emit('$after-rename');
+      assert.equal((await client.read(10)).you, 'Reviewer');
+      assert.equal((await client.status()).you, 'Reviewer');
       const pending = (await unread(channel)).entries;
       assert(pending.some(entry => entry.kind === 'event' && entry.body.endsWith(' is now Reviewer')));
       const output = await identityHook();
