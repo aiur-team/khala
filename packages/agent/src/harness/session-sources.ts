@@ -40,11 +40,12 @@ export const hookMapSource: SessionSource = {
       throw error;
     }
     await ensureStateDir(dir);
-    for await (const parent of walkAncestors(context.pid ?? process.pid, context.readProcess ?? readProcess)) {
-      const entry = await readJson<HookMapping>(path.join(dir, `${parent.pid}.json`));
-      if (entry?.startTime === parent.startTime && typeof entry.sessionId === 'string'
-        && SESSION_ID_PATTERN.test(entry.sessionId) && typeof entry.at === 'string' && Number.isFinite(Date.parse(entry.at))) return entry.sessionId;
-    }
+    // Match the writer's boundary: a nested harness must never inherit an outer session.
+    const parent = await nearestNonShellAncestor(context.pid ?? process.pid, context.readProcess ?? readProcess);
+    if (!parent) return null;
+    const entry = await readJson<HookMapping>(path.join(dir, `${parent.pid}.json`));
+    if (entry?.startTime === parent.startTime && typeof entry.sessionId === 'string'
+      && SESSION_ID_PATTERN.test(entry.sessionId) && typeof entry.at === 'string' && Number.isFinite(Date.parse(entry.at))) return entry.sessionId;
     return null;
   },
 };
