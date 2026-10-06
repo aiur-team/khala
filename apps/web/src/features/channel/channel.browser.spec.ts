@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, expect, type Browser, type Page } from '@playwright/test';
 import { build, preview, type PreviewServer } from 'vite';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,14 +57,12 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
         await page.setViewportSize({width, height:900});
         await page.goto(`${url}?theme=${theme}&twoagents`);
         await page.locator('#kh-head-btn').click();
-        await page.waitForTimeout(300);
-        await page.screenshot({path:join(screenshotDir, `owner-roster-${theme}-${width}.png`)});
+        await page.screenshot({path:join(screenshotDir, `owner-roster-${theme}-${width}.png`), animations: 'disabled'});
         await removeTheo.click();
         await page.getByRole('dialog', { name: 'Remove Theo Park' }).waitFor();
         assert.match(await page.locator('.kh-remove-agents').textContent() ?? '', /Builder, Atlas/);
         assert.equal(await noOverflow(page), true);
-        await page.waitForTimeout(300);
-        await page.screenshot({path:join(screenshotDir, `owner-remove-${theme}-${width}.png`)});
+        await page.screenshot({path:join(screenshotDir, `owner-remove-${theme}-${width}.png`), animations: 'disabled'});
       }
     }
     await page.getByRole('button', {name:'Remove', exact:true}).click();
@@ -199,8 +197,14 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     assert.equal(await page.locator('.kh-card.has-detail').count(), 0);
     await page.locator('.kh-stack .kh-av[aria-label="Builder"]').click();
     await builder.waitFor();
+    // The pane is visible before the card's grid transition finishes. Its
+    // expanding column moves the synthetic leave button in the thread; wait
+    // for the final layout before sending a pointer click there.
+    await expect(page.locator('.kh-detail')).toHaveCSS('width', '320px');
     await page.getByRole('button', { name: 'Builder leaves' }).click();
-    await page.waitForFunction(() => !document.querySelector('.kh-card.has-detail'));
+    await expect(page.locator('.kh-stack .kh-av[aria-label="Builder"]')).toHaveCount(0);
+    await expect(builder).toBeHidden();
+    await expect(page.locator('.kh-card')).not.toHaveClass(/\bhas-detail\b/u);
 
     // Crowded channel: four stacked avatars, then +N.
     await page.getByRole('button', { name: 'Show crowd' }).click();

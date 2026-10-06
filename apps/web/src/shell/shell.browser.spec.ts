@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, expect, type Browser, type Page } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
@@ -74,14 +74,14 @@ test('KhalaApp fills the viewport, keeps fonts per the design and swaps panes on
 
     // The theme toggle lives in the brand actions and swaps the tokens.
     const toggle = page.locator('.kh-brand-actions').getByRole('button', { name: 'Toggle color theme' });
-    // Reduced motion leaves a 0.01ms transition on every property; let it land.
-    const surface = () => page.locator('.kh-list').evaluate(node => new Promise<string>(resolve =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve(getComputedStyle(node).backgroundColor)))));
-    assert.equal(await surface(), 'rgb(30, 32, 37)');
+    // Frames can precede a transition's first style update under load. Wait for
+    // the actual theme color rather than assuming two frames have settled it.
+    const surface = page.locator('.kh-list');
+    await expect(surface).toHaveCSS('background-color', 'rgb(30, 32, 37)');
     assert.equal(await page.locator('.toggle-icon .sun').isVisible(), true);
     await toggle.click();
     assert.equal(await page.locator('.khala-app').getAttribute('data-theme'), 'light');
-    assert.equal(await surface(), 'rgb(244, 236, 217)');
+    await expect(surface).toHaveCSS('background-color', 'rgb(244, 236, 217)');
     assert.equal(await page.locator('.toggle-icon .moon').isVisible(), true);
     await toggle.click();
     assert.equal(await page.locator('.kh-brand-actions').getByRole('button', { name: 'Log out' }).count(), 1);
