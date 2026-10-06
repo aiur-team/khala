@@ -1,3 +1,4 @@
+import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { webcrypto } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_DEVICE_ID, LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type LocalEvent, type LocalMember } from '@khala/contracts/m1/local';
@@ -23,6 +24,7 @@ function fixture() {
   const replies = new Map<string, (LocalHttpResult<unknown> | Promise<LocalHttpResult<unknown>>)[]>();
   const enqueue = (path: string, value: LocalHttpResult<unknown> | Promise<LocalHttpResult<unknown>>) => replies.set(path, [...(replies.get(path) ?? []), value]);
   async function call<T>(method: string, path: string, decode: (value: unknown) => Decoded<T>, body?: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<LocalHttpResult<T>> {
+    if (method === 'GET') assertHarnessWireSupport(path, decode);
     calls.push({ method, path, body, signal, timeoutMs });
     const result = await (replies.get(path)?.shift() ?? new Promise<LocalHttpResult<unknown>>(() => {}));
     if (result.kind !== 'ok') return result;

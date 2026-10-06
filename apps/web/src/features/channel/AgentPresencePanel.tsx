@@ -7,12 +7,12 @@ import type { ParticipantId } from '@khala/contracts/messaging/ids';
 import { AGENT_NAME_MAX, checkName, type NameError } from '@khala/contracts/m1/names';
 import { Avatar } from '../../ui/khala/Avatar';
 import { colorSwatch } from '../../ui/khala/human-colors';
-import { harnessLogo, initials } from '../../ui/khala/identity';
+import { harnessDisplayName, harnessLogo, initials } from '../../ui/khala/identity';
 import { AgentIcon, AsyncIcon, PencilIcon, SteerIcon, SyncIcon, XIcon } from '../../ui/khala/icons';
 import { Popover } from '../../ui/khala/Popover';
 import { Segmented } from '../../ui/khala/Segmented';
 import type { AgentMember, ChannelMembers, HumanMember } from './members';
-import { HARNESS_NAMES, ownerOfLabel } from './roster-model';
+import { ownerOfLabel } from './roster-model';
 
 export type RenameAgentResult = { kind: 'ok'; name: string } | {
   kind: 'error';
@@ -128,7 +128,7 @@ export function AgentName({ agent }: Readonly<{ agent: AgentMember }>) {
     : <span className="kh-id" style={{ '--h': agent.hue } as CSSProperties}>{agent.idBadge}</span>}</b>;
 }
 
-export const harnessName = (agent: AgentMember) => agent.harness ? HARNESS_NAMES[agent.harness] : 'Agent';
+export const harnessName = (agent: AgentMember) => agent.harness ? harnessDisplayName(agent.harness) : 'Agent';
 
 export type SetModeHandler = (participantId: string, mode: ListeningMode) => Promise<'sent' | 'failed'>;
 

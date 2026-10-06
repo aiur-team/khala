@@ -18,6 +18,7 @@ export type SettingsMenuProps = Readonly<{
   /** Without it the menu has no Log out item, e.g. while identity is checked. */
   onSignOut?(): void;
   signingOut?: boolean;
+  mentionNotifications?: { state: 'on' | 'off' | 'blocked' | 'unsupported'; toggle(): void };
 }>;
 
 /** The index a menu key moves focus to among `count` items, or `null` for any other key. */
@@ -112,12 +113,18 @@ export type SettingsItem = Readonly<{
  * The menu's items in order. A new item is one more entry here; the keyboard
  * navigation works over however many items there are.
  */
-export function settingsItems({ theme, onThemeChange, username, color = null, onEditProfile, onSignOut, signingOut = false }: SettingsMenuProps): SettingsItem[] {
+export function settingsItems({ theme, onThemeChange, username, color = null, onEditProfile, onSignOut, signingOut = false, mentionNotifications }: SettingsMenuProps): SettingsItem[] {
   const next: ThemeChoice = theme === 'dark' ? 'light' : 'dark';
   const items: SettingsItem[] = [{
     id: 'mode', icon: next === 'light' ? <SunIcon /> : <MoonIcon />, label: next === 'light' ? 'Light mode' : 'Dark mode',
     run: () => onThemeChange?.(next),
   }];
+  if (mentionNotifications) items.push({ id: 'mentions', icon: <span aria-hidden="true">@</span>,
+    label: 'Notify me when I’m mentioned',
+    detail: mentionNotifications.state === 'blocked' ? 'Blocked in browser settings'
+      : mentionNotifications.state === 'unsupported' ? 'Unavailable in this browser'
+        : mentionNotifications.state === 'on' ? 'On' : 'Off',
+    disabled: mentionNotifications.state === 'blocked' || mentionNotifications.state === 'unsupported', run: mentionNotifications.toggle });
   if (onEditProfile) items.push({ id: 'profile', icon: <UserIcon />, label: 'Profile', detail: <>
     {color ? <span className="kh-swatch-dot" style={{ background: HUMAN_PALETTE[color].solid }} /> : null}{username ? `@${username}` : 'Not set'}
   </>, run: onEditProfile });
@@ -128,7 +135,7 @@ export function settingsItems({ theme, onThemeChange, username, color = null, on
 /** One `menuitem` per item; `activate` closes the menu, then runs the item. */
 export function SettingsMenuItems({ items, activate }: Readonly<{ items: readonly SettingsItem[]; activate(then: () => void): void }>) {
   return <>{items.map(item => <button key={item.id} type="button" role="menuitem" className="kh-mi" tabIndex={-1}
-    disabled={item.disabled} onClick={() => activate(item.run)}>
+    data-setting={item.id === 'mentions' ? item.id : undefined} disabled={item.disabled} onClick={() => activate(item.run)}>
     {item.icon}{item.label}{item.detail ? <em>{item.detail}</em> : null}
   </button>)}</>;
 }

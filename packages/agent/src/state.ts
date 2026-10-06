@@ -157,8 +157,8 @@ export async function writeStatus(files: SessionFiles, state: AgentState, detail
   return status;
 }
 export function readStatus(files: SessionFiles): Promise<StatusFile | null> { return readJson(files.status); }
-export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json' | 'channel.json', value: unknown): Promise<void> {
-  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json', 'channel.json'].includes(name)) throw new StateError('storage_failed');
+export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json' | 'channel.json' | 'resume.json', value: unknown): Promise<void> {
+  if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json', 'channel.json', 'resume.json'].includes(name)) throw new StateError('storage_failed');
   await writeJsonAtomic(path.join(dir, name), value);
 }
 export function readStateFile<T>(dir: string, name: string): Promise<T | null> {
@@ -171,3 +171,5 @@ export async function removeStateFile(dir: string, name: string): Promise<void> 
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new StateError('storage_failed');
   }
 }
+
+export const TERMINAL_SESSION_DETAILS = ['left', 'removed', 'revoked', 'unauthorized', 'channel_deleted'] as const;

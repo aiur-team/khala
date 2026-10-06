@@ -6,6 +6,7 @@ import { MatrixEvent } from 'matrix-js-sdk';
 import { localChannelNamePath } from '@khala/contracts/m1/channel-names';
 import { LOCAL_OWNER_USER_ID, decodeLocalEventsPage, type OwnerProfile } from '@khala/contracts/m1/local';
 import { decodeLocalEventsPage as frozenEventsPage, decodeLocalHistoryPage as frozenHistoryPage } from './local-decoder.main.frozen';
+import { decodeLocalEvent as releasedEvent, decodeLocalEventsPage as releasedEventsPage } from './local-decoder.0-4.frozen';
 import { frozenMainMatrixMessage } from './matrix-message.main.frozen';
 import { memberRenameContent } from '../events/member-rename';
 import { openLocalStore, type OpenedLocalStore } from '../local/store';
@@ -117,6 +118,7 @@ describe('local helper default wire stays decodable by pre-#1078 CLIs', () => {
     // frozen decoder rejecting that page proves this test catches a default leak.
     const opted = await agent.call('GET', agent.room(`events?after=${agent.after}&prev=1`), agent.auth);
     expect(decodeLocalEventsPage(opted.json)).toMatchObject({ ok: true });
+    expect(releasedEventsPage(opted.json)).toMatchObject({ ok: true });
     expect(frozenEventsPage(opted.json)).toMatchObject({ ok: false, error: { code: 'unknown_field' } });
   });
 
@@ -128,6 +130,31 @@ describe('local helper default wire stays decodable by pre-#1078 CLIs', () => {
     expect(history.ok).toBe(true);
     expect(history.ok && history.value.events.map(e => [e.type, e.content['body']])).toEqual([
       ['com.khala.event.v1', 'kevin-Codex joined'], ['com.khala.event.v1', 'kevin-Codex is now reviewer']]);
+  });
+});
+
+describe('frozen local harness ids', () => {
+  it.each([['pre-#1078', frozenEventsPage], ['0.4.x', releasedEventsPage]] as const)('%s rejects a Gemini member', async (_version, decode) => {
+    const agent = await joinedAgent();
+    const response = await agent.call('GET', agent.room('events?after=0'), agent.auth);
+    expect(response.status).toBe(200);
+    const page = response.json as { events: Record<string, unknown>[]; next: number };
+    const member = page.events.find(event => event['type'] === 'm.room.member' && (event['content'] as Record<string, unknown>)['kind'] === 'agent')!;
+    const content = member['content'] as Record<string, unknown>;
+    for (const harness of ['claude', 'codex', 'cursor']) {
+      expect(decode({ events: [{ ...member, content: { ...content, harness } }], next: member['seq'] })).toMatchObject({ ok: true });
+    }
+    expect(decode({ events: [{ ...member, content: { ...content, harness: 'gemini' } }], next: member['seq'] }))
+      .toMatchObject({ ok: false, error: { path: 'events[0].content.harness', code: 'invalid_value' } });
+  });
+
+  it('0.4.x accepts the helper prev=1 page with previous membership', async () => {
+    const agent = await joinedAgent();
+    const response = await agent.call('GET', agent.room('events?after=0&prev=1'), agent.auth);
+    expect(response.status).toBe(200);
+    const decoded = releasedEventsPage(response.json);
+    expect(decoded).toMatchObject({ ok: true });
+    expect(decoded.ok && decoded.value.events.some(event => event.previousContent?.membership === 'invite')).toBe(true);
   });
 });
 
@@ -153,5 +180,79 @@ describe('hosted Matrix events stay mappable by pre-#1078 CLIs', () => {
     expect(memberRenameContent(rename.getContent(), rename.getPrevContent())).toMatchObject({ kind: 'member', body: 'kevin-Codex is now reviewer' });
     expect(memberRenameContent(mode.getContent(), mode.getPrevContent())).toBeNull();
     expect(memberRenameContent(channelName.getContent(), channelName.getPrevContent())).toMatchObject({ body: 'kevin-Codex is now kevin-Codex-2' });
+  });
+});
+
+
+describe('new local harness wire and disk compatibility', () => {
+  async function gemini() {
+    const a = await joinedAgent();
+    await store.append(a.roomId, { type: 'm.room.member', sender: LOCAL_OWNER_USER_ID,
+      content: { user: AGENT, membership: 'join', displayname: 'kevin-Gemini', kind: 'agent', harness: 'gemini' } });
+    await a.call('POST', `/api/local/agents/${encodeURIComponent(AGENT)}/name`, ADMIN, { name: 'reviewer' });
+    return a;
+  }
+  it.each(['', 'prev=1', 'wire=2', 'prev=1&wire=2'])('gates harness independently of previous content: %s', async query => {
+    const a = await gemini();
+    const response = await a.call('GET', a.room(`events?after=${a.after}&${query}`), a.auth);
+    expect(response.status).toBe(200);
+    const page = response.json as { events: { content: Record<string, unknown>; previousContent?: Record<string, unknown> }[] };
+    const newWire = query.includes('wire=2');
+    for (const e of page.events.filter(e => e.content['user'] === AGENT)) {
+      expect(e.content['harness']).toBe(newWire ? 'gemini' : undefined);
+      expect(e.previousContent !== undefined).toBe(query.includes('prev=1'));
+      if (e.previousContent?.['displayname'] === 'kevin-Gemini') expect(e.previousContent['harness']).toBe(newWire ? 'gemini' : undefined);
+    }
+    if (!newWire) {
+      expect(releasedEventsPage(response.json).ok).toBe(true);
+      if (!query) expect(frozenEventsPage(response.json).ok).toBe(true);
+    }
+  });
+  it.each(['', '?wire=2'])('gates rosters and both channel summary endpoints: %s', async query => {
+    const a = await gemini();
+    const roster = (await a.call('GET', a.room(`members${query}`), a.auth)).json as { members: { userId: string; harness?: string }[] };
+    const summary = (await a.call('GET', `/api/local/channels/${encodeURIComponent(a.roomId)}${query}`, ADMIN)).json as typeof roster;
+    const list = (await a.call('GET', `/api/local/channels${query}`, ADMIN)).json as { channels: (typeof roster)[] };
+    for (const value of [roster, summary, ...list.channels]) expect(value.members.find(m => m.userId === AGENT)?.harness).toBe(query ? 'gemini' : undefined);
+    expect(frozenHistoryPage((await a.call('GET', a.room(`messages${query}`), a.auth)).json).ok).toBe(true);
+  });
+  it.each(['', 'wire=2', 'wire=1', 'prev=1'])('always emits legacy ids: %s', async query => {
+    const a = await joinedAgent();
+    const page = (await a.call('GET', a.room(`events?${query}`), a.auth)).json as { events: { content: Record<string, unknown> }[] };
+    expect(page.events.filter(e => e.content['user'] === AGENT).map(e => e.content['harness'])).toEqual(['codex', 'codex']);
+    const roster = (await a.call('GET', a.room(`members?${query}`), a.auth)).json as { members: { userId: string; harness?: string }[] };
+    expect(roster.members.find(m => m.userId === AGENT)?.harness).toBe('codex');
+  });
+  it('persists legacy-decodable lines and restores the sidecar after a downgrade write', async () => {
+    const a = await gemini();
+    await store.append(a.roomId, { type: 'm.room.message', sender: AGENT, content: { msgtype: 'm.text', body: 'hello' } });
+    const dir = path.join(tmp, 'khala/local/channels', a.roomId.slice(1, -6));
+    const log = await fs.readFile(path.join(dir, 'log.jsonl'), 'utf8');
+    expect(log).not.toContain('gemini');
+    const lines = log.trim().split('\n').map(line => JSON.parse(line) as unknown);
+    for (const line of lines) expect(releasedEvent(line).ok).toBe(true);
+    expect(JSON.parse(await fs.readFile(path.join(dir, 'harness.json'), 'utf8'))).toEqual({ [AGENT]: 'gemini' });
+    if (process.platform !== 'win32') expect((await fs.stat(path.join(dir, 'harness.json'))).mode & 0o777).toBe(0o600);
+    await store.close();
+    // An older helper preserves sequence numbers and writes a member without a harness.
+    const last = releasedEvent(lines.at(-1));
+    if (!last.ok) throw new Error('invalid log');
+    await fs.appendFile(path.join(dir, 'log.jsonl'), JSON.stringify({ ...last.value, seq: last.value.seq + 1,
+      eventId: '$' + 'd'.repeat(22), type: 'm.room.member', content: { user: AGENT, membership: 'join', displayname: 'older-rename', kind: 'agent' } }) + '\n');
+    store = await openLocalStore({ root: path.join(tmp, 'khala/local'), ownerDefault });
+    expect(store.member(a.roomId, AGENT)).toMatchObject({ harness: 'gemini', displayName: 'older-rename' });
+    const page = (await helper()('GET', a.room('events?wire=2'), a.auth)).json as { events: { content: Record<string, unknown> }[] };
+    expect(page.events.at(-1)?.content['harness']).toBe('gemini');
+    const message = await store.append(a.roomId, { type: 'm.room.message', sender: AGENT, content: { msgtype: 'm.text', body: 'next' } });
+    expect(message.seq).toBe(last.value.seq + 2);
+  });
+  it('joins Gemini with its registry default and cascades the owner rename', async () => {
+    const { roomId } = await store.createChannel('new harness');
+    const call = helper();
+    const link = `http://127.0.0.1:47830/join/${(await store.mintLink(roomId, 'join')).token}`;
+    expect((await call('POST', '/api/agent/join', { kind: 'none' }, { link, harness: 'gemini' })).status).toBe(201);
+    expect(store.members(roomId)).toEqual(expect.arrayContaining([expect.objectContaining({ harness: 'gemini', displayName: 'kevin-Gemini' })]));
+    expect((await call('POST', '/api/local/profile/username', ADMIN, { username: 'kev' })).status).toBe(200);
+    expect(store.members(roomId)).toEqual(expect.arrayContaining([expect.objectContaining({ harness: 'gemini', displayName: 'kev-Gemini' })]));
   });
 });

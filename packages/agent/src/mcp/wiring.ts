@@ -2,7 +2,9 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
 import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
-import { createCodexWaker } from '../wake/codex';
+import type { createCodexWaker } from '../wake/codex';
+import { createWakeLadder } from '../wake/ladder';
+import { adapterFor } from '../harness';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
@@ -10,13 +12,17 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
   createClient?: typeof createKhalaAgentClient;
   createWaker?: typeof createCodexWaker;
 } = {}): ClientFactory {
-  return ({ harness, sessionId }) => {
+  return ({ harness, sessionId, rejoinable }) => {
     const files = sessionFiles(harness, sessionId, env);
-    const waker = harness === 'codex'
-      ? (deps.createWaker ?? createCodexWaker)({ files, threadId: sessionId }) : undefined;
-    const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, env,
+    const adapter = adapterFor(harness);
+    const drivers = adapter?.wakeLadder;
+    const waker = drivers?.length ? deps.createWaker
+      ? deps.createWaker({ files, threadId: sessionId })
+      : createWakeLadder({ files, harness, sessionId, drivers, env,
+        ...(harness === 'codex' ? { warningPrefix: 'codex' } : {}) }) : undefined;
+    const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, ...(rejoinable !== undefined ? { rejoinable } : {}), env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
-    // The client initializes lazily. Clear the previous process's join before
+    // Restore authorization before the first tool call. Clear the previous process's join before
     // delegating any operation, so an expired join cannot reject a fresh one.
     let initialization: Promise<void> | undefined;
     const initialize = () => initialization ??= (async () => {
@@ -25,13 +31,15 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       const joinsDir = path.join(files.dir, 'joins');
       await ensureStateDir(joinsDir);
       await fs.rm(joinsDir, { recursive: true, force: true });
+      await client.resume?.();
     })();
+    void initialize().catch(() => {});
     return {
       async join(link, label) { await initialize(); return client.join(link, label); },
       async status(channel) {
         await initialize();
         const status = await (channel === undefined ? client.status() : client.status(channel));
-        return harness === 'claude' && ['connected', 'send_failed'].includes(status.state)
+        return adapter?.watcherStatus && ['connected', 'send_failed'].includes(status.state)
           ? { ...status, watcherArmed: await monitorArmed(files) } : status;
       },
       async read(limit, before, channel) { await initialize(); return channel === undefined ? client.read(limit, before) : client.read(limit, before, channel); },

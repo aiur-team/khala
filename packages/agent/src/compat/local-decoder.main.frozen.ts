@@ -3,11 +3,15 @@
 // Do not edit: helper-default responses must keep decoding with it, because one
 // machine-wide helper serves every installed CLI version. See wire-compat.test.ts.
 import { type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal, nullable, object, safeInteger, text, utcTimestamp, utf8Length, version } from '@khala/contracts/messaging/decode';
-import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHarness, readHttpUrl, readMatrixUserId, readRoomId } from '@khala/contracts/m1/agent-join';
+import { type Harness, M1_LABEL_MAX_BYTES, readChannelLink, readHttpUrl, readMatrixUserId, readRoomId } from '@khala/contracts/m1/agent-join';
 import { type HumanColorId, readHumanColorId } from '@khala/contracts/m1/colors';
 import { readHumanInitials } from '@khala/contracts/m1/initials';
 import { LISTENING_MODES } from '@khala/contracts/m1/listening-mode';
 import { checkName } from '@khala/contracts/m1/names';
+
+function readHarness(input: unknown, path: string): Harness {
+  return literal(input, path, ['claude', 'codex', 'cursor']);
+}
 
 export const LOCAL_SERVER_NAME = 'local' as const;
 export const LOCAL_OWNER_USER_ID = '@khala_owner:local' as const;

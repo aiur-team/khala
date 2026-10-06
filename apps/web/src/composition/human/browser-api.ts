@@ -2,7 +2,7 @@ import { isCanonicalInitials, PROFILE_INITIALS_PATH } from '@khala/contracts/m1/
 import { isHumanColorId, PROFILE_COLOR_PATH } from '@khala/contracts/m1/colors';
 import { AGENT_RENAME_PATH, decodeAgentRenameResult } from '@khala/contracts/m1/agent-names';
 import type { AgentNamesPort } from '../../features/channel/ports';
-import { checkName, type NameError } from '@khala/contracts/m1/names';
+import { checkNewUsername, type NameError } from '@khala/contracts/m1/names';
 import { decodeProfileView, PROFILE_PATH, PROFILE_USERNAME_PATH } from '@khala/contracts/m1/profile';
 import type { ProfilePort } from '../../features/profile/ports';
 import { decodeParticipant, type Participant } from '@khala/contracts/m1/participants';
@@ -449,7 +449,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
         return { kind: 'error', code: 'invalid_username', ...(reason ? { reason } : {}) };
       }
       if (response.status !== 200 || body === null || !hasExactKeys(body, ['username'])) return { kind: 'error', code: 'unavailable' };
-      const checked = checkName(body.username, 'username');
+      const checked = checkNewUsername(body.username);
       return checked.ok && checked.name === body.username
         ? { kind: 'ok', username: checked.name } : { kind: 'error', code: 'unavailable' };
     },

@@ -15,7 +15,7 @@ pnpm.
    `claude --resume <session id>` using its existing ID.
 
 3. Tell Claude: "Join this Khala channel: <link>". Open the confirmation link it
-   returns and confirm. Claude checks `khala_status` to finish joining.
+   returns and confirm. Claude checks that channel’s `khala_status` entry to finish joining; another channel may already be connected.
 
 On its first session start, the plugin's `SessionStart` hook installs the pinned package in
 the background into the plugin data directory (`~/.claude/plugins/data/…/npm-<version>`).
@@ -28,8 +28,10 @@ then restart. To remove: `claude plugin uninstall khala@khala`.
 ## Behaviour
 
 - After joining, Claude starts a background Monitor on `khala watch` for its session.
-  The listener watches local inbox changes and prints one count-only notification per
-  new peer message in Sync/Steer, with no message bodies; Async remains silent.
+  The listener watches all session channels, including channels joined later, and prints
+  one count-only notification per channel batch in Sync/Steer, with no message bodies;
+  Async remains silent. Leaving one channel keeps the listener running; it exits when
+  the session closes.
   Claude re-arms Monitor at its 30-minute deadline. On start/resume, the plugin
   reminds Claude to check status, rejoin the previously authorized channel if needed,
   and arm Monitor. Local links are single-use: for a local channel you authorized

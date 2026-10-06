@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientEvent, EventType, MatrixEvent, MatrixEventEvent, Preset, RoomEvent, Visibility, type EventTimeline, type MatrixClient, type Room } from 'matrix-js-sdk';
 import { DecryptionFailureCode, type CryptoApi } from 'matrix-js-sdk/lib/crypto-api';
 import { decodeContentLimits, type MessageContent, type ParticipantView, type RoomId, type EventId } from '@khala/contracts/messaging/index';
-import { markMatrixRoomRead, inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption } from './matrix-browser';
+import { markMatrixRoomRead, inviteWithHistory, memberSince, setOwnChannelName, createMatrixRoomRequest, ensureCrossSigning, isPreJoinUndecryptable, decryptTimelineEvents, paginateHistoricalEvents, projectJoinedEncryptedRooms, projectMatrixTimelineEvent, sendRoomMessage, startMatrixClient, subscribeConversationIndex, subscribeRoomDecryption, waitForEncryptedRoom, MatrixSubstrate } from './matrix-browser';
 
 describe('Matrix browser safety boundaries', () => {
   it('sends hosted read markers and clears counts without erasing a newer arrival', async () => {
@@ -532,4 +532,54 @@ describe('browser cross-signing and shared history', () => {
     expect(projectJoinedEncryptedRooms({ getRooms: () => [room], getUserId: () => '@me:test' }, limits.value)[0])
       .toMatchObject({ preview: null, timestamp: null });
   });
+});
+
+describe('waiting for the first room sync', () => {
+  it('waits for an encrypted room that appears late after joining', async () => {
+    vi.useFakeTimers();
+    try {
+      let room: Room | null = null;
+      const client = { getRoom: () => room } as unknown as MatrixClient;
+      const waiting = waitForEncryptedRoom(client, '!late:hs');
+      await vi.advanceTimersByTimeAsync(100);
+      room = { hasEncryptionStateEvent: () => true } as unknown as Room;
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await waiting).toBe(room);
+    } finally { vi.useRealTimers(); }
+  });
+  it('honors cancellation before the room sync arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = { getRoom: () => null } as unknown as MatrixClient;
+      const abort = new AbortController();
+      const waiting = waitForEncryptedRoom(client, '!late:hs', abort.signal);
+      const rejected = expect(waiting).rejects.toThrow();
+      abort.abort();
+      await rejected;
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it('times out an unsynced encrypted room after ten seconds', { timeout: 12_000 }, async () => {
+  const client = { getRoom: () => null } as unknown as MatrixClient;
+  await expect(waitForEncryptedRoom(client, '!missing:hs')).rejects.toMatchObject({ name: 'TimeoutError' });
+});
+
+it.each(['leave', 'ban'])('publishes definite %s without waiting for revoked participant attribution', async membership => {
+  const decoded = decodeContentLimits({ maxBodyBytes: 32_768, maxDisplayNameBytes: 255, maxRoomTitleBytes: 255 });
+  if (!decoded.ok) throw new Error('limits');
+  const roomId = '!room:example.test' as RoomId;
+  const room = { roomId, name: 'Channel', hasEncryptionStateEvent: () => true,
+    getMyMembership: () => membership, getLastLiveEvent: () => undefined } as unknown as Room;
+  const client = { getRoom: () => room, on: vi.fn(), off: vi.fn() } as unknown as MatrixClient;
+  const participants = { resolve: vi.fn(async () => null) };
+  const substrate = new MatrixSubstrate({ active: { client, generation: 1 } } as never, decoded.value, participants);
+  const listener = vi.fn();
+  const dispose = substrate.subscribe(roomId, listener);
+  await Promise.resolve();
+  expect(listener).toHaveBeenCalledWith({ generation: 1, room: expect.objectContaining({
+    membership: membership === 'ban' ? 'revoked' : 'left' }), events: [] });
+  expect(participants.resolve).not.toHaveBeenCalled();
+  dispose();
+  expect(client.off).toHaveBeenCalledWith(RoomEvent.MyMembership, expect.any(Function));
 });

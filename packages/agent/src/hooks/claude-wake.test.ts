@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
+import { filesForDir, openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
 import { appendEntries, unreadCount } from '../inbox';
 import { writeActivity } from '../activity';
-import { unreadMessages, watch } from '../../hooks/claude-wake';
+import { DEADLINE_MS, unreadMessages, watch } from '../../hooks/claude-wake';
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 const input = JSON.stringify({ session_id: 'session', hook_event_name: 'Stop', stop_hook_active: false });
@@ -35,6 +35,9 @@ function start(stdin = input, deadline = 3000) {
   }));
   process.child.stdin!.end(stdin);
   return process;
+}
+async function watcher() {
+  return JSON.parse(await fs.readFile(path.join(files.dir, 'watcher.json'), 'utf8'));
 }
 async function owner() {
   try { return JSON.parse(await fs.readFile(path.join(files.dir, 'watcher.json'), 'utf8')).nonce as string; }
@@ -81,6 +84,7 @@ it('wakes within 1s after append, without claiming or changing inbox/cursor/acti
   const inbox = await fs.readFile(files.inbox);
   expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
   expect(Date.now() - appendedAt).toBeLessThan(1000);
+  expect(await watcher()).toMatchObject({ pid: running.child.pid, parentPid: process.pid, state: 'woke' });
   expect(await fs.readFile(files.cursor)).toEqual(cursor);
   expect(await fs.readFile(files.inbox)).toEqual(inbox);
   expect(await fs.readFile(path.join(files.dir, 'activity.json'))).toEqual(activity);
@@ -125,6 +129,7 @@ it('supersedes the old watcher within 200ms; only the new watcher wakes', async 
   const secondArmed = Date.now();
   expect(await first.result).toEqual({ code: 0, stdout: '', stderr: '' });
   expect(Date.now() - secondArmed).toBeLessThan(200);
+  expect(await watcher()).toMatchObject({ pid: second.child.pid, parentPid: process.pid, state: 'armed' });
   await writeActivity(files, 'idle');
   expect(await second.result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
@@ -145,6 +150,7 @@ it('exits silently within 500ms when the launching parent dies', async () => {
   expect(result.stdout).toBe('');
   expect(result.stderr).toBe('');
   expect(await fs.readFile(exitFile, 'utf8')).toBe('0');
+  expect((await watcher()).state).toBe('exited');
   expect(Date.now() - killedAt).toBeLessThan(500);
 });
 it('handles corrupt cursor/lines and wakes only for valid unread messages', async () => {
@@ -163,8 +169,10 @@ it('silently contains storage and IO errors', async () => {
   await seed('idle', [entry()]);
   await fs.mkdir(files.cursor);
   expect(await start().result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect((await watcher()).state).toBe('exited');
   await fs.rm(files.cursor, { recursive: true });
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(), stderr: { write: () => { throw Error('failed'); } } })).toBe(0);
+  expect((await watcher()).state).toBe('exited');
 });
 it.each(['busy', 'claimed', 'superseded'])('rechecks %s after observing unread messages', async race => {
   await seed('idle', [entry()]);
@@ -199,6 +207,41 @@ it('keeps polling in async and wakes after switching to sync', async () => {
   expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
 });
 
+async function channel(name: string, mode = 'sync', entries = [entry()]) {
+  const target = filesForDir(path.join(files.dir, 'channels', name));
+  await fs.mkdir(target.dir, { recursive: true, mode: 0o700 });
+  await writeJsonAtomic(target.mode, { mode });
+  await appendEntries(target, entries);
+  return target;
+}
+it('wakes for sync channel B even when the legacy root is async', async () => {
+  await seed();
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  await channel('b');
+  expect(await start().result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('does not wake for async channels beside an empty sync channel', async () => {
+  await seed();
+  await channel('a', 'async');
+  await channel('b', 'sync', []);
+  expect(await start(input, 200).result).toEqual({ code: 0, stdout: '', stderr: '' });
+});
+it('counts the legacy inbox and channel inbox separately without advancing cursors', async () => {
+  await seed('idle', [entry()]);
+  const target = await channel('b', 'steer', [entry(2), entry(3)]);
+  await writeJsonAtomic(target.cursor, { deliveredCount: 1, lastDeliveredEventId: '$e2' });
+  const cursor = await fs.readFile(target.cursor);
+  expect(await unreadMessages(files.dir)).toBe(2);
+  expect(await fs.readFile(target.cursor)).toEqual(cursor);
+});
+it('finds a channel joined after the watcher is armed', async () => {
+  await seed();
+  const running = start();
+  await armed();
+  await channel('later');
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+
 it('retains backup wake after the former 50-minute deadline', async () => {
   await seed('idle', [entry()]);
   let reads = 0;
@@ -206,4 +249,33 @@ it('retains backup wake after the former 50-minute deadline', async () => {
   const stderr = { write: vi.fn() };
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now, stderr })).toBe(2);
   expect(stderr.write).toHaveBeenCalledExactlyOnceWith(notice);
+});
+
+it('defaults to a 24-hour deadline and records expiry at its boundary', async () => {
+  expect(DEADLINE_MS).toBe(24 * 60 * 60 * 1000);
+  await seed('idle', [entry()]);
+  let reads = 0;
+  const stderr = { write: vi.fn() };
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(reads++ === 0 ? 0 : DEADLINE_MS), stderr })).toBe(0);
+  expect(stderr.write).not.toHaveBeenCalled();
+  expect(await watcher()).toMatchObject({ armedAt: new Date(0).toISOString(), pid: process.pid, parentPid: process.ppid, state: 'expired' });
+});
+
+it('does not overwrite a re-arm that races the exit-state write', async () => {
+  await seed();
+  const replacement = { nonce: 'replacement', armedAt: new Date().toISOString(), pid: 123, parentPid: 456, state: 'armed' };
+  const realOpen = fs.open;
+  vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+    const file = await realOpen(...args);
+    const read = file.readFile.bind(file);
+    vi.spyOn(file, 'readFile').mockImplementationOnce(async () => {
+      const body = await read('utf8');
+      await writeJsonAtomic(path.join(files.dir, 'watcher.json'), replacement);
+      return body;
+    });
+    return file;
+  });
+  let reads = 0;
+  expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(reads++ === 0 ? 0 : DEADLINE_MS), stderr: { write: vi.fn() } })).toBe(0);
+  expect(await watcher()).toEqual(replacement);
 });

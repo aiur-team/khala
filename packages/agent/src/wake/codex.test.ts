@@ -1,17 +1,18 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
 import * as activityState from '../activity';
 import { appendEntries } from '../inbox';
-import { openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
+import { channelFiles, ensureStateDir, openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
 import { createCodexWaker, type CodexWaker } from './codex';
 import { CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
 
 let root: string;
 let files: SessionFiles;
+let session: SessionFiles;
 let time: number;
 let waker: CodexWaker | undefined;
 let outcome: CodexIdleWakeOutcome;
@@ -23,16 +24,22 @@ async function append(id: string, kind: 'message' | 'event' = 'message') {
     senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind }]);
 }
 async function activity(state: 'idle' | 'busy', at = time - 1) {
-  await writeActivity(files, state, () => new Date(at));
+  await writeActivity(session, state, () => new Date(at));
 }
 function start() {
-  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run }, pollMs: 20,
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, pollMs: 20,
     now: () => time, stderr: line => diagnostics.push(line) });
   waker.notify();
 }
+describe.each(['legacy', 'nested'])('%s channel layout', layout => {
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-853-waker-'));
-  files = await openSessionDir('codex', 'thread-1', { XDG_STATE_HOME: root });
+  session = await openSessionDir('codex', 'thread-1', { XDG_STATE_HOME: root });
+  files = layout === 'legacy' ? session : channelFiles(session, 'room');
+  if (layout === 'nested') {
+    await ensureStateDir(files.dir);
+    await writeJsonAtomic(path.join(files.dir, 'channel.json'), { roomId: 'room', channelName: 'A' });
+  }
   time = Date.parse('2026-10-01T00:00:00Z');
   outcome = { status: 'queued' };
   run.mockClear(); diagnostics.length = 0;
@@ -54,7 +61,7 @@ it('does not wake busy sessions, then wakes when idle', async () => {
 it('does not wake for events only or missing activity', async () => {
   await append('1', 'event'); await activity('idle'); start(); await wait();
   expect(run).not.toHaveBeenCalled();
-  await append('2'); await fs.unlink(path.join(files.dir, 'activity.json')); await wait();
+  await append('2'); await fs.unlink(path.join(session.dir, 'activity.json')); await wait();
   expect(run).not.toHaveBeenCalled();
 });
 it('clears pending after a later hook boundary and stops when unread is zero', async () => {
@@ -74,7 +81,7 @@ it('allows at most two wakes per cursor count, and permits waking after cursor a
 });
 it('resets the attempt cap and pending retry when switching channels at cursor zero', async () => {
   const credentials = { homeserver: 'https://example.test', userId: '@agent-a:example.test',
-    accessToken: 'token', deviceId: 'device-a', roomId: '!room-a:example.test' };
+    accessToken: 'token', deviceId: 'device-a', roomId: layout === 'legacy' ? '!room-a:example.test' : 'room' };
   await saveSession(files, credentials);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
   await append('a'); await activity('idle'); start(); await wait();
@@ -85,9 +92,9 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
 
   await fs.unlink(files.inbox);
   await fs.unlink(files.cursor);
-  await saveSession(files, { ...credentials, userId: '@agent-b:example.test', roomId: '!room-b:example.test' });
+  await saveSession(files, { ...credentials, userId: '@agent-b:example.test', roomId: layout === 'legacy' ? '!room-b:example.test' : 'room' });
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
-  await appendEntries(files, [{ eventId: 'b', roomId: '!room-b:example.test', ts: new Date(time).toISOString(),
+  await appendEntries(files, [{ eventId: 'b', roomId: layout === 'legacy' ? '!room-b:example.test' : 'room', ts: new Date(time).toISOString(),
     sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
   waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(3);
@@ -111,7 +118,7 @@ it('coalesces notifications during a queue, aborts it and waits for settlement o
     signal = abort;
     return new Promise<CodexIdleWakeOutcome>(resolve => { settle = () => resolve({ status: 'queued' }); });
   });
-  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run: slow }, pollMs: 20, now: () => time });
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, pollMs: 20, now: () => time });
   waker.notify(); await wait();
   for (let i = 0; i < 5; i++) waker.notify();
   await wait(); expect(slow).toHaveBeenCalledTimes(1);
@@ -126,10 +133,11 @@ it('runs exactly one coalesced reevaluation after an in-flight queue settles', a
   const slow = vi.fn().mockImplementationOnce(() => new Promise<CodexIdleWakeOutcome>(resolve => {
     settle = () => resolve({ status: 'queued' });
   })).mockResolvedValue({ status: 'queued' });
-  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run: slow }, pollMs: 100_000, now: () => time });
-  waker.notify(); await wait(); time += 10; await activity('idle', time);
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, pollMs: 100_000, now: () => time });
+  waker.notify(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
+  time += 10; await activity('idle', time);
   for (let i = 0; i < 5; i++) waker.notify();
-  settle(); await wait(); expect(slow).toHaveBeenCalledTimes(2);
+  settle(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(2));
 });
 it('reports content-free errors and continues after a storage failure', async () => {
   await fs.mkdir(files.inbox); start(); await wait();
@@ -139,7 +147,7 @@ it('reports content-free errors and continues after a storage failure', async ()
 });
 it('rejects invalid thread IDs', () => {
   for (const threadId of ['../x', '', '-x', 'a'.repeat(129)]) {
-    expect(() => createCodexWaker({ files, threadId })).toThrow('invalid_thread_id');
+    expect(() => createCodexWaker({ files: session, threadId })).toThrow('invalid_thread_id');
   }
 });
 it('uses the real no-shell process runner with scrubbed env and no message marker', async () => {
@@ -148,7 +156,7 @@ it('uses the real no-shell process runner with scrubbed env and no message marke
   await fs.writeFile(executable, `#!${process.execPath}\nimport fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(dump)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env }));\n`, { mode: 0o700 });
   await append('1'); await activity('idle');
   const port = createCodexQueueProcessPort({ command: 'codex', env: { ...process.env, PATH: root, KHALA_SECRET: 'x' } });
-  waker = createCodexWaker({ files, threadId: 'thread-1', port, pollMs: 20, now: () => time });
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port, pollMs: 20, now: () => time });
   waker.notify();
   await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(dump, 'utf8')).argv).toEqual(['queue', '--thread', 'thread-1', '--message', CODEX_IDLE_WAKE_NOTICE]));
   const content = await fs.readFile(dump, 'utf8');
@@ -194,10 +202,88 @@ it('does not queue when mode switches to async during evaluation', async () => {
     await writeJsonAtomic(files.mode, { mode: 'async' });
     return current;
   });
-  waker = createCodexWaker({ files, threadId: 'thread-1', port: { run }, pollMs: 100_000,
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, pollMs: 100_000,
     now: () => time, stderr: line => diagnostics.push(line) });
   waker.notify();
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   await wait();
   expect(run).not.toHaveBeenCalled();
+});
+
+async function joinedB(mode = 'sync', messages = 1) {
+  const target = channelFiles(session, 'room-b');
+  await ensureStateDir(target.dir);
+  await writeJsonAtomic(path.join(target.dir, 'channel.json'), { roomId: 'room-b', channelName: 'B' });
+  await saveSession(target, { homeserver: 'https://example.test', userId: '@b:example.test', accessToken: 'token', deviceId: 'b', roomId: 'room-b' });
+  await writeJsonAtomic(target.mode, { mode });
+  await appendEntries(target, Array.from({ length: messages }, (_, i) => ({ eventId: `b${i}`, roomId: 'room-b', ts: new Date(time).toISOString(), sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human' as const, body: 'BODYMARK', kind: 'message' as const })));
+  return target;
+}
+it('coalesces two sync channels and renews the composite budget after delivery in either', async () => {
+  await append('a1'); await append('a2');
+  const b = await joinedB('sync', 2);
+  await activity('idle'); start();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await append('a3');
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await appendEntries(b, [{ eventId: 'b3', roomId: 'room-b', ts: new Date(time).toISOString(), sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  await writeJsonAtomic(b.cursor, { lastDeliveredEventId: 'b0', deliveredCount: 1 });
+  const cursor = await fs.readFile(b.cursor);
+  waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(await fs.readFile(b.cursor)).toEqual(cursor);
+  await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
+  await writeJsonAtomic(files.cursor, { lastDeliveredEventId: 'a1', deliveredCount: 1 });
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+});
+it('does not wake for ten unread async messages beside an empty sync channel', async () => {
+  await joinedB('async', 10);
+  await activity('idle'); start(); await wait();
+  expect(run).not.toHaveBeenCalled();
+});
+it('does not wake for unread async A beside empty sync B', async () => {
+  await append('a1'); await writeJsonAtomic(files.mode, { mode: 'async' });
+  await joinedB('sync', 0);
+  await activity('idle'); start(); await wait();
+  expect(run).not.toHaveBeenCalled();
+});
+it('joining and rejoining an empty channel preserves the other channel wake budget', async () => {
+  await append('a1'); await activity('idle'); start(); await wait();
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  const b = await joinedB('sync', 0);
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  await saveSession(b, { homeserver: 'https://example.test', userId: '@rejoined:example.test', accessToken: 'token', deviceId: 'b', roomId: 'room-b' });
+  waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('does not renew an exhausted cursor budget by toggling async', async () => {
+  await append('a1'); await activity('idle'); start(); await wait();
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  await writeJsonAtomic(files.mode, { mode: 'async' });
+  waker!.notify(); await wait();
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it('renews a rejoined channel with the same credentials while preserving other channels', async () => {
+  const b = await joinedB();
+  await activity('idle'); start(); await wait();
+  time += 60_000; waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(2);
+  await writeJsonAtomic(path.join(b.dir, 'channel.json'), { roomId: 'room-b', channelName: 'B', joinedAt: new Date(time).toISOString() });
+  waker!.notify(); await wait();
+  expect(run).toHaveBeenCalledTimes(3);
+  await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
 });

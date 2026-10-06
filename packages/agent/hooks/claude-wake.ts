@@ -1,6 +1,8 @@
+import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import { resolveStateDir } from '../src/state';
+import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -17,7 +19,7 @@ async function readJson(file: string): Promise<{ nonce?: string; mode?: string; 
 }
 
 /** Match inbox unreadCount: ignore corrupt records and incomplete trailing writes. */
-export async function unreadMessages(dir: string): Promise<number> {
+async function unreadChannelMessages(dir: string): Promise<number> {
   const cursor = await readJson(path.join(dir, 'cursor.json'));
   const delivered = cursor && (cursor.lastDeliveredEventId === null || typeof cursor.lastDeliveredEventId === 'string')
     && Number.isSafeInteger(cursor.deliveredCount) && typeof cursor.deliveredCount === 'number' && cursor.deliveredCount >= 0 ? cursor.deliveredCount : 0;
@@ -34,6 +36,23 @@ export async function unreadMessages(dir: string): Promise<number> {
   }
   return messages;
 }
+/** Re-list each observation so channels joined while Stop is waiting are included. */
+export async function unreadMessages(dir: string): Promise<number> {
+  const directories = [dir];
+  try {
+    for (const entry of await fs.readdir(path.join(dir, 'channels'), { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) directories.push(path.join(dir, 'channels', entry.name));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let messages = 0;
+  for (const directory of directories) {
+    if ((await readJson(path.join(directory, 'mode.json')))?.mode === 'async') continue;
+    messages += await unreadChannelMessages(directory);
+  }
+  return messages;
+}
 function testDuration(value: string | undefined, fallback: number): number {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : fallback;
@@ -46,22 +65,34 @@ function parentAlive(parent: number): boolean {
 
 export async function watch(stdin: string, _argv: readonly string[], io: IO = { stderr: process.stderr, env: process.env, now: () => new Date() }): Promise<number> {
   let temporary: string | undefined;
+  let finish: (() => Promise<void>) | undefined;
+  let state: 'woke' | 'exited' | 'expired' = 'exited';
   try {
     const parent = process.ppid;
     const input = JSON.parse(stdin);
     if (input?.hook_event_name !== 'Stop' || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
-    const root = io.env.XDG_STATE_HOME && path.isAbsolute(io.env.XDG_STATE_HOME)
-      ? io.env.XDG_STATE_HOME : path.join(io.env.HOME ?? os.homedir(), '.local/state');
-    const dir = path.join(root, 'khala', 'claude', input.session_id);
+    const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
     const nonce = randomBytes(6).toString('hex');
     const owner = path.join(dir, 'watcher.json');
     temporary = path.join(dir, `.watcher-${nonce}.tmp`);
     const started = io.now();
-    await fs.writeFile(temporary, JSON.stringify({ nonce, armedAt: started.toISOString() }) + '\n', { mode: 0o600, flag: 'wx' });
+    const record = { nonce, armedAt: started.toISOString(), pid: process.pid, parentPid: parent, state: 'armed' };
+    await fs.writeFile(temporary, JSON.stringify(record) + '\n', { mode: 0o600, flag: 'wx' });
     await fs.rename(temporary, owner);
     temporary = undefined;
+    finish = async () => {
+      // Re-arm replaces the inode. Updating this handle cannot overwrite a
+      // newer owner, even if its rename races the nonce check below.
+      const file = await fs.open(owner, 'r+');
+      try {
+        if (JSON.parse(await file.readFile('utf8')).nonce !== nonce) return;
+        const body = JSON.stringify({ ...record, state }) + '\n';
+        await file.write(body, 0, 'utf8');
+        await file.truncate(Buffer.byteLength(body));
+      } finally { await file.close(); }
+    };
     const deadline = started.getTime() + testDuration(io.env.KHALA_WAKE_TEST_DEADLINE_MS, DEADLINE_MS);
     const poll = testDuration(io.env.KHALA_WAKE_TEST_POLL_MS, POLL_MS);
     const owns = async () => (await readJson(owner))?.nonce === nonce;
@@ -69,21 +100,25 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       const activity = await readJson(path.join(dir, 'activity.json'));
       return activity?.state === 'idle' && typeof activity.updatedAt === 'string' && Number.isFinite(Date.parse(activity.updatedAt));
     };
-    const listening = async () => (await readJson(path.join(dir, 'mode.json')))?.mode !== 'async';
     while (io.now().getTime() < deadline) {
       if (!await owns() || !parentAlive(parent)) return 0;
-      if (await listening() && await idle() && await unreadMessages(dir) > 0) {
+      if (await idle() && await unreadMessages(dir) > 0) {
         // Delivery or a new prompt may have raced the first observation.
-        if (await unreadMessages(dir) > 0 && await listening() && await idle() && await owns()
+        if (await unreadMessages(dir) > 0 && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
+          state = 'woke';
           return 2;
         }
       }
       await sleep(Math.min(poll, Math.max(0, deadline - io.now().getTime())));
     }
+    state = 'expired';
   } catch { /* A watcher error must never become a wake prompt. */ }
-  finally { if (temporary) { try { await fs.unlink(temporary); } catch { /* Best effort. */ } } }
+  finally {
+    if (finish) { try { await finish(); } catch { /* Storage failure must not become a wake prompt. */ } }
+    if (temporary) { try { await fs.unlink(temporary); } catch { /* Best effort. */ } }
+  }
   return 0;
 }
 export default async function run(stdin: string, argv: readonly string[]): Promise<number> {

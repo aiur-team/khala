@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { appendEntries } from './inbox';
-import { openSessionDir, writeJsonAtomic, writeStatus, type SessionFiles } from './state';
+import { channelFiles, ensureStateDir, openSessionDir, writeJsonAtomic, writeStatus, type SessionFiles } from './state';
 import { mentions, monitorArmed, watchSession } from './watch';
 
 vi.mock('node:fs/promises', { spy: true });
@@ -44,20 +44,17 @@ async function armed() {
   start();
   await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
 }
-it.each(['sync', 'steer'])('emits one content-free line per new peer message in %s', async mode => {
+it.each(['sync', 'steer'])('emits one content-free line per channel batch in %s', async mode => {
   await writeJsonAtomic(files.mode, { mode });
   await armed();
   await appendEntries(files, [entry(1), entry(2, 'BODYMARK hello'), entry(3, 'BODYMARK', '@self:local'), entry(4, 'BODYMARK', '@peer:local', 'event')]);
-  await vi.waitFor(() => expect(lines).toHaveLength(2));
-  expect(lines).toEqual([
-    'khala: 1 new message in #ecosystem (1 mentions you)\n',
-    'khala: 1 new message in #ecosystem (0 mentions you)\n',
-  ]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  expect(lines).toEqual(['khala: 2 new messages in #ecosystem (1 mentions you)\n']);
   expect(lines.join('')).not.toMatch(/BODYMARK|LABELMARK|@peer/);
   await appendEntries(files, [entry(1)]);
   await writeJsonAtomic(files.mode, { mode });
   await new Promise(resolve => setTimeout(resolve, 100));
-  expect(lines).toHaveLength(2);
+  expect(lines).toHaveLength(1);
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it('stays silent in Async, including mentions, and never replays its observed messages', async () => {
@@ -80,11 +77,9 @@ it('notifies existing unread once on resume and uses the current renamed you nam
   await vi.waitFor(() => expect(lines).toHaveLength(2));
   expect(lines[1]).toBe('khala: 1 new message in #ecosystem INJECT (1 mentions you)\n');
 });
-it.each(['leave', 'remove', 'switch', 'delete'])('exits silently on %s and clears ownership', async action => {
+it.each(['remove', 'delete'])('exits silently on %s and clears ownership', async action => {
   await armed();
-  if (action === 'leave') await fs.unlink(files.session);
   if (action === 'remove') await writeStatus(files, 'disconnected', 'removed');
-  if (action === 'switch') await writeJsonAtomic(files.session, { userId: '@self:local', roomId: '!new:local' });
   if (action === 'delete') await fs.rm(files.dir, { recursive: true });
   await expect(result).resolves.toBe(0);
   expect(lines).toEqual([]);
@@ -138,7 +133,7 @@ it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after e
   await appendEntries(files, [entry(1)]);
   await vi.waitFor(() => expect(resumed.output()).toContain('(1 mentions you)\n'));
   expect(resumed.error()).toBe('');
-  await fs.unlink(files.session);
+  await writeStatus(files, 'disconnected');
   await expect(resumed.closed).resolves.toBe(0);
 });
 it('renews without replaying unread messages and notices new events after renewal', async () => {
@@ -210,4 +205,77 @@ it('prints watch help and reports invalid arguments without an internal error', 
     expect(await run(['--harness', 'unknown', '--session', 'valid'])).toBe(1);
     expect(err).toHaveBeenCalledWith(`khala: invalid_harness\n${WATCH_USAGE}`);
   } finally { out.mockRestore(); err.mockRestore(); }
+});
+
+async function joined(roomId: string, name: string, mode = 'sync') {
+  const target = channelFiles(files, roomId);
+  await ensureStateDir(target.dir);
+  await writeJsonAtomic(path.join(target.dir, 'channel.json'), { roomId, channelName: name });
+  await writeJsonAtomic(target.session, { roomId, userId: '@self:local' });
+  await writeStatus(target, 'connected', undefined, undefined, name, 'Owner-Claude');
+  await writeJsonAtomic(target.mode, { mode });
+  return target;
+}
+it('reports each channel batch, ignores async, and leaves every delivery cursor unchanged', async () => {
+  const a = await joined('!a:local', 'optimism');
+  const b = await joined('!b:local', 'research', 'async');
+  await appendEntries(files, [entry(1)]);
+  await appendEntries(a, [1, 2].map(id => ({ ...entry(id, id === 1 ? '@Owner-Claude BODYMARK' : 'BODYMARK'), roomId: '!a:local' })));
+  await appendEntries(b, [{ ...entry(1), roomId: '!b:local' }]);
+  await armed();
+  await vi.waitFor(() => expect(lines).toHaveLength(2));
+  expect(lines).toContain('khala: 1 new message in #ecosystem (1 mentions you)\n');
+  expect(lines).toContain('khala: 2 new messages in #optimism (1 mentions you)\n');
+  expect(lines.join('')).not.toMatch(/BODYMARK|LABELMARK|research/);
+  for (const target of [files, a, b]) await expect(fs.readFile(target.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('discovers a later join, keeps running after one channel leaves, and exits on session close', async () => {
+  await armed();
+  const a = await joined('!a:local', 'later');
+  await appendEntries(a, [{ ...entry(1), roomId: '!a:local' }]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  // Output precedes observation persistence; wait for the atomic write before
+  // deleting the channel directory so removal cannot race its temporary file.
+  await vi.waitFor(async () => {
+    const observed = JSON.parse(await fs.readFile(path.join(a.dir, 'monitor-cursor.json'), 'utf8')) as { count: number };
+    expect(observed.count).toBe(1);
+  });
+  await fs.rm(a.dir, { recursive: true });
+  await fs.unlink(files.session);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  expect(await monitorArmed(files)).toBe(true);
+  const b = await joined('!b:local', 'remaining');
+  await appendEntries(b, [{ ...entry(1), roomId: '!b:local' }]);
+  await vi.waitFor(() => expect(lines).toHaveLength(2));
+  await writeJsonAtomic(files.status, { state: 'closed' });
+  await expect(result).resolves.toBe(0);
+});
+
+it('captures the empty legacy startup baseline before delivery can race the first scan', async () => {
+  const realRead = (await vi.importActual<typeof fs>('node:fs/promises')).readFile;
+  let raced = false;
+  vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+    const content = await realRead(...args);
+    if (args[0] === path.join(files.dir, 'monitor.json') && !raced) {
+      raced = true;
+      await appendEntries(files, [entry(1)]);
+      await writeJsonAtomic(files.cursor, { deliveredCount: 1, lastDeliveredEventId: '$1' });
+    }
+    return content;
+  });
+  await armed();
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  expect(await fs.readFile(files.cursor, 'utf8')).toBe(JSON.stringify({ deliveredCount: 1, lastDeliveredEventId: '$1' }) + '\n');
+});
+it('notifies after a same-identity channel inbox is reset on rejoin', async () => {
+  const target = await joined('!a:local', 'a');
+  await appendEntries(target, [{ ...entry(1), roomId: '!a:local' }]);
+  await writeJsonAtomic(target.cursor, { deliveredCount: 1, lastDeliveredEventId: '$1' });
+  await armed();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  expect(lines).toEqual([]);
+  await fs.writeFile(target.inbox, '');
+  await writeJsonAtomic(target.cursor, { deliveredCount: 0, lastDeliveredEventId: null });
+  await appendEntries(target, [{ ...entry(2), roomId: '!a:local' }]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
 });

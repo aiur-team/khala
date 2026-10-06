@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import main, { createPlaceholderClient, runMcpCommand } from './main';
 
@@ -26,7 +26,7 @@ describe('MCP command lifecycle', () => {
     const createClient = vi.fn(() => clients[createClient.mock.calls.length - 1]!);
     const io = streams([call('khala_status', 'a'), call('khala_status', 'b'), call('khala_status', 'a')]);
     expect(await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient })).toBe(0);
-    expect(createClient.mock.calls).toEqual([[{ harness: 'codex', sessionId: 'a' }], [{ harness: 'codex', sessionId: 'b' }]]);
+    expect(createClient.mock.calls).toEqual([[{ harness: 'codex', sessionId: 'a', rejoinable: true }], [{ harness: 'codex', sessionId: 'b', rejoinable: true }]]);
     for (const client of clients) expect(client.close).toHaveBeenCalledTimes(1);
   });
   it('returns the placeholder results through the real server', async () => {
@@ -41,7 +41,7 @@ describe('MCP command lifecycle', () => {
     const createClient = vi.fn(createPlaceholderClient);
     await runMcpCommand(['--harness', 'codex'], { ...io, env: {}, createClient });
     expect(createClient).not.toHaveBeenCalled();
-    expect(io.responses().map(response => response.result.structuredContent)).toEqual([{ error: 'session_unknown' }, { error: 'session_unknown' }]);
+    expect(io.responses().map(response => response.result.structuredContent)).toEqual([{ error: 'session_unknown', hint: 'Send the agent one message first, then retry.' }, { error: 'session_unknown', hint: 'Send the agent one message first, then retry.' }]);
   });
   it('rejects invalid harness before reading input', async () => {
     const input = new Readable({ read() { throw new Error('must not read'); } });
@@ -178,4 +178,39 @@ it('forwards khala_leave through the real CLI wrapper', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ error: 'channel_unknown', channels: [] });
   } finally { rmSync(stateHome, { recursive: true, force: true }); }
+});
+
+it.each(['codex', 'claude'] as const)('creates the %s startup client without input and reuses it', async harness => {
+  const input = new PassThrough();
+  const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const controller = new AbortController();
+  const client = createPlaceholderClient();
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn(() => client);
+  const env = harness === 'codex' ? { CODEX_THREAD_ID: 'resume' } : { CLAUDE_CODE_SESSION_ID: 'resume' };
+  const running = runMcpCommand(['--harness', harness], { input, output, signal: controller.signal, createClient, env });
+  await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
+  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume', rejoinable: true });
+  input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
+  await running;
+  expect(createClient).toHaveBeenCalledOnce();
+  expect(client.close).toHaveBeenCalledOnce();
+  output.destroy();
+});
+
+it.each([undefined, '/work/project'])('skips Cursor startup restore for workspace %s but creates clients on tool calls', async workspace => {
+  const input = new PassThrough();
+  const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const client = createPlaceholderClient();
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn<(input: { harness: string; sessionId: string }) => typeof client>(() => client);
+  const env = workspace === undefined ? {} : { KHALA_CURSOR_WORKSPACE: workspace };
+  const running = runMcpCommand(['--harness', 'cursor'], { input, output, createClient, env });
+  expect(createClient).not.toHaveBeenCalled();
+  input.end(JSON.stringify(call('khala_status', undefined)) + '\n');
+  await running;
+  expect(createClient).toHaveBeenCalledOnce();
+  expect(createClient.mock.calls[0]![0]).toMatchObject({ harness: 'cursor' });
+  expect(client.close).toHaveBeenCalledOnce();
+  output.destroy();
 });

@@ -1,4 +1,5 @@
-import { agentConfirmPagePath, HARNESSES, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
+import { isHarnessId } from '@khala/contracts/m1/harness';
+import { agentConfirmPagePath, validAgentSessionId, validAgentRejoinSecret, type Harness, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
 import { type ControlStore, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { consumeJoinBudget, createJoinStore, effectiveState, isJoinId, JOIN_TTL_MS, hashPollSecret, openCredentials, pollSecretMatches, resolveJoinLink, type JoinRecord } from './store';
@@ -46,7 +47,7 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     if (Object.keys(r).some(key => !['link', 'harness', 'label', 'sessionId', 'rejoinSecret'].includes(key)) || !['link', 'harness', 'label'].every(key => Object.hasOwn(r, key)) || typeof r.link !== 'string') return error('invalid_link', 400);
     if (Object.hasOwn(r, 'sessionId') && !validAgentSessionId(r.sessionId)) return error('invalid_link', 400);
     if (Object.hasOwn(r, 'rejoinSecret') && !validAgentRejoinSecret(r.rejoinSecret)) return error('invalid_link', 400);
-    if (!(HARNESSES as readonly unknown[]).includes(r.harness)) return error('invalid_harness', 400);
+    if (!isHarnessId(r.harness)) return error('invalid_harness', 400);
     const label = validateAgentName(r.label);
     if (!label.ok || [...label.name].length > 40) return error('invalid_label', 400);
     const link = await resolveJoinLink({ ...deps, link: r.link });

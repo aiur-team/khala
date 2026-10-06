@@ -91,3 +91,12 @@ are treated as success. **Open channel** appears when the invite succeeds.
 If connecting times out, **Retry** resumes status checks without confirming again.
 If the invite fails, **Retry** attempts only the invite. Closing or navigating away
 stops the page's requests and timers; reopening a confirmed link resumes polling.
+
+## Mention notifications
+
+In Settings, choose **Notify me when I’m mentioned** to enable desktop notifications
+in this browser. Permission is requested only after that action. The preference
+is remembered per browser; if permission is blocked, allow notifications in the
+browser’s site settings. Notifications cover joined channels in both hosted and
+local apps while the tab is hidden or unfocused. They omit old and own messages,
+replace bursts from the same channel, and open the mentioned message when clicked.

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
-import { ChannelRoster, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
+import { ChannelRoster, MemberAvatar, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers } from './members';
 
@@ -15,6 +15,21 @@ const members = (agents: readonly ChannelAgentView[]) => resolveMembers({ viewer
   humans: [], agents });
 
 describe('ChannelRoster', () => {
+  it.each(['antigravity', 'muse'])('renders initials for registered %s without a logo', harness => {
+    const agent = members([scout]).agents[0]!;
+    const html = renderToStaticMarkup(<MemberAvatar member={{ ...agent, harness }} />);
+    expect(html).toContain('<span class="kh-ini">SC</span>');
+    expect(html).not.toContain('<img');
+  });
+  it.each([['vscode', 'Copilot (VS Code)'], ['claude-code', 'MCP agent (claude-code)']])('renders %s identity', (harness, label) => {
+    const resolved = members([scout]);
+    const agents = resolved.agents.map(agent => ({ ...agent, harness }));
+    const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={{ ...resolved, agents,
+      groups: resolved.groups.map(group => ({ ...group, agents: group.agents.map(agent => ({ ...agent, harness })) })) }} />);
+    expect(html).toContain(label);
+    expect(html).not.toContain('undefined');
+    if (harness === 'claude-code') expect(html).not.toContain('Claude Code');
+  });
   it('badges names that collide across owners with the thread owner suffix', () => {
     const theosScout = { ...scout, participantId: 'agent_other' as ParticipantId, ownerId: 'owner_theo' as OwnerId };
     const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout, theosScout])} />);
@@ -157,4 +172,15 @@ describe('channel creator authority', () => {
     expect(render('owner_theo')).toContain('OWNER');
     expect(render('owner_theo')).not.toContain('aria-label="Remove Theo"');
   });
+});
+
+it('hides every remove button from a non-owner even when the parent supplies removal props', () => {
+  const roster = resolveMembers({ viewer: { ownerId: mira, name: 'Mira' }, humans: [
+    { participantId: 'p_theo', ownerId: 'owner_theo', displayName: 'Theo' },
+    { participantId: 'p_bob', ownerId: 'owner_bob', displayName: 'Bob' },
+  ], agents: [] });
+  const markup = renderToStaticMarkup(<ChannelRoster members={roster} phase="ready" onOpen={() => {}}
+    creatorOwnerId="owner_theo" onRemoveHuman={async () => 'removed'} />);
+  expect(markup).toContain('OWNER');
+  expect(markup).not.toContain('aria-label="Remove ');
 });

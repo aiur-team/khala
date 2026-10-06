@@ -33,29 +33,25 @@ export function createAgentSessionStatusHandler(store: ControlStore, options?: R
       const read = await store.read<SessionIndex>(key(token));
       if (read.kind === 'unavailable') return json(503, { error: 'unavailable' });
       if (read.kind === 'absent') {
-        if (!claimedIdentity) return json(200, { removed: false });
+        // Unknown bearers must prove identity before any removal-ledger lookup.
+        if (!options) return json(401, { error: 'authentication_required' });
+        const fetch = options.fetch ?? globalThis.fetch;
+        const response = await fetch(`${options.homeserverOrigin}/_matrix/client/v3/account/whoami`,
+          { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+        if (response.status === 401) return json(401, { error: 'authentication_required' });
+        if (!response.ok) return json(503, { error: 'unavailable' });
+        const value = await response.json() as { user_id?: unknown; device_id?: unknown };
+        if (typeof value.user_id !== 'string') return json(503, { error: 'unavailable' });
+        if (!claimedIdentity || value.user_id !== claimedIdentity.userId) return json(200, { removed: false });
         const removals = await readRoomRemovals(store, claimedIdentity.roomId);
         if (removals === 'unavailable') return json(503, { error: 'unavailable' });
         const entry = removals ? Object.values(removals.owners).find(entry => entry.agents.includes(claimedIdentity.userId)) : undefined;
-        if (!entry) return json(200, { removed: false });
-        if (options) {
-          const fetch = options.fetch ?? globalThis.fetch;
-          const response = await fetch(`${options.homeserverOrigin}/_matrix/client/v3/account/whoami`,
-            { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
-          if (response.ok) {
-            const value = await response.json() as { user_id?: unknown; device_id?: unknown };
-            if (value.user_id !== claimedIdentity.userId) return json(200, { removed: false });
-            if (!entry.complete) return json(200, { removed: true });
-            // A valid token after completed logout/all is a fresh authorized issuance.
-            const remembered = await rememberAgentSession(store, { homeserver: options.homeserverOrigin,
-              userId: claimedIdentity.userId, roomId: claimedIdentity.roomId, accessToken: token, deviceId: typeof value.device_id === 'string' ? value.device_id : 'unknown' });
-            return remembered ? json(200, { removed: false }) : json(503, { error: 'unavailable' });
-          }
-          if (response.status !== 401) return json(503, { error: 'unavailable' });
-        }
-        // Legacy bearer indexes were not retained. This reveals only a removal boolean
-        // for the exact agent and room already recorded in the removal ledger.
-        return json(200, { removed: true });
+        if (entry && !entry.complete) return json(200, { removed: true });
+        // A valid token after completed logout/all is a fresh authorized issuance.
+        const remembered = await rememberAgentSession(store, { homeserver: options.homeserverOrigin,
+          userId: claimedIdentity.userId, roomId: claimedIdentity.roomId, accessToken: token,
+          deviceId: typeof value.device_id === 'string' ? value.device_id : 'unknown' });
+        return remembered ? json(200, { removed: false }) : json(503, { error: 'unavailable' });
       }
       const session = read.record.value;
       if (claimedIdentity && (session.userId !== claimedIdentity.userId || session.roomId !== claimedIdentity.roomId)) return json(200, { removed: false });

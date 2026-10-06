@@ -489,6 +489,29 @@ export function TimelineScreen({
   // While encrypted history is still being scanned, the persisted participant
   // name is a better provisional label than implying that the key is missing.
   const namesUnavailable = data.namesReady === false && data.nameScan !== 'checking';
+  const revealedNotification = useRef<string | null>(null);
+  // Notification clicks may arrive before this channel's async history does.
+  useEffect(() => {
+    const reveal = () => {
+      const hash = globalThis.location?.hash ?? '';
+      if (!hash.startsWith('#message=')) return;
+      if (revealedNotification.current === hash) return;
+      let eventId: string;
+      try { eventId = decodeURIComponent(hash.slice('#message='.length)); } catch { return; }
+      const row = listRef.current?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(eventId)}"]`);
+      if (row) {
+        revealedNotification.current = hash;
+        setAtLatest(false);
+        row.scrollIntoView({ block: 'center' });
+        row.tabIndex = -1;
+        row.focus({ preventScroll: true });
+      } else if (data.nextCursor !== null) void controller.loadOlder();
+    };
+    reveal();
+    window.addEventListener('hashchange', reveal);
+    return () => window.removeEventListener('hashchange', reveal);
+  }, [controller, data.items, data.nextCursor]);
+
   const attributed = new Map(names.events.map(event => [event.eventId, event]));
 
   /** C3 details first, then the name replay at `eventId` (or the current name for the roster). */

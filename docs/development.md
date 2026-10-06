@@ -41,7 +41,7 @@ The Executor owns shared manifests, the root lockfile, compiler/test configurati
 
 ## Human profiles
 
-`GET /api/human/profile` returns `{ username: string | null, suggestion: string, color: HumanColorId, initials: string | null }` for the signed-in owner. Existing owners without a profile keep `username: null`. `POST /api/human/profile/username` accepts exactly `{ username }` with the session cookie, allowed Origin and `x-khala-csrf` token. Usernames contain 2–24 ASCII letters, digits or `.`, `_`, `-`, start/end with a letter or digit, and cannot contain adjacent separators, reserved words or an agent model suffix. Display casing is preserved; reservations in `names/v1/<lowercase name>` share one site-wide namespace with agents.
+`GET /api/human/profile` returns `{ username: string | null, suggestion: string, color: HumanColorId, initials: string | null }` for the signed-in owner. Existing owners without a profile keep `username: null`. `POST /api/human/profile/username` accepts exactly `{ username }` with the session cookie, allowed Origin and `x-khala-csrf` token. Usernames contain 2–24 ASCII letters, digits or `.`, `_`, `-`, start/end with a letter or digit, and cannot contain adjacent separators, reserved words or a known registry model suffix (case-insensitive, with optional `-N`), excluding the generic `Agent`. These suffix reservations apply to username choices and changes; existing profiles with newer model suffixes remain readable. Display casing is preserved; reservations in `names/v1/<lowercase name>` share one site-wide namespace with agents.
 
 Invalid names return `400 { error: 'invalid_username', reason }`; malformed request shapes return `400 invalid_request`, occupied names return `409 username_taken`, and storage failures return `503 unavailable`. A successful change stores `profiles/<encoded ownerId>`, releases the previous reservation, and updates the owner's Matrix display name best effort. Session minting reconciles that display name from the stored username; an unavailable profile read skips the update. The browser exposes this API through `context.profile`; username screens are separate work.
 
@@ -54,3 +54,21 @@ Initials are optional and non-unique. `POST /api/human/profile/initials` accepts
 `POST /api/human/agents/rename` accepts exactly `{ matrixUserId, name }` with the same cookie, Origin and CSRF requirements. Only the recorded owner can rename an agent. Agent names use the shared namespace and username character rules, with a 2–40 character limit. Success returns `{ matrixUserId, name }` after setting the agent's global Matrix display name through a dedicated control device and updating its owner record; it emits no per-channel rename event. Errors include `400 invalid_request`, `400 invalid_name` (with `reason`), `403 not_owner`, `404 not_found`, `409 name_taken`, and `503 unavailable`. The web port is `context.agentNames`; UI wiring is separate.
 
 Username changes rename up to 50 indexed agents still using the old default name, keeping their numeric suffix when available and allocating a free default otherwise. Custom names stay unchanged; the first username claim does not cascade. Cascade failures are isolated per agent. Pending join reservations expire with the join; expired staged joins release their claims when polled. A permanent name reservation is required before confirmed credentials become available. Failed old-name cleanup resumes when the rename is retried.
+
+
+MCP startup restores each authorized Codex or Claude channel in the same workspace
+without a tool call. Each channel's private resume record holds its last authorized
+link and label, bound to the workspace and a hash of the session's rejoin secret;
+hosted Matrix credentials are not retained after process exit. Hosted startup uses the existing
+join request with the saved secret and continues through poll, ready, invite and
+join only when control auto-confirms the rejoin. This uses the existing control
+route and its removal/revocation checks, including the existing `invalid_link`
+compatibility retry. A join requiring owner confirmation is not restored.
+
+Temporary failures retain authorization for the next startup. `khala_leave` clears
+only the selected channel's authorization; leaving or removing one channel does
+not prevent others from restoring. Channel/display-name metadata survives startup
+and temporary failures so Claude's SessionStart hook can remind the agent to arm
+Monitor. Codex arms its waker immediately; Claude still needs its agent to arm
+Monitor. Old sessions need one authorized join to create resume state. Local resume reuses saved helper credentials because local links are single-use;
+the helper wire format and compatibility layer are unchanged.

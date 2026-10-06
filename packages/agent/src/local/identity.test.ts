@@ -80,6 +80,7 @@ it('rejects a root that is a file', async () => {
 it.each([
   ['kevin-Codex', 'codex', 'kevin'], ['kevin-Codex-2', 'codex', 'kevin'],
   ['kevin-codex', 'codex', 'kevin'], ['kev.in-Claude-12', 'claude', 'kev.in'],
+  ['kevin-Gemini', 'gemini', 'kevin'], ['kevin-Agent-2', 'custom-harness', 'kevin'],
   ['kevin-Claude', 'codex', null], ['reviewer', 'claude', null],
   ['-Claude', 'claude', null], ['a-Claude', 'claude', null], ['owner-Claude', 'claude', null],
 ] as const)('derives only a valid own default username from %s (%s)', (name, harness, expected) => {

@@ -111,8 +111,8 @@ describe('public deliver entry point', () => {
       unread: (await unread(files)).entries.map(item => item.eventId),
     });
   });
-  it('unknown harness preserves the suppressed-hook exit code and streams', async () => {
-    await golden('unknown-harness', await hook('unknown', '{}'));
+  it.each(['unknown', 'gemini'])('%s preserves the suppressed-hook exit code and streams', async harness => {
+    await golden('unknown-harness', await hook(harness, '{}'));
   });
 });
 
@@ -126,13 +126,13 @@ it('pins harness precedence and session identifiers', async () => {
       resolveHarness(['--harness', 'unknown'], {}),
     ],
     sessions: {
-      claude: resolveSessionId('claude', { threadId: 'ignored' }, { CLAUDE_CODE_SESSION_ID: 'claude-env' }),
-      codexMeta: resolveSessionId('codex', { threadId: 'meta-thread' }, { CODEX_THREAD_ID: 'env-thread' }),
-      codexEnv: resolveSessionId('codex', undefined, { CODEX_THREAD_ID: 'env-thread' }),
-      cursorWorkspace: resolveSessionId('cursor', { threadId: 'ignored' }, { KHALA_CURSOR_WORKSPACE: workspace }),
-      cursorDefault: resolveSessionId('cursor', undefined, {}),
-      invalidClaude: resolveSessionId('claude', undefined, { CLAUDE_CODE_SESSION_ID: '../invalid' }),
-      invalidCodex: resolveSessionId('codex', { threadId: '../invalid' }, { CODEX_THREAD_ID: 'valid' }),
+      claude: await resolveSessionId('claude', { threadId: 'ignored' }, { CLAUDE_CODE_SESSION_ID: 'claude-env' }),
+      codexMeta: await resolveSessionId('codex', { threadId: 'meta-thread' }, { CODEX_THREAD_ID: 'env-thread' }),
+      codexEnv: await resolveSessionId('codex', undefined, { CODEX_THREAD_ID: 'env-thread' }),
+      cursorWorkspace: await resolveSessionId('cursor', { threadId: 'ignored' }, { KHALA_CURSOR_WORKSPACE: workspace }),
+      cursorDefault: await resolveSessionId('cursor', undefined, {}),
+      invalidClaude: await resolveSessionId('claude', undefined, { CLAUDE_CODE_SESSION_ID: '../invalid' }),
+      invalidCodex: await resolveSessionId('codex', { threadId: '../invalid' }, { CODEX_THREAD_ID: 'valid' }),
     },
   });
 });
@@ -172,7 +172,7 @@ it('only folderless Cursor omits persistent rejoin identity', async () => {
       expect(await readStateFile(files.dir, 'rejoin.json')).toEqual(saved);
       await expect(restarted.join('https://khala.example/join/abcdefgh', 'Scout')).rejects.toThrow();
       expect(join).toHaveBeenCalledWith({ link: 'https://khala.example/join/abcdefgh', harness, label: 'Scout',
-        ...(saved ? { sessionId: id, rejoinSecret: saved.secret } : {}) }, {});
+        ...(saved ? { sessionId: id, rejoinSecret: saved.secret } : {}) }, { env: { XDG_STATE_HOME: root } });
     } finally { await restarted.close(); }
   }
   await golden('rejoin-identity', observed);

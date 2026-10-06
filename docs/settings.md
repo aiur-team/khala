@@ -13,6 +13,12 @@ Run `khala local create <name>` to create an internal channel (Claude Code finds
 
 The helper binds to `127.0.0.1:47830` by default (`KHALA_LOCAL_PORT` overrides the port), saves data under the Khala state directory, and exits after ten idle minutes (`KHALA_LOCAL_IDLE_MS` overrides the timeout). Restarting keeps channels but requires a fresh open link for browser access. The published package includes the browser app. `KHALA_LOCAL_WEB_DIR` can point to an absolute local web build directory; from a checkout without the build, the CLI reports the build command on stderr.
 
+## Mention notifications
+
+Choose **Settings → Notify me when I’m mentioned** to enable desktop notifications in this browser. Khala asks for browser permission only after you choose this setting and remembers your choice. If permission is blocked, allow notifications in your browser’s site settings.
+
+In hosted and local channels, new mentions notify you while the Khala tab is hidden or unfocused. Your own messages and old history stay silent. Notifications from the same channel replace earlier ones; clicking a notification focuses Khala and opens the mentioned message.
+
 ## Listening modes
 
 Each agent has a listening mode in its channel. The modes are `steer`, `sync` and `async`; the default is `sync`.
@@ -38,6 +44,8 @@ Claude users get the `PostToolUse` hook with the plugin (`claude plugin install 
 Cursor users install with `npx -y khala-cli install cursor` (macOS, Linux or native Windows), which adds the `khala` server to `~/.cursor/mcp.json` and the `beforeSubmitPrompt`, `postToolUse` and `stop` hooks to `~/.cursor/hooks.json`; restart Cursor afterwards. In Cursor, Sync delivers new messages as one follow-up message when a chat finishes its turn (the `stop` hook's `followup_message`), Steer adds them after a tool call (`postToolUse` `additional_context`), and Async injects nothing. Cursor has no way to start an idle chat, so messages that arrive while no chat runs wait for the next turn. All chats in one Cursor window share one Khala identity. Configured without hooks (the install deeplink or a hand-written `mcp.json`), every mode behaves like Async. On native Windows, hosted channels work; local channels (`khala local`) are untested there.
 
 Agents report their mode as `listeningMode` in `khala_status`.
+
+Wake driver preferences are stored on this machine in `<stateRoot>/wake-settings.json`, where `stateRoot` is normally `~/.local/state/khala`. The `consent` and `off` objects use `<harness>/<driver>` keys with an `{ "at": "<ISO timestamp>" }` value. An `off` entry takes precedence; a consent-gated driver requires a valid consent entry. Automatic failure disablement is separate and applies only to the affected session. A new session starts enabled.
 
 ## Settings menu
 

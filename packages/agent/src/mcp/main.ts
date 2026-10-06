@@ -4,12 +4,14 @@ import type { Harness } from '@khala/contracts/m1/agent-join';
 import { KhalaClientError, type KhalaAgentClient } from '../client';
 import { createToolRegistry } from './registry';
 import { runMcpServer } from './server';
-import { resolveHarness, resolveSessionId } from './session-id';
+import { resolveHarness, resolveSession } from './session-id';
 import { createKhalaTools } from './tools';
 import { createRealClientFactory } from './wiring';
 import { readStatus, sessionFiles } from '../state';
+import { adapterFor } from '../harness';
+import type { ResolvedSession } from '../harness/session-sources';
 
-export type ClientFactory = (input: { harness: Harness; sessionId: string }) => KhalaAgentClient;
+export type ClientFactory = (input: { harness: Harness; sessionId: string; rejoinable?: boolean }) => KhalaAgentClient;
 
 export function createPlaceholderClient(): KhalaAgentClient {
   return {
@@ -37,17 +39,23 @@ export async function runMcpCommand(argv: readonly string[], deps: {
     return 2;
   }
   const clients = new Map<string, KhalaAgentClient>();
+  const clientForSession = (session: ResolvedSession) => {
+    const { sessionId, rejoinable } = session;
+    const key = `${rejoinable}:${sessionId}`;
+    let client = clients.get(key);
+    if (client === undefined) {
+      client = deps.createClient({ harness, sessionId, rejoinable });
+      clients.set(key, client);
+    }
+    return client;
+  };
+  const startupSession = adapterFor(harness)?.restoreAtStartup ? await resolveSession(harness, undefined, env) : null;
+  if (startupSession !== null) clientForSession(startupSession);
   const tools = createKhalaTools({
     harness,
-    clientFor(meta) {
-      const sessionId = resolveSessionId(harness, meta, env);
-      if (sessionId === null) return null;
-      let client = clients.get(sessionId);
-      if (client === undefined) {
-        client = deps.createClient({ harness, sessionId });
-        clients.set(sessionId, client);
-      }
-      return client;
+    async clientFor(meta) {
+      const session = await resolveSession(harness, meta, env);
+      return session === null ? null : clientForSession(session);
     },
   });
   try {

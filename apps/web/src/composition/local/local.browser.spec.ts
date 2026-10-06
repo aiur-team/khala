@@ -427,3 +427,49 @@ test('local app screenshots at 1280 and 390, dark and light', { timeout: 180_000
   assert.equal(written.length, 20);
   for (const path of written) assert.ok((await stat(path)).size > 0, path);
 });
+
+test('local mention notification observes unopened channels without clearing unread; click reveals the message', { timeout: 90_000 }, async () => {
+  await withLocalApp(async ({ browser, origin }) => {
+    const fake = createFakeLocalHelper();
+    const context = await browser.newContext();
+    const wired = await wire(context, fake, origin);
+    await context.addInitScript(`window.__notifications = [];
+      window.__background = false;
+      Object.defineProperty(document, 'hidden', { get: () => window.__background });
+      document.hasFocus = () => !window.__background;
+      class StubNotification {
+        static permission = 'granted';
+        constructor(title, options) { this.title = title; this.options = options; window.__notifications.push(this); }
+        close() { this.onclose?.(); }
+      }
+      window.Notification = StubNotification;
+      localStorage.setItem('khala.mention-notifications.v1', 'on');`);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    try {
+      await guarded(wired, async () => {
+        await page.goto(origin);
+        await expect(page.locator('.kh-cv')).toHaveCount(2);
+        await expect.poll(() => fake.log.filter(request => request.path.includes('/events')).length).toBeGreaterThanOrEqual(2);
+        await page.evaluate('window.__background = true');
+        const event = fake.agentSays(FAKE_R2, FAKE_RELEASE_AGENT, '@kevin release is ready');
+        await expect.poll(() => page.evaluate('window.__notifications.length')).toBe(1);
+        assert.deepEqual(await page.evaluate('({title: window.__notifications[0].title, body: window.__notifications[0].options.body})'),
+          { title: 'release', body: 'kevin-Claude: @kevin release is ready' });
+        const release = page.locator('.kh-cv', { hasText: 'release' });
+        await expect(release).toHaveAttribute('aria-label', /1 unread/u);
+        await page.evaluate('window.__background = false; window.__notifications[0].onclick()');
+        await expect.poll(() => pathname(page)).toBe(R2_PATH);
+        const message = page.locator(`[data-event-id="${event.eventId}"]`);
+        await expect(message).toBeVisible();
+        await expect(message).toBeFocused();
+        // Own and focused messages remain silent.
+        fake.agentSays(FAKE_R2, FAKE_RELEASE_AGENT, '@kevin another update');
+        await page.getByText('@kevin another update', { exact: true }).waitFor();
+        assert.equal(await page.evaluate('window.__notifications.length'), 1);
+        assert.deepEqual(errors, []);
+      });
+    } finally { fake.close(); await context.close(); }
+  });
+});

@@ -49,8 +49,8 @@ it.each([
 ])('rejects an invalid link: %s', link => expect(parseChannelLink(link)).toBeNull());
 it('validates link before harness and label without fetching', async () => {
   const deps = fake();
-  await rejects(requestJoin({ ...input, link: 'https://x.test/channels/AbCdEfGh12', harness: 'bad' as Harness, label: '' }, deps), 'invalid_link', 'invalid_link');
-  await rejects(requestJoin({ ...input, harness: 'bad' as Harness, label: '' }, deps), 'internal_error', 'invalid_harness');
+  await rejects(requestJoin({ ...input, link: 'https://x.test/channels/AbCdEfGh12', harness: 'Bad!' as Harness, label: '' }, deps), 'invalid_link', 'invalid_link');
+  await rejects(requestJoin({ ...input, harness: 'Bad!' as Harness, label: '' }, deps), 'internal_error', 'invalid_harness');
   expect(deps.calls).toHaveLength(0);
 });
 it.each(['', 'System', 'a'.repeat(41), 'a\u0007b'])('rejects invalid label %j without fetching', async label => {
@@ -75,7 +75,7 @@ const gatewayCases: [number, unknown, string][] = [
 it.each([
   [400, { error: 'invalid_link' }, 'invalid_link', 'invalid_link'],
   [400, { error: 'invalid_label' }, 'internal_error', 'invalid_label'],
-  [400, { error: 'invalid_harness' }, 'internal_error', 'invalid_harness'],
+  [400, { error: 'invalid_harness' }, 'update_required', "Khala's hosted service does not accept Claude Code agents yet. Local channels work now."],
   [404, { error: 'link_unavailable' }, 'link_unavailable', 'link_unavailable'],
   [404, { code: 'not_found', requestId: 'r1' }, 'internal_error', 'route_not_found'],
   [429, {}, 'internal_error', 'rate_limited'], [500, {}, 'internal_error', 'protocol'],
