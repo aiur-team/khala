@@ -245,7 +245,11 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
             .toEqual([[...target, 'Enter']]);
         }
         expect(line).toMatch(fixedLine); expect(line).not.toContain('tier-b-idle');
-        expect((await hook(agent, 'prompt', { promptText: line })).frame).toContain('tier-b-idle');
+        if (harness === 'antigravity') await writeFile(path.join(agent.session.workspace!, 'transcript.jsonl'),
+          JSON.stringify({ source: 'USER_EXPLICIT', type: 'USER_INPUT', content: line }) + '\n');
+        const prompt = await hook(agent, 'prompt', { promptText: line });
+        if (adapter.codec?.promptAcceptsContext) expect(prompt.frame).toContain('tier-b-idle');
+        else expect((await hook(agent, 'stop')).frame).toContain('tier-b-idle');
         await eventually(async () => (await readWakeState(agent.files.dir))[harness === 'codex' ? 'queue' : 'terminal']?.failures === 0);
       }, harnessInfo(harness).idleWake === 'none');
     } finally {
