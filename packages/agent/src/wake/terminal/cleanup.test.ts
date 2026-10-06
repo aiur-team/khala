@@ -22,9 +22,10 @@ it.each(['activity', 'consent', 'ownership', 'draft', 'row', 'column', 'copy', '
   const run: CommandRunner = async (_command, argv) => {
    commands.push([...argv]);
    if (argv[0] === 'display-message') return `100|${mode}|0|${column}|${row}|/dev/pts/1|0`;
-   if (argv[0] === 'capture-pane') return composer;
+   // Real tmux and WezTerm drop trailing blank cells from captured rows.
+   if (argv[0] === 'capture-pane') return composer.replace(/ +$/, '');
    if (argv[1] === 'list') return JSON.stringify([{ pane_id: 7, tty_name: '/dev/pts/1', cursor_x: column, cursor_y: row }]);
-   if (argv[1] === 'get-text') return composer;
+   if (argv[1] === 'get-text') return composer.replace(/ +$/, '');
    if (argv.includes('-l') || argv[1] === 'send-text') {
     const value = argv.at(-1)!;
     if (value.startsWith('\x7f')) { composer = composer.slice(0, -value.length); column -= value.length; }
