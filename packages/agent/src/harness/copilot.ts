@@ -7,7 +7,9 @@ const emptyPrompt = { pattern: /^❯ ?$/u, cursorColumn: 2 };
 const install: NonNullable<HarnessAdapter['install']> = async (flags, deps) =>
   (await import('../install/main')).runCopilotInstall(flags, deps);
 export const copilot: HarnessAdapter = {
-  id: 'copilot', sessionSources: [hookMapSource], codec: copilotCodec, restoreAtStartup: true,
+  id: 'copilot',
+  sessionSources: [{ kind: 'env', resolve: (_meta, env) => env.COPILOT_AGENT_SESSION_ID, rejoinable: () => true }, hookMapSource],
+  codec: copilotCodec, restoreAtStartup: true,
   install, uninstall: (flags, deps) => install([...flags, '--uninstall'], deps),
   emptyPrompt, wakeLadder: [createTerminalWakeDriver(emptyPrompt)], wakeWarningName: 'copilot',
 };
