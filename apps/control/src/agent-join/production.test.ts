@@ -89,6 +89,7 @@ it.each([
   const clock = () => Date.parse('2026-10-01T12:00:00Z');
   const blobs = durableStores();
   const registered: string[] = [];
+  const memberships = new Map<string, Record<string, unknown>>();
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
     if (path === '/_synapse/admin/v1/register') {
@@ -102,8 +103,13 @@ it.each([
       return json({ user_id: body.identifier.user, device_id: body.device_id,
         access_token: body.identifier.user.startsWith('@agent-') ? 'agent-token' : 'control-token' });
     }
-    if (path.endsWith('/displayname') && init?.method === 'PUT' || path === '/_matrix/client/v3/logout') return json({});
-    if (path.includes('/state/m.room.member/')) return json({ membership: 'join' });
+    if (path === '/_matrix/client/v3/logout') return json({});
+    if (path === '/_matrix/client/v3/joined_rooms') return json({ joined_rooms: ['!release:matrix.example.test'] });
+    if (path.includes('/state/m.room.member/')) {
+      const content = memberships.get(path) ?? { membership: 'join', 'com.khala.invited_by': '@alice:matrix.example.test', 'com.khala.listening_mode': 'steer' };
+      if (init?.method === 'PUT') { memberships.set(path, JSON.parse(String(init.body))); return json({}); }
+      return json(content);
+    }
     if (path.endsWith('/state/m.room.name/')) return json({ name: roomName });
     // Another owner's agent here already holds the default name, so this one joins numbered.
     if (path.endsWith('/joined_members')) return json({ joined: Object.fromEntries([['@other-agent:matrix.example.test', { display_name: 'Alice-Codex' }],
@@ -165,6 +171,12 @@ it.each([
   const renamed = await handle(mutation('/api/human/agents/rename', { matrixUserId, name: 'Reviewer' }));
   expect(renamed.status).toBe(200);
   expect(await renamed.json()).toEqual({ matrixUserId, name: 'Reviewer' });
-  expect(fetch.mock.calls.filter(([input, init]) => String(input).endsWith('/displayname') && init?.method === 'PUT')
-    .some(([, init]) => init?.body === JSON.stringify({ displayname: 'Reviewer' }))).toBe(true);
+  const memberPath = `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(matrixUserId)}`;
+  expect(memberships.get(memberPath)).toEqual({ membership: 'join', displayname: 'Reviewer',
+    'com.khala.invited_by': '@alice:matrix.example.test', 'com.khala.listening_mode': 'steer' });
+  const writes = fetch.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === memberPath && init?.method === 'PUT')
+    .map(([, init]) => JSON.parse(String(init?.body)));
+  expect(writes).toEqual(['Ally-Codex-2', 'Reviewer'].map(displayname => ({ membership: 'join', displayname,
+    'com.khala.invited_by': '@alice:matrix.example.test', 'com.khala.listening_mode': 'steer' })));
+  expect(fetch.mock.calls.some(([input]) => String(input).includes('/profile/'))).toBe(false);
 });
