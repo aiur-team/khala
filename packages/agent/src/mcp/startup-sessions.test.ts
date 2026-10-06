@@ -49,8 +49,8 @@ it('restores only the newest thread and breaks simultaneous timestamps consisten
     }
   }
   const expected = [{ sessionId: 'first', rejoinable: true }];
-  expect(await codexStartupSessions(env)).toEqual(expected);
-  expect(await codexStartupSessions(env)).toEqual(expected);
+  const restored = await Promise.all([codexStartupSessions(env), codexStartupSessions(env)]);
+  expect(restored).toEqual([expected, expected]);
   const latest = channelFiles(await openSessionDir('codex', 'second', env), '!two:local');
   const newer = new Date(time.getTime() + 1000);
   await fs.utimes(path.join(latest.dir, 'resume.json'), newer, newer);

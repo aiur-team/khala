@@ -77,6 +77,12 @@ export async function readProcess(pid: number): Promise<ProcessInfo | null> {
   if (!validPid(pid)) return null;
   try {
     process.kill(pid, 0);
+  } catch (error) {
+    // EPERM can mean a live process owned by another user; its identity may
+    // still be readable even though we cannot signal it.
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return null;
+  }
+  try {
     if (process.platform === 'linux') return parseLinuxStat(pid, await readFile(`/proc/${pid}/stat`, 'utf8'));
     if (process.platform === 'darwin') {
       const { stdout } = await execFileAsync('ps', ['-o', 'ppid=,lstart=,comm=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' }, timeout: 5000 });

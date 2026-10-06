@@ -65,7 +65,14 @@ it('caches concurrent owner probes only within one hook', async () => {
   expect(read).toHaveBeenCalledTimes(2);
 });
 it('skips expensive identity probes when the cheap liveness check fails', async () => {
-  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw new Error('ESRCH'); });
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('No such process'), { code: 'ESRCH' }); });
   expect(await readProcess(42)).toBeNull();
   expect(kill).toHaveBeenCalledExactlyOnceWith(42, 0);
+});
+it.skipIf(process.platform !== 'linux')('reads process identity when the cheap liveness check returns EPERM', async () => {
+  const identity = await readProcess(process.pid);
+  expect(identity?.startTime).toMatch(/^\d+$/);
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' }); });
+  expect(await readProcess(process.pid)).toEqual(identity);
+  expect(kill).toHaveBeenCalledExactlyOnceWith(process.pid, 0);
 });

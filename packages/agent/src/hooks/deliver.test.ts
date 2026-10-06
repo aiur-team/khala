@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as childProcess from 'node:child_process';
+import * as processReader from '../harness/proc';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,7 +15,7 @@ import { readActivity, writeActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
 
-vi.mock('node:child_process', { spy: true });
+vi.mock('../harness/proc', { spy: true });
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
 let root: string;
@@ -605,9 +605,9 @@ it.each(goldenCases)('single-channel golden $harness $event $mode $count guard=$
 
 it.each(['UserPromptSubmit', 'PostToolUse'])('reads connected Codex display metadata without subprocesses on %s', async event => {
   await seed([message()], 'codex');
-  const exec = vi.spyOn(childProcess, 'execFile');
-  const spawnProcess = vi.spyOn(childProcess, 'spawn');
-  const fork = vi.spyOn(childProcess, 'fork');
+  await fs.writeFile(files.mode, JSON.stringify({ mode: 'steer' }));
+  // Observe the actual identity reader, including execFile's custom promisify path.
+  const read = vi.spyOn(processReader, 'readProcess').mockClear();
   // Force the platform that previously launched ps for every status read.
   const platform = process.platform;
   Object.defineProperty(process, 'platform', { value: 'darwin' });
@@ -620,8 +620,6 @@ it.each(['UserPromptSubmit', 'PostToolUse'])('reads connected Codex display meta
     });
   } finally { Object.defineProperty(process, 'platform', { value: platform }); }
   expect(errors).toEqual([]);
-  expect(exec).not.toHaveBeenCalled();
-  expect(spawnProcess).not.toHaveBeenCalled();
-  expect(fork).not.toHaveBeenCalled();
-  if (event === 'UserPromptSubmit') expect(output.join('')).toContain('Docs are a go');
+  expect(read).not.toHaveBeenCalled();
+  expect(output.join('')).toContain('Docs are a go');
 });
