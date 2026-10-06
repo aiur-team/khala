@@ -238,3 +238,12 @@ it('preserves validated previous membership for rename delivery', () => {
   expect(local.decodeLocalEvent(value)).toEqual({ ok: true, value });
   expect(local.decodeLocalEvent({ ...value, previousContent: { ...previousContent, membership: 'invalid' } }).ok).toBe(false);
 });
+
+it('decodes events pages and cached profiles for existing registry-suffixed owners', () => {
+  accepted(local.decodeOwnerProfile, { ...profile, username: 'bob-Gemini' });
+  accepted(local.decodeOwnerProfileView, { ...profileView, username: 'bob-Gemini' });
+  const page = { events: [{ ...event(), type: 'm.room.member', content: { user: owner, membership: 'join',
+    displayname: 'bob-Gemini', kind: 'human' } }], next: 5 };
+  accepted(local.decodeLocalEventsPage, page);
+  accepted(local.decodeLocalMembersResponse, { members: [{ ...agentMember, ownerLabel: 'bob-Gemini' }] });
+});

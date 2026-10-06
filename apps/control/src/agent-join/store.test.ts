@@ -59,7 +59,7 @@ function fixture() {
 it('strictly decodes records and strips undefined keys', () => {
   const { record } = fixture();
   expect(decodeJoinRecord(toStored({ ...record, ownerId: undefined } as unknown as JoinRecord))).toEqual(record);
-  for (const patch of [{ extra: 1 }, { label: ' system ' }, { harness: 'unknown' }, { joinId: 'bad' }, { pollSecretHash: 'secret' }, { expiresAt: 'bad' }, { state: 'confirmed' }, { ownerId: 4 }, { rejoinApproval: { ownerLabel: 'Kevin', generation: -1 } }, { rejoinApproval: { ownerLabel: '', generation: 0 } }]) expect(decodeJoinRecord({ ...record, ...patch })).toBeNull();
+  for (const patch of [{ extra: 1 }, { label: ' system ' }, { harness: 'Bad Harness' }, { joinId: 'bad' }, { pollSecretHash: 'secret' }, { expiresAt: 'bad' }, { state: 'confirmed' }, { ownerId: 4 }, { rejoinApproval: { ownerLabel: 'Kevin', generation: -1 } }, { rejoinApproval: { ownerLabel: '', generation: 0 } }]) expect(decodeJoinRecord({ ...record, ...patch })).toBeNull();
   expect(pollSecretMatches('poll-secret', record.pollSecretHash)).toBe(true);
   expect(pollSecretMatches('wrong', record.pollSecretHash)).toBe(false);
 });
@@ -144,5 +144,15 @@ it('cleans up a staged permanent claim after restart while preserving a differen
     expect(read.kind === 'found' && read.record.state).toBe('expired');
     expect((await f.store.read(key)).kind).toBe(sameAgent ? 'absent' : 'record');
     expect((await restarted.read(joinId)).kind).toBe('found');
+  }
+});
+
+it('accepts registered and unknown valid harness ids in join storage', () => {
+  const { record } = fixture();
+  for (const harness of ['gemini', 'antigravity', 'cline']) {
+    expect(decodeJoinRecord({ ...record, harness })).toEqual({ ...record, harness });
+  }
+  for (const harness of ['', 'x', 'Gemini', 'bad_id', 'a'.repeat(25), null]) {
+    expect(decodeJoinRecord({ ...record, harness })).toBeNull();
   }
 });

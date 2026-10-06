@@ -1,5 +1,6 @@
 import { reserved } from '../messaging/agent-names';
 import type { Harness } from './agent-join';
+import { HARNESS_REGISTRY, LEGACY_HARNESSES, harnessInfo, type HarnessId } from './harness';
 import { readMatrixUserId } from './agent-join';
 import { type Decoded, array, decodeWith, elementPath, fail, identifier, object, version } from '../messaging/decode';
 import { ownerFirstName } from './participants';
@@ -25,19 +26,33 @@ export function checkName(input: unknown, kind: NameKind): NameCheck {
   return { ok: true, name };
 }
 
-export const nameKey = (name: string): string => `names/v1/${name.toLowerCase()}`;
-export const MODEL_NAMES: Record<Harness, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
-export function defaultAgentName(username: string, harness: Harness, n = 1): string {
-  return `${username}-${MODEL_NAMES[harness]}${n === 1 ? '' : `-${n}`}`;
+const escapePattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+const newAgentSuffix = new RegExp(`-(?:${HARNESS_REGISTRY.filter(row => row.modelName !== 'Agent')
+  .map(row => escapePattern(row.modelName)).join('|')})(?:-\\d+)?$`, 'iu');
+
+/** Extra reservations for username choices; stored names keep checkName's legacy rules. */
+export function checkNewUsername(input: unknown): NameCheck {
+  const checked = checkName(input, 'username');
+  if (!checked.ok) return checked;
+  return newAgentSuffix.test(checked.name) ? { ok: false, error: 'reserved' } : checked;
 }
-export function isDefaultAgentName(name: string, username: string, harness: Harness): boolean {
-  const escaped = `${username}-${MODEL_NAMES[harness]}`.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
+export const nameKey = (name: string): string => `names/v1/${name.toLowerCase()}`;
+// Compatibility for legacy callers; model metadata belongs to the registry.
+export const MODEL_NAMES: Record<Harness, string> = Object.fromEntries(
+  LEGACY_HARNESSES.map(id => [id, harnessInfo(id).modelName]),
+) as Record<Harness, string>;
+export function defaultAgentName(username: string, harness: HarnessId, n = 1): string {
+  return `${username}-${harnessInfo(harness).modelName}${n === 1 ? '' : `-${n}`}`;
+}
+export function isDefaultAgentName(name: string, username: string, harness: HarnessId): boolean {
+  const escaped = escapePattern(`${username}-${harnessInfo(harness).modelName}`);
   return new RegExp(`^${escaped}(?:-\\d+)?$`, 'iu').test(name);
 }
 export function suggestUsername(email: string): string {
   const base = ownerFirstName(email).replace(/[^A-Za-z0-9._-]/gu, '')
     .replace(/^[._-]+|[._-]+$/gu, '').slice(0, USERNAME_MAX).replace(/[._-]+$/gu, '');
-  return checkName(base, 'username').ok ? base : 'User';
+  return checkNewUsername(base).ok ? base : 'User';
 }
 
 export type OwnerAgents = { v: 1; ownerId: string; agents: string[] };
