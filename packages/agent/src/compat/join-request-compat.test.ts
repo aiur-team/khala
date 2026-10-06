@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createKhalaAgentClient } from '../client-impl';
 import { requestJoin } from '../join';
 import { frozenMainControlJoinValidation } from './control-join-request.main.frozen';
@@ -87,4 +87,56 @@ describe('the agent client against the production control plane', () => {
       ]);
     } finally { await client.close(); }
   });
+});
+
+describe('new harnesses against frozen servers', () => {
+  const input = { harness: 'gemini', label: 'Gemini' } as const;
+  it('restarts the local helper once then retries the same link', async () => {
+    let upgraded = false;
+    const target = servers['already-running helper (main 120d9ffa)']!;
+    const fake = server(local, request => upgraded ? Promise.resolve('accepted') : target.validate(request));
+    const restartHelper = vi.fn(async () => { upgraded = true; return true; });
+    await expect(requestJoin({ ...input, link: target.link }, { fetch: fake.fetch, restartHelper })).resolves.toMatchObject({ origin: local });
+    expect(restartHelper).toHaveBeenCalledExactlyOnceWith(local);
+    expect(fake.bodies).toHaveLength(2);
+    expect(fake.bodies[0]).toEqual(fake.bodies[1]);
+  });
+  it('surfaces a second local rejection', async () => {
+    const target = servers['already-running helper (main 120d9ffa)']!;
+    const fake = server(local, target.validate);
+    const restartHelper = vi.fn(async () => true);
+    await expect(requestJoin({ ...input, link: target.link }, { fetch: fake.fetch, restartHelper })).rejects.toMatchObject({ message: 'invalid_harness' });
+    expect(restartHelper).toHaveBeenCalledOnce();
+    expect(fake.bodies).toHaveLength(2);
+  });
+  it('surfaces local rejection when the restart allowance is spent', async () => {
+    const target = servers['already-running helper (main 120d9ffa)']!;
+    const fake = server(local, target.validate);
+    await expect(requestJoin({ ...input, link: target.link }, { fetch: fake.fetch, restartHelper: async () => false })).rejects.toMatchObject({ message: 'invalid_harness' });
+    expect(fake.bodies).toHaveLength(1);
+  });
+  it('explains hosted version skew using the harness display name', async () => {
+    const target = servers['production control plane (main 120d9ffa)']!;
+    const fake = server(hosted, target.validate);
+    const restartHelper = vi.fn(async () => true);
+    await expect(requestJoin({ ...input, link: target.link }, { fetch: fake.fetch, restartHelper })).rejects.toMatchObject({
+      code: 'update_required', message: "Khala's hosted service does not accept Gemini CLI agents yet. Local channels work now.",
+    });
+    expect(fake.bodies).toHaveLength(1);
+    expect(restartHelper).not.toHaveBeenCalled();
+  });
+});
+
+it('retains rejoin identity after a frozen helper rejects the new harness', async () => {
+  const target = servers['already-running helper (main 120d9ffa)']!;
+  let upgraded = false;
+  const fake = server(local, request => upgraded ? Promise.resolve('accepted') : target.validate(request));
+  const restartHelper = vi.fn(async () => { upgraded = true; return true; });
+  await requestJoin({ link: target.link, harness: 'gemini', label: 'Gemini', sessionId: 'thread-1', rejoinSecret: SECRET }, { fetch: fake.fetch, restartHelper });
+  expect(fake.bodies).toEqual([
+    { link: target.link, harness: 'gemini', label: 'Gemini', sessionId: 'thread-1', rejoinSecret: SECRET },
+    { link: target.link, harness: 'gemini', label: 'Gemini' },
+    { link: target.link, harness: 'gemini', label: 'Gemini', sessionId: 'thread-1', rejoinSecret: SECRET },
+  ]);
+  expect(restartHelper).toHaveBeenCalledOnce();
 });

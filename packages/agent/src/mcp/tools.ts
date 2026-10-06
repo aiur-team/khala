@@ -8,7 +8,7 @@ import { failure, hasOnly, success, toolError, type McpTool, type McpToolDefinit
 export type ClientLookup = (meta: Readonly<Record<string, unknown>> | undefined) => KhalaAgentClient | null | Promise<KhalaAgentClient | null>;
 
 const ERROR_CODES: readonly KhalaErrorCode[] = [
-  'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'internal_error',
+  'update_required', 'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'internal_error',
 ];
 
 export function errorCode(error: unknown): KhalaErrorCode {
@@ -38,7 +38,10 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
           const structuredContent = await invoke(client, args);
           return success(context.id, { content: [{ type: 'text', text: render(structuredContent) }], structuredContent });
         } catch (error) {
-          return success(context.id, toolError(errorCode(error), error instanceof KhalaClientError ? error.extra : undefined));
+          const code = errorCode(error);
+          const extra = error instanceof KhalaClientError
+            ? { ...error.extra, ...(code === 'update_required' ? { message: error.message } : {}) } : undefined;
+          return success(context.id, toolError(code, extra));
         }
       },
     };
@@ -107,7 +110,10 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
           const sent = await (channel === undefined ? client.sendChannelEvent(resolved.content) : client.sendChannelEvent(resolved.content, channel as string));
           return success(context.id, { content: [{ type: 'text', text: `Posted channel event: ${resolved.content.body}` }], structuredContent: sent });
         } catch (error) {
-          return success(context.id, toolError(errorCode(error), error instanceof KhalaClientError ? error.extra : undefined));
+          const code = errorCode(error);
+          const extra = error instanceof KhalaClientError
+            ? { ...error.extra, ...(code === 'update_required' ? { message: error.message } : {}) } : undefined;
+          return success(context.id, toolError(code, extra));
         }
       },
     },
