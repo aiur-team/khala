@@ -1,3 +1,4 @@
+import { CODEX_DAEMON_WAKE_NOTE } from '../wake/status';
 /**
  * Scripted AE1–AE12 acceptance. KI-161 covers the live model/harness halves:
  * a free port replaces 47830; this driver runs Claude's CLI; helper stop/start
@@ -259,7 +260,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect((await wake.exited).code, context('AE5')).toBe(2);
     // The no-egress guard denies the cached capability probe, so no queue is attempted.
     expect(toolData(await world.codex.call('khala_status')), context('AE5')).toMatchObject({
-      idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is unavailable.' },
+      idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is unavailable.', note: CODEX_DAEMON_WAKE_NOTE },
     });
     expect(await deniedCodexCount(), context('AE5')).toBe(queues);
     expect((await codexCalls(world)).length, context('AE5')).toBe(0);

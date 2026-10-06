@@ -42,6 +42,8 @@ export interface HumanApplicationPorts {
   readonly memberSince?: (roomId: RoomId, matrixUserId: string) => number | null;
   readonly profile?: ProfilePort;
   readonly inviteAgent?: AgentInvitePort;
+  /** Current room membership, independent of asynchronous timeline loading. */
+  readonly isJoined?: (roomId: RoomId) => boolean;
   /** The listening mode a Matrix user reports in `roomId`; `sync` when unknown. */
   readonly listeningMode?: (roomId: RoomId, matrixUserId: string) => ListeningMode;
   readonly subscribeListeningModes?: (roomId: RoomId, listener: () => void) => Disposer;
