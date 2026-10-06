@@ -2,6 +2,7 @@
 // Paths go through an injected `path` flavour so tests can check Windows layouts on Linux.
 import nodePath from 'node:path';
 import { CURSOR_WORKSPACE_ENV } from '../cursor';
+import { nodeScriptCommand } from './command';
 import { ManagedFiles, formatJson, jsonFormat, readManaged, type ManagedRead } from './managed-file';
 
 type PathApi = Pick<typeof nodePath, 'join' | 'isAbsolute'>;
@@ -32,9 +33,6 @@ export function cursorPaths({ platform, path, home, env }: CursorPlatform, packa
   };
 }
 
-/** POSIX single quotes. */
-const posixQuote = (value: string): string => /^[A-Za-z0-9_./:-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
-
 /**
  * The hook command line. Cursor runs hooks through a shell: PowerShell on Windows (bash when
  * Git Bash's MSYSTEM leaks in), sh on macOS/Linux. On Windows the command therefore starts
@@ -44,8 +42,7 @@ const posixQuote = (value: string): string => /^[A-Za-z0-9_./:-]+$/u.test(value)
  * user's shell PATH still finds Node.
  */
 export function cursorHookCommand(platform: NodeJS.Platform, node: string, script: string): string {
-  if (platform === 'win32') return `node "${script.replaceAll('\\', '/')}"${HOOK_SUFFIX}`;
-  return `${posixQuote(node)} ${posixQuote(script)}${HOOK_SUFFIX}`;
+  return nodeScriptCommand(platform, node, script) + HOOK_SUFFIX;
 }
 
 export function cursorMcpEntry(node: string, script: string) {
