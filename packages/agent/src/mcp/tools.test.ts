@@ -322,3 +322,18 @@ it('Muse join and status supply an absolute watcher command with explicit sessio
     expect(text).not.toContain('use khala_read for channel content');
   }
 });
+
+it('never supplies a Claude Monitor fallback for Qwen status', async () => {
+  const client = fake();
+  client.status = async () => ({ state: 'connected', unread: 0, watcherArmed: false });
+  const { responses } = await exchange([call('khala_status')], client, 'qwen');
+  expect(responses[0].result.content[0].text).toBe(JSON.stringify(await client.status()));
+});
+
+it('renders the installed Qwen background-shell hint without a Claude Monitor', async () => {
+  const client = fake();
+  const watcherHint = 'Arm run_shell_command with {"command":"khala watch --harness qwen --session s","is_background":true}.';
+  client.status = async () => ({ state: 'connected', unread: 0, watcherArmed: false, watcherHint });
+  const { responses } = await exchange([call('khala_status')], client, 'qwen');
+  expect(responses[0].result.content[0].text).toBe(JSON.stringify(await client.status()) + '\n' + watcherHint);
+});
