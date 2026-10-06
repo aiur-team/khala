@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { wakeStatusText, WAKE_STATES } from './status';
+import { wakeStatusText, WAKE_STATES, CODEX_DAEMON_WAKE_NOTE, selectedWakeStatus } from './status';
 it('renders every state from one fixed reason and remedy table', () => {
   for (const state of Object.keys(WAKE_STATES) as (keyof typeof WAKE_STATES)[]) {
     const result = wakeStatusText('terminal', state);
@@ -70,7 +70,15 @@ it.skipIf(process.platform === 'win32')('probes only queue help and reports an a
   try {
     await fs.writeFile(path.join(root, 'codex'), '#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ] || exit 1\nprintf "%s\\n" "--thread --message\\n"\n', { mode: 0o700 });
     const rows = await wakeStatus('codex', { env: { PATH: root, XDG_STATE_HOME: root } });
-    expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'active', reason: WAKE_STATES.active.reason });
+    expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'active', reason: WAKE_STATES.active.reason, note: CODEX_DAEMON_WAKE_NOTE });
+    expect(selectedWakeStatus(rows).note).toContain('even after the TUI exits');
+    const { runWake } = await import('./cli');
+    const output: string[] = [];
+    for (const flags of [[], ['--json']]) {
+      await runWake(['status', '--harness', 'codex', ...flags], { env: { PATH: root, XDG_STATE_HOME: root }, stdout: line => output.push(line) });
+    }
+    expect(output[0]).toContain(CODEX_DAEMON_WAKE_NOTE);
+    expect(JSON.parse(output[1]!).find((row: { driver: string }) => row.driver === 'queue').note).toBe(CODEX_DAEMON_WAKE_NOTE);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

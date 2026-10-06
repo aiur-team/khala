@@ -9,8 +9,10 @@ import { channelFiles, ensureStateDir, openSessionDir, readStatus, writeStateFil
 import type { ChannelSession, SessionMessage } from '../transport';
 import { createCodexWaker } from '../wake/codex';
 import { createRealClientFactory } from './wiring';
+import { runMcpCommand } from './main';
+import { PassThrough } from 'node:stream';
 
-it('restores a Codex channel and queues an owner message without any tool call', async () => {
+it('restores a daemon Codex channel without CODEX_THREAD_ID and queues an owner message without any tool call', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-startup-wake-'));
   const env = { XDG_STATE_HOME: root };
   const files = await openSessionDir('codex', 'thread', env);
@@ -36,13 +38,15 @@ it('restores a Codex channel and queues an owner message without any tool call',
     createClient: options => createKhalaAgentClient({ ...options, startSession: async () => session }),
     createWaker: options => createCodexWaker({ ...options, port: { run: queue }, probe: async () => ({ available: true }), pollMs: 100_000 }),
   });
-  const client = factory({ harness: 'codex', sessionId: 'thread' });
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const running = runMcpCommand(['--harness', 'codex'], { env, input, output, createClient: factory });
   try {
     await vi.waitFor(async () => expect(await readStatus(nested)).toMatchObject({ state: 'connected' }));
     intake!({ eventId: '$owner', roomId, sender: '@owner:local', ts: Date.now(), type: 'm.room.message', body: '@Agent hello', content: {} });
     await vi.waitFor(() => expect(queue).toHaveBeenCalledOnce());
     expect(queue.mock.calls[0]).toEqual([['queue', '--thread', 'thread', '--message', expect.any(String)], expect.any(AbortSignal)]);
-  } finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
+  } finally { input.end(); await running; output.destroy(); await fs.rm(root, { recursive: true, force: true }); }
 });
 
 it('keeps the Claude SessionStart reminder after old control returns an unconfirmed restore', async () => {
