@@ -43,6 +43,22 @@ it('sends only the fixed line then delayed Enter, rechecking ownership twice', a
  expect(sends()).toEqual([['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')], ['send-keys', '-t', '%7', 'Enter']]);
  expect(owns).toHaveBeenCalledTimes(2); expect(pause).toHaveBeenCalledOnce();
 });
+it('submits a wake when capture trims the empty prompt spacing', async () => {
+ line = '›';
+ await make().wake(ctx, wakeLine('1234abcd'));
+ expect(sends()).toEqual([['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')], ['send-keys', '-t', '%7', 'Enter']]);
+});
+it('cleans up a wake from a trimmed empty prompt when consent is revoked', async () => {
+ line = '›';
+ const driver = make({ delay: async () => {
+  await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: {}, off: {} });
+ } });
+ await driver.wake(ctx, wakeLine('1234abcd'));
+ expect(sends()).toEqual([
+  ['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')],
+  ['send-keys', '-t', '%7', '-N', String(wakeLine('1234abcd').length), 'BSpace'],
+ ]);
+});
 it.each(['consent', 'busy', 'recent', 'guard', 'exited', 'reused', 'copy', 'sync', 'draft', 'space', 'abort'])('refuses unsafe %s without recording a failure', async kind => {
  let driver = make();
  if (kind === 'consent') await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: {}, off: {} });
