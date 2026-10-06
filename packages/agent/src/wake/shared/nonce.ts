@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { wakeLine } from './rules';
 import { withWakeLock } from './lock';
 
-export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number }
+export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number; verificationDeferred?: boolean }
 export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string; noticeShown?: boolean }
 export type WakeState = Record<string, WakeDriverState>;
 export interface WakeSettlement { nonce: string; driver: string; status: 'success' | 'failure' | 'void' }
@@ -45,7 +45,9 @@ export async function recordAttempt(dir: string, attempt: WakeAttempt): Promise<
 export async function settleAttempts(dir: string, input: {
   now: number;
   activity: { state: string; updatedAt: string | number } | null;
-  promptText?: string;
+  promptText?: string | undefined;
+  /** Transcript hooks may run before their wake step is appended. */
+  deferVerification?: boolean;
 }): Promise<WakeSettlement[]> {
   // The atomic journal is authoritative. An attempt published after this read
   // remains pending for the next hook or poll; never overwrite it from this snapshot.
@@ -62,7 +64,13 @@ export async function settleAttempts(dir: string, input: {
       const activityChanged = input.activity && (input.activity.state !== 'idle' || activityAt > baselineAt);
       // Prompt integrations settle before writing their own busy boundary.
       // Any changed activity here therefore belongs to prior user activity.
-      if (activityChanged) status = 'void';
+      if (input.deferVerification && !activityChanged) attempt.verificationDeferred = true;
+      // A deferred transcript acknowledgement can arrive after the prompt hook
+      // has recorded busy. Polls must keep that attempt for the tool/Stop hook.
+      if (attempt.verificationDeferred) {
+        if (verified && input.now <= attempt.deadline) status = 'success';
+        else if (input.now >= attempt.deadline) status = activityChanged ? 'void' : 'failure';
+      } else if (activityChanged) status = 'void';
       else if (verified && input.now <= attempt.deadline) status = 'success';
       else if (input.now >= attempt.deadline && input.activity?.state === 'idle') status = 'failure';
       else if (input.promptText !== undefined) status = 'void';

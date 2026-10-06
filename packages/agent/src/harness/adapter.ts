@@ -29,7 +29,7 @@ export type HarnessAdapter = Readonly<{
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   wakeLadder?: readonly WakeDriver[];
   /** Resolve wake verification text when the hook only supplies a transcript. */
-  hookPromptText?: (input: NonNullable<ReturnType<DeliverCodec['parse']>>, files: SessionFiles) => Promise<string>;
+  hookPromptText?: (input: NonNullable<ReturnType<DeliverCodec['parse']>>, files: SessionFiles) => Promise<string | undefined>;
   /** Native plugins poll through delivery hooks rather than an external transport. */
   pollIdleWake?: (files: SessionFiles, io: HookIO, replay?: boolean) => Promise<string | undefined>;
   /** Measured empty input text and cursor column for safe terminal wakes. */

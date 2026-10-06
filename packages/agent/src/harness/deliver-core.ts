@@ -196,6 +196,13 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
         }
         if (input.event !== 'start') {
           let steerOnly = input.event === 'tool';
+          if (adapter.hookPromptText || input.event === 'prompt') {
+            try {
+              await settleAttempts(files.dir, { now: io.now().getTime(), activity: await readActivity(files),
+                promptText: adapter.hookPromptText ? await adapter.hookPromptText(input, files) : input.promptText ?? '',
+                deferVerification: Boolean(adapter.hookPromptText) });
+            } catch { diagnostic(io, 'wake_verification_failed'); }
+          }
           if (input.event === 'prompt') {
             const activity = await readActivity(files);
             // Claude Monitor/task notifications can submit a prompt inside a turn.
@@ -205,10 +212,6 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
               && Date.parse(activity.updatedAt) !== 0
               && io.now().getTime() - Date.parse(activity.updatedAt) < CLAUDE_STALE_BUSY_MS
               && !await claudeTranscriptInterrupted(input.transcriptPath, activity.updatedAt);
-            try {
-              await settleAttempts(files.dir, { now: io.now().getTime(), activity,
-                promptText: adapter.hookPromptText ? await adapter.hookPromptText(input, files) : input.promptText ?? '' });
-            } catch { diagnostic(io, 'wake_verification_failed'); }
             await writeActivity(files, 'busy', io.now);
           }
           // Refresh an active turn even without delivery; background tools after

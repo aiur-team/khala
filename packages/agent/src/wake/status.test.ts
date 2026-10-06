@@ -116,3 +116,21 @@ it('reports Codex capture pending after terminal consent until its first prompt'
     expect(terminal[0]).toMatchObject({ state: 'unavailable', reason: WAKE_STATES.unavailable.reasons.terminal_capture_pending_prompt });
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+it('describes Antigravity status outside a conversation as session-scoped', async () => {
+  const { wakeStatus } = await import('./status');
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { writeWakeSettings } = await import('./shared');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agy-status-'));
+  const env = { XDG_STATE_HOME: root };
+  const { stateRoot } = await import('../state');
+  await writeWakeSettings(stateRoot(env), { consent: { 'antigravity/antigravity-native': { at: new Date().toISOString() } }, off: {} });
+  const rows = await wakeStatus('antigravity', { env });
+  await fs.rm(root, { recursive: true, force: true });
+  const native = rows.find(row => row.driver === 'antigravity-native')!;
+  expect(native.reason).toContain('scoped to a conversation');
+  expect(native.reason).not.toContain('missing');
+  expect(native.remedy).toBeUndefined();
+});

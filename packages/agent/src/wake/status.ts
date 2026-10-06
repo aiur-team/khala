@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { antigravityRegisterCommand } from './antigravity-registration';
 import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import { adapterFor } from '../harness';
 import { filesForDir, readStateFile, stateRoot, type SessionFiles } from '../state';
@@ -12,8 +13,8 @@ export const WAKE_STATES = {
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
   unavailable: { reason: 'No remote-control API is available.', remedy: '', reasons: {
     wake_status_unavailable: 'Wake status is unavailable.',
-    antigravity_credentials_missing: 'Antigravity native wake credentials are missing; run npx -y khala-cli wake register --harness antigravity through the agent shell.',
-    antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected; run npx -y khala-cli wake register --harness antigravity through the agent shell.',
+    antigravity_credentials_missing: 'Antigravity native wake credentials are missing.',
+    antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected.',
     queue_missing: 'Codex queue is missing.',
     codex_binary_missing: 'Codex queue is missing.',
     codex_queue_unavailable: 'Codex queue is unavailable.',
@@ -95,8 +96,13 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
       state = 'unavailable';
       unavailableReason = process.platform === 'win32' && driver.id === 'terminal' ? 'windows' : 'driver_missing';
     }
-    rows.push({ harness, rung: driver.rung, ...wakeStatusText(driver.id, state, unavailableReason),
-      ...(harness === 'antigravity' && driver.id === 'antigravity-native' ? { note: 'Native wake and Sync continuation use billed model turns.' } : {}),
+    const status = wakeStatusText(driver.id, state, unavailableReason);
+    if (harness === 'antigravity' && driver.id === 'antigravity-native') {
+      if (!options.sessionId && state === 'unavailable') { status.reason = 'Antigravity native wake credentials are scoped to a conversation.'; status.note = 'Credential availability is session-scoped; run this command inside the Antigravity agent shell.'; }
+      else if (unavailableReason === 'antigravity_credentials_missing' || unavailableReason === 'antigravity_credentials_rejected') status.remedy = antigravityRegisterCommand(env) + ' through the agent shell';
+    }
+    rows.push({ harness, rung: driver.rung, ...status,
+      ...(harness === 'antigravity' && driver.id === 'antigravity-native' ? { note: (status.note ? status.note + ' ' : '') + 'Native wake and Sync continuation use billed model turns.' } : {}),
       ...(harness === 'codex' && driver.id === 'queue' ? { note: CODEX_DAEMON_WAKE_NOTE } : {}) });
   }
   return rows;

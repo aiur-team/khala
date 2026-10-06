@@ -14,6 +14,7 @@ import { geminiPaths, installGemini } from './gemini';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 import { ManagedFiles, formatJson, jsonFormat, readManaged, textFormat } from './managed-file';
 import { stateRoot } from '../state';
+import { installedLauncher } from './launcher';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
 const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install antigravity [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install copilot [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
@@ -252,9 +253,8 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
     stderr('khala: install runs from the published package (npx -y <package> install codex); from a checkout follow packages/agent/docs/install-codex.md');
     return 1;
   }
-  const dataHome = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(env.HOME ?? os.homedir(), '.local/share');
-  const prefix = path.join(dataHome, 'khala', 'npm');
-  const bin = path.join(prefix, 'bin', 'khala');
+  const platform = deps.platform ?? process.platform;
+  const { prefix, bin } = installedLauncher(platform, platform === 'win32' ? path.win32 : path.posix, deps.home ?? env.HOME ?? os.homedir(), env);
   const command = `${shellQuote(bin)} hook deliver --harness codex`;
 
   const hooksFile = path.join(codexHome, 'hooks.json');

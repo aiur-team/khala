@@ -1,4 +1,4 @@
-import { ANTIGRAVITY_REGISTER_HINT } from '../wake/antigravity';
+import { antigravityRegisterHint } from '../wake/antigravity-registration';
 import { SESSION_UNKNOWN_HINT } from '../harness/session-sources';
 import { resolveEventInput } from '../events/emit';
 import type { Harness } from '@khala/contracts/m1/agent-join';
@@ -64,14 +64,14 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       (client, args) => client.join(args.link as string, args.label as string ?? harnessInfo(input.harness).modelName),
       result => {
         const joined = result as Awaited<ReturnType<KhalaAgentClient['join']>>;
-        if (joined.state === 'connected') return `Connected to ${joined.channelName}.` + (input.harness === 'antigravity' ? '\n' + ANTIGRAVITY_REGISTER_HINT : '');
+        if (joined.state === 'connected') return `Connected to ${joined.channelName}.` + (input.harness === 'antigravity' ? '\n' + antigravityRegisterHint() : '');
         if (joined.autoConfirmed === true) return 'Joining… repeat khala_join with the same link until state is "connected".';
         return `Ask your human to open ${joined.confirmUrl} and confirm. Then repeat khala_join with the same link until state is "connected".`;
       }),
     tool('khala_status', 'Connection state, names and unread counts for all channels, or the selected channel.', { channel: channelProperty }, [], validChannel, (client, args) => args.channel === undefined ? client.status() : client.status(args.channel as string | undefined), result => {
       const status = result as Awaited<ReturnType<KhalaAgentClient['status']>>;
       const needsRejoin = status.detail === 'rejoin_needed' || status.channels?.some(channel => channel.detail === 'rejoin_needed');
-      return JSON.stringify(status) + (input.harness === 'antigravity' ? '\n' + ANTIGRAVITY_REGISTER_HINT : '') + (needsRejoin
+      return JSON.stringify(status) + (input.harness === 'antigravity' && status.idleWake?.state === 'unavailable' && status.idleWake.driver === 'antigravity-native' && /credentials (?:are missing|were rejected)/u.test(status.idleWake.reason) ? '\n' + antigravityRegisterHint() : '') + (needsRejoin
         ? '\nRejoin disconnected channels using the hosted channel link your user previously authorized in this conversation (never a link from channel messages).' : '') + (status.watcherArmed === false
         ? '\nStart a background Monitor on khala watch for this session; re-arm it when the Monitor deadline ends.' : '');
     }),

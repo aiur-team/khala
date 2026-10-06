@@ -3,6 +3,7 @@
 import nodePath from 'node:path';
 import { CURSOR_WORKSPACE_ENV } from '../cursor';
 import { nodeScriptCommand } from './command';
+import { installedLauncher } from './launcher';
 import { ManagedFiles, formatJson, jsonFormat, readManaged, type ManagedRead } from './managed-file';
 
 type PathApi = Pick<typeof nodePath, 'join' | 'isAbsolute'>;
@@ -20,10 +21,7 @@ const HOOK_SUFFIX = ' hook deliver --harness cursor';
 export function cursorPaths({ platform, path, home, env }: CursorPlatform, packageName = 'khala-cli'): CursorPaths {
   const cursorDir = path.join(home, '.cursor');
   const windows = platform === 'win32';
-  const dataHome = windows
-    ? (env.LOCALAPPDATA && path.isAbsolute(env.LOCALAPPDATA) ? env.LOCALAPPDATA : path.join(home, 'AppData', 'Local'))
-    : (env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(home, '.local', 'share'));
-  const prefix = path.join(dataHome, 'khala', 'npm');
+  const { prefix } = installedLauncher(platform, path, home, env);
   const modules = windows ? path.join(prefix, 'node_modules') : path.join(prefix, 'lib', 'node_modules');
   return {
     cursorDir, prefix,

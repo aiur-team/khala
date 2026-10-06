@@ -6,7 +6,7 @@ import { registerAntigravityWake, createAntigravityWakeDriver, antigravityPrompt
 import { runWake } from './cli';
 import { openSessionDir, type SessionFiles } from '../state';
 import { readActivity, writeActivity } from '../activity';
-import { recordAttempt, readWakeState } from './shared/nonce';
+import { recordAttempt, readWakeState, settleAttempts } from './shared/nonce';
 import { deliver } from '../../hooks/deliver';
 import { wakeLine } from './shared/rules';
 import type { WakeDriverContext } from './driver';
@@ -77,7 +77,7 @@ it('verifies native wake via the captured SYSTEM_MESSAGE shape before marking ac
   expect((await readWakeState(files.dir))['antigravity-native']).toEqual({ failures: 0 });
   expect((await readActivity(files)).state).toBe('busy');
   await fs.writeFile(transcriptPath, JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', content: line }) + '\n');
-  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe('');
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBeUndefined();
 });
 it('never sends credential values to the channel or MCP status/join output', async () => {
   await registerAntigravityWake(env);
@@ -89,7 +89,8 @@ it('never sends credential values to the channel or MCP status/join output', asy
   for (const [name, args] of [['khala_join', { link: 'https://example.com' }], ['khala_status', {}]] as const) {
     const result = await tools.find(tool => tool.name === name)!.call(args, { id: 1, notification: false, meta: undefined });
     const text = JSON.stringify(result);
-    expect(text).toContain('npx -y khala-cli wake register --harness antigravity');
+    if (name === 'khala_join') expect(text).toContain('wake register --harness antigravity');
+    else expect(text).not.toContain('wake register --harness antigravity');
     expect(text).not.toContain(env.ANTIGRAVITY_CSRF_TOKEN); expect(text).not.toContain(env.ANTIGRAVITY_LS_ADDRESS);
   }
   expect(send).not.toHaveBeenCalled(); expect(client.sendChannelEvent).not.toHaveBeenCalled();
@@ -104,7 +105,7 @@ it('verifies typed terminal wakes from documented USER_EXPLICIT/USER_INPUT steps
     ['SYSTEM_SDK', 'EPHEMERAL_MESSAGE', line, ''],
   ]) {
     await fs.writeFile(transcriptPath, JSON.stringify({ source, type, content }) + '\n');
-    expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe(expected);
+    expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe(expected || undefined);
   }
 });
 it('does not overwrite a new registration when an older credential is rejected in flight', async () => {
@@ -125,6 +126,39 @@ it('bounds transcript reads, ignores malformed steps and does not block on non-f
   const step = JSON.stringify({ source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: line });
   await fs.writeFile(transcriptPath, 'x'.repeat(70 * 1024) + '\nnull\nnot-json\n' + step + '\n');
   expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe(line);
-  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: root })).toBe('');
-  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: path.join(root, 'missing') })).toBe('');
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: root })).toBeUndefined();
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: path.join(root, 'missing') })).toBeUndefined();
+});
+
+it.each(['tool', 'stop'] as const)('keeps a wake pending across the early prompt and busy polls, then verifies at %s', async next => {
+  const transcriptPath = path.join(root, 'delayed.jsonl');
+  const line = wakeLine('1234abcd');
+  // An older wake in the transcript cannot acknowledge this attempt.
+  await fs.writeFile(transcriptPath, JSON.stringify({ source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: wakeLine('deadbeef') }) + '\n');
+  await recordAttempt(files.dir, { nonce: '1234abcd', driver: 'antigravity-native', at: now().getTime() - 1,
+    deadline: now().getTime() + 30_000, activityUpdatedAt: now().toISOString() });
+  const call = async (event: string, invocationNum: number) => deliver(JSON.stringify({ conversationId: 'session', invocationNum, transcriptPath }),
+    ['--harness', 'antigravity', '--event', event], { env, now, stdout: { write: () => {} }, stderr: { write: () => {} } });
+  await call('PreInvocation', 0);
+  expect((await readActivity(files)).state).toBe('busy');
+  expect(await settleAttempts(files.dir, { now: now().getTime() + 1, activity: await readActivity(files) })).toEqual([]);
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'wake-journal.json'), 'utf8')).attempts).toHaveLength(1);
+  expect((await readWakeState(files.dir))['antigravity-native']).toBeUndefined();
+  // The real CLI writes this only after the first hook returns.
+  await fs.appendFile(transcriptPath, JSON.stringify({ source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: line }) + '\n');
+  await call(next === 'tool' ? 'PreInvocation' : 'Stop', 1);
+  expect((await readWakeState(files.dir))['antigravity-native']).toEqual({ failures: 0 });
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'wake-journal.json'), 'utf8')).attempts).toEqual([]);
+});
+
+it('registers stable agy from PATH instead of the running rotated binary', async () => {
+  const binDir = path.join(root, 'bin');
+  await fs.mkdir(binDir);
+  const stable = path.join(binDir, process.platform === 'win32' ? 'agy.exe' : 'agy');
+  await fs.writeFile(stable, 'stable', { mode: 0o700 });
+  await registerAntigravityWake({ ...env, PATH: binDir, ANTIGRAVITY_AGENTAPI_EXE: '/rotated/agy.1.old' });
+  const stored = JSON.parse(await fs.readFile(path.join(files.dir, 'antigravity-wake.json'), 'utf8'));
+  expect(stored.command).toBe(stable);
+  await registerAntigravityWake({ ...env, PATH: path.join(root, 'missing-bin'), ANTIGRAVITY_AGENTAPI_EXE: '/fallback/agy.1.old' });
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'antigravity-wake.json'), 'utf8')).command).toBe('/fallback/agy.1.old');
 });

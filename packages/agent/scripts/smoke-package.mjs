@@ -145,10 +145,11 @@ try {
   const agyHooks = JSON.parse(await fs.readFile(agyHooksFile, 'utf8')).khala;
   assert.deepEqual(Object.keys(agyHooks), ['PreInvocation', 'Stop']);
   assert.equal(agyHooks.Stop[0].timeout, 10);
+  assert.deepEqual(agyMcp.args, ['mcp', '--harness', 'antigravity']);
+  assert.equal(agyMcp.command, path.join(windows ? env.LOCALAPPDATA : env.XDG_DATA_HOME, 'khala', 'npm', ...(windows ? ['khala.cmd'] : ['bin', 'khala'])));
   await mcpSmoke('antigravity configured MCP', agyMcp.command, agyMcp.args, true, { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy' });
-  assert.equal(check('antigravity PreInvocation hook', process.execPath,
-    [script, 'hook', 'deliver', '--harness', 'antigravity', '--event', 'PreInvocation'],
-    { shell: false, input: JSON.stringify({ conversationId: 'smoke-agy', invocationNum: 0 }) }), '{}\n');
+  assert.equal(check('antigravity PreInvocation hook', agyHooks.PreInvocation[0].command, [],
+    { shell: true, input: JSON.stringify({ conversationId: 'smoke-agy', invocationNum: 0 }) }), '{}\n');
   const registered = check('antigravity wake register', process.execPath,
     [script, 'wake', 'register', '--harness', 'antigravity'], { shell: false,
       env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy', ANTIGRAVITY_LS_ADDRESS: 'localhost:1234', ANTIGRAVITY_CSRF_TOKEN: 'smoke-private-token' } });

@@ -99,8 +99,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-conformance-'));
   const rows: ConformanceRow[] = [];
   const clients = new Set<KhalaAgentClient>();
-  const sample = driver.newSession();
-  if (adapter.id === 'antigravity') sample.workspace = root;
+  const sample = driver.newSession(root);
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
     let hookAt = now().getTime();
@@ -308,6 +307,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         assert.match(probe.prompt()!, /^Khala: channel messages are waiting\. Continue\. \(k-[0-9a-f]{8}\)$/);
         hookAt = now().getTime() + 60_001;
         await hook('prompt', { promptText: probe.prompt()! });
+        if (probe.afterPrompt) { await probe.afterPrompt(); await hook('tool'); }
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');
       } finally { await ladder.stop(); }

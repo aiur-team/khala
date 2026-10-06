@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runInstall } from './main';
-import { antigravityPaths, antigravityFormat, mergeAntigravity } from './antigravity';
+import { antigravityPaths, antigravityFormat, antigravityHooks, mergeAntigravity } from './antigravity';
 import { readWakeSettings } from '../wake/shared';
 import { stateRoot } from '../state';
 
@@ -23,7 +23,7 @@ it('installs both configs, records consent and restores exact JSONC bytes after 
   await fs.writeFile(paths.mcpFile, original);
   expect(await runInstall(['antigravity'], deps)).toBe(0);
   const installed = await fs.readFile(paths.mcpFile, 'utf8');
-  expect(JSON.parse(installed).mcpServers).toMatchObject({ sibling: { command: 'https://x/*ok*/' }, khala: { args: [paths.script, 'mcp', '--harness', 'antigravity'] } });
+  expect(JSON.parse(installed).mcpServers).toMatchObject({ sibling: { command: 'https://x/*ok*/' }, khala: { command: paths.bin, args: ['mcp', '--harness', 'antigravity'] } });
   const hooks = JSON.parse(await fs.readFile(paths.hooksFile, 'utf8')).khala;
   expect(Object.keys(hooks)).toEqual(['PreInvocation', 'Stop']);
   expect(hooks.Stop[0].timeout).toBe(10);
@@ -57,4 +57,29 @@ it('does not corrupt strings and refuses invalid containers', () => {
   expect(() => mergeAntigravity({ mcpServers: { khala: { args: ['antigravity', 'mcp'] } } }, 'mcp', null)).toThrow();
   expect(() => mergeAntigravity({ mcpServers: [] }, 'mcp', null)).toThrow();
   expect(() => mergeAntigravity({ mcpServers: { khala: { command: 'foreign' } } }, 'mcp', null)).toThrow();
+});
+
+it('uses stable launchers on POSIX and Windows and quotes hook paths', async () => {
+  const layouts = [
+    { platform: 'linux' as const, path: path.posix, home: "/home/agent's space", env: {} },
+    { platform: 'win32' as const, path: path.win32, home: 'C:\\Users\\Agent Space', env: {} },
+  ].map(input => {
+    const paths = antigravityPaths(input);
+    return { bin: paths.bin, mcp: { command: paths.bin, args: ['mcp', '--harness', 'antigravity'] }, hooks: antigravityHooks(input.platform, paths.bin) };
+  });
+  expect(layouts).toEqual(JSON.parse(await fs.readFile(new URL('./__golden__/antigravity-launchers.json', import.meta.url), 'utf8')));
+});
+it('upgrades and uninstalls previously managed node-script entries', async () => {
+  const { paths, deps } = setup();
+  await fs.mkdir(path.dirname(paths.mcpFile), { recursive: true });
+  const legacy = { mcpServers: { khala: { command: '/versioned/node', args: [paths.script, 'mcp', '--harness', 'antigravity'] } } };
+  const hooks = Object.fromEntries(['PreInvocation', 'Stop'].map(event => [event, [{ command: `/versioned/node ${paths.script} hook deliver --harness antigravity --event ${event}`, type: 'command', timeout: 10 }]]));
+  await fs.writeFile(paths.mcpFile, JSON.stringify(legacy));
+  await fs.writeFile(paths.hooksFile, JSON.stringify({ khala: hooks }));
+  expect(await runInstall(['antigravity'], deps)).toBe(0);
+  expect(JSON.parse(await fs.readFile(paths.mcpFile, 'utf8')).mcpServers.khala.command).toBe(paths.bin);
+  expect(await runInstall(['antigravity', '--uninstall'], deps)).toBe(0);
+  // The pre-existing managed entry is restored by provenance, and remains removable without provenance.
+  expect(mergeAntigravity(legacy, 'mcp', null)).toEqual({ mcpServers: {} });
+  expect(mergeAntigravity({ khala: hooks }, 'hooks', null)).toEqual({});
 });

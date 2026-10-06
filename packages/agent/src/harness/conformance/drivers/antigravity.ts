@@ -7,14 +7,15 @@ import { writeJsonAtomic } from '../../../state';
 
 export function createAntigravityConformanceDriver(transport: 'native' | 'terminal' | 'rejected-native' = 'native'): FakeHarnessDriver {
   let wakeTransport: 'native' | 'terminal' = 'native';
+  let appendTranscript: (() => void) | undefined;
   return {
     syncGuard: 'cursor',
-    newSession: () => ({ id: 'conformance-session', mcpEnv: { ANTIGRAVITY_CONVERSATION_ID: 'conformance-session' },
+    newSession: workspace => ({ ...(workspace ? { workspace } : {}), id: 'conformance-session', mcpEnv: { ANTIGRAVITY_CONVERSATION_ID: 'conformance-session' },
       mcpMeta: { 'antigravity.google/conversation_id': 'conformance-session' } }),
     hookStdin(event, session) {
-      // The hook stdin has no prompt field. Materialize the SYSTEM_MESSAGE capture used by native wake.
+      // agy appends the wake step after PreInvocation returns, not before it runs.
       const transcript = session.workspace ? path.join(session.workspace, 'transcript.jsonl') : undefined;
-      if (transcript && session.promptText) fs.writeFileSync(transcript, JSON.stringify(wakeTransport === 'native'
+      if (transcript && session.promptText) appendTranscript = () => fs.writeFileSync(transcript, JSON.stringify(wakeTransport === 'native'
         ? { source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: `[Message] sender=system content=${session.promptText}` }
         : { source: 'USER_EXPLICIT', type: 'USER_INPUT', content: session.promptText }) + '\n');
       return JSON.stringify({ conversationId: session.id, khalaHookEvent: event === 'stop' ? 'Stop' : 'PreInvocation',
@@ -46,6 +47,7 @@ export function createAntigravityConformanceDriver(transport: 'native' | 'termin
           wakeTransport = 'native'; prompt = argv.at(-1); return true;
         }), terminal],
         prompt: () => prompt,
+        async afterPrompt() { appendTranscript?.(); appendTranscript = undefined; },
         async prepare(files) {
           prompt = undefined; terminalLine = '>'; column = 2;
           await writeJsonAtomic(path.join(files.dir, 'pane.json'), { kind: 'tmux', paneId: '%7', agentPid: 100,

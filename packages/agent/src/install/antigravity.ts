@@ -1,6 +1,8 @@
+import { antigravityRegisterHint } from '../wake/antigravity-registration';
 import type { CursorPlatform } from './cursor';
 import { cursorPaths } from './cursor';
-import { nodeScriptCommand } from './command';
+import { installedLauncher, launcherShellQuote } from './launcher';
+
 import { ManagedFiles, formatJson, jsonFormat, readManaged, type ManagedFormat } from './managed-file';
 
 const HOOK_EVENTS = ['PreInvocation', 'Stop'] as const;
@@ -19,10 +21,11 @@ export const antigravityFormat: ManagedFormat = {
 export function antigravityPaths(input: CursorPlatform, packageName = 'khala-cli') {
   const { prefix, script } = cursorPaths(input, packageName);
   const configDir = input.path.join(input.home, '.gemini', 'config');
-  return { prefix, script, mcpFile: input.path.join(configDir, 'mcp_config.json'), hooksFile: input.path.join(configDir, 'hooks.json') };
+  const { bin } = installedLauncher(input.platform, input.path, input.home, input.env);
+  return { prefix, script, bin, mcpFile: input.path.join(configDir, 'mcp_config.json'), hooksFile: input.path.join(configDir, 'hooks.json') };
 }
-export function antigravityHooks(platform: NodeJS.Platform, node: string, script: string) {
-  const command = nodeScriptCommand(platform, node, script) + HOOK_SUFFIX;
+export function antigravityHooks(platform: NodeJS.Platform, bin: string) {
+  const command = launcherShellQuote(platform, bin) + HOOK_SUFFIX;
   return Object.fromEntries(HOOK_EVENTS.map(event =>
     [event, [{ type: 'command', command: command + event, timeout: 10 }]]));
 }
@@ -55,8 +58,8 @@ export async function installAntigravity(input: {
   const { paths, uninstall, stdout, stderr } = input;
   const entries = [];
   for (const [file, kind, value] of [
-    [paths.mcpFile, 'mcp', { command: input.node, args: [paths.script, 'mcp', '--harness', 'antigravity'] }],
-    [paths.hooksFile, 'hooks', antigravityHooks(input.platform, input.node, paths.script)],
+    [paths.mcpFile, 'mcp', { command: paths.bin, args: ['mcp', '--harness', 'antigravity'] }],
+    [paths.hooksFile, 'hooks', antigravityHooks(input.platform, paths.bin)],
   ] as const) {
     const current = await readManaged(file);
     try {
@@ -76,7 +79,7 @@ export async function installAntigravity(input: {
     : `configured ${paths.mcpFile} and ${paths.hooksFile}; restart Antigravity CLI to load Khala`);
   if (!uninstall) {
     stdout('These config files are shared with Antigravity desktop and IDE; their Khala hooks and MCP entry are installed too.');
-    stdout('Native idle wake and Sync continuation start billed model turns. After joining and at each session start, run npx -y khala-cli wake register --harness antigravity through the agent shell.');
+    stdout('Native idle wake and Sync continuation start billed model turns. ' + antigravityRegisterHint(undefined, paths.bin));
   }
   return 0;
 }

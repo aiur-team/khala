@@ -14,7 +14,7 @@ export type HookEvent = 'prompt' | 'tool' | 'stop';
 export interface FakeHarnessDriver {
   /** Cursor guards allow a new batch during a retry, but never replay a delivered batch. */
   syncGuard?: 'cursor';
-  newSession(): FakeSession;
+  newSession(workspaceRoot?: string): FakeSession;
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;
   readHookStdout(stdout: string): { kind: 'context' | 'continue' | 'none'; frame?: string };
   /** Replace only external I/O, keeping the adapter's real wake implementation. */
@@ -22,6 +22,8 @@ export interface FakeHarnessDriver {
     drivers: readonly WakeDriver[];
     prompt(): string | undefined;
     prepare?(files: SessionFiles): Promise<void>;
+    /** Harnesses that append wake input after the prompt hook acknowledge at the next hook. */
+    afterPrompt?(): Promise<void>;
   };
 }
 

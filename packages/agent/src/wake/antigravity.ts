@@ -11,7 +11,6 @@ import { withWakeLock } from './shared/lock';
 import { resetWakeDriver } from './shared/nonce';
 
 const file = 'antigravity-wake.json';
-export const ANTIGRAVITY_REGISTER_HINT = 'Run npx -y khala-cli wake register --harness antigravity through your own shell tool after khala_join and at every session start; repeat if the local server restarts. Never print or send the credential environment variables.';
 type Credentials = { sessionId: string; address: string; token: string; command: string; rejected?: boolean };
 const localAddress = (value: unknown): value is string => typeof value === 'string'
   && /^(?:localhost|127\.0\.0\.1|\[::1\]):([0-9]{1,5})$/u.test(value)
@@ -23,6 +22,8 @@ async function credentials(files: SessionFiles, sessionId: string): Promise<Cred
     const handle = await fs.open(path.join(files.dir, file), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
     try {
       const stat = await handle.stat();
+      // Re-check ownership and permissions on every read: another local process
+      // or a user chmod can expose credentials after the private atomic write.
       if (!stat.isFile() || stat.size > 16 * 1024 || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)
         || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) return null;
       value = JSON.parse(await handle.readFile('utf8')) as Credentials;
@@ -33,12 +34,24 @@ async function credentials(files: SessionFiles, sessionId: string): Promise<Cred
     && typeof value.command === 'string' && (path.isAbsolute(value.command) || value.command === 'agy') ? value : null;
 }
 
+/** Prefer the updater's stable PATH entry over the running process's rotated .old binary. */
+async function stableAgyCommand(env: NodeJS.ProcessEnv): Promise<string> {
+  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const name of process.platform === 'win32' ? ['agy.exe', 'agy.cmd', 'agy'] : ['agy']) {
+      const candidate = path.resolve(dir, name);
+      try { await fs.access(candidate, constants.X_OK); if ((await fs.stat(candidate)).isFile()) return candidate; }
+      catch { /* Try the next PATH entry. */ }
+    }
+  }
+  return env.ANTIGRAVITY_AGENTAPI_EXE || 'agy';
+}
+
 /** Only agy's agent shell receives these variables; never return their values. */
 export async function registerAntigravityWake(env: NodeJS.ProcessEnv): Promise<void> {
   const sessionId = env.ANTIGRAVITY_CONVERSATION_ID;
   const address = env.ANTIGRAVITY_LS_ADDRESS;
   const token = env.ANTIGRAVITY_CSRF_TOKEN;
-  const command = env.ANTIGRAVITY_AGENTAPI_EXE || 'agy';
+  const command = await stableAgyCommand(env);
   if (!sessionId || !SESSION_ID_PATTERN.test(sessionId) || !localAddress(address) || !token
     || /[\r\n\0]/u.test(token) || !(path.isAbsolute(command) || command === 'agy')) throw new Error('antigravity_registration_unavailable');
   const files = await openSessionDir('antigravity', sessionId, env);
@@ -83,13 +96,13 @@ export function createAntigravityWakeDriver(execute: AntigravityRun = run): Wake
 }
 
 /** U28's native messages enter as SYSTEM_MESSAGE transcript steps, not hook prompt fields. */
-export async function antigravityPromptText(input: NonNullable<ReturnType<DeliverCodec['parse']>>): Promise<string> {
-  if (!input.transcriptPath) return '';
+export async function antigravityPromptText(input: NonNullable<ReturnType<DeliverCodec['parse']>>): Promise<string | undefined> {
+  if (!input.transcriptPath) return undefined;
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(input.transcriptPath, constants.O_RDONLY | constants.O_NONBLOCK);
     const stat = await handle.stat();
-    if (!stat.isFile()) return '';
+    if (!stat.isFile()) return undefined;
     const length = Math.min(stat.size, 64 * 1024), start = stat.size - length;
     const buffer = Buffer.alloc(length);
     const { bytesRead } = await handle.read(buffer, 0, length, start);
@@ -111,7 +124,7 @@ export async function antigravityPromptText(input: NonNullable<ReturnType<Delive
           return nonce ? [CODEX_IDLE_WAKE_NOTICE + ' ' + nonce] : [];
         });
       } catch { return []; }
-    }).join('\n');
-  } catch { return ''; }
+    }).join('\n') || undefined;
+  } catch { return undefined; }
   finally { await handle?.close().catch(() => {}); }
 }
