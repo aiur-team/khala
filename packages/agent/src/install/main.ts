@@ -6,11 +6,13 @@ import { codexHooksFragment, mergeCodexHooks } from '../../codex/hooks-config.mj
 import { bundle } from '../bundle';
 import { runMcpInstall } from './mcp';
 import { adapterFor } from '../harness';
+import { consentLine, setWake } from '../wake/cli';
+import { wakeDrivers } from '../wake/status';
 import { cursorPaths, installCursor } from './cursor';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--uninstall] | khala install cursor [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -209,7 +211,18 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
   if (target === 'mcp') return runMcpInstall(flags, deps);
   const adapter = adapterFor(target);
   const run = adapter?.install;
-  if (run) return run(flags, deps);
+  if (run) {
+    const wake = !flags.includes('--no-wake');
+    const result = await run(flags.filter(flag => flag !== '--wake' && flag !== '--no-wake'), deps);
+    if (result === 0 && !flags.includes('--uninstall')) {
+      const drivers = wakeDrivers(target).filter(driver => driver.optIn).map(driver => driver.id);
+      if (drivers.length) {
+        await setWake(target, drivers, wake, deps.env ?? process.env);
+        (deps.stdout ?? console.log)(consentLine(target, drivers, wake));
+      }
+    }
+    return result;
+  }
   (deps.stderr ?? (line => { process.stderr.write(line + '\n'); }))(USAGE);
   return 1;
 }
