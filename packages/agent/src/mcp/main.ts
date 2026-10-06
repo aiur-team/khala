@@ -2,6 +2,7 @@ import { Console } from 'node:console';
 import type { Readable, Writable } from 'node:stream';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { KhalaClientError, type KhalaAgentClient } from '../client';
+import { codexStartupSessions } from './startup-sessions';
 import { createToolRegistry } from './registry';
 import { runMcpServer } from './server';
 import { resolveHarness, resolveSession } from './session-id';
@@ -51,6 +52,9 @@ export async function runMcpCommand(argv: readonly string[], deps: {
   };
   const startupSession = adapterFor(harness)?.restoreAtStartup ? await resolveSession(harness, undefined, env) : null;
   if (startupSession !== null) clientForSession(startupSession);
+  else if (harness === 'codex' && env.CODEX_THREAD_ID === undefined) {
+    for (const session of await codexStartupSessions(env)) clientForSession(session);
+  }
   const tools = createKhalaTools({
     harness,
     async clientFor(meta) {
