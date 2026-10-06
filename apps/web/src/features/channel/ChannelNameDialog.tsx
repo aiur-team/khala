@@ -1,8 +1,8 @@
 // The name prompt a channel shows only when the viewer, or one of the viewer's
 // agents, shares a name with someone who held it here first. It sets a name for
-// this channel only and has a single action: Save.
+// this channel only, without blocking interaction with the channel.
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AGENT_NAME_MAX, checkName, USERNAME_MAX, type NameError } from '@khala/contracts/m1/names';
 import type { ChannelNamePrompt } from './channel-names';
 
@@ -36,28 +36,16 @@ export function ChannelNameDialog({ prompt, onSave }: Readonly<{ prompt: Channel
   const [draft, setDraft] = useState(prompt.suggestion);
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const dialog = useRef<HTMLDivElement>(null);
-  const input = useRef<HTMLInputElement>(null);
+  const [dismissed, setDismissed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const headingId = useId();
   const noteId = useId();
   const errorId = useId();
   useEffect(() => {
-    input.current?.focus();
-    input.current?.select();
     return () => request.current?.abort();
   }, []);
   const rule = channelNameError(prompt, draft);
   const message = rule ?? failure;
-
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Tab') return;
-    const items = [...(dialog.current?.querySelectorAll<HTMLElement>('input, button:not([disabled])') ?? [])];
-    const first = items[0], last = items[items.length - 1];
-    if (!first || !last) { event.preventDefault(); return; }
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
 
   async function submit() {
     request.current?.abort();
@@ -71,22 +59,25 @@ export function ChannelNameDialog({ prompt, onSave }: Readonly<{ prompt: Channel
     if (result.kind === 'error') setFailure(result.message);
   }
 
+  if (dismissed) return null;
+
   const human = prompt.kind === 'human';
-  return <div className="kh-cname-scrim">
-    <div ref={dialog} className="kh-cname" role="dialog" aria-modal="true" aria-labelledby={headingId} aria-describedby={noteId}
-      data-kh-name-prompt={prompt.participantId} onKeyDown={onKeyDown}>
+  return <div className="kh-cname-banner">
+    <div className="kh-cname" role="region" aria-labelledby={headingId} aria-describedby={noteId}
+      data-kh-name-prompt={prompt.participantId}>
       <h2 id={headingId}>{human ? 'Your name in this channel' : 'Agent name in this channel'}</h2>
       <p id={noteId} className="kh-cname-note">{channelNameNote(prompt)}</p>
       <form className="kh-cname-form" noValidate onSubmit={event => { event.preventDefault(); if (!rule && !saving) void submit(); }}>
         <div className="kh-cname-field">
           <span className="kh-cname-at" aria-hidden="true">@</span>
-          <input ref={input} className="kh-txt" aria-labelledby={headingId} aria-invalid={message ? true : undefined}
+          <input className="kh-txt" aria-labelledby={headingId} aria-invalid={message ? true : undefined}
             {...(message ? { 'aria-describedby': errorId } : {})} value={draft} maxLength={human ? USERNAME_MAX : AGENT_NAME_MAX}
             autoComplete="off" autoCapitalize="none" spellCheck={false}
             onChange={event => { setDraft(event.target.value); setFailure(null); }} />
         </div>
         {message ? <p className="kh-cname-err" id={errorId} role="alert">{message}</p> : null}
         <div className="kh-cname-actions">
+          <button type="button" className="kh-btn" onClick={() => { request.current?.abort(); setDismissed(true); }}>Dismiss</button>
           <button type="submit" className="kh-btn pri" disabled={rule !== null || saving}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </form>

@@ -163,7 +163,7 @@ test('channel header, roster, popovers and detail pane', { timeout: 120_000 }, a
     await page.locator('.kh-rai[data-kh-agent="agent_scout"]').click();
     const detail = page.getByRole('complementary', { name: 'Scout details' });
     await detail.waitFor();
-    assert.equal(await detail.locator('.kh-d-owner').textContent(), 'YOYour agent');
+    assert.equal(await detail.locator('.kh-d-owner').textContent(), 'SCYour agent');
     assert.equal(await detail.locator('.kh-d-kv dt').allTextContents().then(items => items.join(',')), 'Harness,Owner,Joined');
     assert.equal(await detail.locator('.kh-d-log > div').count(), 2);
     assert.equal(await detail.locator('.kh-d-log time').first().getAttribute('datetime'), '2026-10-01T16:52:00Z');

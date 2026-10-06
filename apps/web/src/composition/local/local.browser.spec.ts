@@ -142,13 +142,13 @@ test('the real local app runs end to end against a faked helper', { timeout: 180
         await expect(page.locator('.timeline__row', { hasText: 'hello agents' })).toHaveCount(1);
 
         // F4 an agent message over the held events long-poll: sender name, and the owner's
-        // badge in the owner's colour. With no initials chosen the badge reads `YO` (#1056 ruling).
+        // badge in the owner's colour. With no initials chosen the badge uses the agent display name.
         const said = fake.agentSays(FAKE_R1, FAKE_CLAUDE, 'On it. Reviewing PR #12 now.');
         const row = page.locator(`[data-event-id="${said.eventId}"]`);
         await row.waitFor({ timeout: 5000 });
         await expect(row).toContainText('kevin-Claude');
         await expect(row).toContainText('On it. Reviewing PR #12 now.');
-        await expect(ownerBadge(row)).toHaveText('YO');
+        await expect(ownerBadge(row)).toHaveText('KC');
         const ownerColor = await background(ownerBadge(row));
         assert.notEqual(ownerColor, 'rgba(0, 0, 0, 0)', 'the owner badge is drawn in the owner colour');
 
