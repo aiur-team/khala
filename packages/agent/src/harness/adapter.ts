@@ -1,6 +1,6 @@
+import type { SessionFiles } from '../state';
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
-import type { SessionFiles } from '../state';
 import type { WakeDriver } from '../wake/driver';
 import type { EmptyPrompt } from '../wake/terminal/prompt-guard';
 
@@ -38,6 +38,8 @@ export type HarnessAdapter = Readonly<{
   wakeWarningName?: string;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;
+  /** Native wakes may verify outside UserPromptSubmit. */
+  verifyWake?: (stdin: string, files: SessionFiles, now: number) => Promise<void>;
   /** Native notification proof, scoped to the run that reached Stop. */
   stopWakeText?: (stdin: string, files: SessionFiles, env: NodeJS.ProcessEnv) => Promise<{ text: string; at: number } | undefined>;
   /** Context for a joined session at startup, without channel content. */

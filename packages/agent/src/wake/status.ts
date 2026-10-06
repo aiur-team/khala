@@ -8,10 +8,15 @@ import type { WakeDriver } from './driver';
 export const CODEX_DAEMON_WAKE_NOTE = 'Codex threads can keep answering mentions while the app-server daemon runs, even after the TUI exits. Stop with khala_leave, khala wake off --harness codex, or codex app-server daemon stop.';
 
 export const WAKE_STATES = {
+  held: { reason: 'Held by your Qwen setting.', remedy: '/peers accept, or change agents.crossSessionInbound in Qwen settings.' },
   active: { reason: 'Idle wake is on.', remedy: '' },
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
   unavailable: { reason: 'No remote-control API is available.', remedy: '', reasons: {
     wake_status_unavailable: 'Wake status is unavailable.',
+    qwen_session_missing: 'Run wake status inside a Qwen session; its messaging socket is not inherited here.',
+    qwen_socket_missing: 'Qwen session registry or private controller credential is unavailable.',
+    qwen_watcher_missing: 'The Qwen background shell watcher is not armed; call khala_status inside Qwen for its installed run_shell_command command.',
+    qwen_refused: 'Qwen cross-session messaging is refused or off.',
     queue_missing: 'Codex queue is missing.',
     codex_binary_missing: 'Codex queue is missing.',
     codex_queue_unavailable: 'Codex queue is unavailable.',
@@ -88,6 +93,7 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
       state = available ? 'active' : 'unavailable';
       if (!available) {
         const reason = await driver.runtime.unavailableReason?.(ctx);
+        if (reason === 'qwen_held') state = 'held';
         if (reason && Object.hasOwn(WAKE_STATES.unavailable.reasons, reason)) unavailableReason = reason as WakeUnavailableReason;
       }
     } else {

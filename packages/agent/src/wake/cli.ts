@@ -26,7 +26,11 @@ export async function setWake(harness: string, drivers: readonly string[], on: b
     }
   });
   if (on) for (const id of await sessionIds(harness, env)) {
-    for (const driver of drivers) await resetWakeDriver(filesForDir(path.join(root, harness, id)).dir, driver);
+    for (const driver of drivers) {
+      const dir = filesForDir(path.join(root, harness, id)).dir;
+      await resetWakeDriver(dir, driver);
+      if (harness === 'qwen' && driver === 'socket') await fs.rm(path.join(dir, 'qwen-receipt.json'), { force: true });
+    }
   }
 }
 export function consentLine(harness: string, drivers: readonly string[], on: boolean): string {
