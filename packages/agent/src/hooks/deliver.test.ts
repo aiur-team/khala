@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { channelFiles, openSessionDir, sessionFiles, StateError, writeStatus, type SessionFiles } from '../state';
@@ -200,17 +199,18 @@ it('delivers a thousand-line inbox within the in-process performance budget', as
   const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
   const stdin = JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit' });
   const io = { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() };
-  // Exclude Node/tsx startup. A full second leaves room for loaded CI runners
-  // while still catching substantial regressions in the delivery work itself.
-  const start = performance.now();
+  // Delivery uses ~7.6 ms CPU locally (6.3–10.9 ms across five samples).
+  // A ~10x budget catches large regressions without counting startup or CPU contention waits.
+  const start = process.cpuUsage();
   const code = await deliver(stdin, ['--harness', 'claude'], io);
-  const elapsed = performance.now() - start;
+  const cpu = process.cpuUsage(start);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
   expect(code).toBe(0);
   expect(stderr.write).not.toHaveBeenCalled();
   expect(stdout.write).toHaveBeenCalledTimes(1);
   expect(JSON.parse(stdout.write.mock.calls[0]![0]).hookSpecificOutput.additionalContext).toContain('count="50"');
   expect((await readCursor(files)).deliveredCount).toBe(50);
-  expect(elapsed).toBeLessThan(1000);
+  expect(cpuMs).toBeLessThan(75);
 });
 
 it('recomputes once after a cursor conflict', async () => {
