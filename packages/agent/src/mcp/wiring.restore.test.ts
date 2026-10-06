@@ -147,3 +147,57 @@ it('arms Claude before clean-exit restoration and wakes before its first Stop', 
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+
+it.each(['session-start', 'idle'])('restores both OpenCode channels from a late %s hook and delivers gap messages once', async event => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-opencode-restore-'));
+  const env = { XDG_STATE_HOME: root };
+  const files = await openSessionDir('opencode', 'ses_resumed', env);
+  const secret = 'S'.repeat(43);
+  await writeStateFile(files.dir, 'rejoin.json', { secret });
+  const rooms = ['!local:local', '!hosted:test'];
+  for (const [index, roomId] of rooms.entries()) {
+    const nested = channelFiles(files, roomId);
+    await ensureStateDir(nested.dir);
+    await writeStateFile(nested.dir, 'channel.json', { roomId, channelName: `Channel ${index}`, joinedAt: new Date(Date.now() - 60_000).toISOString() });
+    await writeStateFile(nested.dir, 'resume.json', { link: `http://127.0.0.1:47830/join/channel${index}`, label: 'Agent', roomId,
+      workspace: process.cwd(), secretHash: createHash('sha256').update(secret).digest('hex'),
+      ...(index === 0 ? { localCredentials: { transport: 'local', homeserver: 'http://127.0.0.1:47830', userId: '@agent:local', accessToken: 'private', deviceId: 'device', roomId } } : {}) });
+  }
+  const fetcher = vi.fn(async (url: string | URL | Request) => {
+    const request = String(url);
+    if (request.endsWith('/api/agent/join')) return new Response(JSON.stringify({ joinId: 'restored', pollSecret: 'private',
+      confirmUrl: 'http://127.0.0.1:47830/agent/confirm', expiresAt: new Date(Date.now() + 60_000).toISOString(), autoConfirmed: true }), { status: 201 });
+    if (request.includes('/poll')) return new Response(JSON.stringify({ state: 'confirmed', credentials: { homeserver: 'https://matrix.example', userId: '@agent:test',
+      accessToken: 'private', deviceId: 'device', roomId: rooms[1] } }), { status: 200 });
+    return new Response(null, { status: 204 });
+  });
+  const start = vi.fn(async (credentials: { roomId: string; userId: string }): Promise<ChannelSession> => ({
+    userId: credentials.userId, inviter: () => '@owner:test', displayName: () => 'Agent', roomName: () => credentials.roomId,
+    onMessage: () => () => {}, onListeningModeCommand: () => () => {}, publishListeningMode: async () => {},
+    waitForInvite: async () => {}, join: async () => {},
+    history: async () => ({ messages: [{ eventId: `$gap-${credentials.roomId}`, roomId: credentials.roomId, sender: '@owner:test',
+      ts: Date.now(), type: 'm.room.message', body: `gap for ${credentials.roomId}`, content: {} }] }),
+    send: async () => ({ eventId: '$send' }), sendChannelEvent: async () => ({ eventId: '$event' }), stop: async () => {},
+  }));
+  const factory = createRealClientFactory(env, { createClient: options => createKhalaAgentClient({ ...options, fetch: fetcher, startSession: start }) });
+  const input = new PassThrough(), output = new PassThrough();
+  const running = runMcpCommand(['--harness', 'opencode'], { env, input, output, createClient: factory });
+  const { deliver } = await import('../../hooks/deliver');
+  let frame = '', stderr = '';
+  const io = { env, now: () => new Date(), stdout: { write: (text: string) => { frame += text; } }, stderr: { write: (text: string) => { stderr += text; } } };
+  try {
+    await deliver(JSON.stringify({ session_id: 'ses_resumed', event }), ['--harness', 'opencode'], io);
+    await vi.waitFor(async () => {
+      for (const roomId of rooms) expect(await readStatus(channelFiles(files, roomId))).toMatchObject({ state: 'connected' });
+    }, { timeout: 4_000 });
+    await deliver(JSON.stringify({ session_id: 'ses_resumed', event: 'idle' }), ['--harness', 'opencode'], io);
+    expect(frame).toMatch(/^Khala: channel messages are waiting/);
+    for (const roomId of rooms) expect(frame.split(`gap for ${roomId}`)).toHaveLength(2);
+    frame = '';
+    await deliver(JSON.stringify({ session_id: 'ses_resumed', event: 'idle' }), ['--harness', 'opencode'], io);
+    expect(frame).toBe('');
+    expect(stderr).toBe('');
+    expect(start).toHaveBeenCalledTimes(2);
+  } finally { input.end(); await running; output.destroy(); await fs.rm(root, { recursive: true, force: true }); }
+});

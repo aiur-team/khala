@@ -175,7 +175,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
   if (!codec) return 0;
   const input = codec.parse(stdin);
   let output = codec.noop(input?.event);
-  if (input && (input.event === 'prompt' || input.event === 'start') && input.sessionId
+  if (input && (input.event === 'prompt' || input.event === 'start' || adapter.id === 'opencode' && input.event === 'stop') && input.sessionId
     && adapter.sessionSources.some(source => source.kind === 'hook-map')) {
     try { await recordHookSession(adapter.id, input.sessionId, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}), ...(io.readProcess ? { readProcess: io.readProcess } : {}), ...(input.workspace !== undefined ? { workspace: input.workspace } : {}) }); }
     catch (error) { diagnostic(io, error instanceof StateError ? error.code : 'internal_error'); }
