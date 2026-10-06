@@ -43,10 +43,10 @@ it('installs the pinned package and points Codex MCP and hooks at its stable bin
   expect(await run(['codex'])).toBe(0);
   expect(await fs.readFile(path.join(codex(), 'config.toml'), 'utf8')).toBe(toml);
   expect(JSON.parse(await fs.readFile(path.join(codex(), 'hooks.json'), 'utf8'))).toEqual(hooks);
-  // Uninstall restores the original config and leaves an empty hooks map.
+  // Uninstall restores the original config and removes the hooks.json it created.
   expect(await run(['codex', '--uninstall'])).toBe(0);
   expect(await fs.readFile(path.join(codex(), 'config.toml'), 'utf8')).toBe('model = "x"\n\n[mcp_servers.other]\ncommand = "o"\n');
-  expect(JSON.parse(await fs.readFile(path.join(codex(), 'hooks.json'), 'utf8'))).toEqual({ hooks: {} });
+  expect((await fs.readdir(codex())).sort()).toEqual(['config.toml']);
 });
 
 it('refuses an unmanaged khala table and malformed hooks without writing or installing', async () => {

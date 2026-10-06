@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { codexHooksFragment, mergeCodexHooks } from '../../codex/hooks-config.mjs';
@@ -10,6 +9,8 @@ import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
 import { cursorPaths, installCursor } from './cursor';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
+import { ManagedFiles, formatJson, jsonFormat, readManaged, textFormat } from './managed-file';
+import { stateRoot } from '../state';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
 const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
@@ -50,7 +51,7 @@ export async function runCursorInstall(flags: readonly string[], deps: InstallDe
   const paths = cursorPaths({ platform, path: pathApi, home, env }, pkg?.name);
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   return installCursor({
-    paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
+    paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
@@ -77,7 +78,7 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   const override = env.KHALA_OPENCODE_PLUGIN_SPEC;
   const plugin = uninstall ? null : override || (await opencodePluginPublished(pkg!.version, deps.fetchRegistry) ? `khala-opencode@${pkg!.version}` : null);
-  return installOpenCode({ paths, platform, uninstall, stdout, stderr, plugin,
+  return installOpenCode({ paths, platform, uninstall, stdout, stderr, plugin, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
@@ -85,6 +86,11 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
       return false;
     },
   });
+}
+
+/** Khala's state directory for the installer's `home` (tests pass a home without HOME). */
+function installStateDir(env: NodeJS.ProcessEnv, home: string): string {
+  return stateRoot(env.XDG_STATE_HOME ? env : { ...env, HOME: home });
 }
 
 /** POSIX single-quotes a path for a hook command line. */
@@ -137,11 +143,6 @@ export function codexMcpBlock(bin: string, env: NodeJS.ProcessEnv, codexHome?: s
   ].join('\n');
 }
 
-async function readOr(file: string, fallback: string): Promise<{ text: string; mode: number }> {
-  try { return { text: await fs.readFile(file, 'utf8'), mode: (await fs.stat(file)).mode & 0o777 }; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: fallback, mode: 0o600 }; throw error; }
-}
-
 /**
  * `khala install codex`: installs this exact package version under
  * `${XDG_DATA_HOME:-~/.local/share}/khala/npm`, then points Codex's MCP table and the three
@@ -172,14 +173,13 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
 
   const hooksFile = path.join(codexHome, 'hooks.json');
   const tomlFile = path.join(codexHome, 'config.toml');
-  const hooks = await readOr(hooksFile, '{"hooks":{}}\n');
-  const toml = await readOr(tomlFile, '');
-  let parsed: unknown;
-  try { parsed = JSON.parse(hooks.text); } catch { stderr('khala: invalid hooks.json in ' + codexHome); return 1; }
+  const hooks = await readManaged(hooksFile);
+  const toml = await readManaged(tomlFile);
+  const fragment = codexHooksFragment(command);
   let merged: { config: unknown; warnings: string[] };
-  try { merged = mergeCodexHooks(parsed, uninstall ? 'uninstall' : 'install', codexHooksFragment(command)); }
+  try { merged = mergeCodexHooks(jsonFormat.parse(hooks.text ?? ''), uninstall ? 'uninstall' : 'install', fragment); }
   catch { stderr('khala: invalid hooks.json in ' + codexHome); return 1; }
-  const nextToml = updateCodexToml(toml.text, uninstall ? null : codexMcpBlock(bin, env, codexHome));
+  const nextToml = updateCodexToml(toml.text ?? '', uninstall ? null : codexMcpBlock(bin, env, codexHome));
   if ('error' in nextToml) {
     stderr(`khala: ${tomlFile} already has an unmanaged [mcp_servers.khala] table; remove it and run this again`);
     return 1;
@@ -191,14 +191,21 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
     stdout(`installing ${spec} into ${prefix}`);
     if (!(deps.npmInstall ?? defaultNpmInstall)(prefix, spec)) { stderr('khala: npm install failed for ' + spec); return 1; }
   }
-  await fs.mkdir(codexHome, { recursive: true });
-  if (!uninstall) {
-    try { await fs.writeFile(hooksFile + '.khala-bak', hooks.text, { flag: 'wx', mode: hooks.mode }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  }
   for (const warning of merged.warnings) stderr(warning);
-  await fs.writeFile(hooksFile, JSON.stringify(merged.config, null, 2) + '\n', { mode: hooks.mode });
-  await fs.writeFile(tomlFile, nextToml.text, { mode: toml.mode });
+  const managed = new ManagedFiles(stateRoot(env));
+  if (uninstall) {
+    await managed.restore(hooks, jsonFormat, value => mergeCodexHooks(value, 'uninstall', fragment).config);
+    await managed.restore(toml, textFormat, value => {
+      const next = updateCodexToml(String(value), null);
+      return 'text' in next ? next.text : value;
+    });
+  } else {
+    // New files are private (0600); existing files keep their mode.
+    await managed.write([
+      { current: hooks, text: formatJson(merged.config, hooks.text), mode: 0o600 },
+      { current: toml, text: nextToml.text, mode: 0o600 },
+    ]);
+  }
   if (uninstall) {
     stdout(`removed the Khala MCP server and hooks from ${codexHome}; delete ${prefix} to remove the CLI`);
   } else {
