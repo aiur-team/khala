@@ -5,10 +5,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
+import { readProcess, type ProcessReader } from './harness/proc';
 
 export type AgentState = 'idle' | 'joining' | 'connected' | 'send_failed' | 'disconnected';
 /** `displayName` is the agent's own current name in the channel; hooks show it as `you=`. */
-export type StatusFile = { state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };
+export type StatusFile = { owner?: { pid: number; startTime: string }; state: AgentState; channelName?: string; displayName?: string; detail?: string; updatedAt: string };
 export type JoinFile = { joinId: string; pollSecret: string; confirmUrl: string; expiresAt: string; link: string };
 export type SessionFiles = { dir: string; join: string; session: string; inbox: string; cursor: string; status: string; mode: string };
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -155,14 +156,30 @@ export function readJoin(files: SessionFiles): Promise<JoinFile | null> { return
 export async function saveSession(files: SessionFiles, credentials: AgentCredentials): Promise<void> { await writeJsonAtomic(files.session, credentials); }
 export async function removeSession(files: SessionFiles): Promise<void> { await removeStateFile(files.dir, 'session.json'); }
 export async function writeStatus(files: SessionFiles, state: AgentState, detail?: string, now: () => Date = () => new Date(), channelName?: string, displayName?: string): Promise<StatusFile> {
-  const status = { state, ...(channelName ? { channelName } : {}), ...(displayName ? { displayName } : {}), ...(detail ? { detail } : {}), updatedAt: now().toISOString() };
-  await writeJsonAtomic(files.status, status);
-  return status;
+  const status: StatusFile = { state, ...(channelName ? { channelName } : {}), ...(displayName ? { displayName } : {}), ...(detail ? { detail } : {}), updatedAt: now().toISOString() };
+  const snapshot = await ownStatus(status);
+  await writeJsonAtomic(files.status, snapshot);
+  return snapshot;
 }
-export function readStatus(files: SessionFiles): Promise<StatusFile | null> { return readJson(files.status); }
+let processIdentity: ReturnType<typeof readProcess> | undefined;
+async function ownStatus<T>(value: T): Promise<T> {
+  if (!value || typeof value !== 'object' || !('state' in value) || !['connected', 'send_failed'].includes(String(value.state))) return value;
+  const owner = await (processIdentity ??= readProcess(process.pid));
+  return owner ? { ...value, owner: { pid: owner.pid, startTime: owner.startTime } } : value;
+}
+/** Status files are snapshots. A dead or reused writer PID cannot report a live connection. */
+export async function readStatus(files: SessionFiles, read: ProcessReader = readProcess): Promise<StatusFile | null> {
+  const status = await readJson<StatusFile>(files.status);
+  if (!status || !['connected', 'send_failed'].includes(status.state)) return status;
+  const owner = status.owner;
+  const writer = owner && Number.isSafeInteger(owner.pid) && owner.pid > 0 && typeof owner.startTime === 'string'
+    ? await read(owner.pid) : null;
+  return writer && writer.startTime === owner?.startTime ? status
+    : { ...status, state: 'disconnected', detail: 'process_exited' };
+}
 export async function writeStateFile(dir: string, name: 'join.json' | 'session.json' | 'cursor.json' | 'status.json' | 'mode.json' | 'rejoin.json' | 'channel.json' | 'resume.json', value: unknown): Promise<void> {
   if (!['join.json', 'session.json', 'cursor.json', 'status.json', 'mode.json', 'rejoin.json', 'channel.json', 'resume.json'].includes(name)) throw new StateError('storage_failed');
-  await writeJsonAtomic(path.join(dir, name), value);
+  await writeJsonAtomic(path.join(dir, name), name === 'status.json' ? await ownStatus(value) : value);
 }
 export function readStateFile<T>(dir: string, name: string): Promise<T | null> {
   if (!/^[a-z]+\.json$/.test(name)) throw new StateError('storage_failed');
