@@ -318,5 +318,7 @@ it('Muse join and status supply an absolute watcher command with explicit sessio
     expect(text).toContain('muse-explicit');
     expect(text).toContain('/khala/npm/bin/khala');
     expect(text).toContain('wake_delay_ms: 0');
+    expect(text).toContain('Do not call khala_read or reply to the wake notice');
+    expect(text).not.toContain('use khala_read for channel content');
   }
 });

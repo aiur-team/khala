@@ -49,6 +49,9 @@ it('reminds a joined session at startup without leaking channel content and stay
   expect(output).toContain('persistent: true');
   expect(output).toContain('show_lines: true');
   expect(output).toContain("watch --harness muse --session 'session'");
+  expect(output).toContain('Do not call khala_read or reply to the wake notice');
+  expect(output).toContain('End the turn so the Stop hook can deliver the frame');
+  expect(output).not.toContain('use khala_read for channel content');
   expect(output).not.toContain('CHANNELMARK');
   await writeStatus(files, 'disconnected', 'removed');
   output = '';
