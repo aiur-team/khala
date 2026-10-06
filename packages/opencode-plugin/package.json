@@ -10,11 +10,13 @@
     "directory": "packages/opencode-plugin"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./server": "./dist/index.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
@@ -31,5 +33,6 @@
     "@khala/agent": "workspace:*",
     "@opencode-ai/plugin": "1.15.6",
     "esbuild": "0.28.2"
-  }
+  },
+  "main": "./dist/index.js"
 }

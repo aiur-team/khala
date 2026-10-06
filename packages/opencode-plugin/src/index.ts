@@ -1,12 +1,24 @@
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import os from 'node:os';
 import path from 'node:path';
-import type { Plugin } from '@opencode-ai/plugin';
+import type { Hooks, Plugin } from '@opencode-ai/plugin';
 import { wakeParts } from './composition/wake';
 
 export type DeliveryInput = { session_id: string; event: 'session-start' | 'prompt' | 'post-tool' | 'idle'; prompt?: string; continuation?: boolean; replay?: boolean };
 export type Delivery = (input: DeliveryInput) => Promise<string>;
+type ChatMessage = NonNullable<Hooks['chat.message']>;
+type ToolAfter = NonNullable<Hooks['tool.execute.after']>;
+let lastPartTime = 0;
+let partCounter = 0;
+function partID(): string {
+  const now = Math.max(Date.now(), lastPartTime);
+  partCounter = now === lastPartTime ? partCounter + 1 : 0;
+  lastPartTime = now;
+  if (partCounter >= 4096) { lastPartTime++; partCounter = 0; }
+  return 'prt_' + (BigInt(lastPartTime) * 4096n + BigInt(partCounter)).toString(16).padStart(12, '0') + randomBytes(7).toString('hex');
+}
 const argv = ['hook', 'deliver', '--harness', 'opencode'];
 
 /** Shell-free hooks. Timeout and output bounds keep a failed CLI out of the user's turn. */
@@ -104,22 +116,23 @@ export function createHooks(client: PluginClient, deliver: Delivery, command: st
       // Preserve an explicitly configured foreign server.
       cfg.mcp = { khala: { type: 'local', command, enabled: true }, ...cfg.mcp };
     },
-    'chat.message': async (input: { sessionID: string; messageID?: string }, output: { parts: { type: string; text?: string; synthetic?: boolean }[] }) => {
+    'chat.message': async (input: Parameters<ChatMessage>[0], output: Parameters<ChatMessage>[1]) => {
       const state = session(input.sessionID);
       state.idle = false; state.generation++;
       if (input.messageID) { state.failures = 0; state.retryAt = 0; }
       const prompt = output.parts.filter(part => part.type === 'text').map(part => part.text ?? '').join('\n');
       const frame = await deliver({ session_id: input.sessionID, event: 'prompt', prompt });
-      if (frame && !disposed) output.parts.push({ type: 'text', text: frame, synthetic: true });
+      if (frame && !disposed) output.parts.push({ id: partID(), sessionID: input.sessionID, messageID: output.message.id, type: 'text', text: frame, synthetic: true });
     },
     'tool.execute.before': async (input: { sessionID: string; tool: string }, output: { args: Record<string, unknown> }) => {
       const state = session(input.sessionID);
       state.idle = false; state.generation++;
       if (input.tool.startsWith('khala_')) output.args.khala_session = input.sessionID;
     },
-    'tool.execute.after': async (input: { sessionID: string }, output: { output: string; content?: { type: string; text?: string }[] }) => {
+    'tool.execute.after': async (input: Parameters<ToolAfter>[0], output: Parameters<ToolAfter>[1] & { content?: { type: string; text?: string }[] }) => {
       const frame = await deliver({ session_id: input.sessionID, event: 'post-tool' });
       if (!frame || disposed) return;
+      // OpenCode normalizes built-in and MCP results to this same hook output.
       if (Array.isArray(output.content)) output.content.push({ type: 'text', text: frame });
       else output.output += frame;
     },
