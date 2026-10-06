@@ -263,7 +263,7 @@ it('uses authenticated shutdown and keeps real channels through a helper restart
   } finally { abort.abort(); await Promise.all(exits); }
 });
 
-it.each(['rejected', 'timeout'])('bounds failed shutdown (%s) and spends the restart allowance', async kind => {
+it.each(['rejected', 'timeout'])('adopts a healthy helper after failed shutdown (%s) and spends the restart allowance', async kind => {
   await write();
   const f = fake();
   let shutdowns = 0;
@@ -271,10 +271,53 @@ it.each(['rejected', 'timeout'])('bounds failed shutdown (%s) and spends the res
     if (String(url).endsWith('/shutdown')) { shutdowns++; return new Response(null, { status: kind === 'rejected' ? 403 : 204 }); }
     return Response.json({ ok: true, pid: 4242, version: '1.0.0' });
   });
-  await expect(ensureHelper(env, f.deps)).rejects.toMatchObject({ code: 'internal_error', message: 'helper_unavailable' });
+  await expect(ensureHelper(env, f.deps)).resolves.toEqual({ origin: file().origin, adminToken: token });
   expect(f.spawn).not.toHaveBeenCalled();
   await ensureHelper(env, f.deps);
   expect(shutdowns).toBe(1);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.time()).toBeLessThanOrEqual(2000);
+});
+
+it.each(['removed', 'stale'])('spawns and adopts when another CLI stops the helper with %s metadata', async metadata => {
+  await write();
+  const f = fake();
+  const replacement = file(4243, 'B'.repeat(43));
+  let shutdowns = 0;
+  f.fetch.mockImplementation(async url => {
+    if (String(url).endsWith('/shutdown')) {
+      shutdowns++;
+      if (metadata === 'removed') await fs.unlink(helperPaths(env).helperFile);
+      throw new Error('ECONNREFUSED');
+    }
+    if (shutdowns && !f.spawn.mock.calls.length) throw new Error('ECONNREFUSED');
+    return Response.json({ ok: true, pid: f.spawn.mock.calls.length ? replacement.pid : 4242, version: '1.0.0' });
+  });
+  const advance = f.sleep.getMockImplementation()!;
+  f.sleep.mockImplementation(async ms => { await advance(ms); await write(replacement); });
+  await expect(ensureHelper(env, f.deps)).resolves.toEqual({ origin: replacement.origin, adminToken: replacement.adminToken });
+  await expect(ensureHelper(env, f.deps)).resolves.toEqual({ origin: replacement.origin, adminToken: replacement.adminToken });
+  expect(f.spawn).toHaveBeenCalledOnce();
+  expect(shutdowns).toBe(1);
+});
+
+it.each([401, 403])('adopts replaced helper metadata after shutdown returns %s', async status => {
+  await write();
+  const f = fake();
+  const replacement = file(4243, 'B'.repeat(43));
+  let shutdowns = 0;
+  f.fetch.mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/shutdown')) {
+      shutdowns++;
+      expect(init?.headers).toEqual({ authorization: `Bearer ${token}` });
+      await write(replacement);
+      return new Response(null, { status });
+    }
+    return Response.json({ ok: true, pid: shutdowns ? replacement.pid : 4242, version: '1.0.0' });
+  });
+  for (let i = 0; i < 2; i++) {
+    await expect(ensureHelper(env, f.deps)).resolves.toEqual({ origin: replacement.origin, adminToken: replacement.adminToken });
+  }
+  expect(shutdowns).toBe(1);
+  expect(f.spawn).not.toHaveBeenCalled();
 });

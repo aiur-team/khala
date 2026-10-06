@@ -118,7 +118,11 @@ async function attempt(env: NodeJS.ProcessEnv, deps: EnsureHelperDeps, restartOr
         if (now() >= deadline || i === 19) throw new Error('shutdown_timeout');
         await sleep(100);
       }
-    } catch { throw new KhalaClientError('internal_error', 'helper_unavailable'); }
+    } catch {
+      // Another CLI may have stopped or replaced the helper during shutdown.
+      const refreshed = await readHelperFile(env);
+      if (refreshed && await healthy(fetchImpl, refreshed)) return connection(refreshed);
+    }
   }
 
   const paths = helperPaths(env);
