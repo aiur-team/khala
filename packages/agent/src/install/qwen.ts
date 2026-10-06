@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { stateRoot } from '../state';
+import { ManagedFiles, formatJson, jsonFormat, readManaged } from './managed-file';
 import { qwenControllerFile, qwenHome } from '../wake/qwen-socket';
 
 export const QWEN_WATCH_PERMISSION = 'Bash(khala watch --harness qwen --session *)';
@@ -61,9 +62,9 @@ export async function installQwen(input: {
   stdout: (line: string) => void; stderr: (line: string) => void;
 }): Promise<number> {
   const file = path.join(qwenHome(input.env), 'settings.json');
-  let before: string | undefined;
-  try { before = await fs.readFile(file, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const current = await readManaged(file);
+  const before = current.text;
+  const managed = new ManagedFiles(stateRoot(input.env));
   let config;
   try { config = before?.trim() ? JSON.parse(before.replace(/^\uFEFF/u, '')) : {}; }
   catch { input.stderr('khala: invalid Qwen settings.json'); return 1; }
@@ -103,13 +104,19 @@ export async function installQwen(input: {
       } finally { await fs.rm(temporary, { force: true }); }
       await fs.chmod(credentialFile, 0o600);
     }
-    if (!input.uninstall || before !== undefined) {
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      if (!input.uninstall && before !== undefined) {
-        try { await fs.writeFile(file + '.khala-bak', before, { flag: 'wx', mode: 0o600 }); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-      }
-      await fs.writeFile(file, JSON.stringify(merged.config, null, 2) + '\n', { mode: 0o600 });
+    if (input.uninstall) {
+      await managed.restore(current, jsonFormat, (value, original) => {
+        const removed = mergeQwenSettings(value, null, null, input.backgroundWake, input.watchCommand);
+        if ('error' in removed) throw new Error(removed.error);
+        // Empty containers that predate Khala belong to the user.
+        for (const key of ['mcpServers', 'hooks']) {
+          if (object(original) && object(original[key]) && !Object.keys(original[key]).length
+            && !Object.hasOwn(removed.config, key)) removed.config[key] = original[key];
+        }
+        return removed.config;
+      });
+    } else {
+      await managed.write([{ current, text: formatJson(merged.config, before), mode: 0o600 }]);
     }
     if (input.backgroundWake) {
       const watchFile = path.join(path.dirname(credentialFile), 'watch-command.json');

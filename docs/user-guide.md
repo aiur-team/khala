@@ -326,7 +326,10 @@ Stop hooks into `$QWEN_HOME/settings.json` (default `~/.qwen/settings.json`),
 keeping other servers and hooks. `khala install qwen --uninstall` removes those
 entries, revokes the trusted controller in Qwen, and removes its local credential;
 it leaves the installed CLI intact. If Qwen is missing, uninstall reports that
-revocation could not run.
+revocation could not run. Config edits use the shared installer recording:
+uninstall restores the original bytes when only Khala changed the file, or
+removes only Khala entries when you added other settings. A config created by
+Khala is removed when nothing else remains.
 
 On Linux and macOS, install mints a trusted Qwen controller credential and stores
 it with mode 0600 under Khala's state directory. Reinstall checks that Qwen still

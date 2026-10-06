@@ -85,7 +85,7 @@ it('revokes removed controllers, remints revoked IDs, and leaves no empty manage
     expect(minted).toBe(2);
     expect(await installQwen({ ...input, uninstall: true })).toBe(0);
     expect(removed).toEqual(['c_2']);
-    expect(JSON.parse(await fs.readFile(path.join(root, '.qwen/settings.json'), 'utf8'))).toEqual({});
+    await expect(fs.stat(path.join(root, '.qwen/settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
@@ -165,5 +165,25 @@ it('Windows install grants the exact persisted private CLI watcher command', asy
     const settings = JSON.parse(await fs.readFile(path.join(env.QWEN_HOME, 'settings.json'), 'utf8'));
     expect(settings.permissions.allow).toEqual([`Bash(${installed.command} --session *)`]);
     expect(settings.permissions.allow).not.toContain(QWEN_WATCH_PERMISSION);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('restores exact Qwen settings bytes and preserves subsequent user changes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qw-restore-'));
+  const env = { HOME: root, QWEN_HOME: path.join(root, 'qwen'), XDG_STATE_HOME: path.join(root, 'state') };
+  const file = path.join(env.QWEN_HOME, 'settings.json');
+  const original = '\uFEFF{\r\n\t"agents": {"crossSessionInbound": "hold"}, "hooks": {}\r\n}';
+  const input = { env, entry: { command: 'node', args: ['mcp', '--harness', 'qwen'] }, command: 'node khala hook deliver --harness qwen', uninstall: false, stdout: () => {}, stderr: () => {} };
+  try {
+    await fs.mkdir(env.QWEN_HOME); await fs.writeFile(file, original);
+    expect(await installQwen(input)).toBe(0);
+    expect(await installQwen(input)).toBe(0);
+    expect(await installQwen({ ...input, uninstall: true })).toBe(0);
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+    expect(await installQwen(input)).toBe(0);
+    const changed = JSON.parse((await fs.readFile(file, 'utf8')).replace(/^\uFEFF/u, ''));
+    changed.theme = 'dark'; await fs.writeFile(file, JSON.stringify(changed));
+    expect(await installQwen({ ...input, uninstall: true })).toBe(0);
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ agents: { crossSessionInbound: 'hold' }, hooks: {}, theme: 'dark' });
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
