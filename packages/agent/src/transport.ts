@@ -6,6 +6,7 @@ export type SessionModeCommand = { eventId: string; roomId: string; sender: stri
 export type SessionEndReason = 'removed' | 'channel_deleted' | 'unauthorized';
 export interface ChannelSession {
   readonly userId: string;
+  readonly cryptoReset?: boolean;
   listeningMode?(roomId: string): ListeningMode;
   onEnded?(handler: (reason: SessionEndReason) => void): () => void;
   inviter(roomId: string): string | undefined;
@@ -22,7 +23,7 @@ export interface ChannelSession {
   stop(): Promise<void>;
 }
 
-export type SessionOptions = { checkRemoved?: () => Promise<boolean> };
+export type SessionOptions = { cryptoStore?: { dir: string; root: string }; checkRemoved?: () => Promise<boolean> };
 export type StartSession = (creds: AgentCredentials, options?: SessionOptions) => Promise<ChannelSession>;
 export const startChannelSession: StartSession = async (creds, options) => creds.transport === 'local'
   ? (await import('./local/session')).createLocalSession(creds)
