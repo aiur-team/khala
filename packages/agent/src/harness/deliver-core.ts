@@ -5,6 +5,7 @@ import { sessionFiles, readStatus, StateError, type SessionFiles } from '../stat
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity } from '../activity';
+import { wakeDisableNotice } from '../wake/status';
 import { settleAttempts } from '../wake/shared/nonce';
 import { readListeningMode } from '../mode';
 import { isWakeEntry } from '../events/receive';
@@ -205,7 +206,8 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
             input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
           if (frame) {
             await writeActivity(files, 'busy', io.now);
-            output = codec.render(input.event, frame);
+            const notice = await wakeDisableNotice(files.dir);
+            output = codec.render(input.event, frame + (notice ? '\n' + notice : ''));
           } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
         }
       } catch (error) {

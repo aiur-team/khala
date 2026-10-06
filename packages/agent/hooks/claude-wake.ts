@@ -1,7 +1,8 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { filesForDir, resolveStateDir } from '../src/state';
+import { driverAllowed } from '../src/wake/shared/settings';
+import { filesForDir, stateRoot, resolveStateDir } from '../src/state';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
@@ -73,6 +74,7 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     const input = JSON.parse(stdin);
     if (!['Stop', 'SessionStart'].includes(input?.hook_event_name) || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
+    if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false)) return 0;
     const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
     if (input.hook_event_name === 'SessionStart') {
@@ -117,11 +119,11 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       return messages;
     };
     while (io.now().getTime() < deadline) {
-      if (!await owns() || !parentAlive(parent)) return 0;
+      if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) || !await owns() || !parentAlive(parent)) return 0;
       if (input.hook_event_name === 'SessionStart' && !(await sessionStartWakeChannels(filesForDir(dir), io.env)).length) return 0;
       if (await idle() && await unread() > 0) {
         // Delivery or a new prompt may have raced the first observation.
-        if (await unread() > 0 && await idle() && await owns()
+        if (await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) && await unread() > 0 && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
           state = 'woke';

@@ -115,6 +115,23 @@ it('keeps prompt delivery and busy activity when verification state is corrupt',
   expect(stderr).toContain('wake_verification_failed');
 });
 
+it('delivers a disable notice on the next frame only once', async () => {
+  const { recordAttempt, settleAttempts } = await import('../wake/shared');
+  for (const [nonce, at] of [['12345678', 100], ['abcdef12', 200]] as const) {
+    await recordAttempt(files.dir, { driver: 'terminal', nonce, at, deadline: at + 10 });
+    await settleAttempts(files.dir, { now: at + 10, activity: { state: 'idle', updatedAt: 0 } });
+  }
+  const input = '{"session_id":"session","hook_event_name":"UserPromptSubmit"}';
+  await deliverCore(input, adapterFor('codex')!, io);
+  expect(stdout).toContain('Idle wake (terminal)');
+  expect(stdout).toContain('khala wake on --driver terminal');
+  stdout = '';
+  await appendEntries(files, [{ eventId: '$second', roomId: '!room', ts: instant.toISOString(), sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'next' }]);
+  await deliverCore(input, adapterFor('codex')!, io);
+  expect(stdout).toContain('next');
+  expect(stdout).not.toContain('Idle wake (terminal)');
+});
+
 it.each(['codex', 'claude', 'cursor'] as const)('leaves both wake files unchanged on a %s prompt with no pending wake', async harness => {
   const adapter = adapterFor(harness)!;
   const codec: DeliverCodec = { ...adapter.codec!, parse: () => ({ sessionId: 'session', event: 'prompt', continuation: false, promptText: 'hello' }) };
