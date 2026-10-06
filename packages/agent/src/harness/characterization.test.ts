@@ -111,8 +111,8 @@ describe('public deliver entry point', () => {
       unread: (await unread(files)).entries.map(item => item.eventId),
     });
   });
-  it('unknown harness preserves the suppressed-hook exit code and streams', async () => {
-    await golden('unknown-harness', await hook('unknown', '{}'));
+  it.each(['unknown', 'gemini'])('%s preserves the suppressed-hook exit code and streams', async harness => {
+    await golden('unknown-harness', await hook(harness, '{}'));
   });
 });
 
