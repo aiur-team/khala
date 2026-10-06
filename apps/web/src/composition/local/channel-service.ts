@@ -9,6 +9,8 @@ import { createBrowserRoomJournal } from '../human/room-journal';
 
 export type LocalChannelService = Readonly<{
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
+  /** Shares the projection without marking the channel as viewed. */
+  observeBackgroundEntries: ChannelService['observeEntries'];
   /** Stops the current service; a later ready device builds a fresh one. */
   stop(): void;
   /** Stops the service and removes the device observer. */
@@ -75,6 +77,7 @@ export function createLocalChannelService(input: Readonly<{
       observe: (roomId, listener) => observe(roomId, active => active.observe(roomId, listener)),
       observeEntries: (roomId, listener) => observe(roomId, active => active.observeEntries(roomId, listener)),
     },
+    observeBackgroundEntries: (roomId, listener) => service()?.observeEntries(roomId, listener) ?? (() => undefined),
     stop,
     dispose() {
       if (disposed) return;

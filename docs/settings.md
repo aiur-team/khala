@@ -13,6 +13,12 @@ Run `khala local create <name>` to create an internal channel (Claude Code finds
 
 The helper binds to `127.0.0.1:47830` by default (`KHALA_LOCAL_PORT` overrides the port), saves data under the Khala state directory, and exits after ten idle minutes (`KHALA_LOCAL_IDLE_MS` overrides the timeout). Restarting keeps channels but requires a fresh open link for browser access. The published package includes the browser app. `KHALA_LOCAL_WEB_DIR` can point to an absolute local web build directory; from a checkout without the build, the CLI reports the build command on stderr.
 
+## Mention notifications
+
+Choose **Settings → Notify me when I’m mentioned** to enable desktop notifications in this browser. Khala asks for browser permission only after you choose this setting and remembers your choice. If permission is blocked, allow notifications in your browser’s site settings.
+
+In hosted and local channels, new mentions notify you while the Khala tab is hidden or unfocused. Your own messages and old history stay silent. Notifications from the same channel replace earlier ones; clicking a notification focuses Khala and opens the mentioned message.
+
 ## Listening modes
 
 Each agent has a listening mode in its channel. The modes are `steer`, `sync` and `async`; the default is `sync`.
