@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { appendEntries, readEntries, unread } from './inbox';
 import { channelKey, listChannels, migrateLegacy, resolveChannel, type ChannelRef } from './channels';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile, type SessionFiles } from './state';
@@ -118,18 +118,20 @@ it.each([false, true])('merges only legacy unread entries without replacing chan
   expect(await fs.readFile(nested.mode, 'utf8')).toBe(modeBytes);
 });
 
-it('leaves conflicting cursors and legacy data intact when destination history is absent', async () => {
+it.each([[1, 5], [5, 1], [0, 2], [2, 2]])('migrates conflicting cursors safely (legacy %s, channel %s)', async (legacy, channelCount) => {
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const nested = (await channel('!eco:test')).files;
-  await appendEntries(files, [entry('$delivered'), entry('$unread')]);
-  await writeStateFile(files.dir, 'cursor.json', { lastDeliveredEventId: '$delivered', deliveredCount: 1 });
-  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$other', deliveredCount: 5 });
-  await writeStateFile(files.dir, 'mode.json', { mode: 'sync' });
+  const entries = Array.from({ length: 6 }, (_, index) => entry(`$${index}`));
+  await appendEntries(files, entries);
+  await writeStateFile(files.dir, 'cursor.json', { lastDeliveredEventId: '$legacy', deliveredCount: legacy });
+  await writeStateFile(nested.dir, 'cursor.json', { lastDeliveredEventId: '$channel', deliveredCount: channelCount });
   await writeStateFile(nested.dir, 'mode.json', { mode: 'watch' });
-  const source = await Promise.all([files.cursor, files.mode, files.inbox].map(file => fs.readFile(file, 'utf8')));
-  const destination = await Promise.all([nested.cursor, nested.mode].map(file => fs.readFile(file, 'utf8')));
-  await expect(migrateLegacy(files)).rejects.toMatchObject({ code: 'storage_failed' });
-  expect(await Promise.all([files.cursor, files.mode, files.inbox].map(file => fs.readFile(file, 'utf8')))).toEqual(source);
-  expect(await Promise.all([nested.cursor, nested.mode].map(file => fs.readFile(file, 'utf8')))).toEqual(destination);
+  expect(await migrateLegacy(files)).toBe('moved');
+  expect((await unread(nested)).entries).toEqual(entries.slice(Math.min(legacy, channelCount)));
+  expect(warning).toHaveBeenCalledWith(expect.stringContaining(`using earlier position ${Math.min(legacy, channelCount)} to avoid skipping messages`));
+  warning.mockRestore();
+  expect(JSON.parse(await fs.readFile(nested.mode, 'utf8'))).toEqual({ mode: 'watch' });
+  expect(await migrateLegacy(files)).toBe('none');
 });
 it('preserves an existing mode while completing an interrupted cursor rename', async () => {
   const nested = (await channel('!eco:test')).files;

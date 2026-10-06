@@ -27,6 +27,11 @@ does not give a Cursor agent the tools.
 3. Tell the agent “Join this Khala channel: <link>” and open the confirmation link it
    returns.
 
+After confirmation, the agent should check the specific channel with `khala_status`
+using `channel` (name or room ID), or its entry in the `channels` list. Overall
+status can already be connected to another channel. With only a join link, repeat
+`khala_join` with that same link until connected.
+
 To update, run `npx -y khala-cli@latest install cursor` and restart Cursor. To remove, run
 `npx -y khala-cli install cursor --uninstall` and delete the `khala/npm` folder above.
 If you change or reinstall Node, run the install again so `mcp.json` points at it.

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
-import { appendEntries, unread } from './inbox';
+import { appendEntries, readCursor, unread } from './inbox';
 import { channelFiles, channelsDir, ensureStateDir, filesForDir, readJson, readStatus, removeStateFile, stateKey, StateError, writeStateFile, type SessionFiles } from './state';
 
 export type ChannelRef = { key: string; roomId: string; channelName?: string; files: SessionFiles; legacy: boolean };
@@ -67,11 +67,13 @@ export async function migrateLegacy(files: SessionFiles): Promise<'none' | 'move
   const nested = channelFiles(files, id);
   await ensureStateDir(nested.dir);
   const destinationInbox = await exists(nested.inbox);
-  if (present[2] && !destinationInbox && present[0] && await exists(nested.cursor)) {
-    // Two cursors without channel history cannot establish which inbox they index.
-    // Leave both trees untouched rather than guessing and skipping messages.
-    if (await fs.readFile(files.cursor, 'utf8') !== await fs.readFile(nested.cursor, 'utf8')) {
-      throw new StateError('storage_failed');
+  if (!destinationInbox && present[0] && await exists(nested.cursor)) {
+    const [legacyCursor, channelCursor] = await Promise.all([readCursor(files), readCursor(nested)]);
+    if (legacyCursor.deliveredCount !== channelCursor.deliveredCount || legacyCursor.lastDeliveredEventId !== channelCursor.lastDeliveredEventId) {
+      // Both cursors will index the legacy inbox. Prefer replay over skipping unread messages.
+      const safe = legacyCursor.deliveredCount < channelCursor.deliveredCount ? legacyCursor : channelCursor;
+      await writeStateFile(nested.dir, 'cursor.json', safe);
+      console.warn(`Khala cursor migration: conflicting cursors for ${id}; using earlier position ${safe.deliveredCount} to avoid skipping messages (legacy=${legacyCursor.deliveredCount}, channel=${channelCursor.deliveredCount}).`);
     }
   }
   const status = await readStatus(files);
