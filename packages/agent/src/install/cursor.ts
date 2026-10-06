@@ -1,8 +1,8 @@
 // `khala install cursor`: pure path and JSON merge helpers plus the file I/O around them.
 // Paths go through an injected `path` flavour so tests can check Windows layouts on Linux.
-import * as fs from 'node:fs/promises';
 import nodePath from 'node:path';
 import { CURSOR_WORKSPACE_ENV } from '../cursor';
+import { ManagedFiles, formatJson, jsonFormat, readManaged, type ManagedRead } from './managed-file';
 
 type PathApi = Pick<typeof nodePath, 'join' | 'isAbsolute'>;
 export type CursorPlatform = { platform: NodeJS.Platform; path: PathApi; home: string; env: NodeJS.ProcessEnv };
@@ -110,16 +110,15 @@ export function mergeCursorHooks(config: unknown, command: string | null): { con
   return { config: { version: 1, ...config, hooks: next } };
 }
 
-async function readJsonFile(file: string): Promise<{ text: string | null; value: unknown }> {
-  let text: string;
-  try { text = await fs.readFile(file, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: null, value: {} }; throw error; }
-  if (!text.trim()) return { text, value: {} };
-  try { return { text, value: JSON.parse(text.replace(/^﻿/u, '')) }; } catch { return { text, value: undefined }; }
+async function readJsonFile(file: string): Promise<ManagedRead & { value: unknown }> {
+  const current = await readManaged(file);
+  try { return { ...current, value: jsonFormat.parse(current.text ?? '') }; } catch { return { ...current, value: undefined }; }
 }
 
 export type CursorInstallInput = {
   paths: CursorPaths; platform: NodeJS.Platform; node: string; uninstall: boolean;
+  /** Khala's state directory, where the original config files are recorded. */
+  stateDir: string;
   /** Installs the package into `paths.prefix`; absent on uninstall. */
   install?: () => boolean;
   stdout: (line: string) => void; stderr: (line: string) => void;
@@ -140,16 +139,21 @@ export async function installCursor(input: CursorInstallInput): Promise<number> 
   const nextHooks = mergeCursorHooks(hooks.value, uninstall ? null : command);
   if ('error' in nextHooks) { stderr(`khala: invalid JSON in ${paths.hooksFile}`); return 1; }
   if (!uninstall && input.install && !input.install()) return 1;
-  await fs.mkdir(paths.cursorDir, { recursive: true });
-  for (const [file, before, after] of [[paths.mcpFile, mcp.text, nextMcp.config], [paths.hooksFile, hooks.text, nextHooks.config]] as const) {
-    if (uninstall && before === null) continue;
-    // The first install keeps the user's original file; later runs never overwrite it.
-    if (!uninstall && before !== null) {
-      try { await fs.writeFile(file + '.khala-bak', before, { flag: 'wx' }); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    }
-    const text = JSON.stringify(after, null, 2) + '\n';
-    if (text !== before) await fs.writeFile(file, text);
+  const managed = new ManagedFiles(input.stateDir);
+  if (uninstall) {
+    await managed.restore(mcp, jsonFormat, value => (mergeCursorMcp(value, null) as { config: unknown }).config);
+    await managed.restore(hooks, jsonFormat, (value, original) => {
+      const { config } = mergeCursorHooks(value, null) as { config: Record<string, unknown> };
+      // `version: 1` exists only for Khala's hooks; it goes with them when the user had none.
+      const hadVersion = isObject(original) && Object.hasOwn(original, 'version');
+      if (!hadVersion && isObject(config.hooks) && !Object.keys(config.hooks).length) delete config.version;
+      return config;
+    });
+  } else {
+    await managed.write([
+      { current: mcp, text: formatJson(nextMcp.config, mcp.text) },
+      { current: hooks, text: formatJson(nextHooks.config, hooks.text) },
+    ]);
   }
   if (uninstall) {
     stdout(`removed the Khala MCP server and hooks from ${paths.cursorDir}; delete ${paths.prefix} to remove the CLI`);
