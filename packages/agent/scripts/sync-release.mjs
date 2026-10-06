@@ -18,6 +18,7 @@ export const files = {
   marketplace: `${repo}.claude-plugin/marketplace.json`,
   releases: `${agent}src/hooks/fixtures/claude-plugin-releases.json`,
   agentsGuide: `${repo}apps/web/src/landing/public/AGENTS.md`,
+  opencode: `${repo}packages/opencode-plugin/package.json`,
 };
 /** Plugin files whose content defines a plugin release (see claude-plugin.test.ts). */
 export const RELEASE_CONTENT = ['hooks/hooks.json', 'skills/khala/SKILL.md', '.mcp.json', 'bin/khala'];
@@ -36,6 +37,8 @@ export async function expectedFiles() {
   if (!/^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name)) throw new Error(`invalid package name ${name}`);
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`invalid version ${version}`);
   const out = [];
+  const opencode = await readJson(files.opencode);
+  out.push([files.opencode, json({ ...opencode, version })]);
   const launcher = (await fs.readFile(files.launcher, 'utf8'))
     .replace(/^KHALA_PACKAGE=.*$/m, `KHALA_PACKAGE=${name}`)
     .replace(/^KHALA_VERSION=.*$/m, `KHALA_VERSION=${version}`);

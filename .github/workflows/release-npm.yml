@@ -120,6 +120,18 @@ jobs:
       - run: pnpm --filter @khala/agent typecheck
       - run: pnpm --filter @khala/agent test
       - run: pnpm --filter @khala/agent build
+      - run: pnpm --filter khala-opencode typecheck
+      - run: pnpm --filter khala-opencode test
+      - run: pnpm --filter khala-opencode build
+      - name: Pack OpenCode plugin
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/opencode-dist"
+          pnpm --dir packages/opencode-plugin pack --pack-destination "$GITHUB_WORKSPACE/opencode-dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: khala-opencode-tarball
+          path: opencode-dist/*.tgz
+          if-no-files-found: error
 
       - name: Pack
         run: |
@@ -248,3 +260,52 @@ jobs:
             echo "| --- | --- | --- |"
             echo "| $pkg | $v | $latest |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-opencode:
+    name: publish OpenCode (${{ needs.setup.outputs.channel }})
+    needs: [setup, build, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: khala-opencode-tarball
+          path: opencode-artifacts
+      - name: Check operator bootstrap
+        id: bootstrap
+        run: |
+          if npm view khala-opencode name > /dev/null 2>&1; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Skipping khala-opencode publication: hand-publish a placeholder and configure the release-npm.yml trusted publisher first."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Dry-run OpenCode publish and assert OIDC exchange
+        if: steps.bootstrap.outputs.ready == 'true' && needs.setup.outputs.publish != 'true'
+        run: |
+          set -o pipefail
+          tgz=./$(ls opencode-artifacts/*.tgz)
+          npm publish "$tgz" --dry-run --access public --loglevel verbose 2>&1 | tee opencode-out.log
+          if grep -q "Failed token exchange request" opencode-out.log || ! grep -qiE 'oidc|trusted publish' opencode-out.log; then
+            echo "OpenCode trusted publishing preflight failed; configure release-npm.yml on npmjs.com" >&2
+            exit 1
+          fi
+      - name: Publish OpenCode
+        if: steps.bootstrap.outputs.ready == 'true' && needs.setup.outputs.publish == 'true'
+        run: npm publish ./opencode-artifacts/*.tgz --access public
+      - name: Verify OpenCode registry version
+        if: steps.bootstrap.outputs.ready == 'true' && needs.setup.outputs.publish == 'true'
+        run: |
+          version="${{ needs.setup.outputs.version }}"
+          deadline=$((SECONDS + 300))
+          until [ "$(npm view "khala-opencode@$version" version 2>/dev/null || true)" = "$version" ]; do
+            [ "$SECONDS" -lt "$deadline" ] || exit 1
+            sleep 5
+          done
