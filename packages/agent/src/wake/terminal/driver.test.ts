@@ -51,6 +51,7 @@ it.each(['submit', 'activity', 'consent', 'draft', 'ownership', 'row', 'column']
  let owned = true;
  const text = wakeLine('1234abcd');
  const geminiRun: CommandRunner = async (command, argv, env, signal) => {
+  if (argv[0] === 'capture-pane') { calls.push([...argv]); return `${line}\n`; }
   if (argv.includes('-l')) {
    calls.push([...argv]); line = ` > ${argv.at(-1)}`; column = line.length; return '';
   }
