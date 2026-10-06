@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { codexHooksFragment, mergeCodexHooks } from '../../codex/hooks-config.mjs';
 import { bundle } from '../bundle';
+import { runMcpInstall } from './mcp';
 import { adapterFor } from '../harness';
 import { cursorPaths, installCursor } from './cursor';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--uninstall] | khala install cursor [--uninstall]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--uninstall] | khala install cursor [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -175,6 +176,7 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
 
 export async function runInstall(argv: readonly string[], deps: InstallDeps = {}): Promise<number> {
   const [target = '', ...flags] = argv;
+  if (target === 'mcp') return runMcpInstall(flags, deps);
   const adapter = adapterFor(target);
   const run = adapter?.install;
   if (run) return run(flags, deps);

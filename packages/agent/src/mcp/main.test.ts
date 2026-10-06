@@ -47,7 +47,7 @@ describe('MCP command lifecycle', () => {
     const input = new Readable({ read() { throw new Error('must not read'); } });
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
-      expect(await runMcpCommand(['--harness', 'bad'], { input, createClient: createPlaceholderClient })).toBe(2);
+      expect(await runMcpCommand(['--harness', '../bad'], { input, createClient: createPlaceholderClient })).toBe(2);
       expect(stderr).toHaveBeenCalledWith('khala: invalid --harness\n');
     } finally { stderr.mockRestore(); input.destroy(); }
   });
@@ -215,4 +215,17 @@ it.each([undefined, '/work/project'])('skips Cursor startup restore for workspac
   expect(createClient.mock.calls[0]![0]).toMatchObject({ harness: 'cursor' });
   expect(client.close).toHaveBeenCalledOnce();
   output.destroy();
+});
+
+it.each(['generic', 'cline'])('routes %s MCP requests through the resolved environment session', async harness => {
+  const client = createPlaceholderClient();
+  client.status = vi.fn(async () => ({ state: 'connected', unread: 0, you: 'kevin-Agent', listeningMode: 'async' as const }));
+  client.read = vi.fn(async () => ({ you: 'kevin-Agent', messages: [] }));
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn(() => client);
+  const io = streams([call('khala_read', 'ignored'), call('khala_status')]);
+  expect(await runMcpCommand(['--harness', harness], { ...io, env: { KHALA_SESSION_ID: 'stable' }, createClient })).toBe(0);
+  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'stable', rejoinable: true });
+  expect(io.responses().map(response => response.result.structuredContent.you)).toEqual(['kevin-Agent', 'kevin-Agent']);
+  expect(client.close).toHaveBeenCalledOnce();
 });

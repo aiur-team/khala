@@ -4,7 +4,7 @@
     "cursor",
     "claude",
     "codex",
-    "invalid"
+    "unknown"
   ],
   "sessions": {
     "claude": "claude-env",

@@ -1099,3 +1099,17 @@ it.each([[401, 'unauthorized'], [403, 'removed'], [404, 'channel_deleted']] as c
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail }));
   expect(await readStateFile(directory, 'resume.json')).toBeNull();
 });
+
+it('keeps an MCP-only client Async and returns its current identity', async () => {
+  await client.close();
+  vi.mocked(session.displayName).mockReturnValue('kevin-Agent');
+  client = createKhalaAgentClient({ harness: 'cline', sessionId: 'test', env: { XDG_STATE_HOME: root }, now, startSession, joinApi });
+  expect((await client.status()).listeningMode).toBe('async');
+  await connected();
+  expect(await client.status()).toMatchObject({ you: 'kevin-Agent', displayName: 'kevin-Agent', listeningMode: 'async',
+    channels: [expect.objectContaining({ you: 'kevin-Agent', listeningMode: 'async' })] });
+  expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async', expect.any(AbortSignal));
+  modeHandler!(modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }));
+  expect((await client.status()).listeningMode).toBe('async');
+  expect((await client.read(10)).you).toBe('kevin-Agent');
+});
