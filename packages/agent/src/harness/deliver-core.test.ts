@@ -109,9 +109,15 @@ it.each(['codex', 'claude', 'cursor'] as const)('leaves both wake files unchange
   const state = path.join(active.dir, 'wake-state.json');
   await fs.writeFile(journal, '{ "attempts": [], "state": {"native":{"failures":1}} }');
   await fs.writeFile(state, '{ "native": {"failures":1} }');
-  const before = await Promise.all([journal, state].map(async file => ({ body: await fs.readFile(file, 'utf8'), stat: await fs.stat(file) })));
+  const snapshot = async (file: string) => {
+    const body = await fs.readFile(file, 'utf8');
+    const { mtimeMs, ctimeMs, ino } = await fs.stat(file);
+    return { body, mtimeMs, ctimeMs, ino };
+  };
+  const before = await Promise.all([journal, state].map(snapshot));
   expect(await deliverCore('prompt', { ...adapter, codec }, io)).toBe(0);
-  const after = await Promise.all([journal, state].map(async file => ({ body: await fs.readFile(file, 'utf8'), stat: await fs.stat(file) })));
+  const after = await Promise.all([journal, state].map(snapshot));
   expect(after).toEqual(before);
+  await expect(fs.stat(path.join(active.dir, 'wake.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect((await readActivity(active)).state).toBe('busy');
 });
