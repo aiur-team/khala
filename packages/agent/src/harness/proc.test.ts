@@ -12,6 +12,7 @@ describe('process inspection', () => {
     expect(parseLinuxStat(300, `300 (hook (worker)) ${fields.join(' ')}`)).toEqual({ pid: 300, ppid: 100, startTime: '987654', command: 'hook (worker)' });
     expect(parseLinuxStat(301, `300 (hook) ${fields.join(' ')}`)).toBeNull();
     expect(parseLinuxStat(300, '300 (hook) S 100')).toBeNull();
+    for (const state of ['Z', 'X']) expect(parseLinuxStat(300, `300 (hook) ${[state, ...fields.slice(1)].join(' ')}`)).toBeNull();
   });
   it('parses macOS ps output into a stable session-safe token', () => {
     expect(parseDarwinPs(400, ' 100 Mon Oct  5 12:34:56 2026 /Applications/Gemini App/gemini\n')).toEqual({ pid: 400, ppid: 100, startTime: 'Mon-Oct-5-12-34-56-2026', command: '/Applications/Gemini App/gemini' });
