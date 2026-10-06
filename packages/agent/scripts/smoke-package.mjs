@@ -107,7 +107,10 @@ try {
   const again = JSON.parse(await fs.readFile(path.join(cursorDir, 'hooks.json'), 'utf8'));
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
-  if (await fs.stat(cursorDir).catch(() => null)) throw new Error('Cursor uninstall left created config directory');
+  for (const file of ['mcp.json', 'hooks.json']) {
+    try { await fs.stat(path.join(cursorDir, file)); throw new Error(`uninstall left ${file}, which was originally absent`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
 
   // Copilot: execute the installed shell command with the CLI's event-less camelCase payload.
   const copilotDir = path.join(home, '.copilot');
@@ -149,7 +152,8 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  if (await fs.stat(opencodeConfig).catch(() => null)) throw new Error('OpenCode uninstall left created config');
+  try { await fs.stat(opencodeConfig); throw new Error('uninstall left OpenCode config, which was originally absent'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
