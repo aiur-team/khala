@@ -234,6 +234,12 @@ it('discovers a later join, keeps running after one channel leaves, and exits on
   const a = await joined('!a:local', 'later');
   await appendEntries(a, [{ ...entry(1), roomId: '!a:local' }]);
   await vi.waitFor(() => expect(lines).toHaveLength(1));
+  // Output precedes observation persistence; wait for the atomic write before
+  // deleting the channel directory so removal cannot race its temporary file.
+  await vi.waitFor(async () => {
+    const observed = JSON.parse(await fs.readFile(path.join(a.dir, 'monitor-cursor.json'), 'utf8')) as { count: number };
+    expect(observed.count).toBe(1);
+  });
   await fs.rm(a.dir, { recursive: true });
   await fs.unlink(files.session);
   await new Promise(resolve => setTimeout(resolve, 150));
