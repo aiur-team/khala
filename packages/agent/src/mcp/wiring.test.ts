@@ -13,7 +13,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(di
 async function environment() {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'khala-wiring-'));
   directories.push(dir);
-  return { XDG_STATE_HOME: dir };
+  return { XDG_STATE_HOME: dir, PATH: '' };
 }
 
 describe('real MCP client wiring', () => {
@@ -32,8 +32,7 @@ describe('real MCP client wiring', () => {
     expect(createWaker.mock.calls).toEqual([[{ files: sessionFiles('codex', 'thread-1', env), threadId: 'thread-1' }]]);
     options?.onInboxAppend?.({} as Parameters<NonNullable<KhalaAgentClientOptions['onInboxAppend']>>[0]);
     expect(waker.notify).toHaveBeenCalledOnce();
-    expect(await wrapped.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync',
-      wakeDrivers: [{ id: 'queue', available: false, reason: 'codex_binary_missing' }] });
+    expect(await wrapped.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.' } });
     const content = { v: 1, kind: 'test', summary: 'Test', body: 'Test' } as const;
     expect(await wrapped.sendChannelEvent(content)).toEqual({ eventId: '$event' });
     expect(client.sendChannelEvent).toHaveBeenCalledWith(content);
@@ -52,7 +51,7 @@ describe('real MCP client wiring', () => {
     })({ harness, sessionId: 'thread' });
     try {
       expect(await client.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync',
-        ...(harness === 'codex' ? { wakeDrivers: [{ id: 'queue', available: false, reason: 'wake_status_unavailable' }] } : {}) });
+        idleWake: { driver: harness === 'codex' ? 'queue' : 'watcher', state: 'unavailable', reason: 'Wake status is unavailable.' } });
     } finally { await client.close(); }
   });
 
@@ -205,4 +204,24 @@ it.each(['codex', 'claude'] as const)('starts restoring %s before any tool call'
   if (harness === 'codex') expect(createWaker).toHaveBeenCalledOnce();
   else expect(createWaker).not.toHaveBeenCalled();
   await wrapped.close();
+});
+
+it('shares status text with the CLI and attaches one auto-disable notice to a read', async () => {
+  const { recordAttempt, settleAttempts, readWakeState } = await import('../wake/shared');
+  const { wakeStatus, selectedWakeStatus } = await import('../wake/status');
+  const env = await environment();
+  const files = sessionFiles('codex', 'notice-session', env);
+  const client = createPlaceholderClient();
+  client.read = async () => ({ messages: [] });
+  const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker: () => ({ notify() {}, async stop() {} }) })({ harness: 'codex', sessionId: 'notice-session' });
+  try {
+    for (const [nonce, at] of [['12345678', 100], ['abcdef12', 200]] as const) {
+      await recordAttempt(files.dir, { driver: 'queue', nonce, at, deadline: at + 10 });
+      await settleAttempts(files.dir, { now: at + 10, activity: { state: 'idle', updatedAt: 0 } });
+    }
+    expect((await wrapped.status()).idleWake).toEqual(selectedWakeStatus(await wakeStatus('codex', { env, files, sessionId: 'notice-session' })));
+    expect((await wrapped.read(30)).wakeNotice).toContain('khala wake on --driver queue');
+    expect((await wrapped.read(30)).wakeNotice).toBeUndefined();
+    expect((await readWakeState(files.dir)).queue?.noticeShown).toBe(true);
+  } finally { await wrapped.close(); }
 });
