@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { nativeWakeInstallation } from './installation';
 import { antigravityRegisterCommand } from './antigravity-registration';
 import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import { adapterFor } from '../harness';
@@ -82,6 +83,14 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
     const key = `${harness}/${driver.id}`;
     let state: WakeStateName;
     let unavailableReason: WakeUnavailableReason | undefined;
+    if (!Object.hasOwn(settings.off, key) && !states[driver.id]?.disabled
+      && ((harness === 'codex' && driver.id === 'queue') || (harness === 'opencode' && driver.id === 'opencode-native'))) {
+      const reason = await nativeWakeInstallation(harness, env);
+      if (reason) {
+        rows.push({ harness, rung: driver.rung, driver: driver.id, state: 'unavailable', reason, remedy: `khala install ${harness}` });
+        continue;
+      }
+    }
     if (Object.hasOwn(settings.off, key)) state = 'disabled';
     else if (states[driver.id]?.disabled) state = 'disabled_after_failures';
     else if (driver.optIn && !Object.hasOwn(settings.consent, key)) state = 'needs_consent';

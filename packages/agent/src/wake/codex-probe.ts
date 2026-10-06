@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
-import { access, realpath, stat } from 'node:fs/promises';
+import { access, mkdtemp, realpath, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import { scrubbedQueueEnv } from './idle-wake-process';
 
@@ -28,14 +29,18 @@ export async function probeCodexQueue(env: NodeJS.ProcessEnv): Promise<CodexQueu
   if (cached?.mtime === mtime) return cached.result;
   const binary = command;
   const result = (async (): Promise<CodexQueueProbe> => {
+    let probeHome: string | undefined;
     try {
+      probeHome = await mkdtemp(path.join(os.tmpdir(), 'khala-codex-probe-'));
       const { stdout } = await execute(binary, ['queue', '--help'], {
-        env: scrubbedQueueEnv(env), timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024, windowsHide: true,
+        env: { ...scrubbedQueueEnv(env), HOME: probeHome, CODEX_HOME: probeHome,
+          XDG_CONFIG_HOME: probeHome, XDG_DATA_HOME: probeHome, XDG_STATE_HOME: probeHome }, timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024, windowsHide: true,
       });
       return /--thread\b/.test(stdout) && /--message\b/.test(stdout)
         ? { available: true, command: binary }
         : { available: false, reason: 'codex_queue_unavailable' };
     } catch { return { available: false, reason: 'codex_queue_unavailable' }; }
+    finally { if (probeHome) await rm(probeHome, { recursive: true, force: true }); }
   })();
   probes.set(binary, { mtime, result });
   return result;
