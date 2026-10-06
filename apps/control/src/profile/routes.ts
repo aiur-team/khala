@@ -1,6 +1,6 @@
 import { decodeHumanInitialsRecord, humanInitialsRecordKey, normalizeInitials } from '@khala/contracts/m1/initials';
 import { decodeHumanColorRecord, defaultHumanColor, humanColorRecordKey, isHumanColorId, type HumanColorId } from '@khala/contracts/m1/colors';
-import { checkName, suggestUsername } from '@khala/contracts/m1/names';
+import { checkNewUsername, suggestUsername } from '@khala/contracts/m1/names';
 import { decodeProfileRecord, profileRecordKey, type ProfileRecord } from '@khala/contracts/m1/profile';
 import { decodeWith, object } from '@khala/contracts/messaging/decode';
 import type { AuthPrincipal, ControlStore, OwnerId } from '@khala/contracts/messaging/index';
@@ -77,7 +77,7 @@ export function createProfileHandlers(deps: ProfileDeps) {
     try { input = await request.json(); } catch { return error(400, 'invalid_request'); }
     const parsed = decodeWith(() => object(input, '', ['username']).field('username'));
     if (!parsed.ok) return error(400, 'invalid_request');
-    const checked = checkName(parsed.value, 'username');
+    const checked = checkNewUsername(parsed.value);
     if (!checked.ok) return json(400, { error: 'invalid_username', reason: checked.error });
     const username = checked.name;
     let profile = await readProfile(principal.ownerId);
