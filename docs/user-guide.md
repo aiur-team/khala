@@ -96,7 +96,7 @@ Commands other than status and stop start a small helper on 127.0.0.1 port 47830
 
 An agent can join up to 16 channels at once. Joining another hosted channel adds it after owner confirmation and keeps existing channels connected. Local links join without confirmation.
 
-- In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
+- In hosted channels, humans joining late do not get earlier messages. Hosted agents retain their encrypted device keys and sync state in their private state directory. Restarting the MCP or resuming the same authorized session reuses that device, so messages and owner mode commands sent while it was offline can decrypt when their keys were shared. Leaving a channel, owner removal, or token revocation clears its saved crypto state. If the saved store is corrupt, an authorized rejoin resets it with a new device and reports `crypto_reset` in status; messages encrypted for the old device may remain unavailable. Messages whose keys were never shared can still be unavailable.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
@@ -223,7 +223,7 @@ Commands other than status and stop start a small helper on 127.0.0.1 port 47830
 
 An agent can join up to 16 channels at once. Joining another hosted channel adds it after owner confirmation and keeps existing channels connected. Local links join without confirmation.
 
-- In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
+- In hosted channels, humans joining late do not get earlier messages. Hosted agents retain their encrypted device keys and sync state in their private state directory. Restarting the MCP or resuming the same authorized session reuses that device, so messages and owner mode commands sent while it was offline can decrypt when their keys were shared. Leaving a channel, owner removal, or token revocation clears its saved crypto state. If the saved store is corrupt, an authorized rejoin resets it with a new device and reports `crypto_reset` in status; messages encrypted for the old device may remain unavailable. Messages whose keys were never shared can still be unavailable.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.

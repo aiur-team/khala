@@ -2,11 +2,12 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMatrixSession } from './session';
 
-const sdk = vi.hoisted(() => ({ client: undefined as unknown }));
+const sdk = vi.hoisted(() => ({ client: undefined as unknown, store: undefined as unknown }));
+vi.mock('./crypto-store', () => ({ openCryptoStore: vi.fn(async () => sdk.store) }));
 vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
-  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR' },
+  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
   Direction: { Backward: 'b' }, Method: { Get: 'GET' },
 }));
@@ -34,7 +35,7 @@ function fake() {
     crypto, auth, room, initRustCrypto: vi.fn().mockResolvedValue(undefined), getCrypto: () => crypto,
     getSyncState: () => sync,
     startClient: vi.fn(async () => { sync = 'PREPARED'; bus.emit('sync', sync); }),
-    stopClient: vi.fn(), getRoom: vi.fn(() => room),
+    stopClient: vi.fn(() => { sync = 'STOPPED'; bus.emit('sync', sync); }), getRoom: vi.fn(() => room),
     joinRoom: vi.fn(async () => { membership = 'join'; bus.emit('membership', room, 'join'); return room; }),
     decryptEventIfNeeded: vi.fn().mockResolvedValue(undefined),
     getEventMapper: () => (e: unknown) => e,
@@ -209,7 +210,7 @@ it('restores member mode and owner on a resumed account, with one rejoin event',
   expect(session.listeningMode?.('!r:hs')).toBe('async');
   expect(session.inviter('!r:hs')).toBe('@owner:hs');
   expect(client.joinRoom).not.toHaveBeenCalled();
-  expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith('!r:hs', 'com.khala.event.v1', expect.objectContaining({ summary: 'Reviewer rejoined' }), `khala.rejoin.${creds.deviceId}`);
+  expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith('!r:hs', 'com.khala.event.v1', expect.objectContaining({ summary: 'Reviewer rejoined' }), expect.stringMatching(/^khala\.rejoin\./));
 });
 
 it('delivers live self profile renames once and projects membership history', async () => {
@@ -311,4 +312,98 @@ it('uses the removal probe for forbidden history reads', async () => {
   client.createMessagesRequest.mockRejectedValue(Object.assign(new Error('forbidden'), { errcode: 'M_FORBIDDEN' }));
   await expect(session.history('!r:hs', 30)).rejects.toThrow('forbidden');
   expect(ended).toHaveBeenCalledExactlyOnceWith('removed');
+});
+
+
+it('uses persistent crypto and delivers offline messages and mode commands on restored timelines', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  membership = 'join';
+  const offline = event('$offline', '@owner:hs', 200);
+  const command = event('$mode-offline', '@owner:hs', 201, 'com.khala.listening_mode.v1', { mode: 'async' });
+  client.startClient.mockImplementation(async () => { timeline(offline, false); timeline(command, false); client.prepare(); });
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  expect(client.initRustCrypto).toHaveBeenCalledWith({ useIndexedDB: true, cryptoDatabasePrefix: 'channel-store' });
+  const messages = vi.fn(), modes = vi.fn(); session.onMessage(messages); session.onListeningModeCommand(modes);
+  await session.join('!r:hs'); await flush();
+  expect(messages).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$offline' }));
+  expect(modes).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$mode-offline' }));
+  await session.stop(); expect(store.close).toHaveBeenCalledOnce(); expect(store.wipe).not.toHaveBeenCalled();
+});
+it.each(['removed', 'unauthorized'] as const)('wipes persistent crypto on %s before releasing the lease', async reason => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  await session.join('!r:hs');
+  if (reason === 'removed') client.emit('membership', client.room, 'leave');
+  else client.emit('sync', 'ERROR', null, { error: { errcode: 'M_UNKNOWN_TOKEN' } });
+  await flush(); await session.stop();
+  expect(store.wipe).toHaveBeenCalledOnce(); expect(store.close).toHaveBeenCalledOnce();
+  expect(store.wipe.mock.invocationCallOrder[0]).toBeLessThan(store.close.mock.invocationCallOrder[0]!);
+});
+
+it('recovers a mode command omitted from a limited sync tail before newer messages', async () => {
+  sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  membership = 'join';
+  const command = event('$gap-mode', '@owner:hs', 120, 'com.khala.listening_mode.v1', { mode: 'async' });
+  const older = event('$old', '@owner:hs', 90);
+  const tail = event('$tail', '@owner:hs', 200);
+  client.startClient.mockImplementation(async () => { timeline(tail, false); client.prepare(); });
+  client.createMessagesRequest.mockResolvedValueOnce({ chunk: [tail], end: 'gap' })
+    .mockResolvedValueOnce({ chunk: [command, older], end: 'older' });
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  const delivered: string[] = [];
+  session.onListeningModeCommand(c => delivered.push(c.eventId)); session.onMessage(m => delivered.push(m.eventId));
+  await session.join('!r:hs');
+  expect(delivered).toEqual(['$gap-mode', '$tail']);
+  expect(client.createMessagesRequest).toHaveBeenNthCalledWith(2, '!r:hs', 'gap', 100, 'b');
+});
+it('uses different transaction IDs for successive rejoins on the same device', async () => {
+  membership = 'join';
+  session = await createAgentMatrixSession(creds); await session.join('!r:hs');
+  const first = client.sendEvent.mock.calls[0]![3]; await session.stop();
+  client = fake(); sdk.client = client;
+  session = await createAgentMatrixSession(creds); await session.join('!r:hs');
+  expect(client.sendEvent.mock.calls[0]![3]).not.toBe(first);
+});
+
+
+it('removes persisted credentials immediately but waits for sync completion before destroying stores', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    forgetIdentity: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  await session.join('!r:hs');
+  // Model an in-flight sync save: stopClient aborts polling but STOPPED only
+  // arrives after the response currently being processed has finished saving.
+  client.stopClient.mockImplementation(() => {});
+  client.emit('membership', client.room, 'leave');
+  await flush();
+  expect(store.forgetIdentity).toHaveBeenCalledOnce();
+  expect(store.wipe).not.toHaveBeenCalled();
+  expect(store.close).not.toHaveBeenCalled();
+  client.emit('sync', 'STOPPED');
+  await session.stop();
+  expect(store.wipe).toHaveBeenCalledOnce();
+  expect(store.close).toHaveBeenCalledOnce();
+});
+
+it('still stops and releases the store when the first identity deletion fails', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    forgetIdentity: vi.fn().mockRejectedValue(new Error('disk busy')), close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  await session.join('!r:hs');
+  client.emit('membership', client.room, 'leave');
+  await session.stop();
+  expect(client.stopClient).toHaveBeenCalledOnce();
+  expect(store.wipe).toHaveBeenCalledOnce();
+  expect(store.close).toHaveBeenCalledOnce();
 });
