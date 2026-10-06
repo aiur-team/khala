@@ -17,6 +17,7 @@ export const cursorCodec: DeliverCodec = {
         ? input.workspace_roots[0] : undefined;
       return { sessionId: cursorSessionId(workspace), event: events[input.hook_event_name as keyof typeof events],
         continuation: typeof input.loop_count === 'number' && input.loop_count > 0,
+        ...(typeof input.prompt === 'string' ? { promptText: input.prompt } : {}),
         ...(workspace !== undefined ? { workspace } : {}) };
     } catch { return null; }
   },

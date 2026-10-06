@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
 import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import type { createCodexWaker } from '../wake/codex';
+import { createWakeLadder } from '../wake/ladder';
 import { adapterFor } from '../harness';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
@@ -14,8 +15,11 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
   return ({ harness, sessionId }) => {
     const files = sessionFiles(harness, sessionId, env);
     const adapter = adapterFor(harness);
-    const createWaker = adapter?.waker && (deps.createWaker ?? adapter.waker);
-    const waker = createWaker?.({ files, threadId: sessionId });
+    const drivers = adapter?.wakeLadder;
+    const waker = drivers?.length ? deps.createWaker
+      ? deps.createWaker({ files, threadId: sessionId })
+      : createWakeLadder({ files, harness, sessionId, drivers, env,
+        ...(harness === 'codex' ? { warningPrefix: 'codex' } : {}) }) : undefined;
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before
