@@ -4,7 +4,6 @@
 // an MCP initialize + tools/list over stdio, a delivery hook, `install cursor` (MCP server
 // started exactly as mcp.json says, a Cursor hook through the shell, uninstall) and
 // `npx -y <tgz> --version`. Runs on Linux, macOS and native Windows.
-import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
