@@ -1,3 +1,4 @@
+import { legacyHarnessView } from '../wire';
 import type { AgentRenameResult } from '@khala/contracts/m1/agent-names';
 import type { ChannelNameResult } from '@khala/contracts/m1/channel-names';
 import { CHANNEL_EVENT_TYPE, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
@@ -69,7 +70,7 @@ export function ownerRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[]
       const wait = req.query.get('wait') ?? '0';
       if (since !== null && !/^\d{1,15}$/u.test(since) || !/^\d{1,2}$/u.test(wait) || Number(wait) > LOCAL_LONG_POLL_MAX_S) return fail(400, 'invalid_request');
       if (since !== null && Number(since) === store.revision() && Number(wait) > 0) await store.waitForRevision(Number(since), Number(wait) * 1000, req.signal);
-      return { status: 200, json: { revision: store.revision(), channels: store.listChannels() } };
+      return { status: 200, json: { revision: store.revision(), channels: store.listChannels().map(summary => ({ ...summary, members: summary.members.map(member => req.query.get('wire') === '2' ? member : legacyHarnessView(member)) })) } };
     }),
     route('GET', /^\/api\/local\/channels\/by-operation\/([^/]+)$/u, async (_req, params, { store }) => {
       const id = decodeParam(params[0]);
@@ -77,10 +78,10 @@ export function ownerRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[]
       const roomId = store.findByOperation(id);
       return roomId === undefined ? fail(404, 'not_found') : { status: 200, json: { roomId } };
     }),
-    route('GET', /^\/api\/local\/channels\/([^/]+)$/u, async (_req, params, { store }) => {
+    route('GET', /^\/api\/local\/channels\/([^/]+)$/u, async (req, params, { store }) => {
       const roomId = channelParam(params[0], store);
       const summary = roomId === null ? undefined : store.channelSummary(roomId);
-      return summary === undefined ? fail(404, 'not_found') : { status: 200, json: summary };
+      return summary === undefined ? fail(404, 'not_found') : { status: 200, json: { ...summary, members: summary.members.map(member => req.query.get('wire') === '2' ? member : legacyHarnessView(member)) } };
     }),
     route('POST', /^\/api\/local\/channels$/u, async (req, _params, ctx) => {
       const body = req.body;
@@ -97,7 +98,7 @@ export function ownerRoutes(options: { queue?: SerialQueue } = {}): LocalRoute[]
       const open = ctx.mintOpenToken(roomId);
       return { status: 201, json: { roomId, name: store.channelName(roomId), selfLink: `${ctx.origin}/join/${self.token}`, shareLink: `${ctx.origin}/join/${share.token}`, openUrl: `${ctx.origin}/open/${open.token}`, expiresAt: self.expiresAt } };
     }, { serial: true }),
-    route('DELETE', /^\/api\/local\/channels\/([^/]+)$/u, async (_req, params, ctx) => {
+    route('DELETE', /^\/api\/local\/channels\/([^/]+)$/u, async (req, params, ctx) => {
       const roomId = channelParam(params[0], ctx.store);
       if (roomId === null) return fail(404, 'not_found');
       await ctx.store.deleteChannel(roomId);

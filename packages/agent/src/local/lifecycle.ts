@@ -8,6 +8,7 @@ import { LOCAL_DEFAULT_PORT, decodeHelperFile, type HelperFile } from '@khala/co
 import { ensureStateDir, readJson, stateRoot, StateError } from '../state';
 import { KhalaClientError } from '../client';
 import { bundle } from '../bundle';
+import { KHALA_AGENT_VERSION } from '../version';
 
 export type HelperPaths = { root: string; helperFile: string; logFile: string; port: number; origin: string };
 export function helperPaths(env: NodeJS.ProcessEnv = process.env): HelperPaths {
@@ -51,30 +52,78 @@ export type EnsureHelperDeps = {
 };
 type HelperConnection = { origin: string; adminToken: string };
 const attempts = new Map<string, Promise<HelperConnection>>();
+let restarted = false;
+const recovering = new Map<string, string>();
 
-async function healthy(fetchImpl: typeof fetch, file: HelperFile): Promise<boolean> {
+export function olderHelperVersion(version: unknown): boolean {
+  if (typeof version !== 'string') return true;
+  const parse = (value: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/u.exec(value);
+  const helper = parse(version), cli = parse(KHALA_AGENT_VERSION);
+  if (!helper || !cli) return true;
+  for (let i = 1; i <= 3; i++) {
+    if (Number(helper[i]) !== Number(cli[i])) return Number(helper[i]) < Number(cli[i]);
+  }
+  if (helper[4] === cli[4]) return false;
+  if (!helper[4] || !cli[4]) return Boolean(helper[4]);
+  const a = helper[4].split('.'), b = cli[4].split('.');
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] === b[i]) continue;
+    if (a[i] === undefined || b[i] === undefined) return a[i] === undefined;
+    const an = /^\d+$/u.test(a[i]!), bn = /^\d+$/u.test(b[i]!);
+    if (an && bn) return Number(a[i]) < Number(b[i]);
+    if (an !== bn) return an;
+    return a[i]! < b[i]!;
+  }
+  return false;
+}
+
+async function healthy(fetchImpl: typeof fetch, file: HelperFile): Promise<{ version?: unknown } | null> {
   try {
     const response = await fetchImpl(`${file.origin}/healthz`, { signal: AbortSignal.timeout(500) });
     if (response.status !== 200) {
       await response.body?.cancel();
-      return false;
+      return null;
     }
     const body: unknown = await response.json();
     return typeof body === 'object' && body !== null && 'ok' in body && body.ok === true
-      && 'pid' in body && body.pid === file.pid;
-  } catch { return false; }
+      && 'pid' in body && body.pid === file.pid ? { version: 'version' in body ? body.version : undefined } : null;
+  } catch { return null; }
 }
 function connection(file: HelperFile): HelperConnection {
   return { origin: file.origin, adminToken: file.adminToken };
 }
 
-async function attempt(env: NodeJS.ProcessEnv, deps: EnsureHelperDeps): Promise<HelperConnection> {
+async function attempt(env: NodeJS.ProcessEnv, deps: EnsureHelperDeps, restartOrigin?: string): Promise<HelperConnection> {
   const fetchImpl = deps.fetch ?? globalThis.fetch;
   const spawn = deps.spawn ?? ((command, argv, options) => nodeSpawn(command, [...argv], options));
   const sleep = deps.sleep ?? sleepDefault;
   const now = deps.now ?? Date.now;
   const existing = await readHelperFile(env);
-  if (existing && await healthy(fetchImpl, existing)) return connection(existing);
+  const status = existing ? await healthy(fetchImpl, existing) : null;
+  if (existing && status) {
+    if ((!olderHelperVersion(status.version) && restartOrigin === undefined) || restarted) return connection(existing);
+    // Never shut down an unrelated helper just because a loopback join rejected a harness.
+    if (restartOrigin !== undefined && existing.origin !== restartOrigin) return connection(existing);
+    restarted = true;
+    recovering.set(helperPaths(env).helperFile, existing.origin);
+    try {
+      const response = await fetchImpl(`${existing.origin}/api/local/shutdown`, {
+        method: 'POST', headers: { authorization: `Bearer ${existing.adminToken}` }, signal: AbortSignal.timeout(2000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 204) throw new Error('shutdown_failed');
+      const deadline = now() + 2000;
+      for (let i = 0; i < 20; i++) {
+        if (!await healthy(fetchImpl, existing)) break;
+        if (now() >= deadline || i === 19) throw new Error('shutdown_timeout');
+        await sleep(100);
+      }
+    } catch {
+      // Another CLI may have stopped or replaced the helper during shutdown.
+      const refreshed = await readHelperFile(env);
+      if (refreshed && await healthy(fetchImpl, refreshed)) return connection(refreshed);
+    }
+  }
 
   const paths = helperPaths(env);
   try {
@@ -91,7 +140,8 @@ async function attempt(env: NodeJS.ProcessEnv, deps: EnsureHelperDeps): Promise<
         fd = handle.fd;
       }
       const child = spawn(process.execPath, [helperBinPath(), 'local', 'serve'], {
-        detached: true, stdio: ['ignore', fd, fd], env: helperChildEnv(env), cwd: paths.root, shell: false,
+        detached: true, stdio: ['ignore', fd, fd],
+        env: helperChildEnv(existing && status ? { ...env, KHALA_LOCAL_PORT: String(existing.port) } : env), cwd: paths.root, shell: false,
       });
       child.on('error', () => { spawnFailed = true; });
       child.unref();
@@ -116,11 +166,27 @@ async function attempt(env: NodeJS.ProcessEnv, deps: EnsureHelperDeps): Promise<
   throw new KhalaClientError('internal_error', 'helper_unavailable');
 }
 
-export function ensureHelper(env: NodeJS.ProcessEnv = process.env, deps: EnsureHelperDeps = {}): Promise<HelperConnection> {
+export function ensureHelper(env: NodeJS.ProcessEnv = process.env, deps: EnsureHelperDeps = {}, restartOrigin?: string): Promise<HelperConnection> {
   const key = helperPaths(env).helperFile;
   const pending = attempts.get(key);
   if (pending) return pending;
-  const promise = attempt(env, deps).finally(() => { attempts.delete(key); });
+  const promise = attempt(env, deps, restartOrigin).finally(() => { attempts.delete(key); recovering.delete(key); });
   attempts.set(key, promise);
   return promise;
+}
+
+/** Share the version probe's restart allowance with invalid_harness recovery. */
+export async function restartHelper(origin: string, env: NodeJS.ProcessEnv = process.env, deps: EnsureHelperDeps = {}): Promise<boolean> {
+  const key = helperPaths(env).helperFile;
+  const pending = attempts.get(key);
+  if (pending) {
+    const shareRecovery = !restarted || recovering.get(key) === origin;
+    const connection = await pending;
+    if (shareRecovery && restarted && connection.origin === origin) return true;
+  }
+  if (restarted) return false;
+  const file = await readHelperFile(env);
+  if (!file || file.origin !== origin) return false;
+  await ensureHelper(env, deps, origin);
+  return restarted;
 }

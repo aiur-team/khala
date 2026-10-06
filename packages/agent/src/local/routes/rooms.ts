@@ -1,8 +1,9 @@
+import { legacyHarnessView } from '../wire';
 import { decodeChannelEvent, encodeChannelEvent } from '@khala/contracts/m1/channel-event';
 import { DEFAULT_LISTENING_MODE, LISTENING_MODE_MEMBER_KEY, decodeListeningMode } from '@khala/contracts/m1/listening-mode';
-import { LOCAL_LONG_POLL_MAX_S, LOCAL_OWNER_USER_ID, type LocalEvent } from '@khala/contracts/m1/local';
+import { LOCAL_LONG_POLL_MAX_S, LOCAL_OWNER_USER_ID } from '@khala/contracts/m1/local';
 import { decodeWith, object, utf8Length } from '@khala/contracts/messaging/decode';
-import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, LocalStore } from '../types';
+import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, LocalStore, LocalEvent } from '../types';
 
 const fail = (status: number, error: string): LocalResponse => ({ status, json: { error } });
 type Member = NonNullable<ReturnType<LocalStore['member']>>;
@@ -135,10 +136,14 @@ export function roomRoutes(): LocalRoute[] {
       }
       // The shared helper may outlive older CLIs with strict event decoders.
       // Only clients advertising support receive the extended wire shape.
-      const delivered = req.query.get('prev') === '1' ? events : events.map(event => {
-        const legacy = { ...event };
-        delete legacy.previousContent;
-        return legacy;
+      const delivered = events.map(event => {
+        const view = { ...event };
+        if (req.query.get('prev') !== '1') delete view.previousContent;
+        if (req.query.get('wire') !== '2') {
+          view.content = legacyHarnessView(view.content);
+          if (view.previousContent) view.previousContent = legacyHarnessView(view.previousContent);
+        }
+        return view;
       });
       return { status: 200, json: { events: delivered, next: events.at(-1)?.seq ?? after } };
     }),
@@ -147,7 +152,9 @@ export function roomRoutes(): LocalRoute[] {
       const limit = req.query.get('limit') ?? '50';
       if ((before !== null && !/^\$[A-Za-z0-9_-]{1,128}$/u.test(before)) || !/^\d{1,3}$/u.test(limit)
         || Number(limit) < 1 || Number(limit) > 100) return fail(400, 'invalid_request');
-      return { status: 200, json: ctx.store.history(caller.roomId, before ?? undefined, Number(limit)) };
+      const page = ctx.store.history(caller.roomId, before ?? undefined, Number(limit));
+      return { status: 200, json: req.query.get('wire') === '2' ? page : { ...page,
+        events: page.events.map(event => ({ ...event, content: legacyHarnessView(event.content) })) } };
     }),
     route('POST', /^\/api\/local\/rooms\/([^/]+)\/send$/u, 'joined', async (req, params, ctx) => {
       const decoded = decodeWith(() => {
@@ -175,8 +182,8 @@ export function roomRoutes(): LocalRoute[] {
         return { status: 200, json: { eventId: event.eventId } };
       });
     }),
-    route('GET', /^\/api\/local\/rooms\/([^/]+)\/members$/u, 'joined', async (_req, _params, ctx, caller) => ({
-      status: 200, json: { members: ctx.store.members(caller.roomId) },
+    route('GET', /^\/api\/local\/rooms\/([^/]+)\/members$/u, 'joined', async (req, _params, ctx, caller) => ({
+      status: 200, json: { members: ctx.store.members(caller.roomId).map(member => req.query.get('wire') === '2' ? member : legacyHarnessView(member)) },
     })),
     route('PUT', /^\/api\/local\/rooms\/([^/]+)\/members\/([^/]+)$/u, 'joined', async (req, params, ctx, caller) => {
       let target: string;
