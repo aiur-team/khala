@@ -46,7 +46,7 @@ describe('ConversationList', () => {
   });
 
   it('renders the generic # avatar with no other members', () => {
-    expect(avatars(render([{ ...release, members: [] }]))).toBe('<span class="kh-av kh-gen" aria-hidden="true">#</span>');
+    expect(avatars(render([{ ...release, members: [] }]))).toBe('<span class="kh-av kh-gen" aria-hidden="true">#</span><span class="kh-cv-unread"></span>');
     expect(avatars(render([bare]))).toContain('kh-gen');
   });
 
