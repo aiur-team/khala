@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -178,4 +180,26 @@ it('rejects connected status from a dead writer, a reused PID, or a legacy snaps
     await writeJsonAtomic(files.status, { state: 'connected', updatedAt: new Date().toISOString(), owner });
     expect(await readStatus(files)).toMatchObject({ state: 'disconnected', detail: 'process_exited' });
   }
+});
+
+it('reports aggregate and channel status disconnected after their writer is killed', async () => {
+  const nested = channelFiles(files, '!room:local');
+  const source = new URL('./state.ts', import.meta.url).href;
+  const script = `import { ensureStateDir, filesForDir, writeStatus } from ${JSON.stringify(source)};
+    for (const dir of ${JSON.stringify([files.dir, nested.dir])}) {
+      await ensureStateDir(dir); await writeStatus(filesForDir(dir), 'connected');
+    }
+    process.send('ready'); setInterval(() => {}, 1000);`;
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  const exited = once(child, 'exit');
+  try {
+    await Promise.race([once(child, 'message'), exited.then(() => { throw new Error('writer exited before ready'); })]);
+    for (const target of [files, nested]) {
+      expect(await readStatus(target)).toMatchObject({ state: 'connected', owner: { pid: child.pid } });
+    }
+    child.kill('SIGKILL'); await exited;
+    for (const target of [files, nested]) expect(await readStatus(target)).toMatchObject({ state: 'disconnected', detail: 'process_exited' });
+  } finally { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; } }
 });

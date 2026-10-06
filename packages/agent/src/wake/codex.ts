@@ -17,6 +17,8 @@ export type CodexWakerDeps = Readonly<{
 }>;
 export type CodexWaker = WakeLadder;
 
+// TODO(#1223): Prefer per-thread TUI attachment when Codex exposes it; loaded-thread
+// state and daemon-wide connection counts cannot identify an attached TUI.
 export function createCodexWakeDriver(deps: Pick<CodexWakerDeps, 'port' | 'probe' | 'stderr'> = {}): WakeDriver {
   return {
     id: 'queue', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 30_000,

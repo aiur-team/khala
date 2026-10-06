@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CODEX_DAEMON_WAKE_NOTE } from '../wake/status';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile } from '../state';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
@@ -163,7 +164,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.' } });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.', note: CODEX_DAEMON_WAKE_NOTE } });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
