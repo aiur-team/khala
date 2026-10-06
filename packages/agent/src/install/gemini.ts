@@ -72,6 +72,22 @@ export async function installGemini(input: {
       : `khala: invalid JSON or hooks in ${paths.settingsFile}`);
     return 1;
   }
+  if (uninstall) {
+    // The backup supplies only container provenance, never settings to restore:
+    // users may have added siblings since installation. Without it, preserve
+    // existing containers rather than guessing whether Khala introduced them.
+    let original = config;
+    try {
+      const backup: unknown = JSON.parse((await fs.readFile(paths.settingsFile + '.khala-bak', 'utf8')).replace(/^\uFEFF/u, ''));
+      if (isObject(backup)) original = backup;
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (isObject(original)) for (const key of ['mcpServers', 'hooks']) {
+      const container = merged.config[key];
+      if (!Object.hasOwn(original, key) && isObject(container) && Object.keys(container).length === 0) delete merged.config[key];
+    }
+  }
   if (!uninstall && input.install && !input.install()) return 1;
   if (!(uninstall && before === null)) {
     await fs.mkdir(paths.geminiDir, { recursive: true });

@@ -111,3 +111,39 @@ it.each([true, false])('preserves the global hooks enabled=%s setting', enabled 
   if ('config' in added) expect(mergeGeminiSettings(added.config, null, null))
     .toEqual({ config: { theme: 'dark', mcpServers: {}, hooks: { enabled } } });
 });
+
+it.each([false, true])('restores original container presence after uninstall (empty containers=%s)', async containers => {
+  const original = { security: { auth: { selectedType: 'gemini-api-key' } }, ...(containers ? { mcpServers: {}, hooks: {} } : {}) };
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  await fs.writeFile(settingsFile(), JSON.stringify(original));
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual(original);
+});
+it('keeps siblings added after install even when the original had no containers', async () => {
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  await fs.writeFile(settingsFile(), JSON.stringify({ security: { auth: {} } }));
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  const current = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
+  current.mcpServers.other = { command: 'other' };
+  current.hooks.enabled = false;
+  current.theme = 'dark';
+  await fs.writeFile(settingsFile(), JSON.stringify(current));
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual({
+    security: { auth: {} }, theme: 'dark', mcpServers: { other: { command: 'other' } }, hooks: { enabled: false },
+  });
+});
+it('preserves existing empty containers without a usable backup and avoids creating absent ones', async () => {
+  for (const backup of [null, '{broken']) {
+    const original = { mcpServers: {}, hooks: {} };
+    await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+    await fs.writeFile(settingsFile(), JSON.stringify(original));
+    if (backup !== null) await fs.writeFile(settingsFile() + '.khala-bak', backup);
+    expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+    expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual(original);
+  }
+  await fs.writeFile(settingsFile(), JSON.stringify({ security: { auth: {} } }));
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual({ security: { auth: {} } });
+});

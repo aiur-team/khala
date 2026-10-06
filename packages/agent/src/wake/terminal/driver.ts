@@ -72,7 +72,8 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
           || final.view.tty !== ready.view!.tty || final.pane.kind !== ready.pane!.kind
           || final.pane.paneId !== ready.pane!.paneId || final.pane.socket !== ready.pane!.socket) return false;
         const text = final.view.line.replace(/\x1b\[[0-9;]*m/g, '').replace(/[ \r\n]+$/, '');
-        const prefix = ready.view!.line.replace(/\x1b\[[0-9;]*m/g, '').slice(0, guard!.cursorColumn);
+        // tmux trims trailing spaces even when the cursor remains beyond them.
+        const prefix = ready.view!.line.replace(/\x1b\[[0-9;]*m/g, '').slice(0, guard!.cursorColumn).padEnd(guard!.cursorColumn, ' ');
         return text === `${prefix}${line}` && final.view.cursorY === ready.view!.cursorY
           && final.view.cursorX === guard!.cursorColumn + line.length;
       };
