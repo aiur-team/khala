@@ -9,7 +9,8 @@ npx -y khala-cli install gemini
 Restart Gemini CLI, then tell it to join your Khala channel. The installer merges
 `mcpServers.khala` and `SessionStart`, `BeforeAgent`, `AfterTool`, and `AfterAgent`
 hooks into `~/.gemini/settings.json`, preserving other settings, servers and hook
-handlers. It saves the original settings once as `settings.json.khala-bak`.
+handlers. Each installation cycle saves existing original settings as
+`settings.json.khala-bak`; reinstalling preserves that original.
 Both MCP and hooks use Node directly with the stable installed Khala script;
 wrapping either in `npx` or an extra launcher can break session discovery.
 
@@ -42,4 +43,6 @@ on native Windows.
 To update, run `npx -y khala-cli@latest install gemini` and restart Gemini CLI.
 To uninstall, run `npx -y khala-cli install gemini --uninstall`. This removes
 Khala's MCP entry, including trust, and its hook handlers while retaining siblings.
+If settings are otherwise unchanged, uninstall restores the original file exactly,
+or removes it when installation created it. Successful uninstall removes the backup.
 Delete the printed npm prefix separately to remove the shared CLI.

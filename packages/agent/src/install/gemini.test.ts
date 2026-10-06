@@ -36,7 +36,7 @@ it('merges siblings, installs without tool trust, reinstalls idempotently, and u
   expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual(installed);
   expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
   expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8'))).toEqual(original);
-  expect(JSON.parse(await fs.readFile(settingsFile() + '.khala-bak', 'utf8'))).toEqual(original);
+  await expect(fs.stat(settingsFile() + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it('records explicit tool trust, explains approvals, and removes trust on default reinstall', async () => {
   expect(await runInstall(['gemini', '--trust-tools', '--no-wake'], deps())).toBe(0);
@@ -168,4 +168,55 @@ it.each(['', '\n', '\r\n'])('preserves current indentation and trailing newline 
   expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
   expect(await fs.readFile(settingsFile(), 'utf8')).toBe(JSON.stringify({ theme: 'light', mcpServers: { other: { command: 'other' } } }, null, '\t')
     .replace(/\n/gu, newline === '\r\n' ? '\r\n' : '\n') + newline);
+});
+
+it.each([{ existing: false, reinstall: false }, { existing: false, reinstall: true },
+  { existing: true, reinstall: false }, { existing: true, reinstall: true }])('restores original presence across repeated cycles (%j)', async ({ existing, reinstall }) => {
+  const original = '{ "theme": "dark" }\r\n';
+  for (let cycle = 0; cycle < 2; cycle++) {
+    if (existing) {
+      await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+      await fs.writeFile(settingsFile(), original);
+    }
+    expect(await runInstall(['gemini'], deps())).toBe(0);
+    if (reinstall) expect(await runInstall(['gemini'], deps())).toBe(0);
+    expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+    if (existing) expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
+    else await expect(fs.stat(settingsFile())).rejects.toMatchObject({ code: 'ENOENT' });
+    for (const suffix of ['.khala-bak', '.khala-absent']) await expect(fs.stat(settingsFile() + suffix)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
+it('captures the new original after edits between install cycles', async () => {
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  for (const original of ['{ "theme": "dark" }', '{\n\t"theme": "light"\n}\n']) {
+    await fs.writeFile(settingsFile(), original);
+    expect(await runInstall(['gemini'], deps())).toBe(0);
+    expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+    expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
+  }
+});
+it('never backs up a managed file when original provenance is missing', async () => {
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  await fs.rm(settingsFile() + '.khala-absent', { force: true });
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  await expect(fs.stat(settingsFile() + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('preserves new sibling formatting when the original file was absent', async () => {
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  const current = JSON.parse(await fs.readFile(settingsFile(), 'utf8'));
+  current.theme = 'light';
+  await fs.writeFile(settingsFile(), JSON.stringify(current, null, '\t') + '\r\n');
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(await fs.readFile(settingsFile(), 'utf8')).toBe('{\r\n\t"theme": "light"\r\n}\r\n');
+});
+
+it('replaces stale provenance when a fresh unmanaged install cycle begins', async () => {
+  await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
+  await fs.writeFile(settingsFile() + '.khala-bak', '{"mcpServers":{},"hooks":{}}');
+  const original = '{ "theme": "new" }\n';
+  await fs.writeFile(settingsFile(), original);
+  expect(await runInstall(['gemini'], deps())).toBe(0);
+  expect(await fs.readFile(settingsFile() + '.khala-bak', 'utf8')).toBe(original);
+  expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
+  expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
 });

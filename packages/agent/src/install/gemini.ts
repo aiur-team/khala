@@ -73,16 +73,22 @@ export async function installGemini(input: {
       : `khala: invalid JSON or hooks in ${paths.settingsFile}`);
     return 1;
   }
+  const backupFile = paths.settingsFile + '.khala-bak';
+  const absentFile = paths.settingsFile + '.khala-absent';
+  let restoreAbsent = false;
   let restoredText: string | null = null;
   if (uninstall) {
     // Use the backup for container provenance, and restore its exact bytes only
     // when stripping Khala leaves the same settings. Keep later user edits.
-    let original = config;
+    let originallyAbsent = false;
+    try { await fs.access(absentFile); originallyAbsent = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    let original = originallyAbsent ? {} : config;
     let backupText: string | null = null;
     try {
-      const text = await fs.readFile(paths.settingsFile + '.khala-bak', 'utf8');
-      const backup: unknown = JSON.parse(text.replace(/^\uFEFF/u, ''));
-      if (isObject(backup)) { original = backup; backupText = text; }
+      const text = await fs.readFile(backupFile, 'utf8');
+      const backup: unknown = text.trim() ? JSON.parse(text.replace(/^\uFEFF/u, '')) : {};
+      if (!originallyAbsent && isObject(backup)) { original = backup; backupText = text; }
     } catch (error) {
       if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -90,20 +96,39 @@ export async function installGemini(input: {
       const container = merged.config[key];
       if (!Object.hasOwn(original, key) && isObject(container) && Object.keys(container).length === 0) delete merged.config[key];
     }
-    if (backupText !== null && isDeepStrictEqual(merged.config, original)) restoredText = backupText;
+    if (isDeepStrictEqual(merged.config, original)) {
+      if (originallyAbsent) restoreAbsent = true;
+      else if (backupText !== null) restoredText = backupText;
+    }
   }
   if (!uninstall && input.install && !input.install()) return 1;
   if (!(uninstall && before === null)) {
     await fs.mkdir(paths.geminiDir, { recursive: true });
-    if (!uninstall && before !== null) {
-      try { await fs.writeFile(paths.settingsFile + '.khala-bak', before, { flag: 'wx' }); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    if (!uninstall) {
+      // A reinstall must never snapshot the settings that Khala itself wrote.
+      const current = config as Record<string, unknown>;
+      const managed = isObject(current.mcpServers) && Object.hasOwn(current.mcpServers, 'khala')
+        || isObject(current.hooks) && Object.values(current.hooks).some(groups => Array.isArray(groups)
+          && groups.some(group => isObject(group) && Array.isArray(group.hooks)
+            && group.hooks.some(handler => isObject(handler) && typeof handler.command === 'string' && handler.command.endsWith(HOOK_SUFFIX))));
+      if (!managed) {
+        // A new cycle captures today's original, not a leftover from an older cycle.
+        await fs.rm(backupFile, { force: true });
+        await fs.rm(absentFile, { force: true });
+        if (before === null) await fs.writeFile(absentFile, '', { flag: 'wx' });
+        else await fs.writeFile(backupFile, before, { flag: 'wx' });
+      }
     }
     const indent = before === null ? 2 : before.match(/\n([ \t]+)"/u)?.[1];
     const newline = before?.includes('\r\n') ? '\r\n' : '\n';
     const trailing = before === null || before.endsWith('\n') ? newline : '';
     const text = restoredText ?? JSON.stringify(merged.config, null, indent).replace(/\n/gu, newline) + trailing;
-    if (text !== before) await fs.writeFile(paths.settingsFile, text);
+    if (restoreAbsent) await fs.rm(paths.settingsFile, { force: true });
+    else if (text !== before) await fs.writeFile(paths.settingsFile, text);
+  }
+  if (uninstall) {
+    await fs.rm(backupFile, { force: true });
+    await fs.rm(absentFile, { force: true });
   }
   if (uninstall) stdout(`removed the Khala MCP server and hooks from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`);
   else {
