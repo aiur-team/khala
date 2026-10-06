@@ -60,6 +60,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     listeningMode: matrix.listeningMode,
     subscribeListeningModes: matrix.subscribeListeningModes,
     setListeningMode: matrix.setListeningMode,
+    isJoined: matrix.isJoined,
     participant: matrix.participant,
     roomParticipants: matrix.roomParticipants,
     channelNames: matrix.channelNames,

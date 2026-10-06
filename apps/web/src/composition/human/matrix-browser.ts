@@ -801,6 +801,8 @@ export type MatrixBrowserPorts = Readonly<{
   conversations: ConversationIndexPort;
   syncStatus: SyncStatusPort;
   inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
+  /** Current SDK membership, independent of timeline attribution readiness. */
+  isJoined(roomId: RoomId): boolean;
   listeningMode(roomId: RoomId, userId: string): ListeningMode;
   /** Calls `listener` whenever a member event lands in `roomId`. */
   subscribeListeningModes(roomId: RoomId, listener: () => void): () => void;
@@ -924,6 +926,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
   return {
     inviteAgent: (roomId, userId) => runtime.active
       ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
+    isJoined: roomId => runtime.active?.client.getRoom(roomId)?.getMyMembership() === 'join',
     listeningMode: (roomId, userId) => runtime.active
       ? readListeningMode(runtime.active.client, roomId, userId) : DEFAULT_LISTENING_MODE,
     subscribeListeningModes(roomId, listener) {
