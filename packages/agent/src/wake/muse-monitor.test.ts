@@ -45,6 +45,12 @@ async function journal(overrides?: (record: MuseRecord) => void) {
   return file;
 }
 const stop = () => JSON.stringify({ session_id: sessionId, hook_event_name: 'Stop', turn_id: 'run', stop_hook_active: false });
+it('invokes the Windows monitor launcher with PowerShell quoting', () => {
+  expect(museWatchCommand(sessionId, "C:\\Users\\Ada O'Brien\\khala.cmd", 'win32'))
+    .toBe(`& 'C:\\Users\\Ada O''Brien\\khala.cmd' watch --harness muse --session '${sessionId}'`);
+  expect(museWatchCommand(sessionId, '/home/ada/khala', 'linux'))
+    .toBe(`'/home/ada/khala' watch --harness muse --session '${sessionId}'`);
+});
 it('reports an unarmed native monitor unavailable, including Windows, and never uses peer messaging', async () => {
   const driver = createMuseMonitorDriver();
   expect(await driver.available(context())).toBe(false);

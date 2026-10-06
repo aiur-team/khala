@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mergeMuseSettings, musePaths, museMcpEntry, museHookCommand } from './muse';
+import { installMuse, mergeMuseSettings, musePaths, museMcpEntry, museHookCommand } from './muse';
 import { runInstall } from './main';
 import { ManagedFiles } from './managed-file';
 
@@ -45,6 +45,16 @@ it('uses absolute XDG config and platform npm layouts', () => {
 let home: string;
 beforeEach(async () => { home = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-install-muse-')); });
 afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
+it('records a PowerShell monitor command when installing for Windows', async () => {
+  const paths = musePaths({ platform: 'linux', path: path.posix, home, env: {} });
+  paths.bin = "C:\\Users\\Ada O'Brien\\khala.cmd";
+  expect(await installMuse({ paths, platform: 'win32', node: '/node', uninstall: false,
+    stateDir: path.join(home, 'state'), stdout: () => {}, stderr: () => {} })).toBe(0);
+  const skill = await fs.readFile(path.join(home, '.config/muse/skills/khala/SKILL.md'), 'utf8');
+  expect(skill).toContain("& 'C:");
+  expect(skill).toContain("Ada O''Brien");
+  expect(skill).toContain('persistent: true, wake_delay_ms: 0, show_lines: true');
+});
 it('installs in one step, backs up once, reinstalls and uninstalls only its own definitions', async () => {
   const settingsFile = path.join(home, '.config/muse/settings.json');
   await fs.mkdir(path.dirname(settingsFile), { recursive: true });
