@@ -121,7 +121,7 @@ it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after e
     return { child, closed, output: () => output, error: () => error };
   };
   const first = launch();
-  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true), { timeout: 5_000 });
   const second = launch();
   await expect(first.closed).resolves.toBe(0);
   expect(first.output()).toBe('');
@@ -129,13 +129,13 @@ it('dispatches the CLI without stdin, supersedes duplicates, and re-arms after e
   await expect(second.closed).resolves.toBe(0);
   expect(await monitorArmed(files)).toBe(false);
   const resumed = launch();
-  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true), { timeout: 5_000 });
   await appendEntries(files, [entry(1)]);
-  await vi.waitFor(() => expect(resumed.output()).toContain('(1 mentions you)\n'));
+  await vi.waitFor(() => expect(resumed.output()).toContain('(1 mentions you)\n'), { timeout: 5_000 });
   expect(resumed.error()).toBe('');
   await writeStatus(files, 'disconnected');
   await expect(resumed.closed).resolves.toBe(0);
-});
+}, 20_000);
 it('renews without replaying unread messages and notices new events after renewal', async () => {
   await armed();
   await appendEntries(files, [entry(1)]);

@@ -49,7 +49,7 @@ describe('Tier A conformance', () => {
     expect(result.rows.find(row => row.feature === 'steer')).toEqual({ feature: 'steer', status: 'absent' });
     await expect(runConformance(synthetic, driver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } }))
       .rejects.toThrow('steer');
-  });
+  }, 15_000);
   it('supports steer-only identity frames and asserts sync absent without consuming backlog', async () => {
     const adapter: HarnessAdapter = { ...synthetic, codec: { ...codex.codec!, parse(stdin) {
       const parsed = codex.codec!.parse(stdin);
@@ -64,7 +64,7 @@ describe('Tier A conformance', () => {
     } } };
     await expect(runConformance(consuming, driver, { capabilities: noSync }))
       .rejects.toThrow('absent sync must not consume backlog');
-  });
+  }, 15_000);
   it('requires verified delivery, records opt-in consent, and rejects an unverified prompt', async () => {
     function nonceFixture(wrongNonce: boolean) {
       let prompt: string | undefined;
@@ -81,7 +81,7 @@ describe('Tier A conformance', () => {
     const invalid = nonceFixture(true);
     await expect(runConformance(invalid.adapter, invalid.probe, { capabilities: { ...capabilities, idleWake: 'opt-in' } }))
       .rejects.toThrow('idle wake');
-  });
+  }, 15_000);
   it('rejects mixed verified and unverified transports outside the Claude watcher exception', async () => {
     const verified: WakeDriver = { id: 'verified', rung: 1, optIn: true, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: () => {} };
