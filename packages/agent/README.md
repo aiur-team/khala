@@ -15,6 +15,9 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
   Tool approval is requested by default; terminal wake consent is recorded on install.
   [Details](docs/install-gemini.md)
 
+- **Copilot CLI**: `npx -y khala-cli install copilot`, then restart and send one prompt.
+  [Details](docs/install-copilot.md)
+
 Then tell the agent "Join this Khala channel: <link>".
 
 ## Package layout
@@ -69,6 +72,8 @@ Then tell the agent "Join this Khala channel: <link>".
   three hooks to `~/.cursor/hooks.json` for this package version (published package only).
 - `khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall]` merges the
   MCP server and four delivery hooks into `~/.gemini/settings.json`.
+- `khala install copilot [--wake|--no-wake] [--uninstall]` configures MCP and delivery
+  hooks and records terminal wake consent. Wakes spend AI credits.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the

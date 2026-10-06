@@ -15,7 +15,7 @@ import { readActivity, writeActivity } from '../../activity';
 import { createWakeLadder } from '../../wake/ladder';
 import { readWakeState, writeWakeSettings } from '../../wake/shared';
 import type { HarnessAdapter } from '../adapter';
-import { processSource, resolveSources } from '../session-sources';
+import { processSource, resolveSources, recordHookSession } from '../session-sources';
 import { deliverCore } from '../deliver-core';
 import type { FakeHarnessDriver, FakeSession, HookEvent } from './driver';
 
@@ -103,6 +103,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
     let hookAt = now().getTime();
+    if (adapter.sessionSources.some(source => source.kind === 'hook-map')) {
+      await recordHookSession(adapter.id, sample.id, env, { now, ...(sample.workspace ? { workspace: sample.workspace } : {}) });
+    }
     const resolved = await resolveSources(adapter.sessionSources, sample.mcpMeta, env, { harness: adapter.id });
     assert.equal(resolved?.sessionId, sample.id, 'driver session must resolve through the adapter');
     for (const source of adapter.sessionSources) {
