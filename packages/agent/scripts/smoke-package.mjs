@@ -4,8 +4,8 @@
 // an MCP initialize + tools/list over stdio, a delivery hook, `install cursor` (MCP server
 // started exactly as mcp.json says, a Cursor hook through the shell, uninstall) and
 // `npx -y <tgz> --version`. Runs on Linux, macOS and native Windows.
-import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -124,6 +124,18 @@ try {
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
   await assertRestored(cursorOriginals);
+
+  // Gemini uses the same managed-file restore path on POSIX and native Windows.
+  // XDG's parent may be public; only Khala's recording directory must be private.
+  await fs.chmod(env.XDG_STATE_HOME, 0o755);
+  check('install gemini', process.execPath, [script, 'install', 'gemini'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const geminiConfig = path.join(home, '.gemini', 'settings.json');
+  const gemini = JSON.parse(await fs.readFile(geminiConfig, 'utf8'));
+  assert.equal(gemini.mcpServers.khala.command, process.execPath);
+  assert.equal(gemini.mcpServers.khala.trust, undefined);
+  assert.ok(['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent'].every(event => gemini.hooks[event]?.length === 1));
+  check('install gemini --uninstall', process.execPath, [script, 'install', 'gemini', '--uninstall'], { shell: false });
+  await assert.rejects(fs.stat(geminiConfig), { code: 'ENOENT' });
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
