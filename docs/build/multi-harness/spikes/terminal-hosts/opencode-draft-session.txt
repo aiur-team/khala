@@ -1,0 +1,50 @@
+
+  ┃                                                                                                                                                             Reply only 'ok' instruction
+  ┃  Reply with only the word ok.
+  ┃                                                                                                                                                             Context
+                                                                                                                                                                11,848 tokens
+     ok                                                                                                                                                         1% used
+                                                                                                                                                                $0.01 spent
+     ▣  Build · DeepSeek V4 Pro · 1.5s
+                                                                                                                                                                LSP
+                                                                                                                                                                LSPs are disabled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃  draft text
+  ┃
+  ┃  Build · DeepSeek V4 Pro DeepSeek                                                                                                                           ~/work:master
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                                                                                         11.8K (1%) · $0.01  ctrl+p commands    • OpenCode 1.15.6
+
