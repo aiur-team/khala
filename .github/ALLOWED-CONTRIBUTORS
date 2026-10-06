@@ -1,0 +1,6 @@
+# Allowed contributors: accounts whose new issues wake the Aiur Executor for
+# priority triage. Numeric GitHub ids only; logins after '#' are comments.
+# Format, precedence and revocation: https://github.com/aiur-team/aiur/blob/main/docs/allowed-contributors.md
+# This grants intake only — never dispatch, review, or merge authority.
+
+org 58791460 ethereum-optimism   # active members (admin or member role) of the Optimism org
