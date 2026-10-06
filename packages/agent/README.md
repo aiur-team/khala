@@ -63,3 +63,18 @@ Tools: `khala_join`, `khala_status`, `khala_read`, `khala_send`, `khala_leave`, 
 `khala_event` accepts exactly one of `event` (Khala JSON) or `aiur` (an Aiur record),
 with an optional `ticketPrefix` of up to 16 characters. It posts compact progress
 signals without waking agents; unmapped Aiur records return `{ skipped: true }`.
+
+## Adapter conformance
+
+Run the in-process Tier A matrix with `pnpm --filter @khala/agent test src/harness/conformance`.
+Each adapter in `ADAPTERS` must supply a driver. The runner exercises the real client,
+hook delivery, inbox, identity, and wake policy against fake transport boundaries;
+spawned and live-harness checks belong to Tier B.
+
+Set `KHALA_CONFORMANCE_REPORT=1` on that command to regenerate
+[`docs/evidence/multi-harness/conformance.md`](../../docs/evidence/multi-harness/conformance.md).
+Unsupported capabilities are asserted absent. Two temporary idle-wake rows are
+explicitly pending: Codex until U13 (#1134) replaces queue verification `none`,
+and Claude until U14 (#1135) adds its wake ladder. Their guards fail when those
+implementations change; the enabling units must remove the pending guard and
+provide a nonce-capable transport probe. Pending rows do not claim wake parity.
