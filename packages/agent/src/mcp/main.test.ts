@@ -257,3 +257,42 @@ it('restores only the latest authorized Codex session in this workspace before i
     input.end(); await running; output.destroy(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+it('restores OpenCode from late hooks and reuses clients until EOF without tool calls', async () => {
+  vi.useFakeTimers();
+  const resolve = vi.spyOn(await import('./session-id'), 'resolveSession');
+  resolve.mockResolvedValue(null);
+  const client = createPlaceholderClient();
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn(() => client);
+  const input = new PassThrough(), output = new PassThrough();
+  const running = runMcpCommand(['--harness', 'opencode'], { env: {}, input, output, createClient });
+  try {
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(createClient).not.toHaveBeenCalled();
+    resolve.mockRejectedValueOnce(new Error('mapping unavailable'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    resolve.mockResolvedValue({ sessionId: 'ses_resumed', rejoinable: true });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness: 'opencode', sessionId: 'ses_resumed', rejoinable: true });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(createClient).toHaveBeenCalledOnce();
+    let release!: (session: { sessionId: string; rejoinable: boolean }) => void;
+    resolve.mockImplementationOnce(() => new Promise(done => { release = done; }));
+    const beforePending = resolve.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(resolve).toHaveBeenCalledTimes(beforePending + 1);
+    input.end();
+    await vi.advanceTimersByTimeAsync(0);
+    release({ sessionId: 'ses_too_late', rejoinable: true });
+    await running;
+    expect(createClient).toHaveBeenCalledOnce();
+    const calls = resolve.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(resolve).toHaveBeenCalledTimes(calls);
+    expect(client.close).toHaveBeenCalledOnce();
+  } finally {
+    input.end(); await running; output.destroy(); resolve.mockRestore(); vi.useRealTimers();
+  }
+});

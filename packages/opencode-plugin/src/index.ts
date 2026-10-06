@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Hooks, Plugin } from '@opencode-ai/plugin';
 import { wakeParts } from './composition/wake';
+import { startupSession } from './startup-session';
 
 export type DeliveryInput = { session_id: string; event: 'session-start' | 'prompt' | 'post-tool' | 'idle'; prompt?: string; continuation?: boolean; replay?: boolean };
 export type Delivery = (input: DeliveryInput) => Promise<string>;
@@ -49,7 +50,7 @@ export function installedCli(env = process.env, home = os.homedir(), platform = 
   return path.join(base, 'khala', 'npm', ...(platform === 'win32' ? ['node_modules', 'khala-cli', 'dist', 'khala.mjs'] : ['bin', 'khala']));
 }
 
-export function createHooks(client: PluginClient, deliver: Delivery, command: string[]) {
+export function createHooks(client: PluginClient, deliver: Delivery, command: string[], resumedSession?: string) {
   const sessions = new Map<string, { idle: boolean; inFlight: boolean; continuation: boolean; generation: number; pending: string; failures: number; retryAt: number; abort?: AbortController }>();
   let disposed = false;
   const session = (id: string) => {
@@ -107,6 +108,7 @@ export function createHooks(client: PluginClient, deliver: Delivery, command: st
     }
     finally { state.inFlight = false; }
   };
+  if (resumedSession) { session(resumedSession).idle = true; void idle(resumedSession); }
   const timer = setInterval(() => { for (const [id, state] of sessions) if (state.idle) void idle(id); }, 2_000);
   timer.unref();
   const dispose = () => { disposed = true; clearInterval(timer); for (const state of sessions.values()) state.abort?.abort(); sessions.clear(); };
@@ -160,6 +162,6 @@ const plugin: Plugin = async ({ client, directory }) => {
   // Windows npm .cmd shims require a shell; run their Node entry point directly.
   const binary = process.platform === 'win32' ? process.execPath : cli;
   const prefix = process.platform === 'win32' ? [cli] : [];
-  return createHooks(client, cliDelivery(binary, directory, prefix), [binary, ...prefix, 'mcp', '--harness', 'opencode']);
+  return createHooks(client, cliDelivery(binary, directory, prefix), [binary, ...prefix, 'mcp', '--harness', 'opencode'], await startupSession());
 };
 export default { id: 'khala-opencode', server: plugin };

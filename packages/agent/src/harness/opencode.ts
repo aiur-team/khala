@@ -10,7 +10,7 @@ export const opencode: HarnessAdapter = {
   id: 'opencode',
   sessionSources: [{ kind: 'meta', resolve: meta => meta?.khala_session, rejoinable: () => true }, hookMapSource],
   codec: opencodeCodec,
-  restoreAtStartup: false,
+  restoreAtStartup: true,
   wakeLadder: [opencodeWakeDriver],
   pollIdleWake: pollOpenCodeWake,
   install,
