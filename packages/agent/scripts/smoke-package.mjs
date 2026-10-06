@@ -53,8 +53,8 @@ async function assertRestored(originals) {
 }
 
 /** Starts an MCP server, runs initialize + tools/list and stops it. */
-async function mcpSmoke(label, command, args, callStatus = false) {
-  const child = spawn(command, args, { env, cwd: root, stdio: ['pipe', 'pipe', 'inherit'] });
+async function mcpSmoke(label, command, args, callStatus = false, childEnv = env) {
+  const child = spawn(command, args, { env: childEnv, cwd: root, stdio: ['pipe', 'pipe', 'inherit'] });
   const replies = new Map();
   let buffer = '';
   child.stdout.setEncoding('utf8').on('data', data => {
@@ -139,6 +139,27 @@ try {
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
   await assertRestored(opencodeOriginals);
+
+  // A real home: no XDG_STATE_HOME, and ~/.local and ~/.local/state are 0755 like on a normal
+  // system. Only Khala's own state root (~/.local/state/khala) must be private.
+  if (!windows) {
+    const realHome = path.join(root, 'real-home');
+    const stateHome = path.join(realHome, '.local', 'state');
+    for (const dir of [realHome, path.join(realHome, '.local'), stateHome]) { await fs.mkdir(dir, { recursive: true }); await fs.chmod(dir, 0o755); }
+    const realEnv = { ...env, HOME: realHome, USERPROFILE: realHome, XDG_CONFIG_HOME: path.join(realHome, '.config') };
+    delete realEnv.XDG_STATE_HOME;
+    check('install cursor (0755 ~/.local/state)', process.execPath, [script, 'install', 'cursor'], { shell: false, env: { ...realEnv, KHALA_INSTALL_SPEC: tarball } });
+    const realMcp = JSON.parse(await fs.readFile(path.join(realHome, '.cursor', 'mcp.json'), 'utf8')).mcpServers?.khala;
+    await mcpSmoke('cursor mcp.json server (0755 ~/.local/state)', realMcp.command, realMcp.args, true, realEnv);
+    check('install opencode (0755 ~/.local/state)', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...realEnv, KHALA_INSTALL_SPEC: tarball, KHALA_OPENCODE_PLUGIN_SPEC: `khala-opencode@${version}` } });
+    for (const harness of ['cursor', 'opencode']) check(`install ${harness} --uninstall (0755 ~/.local/state)`, process.execPath, [script, 'install', harness, '--uninstall'], { shell: false, env: realEnv });
+    const khalaRoot = path.join(stateHome, 'khala');
+    if (((await fs.stat(khalaRoot)).mode & 0o777) !== 0o700) throw new Error(`${khalaRoot} is not 0700`);
+    for (const dir of [path.join(realHome, '.local'), stateHome]) {
+      if (((await fs.stat(dir)).mode & 0o777) !== 0o755) throw new Error(`${dir} was changed from 0755`);
+    }
+    console.log('ok khala state root private under 0755 ~/.local/state');
+  }
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
