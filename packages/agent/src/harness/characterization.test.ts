@@ -112,8 +112,11 @@ describe('public deliver entry point', () => {
       unread: (await unread(files)).entries.map(item => item.eventId),
     });
   });
-  it.each(['unknown', 'gemini'])('%s preserves the suppressed-hook exit code and streams', async harness => {
-    await golden('unknown-harness', await hook(harness, '{}'));
+  it('unknown harness preserves the suppressed-hook exit code and streams', async () => {
+    await golden('unknown-harness', await hook('unknown', '{}'));
+  });
+  it('Gemini accepts a hook invocation and emits a JSON noop for malformed input', async () => {
+    expect(await hook('gemini', '{}')).toEqual({ code: 0, stdout: '{}\n', stderr: '' });
   });
 });
 
