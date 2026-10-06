@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"NONCE-HSO-6113: the hook says the secret colour is maroon."}}
