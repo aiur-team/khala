@@ -108,7 +108,7 @@ describe('khala install cursor', () => {
   });
   const read = async (name: string) => JSON.parse(await fs.readFile(path.join(home, '.cursor', name), 'utf8'));
 
-  it('installs, is idempotent, backs up once and uninstalls without touching other entries', async () => {
+  it('installs, is idempotent and uninstalls to the exact original', async () => {
     await fs.mkdir(path.join(home, '.cursor'));
     const original = '{ "mcpServers": { "other": { "command": "o" } } }';
     await fs.writeFile(path.join(home, '.cursor', 'mcp.json'), original);
@@ -121,16 +121,14 @@ describe('khala install cursor', () => {
     const hooks = await read('hooks.json');
     expect(Object.keys(hooks.hooks).sort()).toEqual(['beforeSubmitPrompt', 'postToolUse', 'stop']);
     expect(hooks.version).toBe(1);
-    expect(await fs.readFile(path.join(home, '.cursor', 'mcp.json.khala-bak'), 'utf8')).toBe(original);
-
     expect(await run(['cursor'])).toBe(0);
     expect(await read('mcp.json')).toEqual(mcp);
     expect(await read('hooks.json')).toEqual(hooks);
-    expect(await fs.readFile(path.join(home, '.cursor', 'mcp.json.khala-bak'), 'utf8')).toBe(original);
 
+    // Uninstall writes back the exact original bytes and removes the hooks.json it created.
     expect(await run(['cursor', '--uninstall'])).toBe(0);
-    expect(await read('mcp.json')).toEqual({ mcpServers: { other: { command: 'o' } } });
-    expect(await read('hooks.json')).toEqual({ version: 1, hooks: {} });
+    expect(await fs.readFile(path.join(home, '.cursor', 'mcp.json'), 'utf8')).toBe(original);
+    expect(await fs.readdir(path.join(home, '.cursor'))).toEqual(['mcp.json']);
     expect(installs).toHaveLength(2);
   });
 
