@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
+import { KhalaApp } from '../../ui/khala/KhalaApp';
 import { ChannelRoster, MemberAvatar, RenameAgent, submitRename, type RenameAgentHandler, type RenameAgentResult } from './AgentPresencePanel';
 import type { ChannelAgentView } from './controller';
 import { resolveMembers } from './members';
@@ -30,6 +32,29 @@ describe('ChannelRoster', () => {
     expect(html).not.toContain('undefined');
     if (harness === 'claude-code') expect(html).not.toContain('Claude Code');
   });
+  it.each(['generic', 'cline', 'claude-code'])('locks Async-only %s even with a mode handler and stale mode', harness => {
+    const resolved = members([scout]);
+    const roster = { ...resolved, agents: resolved.agents.map(agent => ({ ...agent, harness })) };
+    const html = renderToStaticMarkup(<KhalaApp theme="dark" main={<ChannelRoster phase="ready" onOpen={() => {}} members={roster}
+      modeFor={() => 'steer'} onSetMode={async () => 'sent'} />} />);
+    const radios = html.match(/<button[^>]*role="radio"[^>]*>/g)!;
+    expect(radios).toHaveLength(3);
+    expect(radios.every(radio => radio.includes('disabled=""'))).toBe(true);
+    expect(radios.find(radio => radio.includes('aria-checked="true"'))).toContain('data-v="async"');
+    expect(html).toContain('This client has no hooks or wake.');
+    expect(html).toContain('aria-label="Listening mode for Scout: Async · on demand"');
+    expect(html).not.toContain('aria-haspopup="menu"');
+  });
+
+  it.each(HARNESS_REGISTRY.filter(harness => harness.steer && harness.sync))('keeps $id mode controls live', harness => {
+    const resolved = members([scout]);
+    const html = renderToStaticMarkup(<KhalaApp theme="dark" main={<ChannelRoster phase="ready" onOpen={() => {}}
+      members={{ ...resolved, agents: resolved.agents.map(agent => ({ ...agent, harness: harness.id })) }}
+      onSetMode={async () => 'sent'} />} />);
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html.match(/<button[^>]*role="radio"[^>]*>/g)!.every(radio => !radio.includes('disabled'))).toBe(true);
+  });
+
   it('badges names that collide across owners with the thread owner suffix', () => {
     const theosScout = { ...scout, participantId: 'agent_other' as ParticipantId, ownerId: 'owner_theo' as OwnerId };
     const html = renderToStaticMarkup(<ChannelRoster phase="ready" onOpen={() => {}} members={members([scout, theosScout])} />);
