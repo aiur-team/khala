@@ -155,3 +155,21 @@ it('refuses readable or symlinked controller credentials', async () => {
   await fs.symlink(other, credential);
   expect(await driver.available(ctx)).toBe(false);
 });
+
+it('explicit re-consent clears a stale held receipt without overriding hold settings', async () => {
+  const root = await temp(), env = { HOME: root, XDG_STATE_HOME: path.join(root, 'state'), QWEN_HOME: root };
+  const { openSessionDir } = await import('../state');
+  const { setWake } = await import('./cli');
+  const files = await openSessionDir('qwen', 's', env);
+  const receipt = path.join(files.dir, 'qwen-receipt.json');
+  await fs.writeFile(receipt, JSON.stringify({ status: 'held' }));
+  const driver = createQwenSocketDriver({ resolve: async () => ({ socket: '/fake', sessionId: 's', token: 'secret' }) });
+  const ctx = { files, harness: 'qwen', sessionId: 's', env, signal: new AbortController().signal, now: 1 };
+  expect(await driver.available(ctx)).toBe(false);
+  await setWake('qwen', ['socket'], true, env);
+  await expect(fs.stat(receipt)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await driver.available(ctx)).toBe(true);
+  await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({ agents: { crossSessionInbound: 'hold' } }));
+  await setWake('qwen', ['socket'], true, env);
+  expect(await driver.available(ctx)).toBe(false);
+});
