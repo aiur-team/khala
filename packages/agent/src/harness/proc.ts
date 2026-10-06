@@ -24,6 +24,7 @@ export function parseLinuxStat(pid: number, text: string): ProcessInfo | null {
   if (!validPid(pid) || open < 0 || close < open || Number(text.slice(0, open).trim()) !== pid) return null;
   // The command can contain spaces and parentheses. Field 3 starts after its final ).
   const fields = text.slice(close + 1).trim().split(/\s+/);
+  if (fields[0] === 'Z' || fields[0] === 'X') return null;
   const ppid = Number(fields[1]);
   const startTime = fields[19];
   if (!Number.isSafeInteger(ppid) || ppid < 0 || !startTime || !/^\d+$/.test(startTime)) return null;
