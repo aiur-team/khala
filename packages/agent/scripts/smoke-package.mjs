@@ -23,7 +23,7 @@ const env = {
   // Windows processes need the system environment (SystemRoot, ComSpec, PATHEXT, …).
   ...(windows ? process.env : {}),
   PATH: [binDir, path.dirname(process.execPath), ...(windows ? [process.env.PATH ?? ''] : ['/usr/bin', '/bin'])].join(path.delimiter),
-  HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(root, 'localappdata'),
+  HOME: home, USERPROFILE: home, COPILOT_HOME: path.join(home, '.copilot'), LOCALAPPDATA: path.join(root, 'localappdata'),
   XDG_CONFIG_HOME: path.join(root, 'config'), XDG_STATE_HOME: path.join(root, 'state'), XDG_DATA_HOME: path.join(root, 'data'),
   npm_config_cache: path.join(root, 'npm-cache'), npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false',
 };
@@ -93,12 +93,59 @@ async function mcpSmoke(label, command, args, callStatus = false, childEnv = env
   }
 }
 
+
 try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
   const bin = path.join(binDir, windows ? 'khala.cmd' : 'khala');
   const script = path.join(prefix, ...(windows ? [] : ['lib']), 'node_modules', 'khala-cli', 'dist', 'khala.mjs');
   await fs.access(path.join(path.dirname(script), 'iterm2_send.py'));
   console.log('ok packaged iTerm2 helper');
+  // Exercise the installed bundle's actual SQLite-backed Rust store in two fresh processes.
+  // Looking up its shared chunk keeps this check tied to the code shipped in the tarball.
+  const dist = path.dirname(script);
+  let cryptoChunk;
+  for (const name of await fs.readdir(dist)) {
+    if (!name.endsWith('.mjs') || name === 'khala.mjs') continue;
+    const file = path.join(dist, name);
+    if (/export\s*\{[^}]*\bopenCryptoStore\b/s.test(await fs.readFile(file, 'utf8'))) cryptoChunk = file;
+  }
+  if (!cryptoChunk) throw new Error('packed bundle is missing the persistent crypto store');
+  const cryptoProbe = `
+    import { pathToFileURL } from 'node:url';
+    import { createRequire } from 'node:module';
+    import { mkdir } from 'node:fs/promises';
+    import path from 'node:path';
+    const [chunk, root] = process.argv.slice(1);
+    const { openCryptoStore } = await import(pathToFileURL(chunk));
+    const require = createRequire(pathToFileURL(chunk));
+    const { createClient } = await import(pathToFileURL(require.resolve('matrix-js-sdk')));
+    const { logger } = await import(pathToFileURL(require.resolve('matrix-js-sdk/lib/logger.js')));
+    logger.disableAll();
+    const dir = path.join(root, 'channel');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const credentials = { homeserver: 'https://matrix.invalid', userId: '@smoke:test', deviceId: 'SMOKE', accessToken: 'unused', roomId: '!smoke:test' };
+    const store = await openCryptoStore(dir, root, credentials);
+    const client = createClient({ baseUrl: credentials.homeserver, userId: credentials.userId, deviceId: credentials.deviceId,
+      accessToken: credentials.accessToken, store: store.sync, fetchFn: async () => Response.json({}, { status: 404 }),
+      logger: { trace() {}, debug() {}, info() {}, log() {}, warn() {}, error() {}, getChild() { return this; } } });
+    await store.sync.startup();
+    await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: store.prefix });
+    const keys = await client.getCrypto().getOwnDeviceKeys();
+    const cursor = await store.sync.getSavedSyncToken();
+    await store.sync.setSyncData({ next_batch: 'packed-offline-position', rooms: { join: {} } });
+    await store.sync.save(true);
+    client.stopClient();
+    await store.close();
+    console.log(JSON.stringify({ keys, cursor, restored: store.restored }));
+  `;
+  const cryptoRoot = path.join(root, 'crypto');
+  await fs.mkdir(cryptoRoot, { mode: 0o700 });
+  const firstCrypto = JSON.parse(check('packed crypto initialization', process.execPath,
+    ['--input-type=module', '--eval', cryptoProbe, cryptoChunk, cryptoRoot], { shell: false }));
+  const secondCrypto = JSON.parse(check('packed crypto restart', process.execPath,
+    ['--input-type=module', '--eval', cryptoProbe, cryptoChunk, cryptoRoot], { shell: false }));
+  if (firstCrypto.restored || !secondCrypto.restored || secondCrypto.cursor !== 'packed-offline-position'
+    || JSON.stringify(firstCrypto.keys) !== JSON.stringify(secondCrypto.keys)) throw new Error('packed crypto restart lost keys or sync cursor');
   const reported = check('khala --version', quote(bin), ['--version']).trim();
   if (reported !== version) throw new Error(`khala --version printed ${reported}, expected ${version}`);
   check('hook deliver', quote(bin), ['hook', 'deliver', '--harness', 'claude'], { input: '{}' });
@@ -138,6 +185,34 @@ try {
   assert.ok(['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent'].every(event => gemini.hooks[event]?.length === 1));
   check('install gemini --uninstall', process.execPath, [script, 'install', 'gemini', '--uninstall'], { shell: false });
   await assert.rejects(fs.stat(geminiConfig), { code: 'ENOENT' });
+
+  // Copilot: execute the installed shell command with the CLI's event-less camelCase payload.
+  const copilotDir = path.join(home, '.copilot');
+  await fs.mkdir(copilotDir, { recursive: true });
+  const cpOriginal = JSON.stringify({ mcpServers: { other: { command: 'other' } } });
+  await fs.writeFile(path.join(copilotDir, 'mcp-config.json'), cpOriginal);
+  check('install copilot', process.execPath, [script, 'install', 'copilot'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const cp = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
+  if (cp.mcpServers?.khala?.type !== 'local' || cp.mcpServers?.other?.command !== 'other') throw new Error('Copilot MCP config');
+  await mcpSmoke('copilot mcp-config.json server', cp.mcpServers.khala.command, cp.mcpServers.khala.args);
+  const cpHooks = JSON.parse(await fs.readFile(path.join(copilotDir, 'hooks', 'khala.json'), 'utf8'));
+  for (const event of ['sessionStart', 'userPromptSubmitted', 'postToolUse', 'agentStop']) {
+    const handler = cpHooks.hooks?.[event]?.[0];
+    if (handler?.type !== 'command' || !handler.bash || !handler.powershell) throw new Error(`Copilot hook ${event}`);
+    const hookArgs = windows ? ['-NoProfile', '-NonInteractive', '-Command', handler.powershell] : ['-c', handler.bash];
+    const hookOut = check(`copilot ${event} hook`, windows ? 'powershell.exe' : 'bash', hookArgs,
+      { shell: false, input: JSON.stringify({ sessionId: 'smoke-session', cwd: root }) }).trim();
+    if (hookOut !== '{}') throw new Error(`copilot hook printed ${hookOut}`);
+  }
+  check('install copilot (again)', process.execPath, [script, 'install', 'copilot'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  if (JSON.stringify(JSON.parse(await fs.readFile(path.join(copilotDir, 'hooks', 'khala.json'), 'utf8'))) !== JSON.stringify(cpHooks)) throw new Error('install copilot is not idempotent');
+  check('install copilot --uninstall', process.execPath, [script, 'install', 'copilot', '--uninstall'], { shell: false });
+  const cpRemoved = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
+  if (cpRemoved.mcpServers.khala || cpRemoved.mcpServers.other?.command !== 'other') throw new Error('Copilot uninstall');
+  if (await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8') !== cpOriginal) throw new Error('Copilot original bytes not restored');
+  for (const file of [path.join(copilotDir, 'mcp-config.json.khala-bak'), path.join(copilotDir, 'hooks', 'khala.json'), path.join(copilotDir, 'hooks', 'khala.json.khala-bak')]) {
+    if (await fs.stat(file).catch(() => null)) throw new Error(`Copilot uninstall left ${file}`);
+  }
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');

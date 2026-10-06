@@ -149,3 +149,13 @@ it('emits one disable notice across transport failures until re-consent resets i
   }
   expect(await takeWakeDisableNotices(root)).toEqual(['terminal']);
 });
+
+it('keeps a native wake pending through its own busy turn and verifies on-time ingress after approval', async () => {
+  await recordAttempt(root, { nonce: 'deadbeef', driver: 'monitor', at: 1, deadline: 30_001, startsActivity: true });
+  expect(await settleAttempts(root, { now: 60_000, activity: { state: 'busy', updatedAt: 2 } })).toEqual([]);
+  expect(await readWakeState(root)).toEqual({});
+  expect(await settleAttempts(root, { now: 60_001, activity: { state: 'busy', updatedAt: 2 },
+    promptText: 'Khala: channel messages are waiting. Continue. (k-deadbeef)', verifiedAt: 3 }))
+    .toEqual([{ nonce: 'deadbeef', driver: 'monitor', status: 'success' }]);
+  expect((await readWakeState(root)).monitor).toEqual({ failures: 0 });
+});

@@ -1,7 +1,9 @@
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
-import type { ChannelSession, SessionEndReason, SessionMessage, SessionModeCommand } from '../transport';
+import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
+import { randomUUID } from 'node:crypto';
+import { StateError } from '../state';
 import { memberRenameContent } from '../events/member-rename';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
@@ -21,10 +23,12 @@ function message(event: MatrixEvent): SessionMessage | undefined {
     ...(type === 'm.room.member' ? { previousContent: event.getPrevContent() } : {}) };
 }
 
-export async function createAgentMatrixSession(creds: AgentCredentials, opts?: { log?: (line: string) => void; checkRemoved?: () => Promise<boolean> }): Promise<AgentMatrixSession> {
+export async function createAgentMatrixSession(creds: AgentCredentials, opts?: SessionOptions & { log?: (line: string) => void }): Promise<AgentMatrixSession> {
   const started = Date.now();
+  const rejoinTxnId = `khala.rejoin.${randomUUID()}`;
   const log = (line: string) => opts?.log?.(line);
-  const client = createClient({ baseUrl: creds.homeserver, userId: creds.userId, accessToken: creds.accessToken, deviceId: creds.deviceId });
+  const persistent = opts?.cryptoStore ? await (await import('./crypto-store')).openCryptoStore(opts.cryptoStore.dir, opts.cryptoStore.root, creds) : undefined;
+  const client = createClient({ ...(persistent ? { store: persistent.sync } : {}), baseUrl: creds.homeserver, userId: creds.userId, accessToken: creds.accessToken, deviceId: creds.deviceId });
   const handlers = new Set<(m: SessionMessage) => void>();
   const ended = new Set<(reason: SessionEndReason) => void>();
   const modeHandlers = new Set<(c: SessionModeCommand) => void>();
@@ -36,9 +40,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
   const cancellations = new Set<() => void>();
   let joinedRoom: string | undefined;
   let stopped = false;
+  let recovering = persistent?.restored ?? false;
 
   const deliver = (event: MatrixEvent) => {
-    if (stopped || !liveEvents.has(event)) return;
+    if (stopped || recovering || !liveEvents.has(event)) return;
     const command = event.getType() === LISTENING_MODE_COMMAND_TYPE && !event.isDecryptionFailure()
       && event.getId() && event.getRoomId() && event.getSender()
       ? { eventId: event.getId()!, roomId: event.getRoomId()!, sender: event.getSender()!, ts: event.getTs(), content: event.getContent() } : undefined;
@@ -68,7 +73,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     }
   };
   const timeline = (event: MatrixEvent, _room: Room | undefined, toStart: boolean | undefined, _removed: boolean, data: IRoomTimelineData) => {
-    if (stopped || toStart || data?.liveEvent === false) return;
+    if (stopped || toStart || (data?.liveEvent === false && !persistent?.restored)) return;
     liveEvents.add(event);
     void client.decryptEventIfNeeded(event).then(() => deliver(event), () => log('live_decryption_failed'));
   };
@@ -124,9 +129,37 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       check();
     });
   };
-  const stop = async () => {
+  let stopping: Promise<void> | undefined;
+  let wipe = false;
+  const stop = (): Promise<void> => stopping ??= stopSession();
+  const stopSession = async () => {
     if (stopped) return;
     stopped = true;
+    if (wipe) {
+      // Retire the device while its token is still available. A failed/offline
+      // logout must not prevent local cleanup or release of the store lease.
+      try { await client.http.authedRequest(Method.Post, '/logout', undefined, {}, { localTimeoutMs: 5000 }); }
+      catch { log('discarded_device_logout_failed'); console.error('khala: discarded_device_logout_failed'); }
+    }
+    if (wipe && persistent?.forgetIdentity) {
+      // Still stop the client and release its lease if the filesystem refuses
+      // this first attempt. wipe retries deletion after the sync has drained.
+      try { await persistent.forgetIdentity(); } catch { log('crypto_cleanup_failed'); }
+    }
+    // stopClient only aborts the HTTP request; STOPPED is emitted after the
+    // current sync response and its store save have actually finished.
+    let syncStopped: Promise<void> | undefined;
+    if (persistent && client.getSyncState() !== null && client.getSyncState() !== SyncState.Stopped) {
+      syncStopped = new Promise<void>((resolve, reject) => {
+        const done = (state: SyncState) => { if (state === SyncState.Stopped) finish(); };
+        const timer = setTimeout(() => finish(new Error('crypto_sync_stop_timeout')), 10_000);
+        const finish = (error?: Error) => {
+          clearTimeout(timer); client.removeListener(ClientEvent.Sync, done);
+          if (error) reject(error); else resolve();
+        };
+        client.on(ClientEvent.Sync, done);
+      });
+    }
     client.stopClient();
     client.removeListener(RoomEvent.Timeline, timeline);
     client.removeListener(MatrixEventEvent.Decrypted, decrypted);
@@ -138,6 +171,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     handlers.clear();
     modeHandlers.clear();
     ended.clear();
+    if (persistent) {
+      try { await syncStopped; if (wipe) await persistent.wipe(); } finally { await persistent.close(); }
+    }
   };
   const membershipEnded = (room: Room, membership: string) => {
     if (stopped || room.roomId !== joinedRoom || !['leave', 'ban'].includes(membership)) return;
@@ -146,13 +182,24 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
   const end = (reason: SessionEndReason) => {
     if (stopped) return;
     const listeners = [...ended];
-    void stop();
+    wipe = true;
+    void stop().catch(() => { log('crypto_cleanup_failed'); console.error('khala: crypto_cleanup_failed'); });
     for (const handler of listeners) {
       try { handler(reason); } catch { log('ended_handler_error'); }
     }
   };
   try {
-    await client.initRustCrypto({ useIndexedDB: false });
+    if (persistent) await persistent.sync.startup();
+    try {
+      await client.initRustCrypto(persistent ? { useIndexedDB: true, cryptoDatabasePrefix: persistent.prefix } : { useIndexedDB: false });
+    } catch (error) {
+      if (!persistent?.restored || (error instanceof StateError && error.code === 'unsafe_state_dir')) throw error;
+      // Never attach a new key store to the old device. The caller can make one
+      // bounded retry using the replacement credentials authorized by control.
+      // Close and release the store, but keep its identity until the caller
+      // logs out the old device and wipes it before starting a replacement.
+      throw new (await import('./crypto-store')).CryptoStoreCorruptError();
+    }
     const crypto = client.getCrypto();
     if (!crypto) throw new Error('crypto_unavailable');
     log(`crypto_version=${crypto.getVersion()}`);
@@ -190,6 +237,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
 
   return {
     userId: creds.userId,
+    ...(persistent?.recovered ? { cryptoReset: true } : {}),
+    ...(persistent?.restored ? { recoversOnJoin: true } : {}),
     onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     listeningMode: roomId => memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent()),
     inviter(roomId) { return inviters.get(roomId); },
@@ -208,7 +257,6 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     async join(roomId) {
       if (stopped) throw new Error('session_stopped');
       if (joinedRoom === roomId) return;
-      const rejoinedAt = Date.now();
       const membership = client.getRoom(roomId)?.getMyMembership();
       if (membership !== 'join') {
         if (membership !== 'invite') throw new Error('not_invited');
@@ -223,18 +271,56 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         const owner = ownJoin.getContent()['com.khala.invited_by'];
         if (typeof owner === 'string') inviters.set(roomId, owner);
         const event = encodeChannelEvent({ kind: 'member', summary: `${ownJoin.getContent().displayname ?? creds.userId} rejoined`, status: 'info', source: { system: 'khala-agent' } });
-        if (event.ok) await client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, event.value as never, `khala.rejoin.${creds.deviceId}`);
+        if (event.ok) await client.sendEvent(roomId, CHANNEL_EVENT_TYPE as never, event.value as never, rejoinTxnId);
       }
       if (membership !== 'join' && inviters.has(roomId)) {
         const content = { ...ownJoin.getContent(), membership: 'join' as const, 'com.khala.invited_by': inviters.get(roomId) };
         await client.sendStateEvent(roomId, EventType.RoomMember, content, creds.userId);
       }
-      joinTimes.set(roomId, membership === 'join' ? rejoinedAt : ownJoin.getTs());
+      const joinedAt = persistent?.joinedAt ?? ownJoin.getTs();
+      await persistent?.rememberJoin(joinedAt);
+      joinTimes.set(roomId, joinedAt);
+      if (persistent?.restored) {
+        // A limited /sync can omit an offline command. Replay to the durable
+        // inbox tail, falling back to the original join when it is unavailable.
+        // Inbox IDs and command metadata keep saved-sync replay idempotent.
+        let token: string | null = null;
+        const seenTokens = new Set<string>();
+        let pages = 0;
+        let undecryptable = 0;
+        for (;;) {
+          if (stopped) throw new Error('session_stopped');
+          const page = await client.createMessagesRequest(roomId, token, 100, Direction.Backward);
+          pages++;
+          let reachedBoundary = false;
+          for (const raw of page.chunk) {
+            const event = client.getEventMapper()({ ...raw, room_id: roomId });
+            if ((opts?.restoreStopAtEventId && event.getId() === opts.restoreStopAtEventId) || event.getTs() < joinedAt) { reachedBoundary = true; break; }
+            liveEvents.add(event);
+            await client.decryptEventIfNeeded(event).catch(() => log('recovery_decryption_failed'));
+            if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) { undecryptable++; liveEvents.delete(event); }
+          }
+          if (reachedBoundary || page.chunk.length === 0 || !page.end) break;
+          if (pages >= RESTORE_HISTORY_MAX_PAGES) {
+            const count = `restore_catchup_truncated pages=${pages}`;
+            if (opts?.log) log(count); else process.stderr.write(`${count}\n`);
+            break;
+          }
+          if (seenTokens.has(page.end)) throw new Error('recovery_pagination_stalled');
+          seenTokens.add(page.end); token = page.end;
+        }
+        if (undecryptable > 0) {
+          const count = `history_undecryptable=${undecryptable}`;
+          if (opts?.log) log(count); else process.stderr.write(`${count}\n`);
+        }
+      }
+      recovering = false;
       if (!joinedRoom) client.on(RoomEvent.MyMembership, membershipEnded);
       joinedRoom = roomId;
-      for (const event of liveEvents) { if (event.getRoomId() === roomId) deliver(event); }
+      for (const event of [...liveEvents].sort((a, b) => a.getTs() - b.getTs())) { if (event.getRoomId() === roomId) deliver(event); }
     },
-    async history(roomId, limit, before) {
+    joinedAt: roomId => joinTimes.get(roomId),
+    async history(roomId, limit, before, options) {
       if (stopped) throw new Error('session_stopped');
       let token: string | null = null;
       if (before !== undefined) {
@@ -244,14 +330,26 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       const res = await guarded(roomId, () => client.createMessagesRequest(roomId, token, limit, Direction.Backward));
       const messages: SessionMessage[] = [];
       let undecryptable = 0;
+      let oldest: string | undefined;
+      let oldestTs: number | undefined;
+      let reachedBoundary = false;
       for (const raw of res.chunk) {
         const event = client.getEventMapper()({ ...raw, room_id: roomId });
+        oldest = event.getId();
+        oldestTs = Math.min(oldestTs ?? event.getTs(), event.getTs());
+        if (options?.stopAtEventId && oldest === options.stopAtEventId) {
+          reachedBoundary = true;
+          break;
+        }
         try { await client.decryptEventIfNeeded(event); } catch { /* Report decryption failures below. */ }
         if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
           undecryptable++;
           const eventId = event.getId(), sender = event.getSender();
-          if (eventId && sender && eventId !== before) {
-            const body = '[Encrypted message unavailable: this device does not have its key. Messages from before joining may not have been shared.]';
+          // Unknown encrypted types are diagnostics for explicit reads, never
+          // confirmed messages eligible for restore intake or agent wakes.
+          if (options?.includeUnavailable !== false && eventId && sender && eventId !== before) {
+            const body = '[Encrypted message unavailable: this device does not have its key. Keys may not have been shared for messages sent before joining or while this agent was offline.]';
+
             messages.push({ eventId, roomId, sender, ts: event.getTs(), type: 'm.room.message', body,
               content: { msgtype: 'm.notice', body, 'com.khala.unavailable': true } });
           }
@@ -260,10 +358,14 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         const m = message(event);
         if (m && m.eventId !== before) messages.push(m);
       }
-      log(`history_undecryptable=${undecryptable}`);
+      const count = `history_undecryptable=${undecryptable}`;
+      log(count);
+      if (options?.includeUnavailable === false && undecryptable > 0 && !opts?.log) process.stderr.write(`${count}\n`);
       messages.reverse();
-      const oldest = messages[0];
-      return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest.eventId } : { messages };
+      // Unsupported state/command events still advance pagination. Otherwise an
+      // empty projected page would hide older messages during restore catch-up.
+      return { messages, ...(typeof res.end === 'string' && oldest ? { nextBefore: oldest } : {}),
+        ...(options?.includeUnavailable === false || options?.stopAtEventId ? { ...(oldestTs === undefined ? {} : { oldestTs }), reachedBoundary } : {}) };
     },
     async send(roomId, text) { if (stopped) throw new Error('session_stopped'); const res = await guarded(roomId, () => client.sendTextMessage(roomId, text)); return { eventId: res.event_id }; },
     async sendChannelEvent(roomId, content, txnId) {

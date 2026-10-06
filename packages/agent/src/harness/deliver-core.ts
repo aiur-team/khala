@@ -1,7 +1,7 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { sessionFiles, readJson, StateError, type StatusFile, type SessionFiles } from '../state';
+import { sessionFiles, readStatus, readJson, TERMINAL_SESSION_DETAILS, StateError, type StatusFile, type SessionFiles } from '../state';
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity } from '../activity';
@@ -189,10 +189,30 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     }
     if (files) {
       try {
+        if (adapter.verifyWake) {
+          try { await adapter.verifyWake(stdin, files, io.now().getTime()); }
+          catch { diagnostic(io, 'wake_verification_failed'); }
+        }
         if (adapter.emptyPrompt && (input.event === 'start' || input.event === 'prompt')) {
           try { await capturePane(files, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}),
             ...(io.readProcess ? { readProcess: io.readProcess } : {}) }); }
           catch { diagnostic(io, 'pane_capture_failed'); }
+        }
+        if (input.event === 'start' && adapter.startContext && input.sessionId) {
+          const channels = await listChannels(files);
+          const statuses = await Promise.all(channels.map(channel => readStatus(channel.files)));
+          if (statuses.some(status => status && !(status.state === 'disconnected'
+            && TERMINAL_SESSION_DETAILS.some(detail => detail === status.detail)))) {
+            output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart',
+              additionalContext: adapter.startContext(input.sessionId, io.env) } }) + '\n';
+          }
+        }
+        if (input.event === 'stop' && adapter.stopWakeText) {
+          try {
+            const proof = await adapter.stopWakeText(stdin, files, io.env);
+            // Native run-scoped ingress proof remains valid after tools in that run.
+            if (proof) await settleAttempts(files.dir, { now: io.now().getTime(), activity: null, promptText: proof.text, verifiedAt: proof.at });
+          } catch { diagnostic(io, 'wake_verification_failed'); }
         }
         if (input.event !== 'start') {
           let steerOnly = input.event === 'tool';

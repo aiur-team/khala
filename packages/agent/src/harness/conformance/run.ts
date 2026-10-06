@@ -15,7 +15,7 @@ import { readActivity, writeActivity } from '../../activity';
 import { createWakeLadder } from '../../wake/ladder';
 import { readWakeState, writeWakeSettings } from '../../wake/shared';
 import type { HarnessAdapter } from '../adapter';
-import { processSource, resolveSources } from '../session-sources';
+import { processSource, resolveSources, recordHookSession } from '../session-sources';
 import { deliverCore } from '../deliver-core';
 import type { FakeHarnessDriver, FakeSession, HookEvent } from './driver';
 
@@ -102,7 +102,11 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const sample = driver.newSession();
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
+    await driver.prepareSession?.(sample, env);
     let hookAt = now().getTime();
+    if (adapter.sessionSources.some(source => source.kind === 'hook-map')) {
+      await recordHookSession(adapter.id, sample.id, env, { now, ...(sample.workspace ? { workspace: sample.workspace } : {}) });
+    }
     const resolved = await resolveSources(adapter.sessionSources, sample.mcpMeta, env, { harness: adapter.id });
     assert.equal(resolved?.sessionId, sample.id, 'driver session must resolve through the adapter');
     for (const source of adapter.sessionSources) {
@@ -113,9 +117,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
     // U8 opens client/state wire ids; keep this adapter-facing runner ready for that widening.
     const harness = adapter.id as Harness;
     const files = await openSessionDir(harness, sample.id, env);
-    const hook = async (event: HookEvent, extra: Partial<FakeSession & { continuation: boolean; promptText: string }> = {}) => {
+    const hook = async (event: HookEvent, extra: Partial<FakeSession & { continuation: boolean; promptText: string }> = {}, stdin?: string) => {
       let stdout = '', stderr = '';
-      assert.equal(await deliverCore(driver.hookStdin(event, { ...sample, ...extra }), adapter, {
+      assert.equal(await deliverCore(stdin ?? driver.hookStdin(event, { ...sample, ...extra }), adapter, {
         env, now: () => new Date(hookAt), stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } },
       }), 0);
       assert.equal(stderr, '', 'hook diagnostics');
@@ -256,7 +260,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       if (hookSupported) assert.equal((await readActivity(files)).state, 'idle');
     });
     await row('idle wake', async () => {
-      const probe = driver.wakeProbe?.(adapter);
+      const probe = driver.wakeProbe?.(adapter, env);
       if (capabilities.idleWake === 'none') {
         assert.equal(adapter.wakeLadder?.length ?? 0, 0, 'idle wake declared absent but adapter has drivers');
         return;
@@ -264,7 +268,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert(probe?.drivers.length, 'idle wake declared but not delivered');
       assert.deepEqual(probe.drivers.map(d => [d.id, d.verification, d.optIn]),
         adapter.wakeLadder?.map(d => [d.id, d.verification, d.optIn]), 'probe must preserve wake policy');
-      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')),
+      // Agent-armed watcher completion is a native tool notification, not a typed wake.
+      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')
+        || (adapter.id === 'qwen' && d.id === 'background-shell')),
         'idle wake declared but not delivered: unverified transport');
       if (capabilities.idleWake === 'opt-in') assert(probe.drivers.every(d => d.optIn),
         'opt-in idle wake must require recorded consent for every driver');
@@ -286,7 +292,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         try {
           blocked.notify();
           await delay(100);
-        } finally { await blocked.stop(); }
+        } finally { await blocked.stop(); await probe.stop?.(); }
         assert.equal(probe.prompt(), undefined, `idle wake must be suppressed for ${excluded}`);
         assert.deepEqual(await readWakeState(guard.dir), {}, 'suppression must not settle a wake');
       }
@@ -303,10 +309,11 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         await until(async () => probe.prompt() !== undefined, 'idle wake declared but not delivered');
         assert.match(probe.prompt()!, /^Khala: channel messages are waiting\. Continue\. \(k-[0-9a-f]{8}\)$/);
         hookAt = now().getTime() + 60_001;
-        await hook('prompt', { promptText: probe.prompt()! });
+        if (driver.wakeHook) await hook('stop', {}, await driver.wakeHook(sample, probe.prompt()!));
+        else await hook(probe.verificationEvent ?? 'prompt', { promptText: probe.prompt()! });
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');
-      } finally { await ladder.stop(); }
+      } finally { await ladder.stop(); await probe.stop?.(); }
     }, capabilities.idleWake === 'none' ? 'absent' : 'pass');
     return { harness: adapter.id, rows };
   } finally {

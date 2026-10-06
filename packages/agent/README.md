@@ -2,7 +2,7 @@
 
 ## Install
 
-Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No checkout needed.
+Published to npm as [`khala-cli`](npm/package.json) (Node 22.18 or later in the 22.x series, or Node 24.11 or newer). No checkout needed.
 
 - **Claude Code**: `claude plugin marketplace add aiur-team/khala`, then
   `claude plugin install khala@khala`, then restart. [Details](docs/install-claude.md)
@@ -15,6 +15,9 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
   Tool approval is requested by default; terminal wake consent is recorded on install.
   [Details](docs/install-gemini.md)
 
+- **Copilot CLI**: `npx -y khala-cli install copilot`, then restart and send one prompt.
+  [Details](docs/install-copilot.md)
+
 Then tell the agent "Join this Khala channel: <link>".
 
 ## Package layout
@@ -24,8 +27,9 @@ Then tell the agent "Join this Khala channel: <link>".
 - `npm/`: the published package. `npm/package.json` is the single source of truth for the
   published name and version; `pnpm --filter @khala/agent build` bundles `src/cli-bundle.ts`
   with esbuild into `npm/dist/` (plain ESM, `@khala/contracts` inlined, no tsx) and copies
-  the local web app to `npm/dist/web/`. `matrix-js-sdk` (and its Rust crypto wasm) stay
-  runtime dependencies.
+  the local web app to `npm/dist/web/`. `matrix-js-sdk` (and its Rust crypto wasm), `better-sqlite3` and `proper-lockfile` stay
+  runtime dependencies. The Node IndexedDB shim is bundled, avoiding its unused canvas and
+  static-server installation dependencies.
 - `claude-plugin/`: the Claude plugin and the checkout marketplace `khala-m1`; the
   repository-root `.claude-plugin/marketplace.json` (`khala`) serves the same plugin from
   GitHub. `claude-plugin/khala/bin/khala` pins `<name>@<version>`;
@@ -61,6 +65,10 @@ Then tell the agent "Join this Khala channel: <link>".
   using the previously authorized link. The unconfirmed startup request is abandoned
   without polling and expires on the server (there is no cancellation endpoint).
   Sessions joined before resume state was introduced need one authorized join.
+- Hosted channels keep the Rust crypto and sync stores as private SQLite files in
+  their channel state directory. Rejoining an authorized session retains its Matrix
+  device and valid access token after control reauthorizes the same account and room. Owner removal or token revocation wipes the stores; leaving deletes the
+  channel state. A lease prevents simultaneous use by two MCP processes.
 - `khala hook <name>` runs a harness hook.
 - `khala --version` prints the version (`0.0.0` from a checkout).
 - `khala install codex [--codex-home <dir>] [--uninstall]` configures Codex to run this
@@ -69,6 +77,8 @@ Then tell the agent "Join this Khala channel: <link>".
   three hooks to `~/.cursor/hooks.json` for this package version (published package only).
 - `khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall]` merges the
   MCP server and four delivery hooks into `~/.gemini/settings.json`.
+- `khala install copilot [--wake|--no-wake] [--uninstall]` configures MCP and delivery
+  hooks and records terminal wake consent. Wakes spend AI credits.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,
   127.0.0.1 only, never a service, exits when idle) when needed. From a checkout the
@@ -118,3 +128,14 @@ Any well-formed ID without an adapter uses this fallback, including typos:
 ID if you expected a native adapter. The printed command uses the latest package;
 for a reproducible setup, replace `khala-cli` with `khala-cli@<version>` in the
 JSON arguments. Change that version when you want to update.
+
+For hosted restart regression coverage, `test:live` includes a process-level proof:
+join an encrypted room, kill the agent process, send two messages and an owner
+mode command, restart using automatic resume while control issues fresh credentials, then exit/resume. A backlog larger than the sync window verifies offline command recovery.
+To run just that proof against an isolated Synapse without the full local stack,
+set the test-only `KHALA_CRYPTO_TEST_HOMESERVER` and `KHALA_CRYPTO_TEST_SECRET`
+(registration shared secret), and run:
+
+```sh
+KHALA_E2E_LIVE=1 pnpm --filter @khala/agent exec vitest run --config ../../vitest.config.ts src/matrix/crypto-persistence.live.test.ts
+```

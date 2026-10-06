@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "2ffc4615-c28b-4ffb-8c1d-fadb9c8d1db0",
+  "stream": {
+    "kind": "session",
+    "id": "01a10fee-e403-7390-b3a0-dd772e9d2ef7"
+  },
+  "sequence": 159,
+  "recorded_at": 1791268849611803,
+  "record_type": "event",
+  "durability": "durable",
+  "causation_id": "01a10fef-b303-7b90-851a-8d0e64523427",
+  "payload_type": "runtime.session",
+  "payload_schema_version": 1,
+  "payload": {
+    "event": {
+      "delivery_snapshot": {
+        "body": "[khala] New message in #spike from kevin: \"Reply with the word PELICAN.\" nonce=MON-WAKE-3c91",
+        "delivery_segments": [
+          {
+            "kind": "human",
+            "text": "[khala] New message in #spike from kevin: \"Reply with the word PELICAN.\" nonce=MON-WAKE-3c91"
+          }
+        ],
+        "disposition": "queue",
+        "source": {
+          "event_index": 1,
+          "event_kind": "stdout_line",
+          "line_index": 1,
+          "source": "monitor_event",
+          "task_id": "01a10fef-5b82-7323-9dea-961038d72986",
+          "task_stream": {
+            "id": "01a10fef-5b82-7323-9dea-961038d72986",
+            "kind": "task"
+          }
+        },
+        "summary": "Monitor event: Watch Khala channel messages"
+      },
+      "drain_target_run_stream": {
+        "id": "01a10ff1-87c5-7952-902e-514e689715d0",
+        "kind": "run"
+      },
+      "item_id": "01a10fef-b303-7b90-851a-8d0e64523427",
+      "kind": "inbox_item_drained"
+    },
+    "kind": "run",
+    "run_id": "01a10ff1-87c5-7952-902e-514e689715d0",
+    "source_run_record_id": "01a10ff1-87cb-7460-9212-df5dea19a2ca",
+    "source_run_record_sequence": 14
+  }
+}

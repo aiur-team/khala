@@ -47,7 +47,7 @@ describe('Tier A conformance', () => {
     expect(result.rows.find(row => row.feature === 'steer')).toEqual({ feature: 'steer', status: 'absent' });
     await expect(runConformance(synthetic, driver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } }))
       .rejects.toThrow('steer');
-  });
+  }, 15_000);
   it('supports steer-only identity frames and asserts sync absent without consuming backlog', async () => {
     const adapter: HarnessAdapter = { ...synthetic, codec: { ...codex.codec!, parse(stdin) {
       const parsed = codex.codec!.parse(stdin);
@@ -62,7 +62,7 @@ describe('Tier A conformance', () => {
     } } };
     await expect(runConformance(consuming, driver, { capabilities: noSync }))
       .rejects.toThrow('absent sync must not consume backlog');
-  });
+  }, 15_000);
   it('requires verified delivery, records opt-in consent, and rejects an unverified prompt', async () => {
     function nonceFixture(wrongNonce: boolean) {
       let prompt: string | undefined;

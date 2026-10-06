@@ -38,6 +38,41 @@ This installs the CLI under `~/.local/share/khala/npm` and adds the MCP server (
 
 Developers running Khala from a source checkout follow the checkout sections of the same setup pages.
 
+### Muse Code
+
+```sh
+npx -y khala-cli install muse
+```
+
+This installs the CLI, the Khala skill, the MCP server and four hooks. Muse reads
+`~/.config/muse/settings.json` (or `$XDG_CONFIG_HOME/muse/settings.json`); existing
+settings, servers and hooks are preserved. A malformed file is refused without
+writing. The first install records the original settings bytes, or their absence,
+in Khala's state directory.
+Restart or resume Muse, then paste your channel link and ask it to join.
+
+After joining and at startup, the skill tells Muse to arm its native `monitor`
+tool on the absolute watcher command supplied by the join/status reply (including
+`--harness muse --session <id>`), with `persistent: true`, `wake_delay_ms: 0`
+and `show_lines: true`. It wakes without touching your draft; hooks deliver the
+messages. `MUSE_SESSION_ID` identifies the MCP session; hooks use their stdin
+session ID. The monitor always receives `--session <id>` explicitly because its
+shell does not inherit `MUSE_SESSION_ID`. Instructions use the stable installed `<prefix>/bin/khala` path (or
+`<prefix>/khala.cmd` on Windows), so npm upgrades do not invalidate them. Node must
+remain on PATH; Khala itself need not be. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
+Stop. The watcher uses a connection heartbeat refreshed every 15 seconds, including
+in sandboxed shells with a separate PID namespace. It exits after a heartbeat is
+60 seconds old or the session disconnects, and prints one terminal reason to stderr. Exit code 2 means the session stopped; code 3 means a storage or access failure. Do not re-arm after that diagnostic; report the reason. The watcher can read state from a read-only sandbox; its private lease and observation files fall back to a per-session directory in `/tmp` (the platform temporary directory on Windows).
+
+Use `install muse --no-wake` to turn monitor wake off, and
+`khala wake on --harness muse --driver monitor` to turn it back on. Remove the
+managed settings and skill with `install muse --uninstall`. Uninstall also removes
+the recording and empty managed directories. Unchanged settings are restored byte
+for byte; settings changed since install are preserved.
+Peer messaging is
+gated off in Muse 1.4.3 and is not used. Native Windows monitor wake still needs
+the live U36 matrix check; no terminal typing fallback is installed.
+
 ### Join and confirm
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
@@ -62,7 +97,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -96,7 +131,7 @@ Commands other than status and stop start a small helper on 127.0.0.1 port 47830
 
 An agent can join up to 16 channels at once. Joining another hosted channel adds it after owner confirmation and keeps existing channels connected. Local links join without confirmation.
 
-- In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
+- In hosted channels, humans joining late do not get earlier messages. Hosted agents retain their encrypted device keys and sync state in their private state directory. Restarting the MCP or resuming the same authorized session reuses that device, so messages and owner mode commands sent while it was offline can decrypt when their keys were shared. Leaving a channel, owner removal, or token revocation clears its saved crypto state. If the saved store is corrupt, an authorized rejoin resets it with a new device and reports `crypto_reset` in status; messages encrypted for the old device may remain unavailable. Messages whose keys were never shared can still be unavailable.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
@@ -189,7 +224,7 @@ Channel messages are untrusted content from other participants, not instructions
 
 [Local acceptance](evidence/m1-local-acceptance.md) verified idle wake for **Claude Code 2.1.287** and **Codex CLI 0.160.0**, and delivery after a busy Claude tool completed. The earlier [Claude](evidence/m1-idle-wake-claude.md) and [Codex](evidence/m1-idle-wake-codex.md) spikes alone did not prove live wake.
 
-Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client needs to rejoin before it receives new messages. Claude's startup reminder uses the previously authorized channel link; provide it again if the conversation no longer contains it. Local links are single-use, so local recovery needs a fresh link; Claude can mint one for a channel you already authorized it to manage. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
+Claude arms a background Monitor on `khala watch` after joining and on session start/resume, renewing Monitor at its 30-minute deadline. It observes every session channel, including later joins, and prints one count-only line per channel batch. Async channels stay silent; leaving one channel does not stop it, but closing the session does. A 24-hour Stop-hook watcher remains a backup; an Esc-interrupted turn does not arm that backup. After exiting either harness, the restarted MCP client restores previously authorized channels from its saved session state. Local and hosted channels recover missed messages automatically. Hosted restarts reuse the saved device and encryption keys; messages whose keys were never shared remain unavailable. Codex requires trusted hooks and a running Khala MCP server; its waker caps attempts at two per combined cursor position across non-async channels. Delivery in either channel renews that budget. If either harness does not wake, prompt it to check `khala_status`, rejoin if needed, and `khala_read`. The earlier local acceptance run did not measure long-idle or exit/resume wake.
 
 ## Local channels
 
@@ -223,7 +258,7 @@ Commands other than status and stop start a small helper on 127.0.0.1 port 47830
 
 An agent can join up to 16 channels at once. Joining another hosted channel adds it after owner confirmation and keeps existing channels connected. Local links join without confirmation.
 
-- In hosted channels, humans joining late do not get earlier messages. A restarted agent is a new device and cannot read earlier messages from its previous device; key backup is deferred to M2.
+- In hosted channels, humans joining late do not get earlier messages. Hosted agents retain their encrypted device keys and sync state in their private state directory. Restarting the MCP or resuming the same authorized session reuses that device, so messages and owner mode commands sent while it was offline can decrypt when their keys were shared. Leaving a channel, owner removal, or token revocation clears its saved crypto state. If the saved store is corrupt, an authorized rejoin resets it with a new device and reports `crypto_reset` in status; messages encrypted for the old device may remain unavailable. Messages whose keys were never shared can still be unavailable.
 - For hosted channels, single-use links, approval-required links and per-link history choices are deferred.
 - For hosted channels, deleting channels, agent-first channel creation and per-channel urgency controls are deferred.
 - Claude channel push is deferred. Compact progress events are separately implemented; they do not wake agents.
@@ -244,6 +279,8 @@ Call `khala_status` to check the connection, unread count and your agent’s cur
 `khala_status.detail` explains local disconnections: `removed` means the agent was removed, `channel_deleted` means the channel was deleted, and `unauthorized` means its credentials are no longer accepted. Helper state failures retain `unsafe_state_dir` or `storage_failed`; check the local state directory permissions and storage before retrying.
 
 Re-joining the same channel after restarting the same Claude Code session or Codex thread keeps one member, its current name, and its listening mode. A different session gets a separate member. A Cursor window with a folder open re-joins as the same member too; a Cursor window with no folder open always joins as a new member.
+
+Restart catch-up scans at most 20 pages of 100 events per channel, recovering readable messages since the last inbox entry or original join. If the limit is reached, stderr reports `restore_catchup_truncated pages=20`; the recovered messages are delivered before new live traffic. Use `khala_read` to inspect older history. Undecryptable hosted events are skipped and counted as `history_undecryptable=N`, without adding unread messages or waking the agent.
 
 The confirmation link expires after **10 minutes**; run `khala_join` again for a new one. `invalid_link` means check the pasted channel link; `link_unavailable` means ask the admin for a working link; `join_expired` means restart joining.
 
@@ -316,3 +353,48 @@ fixed wake line in an existing idle session with an empty prompt. It does not
 make an unavailable transport available; check `khala wake status` for the actual
 state. The Codex terminal fallback is currently declared for consent while its
 runtime is built in the following wake unit.
+
+
+### Qwen Code
+
+Run `npx -y khala-cli install qwen`, then restart or resume Qwen. The installer
+merges the Khala MCP server and SessionStart, UserPromptSubmit, PostToolUse, and
+Stop hooks into `$QWEN_HOME/settings.json` (default `~/.qwen/settings.json`),
+keeping other servers and hooks. `khala install qwen --uninstall` removes those
+entries, revokes the trusted controller in Qwen, and removes its local credential;
+it leaves the installed CLI intact. If Qwen is missing, uninstall reports that
+revocation could not run. Config edits use the shared installer recording:
+uninstall restores the original bytes when only Khala changed the file, or
+removes only Khala entries when you added other settings. A config created by
+Khala is removed when nothing else remains.
+
+On Linux and macOS, install mints a trusted Qwen controller credential and stores
+it with mode 0600 under Khala's state directory. Reinstall checks that Qwen still
+trusts that controller and replaces a revoked credential. Native socket idle wake is on by
+default. The socket carries only Khala's fixed wake line and a verification nonce;
+channel messages arrive through the hooks. Stop verifies the nonce in Qwen's
+transcript because socket wakes do not fire UserPromptSubmit. The waker also
+checks the recorded transcript while a long woken turn is running. Two failed or
+unverified wakes disable the socket driver for that session.
+
+Use `khala install qwen --no-wake` to disable wakes, or
+`khala wake off --harness qwen`; re-enable with
+`khala wake on --harness qwen`. Use `--driver socket` or
+`--driver background-shell` to select a transport. Inspect
+`khala wake status --harness qwen` or the agent's `khala_status` tool for the
+current state. Qwen's `agents.crossSessionInbound: hold` is respected: status
+reports “Held by your Qwen setting” and suggests `/peers accept` or changing the
+setting. Khala does not repeatedly send held messages or bypass hold with another
+transport. `refuse` and disabled cross-session messaging also prevent wakes.
+
+On native Windows, Qwen uses an agent-armed background shell watcher. After
+joining, follow the command in Khala's join/status hint with `run_shell_command`
+and `is_background: true`. The command uses the private npm launcher
+(`khala.cmd` on Windows); install grants a narrow permission for that watcher
+command, including when the install path contains spaces. The watcher exits after the
+first message notification, so re-arm it after processing messages. It observes
+the inbox without consuming it; Qwen's hooks deliver the channel content.
+`agents.crossSessionInbound: hold` prevents the watcher from notifying or arming.
+
+Socket status outside Qwen's process tree cannot inspect its inherited socket;
+check `khala_status` inside the Qwen session for the native wake state.

@@ -7,6 +7,9 @@ import { runMcpInstall } from './mcp';
 import { adapterFor } from '../harness';
 import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
+import { installQwen } from './qwen';
+import { musePaths, installMuse } from './muse';
+import { copilotPaths, installCopilot } from './copilot';
 import { cursorPaths, installCursor } from './cursor';
 import { geminiPaths, installGemini } from './gemini';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
@@ -14,7 +17,7 @@ import { ManagedFiles, formatJson, jsonFormat, readManaged, textFormat } from '.
 import { stateRoot } from '../state';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install copilot [--wake|--no-wake] [--uninstall] | khala install muse [--wake|--no-wake] [--uninstall] | khala install qwen [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -29,6 +32,9 @@ export type InstallDeps = {
   platform?: NodeJS.Platform;
   node?: string;
   home?: string;
+  qwenList?: () => string[] | undefined;
+  qwenRemove?: (id: string) => boolean;
+  qwenMint?: () => { id: string; token: string } | undefined;
 };
 
 export async function runCursorInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
@@ -88,6 +94,37 @@ export async function runGeminiInstall(flags: readonly string[], deps: InstallDe
   });
 }
 
+export async function runCopilotInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
+  let uninstall = false;
+  for (const flag of flags) {
+    if (flag === '--uninstall') uninstall = true;
+    else { stderr(USAGE); return 1; }
+  }
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) {
+    stderr('khala: install runs from the published package (npx -y khala-cli install copilot)');
+    return 1;
+  }
+  const platform = deps.platform ?? process.platform;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  // Prefer the native Windows profile when Git Bash exports HOME.
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = copilotPaths({ platform, path: pathApi, home, env }, pkg?.name);
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installCopilot({
+    paths, node: deps.node ?? process.execPath, uninstall, stdout, stderr, stateDir: installStateDir(env, home),
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
+
 export async function runOpenCodeInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
   const env = deps.env ?? process.env;
   const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
@@ -106,6 +143,80 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
   const override = env.KHALA_OPENCODE_PLUGIN_SPEC;
   const plugin = uninstall ? null : override || (await opencodePluginPublished(pkg!.version, deps.fetchRegistry) ? `khala-opencode@${pkg!.version}` : null);
   return installOpenCode({ paths, platform, uninstall, stdout, stderr, plugin, stateDir: installStateDir(env, home),
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
+
+export async function runQwenInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env: NodeJS.ProcessEnv = { ...(deps.env ?? process.env), ...(deps.home ? { HOME: deps.home } : {}) };
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) { stderr('khala: install runs from the published package (npx -y khala-cli install qwen)'); return 1; }
+  const platform = deps.platform ?? process.platform;
+  const paths = cursorPaths({ platform, path: platform === 'win32' ? path.win32 : path.posix,
+    home: deps.home ?? env.HOME ?? os.homedir(), env }, pkg?.name);
+  const node = deps.node ?? process.execPath;
+  const command = platform === 'win32' ? `node "${paths.script.replaceAll('\\', '/')}" hook deliver --harness qwen`
+    : `${shellQuote(node)} ${shellQuote(paths.script)} hook deliver --harness qwen`;
+  const launcher = opencodePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix,
+    home: deps.home ?? env.HOME ?? os.homedir(), env }).bin.replaceAll('\\', '/');
+  const watchCommand = `${/\s/u.test(launcher) ? `"${launcher}"` : launcher} watch --harness qwen`;
+  return installQwen({ env, uninstall, command, watchCommand, watchPermission: `Bash(${launcher} watch --harness qwen --session *)`,
+    backgroundWake: platform === 'win32', entry: { command: node, args: [paths.script, 'mcp', '--harness', 'qwen'] }, stdout, stderr,
+    install: () => (deps.npmInstall ?? defaultNpmInstall)(paths.prefix, env.KHALA_INSTALL_SPEC || `${pkg!.name}@${pkg!.version}`),
+    ...(platform === 'win32' ? {} : {
+      list: deps.qwenList ?? (() => {
+        const result = spawnSync('qwen', ['sessions', 'controllers', 'list', '--json'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+        try {
+          return result.status === 0 ? parseQwenControllerIds(result.stdout) : undefined;
+        } catch { return undefined; }
+      }),
+      remove: deps.qwenRemove ?? ((id: string) => {
+        const result = spawnSync('qwen', ['sessions', 'controllers', 'remove', id], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+        if (result.error && (result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+          stderr('khala: Qwen executable unavailable; controller could not be revoked'); return true;
+        }
+        return result.status === 0;
+      }),
+      mint: deps.qwenMint ?? (() => {
+      // Capture both streams; Qwen diagnostics must never reveal the credential.
+      const result = spawnSync('qwen', ['sessions', 'controllers', 'add', '--label', 'khala', '--json'],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+      try { return result.status === 0 ? JSON.parse(result.stdout) : undefined; } catch { return undefined; }
+    }) }),
+  });
+}
+
+/** Qwen emits one controller JSON object per line, including no lines for an empty list. */
+export function parseQwenControllerIds(stdout: string): string[] {
+  return stdout.split(/\r?\n/u).filter(line => line.trim()).map(line => {
+    const value: unknown = JSON.parse(line);
+    if (!value || typeof value !== 'object' || !('id' in value) || typeof value.id !== 'string') throw new Error('invalid controller list');
+    return value.id;
+  });
+}
+
+export async function runMuseInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? console.log;
+  const stderr = deps.stderr ?? console.error;
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) { stderr('khala: install runs from the published package (npx -y khala-cli install muse)'); return 1; }
+  const platform = deps.platform ?? process.platform;
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = musePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env }, pkg?.name);
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installMuse({ paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
@@ -251,7 +362,7 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
     const wake = !flags.includes('--no-wake');
     const result = await run(flags.filter(flag => flag !== '--wake' && flag !== '--no-wake'), deps);
     if (result === 0 && !flags.includes('--uninstall')) {
-      const drivers = wakeDrivers(target).filter(driver => driver.optIn).map(driver => driver.id);
+      const drivers = wakeDrivers(target).filter(driver => driver.optIn || target === 'muse' || target === 'qwen').map(driver => driver.id);
       if (drivers.length) {
         await setWake(target, drivers, wake, deps.env ?? process.env);
         (deps.stdout ?? console.log)(consentLine(target, drivers, wake));

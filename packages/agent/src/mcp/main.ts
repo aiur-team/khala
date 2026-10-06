@@ -1,3 +1,4 @@
+import { museCliPath } from '../wake/muse-monitor';
 import { Console } from 'node:console';
 import type { Readable, Writable } from 'node:stream';
 import type { Harness } from '@khala/contracts/m1/agent-join';
@@ -57,6 +58,8 @@ export async function runMcpCommand(argv: readonly string[], deps: {
   }
   const tools = createKhalaTools({
     harness,
+    museBin: museCliPath(env),
+    ...(startupSession ? { museSessionId: startupSession.sessionId } : {}),
     async clientFor(meta) {
       const session = await resolveSession(harness, meta, env);
       return session === null ? null : clientForSession(session);

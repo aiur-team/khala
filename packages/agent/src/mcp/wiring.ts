@@ -1,15 +1,18 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { createKhalaAgentClient } from '../client-impl';
-import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
+import { ensureStateDir, readJson, removeStateFile, sessionFiles, stateRoot } from '../state';
 import type { createCodexWaker } from '../wake/codex';
 import { createWakeLadder } from '../wake/ladder';
 import { adapterFor } from '../harness';
 import { wakeStatus, selectedWakeStatus, wakeDisableNotice, wakeStatusText } from '../wake/status';
+import { qwenInboundAllowed } from '../wake/qwen-socket';
+import { readWakeSettings } from '../wake/shared';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
 export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
+  platform?: NodeJS.Platform;
   createClient?: typeof createKhalaAgentClient;
   createWaker?: typeof createCodexWaker;
 } = {}): ClientFactory {
@@ -21,6 +24,16 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       ? deps.createWaker({ files, threadId: sessionId })
       : createWakeLadder({ files, harness, sessionId, drivers, env,
         warningPrefix: adapter?.wakeWarningName ?? 'wake' }) : undefined;
+    const watcherHint = async () => {
+      if (harness !== 'qwen' || (deps.platform ?? process.platform) !== 'win32') return undefined;
+      const settings = await readWakeSettings(stateRoot(env));
+      if (!await qwenInboundAllowed(env) || settings.off['qwen/socket']) return undefined;
+      const rows = await wakeStatus(harness, { env, files, sessionId });
+      if (rows.some(row => row.state === 'held' || row.state === 'disabled')) return undefined;
+      const installed = await readJson<{ command?: string }>(path.join(stateRoot(env), 'qwen', 'watch-command.json'));
+      if (!installed?.command || await monitorArmed(files)) return undefined;
+      return `Arm run_shell_command with ${JSON.stringify({ command: installed.command + ' --session ' + sessionId, is_background: true })}. When it completes, call khala_read, then re-arm the same one-shot watcher.`;
+    };
     const client = (deps.createClient ?? createKhalaAgentClient)({ harness, sessionId, ...(rejoinable !== undefined ? { rejoinable } : {}), env,
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before
@@ -36,7 +49,7 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
     })();
     void initialize().catch(() => {});
     return {
-      async join(link, label) { await initialize(); return client.join(link, label); },
+      async join(link, label) { await initialize(); const joined = await client.join(link, label); return { ...joined, ...(joined.state === 'connected' ? { watcherHint: await watcherHint() } : {}) }; },
       async status(channel) {
         await initialize();
         const status = await (channel === undefined ? client.status() : client.status(channel));
@@ -44,8 +57,9 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
         try { idleWake = selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })); }
         catch { idleWake = wakeStatusText(drivers?.[0]?.id ?? 'watcher', 'unavailable', 'wake_status_unavailable'); }
         const withWake = { ...status, idleWake };
+        const hint = await watcherHint();
         return adapter?.watcherStatus && ['connected', 'send_failed'].includes(withWake.state)
-          ? { ...withWake, watcherArmed: await monitorArmed(files) } : withWake;
+          ? { ...withWake, watcherArmed: await monitorArmed(files), ...(hint ? { watcherHint: hint } : {}) } : withWake;
       },
       async read(limit, before, channel) {
         await initialize();

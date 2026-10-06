@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { build } from 'esbuild';
 
 const agent = fileURLToPath(new URL('..', import.meta.url));
@@ -13,7 +14,9 @@ const dist = `${npmDir}/dist`;
 const manifest = JSON.parse(await fs.readFile(`${npmDir}/package.json`, 'utf8'));
 const workspace = JSON.parse(await fs.readFile(`${agent}package.json`, 'utf8'));
 
-// The published runtime dependencies must be exactly what the checkout runs and tests.
+// The published external dependencies must match the checkout. The Node IndexedDB shim
+// and its JavaScript dependencies are bundled; only its SQLite native binding stays external.
+// This excludes the shim package's unused canvas and static-server install dependencies.
 for (const [name, version] of Object.entries(manifest.dependencies ?? {})) {
   if (workspace.dependencies?.[name] !== version) {
     throw new Error(`npm/package.json pins ${name}@${version} but packages/agent uses ${workspace.dependencies?.[name]}`);
@@ -43,6 +46,38 @@ const result = await build({
   metafile: true,
 });
 await fs.copyFile(`${agent}src/wake/terminal/iterm2_send.py`, `${dist}/iterm2_send.py`);
+// These package-level dependencies are irrelevant to the Node shim and must never ship.
+for (const input of Object.keys(result.metafile.inputs)) {
+  if (/node_modules\/(?:canvas|@node-static\/node-static)\//.test(input)) {
+    throw new Error(`unexpected bundled browser/server dependency ${input}`);
+  }
+}
+// Preserve the license notices of third-party JavaScript now inlined into the package.
+const bundledPackages = new Map();
+for (const input of Object.keys(result.metafile.inputs)) {
+  if (!input.includes('node_modules/')) continue;
+  let directory = path.dirname(path.resolve(agent, input));
+  while (directory !== path.dirname(directory)) {
+    if (bundledPackages.has(directory)) break;
+    try {
+      const pkg = JSON.parse(await fs.readFile(path.join(directory, 'package.json'), 'utf8'));
+      bundledPackages.set(directory, pkg);
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      directory = path.dirname(directory);
+    }
+  }
+}
+const notices = [];
+for (const [directory, pkg] of [...bundledPackages].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const name of (await fs.readdir(directory)).sort()) {
+    if (!/^(?:licen[sc]e|notice)(?:[-.]|$)/i.test(name)) continue;
+    if (!(await fs.stat(path.join(directory, name))).isFile()) continue;
+    notices.push(`${pkg.name}@${pkg.version} — ${name}\n\n${await fs.readFile(path.join(directory, name), 'utf8')}`);
+  }
+}
+await fs.writeFile(`${dist}/THIRD_PARTY_NOTICES.txt`, notices.join('\n\n'));
 const entry = `${dist}/khala.mjs`;
 await fs.writeFile(entry, '#!/usr/bin/env node\n' + await fs.readFile(entry, 'utf8'));
 await fs.chmod(entry, 0o755);

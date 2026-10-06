@@ -15,12 +15,17 @@ export interface FakeHarnessDriver {
   /** Cursor guards allow a new batch during a retry, but never replay a delivered batch. */
   syncGuard?: 'cursor';
   newSession(): FakeSession;
+  prepareSession?(session: FakeSession, env: NodeJS.ProcessEnv): Promise<void>;
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;
   readHookStdout(stdout: string): { kind: 'context' | 'continue' | 'none'; frame?: string };
   /** Replace only external I/O, keeping the adapter's real wake implementation. */
-  wakeProbe?(adapter: HarnessAdapter): {
+  /** Native notification wakes may complete at Stop instead of UserPromptSubmit. */
+  wakeHook?(session: FakeSession, text: string): string | Promise<string>;
+  wakeProbe?(adapter: HarnessAdapter, env: NodeJS.ProcessEnv): {
     drivers: readonly WakeDriver[];
+    verificationEvent?: HookEvent;
     prompt(): string | undefined;
+    stop?(): Promise<void>;
     prepare?(files: SessionFiles): Promise<void>;
   };
 }
