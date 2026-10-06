@@ -92,3 +92,33 @@ it('reminds for an unnamed joined channel using its room identity', async () => 
   expect(output).toContain('khala watch');
   expect(output).not.toContain('!unnamed:test');
 });
+
+it.each(['startup', 'resume'])('marks a joined interactive %s idle before the asynchronous watcher', async source => {
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+  await saveChannel('!joined:test', 'connected');
+  await writeStateFile(files.dir, 'status.json', { state: 'disconnected' });
+  await fs.writeFile(path.join(files.dir, 'activity.json'), JSON.stringify({ state: 'busy', updatedAt: new Date().toISOString() }));
+  await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source }), []);
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'activity.json'), 'utf8'))).toMatchObject({ state: 'idle' });
+});
+it.each(['cli', 'sdk-cli', 'sdk-ts', 'claude-desktop'])('does not mark an unjoined %s session idle', async entrypoint => {
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', entrypoint);
+  await saveChannel('!left:test', 'disconnected', 'left');
+  await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'startup' }), []);
+  await expect(fs.stat(path.join(files.dir, 'activity.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it.each(['sdk-cli', 'sdk-ts', 'claude-desktop'])('does not change activity in a joined %s host', async entrypoint => {
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', entrypoint);
+  await saveChannel('!joined:test', 'connected');
+  await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'startup' }), []);
+  await expect(fs.stat(path.join(files.dir, 'activity.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it.each(['clear', 'compact'])('preserves busy activity on SessionStart %s', async source => {
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+  await saveChannel('!joined:test', 'connected');
+  const activity = JSON.stringify({ state: 'busy', updatedAt: new Date().toISOString() });
+  await fs.writeFile(path.join(files.dir, 'activity.json'), activity);
+  await run(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source }), []);
+  expect(await fs.readFile(path.join(files.dir, 'activity.json'), 'utf8')).toBe(activity);
+});
