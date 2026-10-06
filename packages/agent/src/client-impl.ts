@@ -171,7 +171,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     if (attempt.files) {
       await removeStateFile(attempt.files.dir, 'session.json');
       if (terminal.includes(attempt.status.detail ?? '') && attempt.credentials?.transport !== 'local' && !attempt.restore?.localCredentials) {
-        await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files.dir, stateRoot(options.env));
+        await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files.dir, stateRoot(options.env), options.fetch ?? fetch);
       }
     }
   }
@@ -239,6 +239,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       let credentials = issuedCredentials;
       if (attempt.restore && credentials.roomId !== attempt.restore.roomId) {
         await removeStateFile(attempt.files!.dir, 'resume.json');
+        await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
         throw new KhalaClientError('not_connected', 'unauthorized');
       }
       if (attempt.restore && !attempt.restore.localCredentials) {
@@ -246,7 +247,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         try { credentials = await cryptoStore.restoredCredentials(attempt.files!.dir, credentials); }
         catch (error) {
           if (!(error instanceof cryptoStore.CryptoStoreCorruptError)) throw error;
-          await cryptoStore.wipeCryptoStore(attempt.files!.dir, stateRoot(options.env));
+          await cryptoStore.wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
           attempt.cryptoReset = true;
         }
       }
@@ -299,7 +300,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       catch (error) {
         const cryptoStore = await import('./matrix/crypto-store');
         if (!(error instanceof cryptoStore.CryptoStoreCorruptError) || credentials.accessToken === issuedCredentials.accessToken) throw error;
-        await cryptoStore.wipeCryptoStore(channelDir, stateRoot(options.env));
+        await cryptoStore.wipeCryptoStore(channelDir, stateRoot(options.env), options.fetch ?? fetch);
         credentials = issuedCredentials;
         attempt.credentials = credentials;
         attempt.cryptoReset = true;
@@ -446,7 +447,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           if (restore && !restore.localCredentials) {
             const state = await (await import('./matrix/crypto-store')).validateCryptoToken(attempt.files!.dir, options.fetch ?? fetch);
             if (state === 'corrupt') {
-              await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env));
+              await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
               attempt.cryptoReset = true;
             }
             if (state === 'revoked') throw new KhalaClientError('not_connected', 'unauthorized');
@@ -478,7 +479,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         } catch (error) {
           if (restore && terminal.includes(safeError(error).message)) {
             await removeStateFile(attempt.files!.dir, 'resume.json');
-            if (!restore.localCredentials) await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env));
+            if (!restore.localCredentials) await (await import('./matrix/crypto-store')).wipeCryptoStore(attempt.files!.dir, stateRoot(options.env), options.fetch ?? fetch);
           }
           if (restore && !closed && !attempt.controller.signal.aborted) await setStatus(attempt, 'disconnected', safeError(error).message);
           attempts.delete(link);
@@ -510,11 +511,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const previous = priorStatuses.get(ref.key);
           if (terminal.includes(previous?.detail ?? '')) {
             await removeStateFile(ref.files.dir, 'resume.json');
-            if (!authorization.localCredentials) await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env));
+            await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
           if (!savedSecret || authorization.secretHash !== secretHash() || authorization.workspace !== workspace || authorization.roomId !== ref.roomId || authorization.localCredentials && (authorization.localCredentials.transport !== 'local' || authorization.localCredentials.roomId !== ref.roomId) || typeof authorization.link !== 'string' || typeof authorization.label !== 'string') {
             await removeStateFile(ref.files.dir, 'resume.json');
+            await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
           void join(authorization.link, authorization.label, authorization).catch(() => {});
