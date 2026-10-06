@@ -156,7 +156,7 @@ const save = () => fs.writeFileSync(file, JSON.stringify(pane));
 const send = text => { if (text === '\\r' || text === '\\\\r') { pane.submitted = pane.composer; pane.composer = ''; } else pane.composer = text; save(); };
 if (command === 'wezterm') {
  if (argv[1] === 'list') console.log(JSON.stringify([{pane_id: 7, tty_name: pane.tty, cursor_x: (pane.cursorColumn || 2) + (pane.composer || '').length, cursor_y: 0}]));
- else if (argv[1] === 'get-text') process.stdout.write((pane.prefix || '❯ ') + (pane.composer || '') + '\\r\\n\\x1b[0m\\n');
+ else if (argv[1] === 'get-text') process.stdout.write(((pane.prefix || '❯ ') + (pane.composer || '')).replace(/ +$/, '') + '\\r\\n\\x1b[0m\\n');
  else if (argv[1] === 'send-text') send(argv.at(-1)); else process.exit(1);
  process.exit(0);
 }
@@ -167,7 +167,7 @@ if (command === 'kitten') {
  process.exit(0);
 }
 if (command === 'python3') {
- const view = {tty: '/dev/ttys007', cursorX: (pane.cursorColumn || 2) + (pane.composer || '').length, cursorY: 0, line: (pane.prefix || '❯ ') + (pane.composer || '')};
+ const view = {tty: '/dev/ttys007', cursorX: (pane.cursorColumn || 2) + (pane.composer || '').length, cursorY: pane.cursorY ?? 0, line: Array.from((pane.prefix || '❯ ') + (pane.composer || ''), (cell, column) => (pane.faintColumns?.includes(column) ? '\\x1b[2m' : '\\x1b[22m') + cell).join('')};
  if (argv.length === 2) console.log(JSON.stringify(view));
  else if (JSON.stringify(JSON.parse(argv[3])) !== JSON.stringify(view)) console.log(JSON.stringify({status:'not_empty'}));
  else { send(argv[2]); console.log(JSON.stringify({status:'sent'})); }
@@ -175,7 +175,7 @@ if (command === 'python3') {
 }
 const action = argv[0] === '-S' ? argv[2] : argv[0];
 if (action === 'display-message') console.log([pane.pid, 0, 0, (pane.cursorColumn || 2) + (pane.composer || '').length, 0, pane.tty, 0].join('|'));
-else if (action === 'capture-pane') console.log((pane.prefix || '❯ ') + (pane.composer || ''));
+else if (action === 'capture-pane') console.log(((pane.prefix || '❯ ') + (pane.composer || '')).replace(/ +$/, ''));
 else if (action === 'send-keys') {
   if (argv.includes('-l')) pane.composer = argv[argv.indexOf('-l') + 1];
   else if (argv.at(-1) === 'Enter') { pane.submitted = pane.composer; pane.composer = ''; }

@@ -60,7 +60,7 @@ from types import SimpleNamespace as S
 class Contents:
     string = '❯ '
     def string_at(self, column): return self.string[column]
-    def style_at(self, column): return S(faint=False)
+    def style_at(self, column): return S(faint=column == 1)
 class Screen:
     cursor_coord = S(x=2, y=17)
     windowed_coord_range = S(coord_range=S(start=S(y=17)))
@@ -90,8 +90,21 @@ def run_until_complete(fn): asyncio.run(fn(None))
         let stdout = '', stderr = ''; child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
         child.once('error', reject); child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr)));
       });
-      const view = { tty: '/dev/ttys007', cursorX: 2, cursorY: 17, line: '\x1b[22m❯\x1b[22m ' };
+      const view = { tty: '/dev/ttys007', cursorX: 2, cursorY: 17, line: '\x1b[22m❯\x1b[2m ' };
       expect(JSON.parse(await run(['fixture-session']))).toEqual(view);
+      // Compare the executable fake against the real helper, including a faint
+      // cell, so the two subprocess rows cannot drift to incompatible formats.
+      await prepareTerminal(world.claude, 'iterm2');
+      const configPath = path.join(world.root, 'bin/terminal.json');
+      const config = JSON.parse(await readFile(configPath, 'utf8'));
+      await writeFile(configPath, JSON.stringify({ ...config, cursorY: 17, faintColumns: [1] }));
+      const fakeView = await new Promise<string>((resolve, reject) => {
+        const child = spawn(path.join(world.root, 'bin/python3'), [helper, 'fixture-session'], { env: world.env });
+        let stdout = ''; child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.resume();
+        child.once('error', reject); child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(`fake helper exited ${code}`)));
+      });
+      expect(JSON.parse(fakeView)).toEqual(view);
+
       const line = 'Khala: channel messages are waiting. Continue. (k-1234abcd)';
       expect(JSON.parse(await run(['fixture-session', line, JSON.stringify(view)]))).toEqual({ status: 'sent' });
       expect(JSON.parse(await run(['fixture-session', '\r', JSON.stringify(view)]))).toEqual({ status: 'sent' });
@@ -135,8 +148,8 @@ await driver.wake(ctx, ${JSON.stringify(line)});
       expect(sends.map(call => call.argv.slice(1, 3))).toEqual([
         ['12345678-1234-1234-1234-123456789abc', line], ['12345678-1234-1234-1234-123456789abc', '\r'],
       ]);
-      expect(JSON.parse(sends[0]!.argv[3]!)).toEqual({ tty: '/dev/ttys007', cursorX: 2, cursorY: 0, line: '❯ ' });
-      expect(JSON.parse(sends[1]!.argv[3]!)).toEqual({ tty: '/dev/ttys007', cursorX: 2 + line.length, cursorY: 0, line: '❯ ' + line });
+      expect(JSON.parse(sends[0]!.argv[3]!)).toEqual({ tty: '/dev/ttys007', cursorX: 2, cursorY: 0, line: '\x1b[22m❯\x1b[22m ' });
+      expect(JSON.parse(sends[1]!.argv[3]!)).toEqual({ tty: '/dev/ttys007', cursorX: 2 + line.length, cursorY: 0, line: Array.from('❯ ' + line, cell => '\x1b[22m' + cell).join('') });
       expect(JSON.parse(await readFile(path.join(world.root, 'bin/terminal.json'), 'utf8')).submitted).toBe(line);
     } finally { await cleanupWorld(world); }
   }, 60_000);
