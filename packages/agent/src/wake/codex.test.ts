@@ -5,9 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeActivity } from '../activity';
 import * as activityState from '../activity';
 import { appendEntries } from '../inbox';
-import { channelFiles, ensureStateDir, openSessionDir, saveSession, writeJsonAtomic, type SessionFiles } from '../state';
-import { createCodexWaker, type CodexWaker } from './codex';
-import { CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome } from './idle-wake';
+import { channelFiles, ensureStateDir, openSessionDir, saveSession, writeJsonAtomic, stateRoot, type SessionFiles } from '../state';
+import { createCodexWakeDriver, createCodexWaker, type CodexWaker } from './codex';
+import { readActivity } from '../activity';
+import { readWakeState, settleAttempts, writeWakeSettings } from './shared';
+import { createWakeLadder } from './ladder';
+import { type CodexIdleWakeOutcome } from './idle-wake';
 import { createCodexQueueProcessPort } from './idle-wake-process';
 
 let root: string;
@@ -17,7 +20,10 @@ let time: number;
 let waker: CodexWaker | undefined;
 let outcome: CodexIdleWakeOutcome;
 const diagnostics: string[] = [];
-const run = vi.fn<(argv: readonly string[], signal: AbortSignal) => Promise<CodexIdleWakeOutcome>>(async () => outcome);
+const run = vi.fn<(argv: readonly string[], signal: AbortSignal) => Promise<CodexIdleWakeOutcome>>(async argv => {
+  if (outcome.status === 'queued') await settleAttempts(session.dir, { now: time, activity: await readActivity(session), promptText: argv[4]! });
+  return outcome;
+});
 const wait = (ms = 70) => new Promise(resolve => setTimeout(resolve, ms));
 async function append(id: string, kind: 'message' | 'event' = 'message') {
   await appendEntries(files, [{ eventId: id, roomId: 'room', ts: new Date(time).toISOString(), sender: 'sender',
@@ -27,7 +33,7 @@ async function activity(state: 'idle' | 'busy', at = time - 1) {
   await writeActivity(session, state, () => new Date(at));
 }
 function start() {
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, pollMs: 20,
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, probe: async () => ({ available: true }), pollMs: 20,
     now: () => time, stderr: line => diagnostics.push(line) });
   waker.notify();
 }
@@ -51,7 +57,7 @@ it('queues the fixed notice once for a burst of five appends', async () => {
   for (let i = 0; i < 5; i++) { await append(String(i)); waker!.notify(); }
   await wait();
   expect(run).toHaveBeenCalledTimes(1);
-  expect(run.mock.calls[0]).toEqual([['queue', '--thread', 'thread-1', '--message', CODEX_IDLE_WAKE_NOTICE], expect.any(AbortSignal)]);
+  expect(run.mock.calls[0]).toEqual([['queue', '--thread', 'thread-1', '--message', expect.stringMatching(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/)], expect.any(AbortSignal)]);
 });
 it('does not wake busy sessions, then wakes when idle', async () => {
   await append('1'); await activity('busy'); start(); await wait(300);
@@ -84,9 +90,8 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
     accessToken: 'token', deviceId: 'device-a', roomId: layout === 'legacy' ? '!room-a:example.test' : 'room' };
   await saveSession(files, credentials);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
-  await append('a'); await activity('idle'); start(); await wait();
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  await append('a'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(2);
 
@@ -96,10 +101,8 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
   await appendEntries(files, [{ eventId: 'b', roomId: layout === 'legacy' ? '!room-b:example.test' : 'room', ts: new Date(time).toISOString(),
     sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
-  waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(3);
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(4);
+  waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
   time += 60_000; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(4);
 });
@@ -118,7 +121,7 @@ it('coalesces notifications during a queue, aborts it and waits for settlement o
     signal = abort;
     return new Promise<CodexIdleWakeOutcome>(resolve => { settle = () => resolve({ status: 'queued' }); });
   });
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, pollMs: 20, now: () => time });
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, probe: async () => ({ available: true }), pollMs: 20, now: () => time });
   waker.notify(); await wait();
   for (let i = 0; i < 5; i++) waker.notify();
   await wait(); expect(slow).toHaveBeenCalledTimes(1);
@@ -133,7 +136,7 @@ it('runs exactly one coalesced reevaluation after an in-flight queue settles', a
   const slow = vi.fn().mockImplementationOnce(() => new Promise<CodexIdleWakeOutcome>(resolve => {
     settle = () => resolve({ status: 'queued' });
   })).mockResolvedValue({ status: 'queued' });
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, pollMs: 100_000, now: () => time });
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, probe: async () => ({ available: true }), pollMs: 100_000, now: () => time });
   waker.notify(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
   time += 10; await activity('idle', time);
   for (let i = 0; i < 5; i++) waker.notify();
@@ -144,6 +147,23 @@ it('reports content-free errors and continues after a storage failure', async ()
   expect(diagnostics.every(line => line === '{"ok":false,"warning":"codex_waker_error"}\n')).toBe(true);
   expect(diagnostics.length).toBeGreaterThan(0);
   await fs.rmdir(files.inbox); await append('1'); await activity('idle'); await wait(); expect(run).toHaveBeenCalledTimes(1);
+});
+it.each([false, true])('disables queue after two unverified wakes; terminal consent=%s', async consent => {
+  const env = { XDG_STATE_HOME: root };
+  if (consent) await writeWakeSettings(stateRoot(env), { consent: { 'codex/terminal': { at: new Date(time).toISOString() } }, off: {} });
+  const queued = vi.fn().mockResolvedValue({ status: 'queued' });
+  const terminal = vi.fn();
+  await append('1'); await activity('idle');
+  waker = createWakeLadder({ files: session, harness: 'codex', sessionId: 'thread-1', env, now: () => time, pollMs: 100_000,
+    drivers: [createCodexWakeDriver({ port: { run: queued }, probe: async () => ({ available: true }) }),
+      { id: 'terminal', rung: 4, optIn: true, minIdleMs: 30_000, deadlineMs: 10_000, available: () => true, wake: terminal }] });
+  waker.notify(); await vi.waitFor(() => expect(queued).toHaveBeenCalledTimes(1));
+  time += 60_000; waker.notify(); await vi.waitFor(() => expect(queued).toHaveBeenCalledTimes(2));
+  time += 30_000; waker.notify();
+  await vi.waitFor(async () => expect((await readWakeState(session.dir)).queue).toMatchObject({ disabled: true, failures: 2, reason: 'nonce_timeout' }));
+  await wait();
+  expect(queued).toHaveBeenCalledTimes(2);
+  expect(terminal).toHaveBeenCalledTimes(consent ? 1 : 0);
 });
 it('rejects invalid thread IDs', () => {
   for (const threadId of ['../x', '', '-x', 'a'.repeat(129)]) {
@@ -156,9 +176,9 @@ it('uses the real no-shell process runner with scrubbed env and no message marke
   await fs.writeFile(executable, `#!${process.execPath}\nimport fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(dump)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env }));\n`, { mode: 0o700 });
   await append('1'); await activity('idle');
   const port = createCodexQueueProcessPort({ command: 'codex', env: { ...process.env, PATH: root, KHALA_SECRET: 'x' } });
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port, pollMs: 20, now: () => time });
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port, probe: async () => ({ available: true }), pollMs: 20, now: () => time });
   waker.notify();
-  await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(dump, 'utf8')).argv).toEqual(['queue', '--thread', 'thread-1', '--message', CODEX_IDLE_WAKE_NOTICE]));
+  await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(dump, 'utf8')).argv).toEqual(['queue', '--thread', 'thread-1', '--message', expect.stringMatching(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/)]));
   const content = await fs.readFile(dump, 'utf8');
   expect(content).not.toContain('KHALA_SECRET'); expect(content).not.toContain('BODYMARK'); expect(content).not.toContain('LABELMARK');
 });
@@ -202,7 +222,7 @@ it('does not queue when mode switches to async during evaluation', async () => {
     await writeJsonAtomic(files.mode, { mode: 'async' });
     return current;
   });
-  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, pollMs: 100_000,
+  waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run }, probe: async () => ({ available: true }), pollMs: 100_000,
     now: () => time, stderr: line => diagnostics.push(line) });
   waker.notify();
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));

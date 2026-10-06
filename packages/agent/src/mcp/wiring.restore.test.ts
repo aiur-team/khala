@@ -34,7 +34,7 @@ it('restores a Codex channel and queues an owner message without any tool call',
   const queue = vi.fn(async () => ({ status: 'queued' as const }));
   const factory = createRealClientFactory(env, {
     createClient: options => createKhalaAgentClient({ ...options, startSession: async () => session }),
-    createWaker: options => createCodexWaker({ ...options, port: { run: queue }, pollMs: 100_000 }),
+    createWaker: options => createCodexWaker({ ...options, port: { run: queue }, probe: async () => ({ available: true }), pollMs: 100_000 }),
   });
   const client = factory({ harness: 'codex', sessionId: 'thread' });
   try {

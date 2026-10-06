@@ -5,7 +5,6 @@
 // or types into a screen, and never signals the user's Codex process.
 
 /** The only message text a wake ever queues. */
-import { CODEX_IDLE_WAKE_NOTICE } from './shared/rules';
 export { CODEX_IDLE_WAKE_NOTICE } from './shared/rules';
 
 export type CodexIdleWakeOutcome =
@@ -23,8 +22,8 @@ export interface CodexIdleWakePort {
   run(argv: readonly string[], signal: AbortSignal): Promise<CodexIdleWakeOutcome>;
 }
 
-export function codexIdleWakeArgv(sessionId: string): readonly string[] {
-  return ['queue', '--thread', sessionId, '--message', CODEX_IDLE_WAKE_NOTICE];
+export function codexIdleWakeArgv(sessionId: string, line: string): readonly string[] {
+  return ['queue', '--thread', sessionId, '--message', line];
 }
 
 // Debounced waker: codex.ts (KM-147).

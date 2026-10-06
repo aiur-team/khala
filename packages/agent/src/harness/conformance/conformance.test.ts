@@ -29,10 +29,10 @@ describe('Tier A conformance', () => {
       results.push(result);
       expect(result.rows).toHaveLength(11);
       expect(result.rows.filter(row => row.status === 'pending').map(row => row.feature))
-        .toEqual(['claude', 'codex'].includes(adapter.id) ? ['idle wake'] : []);
-      if (['claude', 'codex'].includes(adapter.id)) {
+        .toEqual(adapter.id === 'claude' ? ['idle wake'] : []);
+      if (adapter.id === 'claude') {
         expect(result.rows.find(row => row.feature === 'idle wake')).toMatchObject({ status: 'pending',
-          detail: expect.stringContaining(adapter.id === 'codex' ? 'U13 #1134' : 'U14 #1135') });
+          detail: expect.stringContaining('U14 #1135') });
       }
       expect(result.rows.filter(row => row.feature !== 'idle wake').every(row => row.status !== 'pending')).toBe(true);
     });
@@ -68,10 +68,10 @@ describe('Tier A conformance', () => {
     await expect(runConformance(consuming, driver, { capabilities: noSync }))
       .rejects.toThrow('absent sync must not consume backlog');
   });
-  it.each(['claude', 'codex'] as const)('%s pending skip fails once nonce support lands', id => {
+  it('Claude pending skip fails once nonce support lands', () => {
     const nonceDriver: WakeDriver = { id: 'queue', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
       verification: 'nonce', available: () => true, wake: () => {} };
-    expect(() => pendingWake({ ...(id === 'claude' ? claude : codex), wakeLadder: [nonceDriver] }))
+    expect(() => pendingWake({ ...claude, wakeLadder: [nonceDriver] }))
       .toThrow('pending skip expired');
   });
   it('requires verified delivery, records opt-in consent, and rejects an unverified prompt', async () => {
@@ -114,15 +114,15 @@ describe('Tier A conformance', () => {
   });
   it('writes the full matrix only when report generation is requested', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-conformance-report-'));
-    const matrix: ConformanceResult[] = [{ harness: 'codex', rows: [
-      { feature: 'idle wake', status: 'pending', detail: 'U13 #1134' }, { feature: 'steer', status: 'pass' },
+    const matrix: ConformanceResult[] = [{ harness: 'claude', rows: [
+      { feature: 'idle wake', status: 'pending', detail: 'U14 #1135' }, { feature: 'steer', status: 'pass' },
     ] }, { harness: 'cursor', rows: [{ feature: 'idle wake', status: 'absent' }, { feature: 'steer', status: 'pass' }] }];
     try {
       expect(await writeConformanceReport(matrix, { root, env: {} })).toBeUndefined();
       expect(await fs.readdir(root)).toEqual([]);
       const target = await writeConformanceReport(matrix, { root, env: { KHALA_CONFORMANCE_REPORT: '1' } });
       expect(await fs.readFile(target!, 'utf8')).toBe(renderConformanceReport(matrix));
-      expect(renderConformanceReport(matrix)).toContain('PENDING — U13 #1134 | ABSENT (asserted)');
+      expect(renderConformanceReport(matrix)).toContain('PENDING — U14 #1135 | ABSENT (asserted)');
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 });

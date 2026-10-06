@@ -1,0 +1,29 @@
+name: Codex queue live
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm install --global @openai/codex@latest
+      - name: Probe queue contract
+        run: node packages/agent/scripts/codex-queue-live.mjs
+      # Dedicated key with a low spend cap. No other step receives this secret.
+      - name: Verify queued daemon turn and prompt hook
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            node packages/agent/scripts/codex-queue-live.mjs --live
+          else
+            echo 'Live turn skipped: OPENAI_API_KEY is not configured; only queue help verified.'
+          fi

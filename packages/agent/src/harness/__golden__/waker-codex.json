@@ -1,4 +1,11 @@
 {
+  "argv": [
+    "queue",
+    "--thread",
+    "session",
+    "--message",
+    "Khala: channel messages are waiting. Continue. (k-12345678)"
+  ],
   "threads": [
     "session"
   ],

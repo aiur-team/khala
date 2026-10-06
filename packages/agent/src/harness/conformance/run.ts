@@ -98,11 +98,6 @@ export function pendingWake(adapter: HarnessAdapter): string | undefined {
     assert.equal(adapter.wakeLadder, undefined, 'Claude pending skip expired: U14 #1135 must require idle wake');
     return 'Known pending: U14 #1135 adds Claude wakeLadder; current verification mode: no wakeLadder';
   }
-  if (adapter.id === 'codex') {
-    assert.deepEqual(adapter.wakeLadder?.map(driver => ({ id: driver.id, verification: driver.verification })),
-      [{ id: 'queue', verification: 'none' }], 'Codex pending skip expired: U13 #1134 must require idle wake');
-    return "Known pending: U13 #1134 enables nonce verification; current verification mode: queue='none'";
-  }
   return undefined;
 }
 

@@ -123,7 +123,11 @@ export async function createWorld(options: { guard?: boolean } = {}): Promise<Wo
   await mkdir(state, { mode: 0o700 }); await mkdir(fakeBin, { mode: 0o700 });
   const calls = path.join(fakeBin, 'codex-calls.log');
   // Resolve the log relative to the executable: queue intentionally receives a restricted environment.
-  await writeFile(path.join(fakeBin, 'codex'), '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$(dirname "$0")/codex-calls.log"\nexit 0\n', { mode: 0o755 });
+  await writeFile(path.join(fakeBin, 'codex'), `#!/bin/sh
+if [ "$*" = "queue --help" ]; then echo '--thread --message'; exit 0; fi
+printf '%s\\n' "$*" >> "$(dirname "$0")/codex-calls.log"
+exit 0
+`, { mode: 0o755 });
   await writeFile(calls, '', { mode: 0o600 });
   const port = await freePort(); const log = path.join(root, 'egress.jsonl');
   await writeFile(log, '', { mode: 0o600 });
@@ -164,9 +168,9 @@ export const helperFile = (world: World) => readHelperFile(world.env);
 export async function codexCalls(world: World): Promise<string[]> {
   return (await readFile(path.join(world.root, 'bin/codex-calls.log'), 'utf8')).split('\n').filter(Boolean);
 }
-export async function deliver(agent: McpProcess, event: 'PostToolUse' | 'UserPromptSubmit' | 'Stop'): Promise<HookFrame | null> {
+export async function deliver(agent: McpProcess, event: 'PostToolUse' | 'UserPromptSubmit' | 'Stop', prompt?: string): Promise<HookFrame | null> {
   const result = await runRuntime(agent.world, [bin, 'hook', 'deliver', '--harness', agent.harness],
-    JSON.stringify({ session_id: agent.sessionId, hook_event_name: event }));
+    JSON.stringify({ session_id: agent.sessionId, hook_event_name: event, ...(prompt ? { prompt } : {}) }));
   if (result.code !== 0) throw new Error('deliver_failed');
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
 }

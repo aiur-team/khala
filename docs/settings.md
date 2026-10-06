@@ -125,3 +125,7 @@ For hosted channels:
 - Deleting channels.
 - Per-channel notification or urgency controls.
 - Single-use or approval-required invite links, and per-link history choices.
+
+Codex queue wake is enabled by default when `codex queue --help` supports `--thread` and `--message`. Khala caches this probe until the executable changes. `khala_status.wakeDrivers` reports availability and a reason (`codex_binary_missing`, `codex_queue_unavailable`, `wake_status_unavailable` for unreadable diagnostics, or session-local `nonce_timeout`). Each queued notice carries a nonce that the trusted `UserPromptSubmit` hook must receive in `prompt`; two unverified wakes disable queue for that session. A later consented, available rung can then wake the session.
+
+The weekly/manual **Codex queue live** workflow probes the latest CLI. Its live step uses the repository `OPENAI_API_KEY` secret, configured with a dedicated low-spend key, to verify a queued daemon turn and its prompt-hook nonce. Without the secret, only the help contract is checked; that does not establish live wake verification. A missing queued prompt hook blocks R2 acceptance.
