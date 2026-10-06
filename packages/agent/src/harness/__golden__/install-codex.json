@@ -16,7 +16,7 @@
   "files": {
     ".codex/config.toml": "model = \"existing\"\n\n# Khala MCP server, managed by `khala install codex`\n[mcp_servers.khala]\ncommand = \"<HOME>/.local/share/khala/npm/bin/khala\"\nargs = [\"mcp\", \"--harness\", \"codex\"]\nenv = { HOME = \"<HOME>\", XDG_STATE_HOME = \"<HOME>/.local/state\" }\n",
     ".codex/hooks.json": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"<HOME>/.local/share/khala/npm/bin/khala hook deliver --harness codex\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ]\n  }\n}\n",
-    ".codex/hooks.json.khala-bak": "{\"hooks\":{}}\n",
+    ".local/state/khala/install-originals.json": "{\n  \"<HOME>/.codex/hooks.json\": {\n    \"existed\": true,\n    \"bytes\": \"eyJob29rcyI6e319Cg==\",\n    \"createdDirs\": []\n  },\n  \"<HOME>/.codex/config.toml\": {\n    \"existed\": true,\n    \"bytes\": \"bW9kZWwgPSAiZXhpc3RpbmciCg==\",\n    \"createdDirs\": []\n  }\n}\n",
     ".local/state/khala/wake-settings.json": "{\"consent\":{\"codex/terminal\":{\"at\":\"2026-10-05T12:00:00.000Z\"}},\"off\":{}}"
   }
 }
