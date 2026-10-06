@@ -22,7 +22,7 @@ export function museWatchCommand(sessionId?: string, bin = museCliPath()): strin
   return `${shellQuote(bin)} watch --harness muse --session ${shellQuote(sessionId ?? '<current session id from khala_status>')}`;
 }
 export function museMonitorInstruction(sessionId?: string, command = museWatchCommand(sessionId)): string {
-  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; If it prints "Do not re-arm", report the reason and do not restart it. Notifications are wake notices; use khala_read for channel content. Never run the watcher as a foreground shell command.`;
+  return `start Muse's monitor tool with command ${JSON.stringify(command)}, persistent: true, wake_delay_ms: 0, show_lines: true. Always pass the current session id explicitly; the monitor shell does not inherit MUSE_SESSION_ID. Keep one monitor per session; If it prints "Do not re-arm", report the reason and do not restart it. Notifications are wake notices, not channel messages. Do not call khala_read or reply to the wake notice; Khala hooks supply the <khala-channel-messages> frame. End the turn so the Stop hook can deliver the frame in sync mode; in steer mode it can arrive after a tool. Use khala_read only for history or owner-requested manual reads; if you already replied to a message from history, do not reply again when the same message appears in a hook frame. Never run the watcher as a foreground shell command.`;
 }
 
 /** The agent arms the native monitor; this driver supplies its sparse stdout events. */
