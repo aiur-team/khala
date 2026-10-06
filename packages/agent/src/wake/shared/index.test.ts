@@ -7,9 +7,9 @@ it('exports the composition-safe wake helpers', () => {
   expect(shared.driverAllowed).toBeTypeOf('function');
 });
 it('depends only on shared modules, Node built-ins and contracts', async () => {
-  for (const name of ['index', 'rules', 'settings', 'nonce']) {
+  for (const name of ['index', 'rules', 'settings', 'nonce', 'lock']) {
     const source = await fs.readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
     const imports = [...source.matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g)].map(match => match[1]);
-    for (const specifier of imports) expect(specifier).toMatch(/^(node:|@khala\/contracts$|\.\/(rules|settings|nonce)$)/);
+    for (const specifier of imports) expect(specifier).toMatch(/^(node:|@khala\/contracts$|\.\/(rules|settings|nonce|lock)$)/);
   }
 });

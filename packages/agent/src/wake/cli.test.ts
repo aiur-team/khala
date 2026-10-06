@@ -1,10 +1,12 @@
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { runWake } from './cli';
 import { stateRoot, sessionFiles } from '../state';
-import { readWakeSettings, recordAttempt, settleAttempts, readWakeState } from './shared';
+import { readWakeSettings, writeWakeSettings, recordAttempt, settleAttempts, readWakeState } from './shared';
 import { wakeDisableNotice, wakeStatus } from './status';
 let root: string;
 let env: NodeJS.ProcessEnv;
@@ -76,3 +78,42 @@ it('does not infer a synthetic Cursor session outside an agent and makes an unam
   expect(await run(['on', '--driver', 'bogus'])).toBe(2);
   expect(lines.pop()).toContain('Valid drivers: watcher, queue, terminal');
 });
+
+it('preserves withdrawal and other harness consent updates across concurrent processes', async () => {
+  await writeWakeSettings(stateRoot(env), { consent: { 'claude/watcher': { at: 'before' } }, off: {} });
+  const script = path.join(root, 'consent-worker.mjs');
+  const cli = fileURLToPath(new URL('./cli.ts', import.meta.url));
+  const harnesses = ['codex', 'cursor', 'gemini', 'qwen'];
+  await fs.writeFile(script, `
+    const { setWake } = await import(process.argv[2]);
+    const env = { XDG_STATE_HOME: process.argv[3] };
+    const worker = Number(process.argv[4]);
+    process.send('ready');
+    await new Promise(resolve => process.once('message', resolve));
+    if (worker === 0) await setWake('claude', ['watcher'], false, env);
+    for (let index = 0; index < 8; index++) {
+      await setWake(process.argv[5], ['driver-' + index], true, env);
+    }
+    process.disconnect();
+  `);
+  const workers = harnesses.map((harness, worker) => fork(script, [cli, root, String(worker), harness], {
+    execArgv: ['--import', 'tsx'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  }));
+  try {
+    const exits = workers.map(child => new Promise<void>((resolve, reject) => {
+      let stderr = '';
+      child.stderr!.on('data', chunk => { stderr += String(chunk); });
+      child.once('error', reject);
+      child.once('exit', code => code === 0 ? resolve() : reject(new Error(`consent worker exited ${code}: ${stderr}`)));
+    }));
+    await Promise.all(workers.map(child => new Promise<void>(resolve => child.once('message', () => resolve()))));
+    workers.forEach(child => child.send('start'));
+    await Promise.all(exits);
+    const settings = await readWakeSettings(stateRoot(env));
+    expect(settings.consent['claude/watcher']).toBeUndefined();
+    expect(settings.off['claude/watcher']).toBeDefined();
+    for (const harness of harnesses) {
+      for (let index = 0; index < 8; index++) expect(settings.consent[`${harness}/driver-${index}`]).toBeDefined();
+    }
+  } finally { workers.forEach(child => child.kill()); }
+}, 15_000);

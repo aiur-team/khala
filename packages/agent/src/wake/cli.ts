@@ -3,7 +3,7 @@ import path from 'node:path';
 import { adapterFor } from '../harness';
 import { CURSOR_DEFAULT_SESSION } from '../cursor';
 import { SESSION_ID_PATTERN, stateRoot, filesForDir } from '../state';
-import { readWakeSettings, writeWakeSettings } from './shared';
+import { updateWakeSettings } from './shared';
 import { resetWakeDriver } from './shared/nonce';
 import { WAKE_HARNESSES, wakeDrivers, wakeStatus } from './status';
 
@@ -15,15 +15,15 @@ export async function sessionIds(harness: string, env: NodeJS.ProcessEnv): Promi
 }
 export async function setWake(harness: string, drivers: readonly string[], on: boolean, env: NodeJS.ProcessEnv): Promise<void> {
   const root = stateRoot(env);
-  const settings = await readWakeSettings(root);
   const at = new Date().toISOString();
-  for (const driver of drivers) {
-    const key = `${harness}/${driver}`;
-    if (on) { settings.consent[key] = { at }; delete settings.off[key]; }
-    else { delete settings.consent[key]; settings.off[key] = { at }; }
-  }
   // Persist machine-wide withdrawal before touching session state.
-  await writeWakeSettings(root, settings);
+  await updateWakeSettings(root, settings => {
+    for (const driver of drivers) {
+      const key = `${harness}/${driver}`;
+      if (on) { settings.consent[key] = { at }; delete settings.off[key]; }
+      else { delete settings.consent[key]; settings.off[key] = { at }; }
+    }
+  });
   if (on) for (const id of await sessionIds(harness, env)) {
     for (const driver of drivers) await resetWakeDriver(filesForDir(path.join(root, harness, id)).dir, driver);
   }
