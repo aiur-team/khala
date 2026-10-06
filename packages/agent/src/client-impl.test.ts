@@ -1078,6 +1078,62 @@ it('delivers restored-channel wake entries without a tool call', async () => {
   await vi.waitFor(() => expect(wake).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$restored-wake' })));
 });
 
+it('backfills paginated gap mentions before live traffic, dedupes, and keeps the original join boundary', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0);
+  const control = f.controls[0]!;
+  const gap = (id: string, ts = now().getTime() + 1000) => ({ ...message(id), roomId: control.creds.roomId, ts, body: `@owner-Codex-0 ${id}` });
+  control.receive(gap('$seen', now().getTime()));
+  await client.status();
+  await client.close();
+  const history = vi.mocked(control.session.history);
+  history.mockImplementation(async (_room, _limit, before) => {
+    if (!before) {
+      control.receive(gap('$live'));
+      return { messages: [gap('$gap2'), gap('$live')], nextBefore: '$gap2' };
+    }
+    return { messages: [gap('$prejoin', now().getTime() - 1), gap('$seen', now().getTime()), gap('$gap1'), { ...gap('$own'), sender: control.creds.userId }], nextBefore: '$prejoin' };
+  });
+  const wake = vi.fn();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now: () => new Date(now().getTime() + 10_000), joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$seen', '$gap1', '$gap2', '$live']);
+  expect((await client.status()).unread).toBe(4);
+  expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap1', '$gap2', '$live']);
+  expect(history).toHaveBeenCalledTimes(2);
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toHaveProperty('joinedAt', now().toISOString());
+});
+
+it('backfills a restored channel with an empty inbox but excludes pre-join messages', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  vi.mocked(control.session.history).mockResolvedValue({ messages: [
+    { ...message('$prejoin'), roomId: control.creds.roomId, ts: now().getTime() - 1 },
+    { ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 },
+  ] });
+  await restartMulti(f);
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+});
+
+it('continues restore pagination through an empty projected page', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  vi.mocked(control.session.history).mockResolvedValueOnce({ messages: [], nextBefore: '$state' })
+    .mockResolvedValueOnce({ messages: [{ ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 }] });
+  await restartMulti(f);
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+  expect(control.session.history).toHaveBeenLastCalledWith(control.creds.roomId, 100, '$state');
+});
+
+it('keeps restore disconnected when catch-up fails rather than claiming a complete inbox', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  vi.mocked(f.controls[0]!.session.history).mockRejectedValue(new Error('history unavailable'));
+  await restartMulti(f);
+  expect((await client.status()).state).toBe('disconnected');
+  expect(await readStateFile(channelFiles(f.files, f.controls[0]!.creds.roomId).dir, 'resume.json')).not.toBeNull();
+});
+
 it('leaves a channel while restoration is requesting authorization without recreating its directory', async () => {
   const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
   await f.join(0); await client.close();

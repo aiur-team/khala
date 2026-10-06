@@ -208,7 +208,6 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
     async join(roomId) {
       if (stopped) throw new Error('session_stopped');
       if (joinedRoom === roomId) return;
-      const rejoinedAt = Date.now();
       const membership = client.getRoom(roomId)?.getMyMembership();
       if (membership !== 'join') {
         if (membership !== 'invite') throw new Error('not_invited');
@@ -229,11 +228,12 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         const content = { ...ownJoin.getContent(), membership: 'join' as const, 'com.khala.invited_by': inviters.get(roomId) };
         await client.sendStateEvent(roomId, EventType.RoomMember, content, creds.userId);
       }
-      joinTimes.set(roomId, membership === 'join' ? rejoinedAt : ownJoin.getTs());
+      joinTimes.set(roomId, ownJoin.getTs());
       if (!joinedRoom) client.on(RoomEvent.MyMembership, membershipEnded);
       joinedRoom = roomId;
       for (const event of liveEvents) { if (event.getRoomId() === roomId) deliver(event); }
     },
+    joinedAt: roomId => joinTimes.get(roomId),
     async history(roomId, limit, before) {
       if (stopped) throw new Error('session_stopped');
       let token: string | null = null;
@@ -244,8 +244,10 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       const res = await guarded(roomId, () => client.createMessagesRequest(roomId, token, limit, Direction.Backward));
       const messages: SessionMessage[] = [];
       let undecryptable = 0;
+      let oldest: string | undefined;
       for (const raw of res.chunk) {
         const event = client.getEventMapper()({ ...raw, room_id: roomId });
+        oldest = event.getId();
         try { await client.decryptEventIfNeeded(event); } catch { /* Report decryption failures below. */ }
         if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
           undecryptable++;
@@ -262,8 +264,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       }
       log(`history_undecryptable=${undecryptable}`);
       messages.reverse();
-      const oldest = messages[0];
-      return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest.eventId } : { messages };
+      // Unsupported state/command events still advance pagination. Otherwise an
+      // empty projected page would hide older messages during restore catch-up.
+      return typeof res.end === 'string' && oldest ? { messages, nextBefore: oldest } : { messages };
     },
     async send(roomId, text) { if (stopped) throw new Error('session_stopped'); const res = await guarded(roomId, () => client.sendTextMessage(roomId, text)); return { eventId: res.event_id }; },
     async sendChannelEvent(roomId, content, txnId) {

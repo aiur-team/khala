@@ -212,6 +212,24 @@ it('restores member mode and owner on a resumed account, with one rejoin event',
   expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith('!r:hs', 'com.khala.event.v1', expect.objectContaining({ summary: 'Reviewer rejoined' }), `khala.rejoin.${creds.deviceId}`);
 });
 
+it('advances history past pages containing only non-message events', async () => {
+  const s = await joined();
+  client.createMessagesRequest.mockResolvedValue({ chunk: [event('$state', '@human:hs', 101, 'm.room.topic', {})], end: 'more' });
+  expect(await s.history('!r:hs', 100)).toEqual({ messages: [], nextBefore: '$state' });
+});
+
+it('keeps initial-sync gap events after the original membership boundary on restore', async () => {
+  membership = 'join';
+  session = await createAgentMatrixSession(creds);
+  const seen = vi.fn(); session.onMessage(seen);
+  timeline(event('$prejoin', '@human:hs', 99));
+  timeline(event('$gap', '@human:hs', 101));
+  await flush();
+  expect(seen).not.toHaveBeenCalled();
+  await session.join('!r:hs');
+  expect(seen.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap']);
+});
+
 it('delivers live self profile renames once and projects membership history', async () => {
   const s = await joined(); const seen = vi.fn(); s.onMessage(seen);
   const rename = { ...event('$rename', creds.userId, 101, 'm.room.member', { membership: 'join', displayname: 'reviewer' }),
