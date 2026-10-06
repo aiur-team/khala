@@ -55,10 +55,17 @@ it('requires a live valid PID for an armed Claude watcher', async () => {
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-it('reports a missing Codex queue instead of active', async () => {
+it('reports a missing Codex queue for an installed harness', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
   const { wakeStatus } = await import('./status');
-  const rows = await wakeStatus('codex', { env: { PATH: '', XDG_STATE_HOME: '/nonexistent-khala-u1133-status' } });
-  expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'unavailable', reason: 'Codex queue is missing.' });
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-missing-queue-'));
+  try {
+    await fs.writeFile(path.join(root, 'config.toml'), '[mcp_servers.khala]\ncommand = "khala"\nargs = ["mcp", "--harness", "codex"]\n');
+    const rows = await wakeStatus('codex', { env: { CODEX_HOME: root, HOME: root, PATH: '', XDG_STATE_HOME: root } });
+    expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'unavailable', reason: 'Codex queue is missing.' });
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 it.skipIf(process.platform === 'win32')('probes only queue help and reports an available native driver', async () => {
@@ -69,13 +76,15 @@ it.skipIf(process.platform === 'win32')('probes only queue help and reports an a
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-queue-probe-'));
   try {
     await fs.writeFile(path.join(root, 'codex'), '#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ] || exit 1\nprintf "%s\\n" "--thread --message\\n"\n', { mode: 0o700 });
-    const rows = await wakeStatus('codex', { env: { PATH: root, XDG_STATE_HOME: root } });
+    await fs.mkdir(path.join(root, '.codex'));
+    await fs.writeFile(path.join(root, '.codex/config.toml'), '[mcp_servers.khala]\ncommand = "khala"\nargs = ["mcp", "--harness", "codex"]\n');
+    const rows = await wakeStatus('codex', { env: { HOME: root, PATH: root, XDG_STATE_HOME: root } });
     expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'active', reason: WAKE_STATES.active.reason, note: CODEX_DAEMON_WAKE_NOTE });
     expect(selectedWakeStatus(rows).note).toContain('even after the TUI exits');
     const { runWake } = await import('./cli');
     const output: string[] = [];
     for (const flags of [[], ['--json']]) {
-      await runWake(['status', '--harness', 'codex', ...flags], { env: { PATH: root, XDG_STATE_HOME: root }, stdout: line => output.push(line) });
+      await runWake(['status', '--harness', 'codex', ...flags], { env: { HOME: root, PATH: root, XDG_STATE_HOME: root }, stdout: line => output.push(line) });
     }
     expect(output[0]).toContain(CODEX_DAEMON_WAKE_NOTE);
     expect(JSON.parse(output[1]!).find((row: { driver: string }) => row.driver === 'queue').note).toBe(CODEX_DAEMON_WAKE_NOTE);
@@ -133,4 +142,45 @@ it('describes Antigravity status outside a conversation as session-scoped', asyn
   expect(native.reason).toContain('scoped to a conversation');
   expect(native.reason).not.toContain('missing');
   expect(native.remedy).toBeUndefined();
+});
+
+it('does not run Codex or report native wake active for uninstalled harnesses', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { wakeStatus } = await import('./status');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-uninstalled-'));
+  try {
+    await fs.writeFile(path.join(root, 'codex'), `#!${process.execPath}\nimport fs from 'node:fs'; fs.mkdirSync(process.env.HOME + '/.codex/tmp', {recursive: true}); console.log('--thread --message');\n`, { mode: 0o700 });
+    const env = { HOME: root, PATH: root, XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
+    for (const harness of ['codex', 'opencode']) {
+      const rows = await wakeStatus(harness, { env });
+      expect(rows[0]).toMatchObject({ state: 'unavailable', remedy: `khala install ${harness}` });
+      expect(rows[0]!.reason).toContain('not installed');
+    }
+    await expect(fs.stat(path.join(root, '.codex'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('requires the OpenCode plugin for native wake, including custom install pins', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { wakeStatus } = await import('./status');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-opencode-install-'));
+  const env = { HOME: root, XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
+  const dir = path.join(root, 'opencode');
+  try {
+    await fs.mkdir(dir);
+    const file = path.join(dir, 'opencode.jsonc');
+    await fs.writeFile(file, JSON.stringify({ mcp: { khala: { enabled: true } } }));
+    expect((await wakeStatus('opencode', { env }))[0]).toMatchObject({ state: 'unavailable', reason: expect.stringContaining('MCP entry') });
+    for (const pin of ['khala-opencode@0.4.9', 'file:/custom/plugin.tgz']) {
+      await fs.writeFile(file, JSON.stringify({ plugin: [pin] }));
+      await fs.writeFile(path.join(dir, 'opencode.json.khala-plugin'), pin);
+      expect((await wakeStatus('opencode', { env }))[0]!.state).toBe('active');
+    }
+    await fs.writeFile(file, '{invalid');
+    expect((await wakeStatus('opencode', { env }))[0]!.state).toBe('unavailable');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
