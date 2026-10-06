@@ -1,4 +1,3 @@
-import { CODEX_DAEMON_WAKE_NOTE } from '../wake/status';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +13,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(di
 async function environment() {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'khala-wiring-'));
   directories.push(dir);
-  return { XDG_STATE_HOME: dir, PATH: '' };
+  return { HOME: dir, CODEX_HOME: path.join(dir, '.codex'), XDG_STATE_HOME: dir, PATH: '' };
 }
 
 describe('real MCP client wiring', () => {
@@ -33,7 +32,7 @@ describe('real MCP client wiring', () => {
     expect(createWaker.mock.calls).toEqual([[{ files: sessionFiles('codex', 'thread-1', env), threadId: 'thread-1' }]]);
     options?.onInboxAppend?.({} as Parameters<NonNullable<KhalaAgentClientOptions['onInboxAppend']>>[0]);
     expect(waker.notify).toHaveBeenCalledOnce();
-    expect(await wrapped.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.', note: CODEX_DAEMON_WAKE_NOTE } });
+    expect(await wrapped.status()).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', idleWake: { driver: 'queue', state: 'unavailable', reason: 'Khala is not installed for codex; run khala install codex.', remedy: 'khala install codex' } });
     const content = { v: 1, kind: 'test', summary: 'Test', body: 'Test' } as const;
     expect(await wrapped.sendChannelEvent(content)).toEqual({ eventId: '$event' });
     expect(client.sendChannelEvent).toHaveBeenCalledWith(content);
@@ -197,7 +196,7 @@ it('reports the active Monitor marker only for a joined Claude session', async (
 });
 
 
-it.each(['codex', 'claude'] as const)('starts restoring %s before any tool call', async harness => {
+it.each(['codex', 'claude', 'copilot'] as const)('starts restoring %s before any tool call', async harness => {
   const env = await environment();
   const client = createPlaceholderClient();
   client.resume = vi.fn(async () => {});

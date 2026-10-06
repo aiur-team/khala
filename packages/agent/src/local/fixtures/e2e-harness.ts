@@ -136,6 +136,10 @@ export class McpProcess {
 export async function createWorld(options: { guard?: boolean } = {}): Promise<World> {
   const root = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-local-e2e-'));
   const state = path.join(root, 'state'); const fakeBin = path.join(root, 'bin');
+  const codexHome = path.join(root, 'codex');
+  await mkdir(codexHome, { mode: 0o700 });
+  // Status probes require an installed harness; never borrow the runner's config.
+  await writeFile(path.join(codexHome, 'config.toml'), '[mcp_servers.khala]\ncommand = "khala"\nargs = ["mcp", "--harness", "codex"]\n', { mode: 0o600 });
   await mkdir(state, { mode: 0o700 }); await mkdir(fakeBin, { mode: 0o700 });
   await writeFile(path.join(fakeBin, 'package.json'), JSON.stringify({ type: 'commonjs' }));
   const calls = path.join(fakeBin, 'codex-calls.log');
@@ -197,7 +201,7 @@ else if (action === 'send-keys') {
     if (build !== 0) { await rm(root, { recursive: true, force: true }); throw new Error('local_web_build_failed'); }
   }
   const guard = options.guard !== false;
-  const env = guardedEnv(log, { XDG_STATE_HOME: state, KHALA_LOCAL_PORT: String(port), KHALA_LOCAL_IDLE_MS: '600000',
+  const env = guardedEnv(log, { CODEX_HOME: codexHome, XDG_STATE_HOME: state, KHALA_LOCAL_PORT: String(port), KHALA_LOCAL_IDLE_MS: '600000',
     KHALA_LOCAL_WEB_DIR: webDir, USER: 'kevin', PATH: fakeBin + path.delimiter + process.env.PATH });
   if (!guard) { delete env.NODE_OPTIONS; delete env.KHALA_EGRESS_LOG; }
   const world = { guard, processGroups: new Set<number>(), root, state, port, origin: `http://127.0.0.1:${port}`, log, env, agents: [], watchers: [], requests: [], blocked: [] } as unknown as World;
