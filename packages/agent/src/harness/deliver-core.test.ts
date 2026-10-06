@@ -54,3 +54,17 @@ it('bounds normalized stop continuations without consuming entries', async () =>
   expect((await readCursor(files)).deliveredCount).toBe(0);
   expect((await readActivity(files)).state).toBe('idle');
 });
+it.each(['claude', 'cursor'])('preserves %s closed-pipe handling without rejecting the hook', async harness => {
+  io.stdout.write = () => { throw new Error('closed pipe with private details'); };
+  const stdin = harness === 'claude'
+    ? '{"session_id":"session","hook_event_name":"UserPromptSubmit"}'
+    : '{"hook_event_name":"beforeSubmitPrompt"}';
+  if (harness === 'claude') {
+    const active = await openSessionDir('claude', 'session', io.env);
+    await appendEntries(active, [{ eventId: '$message', roomId: '!room', ts: instant.toISOString(),
+      sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'hello' }]);
+  }
+  expect(await deliverCore(stdin, adapterFor(harness)!, io)).toBe(0);
+  expect(stderr).toBe(harness === 'claude'
+    ? '{"ok":false,"warning":"khala_hook_suppressed","code":"internal_error"}\n' : '');
+});
