@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import codexColor from './assets/codex-color.svg';
 import claudeSymbol from './assets/claude-symbol.svg';
-import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessLogo, humanInitials, initials, ownerInitials, participantHue } from './identity';
+import geminiLogo from './assets/gemini.svg';
+import { HARNESS_REGISTRY } from '@khala/contracts/m1/harness';
+import { AGENT_HUES, HUMAN_HUES, fnv1a, harnessDisplayName, harnessLogo, humanInitials, initials, ownerInitials, participantHue } from './identity';
 
 describe('participantHue', () => {
   it('gives the viewer 214', () => {
@@ -52,7 +54,7 @@ describe('harnessLogo', () => {
   it('returns the bundled logo for known harnesses and null otherwise', () => {
     expect(harnessLogo('codex')).toBe(codexColor);
     expect(harnessLogo('claude')).toBe(claudeSymbol);
-    expect(harnessLogo('gemini')).toBeNull();
+    expect(harnessLogo('cline')).toBeNull();
   });
 });
 
@@ -82,5 +84,26 @@ describe('humanInitials', () => {
     expect(humanInitials('Kai Watanabe', 'ZZ')).toBe('ZZ');
     expect(humanInitials('Kai Watanabe', null)).toBe('KW');
     expect(humanInitials('Kai Watanabe')).toBe('KW');
+  });
+});
+
+describe('registry logo coverage', () => {
+  it('uses the Gemini asset and falls back for unregistered ids', () => {
+    expect(harnessLogo('gemini')).toBe(geminiLogo);
+    expect(harnessLogo('claude-code')).toBeNull();
+    expect(harnessLogo('constructor')).toBeNull();
+  });
+  it.each(HARNESS_REGISTRY.filter(info => info.logoKey !== null))('resolves $id via its registry key', info => {
+    expect(harnessLogo(info.id)).not.toBeNull();
+  });
+  it('uses the same Copilot mark for both clients', () => {
+    expect(harnessLogo('vscode')).toBe(harnessLogo('copilot'));
+  });
+});
+
+describe('registered harnesses without redistributable marks', () => {
+  it.each([['antigravity', 'Antigravity CLI'], ['muse', 'Muse Code']])('preserves %s identity without a logo', (id, name) => {
+    expect(harnessLogo(id)).toBeNull();
+    expect(harnessDisplayName(id)).toBe(name);
   });
 });
