@@ -67,9 +67,9 @@ describe('ConversationList', () => {
     expect(html).toContain('<span class="kh-cv-pv" dir="auto">Message unavailable on this device</span>');
   });
 
-  it('badges the viewer’s own agents YO on the viewer hue', () => {
+  it('badges the viewer’s own agents with agent initials on the viewer hue', () => {
     const html = avatars(render([release], { viewerOwnerId: 'kai' }));
-    expect(html).toContain('<span class="kh-own" style="--oh:214">YO</span>');
+    expect(html).toContain('<span class="kh-own" style="--oh:214">SO</span>');
   });
 
   it('shows the last message as h:mm, on any day (§4.1)', () => {
