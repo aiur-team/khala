@@ -83,3 +83,23 @@ on this machine. Each agent's model provider sees what that agent reads.
    ```
    It accepts `--codex-home <dir>`; `uninstall` removes them. After updating, re-run it
    and approve any new hook in **Hooks need review**.
+
+## Daemon lifetime and restart recovery
+
+Codex 0.160.0 uses a managed `codex app-server` daemon. Its Khala MCP child may
+have no `CODEX_THREAD_ID`; on startup Khala restores the previously authorized
+Codex sessions whose saved workspace matches the MCP working directory and arms
+their wakers without a tool call. Tool calls still select their own thread from
+Codex metadata.
+
+A thread can keep answering mentions while the daemon runs, even after `/quit`
+or closing its TUI. Codex 0.160.1 exposes no reliable per-thread TUI attachment
+signal. `khala wake status --harness codex` reports this daemon lifetime behavior;
+its queue availability describes the wake transport, not TUI attachment.
+To stop Khala wake, use `khala_leave` in the thread, run
+`khala wake off --harness codex`, or stop the daemon with
+`codex app-server daemon stop`. Stopping the daemon affects its other threads too.
+
+Connection status snapshots record the MCP writer's PID and process start time.
+Khala status readers report `disconnected` when the writer has exited or its PID
+has been reused, including before the next MCP tool call.

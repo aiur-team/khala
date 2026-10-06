@@ -164,7 +164,7 @@ it('guards read/send and recovers from sanitized send failures', async () => {
   await connected();
   vi.mocked(session.send).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.send('x')).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.send('x')).toEqual({ eventId: '$sent' }); expect((await statusFile())?.state).toBe('connected');
 });
 it.each([new KhalaClientError('invalid_link'), new KhalaClientError('internal_error', 'rate_limited'), new Error('SECRET')])('sanitizes request failure %s', async error => {
@@ -215,6 +215,9 @@ it('counts all unread kinds', async () => {
   expect((await client.status()).unread).toBe(2);
 });
 it('keeps different pending links independent when one expires', async () => {
+  const expired = deferred<void>();
+  const joined = deferred<void>();
+  vi.mocked(session.roomName).mockImplementation(() => { joined.resolve(); return 'Release room'; });
   await client.join(link, 'Codex'); const oldPoll = poll;
   poll = deferred<AgentCredentials>();
   const nextLink = 'https://khala.example/join/ijklmnop';
@@ -223,9 +226,17 @@ it('keeps different pending links independent when one expires', async () => {
   expect(await client.join(nextLink, 'Codex')).toEqual({ state: 'awaiting_confirmation', confirmUrl: nextCreated.confirmUrl });
   expect(joinApi.requestJoin).toHaveBeenCalledTimes(2);
   expect(joinApi.requestJoin).toHaveBeenLastCalledWith({ link: nextLink, harness: 'codex', label: 'Codex', sessionId: 'test', rejoinSecret: expect.any(String) }, { env: { XDG_STATE_HOME: root } });
-  expect(joinApi.pollJoin.mock.calls[0]![1]!.signal!.aborted).toBe(false);
-  oldPoll.reject(new KhalaClientError('join_expired')); poll.resolve(credentials);
-  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  const oldSignal = joinApi.pollJoin.mock.calls[0]![1]!.signal!;
+  const nextSignal = joinApi.pollJoin.mock.calls[1]![1]!.signal!;
+  expect(oldSignal.aborted).toBe(false);
+  oldSignal.addEventListener('abort', () => expired.resolve(), { once: true });
+  oldPoll.reject(new KhalaClientError('join_expired'));
+  await expired.promise;
+  expect(nextSignal.aborted).toBe(false);
+  poll.resolve(credentials);
+  // roomName is read after the attempt is joined; status then awaits its task.
+  await joined.promise;
+  expect((await client.status()).state).toBe('connected');
 });
 it('stops a session that finishes starting after close without reviving state', async () => {
   const starting = deferred<AgentMatrixSession>(); startSession.mockReturnValue(starting.promise);
@@ -329,7 +340,7 @@ it('guards event sends and restores connected status after retry', async () => {
   await connected();
   vi.mocked(session.sendChannelEvent).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.sendChannelEvent(content)).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.sendChannelEvent(content)).toEqual({ eventId: '$event' });
   expect((await statusFile())?.state).toBe('connected');
 });

@@ -83,7 +83,7 @@ export async function runWake(argv: readonly string[], deps: WakeCliDeps = {}): 
       rows.push(...await wakeStatus(id, { env, ...(sessionId ? { files: filesForDir(path.join(stateRoot(env), id, sessionId)), sessionId } : {}) }));
     }
     const selected = driver ? rows.filter(row => row.driver === driver) : rows;
-    out(json ? JSON.stringify(selected) : selected.map(row => `${row.harness}\t${row.driver}\t${row.rung}\t${row.state}\t${row.reason}${row.remedy ? ` ${row.remedy}` : ''}`).join('\n'));
+    out(json ? JSON.stringify(selected) : selected.map(row => `${row.harness}\t${row.driver}\t${row.rung}\t${row.state}\t${row.reason}${row.remedy ? ` ${row.remedy}` : ''}${row.note ? ` ${row.note}` : ''}`).join('\n'));
   } else {
     const all = wakeDrivers(harness!);
     const selected = driver ? [driver] : command === 'on' ? [all.find(item => item.optIn)?.id ?? all[0]?.id].filter((id): id is string => !!id) : all.map(item => item.id);
