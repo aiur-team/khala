@@ -284,6 +284,19 @@ it('does not overwrite a re-arm that races the exit-state write', async () => {
   expect(await watcher()).toEqual(replacement);
 });
 
+it('does not arm or wake after machine-wide withdrawal', async () => {
+  const { writeWakeSettings } = await import('../wake/shared');
+  const { stateRoot } = await import('../state');
+  const env = { XDG_STATE_HOME: root };
+  await seed('idle', [entry()]);
+  await writeWakeSettings(stateRoot(env), { consent: {}, off: { 'claude/watcher': { at: 'now' } } });
+  const { watch } = await import('../../hooks/claude-wake');
+  let stderr = '';
+  expect(await watch(input, [], { env, now: () => new Date(), stderr: { write: line => { stderr += line; return true; } } })).toBe(0);
+  expect(stderr).toBe('');
+  expect(await owner()).toBeUndefined();
+});
+
 async function joinedChannel(state: 'connected' | 'send_failed' | 'disconnected' | 'joining' = 'connected') {
   const target = channelFiles(files, '!joined:local');
   await ensureStateDir(target.dir);
@@ -313,6 +326,18 @@ it.each(['missing', 'joining', 'disconnected'] as const)('does not arm SessionSt
   const target = await joinedChannel(state === 'missing' ? 'connected' : state);
   if (state === 'missing') await fs.unlink(target.status);
   expect(await start(sessionStart).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await owner()).toBeUndefined();
+});
+it('does not arm or wake SessionStart after machine-wide withdrawal', async () => {
+  const { writeWakeSettings } = await import('../wake/shared');
+  const { stateRoot } = await import('../state');
+  const env = { XDG_STATE_HOME: root, CLAUDE_CODE_ENTRYPOINT: 'cli' };
+  await seed('idle', [entry()]);
+  await joinedChannel();
+  await writeWakeSettings(stateRoot(env), { consent: {}, off: { 'claude/watcher': { at: 'now' } } });
+  let stderr = '';
+  expect(await watch(sessionStart, [], { env, now: () => new Date(), stderr: { write: line => { stderr += line; return true; } } })).toBe(0);
+  expect(stderr).toBe('');
   expect(await owner()).toBeUndefined();
 });
 it('does not arm an unjoined SessionStart session', async () => {

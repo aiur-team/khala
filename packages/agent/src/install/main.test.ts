@@ -78,3 +78,25 @@ it('keeps surrounding tables when replacing the managed block', () => {
   expect(updateCodexToml(withAfter, null)).toEqual({ text: '[a]\nx = 1\n\n[b]\ny = 2\n' });
   expect(shellQuote("/home/a b/it's")).toBe(`'/home/a b/it'\\''s'`);
 });
+
+it('records terminal consent once in shared dispatch and supports withdrawal and explicit re-consent', async () => {
+  const { readWakeSettings } = await import('../wake/shared');
+  const { stateRoot } = await import('../state');
+  const settings = () => readWakeSettings(stateRoot({ HOME: home }));
+  expect(await run(['codex'])).toBe(0);
+  expect((await settings()).consent['codex/terminal']).toBeDefined();
+  expect(lines.at(-1)).toContain('Idle wake is on (terminal)');
+  expect(lines.at(-1)).toContain('khala wake off --harness codex');
+  expect(await run(['codex', '--no-wake'])).toBe(0);
+  expect((await settings()).consent).toEqual({});
+  expect(lines.at(-1)).toContain('Idle wake is off for terminal.');
+  expect(lines.at(-1)).toContain('khala wake on --harness codex');
+  expect(await run(['codex', '--wake'])).toBe(0);
+  expect((await settings()).consent['codex/terminal']).toBeDefined();
+});
+it('does not consent after a failed install', async () => {
+  const { readWakeSettings } = await import('../wake/shared');
+  const { stateRoot } = await import('../state');
+  expect(await run(['codex'], false)).toBe(1);
+  expect((await readWakeSettings(stateRoot({ HOME: home }))).consent).toEqual({});
+});
