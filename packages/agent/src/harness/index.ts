@@ -2,6 +2,7 @@ import { HARNESS_REGISTRY, isHarnessId } from '@khala/contracts/m1/harness';
 import type { HarnessAdapter } from './adapter';
 import { claude } from './claude';
 import { codex } from './codex';
+import { copilot } from './copilot';
 import { cursor } from './cursor';
 import { gemini } from './gemini';
 import { opencode } from './opencode';
@@ -18,7 +19,7 @@ export function createAdapterRegistry(adapters: readonly HarnessAdapter[]) {
   return Object.freeze({ resolve: (id: string) => byId.get(id) });
 }
 
-export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, opencode, gemini, generic]);
+export const ADAPTERS: readonly HarnessAdapter[] = Object.freeze([claude, codex, cursor, opencode, gemini, copilot, generic]);
 const registry = createAdapterRegistry(ADAPTERS);
 export function adapterFor(id: string): HarnessAdapter | undefined {
   return registry.resolve(id) ?? (isHarnessId(id) ? genericAdapter(id) : undefined);
