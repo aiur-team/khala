@@ -1,6 +1,6 @@
 // `khala install copilot`: pure path and JSON merge helpers plus the file I/O around them.
 // Paths go through an injected `path` flavour so tests can check Windows layouts on Linux.
-import * as fs from 'node:fs/promises';
+import { ManagedFiles, readManaged, formatJson, jsonFormat, type ManagedRead } from './managed-file';
 import nodePath from 'node:path';
 
 type PathApi = Pick<typeof nodePath, 'join' | 'isAbsolute'>;
@@ -72,16 +72,15 @@ export function mergeCopilotHooks(config: unknown, commands: { node: string; scr
   return { config: { version: 1, ...config, hooks: next } };
 }
 
-async function readJsonFile(file: string): Promise<{ text: string | null; value: unknown }> {
-  let text: string;
-  try { text = await fs.readFile(file, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { text: null, value: {} }; throw error; }
-  if (!text.trim()) return { text, value: {} };
-  try { return { text, value: JSON.parse(text.replace(/^﻿/u, '')) }; } catch { return { text, value: undefined }; }
+async function readJsonFile(file: string): Promise<ManagedRead & { value: unknown }> {
+  const current = await readManaged(file);
+  try { return { ...current, value: jsonFormat.parse(current.text ?? '') }; } catch { return { ...current, value: undefined }; }
 }
 
 export type CopilotInstallInput = {
   paths: CopilotPaths; node: string; uninstall: boolean;
+  /** Khala state directory holding exact config originals. */
+  stateDir: string;
   /** Installs the package into `paths.prefix`; absent on uninstall. */
   install?: () => boolean;
   stdout: (line: string) => void; stderr: (line: string) => void;
@@ -101,38 +100,20 @@ export async function installCopilot(input: CopilotInstallInput): Promise<number
   const nextHooks = mergeCopilotHooks(hooks.value, uninstall ? null : { node: input.node, script: paths.script });
   if ('error' in nextHooks) { stderr(`khala: invalid JSON in ${paths.hooksFile}`); return 1; }
   if (!uninstall && input.install && !input.install()) return 1;
-  await fs.mkdir(nodePath.dirname(paths.hooksFile), { recursive: true });
-  for (const [file, before, after] of [[paths.mcpFile, mcp.text, nextMcp.config], [paths.hooksFile, hooks.text, nextHooks.config]] as const) {
-    const backupFile = file + '.khala-bak';
-    const installedFile = file + '.khala-installed';
-    const readOptional = async (name: string) => fs.readFile(name, 'utf8').catch(error => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
+  const managed = new ManagedFiles(input.stateDir);
+  if (uninstall) {
+    await managed.restore(mcp, jsonFormat, value => (mergeCopilotMcp(value, null) as { config: unknown }).config);
+    await managed.restore(hooks, jsonFormat, (value, original) => {
+      const { config } = mergeCopilotHooks(value, null) as { config: Record<string, unknown> };
+      const hadVersion = isObject(original) && Object.hasOwn(original, 'version');
+      if (!hadVersion && isObject(config.hooks) && !Object.keys(config.hooks).length) delete config.version;
+      return config;
     });
-    const installed = await readOptional(installedFile);
-    const backup = await readOptional(backupFile);
-    const text = JSON.stringify(after, null, 2) + '\n';
-    if (uninstall) {
-      if (before !== null) {
-        if (installed !== null && before === installed) {
-          if (backup === null) await fs.unlink(file);
-          else await fs.writeFile(file, backup);
-        } else if (text !== before) await fs.writeFile(file, text);
-      }
-      await fs.rm(backupFile, { force: true });
-      await fs.rm(installedFile, { force: true });
-      continue;
-    }
-    // A managed file on reinstall is never an original, even if no backup exists.
-    const managed = file === paths.mcpFile
-      ? isObject(mcp.value) && isObject(mcp.value.mcpServers) && Object.hasOwn(mcp.value.mcpServers, 'khala')
-      : isObject(hooks.value) && isObject(hooks.value.hooks) && Object.values(hooks.value.hooks).some(list => Array.isArray(list) && list.some(item => isObject(item) && isCopilotHook(item)));
-    if (before !== null && installed === null && !managed && backup === null) {
-      await fs.writeFile(backupFile, before, { flag: 'wx' });
-    }
-    if (text !== before) await fs.writeFile(file, text);
-    // Keep a mismatching snapshot after edits: reinstall must not make them disposable.
-    if ((installed === null && !managed) || before === installed) await fs.writeFile(installedFile, text);
+  } else {
+    await managed.write([
+      { current: mcp, text: formatJson(nextMcp.config, mcp.text) },
+      { current: hooks, text: formatJson(nextHooks.config, hooks.text) },
+    ]);
   }
   if (uninstall) {
     stdout(`removed the Khala MCP server and hooks from ${paths.copilotDir}; delete ${paths.prefix} to remove the CLI`);

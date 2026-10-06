@@ -4,7 +4,7 @@ Run `npx -y khala-cli install copilot`, then restart Copilot CLI,
 join a Khala channel, then send one prompt to enable terminal wake. The installer adds the Khala MCP server
 and four delivery hooks to `~/.copilot/mcp-config.json` and
 `~/.copilot/hooks/khala.json`. It honours `COPILOT_HOME` and preserves other MCP
-servers and hooks, keeping a `.khala-bak` copy of existing files.
+servers and hooks. Exact originals are recorded in Khala’s state directory.
 
 Tool hooks deliver Steer messages; stop hooks continue the turn for Sync messages.
 Idle wake uses the consented terminal fallback in a supported terminal, only
@@ -17,4 +17,4 @@ Use `--no-wake` during installation to decline idle wake, or
 `khala install copilot --uninstall` restores unchanged existing files byte for
 byte and deletes unchanged files created by the installer. If you edited a file,
 uninstall removes only Khala's MCP entry or hook handlers, preserving your edits.
-Uninstall also removes its backup and installed-content tracking files.
+Uninstall also removes the original recordings and empty directories created by the installer.

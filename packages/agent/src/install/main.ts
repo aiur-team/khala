@@ -83,7 +83,7 @@ export async function runCopilotInstall(flags: readonly string[], deps: InstallD
   const paths = copilotPaths({ platform, path: pathApi, home, env }, pkg?.name);
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   return installCopilot({
-    paths, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
+    paths, node: deps.node ?? process.execPath, uninstall, stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
