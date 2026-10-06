@@ -9,6 +9,7 @@ import { deliverCore } from '../harness/deliver-core';
 import { gemini } from '../harness/gemini';
 import { readWakeSettings } from '../wake/shared';
 import { stateRoot } from '../state';
+import { ManagedFiles } from './managed-file';
 
 let home: string;
 let lines: string[];
@@ -183,7 +184,8 @@ it.each([{ existing: false, reinstall: false }, { existing: false, reinstall: tr
     expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
     if (existing) expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
     else await expect(fs.stat(settingsFile())).rejects.toMatchObject({ code: 'ENOENT' });
-    for (const suffix of ['.khala-bak', '.khala-absent']) await expect(fs.stat(settingsFile() + suffix)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await new ManagedFiles(stateRoot(deps().env)).original(settingsFile())).toBeUndefined();
+    await expect(fs.stat(settingsFile() + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
   }
 });
 it('captures the new original after edits between install cycles', async () => {
@@ -195,10 +197,11 @@ it('captures the new original after edits between install cycles', async () => {
     expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
   }
 });
-it('never backs up a managed file when original provenance is missing', async () => {
+it('retains absent-file provenance on reinstall instead of recording managed output', async () => {
   expect(await runInstall(['gemini'], deps())).toBe(0);
-  await fs.rm(settingsFile() + '.khala-absent', { force: true });
+  expect(await new ManagedFiles(stateRoot(deps().env)).original(settingsFile())).toBeNull();
   expect(await runInstall(['gemini'], deps())).toBe(0);
+  expect(await new ManagedFiles(stateRoot(deps().env)).original(settingsFile())).toBeNull();
   await expect(fs.stat(settingsFile() + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
 });
 it('preserves new sibling formatting when the original file was absent', async () => {
@@ -210,13 +213,16 @@ it('preserves new sibling formatting when the original file was absent', async (
   expect(await fs.readFile(settingsFile(), 'utf8')).toBe('{\r\n\t"theme": "light"\r\n}\r\n');
 });
 
-it('replaces stale provenance when a fresh unmanaged install cycle begins', async () => {
+it('migrates a legacy backup and restores its original bytes', async () => {
   await fs.mkdir(path.dirname(settingsFile()), { recursive: true });
-  await fs.writeFile(settingsFile() + '.khala-bak', '{"mcpServers":{},"hooks":{}}');
-  const original = '{ "theme": "new" }\n';
-  await fs.writeFile(settingsFile(), original);
+  const original = '{ "theme": "old" }\n';
+  await fs.writeFile(settingsFile() + '.khala-bak', original);
+  const merged = mergeGeminiSettings(JSON.parse(original), geminiMcpEntry('/node', '/script'), '/node /script hook deliver --harness gemini');
+  expect(merged).toHaveProperty('config');
+  await fs.writeFile(settingsFile(), JSON.stringify((merged as { config: unknown }).config));
   expect(await runInstall(['gemini'], deps())).toBe(0);
-  expect(await fs.readFile(settingsFile() + '.khala-bak', 'utf8')).toBe(original);
+  expect(await new ManagedFiles(stateRoot(deps().env)).original(settingsFile())).toEqual(Buffer.from(original));
+  await expect(fs.stat(settingsFile() + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await runInstall(['gemini', '--uninstall'], deps())).toBe(0);
   expect(await fs.readFile(settingsFile(), 'utf8')).toBe(original);
 });

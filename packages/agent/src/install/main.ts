@@ -78,7 +78,7 @@ export async function runGeminiInstall(flags: readonly string[], deps: InstallDe
   const paths = geminiPaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env }, pkg?.name);
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   return installGemini({ paths, platform, node: deps.node ?? process.execPath, uninstall,
-    trustTools: flags.includes('--trust-tools'), stdout, stderr,
+    trustTools: flags.includes('--trust-tools'), stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;

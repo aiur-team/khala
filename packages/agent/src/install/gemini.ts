@@ -1,8 +1,8 @@
-import * as fs from 'node:fs/promises';
-import { isDeepStrictEqual } from 'node:util';
+import { ManagedFiles, formatJson, jsonFormat, readManaged } from './managed-file';
 import type { CursorPlatform } from './cursor';
 import { cursorPaths } from './cursor';
 import { nodeScriptCommand } from './command';
+import { ensureStateDir } from '../state';
 
 export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent'] as const;
 const HOOK_SUFFIX = ' hook deliver --harness gemini';
@@ -57,14 +57,13 @@ export function mergeGeminiSettings(config: unknown, entry: object | null, comma
 
 export async function installGemini(input: {
   paths: ReturnType<typeof geminiPaths>; platform: NodeJS.Platform; node: string; uninstall: boolean; trustTools: boolean;
+  stateDir: string;
   install?: () => boolean; stdout: (line: string) => void; stderr: (line: string) => void;
 }): Promise<number> {
   const { paths, uninstall, stdout, stderr } = input;
-  let before: string | null = null;
-  try { before = await fs.readFile(paths.settingsFile, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  let config: unknown = {};
-  if (before?.trim()) { try { config = JSON.parse(before.replace(/^\uFEFF/u, '')); } catch { config = undefined; } }
+  const current = await readManaged(paths.settingsFile);
+  let config: unknown;
+  try { config = jsonFormat.parse(current.text ?? ''); } catch { config = undefined; }
   const merged = mergeGeminiSettings(config, uninstall ? null : geminiMcpEntry(input.node, paths.script, input.trustTools),
     uninstall ? null : geminiHookCommand(input.platform, input.node, paths.script));
   if ('error' in merged) {
@@ -73,62 +72,20 @@ export async function installGemini(input: {
       : `khala: invalid JSON or hooks in ${paths.settingsFile}`);
     return 1;
   }
-  const backupFile = paths.settingsFile + '.khala-bak';
-  const absentFile = paths.settingsFile + '.khala-absent';
-  let restoreAbsent = false;
-  let restoredText: string | null = null;
-  if (uninstall) {
-    // Use the backup for container provenance, and restore its exact bytes only
-    // when stripping Khala leaves the same settings. Keep later user edits.
-    let originallyAbsent = false;
-    try { await fs.access(absentFile); originallyAbsent = true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    let original = originallyAbsent ? {} : config;
-    let backupText: string | null = null;
-    try {
-      const text = await fs.readFile(backupFile, 'utf8');
-      const backup: unknown = text.trim() ? JSON.parse(text.replace(/^\uFEFF/u, '')) : {};
-      if (!originallyAbsent && isObject(backup)) { original = backup; backupText = text; }
-    } catch (error) {
-      if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    if (isObject(original)) for (const key of ['mcpServers', 'hooks']) {
-      const container = merged.config[key];
-      if (!Object.hasOwn(original, key) && isObject(container) && Object.keys(container).length === 0) delete merged.config[key];
-    }
-    if (isDeepStrictEqual(merged.config, original)) {
-      if (originallyAbsent) restoreAbsent = true;
-      else if (backupText !== null) restoredText = backupText;
-    }
-  }
   if (!uninstall && input.install && !input.install()) return 1;
-  if (!(uninstall && before === null)) {
-    await fs.mkdir(paths.geminiDir, { recursive: true });
-    if (!uninstall) {
-      // A reinstall must never snapshot the settings that Khala itself wrote.
-      const current = config as Record<string, unknown>;
-      const managed = isObject(current.mcpServers) && Object.hasOwn(current.mcpServers, 'khala')
-        || isObject(current.hooks) && Object.values(current.hooks).some(groups => Array.isArray(groups)
-          && groups.some(group => isObject(group) && Array.isArray(group.hooks)
-            && group.hooks.some(handler => isObject(handler) && typeof handler.command === 'string' && handler.command.endsWith(HOOK_SUFFIX))));
-      if (!managed) {
-        // A new cycle captures today's original, not a leftover from an older cycle.
-        await fs.rm(backupFile, { force: true });
-        await fs.rm(absentFile, { force: true });
-        if (before === null) await fs.writeFile(absentFile, '', { flag: 'wx' });
-        else await fs.writeFile(backupFile, before, { flag: 'wx' });
-      }
-    }
-    const indent = before === null ? 2 : before.match(/\n([ \t]+)"/u)?.[1];
-    const newline = before?.includes('\r\n') ? '\r\n' : '\n';
-    const trailing = before === null || before.endsWith('\n') ? newline : '';
-    const text = restoredText ?? JSON.stringify(merged.config, null, indent).replace(/\n/gu, newline) + trailing;
-    if (restoreAbsent) await fs.rm(paths.settingsFile, { force: true });
-    else if (text !== before) await fs.writeFile(paths.settingsFile, text);
-  }
+  const managed = new ManagedFiles(input.stateDir);
   if (uninstall) {
-    await fs.rm(backupFile, { force: true });
-    await fs.rm(absentFile, { force: true });
+    await managed.restore(current, jsonFormat, value => {
+      const stripped = (mergeGeminiSettings(value, null, null) as { config: Record<string, unknown> }).config;
+      // Without provenance, stripping must not invent containers absent from the current file.
+      for (const key of ['mcpServers', 'hooks']) {
+        if (isObject(value) && !Object.hasOwn(value, key)) delete stripped[key];
+      }
+      return stripped;
+    });
+  } else {
+    await ensureStateDir(input.stateDir);
+    await managed.write([{ current, text: formatJson(merged.config, current.text) }]);
   }
   if (uninstall) stdout(`removed the Khala MCP server and hooks from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`);
   else {
