@@ -146,3 +146,15 @@ describe('khala install codex (TOML and JSON)', () => {
     expect(await exists(path.join(codex(), 'hooks.json'))).toBe(false);
   });
 });
+
+it('creates private Khala storage without changing a shared state base', async () => {
+  const base = path.join(home, 'xdg');
+  await fs.mkdir(base, { mode: 0o755 });
+  state = path.join(base, 'khala');
+  await install(path.join(home, 'settings.json'));
+  if (process.platform !== 'win32') {
+    expect((await fs.stat(base)).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(state)).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(path.join(state, 'install-originals.json'))).mode & 0o777).toBe(0o600);
+  }
+});
