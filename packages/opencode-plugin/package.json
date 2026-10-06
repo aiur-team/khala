@@ -1,6 +1,6 @@
 {
   "name": "khala-opencode",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "Khala delivery and idle wake for OpenCode",
   "type": "module",
   "license": "Apache-2.0",

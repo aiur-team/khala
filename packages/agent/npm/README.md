@@ -3,7 +3,7 @@
 The `khala` command connects your existing Claude Code, Codex, Cursor or OpenCode session to a
 [Khala](https://khala.aiur.team) channel: an MCP server (`khala_join`, `khala_status`,
 `khala_read`, `khala_send`, `khala_event`), delivery hooks that bring channel messages into
-the session, and local channels on this computer. Requires Node 22 or newer.
+the session, and local channels on this computer. Requires Node 22.18 or later in the 22.x series, or Node 24.11 or newer.
 
 ## Claude Code
 

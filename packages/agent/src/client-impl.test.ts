@@ -368,7 +368,7 @@ const modeCommand = (content: unknown = { v: 1, agent: credentials.userId, mode:
 it('applies owner commands, echoes member state and keeps commands out of the inbox', async () => {
   await connected(); modeHandler!(modeCommand());
   expect((await client.status()).listeningMode).toBe('async');
-  expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', updatedAt: now().toISOString() });
+  expect(await readStateFile(channelDir(), 'mode.json')).toEqual({ mode: 'async', changedBy: 'owner', eventId: '$mode', eventTs: now().getTime(), updatedAt: now().toISOString() });
   expect(session.publishListeningMode).toHaveBeenCalledWith(credentials.roomId, 'async', expect.any(AbortSignal));
   expect(await entries()).toEqual([]); expect(waker).not.toHaveBeenCalled();
 });
@@ -406,7 +406,7 @@ it('starts a fresh membership in sync', async () => {
 it('preserves message and command arrival order while joining', async () => {
   vi.mocked(session.join).mockImplementation(async () => {
     modeHandler!(modeCommand()); handler!(message('$before'));
-    modeHandler!(modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }));
+    modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }), eventId: '$sync-mode' });
     handler!(message('$after'));
   });
   await connected(); expect(await client.status()).toMatchObject({ listeningMode: 'sync', unread: 1 });
@@ -1141,5 +1141,50 @@ it('refreshes connected heartbeats every 15 seconds and stops on close', async (
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await statusFile()).toMatchObject({ state: 'disconnected', detail: 'closed' });
     expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it('ignores duplicate and older owner mode commands replayed from the saved sync', async () => {
+  await connected(); modeHandler!(modeCommand()); await client.status();
+  vi.mocked(session.publishListeningMode).mockClear();
+  modeHandler!(modeCommand());
+  modeHandler!({ ...modeCommand({ v: 1, agent: credentials.userId, mode: 'sync' }), eventId: '$old-mode', ts: now().getTime() - 1 });
+  expect((await client.status()).listeningMode).toBe('async');
+  expect(session.publishListeningMode).not.toHaveBeenCalled();
+});
+
+
+it('wipes a token revoked while offline before automatic rejoin can renew it', async () => {
+  const f = await multiClient(['A']);
+  delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const channelDir = channelFiles(f.files, f.controls[0]!.creds.roomId).dir;
+  await fs.writeFile(path.join(channelDir, 'crypto.json'), JSON.stringify(f.controls[0]!.creds), { mode: 0o600 });
+  f.api.requestJoin.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
+    joinApi: f.api, startSession: f.start, fetch: vi.fn(async () => Response.json({ errcode: 'M_UNKNOWN_TOKEN' }, { status: 401 })) });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).channels?.[0]).toMatchObject({ state: 'disconnected', detail: 'unauthorized' }));
+  expect(f.api.requestJoin).not.toHaveBeenCalled();
+  expect(await readStateFile(channelDir, 'crypto.json')).toBeNull();
+  expect(await readStateFile(channelDir, 'resume.json')).toBeNull();
+});
+
+it.each(['reject', 'timeout'] as const)('retries a replayed mode command after publish %s without checkpointing it', async failure => {
+  await connected();
+  if (failure === 'reject') vi.mocked(session.publishListeningMode).mockRejectedValueOnce(new Error('offline'));
+  else { vi.useFakeTimers(); vi.mocked(session.publishListeningMode).mockImplementationOnce(() => new Promise(() => {})); }
+  try {
+    modeHandler!(modeCommand());
+    if (failure === 'timeout') {
+      await vi.waitFor(() => expect(session.publishListeningMode).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(5000);
+    }
+    await client.status();
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ eventId: '$mode', pendingPublish: true });
+    modeHandler!(modeCommand());
+    expect((await client.status()).listeningMode).toBe('async');
+    expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ eventId: '$mode', mode: 'async' });
+    expect(await readStateFile(channelDir(), 'mode.json')).not.toHaveProperty('pendingPublish');
   } finally { vi.useRealTimers(); }
 });

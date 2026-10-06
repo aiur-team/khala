@@ -9,7 +9,7 @@ export async function readListeningMode(files: SessionFiles): Promise<ListeningM
   return decoded.ok ? decoded.value : DEFAULT_LISTENING_MODE;
 }
 export async function applyListeningMode(files: SessionFiles, next: ListeningMode,
-  meta: { changedBy: 'owner'; eventId: string }, now: () => Date = () => new Date()) {
+  meta: { changedBy: 'owner'; eventId: string; eventTs?: number; pendingPublish?: true }, now: () => Date = () => new Date()) {
   const previous = await readListeningMode(files);
   if (previous === 'async' && next !== 'async') {
     for (let attempt = 0; attempt < 2; attempt++) {
