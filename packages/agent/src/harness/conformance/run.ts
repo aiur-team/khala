@@ -33,7 +33,7 @@ async function until(check: () => Promise<boolean>, message: string) {
 }
 
 /** Transport boundaries are faked; client identity, inbox, rename and hook state are real. */
-function transportFixture(adapter: HarnessAdapter, transport: 'local' | 'matrix') {
+export function transportFixture(adapter: HarnessAdapter, transport: 'local' | 'matrix') {
   let sequence = 0;
   let ownName = defaultAgentName('kevin', adapter.id);
   const members = new Map<string, string>();
