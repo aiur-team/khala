@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import * as proc from '../harness/proc';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile } from '../state';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
@@ -259,6 +260,28 @@ it('restores only the latest authorized Codex session in this workspace before i
   }
 });
 
+it('creates the explicit resumed Antigravity client before input and keeps tool metadata authoritative', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
+  const read = vi.spyOn(proc, 'readProcess').mockImplementation(async pid => ({ pid,
+    ppid: pid === process.pid ? 200 : pid === 200 ? 100 : 0, startTime: '1',
+    command: pid === 100 ? 'agy' : 'language_server',
+  }));
+  const args = vi.spyOn(proc, 'readProcessArguments').mockResolvedValue(['agy', '--conversation', 'resume']);
+  const running = runMcpCommand(['--harness', 'antigravity'], { env: {}, input, output, createClient });
+  try {
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
+    expect(createClient).toHaveBeenCalledWith({ harness: 'antigravity', sessionId: 'resume', rejoinable: true });
+    input.end(JSON.stringify({ ...call('khala_status'), params: { name: 'khala_status', arguments: {},
+      _meta: { 'antigravity.google/conversation_id': 'different' } } }) + '\n');
+    await running;
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(createClient).toHaveBeenLastCalledWith({ harness: 'antigravity', sessionId: 'different', rejoinable: true });
+  } finally {
+    input.end(); await running; output.destroy(); read.mockRestore(); args.mockRestore();
+  }
+});
 
 it('restores OpenCode from late hooks and reuses clients until EOF without tool calls', async () => {
   vi.useFakeTimers();

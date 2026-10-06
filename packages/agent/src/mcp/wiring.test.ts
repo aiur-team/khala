@@ -246,6 +246,20 @@ it('offers the installed private-prefix Qwen background command on Windows and r
   await wrapped.close();
 });
 
+it('cancels a pending startup restore before waiting for initialization during close', async () => {
+  const env = await environment();
+  const client = createPlaceholderClient();
+  let restored!: () => void;
+  const restoring = new Promise<void>(resolve => { restored = resolve; });
+  client.resume = vi.fn(() => restoring);
+  client.close = vi.fn(async () => { restored(); });
+  const waker = { notify: vi.fn(), stop: vi.fn(async () => {}) };
+  const wrapped = createRealClientFactory(env, { createClient: () => client, createWaker: () => waker })({ harness: 'antigravity', sessionId: 'resume' });
+  await vi.waitFor(() => expect(client.resume).toHaveBeenCalledOnce());
+  await wrapped.close();
+  expect(client.close).toHaveBeenCalledOnce();
+  expect(waker.stop).toHaveBeenCalledOnce();
+});
 it.each(['linux', 'darwin'] as const)('omits Qwen watcher status and hints on %s', async platform => {
   const env = { ...await environment(), QWEN_HOME: await mkdtemp(path.join(os.tmpdir(), 'qwen-status-')), QWEN_CODE_MESSAGING_SOCKET: '/unused/qwen.sock' };
   directories.push(env.QWEN_HOME);

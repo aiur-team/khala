@@ -59,6 +59,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
   let rejoinSecret: string | undefined;
   let savedSecret: string | undefined;
   let resuming: Promise<void> | undefined;
+  const restores = new Map<string, Promise<unknown>>();
   const workspace = path.resolve(options.env?.PWD ?? process.cwd());
   const secretHash = () => rejoinSecret === undefined ? '' : createHash('sha256').update(rejoinSecret).digest('hex');
   const attempts = new Map<string, Attempt>();
@@ -577,14 +578,23 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
             await (await import('./matrix/crypto-store')).wipeCryptoStore(ref.files.dir, stateRoot(options.env), options.fetch ?? fetch);
             return;
           }
-          void join(authorization.link, authorization.label, authorization).catch(() => {});
+          const restoring = join(authorization.link, authorization.label, authorization).catch(() => {});
+          restores.set(ref.key, restoring);
+          void restoring.then(() => { if (restores.get(ref.key) === restoring) restores.delete(ref.key); });
         }));
       })();
     },
     async status(channel) {
       await initialize();
       const selected = channel === undefined ? refs() : [select(channel)];
-      await Promise.all(selected.map(ref => { const attempt = channels.get(ref.key); return attempt?.joined ? attempt.task : undefined; }));
+      const pendingRestores = selected.flatMap(ref => { const restoring = restores.get(ref.key); return restoring ? [restoring] : []; });
+      if (pendingRestores.length) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([Promise.all(pendingRestores), new Promise<void>(resolve => { timer = setTimeout(resolve, 1_000); })]);
+        } finally { if (timer) clearTimeout(timer); }
+      }
+      await Promise.all(selected.map(ref => { const attempt = channels.get(ref.key); return attempt?.joined && !attempt.restore ? attempt.task : undefined; }));
       await Promise.all(selected.map(ref => channels.get(ref.key)?.appends));
       const items: import('./client').ChannelStatus[] = await Promise.all(selected.map(async ref => {
         const attempt = channels.get(ref.key);

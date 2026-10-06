@@ -12,7 +12,7 @@ describe('harness adapters', () => {
       expect(adapterFor(adapter.id)).toBe(adapter);
       if (adapter.id === 'generic') expect(adapter.codec).toBeUndefined();
       else expect(adapter.codec?.parse).toBeTypeOf('function');
-      expect(adapter.restoreAtStartup).toBe(!['cursor', 'gemini', 'antigravity'].includes(adapter.id));
+      expect(adapter.restoreAtStartup).toBe(!['cursor', 'gemini'].includes(adapter.id));
     }
     expect(adapterFor('gemini')?.id).toBe('gemini');
     expect(adapterFor('toString')).toBeUndefined();

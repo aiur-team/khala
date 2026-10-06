@@ -39,13 +39,17 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       ...(waker ? { onInboxAppend: () => waker.notify() } : {}) });
     // Restore authorization before the first tool call. Clear the previous process's join before
     // delegating any operation, so an expired join cannot reject a fresh one.
-    let initialization: Promise<void> | undefined;
-    const initialize = () => initialization ??= (async () => {
+    let preparation: Promise<void> | undefined;
+    const prepare = () => preparation ??= (async () => {
       await ensureStateDir(files.dir);
       await removeStateFile(files.dir, 'join.json');
       const joinsDir = path.join(files.dir, 'joins');
       await ensureStateDir(joinsDir);
       await fs.rm(joinsDir, { recursive: true, force: true });
+    })();
+    let initialization: Promise<void> | undefined;
+    const initialize = () => initialization ??= (async () => {
+      await prepare();
       await client.resume?.();
     })();
     void initialize().catch(() => {});
@@ -75,7 +79,12 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
-            (async () => { await initialize(); await client.close(); })(),
+            (async () => {
+              await prepare();
+              // Closing aborts pending restores; do not wait for them before cancellation.
+              await client.close();
+              await initialization?.catch(() => {});
+            })(),
             new Promise<never>((_resolve, reject) => {
               // Reserve a second of the CLI deadline for waker child cleanup.
               timer = setTimeout(() => reject(new Error('cleanup_timeout')), 4000);

@@ -4,7 +4,7 @@ import { lstat } from 'node:fs/promises';
 import { SESSION_ID_PATTERN, ensureStateDir, readJson, stateRoot, writeJsonAtomic } from '../state';
 import { walkAncestors, nearestNonShellAncestor, readProcess, type ProcessReader } from './proc';
 
-export type SessionContext = { harness: HarnessId; pid?: number; readProcess?: ProcessReader };
+export type SessionContext = { harness: HarnessId; pid?: number; readProcess?: ProcessReader; readArguments?: (pid: number) => Promise<readonly string[] | null> };
 export type SessionSource = Readonly<{
   kind: 'meta' | 'env' | 'hook-map' | 'workspace' | 'process';
   resolve(meta: Readonly<Record<string, unknown>> | undefined, env: NodeJS.ProcessEnv, context: SessionContext): unknown | Promise<unknown>;
