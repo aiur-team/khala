@@ -54,14 +54,16 @@ export function mergeCopilotMcp(config: unknown, entry: object | null): { config
   return { config: { ...config, mcpServers: next } };
 }
 
+const isCopilotHook = (item: Record<string, unknown>) => [item.bash, item.powershell].some(command =>
+  typeof command === 'string' && COPILOT_HOOK_EVENTS.some(event => command.endsWith(`${HOOK_SUFFIX} --event ${event}`)));
+
 export function mergeCopilotHooks(config: unknown, commands: { node: string; script: string } | null): { config: Record<string, unknown> } | { error: 'invalid_config' } {
   if (!isObject(config)) return { error: 'invalid_config' };
   const hooks = config.hooks ?? {};
   if (!isObject(hooks) || Object.values(hooks).some(list => !Array.isArray(list) || list.some(item => !isObject(item)))) return { error: 'invalid_config' };
-  const ours = (item: Record<string, unknown>) => [item.bash, item.powershell].some(command => typeof command === 'string' && COPILOT_HOOK_EVENTS.some(event => command.endsWith(`${HOOK_SUFFIX} --event ${event}`)));
   const next: Record<string, unknown> = {};
   for (const [event, list] of Object.entries(hooks as Record<string, Record<string, unknown>[]>)) {
-    const kept = list.filter(item => !ours(item));
+    const kept = list.filter(item => !isCopilotHook(item));
     if (kept.length) next[event] = kept;
   }
   if (commands) {
@@ -101,20 +103,42 @@ export async function installCopilot(input: CopilotInstallInput): Promise<number
   if (!uninstall && input.install && !input.install()) return 1;
   await fs.mkdir(nodePath.dirname(paths.hooksFile), { recursive: true });
   for (const [file, before, after] of [[paths.mcpFile, mcp.text, nextMcp.config], [paths.hooksFile, hooks.text, nextHooks.config]] as const) {
-    if (uninstall && before === null) continue;
-    // The first install keeps the user's original file; later runs never overwrite it.
-    if (!uninstall && before !== null) {
-      try { await fs.writeFile(file + '.khala-bak', before, { flag: 'wx' }); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    }
+    const backupFile = file + '.khala-bak';
+    const installedFile = file + '.khala-installed';
+    const readOptional = async (name: string) => fs.readFile(name, 'utf8').catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    const installed = await readOptional(installedFile);
+    const backup = await readOptional(backupFile);
     const text = JSON.stringify(after, null, 2) + '\n';
+    if (uninstall) {
+      if (before !== null) {
+        if (installed !== null && before === installed) {
+          if (backup === null) await fs.unlink(file);
+          else await fs.writeFile(file, backup);
+        } else if (text !== before) await fs.writeFile(file, text);
+      }
+      await fs.rm(backupFile, { force: true });
+      await fs.rm(installedFile, { force: true });
+      continue;
+    }
+    // A managed file on reinstall is never an original, even if no backup exists.
+    const managed = file === paths.mcpFile
+      ? isObject(mcp.value) && isObject(mcp.value.mcpServers) && Object.hasOwn(mcp.value.mcpServers, 'khala')
+      : isObject(hooks.value) && isObject(hooks.value.hooks) && Object.values(hooks.value.hooks).some(list => Array.isArray(list) && list.some(item => isObject(item) && isCopilotHook(item)));
+    if (before !== null && installed === null && !managed && backup === null) {
+      await fs.writeFile(backupFile, before, { flag: 'wx' });
+    }
     if (text !== before) await fs.writeFile(file, text);
+    // Keep a mismatching snapshot after edits: reinstall must not make them disposable.
+    if ((installed === null && !managed) || before === installed) await fs.writeFile(installedFile, text);
   }
   if (uninstall) {
     stdout(`removed the Khala MCP server and hooks from ${paths.copilotDir}; delete ${paths.prefix} to remove the CLI`);
   } else {
     stdout(`configured ${paths.mcpFile} and ${paths.hooksFile}`);
-    stdout('restart Copilot CLI, send one prompt, then join a Khala channel; idle wakes spend AI credits');
+    stdout('restart Copilot CLI, join a Khala channel, then send one prompt to enable terminal wakes; idle wakes spend AI credits');
   }
   return 0;
 }

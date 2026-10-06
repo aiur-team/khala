@@ -53,7 +53,10 @@ it.each([true, false])('installs once, preserves config, records wake=%s and uni
     expect(JSON.parse(await fs.readFile(paths.hooksFile, 'utf8'))).toEqual(hooks);
     expect(JSON.parse(await fs.readFile(paths.mcpFile + '.khala-bak', 'utf8'))).toEqual(original);
     expect(await runInstall(['copilot', '--uninstall'], deps)).toBe(0);
-    expect(JSON.parse(await fs.readFile(paths.mcpFile, 'utf8'))).toEqual(original);
+    expect(await fs.readFile(paths.mcpFile, 'utf8')).toBe(JSON.stringify(original));
+    expect(await fs.readFile(paths.hooksFile, 'utf8')).toBe(JSON.stringify({ version: 1, hooks: { agentStop: [audit] } }));
+    expect(await fs.stat(paths.mcpFile + '.khala-bak').catch(() => null)).toBeNull();
+    expect(await fs.stat(paths.hooksFile + '.khala-bak').catch(() => null)).toBeNull();
     expect(JSON.parse(await fs.readFile(paths.hooksFile, 'utf8'))).toEqual({ version: 1, hooks: { agentStop: [audit] } });
     expect(output.join('\n')).toContain('AI credits');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
@@ -80,5 +83,58 @@ it.each(['invalid-mcp', 'invalid-hooks', 'foreign-server', 'npm-failure'])('leav
     expect((await readWakeSettings(stateRoot(env))).consent['copilot/terminal']).toBeUndefined();
     expect(await fs.readdir(paths.copilotDir)).toEqual(expect.arrayContaining(['hooks', 'mcp-config.json']));
     expect(await fs.stat(paths.mcpFile + '.khala-bak').catch(() => null)).toBeNull();
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+
+it.each([false, true])('fresh install and reinstall uninstall deletes generated files (reinstall=%s)', async reinstall => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-copilot-clean-'));
+  try {
+    const env = { HOME: root, XDG_STATE_HOME: path.join(root, 'state') };
+    const paths = copilotPaths({ platform: 'linux', path, home: root, env });
+    const deps = { env, home: root, platform: 'linux' as const, node: '/node', package: { name: 'khala-cli', version: '1.2.3' }, npmInstall: () => true,
+      stdout: () => {}, stderr: (line: string) => { throw Error(line); } };
+    expect(await runInstall(['copilot'], deps)).toBe(0);
+    if (reinstall) expect(await runInstall(['copilot'], deps)).toBe(0);
+    expect(await fs.stat(paths.mcpFile + '.khala-bak').catch(() => null)).toBeNull();
+    expect(await runInstall(['copilot', '--uninstall'], deps)).toBe(0);
+    for (const file of [paths.mcpFile, paths.hooksFile]) {
+      for (const suffix of ['', '.khala-bak', '.khala-installed']) {
+        expect(await fs.stat(file + suffix).catch(() => null)).toBeNull();
+      }
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it.each([false, true, 'legacy'])('preserves user edits on uninstall even after reinstall=%s', async reinstall => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-copilot-edits-'));
+  try {
+    const env = { HOME: root, XDG_STATE_HOME: path.join(root, 'state') };
+    const paths = copilotPaths({ platform: 'linux', path, home: root, env });
+    await fs.mkdir(path.dirname(paths.hooksFile), { recursive: true });
+    await fs.writeFile(paths.mcpFile, '{"mcpServers":{}}');
+    await fs.writeFile(paths.hooksFile, '{"version":1,"hooks":{}}');
+    const deps = { env, home: root, platform: 'linux' as const, node: '/node', package: { name: 'khala-cli', version: '1.2.3' }, npmInstall: () => true,
+      stdout: () => {}, stderr: (line: string) => { throw Error(line); } };
+    expect(await runInstall(['copilot'], deps)).toBe(0);
+    const mcp = JSON.parse(await fs.readFile(paths.mcpFile, 'utf8'));
+    mcp.mcpServers.other = { command: 'other' };
+    await fs.writeFile(paths.mcpFile, JSON.stringify(mcp));
+    const hooks = JSON.parse(await fs.readFile(paths.hooksFile, 'utf8'));
+    hooks.hooks.agentStop.push({ type: 'command', bash: 'audit.sh' });
+    await fs.writeFile(paths.hooksFile, JSON.stringify(hooks));
+    if (reinstall === 'legacy') {
+      for (const file of [paths.mcpFile, paths.hooksFile]) {
+        await fs.rm(file + '.khala-installed');
+        await fs.rm(file + '.khala-bak');
+      }
+    }
+    if (reinstall) expect(await runInstall(['copilot'], deps)).toBe(0);
+    expect(await runInstall(['copilot', '--uninstall'], deps)).toBe(0);
+    expect(JSON.parse(await fs.readFile(paths.mcpFile, 'utf8'))).toEqual({ mcpServers: { other: { command: 'other' } } });
+    expect(JSON.parse(await fs.readFile(paths.hooksFile, 'utf8'))).toEqual({ version: 1, hooks: { agentStop: [{ type: 'command', bash: 'audit.sh' }] } });
+    for (const file of [paths.mcpFile, paths.hooksFile]) {
+      for (const suffix of ['.khala-bak', '.khala-installed']) expect(await fs.stat(file + suffix).catch(() => null)).toBeNull();
+    }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

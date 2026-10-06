@@ -113,7 +113,8 @@ try {
   // Copilot: execute the installed shell command with the CLI's event-less camelCase payload.
   const copilotDir = path.join(home, '.copilot');
   await fs.mkdir(copilotDir, { recursive: true });
-  await fs.writeFile(path.join(copilotDir, 'mcp-config.json'), JSON.stringify({ mcpServers: { other: { command: 'other' } } }));
+  const cpOriginal = JSON.stringify({ mcpServers: { other: { command: 'other' } } });
+  await fs.writeFile(path.join(copilotDir, 'mcp-config.json'), cpOriginal);
   check('install copilot', process.execPath, [script, 'install', 'copilot'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
   const cp = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
   if (cp.mcpServers?.khala?.type !== 'local' || cp.mcpServers?.other?.command !== 'other') throw new Error('Copilot MCP config');
@@ -132,6 +133,10 @@ try {
   check('install copilot --uninstall', process.execPath, [script, 'install', 'copilot', '--uninstall'], { shell: false });
   const cpRemoved = JSON.parse(await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8'));
   if (cpRemoved.mcpServers.khala || cpRemoved.mcpServers.other?.command !== 'other') throw new Error('Copilot uninstall');
+  if (await fs.readFile(path.join(copilotDir, 'mcp-config.json'), 'utf8') !== cpOriginal) throw new Error('Copilot original bytes not restored');
+  for (const file of [path.join(copilotDir, 'mcp-config.json.khala-bak'), path.join(copilotDir, 'hooks', 'khala.json'), path.join(copilotDir, 'hooks', 'khala.json.khala-bak')]) {
+    if (await fs.stat(file).catch(() => null)) throw new Error(`Copilot uninstall left ${file}`);
+  }
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
