@@ -3,7 +3,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMatrixSession } from './session';
 
 const sdk = vi.hoisted(() => ({ client: undefined as unknown, store: undefined as unknown }));
-vi.mock('./crypto-store', () => ({ openCryptoStore: vi.fn(async () => sdk.store) }));
+vi.mock('./crypto-store', () => ({
+  openCryptoStore: vi.fn(async () => sdk.store),
+  CryptoStoreCorruptError: class extends Error { constructor() { super('storage_failed'); } },
+}));
 vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
@@ -493,4 +496,20 @@ it('still stops and releases the store when the first identity deletion fails', 
   expect(client.stopClient).toHaveBeenCalledOnce();
   expect(store.wipe).toHaveBeenCalledOnce();
   expect(store.close).toHaveBeenCalledOnce();
+});
+
+
+it('keeps the old device identity available for caller logout when restored Rust crypto fails', async () => {
+  const store = { prefix: 'channel-store', restored: true,
+    sync: { startup: vi.fn().mockResolvedValue(undefined), destroy: vi.fn() },
+    forgetIdentity: vi.fn().mockResolvedValue(undefined),
+    wipe: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  client.initRustCrypto.mockRejectedValueOnce(new Error('corrupt database pages'));
+  await expect(createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } }))
+    .rejects.toThrow('storage_failed');
+  expect(client.stopClient).toHaveBeenCalledOnce();
+  expect(store.close).toHaveBeenCalledOnce();
+  expect(store.forgetIdentity).not.toHaveBeenCalled();
+  expect(store.wipe).not.toHaveBeenCalled();
 });

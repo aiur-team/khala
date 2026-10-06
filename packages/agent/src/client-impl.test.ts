@@ -1300,6 +1300,63 @@ it('ignores duplicate and older owner mode commands replayed from the saved sync
 });
 
 
+it.each(['missing', 'invalid', 'changed', 'workspace', 'offline', 'server-error', 'revoked'])('logs out and wipes saved crypto when %s resume authorization is discarded', async kind => {
+  vi.resetModules();
+  const f = await multiClient(['A']);
+  delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const channelDir = channelFiles(f.files, f.controls[0]!.creds.roomId).dir;
+  await fs.writeFile(path.join(channelDir, 'crypto.json'), JSON.stringify(f.controls[0]!.creds), { mode: 0o600 });
+  if (kind === 'missing') await fs.rm(path.join(f.files.dir, 'rejoin.json'));
+  else if (kind !== 'workspace') await writeStateFile(f.files.dir, 'rejoin.json', { secret: kind === 'invalid' ? 'short' : 'z'.repeat(43) });
+  const fetcher = vi.fn<typeof fetch>(async () => {
+    if (kind === 'offline') throw new Error('offline');
+    return Response.json({}, { status: kind === 'server-error' ? 503 : kind === 'revoked' ? 401 : 200 });
+  });
+  f.api.requestJoin.mockClear(); f.start.mockClear();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi',
+    env: { XDG_STATE_HOME: root, ...(kind === 'workspace' ? { PWD: path.join(root, 'other-workspace') } : {}) },
+    now, joinApi: f.api, startSession: f.start, fetch: fetcher });
+  await client.resume!();
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${credentials.homeserver}/_matrix/client/v3/logout`,
+    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: `Bearer ${credentials.accessToken}` }) }));
+  expect(await readStateFile(channelDir, 'crypto.json')).toBeNull();
+  expect(await readStateFile(channelDir, 'resume.json')).toBeNull();
+  expect(f.api.requestJoin).not.toHaveBeenCalled(); expect(f.start).not.toHaveBeenCalled();
+  vi.resetModules();
+});
+
+it('logs out the old device before starting a replacement after a corrupt store reset', async () => {
+  vi.resetModules();
+  const cryptoStore = await import('./matrix/crypto-store');
+  const f = await multiClient(['A']);
+  delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const channelDir = channelFiles(f.files, f.controls[0]!.creds.roomId).dir;
+  const old = { ...f.controls[0]!.creds, deviceId: 'OLD', accessToken: 'old-token' };
+  await fs.writeFile(path.join(channelDir, 'crypto.json'), JSON.stringify(old), { mode: 0o600 });
+  await fs.writeFile(path.join(channelDir, 'crypto.sqlite'), 'corrupt sqlite', { mode: 0o600 });
+  const fetcher = vi.fn<typeof fetch>(async input => String(input).endsWith('/whoami')
+    ? Response.json({ user_id: old.userId, device_id: old.deviceId }) : Response.json({}));
+  f.start.mockClear();
+  f.start.mockImplementation(async creds => {
+    if (creds.deviceId === 'OLD') {
+      await cryptoStore.openCryptoStore(channelDir, path.join(root, 'khala'), creds);
+      throw new Error('expected corrupt store');
+    }
+    expect(fetcher).toHaveBeenCalledWith(`${old.homeserver}/_matrix/client/v3/logout`,
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: 'Bearer old-token' }) }));
+    expect(await readStateFile(channelDir, 'crypto.json')).toBeNull();
+    return f.controls[0]!.session;
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
+    joinApi: f.api, startSession: f.start, fetch: fetcher });
+  await client.resume!();
+  await vi.waitFor(async () => expect(await client.status('A')).toMatchObject({ state: 'connected', detail: 'crypto_reset' }));
+  expect(f.start.mock.calls.map(([creds]) => creds.deviceId)).toEqual(['OLD', credentials.deviceId]);
+  vi.resetModules();
+});
+
 it('wipes a token revoked while offline before automatic rejoin can renew it', async () => {
   const f = await multiClient(['A']);
   delete (f.controls[0]!.creds as AgentCredentials).transport;
@@ -1333,4 +1390,39 @@ it.each(['reject', 'timeout'] as const)('retries a replayed mode command after p
     expect(await readStateFile(channelDir(), 'mode.json')).toMatchObject({ eventId: '$mode', mode: 'async' });
     expect(await readStateFile(channelDir(), 'mode.json')).not.toHaveProperty('pendingPublish');
   } finally { vi.useRealTimers(); }
+});
+
+
+it.each(['ended', 'join-failed'] as const)('closes the session before wiping credentials when resume is discarded after %s', async kind => {
+  vi.resetModules();
+  const f = await multiClient(['A']);
+  const control = f.controls[0]!;
+  delete (control.creds as AgentCredentials).transport;
+  await client.close();
+  const savedDir = channelFiles(f.files, control.creds.roomId).dir;
+  let stopped = false;
+  control.session.stop.mockImplementation(async () => { stopped = true; });
+  const fetcher = vi.fn<typeof fetch>(async () => {
+    expect(stopped).toBe(true);
+    return Response.json({});
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now,
+    joinApi: f.api, startSession: f.start, fetch: fetcher });
+  if (kind === 'join-failed') {
+    vi.mocked(control.session.join).mockImplementation(async () => {
+      await fs.writeFile(path.join(savedDir, 'crypto.json'), JSON.stringify(control.creds), { mode: 0o600 });
+      await writeStateFile(savedDir, 'resume.json', { roomId: control.creds.roomId });
+      throw new KhalaClientError('not_connected', 'removed');
+    });
+    await expect(f.join(0)).rejects.toMatchObject({ message: 'removed' });
+  } else {
+    await f.join(0);
+    await fs.writeFile(path.join(savedDir, 'crypto.json'), JSON.stringify(control.creds), { mode: 0o600 });
+    control.ended();
+  }
+  await vi.waitFor(async () => expect((await client.status()).channels?.[0]).toMatchObject({ state: 'disconnected', detail: 'removed' }));
+  expect(await readStateFile(savedDir, 'crypto.json')).toBeNull();
+  expect(await readStateFile(savedDir, 'resume.json')).toBeNull();
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${control.creds.homeserver}/_matrix/client/v3/logout`,
+    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: `Bearer ${control.creds.accessToken}` }) }));
 });

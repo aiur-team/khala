@@ -199,7 +199,7 @@ export async function openCryptoStore(dir: string, root: string, creds: AgentCre
 }
 
 /** Also used when control refuses an offline restore before a Matrix client opens. */
-export async function wipeCryptoStore(dir: string, root: string): Promise<void> {
+export async function wipeCryptoStore(dir: string, root: string, fetcher: typeof fetch = fetch): Promise<void> {
   try {
     const names = await fs.readdir(dir);
     if (!['crypto.json', 'crypto.sqlite', 'sync.sqlite'].some(name => names.includes(name))) return;
@@ -211,6 +211,22 @@ export async function wipeCryptoStore(dir: string, root: string): Promise<void> 
   const release = await lockfile.lock(dir, { realpath: false, lockfilePath: path.join(dir, 'crypto.lock'),
     stale: 10_000, update: 2000, retries: { retries: 12, minTimeout: 1000, maxTimeout: 1000 } });
   try {
+    let identity: Identity | null;
+    try { identity = await readIdentity(path.join(dir, 'crypto.json')); }
+    // The directory was validated above. An unsafe or unreadable identity can
+    // still be unlinked without following it or trusting its token for logout.
+    catch { identity = null; }
+    if (identity?.accessToken) {
+      // Retire the device before discarding the only saved copy of its token.
+      // Offline logout must not prevent removal of local credentials.
+      try {
+        const response = await fetcher(`${identity.homeserver}/_matrix/client/v3/logout`, {
+          method: 'POST', headers: { authorization: `Bearer ${identity.accessToken}`, 'content-type': 'application/json' },
+          body: '{}', signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok && response.status !== 401) console.error('khala: discarded_device_logout_failed');
+      } catch { console.error('khala: discarded_device_logout_failed'); }
+    }
     await unlink(path.join(dir, 'crypto.json'));
     await deleteStores(prefix, dir);
   } finally { await release(); }

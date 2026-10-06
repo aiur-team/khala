@@ -190,7 +190,8 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
       if (!persistent?.restored || (error instanceof StateError && error.code === 'unsafe_state_dir')) throw error;
       // Never attach a new key store to the old device. The caller can make one
       // bounded retry using the replacement credentials authorized by control.
-      wipe = true;
+      // Close and release the store, but keep its identity until the caller
+      // logs out the old device and wipes it before starting a replacement.
       throw new (await import('./crypto-store')).CryptoStoreCorruptError();
     }
     const crypto = client.getCrypto();
