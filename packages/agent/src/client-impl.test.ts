@@ -1089,6 +1089,152 @@ it('delivers restored-channel wake entries without a tool call', async () => {
   await vi.waitFor(() => expect(wake).toHaveBeenCalledWith(expect.objectContaining({ eventId: '$restored-wake' })));
 });
 
+it('backfills paginated gap mentions before live traffic, dedupes, and keeps the original join boundary', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0);
+  const control = f.controls[0]!;
+  const restoreAndWait = async () => {
+    const joined = deferred<void>();
+    vi.mocked(control.session.roomName).mockImplementationOnce(() => { joined.resolve(); return 'A'; });
+    await client.resume!();
+    // Once roomName is read, status awaits the joined attempt's complete task.
+    await joined.promise;
+    expect((await client.status()).state).toBe('connected');
+  };
+  const gap = (id: string, ts = now().getTime() + 1000) => ({ ...message(id), roomId: control.creds.roomId, ts, body: `@owner-Codex-0 ${id}` });
+  control.receive(gap('$seen', now().getTime()));
+  await client.status();
+  await client.close();
+  const history = vi.mocked(control.session.history);
+  history.mockImplementation(async (_room, _limit, before) => {
+    if (!before) {
+      control.receive(gap('$live'));
+      return { messages: [gap('$gap2'), gap('$live')], nextBefore: '$gap2' };
+    }
+    return { messages: [gap('$prejoin', now().getTime() - 1), gap('$seen', now().getTime()), gap('$gap1'), { ...gap('$own'), sender: control.creds.userId }], nextBefore: '$prejoin' };
+  });
+  const wake = vi.fn();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now: () => new Date(now().getTime() + 10_000), joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await restoreAndWait();
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$seen', '$gap1', '$gap2', '$live']);
+  expect((await client.status()).unread).toBe(4);
+  expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap1', '$gap2', '$live']);
+  expect(history).toHaveBeenCalledTimes(2);
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toMatchObject({ originalJoinedAt: now().toISOString(), joinedAt: new Date(now().getTime() + 10_000).toISOString() });
+  await client.close();
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now: () => new Date(now().getTime() + 20_000), joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await restoreAndWait();
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$seen', '$gap1', '$gap2', '$live']);
+  expect(wake).toHaveBeenCalledTimes(3);
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json')).toMatchObject({ originalJoinedAt: now().toISOString(), joinedAt: new Date(now().getTime() + 20_000).toISOString() });
+});
+
+it('backfills a restored channel with an empty inbox but excludes pre-join messages', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  // Older versions have only joinedAt; migrate that boundary on restore.
+  await writeStateFile(channelFiles(f.files, control.creds.roomId).dir, 'channel.json', { roomId: control.creds.roomId, joinedAt: now().toISOString() });
+  vi.mocked(control.session.history).mockResolvedValue({ messages: [
+    { ...message('$prejoin'), roomId: control.creds.roomId, ts: now().getTime() - 1 },
+    { ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 },
+  ] });
+  await restartMulti(f);
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+});
+
+it('continues restore pagination through an empty projected page', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  vi.mocked(control.session.history).mockResolvedValueOnce({ messages: [], nextBefore: '$state' })
+    .mockResolvedValueOnce({ messages: [{ ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 }] });
+  await restartMulti(f);
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+  expect(control.session.history).toHaveBeenLastCalledWith(control.creds.roomId, 100, '$state', { includeUnavailable: false });
+});
+
+it('requests confirmed history on restore and wakes only for the decrypted gap message', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  const wake = vi.fn();
+  const gap = { ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 };
+  vi.mocked(control.session.history).mockImplementation(async (_room, _limit, before, options) => {
+    // The transport cannot identify the encrypted mode command or agent event.
+    expect(options).toEqual({ includeUnavailable: false });
+    return before ? { messages: [gap] } : { messages: [], nextBefore: '$encrypted-mode' };
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+  expect((await client.status()).unread).toBe(1);
+  expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap']);
+});
+
+it.each(['tail', 'cutoff'])('stops restored encrypted history at its raw %s boundary', async boundary => {
+  const f = await multiClient(['A']); await f.join(0);
+  const control = f.controls[0]!;
+  if (boundary === 'tail') { control.receive({ ...message('$tail'), roomId: control.creds.roomId }); await client.status(); }
+  await client.close();
+  const wake = vi.fn();
+  vi.mocked(control.session.history).mockResolvedValue({ messages: [], nextBefore: '$older',
+    ...(boundary === 'tail' ? { reachedBoundary: true, oldestTs: now().getTime() } : { oldestTs: now().getTime() - 1 }) });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect(control.session.history).toHaveBeenCalledExactlyOnceWith(control.creds.roomId, 100, undefined, { includeUnavailable: false, ...(boundary === 'tail' ? { stopAtEventId: '$tail' } : {}) });
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(boundary === 'tail' ? ['$tail'] : []);
+  expect((await client.status()).unread).toBe(boundary === 'tail' ? 1 : 0);
+  expect(wake).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('caps restore history and preserves chronological intake (boundary on last page: %s)', async reachedBoundary => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  let pages = 0;
+  const gap = (id: string, ts: number) => ({ ...message(id), roomId: control.creds.roomId, ts: now().getTime() + ts });
+  vi.mocked(control.session.history).mockImplementation(async () => {
+    pages++;
+    if (pages === 1) control.receive(gap('$live', 30));
+    return { messages: [gap(`$page-${pages}`, 21 - pages)], nextBefore: `$older-${pages}`,
+      ...(reachedBoundary && pages === 20 ? { reachedBoundary: true } : {}) };
+  });
+  try {
+    await restartMulti(f);
+    expect(pages).toBe(20);
+    expect((await client.status()).state).toBe('connected');
+    expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => `$page-${20 - i}`), '$live',
+    ]);
+    if (reachedBoundary) expect(stderr).not.toHaveBeenCalled();
+    else expect(stderr).toHaveBeenCalledExactlyOnceWith('restore_catchup_truncated pages=20\n');
+  } finally { stderr.mockRestore(); }
+});
+
+it('reuses transport join recovery without a second history walk and replays owner modes', async () => {
+  const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
+  await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  Object.assign(control.session, { recoversOnJoin: true });
+  vi.mocked(control.session.join).mockImplementation(async () => {
+    control.mode({ ...modeCommand(), roomId: control.creds.roomId, ts: now().getTime() + 1,
+      content: { v: 1, agent: control.creds.userId, mode: 'async' } });
+    control.receive({ ...message('$decrypted-gap'), roomId: control.creds.roomId, ts: now().getTime() + 2 });
+  });
+  await restartMulti(f);
+  expect(control.session.history).not.toHaveBeenCalled();
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$decrypted-gap']);
+  expect(await readStateFile(channelFiles(f.files, control.creds.roomId).dir, 'mode.json')).toMatchObject({ mode: 'async', eventId: '$mode' });
+});
+
+it('keeps restore disconnected when catch-up fails rather than claiming a complete inbox', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  vi.mocked(f.controls[0]!.session.history).mockRejectedValue(new Error('history unavailable'));
+  await restartMulti(f);
+  expect((await client.status()).state).toBe('disconnected');
+  expect(await readStateFile(channelFiles(f.files, f.controls[0]!.creds.roomId).dir, 'resume.json')).not.toBeNull();
+});
+
 it('leaves a channel while restoration is requesting authorization without recreating its directory', async () => {
   const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
   await f.join(0); await client.close();

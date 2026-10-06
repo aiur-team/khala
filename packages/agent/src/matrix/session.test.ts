@@ -48,7 +48,7 @@ function fake() {
   });
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
-beforeEach(() => { membership = 'invite'; memberContent = undefined; client = fake(); sdk.client = client; session = undefined; });
+beforeEach(() => { membership = 'invite'; memberContent = undefined; client = fake(); sdk.client = client; sdk.store = undefined; session = undefined; });
 afterEach(async () => { await session?.stop(); vi.useRealTimers(); });
 async function joined() { session = await createAgentMatrixSession(creds); await session.join('!r:hs'); return session; }
 const timeline = (e: ReturnType<typeof event>, liveEvent = true, toStart = false) => client.emit('timeline', e, client.room, toStart, false, { liveEvent });
@@ -156,6 +156,36 @@ describe('C11 Node Matrix session', () => {
     expect(page.messages.map(m => m.eventId)).toEqual(['$old', '$new']);
     expect(page.nextBefore).toBe('$old');
   });
+  it('excludes unknown encrypted mode and agent events from catch-up while keeping raw pagination', async () => {
+    const log = vi.fn(); session = await createAgentMatrixSession(creds, { log });
+    const mode = event('$mode', '@owner:hs', 300, 'm.room.encrypted');
+    const agentEvent = event('$agent-event', '@other-agent:hs', 200, 'm.room.encrypted', {}, true);
+    client.createMessagesRequest.mockResolvedValueOnce({ chunk: [mode, agentEvent] as never[], end: 'more' as never })
+      .mockResolvedValueOnce({ chunk: [event('$gap', '@human:hs', 100)] as never[], end: undefined });
+    const unknown = await session.history('!r:hs', 100, undefined, { includeUnavailable: false });
+    expect(unknown).toEqual({ messages: [], nextBefore: '$agent-event', oldestTs: 200, reachedBoundary: false });
+    expect(log).toHaveBeenCalledWith('history_undecryptable=2');
+    const confirmed = await session.history('!r:hs', 100, unknown.nextBefore, { includeUnavailable: false });
+    expect(confirmed.messages.map(m => m.eventId)).toEqual(['$gap']);
+    expect(client.http.authedRequest).toHaveBeenCalledWith('GET', '/rooms/!r%3Ahs/context/%24agent-event', { limit: '0' });
+  });
+  it('stops at an encrypted raw tail and excludes older readable messages in the same page', async () => {
+    session = await createAgentMatrixSession(creds, { log: vi.fn() });
+    client.createMessagesRequest.mockResolvedValue({ chunk: [event('$gap', '@human:hs', 300), event('$tail', '@human:hs', 200, 'm.room.encrypted'), event('$older', '@human:hs', 100)] as never[], end: 'more' as never });
+    const page = await session.history('!r:hs', 100, undefined, { includeUnavailable: false, stopAtEventId: '$tail' });
+    expect(page).toMatchObject({ reachedBoundary: true, oldestTs: 200 });
+    expect(page.messages.map(m => m.eventId)).toEqual(['$gap']);
+    expect(client.decryptEventIfNeeded).toHaveBeenCalledTimes(1);
+  });
+  it('logs skipped encrypted history through the production startChannelSession path', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      session = await (await import('../transport')).startChannelSession(creds);
+      client.createMessagesRequest.mockResolvedValue({ chunk: [event('$unknown', '@human:hs', 300, 'm.room.encrypted')] as never[], end: undefined });
+      expect((await session.history('!r:hs', 100, undefined, { includeUnavailable: false })).messages).toEqual([]);
+      expect(stderr).toHaveBeenCalledExactlyOnceWith('history_undecryptable=1\n');
+    } finally { stderr.mockRestore(); }
+  });
   it('reads member display names only after joining, with no fallback or network', async () => {
     session = await createAgentMatrixSession(creds); memberContent = { displayname: 'Maya' }; expect(session.displayName('@human:hs')).toBeUndefined();
     await session.join('!r:hs'); expect(session.displayName('@human:hs')).toBe('Maya');
@@ -211,6 +241,24 @@ it('restores member mode and owner on a resumed account, with one rejoin event',
   expect(session.inviter('!r:hs')).toBe('@owner:hs');
   expect(client.joinRoom).not.toHaveBeenCalled();
   expect(client.sendEvent).toHaveBeenCalledExactlyOnceWith('!r:hs', 'com.khala.event.v1', expect.objectContaining({ summary: 'Reviewer rejoined' }), expect.stringMatching(/^khala\.rejoin\./));
+});
+
+it('advances history past pages containing only non-message events', async () => {
+  const s = await joined();
+  client.createMessagesRequest.mockResolvedValue({ chunk: [event('$state', '@human:hs', 101, 'm.room.topic', {})], end: 'more' });
+  expect(await s.history('!r:hs', 100)).toEqual({ messages: [], nextBefore: '$state' });
+});
+
+it('keeps initial-sync gap events after the original membership boundary on restore', async () => {
+  membership = 'join';
+  session = await createAgentMatrixSession(creds);
+  const seen = vi.fn(); session.onMessage(seen);
+  timeline(event('$prejoin', '@human:hs', 99));
+  timeline(event('$gap', '@human:hs', 101));
+  await flush();
+  expect(seen).not.toHaveBeenCalled();
+  await session.join('!r:hs');
+  expect(seen.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap']);
 });
 
 it('delivers live self profile renames once and projects membership history', async () => {
@@ -362,6 +410,45 @@ it('recovers a mode command omitted from a limited sync tail before newer messag
   await session.join('!r:hs');
   expect(delivered).toEqual(['$gap-mode', '$tail']);
   expect(client.createMessagesRequest).toHaveBeenNthCalledWith(2, '!r:hs', 'gap', 100, 'b');
+});
+it.each([false, true])('bounds the persistent join recovery walk (join boundary on final page: %s)', async reachedJoin => {
+  sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn() }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  membership = 'join';
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  let pages = 0;
+  client.createMessagesRequest.mockImplementation(async () => {
+    pages++;
+    return { chunk: [event(`$gap-${pages}`, '@owner:hs', 121 - pages),
+      ...(reachedJoin && pages === 20 ? [event('$prejoin', '@owner:hs', 90)] : [])], end: `page-${pages}` };
+  });
+  try {
+    session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+    const received: string[] = []; session.onMessage(m => received.push(m.eventId));
+    await session.join('!r:hs');
+    expect(session.recoversOnJoin).toBe(true);
+    expect(pages).toBe(20);
+    expect(received).toEqual(Array.from({ length: 20 }, (_, i) => `$gap-${20 - i}`));
+    if (reachedJoin) expect(stderr).not.toHaveBeenCalled();
+    else expect(stderr).toHaveBeenCalledExactlyOnceWith('restore_catchup_truncated pages=20\n');
+  } finally { stderr.mockRestore(); }
+});
+it('decrypts paginated recovery messages and owner commands with the restored device', async () => {
+  sdk.store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn() }, rememberJoin: vi.fn(), close: vi.fn(), wipe: vi.fn() };
+  membership = 'join';
+  const decrypted = new Set<string>();
+  const encrypted = (id: string, ts: number, type: string) => ({ ...event(id, '@owner:hs', ts, type), getType: () => decrypted.has(id) ? type : 'm.room.encrypted' });
+  const gap = encrypted('$gap', 150, 'm.room.message');
+  const command = encrypted('$mode', 120, 'com.khala.listening_mode.v1');
+  client.decryptEventIfNeeded.mockImplementation(async e => { decrypted.add(e.getId()); });
+  client.createMessagesRequest.mockResolvedValueOnce({ chunk: [gap], end: 'gap' })
+    .mockResolvedValueOnce({ chunk: [command, event('$prejoin', '@owner:hs', 90)], end: 'older' });
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  const received: string[] = []; session.onMessage(m => received.push(m.eventId)); session.onListeningModeCommand(m => received.push(m.eventId));
+  await session.join('!r:hs');
+  expect(received).toEqual(['$mode', '$gap']);
+  expect(client.createMessagesRequest).toHaveBeenCalledTimes(2);
 });
 it('uses different transaction IDs for successive rejoins on the same device', async () => {
   membership = 'join';
