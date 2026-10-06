@@ -42,9 +42,9 @@ describe('harness adapters', () => {
     expect(adapterFor('codex')!.sessionSources[0]!.rejoinable('session')).toBe(true);
   });
   it('exposes only the existing waker, watcher and installer capabilities', () => {
-    expect(adapterFor('codex')!.waker).toBeTypeOf('function');
-    expect(adapterFor('claude')!.waker).toBeUndefined();
-    expect(adapterFor('cursor')!.waker).toBeUndefined();
+    expect(adapterFor('codex')!.wakeLadder?.map(driver => driver.rung)).toEqual([1]);
+    expect(adapterFor('claude')!.wakeLadder).toBeUndefined();
+    expect(adapterFor('cursor')!.wakeLadder).toBeUndefined();
     expect(adapterFor('claude')!.watcherStatus).toBe(true);
     expect(adapterFor('claude')!.install).toBeUndefined();
     for (const id of ['codex', 'cursor']) {

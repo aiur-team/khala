@@ -1,6 +1,6 @@
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
-import type { CodexWaker, CodexWakerDeps } from '../wake/codex';
+import type { WakeDriver } from '../wake/driver';
 
 import type { SessionSource } from './session-sources';
 export type { SessionSource } from './session-sources';
@@ -24,7 +24,7 @@ export type HarnessAdapter = Readonly<{
   codec: DeliverCodec | undefined;
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
-  waker?: (deps: CodexWakerDeps) => CodexWaker;
+  wakeLadder?: readonly WakeDriver[];
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;
   /** Claude's status exposes the external watcher lease. */

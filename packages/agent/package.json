@@ -10,6 +10,7 @@
     "khala": "./bin/khala.mjs"
   },
   "exports": {
+    "./wake-shared": "./src/wake/shared/index.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
