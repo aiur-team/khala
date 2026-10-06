@@ -116,14 +116,15 @@ export class ManagedFiles {
   /**
    * Records the original once, before Khala's first change. An earlier installer's
    * `.khala-bak` is adopted as the original (the file itself then holds Khala's output)
-   * and removed.
+   * and removed. A harness-specific legacy absence sentinel can pass `original: null`;
+   * the override still never replaces a previously saved recording.
    */
-  async record(file: string): Promise<void> {
+  async record(file: string, options?: { original: Buffer | null }): Promise<void> {
     const key = path.resolve(file);
     const recordings = await this.load();
     if (recordings[key]) return;
     const legacy = await readBytes(file + LEGACY_BACKUP);
-    const current = legacy ?? await readBytes(file);
+    const current = options ? options.original : legacy ?? await readBytes(file);
     recordings[key] = current === null
       ? { existed: false, createdDirs: await missingDirs(path.dirname(key)) }
       : { existed: true, bytes: current.toString('base64'), createdDirs: [] };

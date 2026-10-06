@@ -1,11 +1,11 @@
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
+import type { SessionFiles } from '../state';
 import type { WakeDriver } from '../wake/driver';
 import type { EmptyPrompt } from '../wake/terminal/prompt-guard';
 
 import type { SessionSource } from './session-sources';
 import type { HookIO } from './deliver-core';
-import type { SessionFiles } from '../state';
 export type { SessionSource } from './session-sources';
 
 /** Hook dialect parsing and stdout, separate from shared delivery state. */
@@ -38,6 +38,10 @@ export type HarnessAdapter = Readonly<{
   wakeWarningName?: string;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;
+  /** Native notification proof, scoped to the run that reached Stop. */
+  stopWakeText?: (stdin: string, files: SessionFiles, env: NodeJS.ProcessEnv) => Promise<{ text: string; at: number } | undefined>;
+  /** Context for a joined session at startup, without channel content. */
+  startContext?: (sessionId: string, env: NodeJS.ProcessEnv) => string;
   /** Claude's status exposes the external watcher lease. */
   watcherStatus?: boolean;
 }>;
