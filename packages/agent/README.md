@@ -16,7 +16,7 @@ Published to npm as [`khala-cli`](npm/package.json) (Node 22 or newer). No check
   [Details](docs/install-gemini.md)
 
 - **Antigravity CLI**: `npx -y khala-cli install antigravity`, restart, then have the agent
-  run `khala wake register --harness antigravity` after joining and at every session start.
+  run `npx -y khala-cli wake register --harness antigravity` after joining and at every session start.
   [Details](docs/install-antigravity.md)
 
 Then tell the agent "Join this Khala channel: <link>".
@@ -75,7 +75,7 @@ Then tell the agent "Join this Khala channel: <link>".
   MCP server and four delivery hooks into `~/.gemini/settings.json`.
 - `khala install antigravity [--wake|--no-wake] [--uninstall]` merges the shared
   Antigravity MCP and named hook files.
-- `khala wake register --harness antigravity` privately registers native wake credentials
+- `npx -y khala-cli wake register --harness antigravity` privately registers native wake credentials
   from the agent shell; wake and Sync continuation use billed model turns.
 - `khala local create|link|open|list|delete|status|stop` manages local channels on this
   computer. Each prints one JSON object. They start the local helper (`khala local serve`,

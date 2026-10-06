@@ -53,6 +53,8 @@ it('preserves edits and sibling named hooks, declines consent and refuses foreig
 });
 it('does not corrupt strings and refuses invalid containers', () => {
   expect(antigravityFormat.parse('{/*c*/"a": "x,} //y", "b":[1,],}')).toEqual({ a: 'x,} //y', b: [1] });
+  expect(() => antigravityFormat.parse('{"x":1/*comment*/2}')).toThrow();
+  expect(() => mergeAntigravity({ mcpServers: { khala: { args: ['antigravity', 'mcp'] } } }, 'mcp', null)).toThrow();
   expect(() => mergeAntigravity({ mcpServers: [] }, 'mcp', null)).toThrow();
   expect(() => mergeAntigravity({ mcpServers: { khala: { command: 'foreign' } } }, 'mcp', null)).toThrow();
 });

@@ -9,6 +9,7 @@ import { readActivity, writeActivity } from '../activity';
 import { recordAttempt, readWakeState } from './shared/nonce';
 import { deliver } from '../../hooks/deliver';
 import { wakeLine } from './shared/rules';
+import type { WakeDriverContext } from './driver';
 import { wakeStatus } from './status';
 import { createKhalaTools } from '../mcp/tools';
 import type { KhalaAgentClient } from '../client';
@@ -23,7 +24,7 @@ beforeEach(async () => {
   await writeActivity(files, 'idle', now);
 });
 afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
-const ctx = () => ({ files, harness: 'antigravity', sessionId: 'session', env: { XDG_STATE_HOME: root }, now: now().getTime(), signal: new AbortController().signal });
+const ctx = (): WakeDriverContext => ({ files, harness: 'antigravity', sessionId: 'session', env: { XDG_STATE_HOME: root }, now: now().getTime(), signal: new AbortController().signal });
 it('registers privately, sends only the fixed wake line with child-only credentials and suppresses busy wakes', async () => {
   const stdout = vi.fn(), stderr = vi.fn();
   expect(await runWake(['register', '--harness', 'antigravity'], { env, stdout, stderr })).toBe(0);
@@ -76,7 +77,7 @@ it('verifies native wake via the captured SYSTEM_MESSAGE shape before marking ac
   expect((await readWakeState(files.dir))['antigravity-native']).toEqual({ failures: 0 });
   expect((await readActivity(files)).state).toBe('busy');
   await fs.writeFile(transcriptPath, JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', content: line }) + '\n');
-  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath }, files)).toBe('');
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe('');
 });
 it('never sends credential values to the channel or MCP status/join output', async () => {
   await registerAntigravityWake(env);
@@ -86,10 +87,44 @@ it('never sends credential values to the channel or MCP status/join output', asy
     send, sendChannelEvent: vi.fn() } as unknown as KhalaAgentClient;
   const tools = createKhalaTools({ harness: 'antigravity', clientFor: async () => client });
   for (const [name, args] of [['khala_join', { link: 'https://example.com' }], ['khala_status', {}]] as const) {
-    const result = await tools.find(tool => tool.name === name)!.call(args, { id: 1 });
+    const result = await tools.find(tool => tool.name === name)!.call(args, { id: 1, notification: false, meta: undefined });
     const text = JSON.stringify(result);
-    expect(text).toContain('khala wake register --harness antigravity');
+    expect(text).toContain('npx -y khala-cli wake register --harness antigravity');
     expect(text).not.toContain(env.ANTIGRAVITY_CSRF_TOKEN); expect(text).not.toContain(env.ANTIGRAVITY_LS_ADDRESS);
   }
   expect(send).not.toHaveBeenCalled(); expect(client.sendChannelEvent).not.toHaveBeenCalled();
+});
+it('verifies typed terminal wakes from documented USER_EXPLICIT/USER_INPUT steps, rejecting model/tool echoes', async () => {
+  const line = wakeLine('1234abcd');
+  const transcriptPath = path.join(root, 'typed.jsonl');
+  for (const [source, type, content, expected] of [
+    ['USER_EXPLICIT', 'USER_INPUT', line, line],
+    ['USER_EXPLICIT', 'USER_INPUT', 'a draft ' + line, ''],
+    ['MODEL', 'PLANNER_RESPONSE', line, ''],
+    ['SYSTEM_SDK', 'EPHEMERAL_MESSAGE', line, ''],
+  ]) {
+    await fs.writeFile(transcriptPath, JSON.stringify({ source, type, content }) + '\n');
+    expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe(expected);
+  }
+});
+it('does not overwrite a new registration when an older credential is rejected in flight', async () => {
+  await registerAntigravityWake(env);
+  let finish!: (accepted: boolean) => void;
+  let started!: () => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const driver = createAntigravityWakeDriver(async () => { started(); return new Promise<boolean>(resolve => { finish = resolve; }); });
+  const attempt = driver.wake(ctx(), wakeLine('1234abcd'));
+  await entered;
+  await registerAntigravityWake({ ...env, ANTIGRAVITY_CSRF_TOKEN: 'new-token' });
+  finish(false); expect(await attempt).toBe('skipped');
+  expect(await driver.available(ctx())).toBe(true);
+});
+it('bounds transcript reads, ignores malformed steps and does not block on non-files', async () => {
+  const transcriptPath = path.join(root, 'tail.jsonl');
+  const line = wakeLine('1234abcd');
+  const step = JSON.stringify({ source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: line });
+  await fs.writeFile(transcriptPath, 'x'.repeat(70 * 1024) + '\nnull\nnot-json\n' + step + '\n');
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath })).toBe(line);
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: root })).toBe('');
+  expect(await antigravityPromptText({ event: 'prompt', continuation: false, transcriptPath: path.join(root, 'missing') })).toBe('');
 });

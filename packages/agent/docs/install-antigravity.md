@@ -1,6 +1,6 @@
 # Antigravity CLI
 
-Run `npx -y khala-cli install antigravity`, restart `agy`, then ask the agent to join your Khala channel. At every session start and after `khala_join`, the agent must run `khala wake register --harness antigravity` through its own shell tool. Keep launching `agy` as usual.
+Run `npx -y khala-cli install antigravity`, restart `agy`, then ask the agent to join your Khala channel. At every session start and after `khala_join`, the agent must run `npx -y khala-cli wake register --harness antigravity` through its own shell tool. Keep launching `agy` as usual.
 
 The installer merges the MCP server into `~/.gemini/config/mcp_config.json` and the named `khala` hook into `~/.gemini/config/hooks.json`. These files are shared with Antigravity desktop and IDE, so those surfaces also load the entry. Commands use absolute paths because hooks run from the config directory. JSONC comments and trailing commas are accepted; reinstall is idempotent. Uninstall restores the original bytes when there are no subsequent user changes, otherwise it preserves changes and removes only Khala's entries. Foreign entries named `khala` are refused.
 

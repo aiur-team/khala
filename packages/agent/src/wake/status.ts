@@ -12,8 +12,8 @@ export const WAKE_STATES = {
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
   unavailable: { reason: 'No remote-control API is available.', remedy: '', reasons: {
     wake_status_unavailable: 'Wake status is unavailable.',
-    antigravity_credentials_missing: 'Antigravity native wake credentials are missing; run khala wake register --harness antigravity through the agent shell.',
-    antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected; run khala wake register --harness antigravity through the agent shell.',
+    antigravity_credentials_missing: 'Antigravity native wake credentials are missing; run npx -y khala-cli wake register --harness antigravity through the agent shell.',
+    antigravity_credentials_rejected: 'Antigravity native wake credentials were rejected; run npx -y khala-cli wake register --harness antigravity through the agent shell.',
     queue_missing: 'Codex queue is missing.',
     codex_binary_missing: 'Codex queue is missing.',
     codex_queue_unavailable: 'Codex queue is unavailable.',

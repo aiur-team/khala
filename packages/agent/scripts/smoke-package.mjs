@@ -137,6 +137,25 @@ try {
   check('install gemini --uninstall', process.execPath, [script, 'install', 'gemini', '--uninstall'], { shell: false });
   await assert.rejects(fs.stat(geminiConfig), { code: 'ENOENT' });
 
+  const agyMcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
+  const agyHooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+  const agyOriginals = await captureOriginals([agyMcpFile, agyHooksFile]);
+  check('install antigravity', process.execPath, [script, 'install', 'antigravity'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const agyMcp = JSON.parse(await fs.readFile(agyMcpFile, 'utf8')).mcpServers.khala;
+  const agyHooks = JSON.parse(await fs.readFile(agyHooksFile, 'utf8')).khala;
+  assert.deepEqual(Object.keys(agyHooks), ['PreInvocation', 'Stop']);
+  assert.equal(agyHooks.Stop[0].timeout, 10);
+  await mcpSmoke('antigravity configured MCP', agyMcp.command, agyMcp.args, true, { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy' });
+  assert.equal(check('antigravity PreInvocation hook', process.execPath,
+    [script, 'hook', 'deliver', '--harness', 'antigravity', '--event', 'PreInvocation'],
+    { shell: false, input: JSON.stringify({ conversationId: 'smoke-agy', invocationNum: 0 }) }), '{}\n');
+  const registered = check('antigravity wake register', process.execPath,
+    [script, 'wake', 'register', '--harness', 'antigravity'], { shell: false,
+      env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy', ANTIGRAVITY_LS_ADDRESS: 'localhost:1234', ANTIGRAVITY_CSRF_TOKEN: 'smoke-private-token' } });
+  assert.ok(!registered.includes('smoke-private-token') && !registered.includes('localhost:1234'));
+  check('install antigravity --uninstall', process.execPath, [script, 'install', 'antigravity', '--uninstall'], { shell: false });
+  await assertRestored(agyOriginals);
+
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
   const opencodeOriginals = await captureOriginals([opencodeConfig]);
