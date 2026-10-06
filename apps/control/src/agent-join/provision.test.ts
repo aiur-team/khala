@@ -14,17 +14,15 @@ it('derives the contract identity deterministically per join', () => {
   expect(createAgentProvisioner(options).agentUserId(input.joinId, input.ownerId)).toBe(id.userId);
   expect(agentIdentity('other', input.ownerId, 'matrix.test', 'join')).not.toEqual(id);
 });
-it.each([false, true])('registers with a display name and logs in, existing=%s', async existing => {
+it.each([false, true])('registers with a name and logs in without profile updates, existing=%s', async existing => {
   const id = agentIdentity(input.joinId, input.ownerId, 'matrix.test', 'join');
-  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ nonce: 'nonce' })).mockResolvedValueOnce(existing ? Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }) : Response.json({ user_id: id.userId })).mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' })).mockResolvedValueOnce(Response.json({}));
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ nonce: 'nonce' })).mockResolvedValueOnce(existing ? Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }) : Response.json({ user_id: id.userId })).mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' }));
   expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toEqual({ kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId: id.userId, deviceId: id.deviceId, accessToken: 'token', roomId: input.roomId } });
   const registration = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
   const password = createHmac('sha256', 'password').update(`khala-agent-password-v1\0${id.userId}`).digest('base64url');
   expect(registration).toEqual({ nonce: 'nonce', username: id.username, password, admin: false, displayname: 'Maya-Claude', mac: createHmac('sha1', 'register').update(`nonce\0${id.username}\0${password}\0notadmin`).digest('hex') });
   expect(JSON.parse(fetch.mock.calls[2]![1]!.body as string)).toMatchObject({ identifier: { user: id.userId }, device_id: id.deviceId, password });
-  expect(fetch.mock.calls[3]![0]).toBe(`https://matrix.test/_matrix/client/v3/profile/${encodeURIComponent(id.userId)}/displayname`);
-  expect(fetch.mock.calls[3]![1]).toMatchObject({ method: 'PUT', body: JSON.stringify({ displayname: input.label }) });
-  expect(new Headers(fetch.mock.calls[3]![1]!.headers).get('authorization')).toBe('Bearer token');
+  expect(fetch).toHaveBeenCalledTimes(3);
   for (const call of fetch.mock.calls) expect(call[1]!.signal).toBeInstanceOf(AbortSignal);
   expect(new Headers(fetch.mock.calls[0]![1]!.headers).get('X-Khala-Registration-Ingress')).toBe('ingress');
 });
@@ -33,18 +31,6 @@ it.each(['nonce', 'registration', 'login', 'user', 'device', 'token', 'throw', '
   const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(failure === 'json' ? new Response('{') : Response.json(failure === 'nonce' ? {} : { nonce: 'nonce' })).mockResolvedValueOnce(Response.json({ user_id: id.userId }, { status: failure === 'registration' ? 500 : 200 })).mockResolvedValueOnce(Response.json({ user_id: failure === 'user' ? '@other:matrix.test' : id.userId, device_id: failure === 'device' ? 'other' : id.deviceId, access_token: failure === 'token' ? 42 : 'token' }, { status: failure === 'login' ? 503 : 200 }));
   if (failure === 'throw') fetch.mockReset().mockRejectedValue(Error('offline'));
   expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toEqual({ kind: 'unavailable' });
-});
-
-it.each(['status', 'throw'])('keeps provisioning successful when the display name repair fails: %s', async failure => {
-  const id = agentIdentity(input.joinId, input.ownerId, 'matrix.test', 'join');
-  const fetch = vi.fn<typeof globalThis.fetch>()
-    .mockResolvedValueOnce(Response.json({ nonce: 'nonce' }))
-    .mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
-    .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: id.deviceId, access_token: 'token' }));
-  if (failure === 'throw') fetch.mockRejectedValueOnce(Error('offline'));
-  else fetch.mockResolvedValueOnce(new Response(null, { status: 500 }));
-  expect(await createAgentProvisioner({ ...options, fetch }).provision(input)).toMatchObject({ kind: 'ok' });
-  expect(fetch).toHaveBeenCalledTimes(4);
 });
 
 it('renames globally using a dedicated control device and logs out that token', async () => {
@@ -91,10 +77,10 @@ it('reuses the account identity but issues a fresh device for each join', async 
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(Response.json({ nonce: 'nonce' }))
       .mockResolvedValueOnce(Response.json({ errcode: 'M_USER_IN_USE' }, { status: 400 }))
-      .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: deviceId, access_token: 'token' }))
-      .mockResolvedValueOnce(Response.json({}));
+      .mockResolvedValueOnce(Response.json({ user_id: id.userId, device_id: deviceId, access_token: 'token' }));
     const result = await createAgentProvisioner({ ...options, fetch }).provision({ ...input, identityId, joinId });
     expect(result).toMatchObject({ kind: 'ok', credentials: { userId: id.userId, deviceId } });
+    expect(fetch).toHaveBeenCalledTimes(3);
     devices.push(deviceId);
   }
   expect(devices[0]).not.toBe(devices[1]);
