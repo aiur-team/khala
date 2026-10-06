@@ -202,7 +202,9 @@ it('prints watch help and reports invalid arguments without an internal error', 
     expect(err).toHaveBeenCalledWith(`khala: invalid_arguments\n${WATCH_USAGE}`);
     expect(await run(['--session', '--bogus'])).toBe(1);
     expect(err).toHaveBeenCalledWith(`khala: invalid_session_id\n${WATCH_USAGE}`);
-    expect(await run(['--harness', 'unknown', '--session', 'valid'])).toBe(1);
+    for (const harness of ['unknown', 'generic', 'cline']) {
+      expect(await run(['--harness', harness, '--session', 'valid'])).toBe(1);
+    }
     expect(err).toHaveBeenCalledWith(`khala: invalid_harness\n${WATCH_USAGE}`);
   } finally { out.mockRestore(); err.mockRestore(); }
 });

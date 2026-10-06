@@ -7,6 +7,7 @@ import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
 import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
+import { adapterFor } from './harness';
 import { resolveHarness, resolveSessionId } from './mcp/session-id';
 
 const MARKER = 'monitor.json';
@@ -164,7 +165,7 @@ export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length !== 0 && !(argv.length === 2 && argv[0] === '--session')
     && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) return invalid('invalid_arguments');
   const harness = resolveHarness(argv, process.env);
-  if (harness === 'invalid') return invalid('invalid_harness');
+  if (harness === 'invalid' || !adapterFor(harness)?.codec) return invalid('invalid_harness');
   const index = argv.indexOf('--session');
   const id = index === -1 ? await resolveSessionId(harness, undefined, process.env) : argv[index + 1];
   if (!id) return invalid('session_unknown');
