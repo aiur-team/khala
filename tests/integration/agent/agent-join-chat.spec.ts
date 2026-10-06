@@ -281,6 +281,7 @@ test('an agent rename and real MCP restart preserve Steer and confirm a later ow
     await expect.poll(async () => (await memberState()).displayname, { timeout: 30_000 }).toBe(renamed);
     expect((await memberState())['com.khala.invited_by']).toBe(before['com.khala.invited_by']);
     expect((await memberState())['com.khala.listening_mode']).toBe('steer');
+    await alice.getByRole('button', { name: 'Close details', exact: true }).click();
     const renamedRow = alice.locator('.kh-rrow').filter({ has: alice.getByText(renamed, { exact: true }) });
     const renamedModeStatus = renamedRow.locator('+ .kh-mode-status');
     await agent.close();
