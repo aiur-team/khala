@@ -181,22 +181,24 @@ it('forwards khala_leave through the real CLI wrapper', () => {
   } finally { rmSync(stateHome, { recursive: true, force: true }); }
 });
 
-it.each(['codex', 'claude'] as const)('creates the %s startup client without input and reuses it', async harness => {
+it.each(['codex', 'claude', 'copilot'] as const)('creates the %s startup client without input and reuses it', async harness => {
   const input = new PassThrough();
   const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
   const controller = new AbortController();
   const client = createPlaceholderClient();
   client.close = vi.fn(async () => {});
   const createClient = vi.fn(() => client);
-  const env = harness === 'codex' ? { CODEX_THREAD_ID: 'resume' } : { CLAUDE_CODE_SESSION_ID: 'resume' };
+  const env = harness === 'codex' ? { CODEX_THREAD_ID: 'resume' }
+    : harness === 'claude' ? { CLAUDE_CODE_SESSION_ID: 'resume' } : { COPILOT_AGENT_SESSION_ID: 'resume' };
   const running = runMcpCommand(['--harness', harness], { input, output, signal: controller.signal, createClient, env });
-  await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
-  expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume', rejoinable: true });
-  input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
-  await running;
-  expect(createClient).toHaveBeenCalledOnce();
-  expect(client.close).toHaveBeenCalledOnce();
-  output.destroy();
+  try {
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledOnce());
+    expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'resume', rejoinable: true });
+    input.end(JSON.stringify(call('khala_status', 'resume')) + '\n');
+    await running;
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(client.close).toHaveBeenCalledOnce();
+  } finally { input.end(); await running; output.destroy(); }
 });
 
 it.each([undefined, '/work/project'])('skips Cursor startup restore for workspace %s but creates clients on tool calls', async workspace => {
