@@ -4,7 +4,7 @@ import { createTerminalWakeDriver } from '../../../wake/terminal/driver';
 import type { FakeHarnessDriver } from '../driver';
 
 export const copilotDriver: FakeHarnessDriver = {
-  newSession: () => ({ id: 'conformance-session', mcpEnv: {}, workspace: '/conformance/workspace' }),
+  newSession: () => ({ id: 'conformance-session', mcpEnv: { COPILOT_AGENT_SESSION_ID: 'conformance-session' }, workspace: '/conformance/workspace' }),
   hookStdin: (event, session) => JSON.stringify({ sessionId: session.id,
     hookEventName: { prompt: 'userPromptSubmitted', tool: 'postToolUse', stop: 'agentStop' }[event],
     stop_hook_active: session.continuation ?? false, cwd: session.workspace,
