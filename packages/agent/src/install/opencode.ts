@@ -42,7 +42,8 @@ export function mergeOpenCodeConfig(config: unknown, plugin: string | null, prev
   if (isObject(config.mcp) && isMcp(config.mcp.khala)) {
     const mcp = { ...config.mcp };
     delete mcp.khala;
-    next.mcp = mcp;
+    if (Object.keys(mcp).length) next.mcp = mcp;
+    else delete next.mcp;
   }
   return { config: next };
 }
@@ -54,7 +55,7 @@ export async function installOpenCode(input: {
   const { paths, uninstall, stdout, stderr } = input;
   try {
     await fs.stat(paths.configFile.replace(/\.json$/u, '.jsonc'));
-    stderr(`khala: opencode.jsonc exists in ${paths.configDir}; merge the Khala config manually or convert it to opencode.json before retrying`);
+    stderr(`khala: opencode.jsonc exists in ${paths.configDir}; ${uninstall ? 'remove' : 'merge'} the Khala config manually or convert it to opencode.json before retrying`);
     return 1;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   let text: string | null = null;
@@ -72,6 +73,10 @@ export async function installOpenCode(input: {
   const merged = mergeOpenCodeConfig(config, uninstall ? null : input.plugin, previousOverride ?? input.plugin ?? undefined);
   if ('error' in merged) { stderr(`khala: invalid config in ${paths.configFile}`); return 1; }
   if (!uninstall && input.plugin === null) {
+    if (isObject(config) && isObject(config.mcp) && Object.hasOwn(config.mcp, 'khala') && !isMcp(config.mcp.khala)) {
+      stderr(`khala: refusing to overwrite existing mcp.khala in ${paths.configFile}; remove or rename it before retrying`);
+      return 1;
+    }
     merged.config.mcp = { ...(merged.config.mcp as Record<string, unknown> | undefined), khala: opencodeMcpEntry(input.platform, paths.bin) };
   }
   if (!uninstall && input.install && !input.install()) return 1;

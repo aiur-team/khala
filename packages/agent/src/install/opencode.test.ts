@@ -89,13 +89,13 @@ it.each(['missing', 'network'] as const)('falls back on %s, reinstalls and clean
   fetchRegistry.mockClear();
   expect(await runInstall(['opencode'], overrideDeps)).toBe(0);
   expect(fetchRegistry).not.toHaveBeenCalled();
-  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({ mcp: {}, plugin: ['file:/custom.tgz'] });
+  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({ plugin: ['file:/custom.tgz'] });
   expect(await runInstall(['opencode'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual(JSON.parse(installed));
   fetchRegistry.mockClear();
   expect(await runInstall(['opencode', '--uninstall'], deps)).toBe(0);
   expect(fetchRegistry).not.toHaveBeenCalled();
-  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({ mcp: {} });
+  expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({});
 });
 it('checks the exact version with a short timeout', async () => {
   const timeout = vi.spyOn(AbortSignal, 'timeout');
@@ -123,4 +123,50 @@ it.each([false, true])('refuses JSONC without modifying either config (JSON exis
 });
 it('removes the last plugin without leaving an empty list', () => {
   expect(mergeOpenCodeConfig({ plugin: ['khala-opencode@1'] }, null)).toEqual({ config: {} });
+});
+
+it.each([
+  { plugin: null, foreign: { type: 'local', command: ['foreign-server'] } },
+  { plugin: null, foreign: { type: 'remote', url: 'https://my.khala.example/mcp' } },
+  { plugin: 'khala-opencode@1', foreign: { type: 'local', command: ['foreign-server'] } },
+  { plugin: 'khala-opencode@1', foreign: { type: 'remote', url: 'https://my.khala.example/mcp' } },
+])('protects foreign mcp.khala: %j', async ({ plugin, foreign }) => {
+  const deps = { home, env: { HOME: home }, package: { name: 'khala-cli', version: '1' },
+    fetchRegistry: vi.fn(async () => new Response('{}', { status: plugin ? 200 : 404 })),
+    npmInstall: vi.fn(() => true), stdout: vi.fn(), stderr: vi.fn() };
+  const paths = opencodePaths({ home, env: deps.env, platform: process.platform, path });
+  await fs.mkdir(paths.configDir, { recursive: true });
+  const original = JSON.stringify({ mcp: { khala: foreign }, model: 'mine' });
+  await fs.writeFile(paths.configFile, original);
+  const marker = paths.configFile + '.khala-plugin';
+  await fs.writeFile(marker, 'file:/old-plugin.tgz\n');
+  expect(await runInstall(['opencode'], deps)).toBe(plugin ? 0 : 1);
+  if (plugin) {
+    expect(JSON.parse(await fs.readFile(paths.configFile, 'utf8'))).toEqual({ mcp: { khala: foreign }, model: 'mine', plugin: [plugin] });
+  } else {
+    expect(deps.npmInstall).not.toHaveBeenCalled();
+    expect(deps.stderr).toHaveBeenCalledWith(expect.stringContaining('refusing to overwrite'));
+    expect(await fs.readFile(paths.configFile, 'utf8')).toBe(original);
+    expect(await fs.readFile(marker, 'utf8')).toBe('file:/old-plugin.tgz\n');
+    await expect(fs.stat(paths.configFile + '.khala-bak')).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
+it('removes the last managed MCP entry and preserves MCP siblings', () => {
+  const khala = opencodeMcpEntry('linux', '/bin/khala');
+  expect(mergeOpenCodeConfig({ mcp: { khala }, model: 'mine' }, null)).toEqual({ config: { model: 'mine' } });
+  const sibling = { command: ['other'] };
+  expect(mergeOpenCodeConfig({ mcp: { khala, sibling } }, null)).toEqual({ config: { mcp: { sibling } } });
+});
+it('explains manual removal when uninstall is blocked by JSONC', async () => {
+  const deps = { home, env: { HOME: home }, npmInstall: vi.fn(() => true), stderr: vi.fn() };
+  const paths = opencodePaths({ home, env: deps.env, platform: process.platform, path });
+  await fs.mkdir(paths.configDir, { recursive: true });
+  const jsonc = paths.configFile.replace(/\.json$/u, '.jsonc');
+  const original = '// comment\n{}';
+  await fs.writeFile(jsonc, original);
+  expect(await runInstall(['opencode', '--uninstall'], deps)).toBe(1);
+  expect(deps.stderr).toHaveBeenCalledWith(expect.stringContaining('remove the Khala config manually'));
+  expect(deps.npmInstall).not.toHaveBeenCalled();
+  expect(await fs.readFile(jsonc, 'utf8')).toBe(original);
+  await expect(fs.stat(paths.configFile)).rejects.toMatchObject({ code: 'ENOENT' });
 });
