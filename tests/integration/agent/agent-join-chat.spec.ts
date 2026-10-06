@@ -303,3 +303,89 @@ test('an agent rename and real MCP restart preserve Steer and confirm a later ow
     finally { await context.close(); await rm(stateHome, { recursive: true, force: true }); }
   }
 });
+
+test('the first owner mode change after a username change succeeds', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const environment = readLiveHumanEnvironment();
+  const stateHome = await mkdtemp(path.join(os.tmpdir(), 'khala-mode-restore-'));
+  const sessionId = `mode-restore-${randomUUID()}`;
+  const env = { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: sessionId };
+  const files = sessionFiles('claude', sessionId, { XDG_STATE_HOME: stateHome });
+  const context = await browser.newContext();
+  let mcp: ReturnType<typeof startMcp> | undefined;
+  try {
+    const alice = await freshPage(context, environment);
+    await signIn(alice, environment, environment.users[0]);
+    await chooseUsername(alice);
+    await alice.getByRole('button', { name: 'New channel', exact: true }).click();
+    await alice.getByLabel('Channel name', { exact: true }).fill(`Mode restore ${sessionId.slice(-8)}`);
+    await alice.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(alice).toHaveURL(/\/channels\//u);
+    const channelUrl = alice.url();
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
+    const link = await agentLink(alice);
+    mcp = startMcp({ env });
+    const join = await mcp.call('khala_join', { link, label: 'Agent' });
+    expect(join.isError).not.toBe(true);
+    await alice.goto(join.structuredContent.confirmUrl as string);
+    await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(alice.locator('.kh-fin-ok')).toContainText('joined', { timeout: 120_000 });
+    const agent = mcp;
+    let channels: { roomId: string; you: string }[] = [];
+    await expect.poll(async () => {
+      const status = await agent.call('khala_status', {});
+      channels = status.structuredContent.channels as typeof channels;
+      return status.structuredContent.state;
+    }, { timeout: 120_000, intervals: [2000] }).toBe('connected');
+    const channel = channels[0]!;
+    const nested = channelFiles(files, channel.roomId);
+    const memberState = async () => {
+      // Keep credentials out of assertion output and artifacts.
+      const credentials: AgentCredentials = JSON.parse(await readFile(nested.session, 'utf8'));
+      const response = await fetch(`${credentials.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(channel.roomId)}/state/m.room.member/${encodeURIComponent(credentials.userId)}`,
+        { headers: { authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(5000) });
+      expect(response.status).toBe(200);
+      return await response.json() as Record<string, unknown>;
+    };
+    await alice.goto(channelUrl);
+    await expect(alice.getByLabel('Message', { exact: true })).toBeEnabled({ timeout: 30_000 });
+    await alice.locator('#kh-head-btn').click();
+    const row = alice.locator('.kh-rrow').filter({ has: alice.getByText(channel.you, { exact: true }) });
+    const modeStatus = row.locator('+ .kh-mode-status');
+    await row.locator('[role="radio"][data-v="steer"]').click();
+    await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe('steer');
+    await expect(modeStatus).toBeHidden({ timeout: 30_000 });
+    // Exercise the default name cascade, then an agent with a custom name.
+    const customName = `Custom-${sessionId.slice(-8)}`;
+    for (const mode of ['async', 'sync', 'steer']) {
+      await alice.getByRole('button', { name: 'Settings', exact: true }).click();
+      await alice.getByRole('menuitem', { name: /^Profile/u }).click();
+      const dialog = alice.getByRole('dialog', { name: 'Profile' });
+      await dialog.getByRole('textbox', { name: 'Username', exact: true }).fill(`mode${randomUUID().replaceAll('-', '').slice(0, 12)}`);
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await alice.reload();
+      await expect(alice.getByLabel('Message', { exact: true })).toBeEnabled({ timeout: 30_000 });
+      await alice.locator('#kh-head-btn').click();
+      const currentRow = alice.locator('.kh-rrow').filter({ has: alice.locator('[role="radio"][data-v="async"]') });
+      await currentRow.locator(`[role="radio"][data-v="${mode}"]`).click();
+      await expect(currentRow.locator('+ .kh-mode-status')).not.toContainText("Couldn't send");
+      await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe(mode);
+      await expect(currentRow.locator('+ .kh-mode-status')).toBeHidden({ timeout: 30_000 });
+      if (mode === 'async') {
+        const currentName = (await memberState()).displayname as string;
+        await currentRow.getByRole('button', { name: `Rename ${currentName}`, exact: true }).click();
+        await alice.getByRole('textbox', { name: `Name for ${currentName}`, exact: true }).fill(customName);
+        await alice.getByRole('button', { name: 'Rename', exact: true }).click();
+        await expect.poll(async () => (await memberState()).displayname).toBe(customName);
+        await alice.getByRole('button', { name: 'Close details', exact: true }).click();
+      } else {
+        expect((await memberState()).displayname).toBe(customName);
+      }
+      await alice.locator('#kh-head-btn').click();
+    }
+  } finally {
+    try { await mcp?.close(); }
+    finally { await context.close(); await rm(stateHome, { recursive: true, force: true }); }
+  }
+});
