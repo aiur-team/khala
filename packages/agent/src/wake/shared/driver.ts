@@ -6,8 +6,9 @@ export interface WakeDriver<Context> {
   readonly minIdleMs: number;
   /** Verification window independent of ladder order. */
   readonly deadlineMs: number;
-  /** Existing Codex queue argv stays fixed until U13; async watchers carry no nonce. */
+  /** Async watchers carry no nonce. */
   readonly verification?: 'nonce' | 'none';
   available(ctx: Context): boolean | Promise<boolean>;
+  unavailableReason?(ctx: Context): string | undefined | Promise<string | undefined>;
   wake(ctx: Context, line: string): void | Promise<void>;
 }

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { SpawnOptions } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { codexIdleWakeArgv } from './idle-wake';
+import { CODEX_IDLE_WAKE_NOTICE, codexIdleWakeArgv } from './idle-wake';
 import { createCodexQueueProcessPort, scrubbedQueueEnv } from './idle-wake-process';
 
 const HOST_ENV = {
@@ -25,7 +25,7 @@ describe('codex queue process port', () => {
   it('spawns without a shell and with no message-bearing environment variable', async () => {
     const f = fakeSpawn();
     const port = createCodexQueueProcessPort({ command: '/bin/codex', env: HOST_ENV, spawn: f.spawn });
-    const argv = codexIdleWakeArgv('thread-1');
+    const argv = codexIdleWakeArgv('thread-1', CODEX_IDLE_WAKE_NOTICE + ' (k-12345678)');
     const pending = port.run(argv, new AbortController().signal);
     f.close(0);
     expect(await pending).toEqual({ status: 'queued' });
