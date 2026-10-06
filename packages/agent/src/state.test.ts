@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { channelFiles, channelsDir, joinFilePath, readJoinFile, removeJoinFile, writeJoinFile, ensureStateDir, filesForDir, openSessionDir, readJoin, readJson, readStateFile, readStatus, readWatcherStatus, removeSession, removeStateFile, resolveStateDir, saveJoin, saveSession, sessionFiles, StateError, stateRoot, writeJsonAtomic, writeStateFile, writeStatus, type SessionFiles } from './state';
 
@@ -221,4 +221,64 @@ it('uses visible PID identity only for legacy watcher statuses and honors explic
   expect(await readWatcherStatus(files, async () => ({ pid: 123, startTime: '2' }) as never)).toMatchObject({ detail: 'process_exited' });
   await writeJsonAtomic(files.status, { ...legacy, state: 'disconnected', heartbeatAt: new Date().toISOString() });
   expect(await readWatcherStatus(files, async () => null)).toMatchObject({ state: 'disconnected' });
+});
+
+const posix = process.platform !== 'win32';
+async function publicHome(): Promise<{ home: string; env: NodeJS.ProcessEnv }> {
+  const home = path.join(root, 'home');
+  for (const dir of [home, path.join(home, '.local'), path.join(home, '.local', 'state')]) {
+    await fs.mkdir(dir, { mode: 0o755 }); await fs.chmod(dir, 0o755);
+  }
+  return { home, env: { HOME: home } };
+}
+it.runIf(posix)('accepts a real home whose ~/.local and ~/.local/state are 0755', async () => {
+  const { home, env } = await publicHome();
+  await ensureStateDir(stateRoot(env));
+  const opened = await openSessionDir('claude', 'session-1', env);
+  await ensureStateDir(channelFiles(opened, '!room:local').dir);
+  await ensureStateDir(path.join(stateRoot(env), 'local', 'channels'));
+  for (const dir of [path.join(home, '.local'), path.join(home, '.local', 'state')]) expect((await fs.stat(dir)).mode & 0o777).toBe(0o755);
+  for (const dir of [stateRoot(env), path.dirname(opened.dir), opened.dir]) expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+});
+it.runIf(posix)('accepts a 0755 XDG_STATE_HOME, even one under a directory named khala', async () => {
+  const xdg = path.join(root, 'khala', 'xdg');
+  await fs.mkdir(xdg, { recursive: true, mode: 0o755 });
+  for (const dir of [path.join(root, 'khala'), xdg]) await fs.chmod(dir, 0o755);
+  const env = { XDG_STATE_HOME: xdg };
+  vi.stubEnv('XDG_STATE_HOME', xdg);
+  try {
+    await ensureStateDir(stateRoot(env));
+    await openSessionDir('gemini', 'session-1', env);
+    expect((await fs.stat(stateRoot(env))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(xdg)).mode & 0o777).toBe(0o755);
+    await fs.chmod(stateRoot(env), 0o777);
+    await expect(ensureStateDir(stateRoot(env))).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  } finally { vi.unstubAllEnvs(); }
+});
+it.runIf(posix)('creates missing parents with default permissions and the khala root 0700', async () => {
+  const env = { HOME: path.join(root, 'fresh') };
+  await ensureStateDir(stateRoot(env));
+  expect((await fs.stat(stateRoot(env))).mode & 0o777).toBe(0o700);
+  expect((await fs.stat(path.join(root, 'fresh', '.local'))).isDirectory()).toBe(true);
+});
+it.runIf(posix).each([0o777, 0o757, 0o775, 0o750])('rejects a khala root with mode %o without chmod', async mode => {
+  const { env } = await publicHome();
+  await fs.mkdir(stateRoot(env)); await fs.chmod(stateRoot(env), mode);
+  await expect(ensureStateDir(stateRoot(env))).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  await expect(openSessionDir('claude', 'session-1', env)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  expect((await fs.stat(stateRoot(env))).mode & 0o777).toBe(mode);
+});
+it.runIf(posix)('rejects a symlinked khala root under 0755 parents without writing through it', async () => {
+  const { env } = await publicHome();
+  const target = path.join(root, 'target');
+  await fs.mkdir(target, { mode: 0o700 });
+  await fs.symlink(target, stateRoot(env));
+  await expect(ensureStateDir(stateRoot(env))).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  await expect(openSessionDir('claude', 'session-1', env)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
+  expect(await fs.readdir(target)).toEqual([]);
+});
+it.runIf(posix)('treats a session named khala as a session, still checking the real root', async () => {
+  const nested = await openSessionDir('claude', 'khala', { XDG_STATE_HOME: root });
+  await fs.chmod(path.join(root, 'khala'), 0o755);
+  await expect(ensureStateDir(nested.dir)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
 });

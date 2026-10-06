@@ -81,34 +81,58 @@ export function sessionFiles(harness: Harness, sessionId: string, env?: NodeJS.P
 export function resolveStateDir(harness: Harness, sessionId: string, env?: NodeJS.ProcessEnv): string {
   return sessionFiles(harness, sessionId, env).dir;
 }
+/**
+ * The Khala state root that owns `dir`: this process's `stateRoot()` when `dir` is inside it,
+ * otherwise the shallowest ancestor-or-self named `khala` whose descendants follow Khala's
+ * layout (`<harness>/...` or `local/...`). Picking the shallowest match fails closed: a
+ * too-shallow guess only adds privacy checks, it never skips one. A path outside any Khala root
+ * is treated as its own root.
+ */
+function khalaRootOf(dir: string): string {
+  const resolved = path.resolve(dir);
+  const current = stateRoot();
+  const inside = path.relative(current, resolved);
+  if (inside !== '..' && !inside.startsWith('..' + path.sep) && !path.isAbsolute(inside)) return current;
+  const ancestors: string[] = [];
+  for (let current = resolved; ; current = path.dirname(current)) {
+    ancestors.unshift(current);
+    if (path.dirname(current) === current) break;
+  }
+  for (const candidate of ancestors) {
+    if (path.basename(candidate) !== 'khala') continue;
+    const first = path.relative(candidate, resolved).split(path.sep)[0] ?? '';
+    if (first === '' || first === 'local' || isHarnessId(first)) return candidate;
+  }
+  return resolved;
+}
+async function checkPrivateDir(directory: string): Promise<void> {
+  try { await fs.mkdir(directory, { mode: 0o700 }); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  const stat = await fs.lstat(directory);
+  // Windows has no POSIX mode bits (directories report 0o777); the profile ACL protects it.
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (!WINDOWS && (stat.mode & 0o077) !== 0)
+    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new StateError('unsafe_state_dir');
+}
+/**
+ * Creates `dir` and checks that the Khala state root and every directory from it down to `dir`
+ * is private: a real directory (not a symlink), owned by this user, with no group/other bits.
+ * Directories above the root (`~/.local`, `$XDG_STATE_HOME`) only need to exist; they are created
+ * with default permissions and are commonly 0755.
+ */
 export async function ensureStateDir(dir: string): Promise<void> {
   try {
-    // Check parents before descending so a pre-existing symlink is never followed.
-    let sessionDir = dir;
-    if (path.basename(path.dirname(dir)) === 'channels' && /^[a-f0-9]{24}$/.test(path.basename(dir))
-      && isHarnessId(path.basename(path.dirname(path.dirname(path.dirname(dir)))))
-      && path.basename(path.dirname(path.dirname(path.dirname(path.dirname(dir))))) === 'khala') {
-      sessionDir = path.dirname(path.dirname(dir));
-    } else if (['channels', 'joins'].includes(path.basename(dir))
-      && isHarnessId(path.basename(path.dirname(path.dirname(dir))))
-      && path.basename(path.dirname(path.dirname(path.dirname(dir)))) === 'khala') {
-      sessionDir = path.dirname(dir);
-    }
-    const directories = [path.dirname(path.dirname(sessionDir)), path.dirname(sessionDir), sessionDir];
-    const relative = path.relative(sessionDir, dir);
-    let parent = sessionDir;
+    const root = khalaRootOf(dir);
+    const parent = path.dirname(root);
+    await fs.mkdir(parent, { recursive: true });
+    if (!(await fs.stat(parent)).isDirectory()) throw new StateError('unsafe_state_dir');
+    // Check each level before descending so a pre-existing symlink is never followed.
+    let directory = root;
+    await checkPrivateDir(directory);
+    const relative = path.relative(root, path.resolve(dir));
     for (const component of relative ? relative.split(path.sep) : []) {
-      parent = path.join(parent, component);
-      directories.push(parent);
-    }
-    for (const directory of directories) {
-      try { await fs.mkdir(directory, { recursive: true, mode: 0o700 }); } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      }
-      const stat = await fs.lstat(directory);
-      // Windows has no POSIX mode bits (directories report 0o777); the profile ACL protects it.
-      if (!stat.isDirectory() || stat.isSymbolicLink() || (!WINDOWS && (stat.mode & 0o077) !== 0)
-        || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new StateError('unsafe_state_dir');
+      directory = path.join(directory, component);
+      await checkPrivateDir(directory);
     }
   } catch (error) {
     if (error instanceof StateError) throw error;

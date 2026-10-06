@@ -1,7 +1,7 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import * as fs from 'node:fs/promises';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { sessionFiles, readStatus, TERMINAL_SESSION_DETAILS, StateError, type SessionFiles } from '../state';
+import { sessionFiles, readStatus, readJson, TERMINAL_SESSION_DETAILS, StateError, type StatusFile, type SessionFiles } from '../state';
 import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity } from '../activity';
@@ -106,7 +106,7 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
     if (mode === 'async' || (steerOnly && mode !== 'steer')) continue;
-    const [status, pending] = await Promise.all([readStatus(channel.files), unread(channel.files)]);
+    const [status, pending] = await Promise.all([readJson<StatusFile>(channel.files.status), unread(channel.files)]);
     groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
       ...pending, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
   }
