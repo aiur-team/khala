@@ -116,3 +116,42 @@ it('verifies native delivery during a long turn and resumes after a held receipt
   await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({ agents: { crossSessionInbound: 'hold' } }));
   expect(await driver.available(ctx)).toBe(false);
 });
+
+it.each(['wrong-token', 'wrong-id'])('ignores %s receipts and times out without abort', async fault => {
+  const root = await temp(), socket = path.join(root, 'q.sock');
+  const server = net.createServer(peer => {
+    let bytes = ''; peer.setEncoding('utf8'); peer.on('data', data => bytes += data);
+    peer.on('end', () => {
+      const frame = JSON.parse(bytes.trimEnd().split('\n')[1]!);
+      const receipt = net.createConnection(frame.from);
+      receipt.on('error', () => {});
+      receipt.on('connect', () => receipt.end(JSON.stringify({ msgV: 1, type: 'auth', token: fault === 'wrong-token' ? 'wrong' : frame.replyToken }) + '\n'
+        + JSON.stringify({ msgV: 1, type: 'control', action: 'delivery_status', origMsgId: fault === 'wrong-id' ? 'unknown' : frame.msgId, status: 'delivered' }) + '\n'));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(socket, resolve));
+  try {
+    expect(await sendQwenWake({ socket, sessionId: 's', token: 'secret' }, 'line', new AbortController().signal, { runtimeDir: root, timeoutMs: 100 })).toBe('failed');
+    expect(await fs.readdir(root)).toEqual(['q.sock']);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+it('refuses readable or symlinked controller credentials', async () => {
+  const root = await temp(), sessionDir = path.join(root, 'state', 'khala', 'qwen', 's');
+  await fs.mkdir(sessionDir, { recursive: true, mode: 0o700 });
+  const env = { HOME: root, XDG_STATE_HOME: path.join(root, 'state'), QWEN_HOME: path.join(root, 'qwen'), QWEN_CODE_MESSAGING_SOCKET: '/q.sock' };
+  await fs.mkdir(path.join(env.QWEN_HOME, 'sessions'), { recursive: true });
+  await fs.writeFile(path.join(env.QWEN_HOME, 'sessions', '123.json'), JSON.stringify({ ipcPath: '/q.sock', sessionId: 's' }));
+  const credential = path.join(root, 'state', 'khala', 'qwen', 'controller.json');
+  await fs.writeFile(credential, JSON.stringify({ token: 'qpc_' + 'a'.repeat(64) }), { mode: 0o600 });
+  const driver = createQwenSocketDriver();
+  const ctx = { files: filesForDir(sessionDir), harness: 'qwen', sessionId: 's', env, signal: new AbortController().signal, now: 1 };
+  expect(await driver.available(ctx)).toBe(true);
+  await fs.chmod(credential, 0o644);
+  expect(await driver.available(ctx)).toBe(false);
+  await fs.rm(credential);
+  const other = path.join(root, 'other.json');
+  await fs.writeFile(other, JSON.stringify({ token: 'qpc_' + 'a'.repeat(64) }), { mode: 0o600 });
+  await fs.symlink(other, credential);
+  expect(await driver.available(ctx)).toBe(false);
+});

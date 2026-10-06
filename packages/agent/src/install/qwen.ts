@@ -8,7 +8,8 @@ const suffix = ' hook deliver --harness qwen';
 export const QWEN_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'] as const;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const ours = (server: unknown) => object(server) && Array.isArray(server.args)
-  && server.args.includes('mcp') && server.args[server.args.indexOf('--harness') + 1] === 'qwen';
+  && server.args.includes('mcp') && server.args.indexOf('--harness') !== -1
+  && server.args[server.args.indexOf('--harness') + 1] === 'qwen';
 
 /** Validate before any install side effect; preserve unrelated MCP entries and hook groups. */
 export function mergeQwenSettings(config: unknown, entry: object | null, command: string | null, backgroundWake = false):

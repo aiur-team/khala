@@ -17,6 +17,9 @@ it('merges hooks idempotently and uninstalls only managed entries', () => {
   const removed = mergeQwenSettings(installed.config, null, null);
   expect(removed).toEqual({ config: original });
   expect(mergeQwenSettings({ mcpServers: { khala: { command: 'other' } } }, entry, command)).toEqual({ error: 'qwen_mcp_exists' });
+  const unmanaged = { mcpServers: { khala: { command: 'other', args: ['qwen', 'mcp'] } } };
+  expect(mergeQwenSettings(unmanaged, entry, command)).toEqual({ error: 'qwen_mcp_exists' });
+  expect(mergeQwenSettings(unmanaged, null, null)).toEqual({ error: 'qwen_mcp_exists' });
   expect(mergeQwenSettings({ hooks: { Stop: [{}] } }, entry, command)).toEqual({ error: 'invalid_config' });
 });
 
