@@ -82,7 +82,7 @@ export function createLocalSubstrate(input: {
       return found.kind === 'done' ? { kind: 'found', room: found.value } : { kind: 'unavailable' };
     },
     async room(roomId, options) {
-      const result = await input.http.get(localChannelPath(roomId), decodeLocalChannelSummary, options?.signal);
+      const result = await input.http.get(localChannelPath(roomId, '?wire=2'), decodeLocalChannelSummary, options?.signal);
       if (result.kind === 'ok') return { kind: 'done', value: summary(result.value) };
       return result.kind === 'error' && result.status === 404 ? { kind: 'rejected', code: 'not_found' } : { kind: 'unavailable' };
     },
@@ -96,7 +96,7 @@ export function createLocalSubstrate(input: {
     async timeline(value, options) {
       if (input.members.members(value.roomId) === undefined) await input.members.refresh(value.roomId).catch(() => undefined);
       const query = new URLSearchParams({ limit: String(Math.min(Math.max(value.limit, 1), 100)), ...(value.cursor ? { before: value.cursor } : {}) });
-      const result = await input.http.get(localRoomPath(value.roomId, `/messages?${query}`), decodeLocalHistoryPage, options?.signal);
+      const result = await input.http.get(localRoomPath(value.roomId, `/messages?${query}&wire=2`), decodeLocalHistoryPage, options?.signal);
       if (result.kind === 'ok') return { kind: 'done', value: { events: result.value.events.flatMap(event => project(value.roomId, event) ?? []),
         nextCursor: result.value.nextBefore ?? null, revision: `local:${value.roomId}:${result.value.events.at(-1)?.eventId ?? 'empty'}` } };
       const code = rejectedFrom(result);
@@ -119,14 +119,14 @@ export function createLocalSubstrate(input: {
       async function run() {
         while (!disposed) {
           try {
-            const result = await input.http.get(localChannelPath(roomId), decodeLocalChannelSummary, abort.signal);
+            const result = await input.http.get(localChannelPath(roomId, '?wire=2'), decodeLocalChannelSummary, abort.signal);
             if (disposed) return;
             if (result.kind === 'error' && result.status === 404) { publish(); return; }
             if (result.kind !== 'ok') { await pause(); continue; }
             current = summary(result.value); after = result.value.lastSeq;
             if (input.members.members(roomId) === undefined) await input.members.refresh(roomId).catch(() => undefined);
             if (disposed) return;
-            const history = await input.http.get(localRoomPath(roomId, '/messages?limit=50'), decodeLocalHistoryPage, abort.signal);
+            const history = await input.http.get(localRoomPath(roomId, '/messages?limit=50&wire=2'), decodeLocalHistoryPage, abort.signal);
             if (disposed) return;
             if (history.kind !== 'ok') { await pause(); continue; }
             for (const event of history.value.events) window.set(event.eventId, event);
@@ -135,7 +135,7 @@ export function createLocalSubstrate(input: {
         }
         while (!disposed) {
           try {
-            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1`), decodeLocalEventsPage, abort.signal, 35_000);
+            const result = await input.http.get(localRoomPath(roomId, `/events?after=${after}&wait=25&prev=1&wire=2`), decodeLocalEventsPage, abort.signal, 35_000);
             if (disposed) return;
             if (result.kind === 'ok') {
               let membersChanged = false;

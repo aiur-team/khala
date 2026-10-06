@@ -247,3 +247,14 @@ it('decodes events pages and cached profiles for existing registry-suffixed owne
   accepted(local.decodeLocalEventsPage, page);
   accepted(local.decodeLocalMembersResponse, { members: [{ ...agentMember, ownerLabel: 'bob-Gemini' }] });
 });
+
+it.each(['gemini', 'opencode', 'cline'])('opens every local harness decoder to %s', harness => {
+  const content = { user: agent, membership: 'join', displayname: 'Agent', kind: 'agent', harness };
+  accepted(local.decodeLocalMemberContent, content);
+  accepted(local.decodeLocalMember, { ...agentMember, harness });
+  const member = { userId: agent, displayName: 'Agent', kind: 'agent', harness };
+  accepted(local.decodeLocalChannelSummary, { ...summary, members: [member] });
+  accepted(local.decodeLocalMembersResponse, { members: [{ ...agentMember, harness }] });
+  const e = { ...event(), type: 'm.room.member', content, previousContent: { ...content, membership: 'invite' } };
+  accepted(local.decodeLocalEventsPage, { events: [e], next: e.seq });
+});

@@ -1,6 +1,5 @@
 import { reserved } from '../messaging/agent-names';
-import type { Harness } from './agent-join';
-import { HARNESS_REGISTRY, LEGACY_HARNESSES, harnessInfo, type HarnessId } from './harness';
+import { HARNESS_REGISTRY, harnessInfo, type HarnessId } from './harness';
 import { readMatrixUserId } from './agent-join';
 import { type Decoded, array, decodeWith, elementPath, fail, identifier, object, version } from '../messaging/decode';
 import { ownerFirstName } from './participants';
@@ -38,10 +37,6 @@ export function checkNewUsername(input: unknown): NameCheck {
 }
 
 export const nameKey = (name: string): string => `names/v1/${name.toLowerCase()}`;
-// Compatibility for legacy callers; model metadata belongs to the registry.
-export const MODEL_NAMES: Record<Harness, string> = Object.fromEntries(
-  LEGACY_HARNESSES.map(id => [id, harnessInfo(id).modelName]),
-) as Record<Harness, string>;
 export function defaultAgentName(username: string, harness: HarnessId, n = 1): string {
   return `${username}-${harnessInfo(harness).modelName}${n === 1 ? '' : `-${n}`}`;
 }

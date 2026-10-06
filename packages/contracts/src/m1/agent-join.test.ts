@@ -68,7 +68,7 @@ describe('M1 agent join', () => {
   it('decodes all ten API error codes and maps request error paths', () => {
     for (const error of ['invalid_link', 'invalid_label', 'invalid_harness', 'link_unavailable', 'rate_limited', 'not_found', 'not_confirmed', 'signed_out', 'not_member', 'already_confirmed_by_other']) expect(join.decodeAgentJoinError({ error })).toEqual({ ok: true, value: { error } });
     expect(join.decodeAgentJoinError({ error: 'forbidden_origin' }).ok).toBe(false);
-    expect(join.decodeAgentJoinRequest({ ...request, harness: 'other' }).ok).toBe(false);
+    expect(join.decodeAgentJoinRequest({ ...request, harness: 'Other' }).ok).toBe(false);
     for (const [path, expected] of [['label', 'invalid_label'], ['label.nested', 'invalid_label'], ['harness', 'invalid_harness'], ['', 'invalid_link'], ['extra', 'invalid_link']]) expect(join.agentJoinRequestErrorCode({ path: path!, code: 'invalid_value' })).toBe(expected);
   });
 });
@@ -113,4 +113,11 @@ it('validates the optional rejoin secret and supports the client session id alph
   for (const rejoinSecret of ['', 'S'.repeat(42), 'S'.repeat(44), null, 42, ' '.repeat(43)]) {
     expect(join.decodeAgentJoinRequest({ ...request, rejoinSecret }).ok).toBe(false);
   }
+});
+
+it.each(['gemini', 'opencode', 'cline', 'a'.repeat(24)])('accepts open harness %s', harness => {
+  expect(join.decodeAgentJoinRequest({ link: 'https://khala.example/join/abcdefgh', harness, label: 'Agent' })).toMatchObject({ ok: true, value: { harness } });
+});
+it.each(['Gemini', 'g', '../x', 'ab\n', 'a'.repeat(25), 42])('rejects malformed harness %s', harness => {
+  expect(join.decodeAgentJoinRequest({ link: 'https://khala.example/join/abcdefgh', harness, label: 'Agent' })).toMatchObject({ ok: false, error: { path: 'harness' } });
 });

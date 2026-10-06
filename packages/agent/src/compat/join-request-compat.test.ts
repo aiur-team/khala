@@ -1,3 +1,5 @@
+import { frozenRegistryControlJoinValidation } from './control-join-request.registry.frozen';
+import { frozenRegistryHelperJoinValidation } from './helper-join-request.registry.frozen';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -139,4 +141,21 @@ it('retains rejoin identity after a frozen helper rejects the new harness', asyn
     { link: target.link, harness: 'gemini', label: 'Gemini', sessionId: 'thread-1', rejoinSecret: SECRET },
   ]);
   expect(restartHelper).toHaveBeenCalledOnce();
+});
+
+const openedServers = [
+  { origin: hosted, validate: frozenRegistryControlJoinValidation },
+  { origin: local, validate: async (request: Request) => frozenRegistryHelperJoinValidation({ body: await request.json() }, { origin: local }) },
+];
+describe.each(openedServers)('opened registry validator at $origin', target => {
+  it.each(['gemini', 'cline', 'opencode'])('accepts %s with rejoin fields without retry', async harness => {
+    const fake = server(target.origin, target.validate);
+    await requestJoin({ link: `${target.origin}/join/${'a'.repeat(43)}`, harness, label: 'Agent', sessionId: 'thread-1', rejoinSecret: SECRET }, { fetch: fake.fetch });
+    expect(fake.bodies).toHaveLength(1);
+    expect(fake.bodies[0]).toMatchObject({ harness, sessionId: 'thread-1', rejoinSecret: SECRET });
+  });
+  it.each(['Gemini', 'g', '../x', 'ab\n'])('rejects malformed %s at the server boundary', async harness => {
+    expect(await target.validate(new Request(`${target.origin}/api/agent/join`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ link: `${target.origin}/join/${'a'.repeat(43)}`, harness, label: 'Agent' }) }))).toEqual({ status: 400, json: { error: 'invalid_harness' } });
+  });
 });

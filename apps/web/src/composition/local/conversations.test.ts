@@ -62,7 +62,7 @@ describe('local conversations', () => {
   it('distinguishes initial loading and error, then recovers through retry', async () => {
     vi.useFakeTimers(); const s = setup(); const listener = vi.fn();
     expect(s.snapshot()).toBeUndefined(); s.port.subscribe(ownerId, 1, listener);
-    expect(s.polls()[0]).toMatchObject({ path: '/api/local/channels?wait=25', timeoutMs: 35_000 });
+    expect(s.polls()[0]).toMatchObject({ path: '/api/local/channels?wait=25&wire=2', timeoutMs: 35_000 });
     s.polls()[0]!.answer({ kind: 'unavailable' }); await flush();
     expect(s.snapshot()).toBeNull(); expect(s.port.syncStatus.live(ownerId, 1)).toBe(false);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -70,11 +70,11 @@ describe('local conversations', () => {
     await vi.advanceTimersByTimeAsync(1); expect(s.polls()).toHaveLength(2);
     await s.list([]); expect(s.snapshot()).toEqual([]);
     expect(s.port.syncStatus.live(ownerId, 1)).toBe(true);
-    expect(s.polls().at(-1)?.path).toBe('/api/local/channels?since=42&wait=25');
+    expect(s.polls().at(-1)?.path).toBe('/api/local/channels?since=42&wait=25&wire=2');
   });
   it('maps every channel, avatars and latest sender and sorts by activity', async () => {
     const s = setup({ initialSeen: '5' }); s.snapshot(); await s.list();
-    expect(s.unread()[0]?.path).toBe('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/events?after=5&wait=0');
+    expect(s.unread()[0]?.path).toBe('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/events?after=5&wait=0&wire=2');
     s.unread()[0]!.answer({ kind: 'ok', value: page([event(6, LOCAL_OWNER_USER_ID), event(7), event(8, agentId, 'm.room.name')]) });
     await flush();
     expect(s.snapshot()).toEqual([{ id: roomId, title: 'refactor', preview: 'On it.', timestamp: '2025-10-02T09:01:40.000Z',
@@ -117,7 +117,7 @@ describe('local conversations', () => {
   });
   it.each([undefined, '-1', '1.5', 'NaN', '9007199254740992'])('defaults invalid last-seen %s to zero', async initialSeen => {
     const s = setup({ initialSeen }); s.snapshot(); await s.list();
-    expect(s.unread()[0]?.path).toContain('after=0&wait=0');
+    expect(s.unread()[0]?.path).toContain('after=0&wait=0&wire=2');
   });
   it('caps unread at one 200-event page and maps zero to null', async () => {
     const s = setup(); s.snapshot(); await s.list([{ ...summary, lastSeq: 300 }]);
@@ -192,7 +192,7 @@ describe('local conversations', () => {
     'keeps read markers when storage is unavailable', async storage => {
       const s = setup({ storage }); s.port.rememberEvent(event(8)); s.port.markRead!(ownerId, 1, roomId, event(8).eventId as EventId); s.snapshot(); await s.list();
       expect(s.unread()).toHaveLength(0); await s.list([{ ...summary, lastSeq: 9 }], 43);
-      expect(s.unread()[0]?.path).toContain('after=8&wait=0');
+      expect(s.unread()[0]?.path).toContain('after=8&wait=0&wire=2');
     });
   it('isolates owners, subscribers and disposal of pending polls and unread reads', async () => {
     const s = setup(); expect(s.port.snapshot(otherOwnerId, 1)).toBeNull();
