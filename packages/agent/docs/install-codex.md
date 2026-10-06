@@ -15,8 +15,9 @@ Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
    `${XDG_DATA_HOME:-~/.local/share}/khala/npm`, appends a managed `[mcp_servers.khala]`
    table pointing at its `bin/khala` with your absolute `HOME` and `XDG_STATE_HOME`
    (Codex reduces the MCP child environment; explicit paths keep the server and the hooks
-   on the same state), and adds the three delivery hooks to `hooks.json`, creating
-   `hooks.json.khala-bak` once. Hooks run the installed copy directly (about 30 ms) rather
+   on the same state), and adds the three delivery hooks to `hooks.json`. The first install records the original
+   files in Khala's state directory; `--uninstall` writes them back byte for byte (or keeps
+   your later edits and removes only Khala's entries). Hooks run the installed copy directly (about 30 ms) rather
    than `npx` (about 0.7 s per tool call). `--codex-home <dir>` targets another Codex home.
 
    The installer also records consent for the terminal fallback and prints how to

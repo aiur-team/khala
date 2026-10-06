@@ -24,3 +24,9 @@ it.each(['garbage', 'null', '{}', '\uFEFF{}',
   expect(codec.parse(stdin)).toBeNull();
   expect(codec.noop()).toBe('');
 });
+
+it('normalizes optional transcript paths and ignores non-string paths', () => {
+  const input = { session_id: 's', hook_event_name: 'UserPromptSubmit' };
+  expect(codec.parse(JSON.stringify({ ...input, transcript_path: '/tmp/session.jsonl' }))?.transcriptPath).toBe('/tmp/session.jsonl');
+  expect(codec.parse(JSON.stringify({ ...input, transcript_path: 12 }))?.transcriptPath).toBeUndefined();
+});

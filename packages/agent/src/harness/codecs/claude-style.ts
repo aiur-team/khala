@@ -17,6 +17,7 @@ export const claudeStyleCodec: DeliverCodec = {
       return { sessionId: input.session_id, event: events[input.hook_event_name as keyof typeof events],
         continuation: input.stop_hook_active === true,
         ...(typeof input.cwd === 'string' ? { workspace: input.cwd } : {}),
+        ...(typeof input.transcript_path === 'string' ? { transcriptPath: input.transcript_path } : {}),
         ...(typeof input.prompt === 'string' ? { promptText: input.prompt } : {}) };
     } catch { return null; }
   },
