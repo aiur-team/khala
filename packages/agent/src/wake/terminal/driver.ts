@@ -19,6 +19,16 @@ export type TerminalDriverDeps = {
   delay?: (signal: AbortSignal) => Promise<void>;
 };
 
+/**
+ * The composer text before the cursor on an empty prompt row. tmux and real
+ * terminals drop trailing blank cells when capturing (`❯ ` comes back as `❯`),
+ * so restore the spacing up to the guarded cursor column. Only ASCII spaces are
+ * added; captured cells such as Claude's U+00A0 are kept as-is.
+ */
+export function promptPrefix(captured: string, cursorColumn: number): string {
+  return captured.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r?\n$/, '').slice(0, cursorColumn).padEnd(cursorColumn, ' ');
+}
+
 export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriverDeps = {}): WakeDriver {
   const run = deps.run ?? runTerminalCommand;
   const read = deps.readProcess ?? readProcess;
@@ -72,8 +82,7 @@ export function createTerminalWakeDriver(guard?: EmptyPrompt, deps: TerminalDriv
           || final.view.tty !== ready.view!.tty || final.pane.kind !== ready.pane!.kind
           || final.pane.paneId !== ready.pane!.paneId || final.pane.socket !== ready.pane!.socket) return false;
         const text = final.view.line.replace(/\x1b\[[0-9;]*m/g, '').replace(/[ \r\n]+$/, '');
-        const prefix = ready.view!.line.replace(/\x1b\[[0-9;]*m/g, '').slice(0, guard!.cursorColumn);
-        return text === `${prefix}${line}` && final.view.cursorY === ready.view!.cursorY
+        return text === `${promptPrefix(ready.view!.line, guard!.cursorColumn)}${line}` && final.view.cursorY === ready.view!.cursorY
           && final.view.cursorX === guard!.cursorColumn + line.length;
       };
       // Revoked consent or new activity prohibits submission, but not removing our
