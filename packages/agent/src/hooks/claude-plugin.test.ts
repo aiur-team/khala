@@ -29,6 +29,8 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   expect(hooks.SessionStart).toEqual([{ hooks: [
     { type: 'command', command: `${khala} --ensure-installed`, timeout: 10 },
     { type: 'command', command: `${khala} hook session-start`, timeout: 10 },
+  ] }, { matcher: 'startup|resume', hooks: [
+    { type: 'command', command: `${khala} hook claude-wake`, asyncRewake: true, timeout: 86700 },
   ] }]);
   expect(hooks.UserPromptSubmit).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
   expect(hooks.PostToolUse).toEqual([{ hooks: [{ type: 'command', command: `${khala} hook deliver --harness claude`, timeout: 10 }] }]);
@@ -39,6 +41,7 @@ it('ships byte-identical delivery and async wake hooks with the evidence deadlin
   const { DEADLINE_MS } = await import('../../hooks/claude-wake');
   const deadline = DEADLINE_MS / 1000;
   expect(hooks.Stop[0].hooks[1].timeout).toBe(deadline + 300);
+  expect(hooks.SessionStart[1].hooks[0].timeout).toBe(deadline + 300);
 });
 it('packages the launcher-based MCP server and a self-contained marketplace', async () => {
   expect(await json(path.join(plugin, '.mcp.json'))).toEqual({ mcpServers: { khala: { command: '${CLAUDE_PLUGIN_ROOT}/bin/khala', args: ['mcp', '--harness', 'claude'] } } });
