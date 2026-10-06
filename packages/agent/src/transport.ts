@@ -15,7 +15,7 @@ export interface ChannelSession {
   waitForInvite(roomId: string, timeoutMs: number): Promise<void>;
   join(roomId: string): Promise<void>;
   joinedAt?(roomId: string): number | undefined;
-  history(roomId: string, limit: number, before?: string): Promise<{ messages: SessionMessage[]; nextBefore?: string }>;
+  history(roomId: string, limit: number, before?: string, options?: { includeUnavailable?: boolean }): Promise<{ messages: SessionMessage[]; nextBefore?: string }>;
   send(roomId: string, text: string): Promise<{ eventId: string }>;
   sendChannelEvent(roomId: string, content: Record<string, unknown>, txnId?: string): Promise<{ eventId: string }>;
   roomName(roomId: string): string | undefined;

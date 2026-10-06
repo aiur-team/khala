@@ -1132,7 +1132,25 @@ it('continues restore pagination through an empty projected page', async () => {
     .mockResolvedValueOnce({ messages: [{ ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 }] });
   await restartMulti(f);
   expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
-  expect(control.session.history).toHaveBeenLastCalledWith(control.creds.roomId, 100, '$state');
+  expect(control.session.history).toHaveBeenLastCalledWith(control.creds.roomId, 100, '$state', { includeUnavailable: false });
+});
+
+it('requests confirmed history on restore and wakes only for the decrypted gap message', async () => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  const wake = vi.fn();
+  const gap = { ...message('$gap'), roomId: control.creds.roomId, ts: now().getTime() + 1 };
+  vi.mocked(control.session.history).mockImplementation(async (_room, _limit, before, options) => {
+    // The transport cannot identify the encrypted mode command or agent event.
+    expect(options).toEqual({ includeUnavailable: false });
+    return before ? { messages: [gap] } : { messages: [], nextBefore: '$encrypted-mode' };
+  });
+  client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now, joinApi: f.api, startSession: f.start, onInboxAppend: wake });
+  await client.resume!();
+  await vi.waitFor(async () => expect((await client.status()).state).toBe('connected'));
+  expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$gap']);
+  expect((await client.status()).unread).toBe(1);
+  expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap']);
 });
 
 it('keeps restore disconnected when catch-up fails rather than claiming a complete inbox', async () => {

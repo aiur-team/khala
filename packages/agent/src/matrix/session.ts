@@ -234,7 +234,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
       for (const event of liveEvents) { if (event.getRoomId() === roomId) deliver(event); }
     },
     joinedAt: roomId => joinTimes.get(roomId),
-    async history(roomId, limit, before) {
+    async history(roomId, limit, before, options) {
       if (stopped) throw new Error('session_stopped');
       let token: string | null = null;
       if (before !== undefined) {
@@ -252,7 +252,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: {
         if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
           undecryptable++;
           const eventId = event.getId(), sender = event.getSender();
-          if (eventId && sender && eventId !== before) {
+          // Unknown encrypted types are diagnostics for explicit reads, never
+          // confirmed messages eligible for restore intake or agent wakes.
+          if (options?.includeUnavailable !== false && eventId && sender && eventId !== before) {
             const body = '[Encrypted message unavailable: this device does not have its key. Messages from before joining may not have been shared.]';
             messages.push({ eventId, roomId, sender, ts: event.getTs(), type: 'm.room.message', body,
               content: { msgtype: 'm.notice', body, 'com.khala.unavailable': true } });

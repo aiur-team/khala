@@ -155,6 +155,19 @@ describe('C11 Node Matrix session', () => {
     expect(page.messages.map(m => m.eventId)).toEqual(['$old', '$new']);
     expect(page.nextBefore).toBe('$old');
   });
+  it('excludes unknown encrypted mode and agent events from catch-up while keeping raw pagination', async () => {
+    const log = vi.fn(); session = await createAgentMatrixSession(creds, { log });
+    const mode = event('$mode', '@owner:hs', 300, 'm.room.encrypted');
+    const agentEvent = event('$agent-event', '@other-agent:hs', 200, 'm.room.encrypted', {}, true);
+    client.createMessagesRequest.mockResolvedValueOnce({ chunk: [mode, agentEvent] as never[], end: 'more' as never })
+      .mockResolvedValueOnce({ chunk: [event('$gap', '@human:hs', 100)] as never[], end: undefined });
+    const unknown = await session.history('!r:hs', 100, undefined, { includeUnavailable: false });
+    expect(unknown).toEqual({ messages: [], nextBefore: '$agent-event' });
+    expect(log).toHaveBeenCalledWith('history_undecryptable=2');
+    const confirmed = await session.history('!r:hs', 100, unknown.nextBefore, { includeUnavailable: false });
+    expect(confirmed.messages.map(m => m.eventId)).toEqual(['$gap']);
+    expect(client.http.authedRequest).toHaveBeenCalledWith('GET', '/rooms/!r%3Ahs/context/%24agent-event', { limit: '0' });
+  });
   it('reads member display names only after joining, with no fallback or network', async () => {
     session = await createAgentMatrixSession(creds); memberContent = { displayname: 'Maya' }; expect(session.displayName('@human:hs')).toBeUndefined();
     await session.join('!r:hs'); expect(session.displayName('@human:hs')).toBe('Maya');

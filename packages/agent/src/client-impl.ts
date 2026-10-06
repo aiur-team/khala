@@ -352,7 +352,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         let before: string | undefined;
         const visited = new Set<string>();
         while (current(attempt)) {
-          const page = await wait(session.history(credentials.roomId, 100, before));
+          const page = await wait(session.history(credentials.roomId, 100, before, { includeUnavailable: false }));
           const boundary = page.messages.findIndex(message => message.eventId === lastEventId);
           missed.push(page.messages.slice(boundary + 1).filter(message => message.ts >= cutoff));
           if (boundary !== -1 || page.messages.some(message => message.ts < cutoff) || !page.nextBefore || visited.has(page.nextBefore)) break;
