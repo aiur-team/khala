@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import os from 'node:os';
 import path from 'node:path';
 import * as proc from '../harness/proc';
-import { CODEX_DAEMON_WAKE_NOTE } from '../wake/status';
 import { channelFiles, ensureStateDir, openSessionDir, writeStateFile } from '../state';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
@@ -160,12 +159,12 @@ describe('MCP command lifecycle', () => {
     const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-main-'));
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
-        env: { ...process.env, PATH: '', XDG_STATE_HOME: stateHome },
+        env: { ...process.env, HOME: stateHome, CODEX_HOME: path.join(stateHome, '.codex'), PATH: '', XDG_STATE_HOME: stateHome },
         encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.', note: CODEX_DAEMON_WAKE_NOTE } });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Khala is not installed for codex; run khala install codex.', remedy: 'khala install codex' } });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
