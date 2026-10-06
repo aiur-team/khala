@@ -18,8 +18,39 @@ PATTERNS = {
     "copilot":  (r'^❯ ?$',                                       lambda l: 2),
     "agy":      (r'^> ?$',                                       lambda l: 2),
     "muse":     (r'^❯ ?$',                                       lambda l: 2),
+    # Qwen: drafts end with U+200B after the cursor cell; the empty prompt shows a grey placeholder or a grey
+    # follow-up suggestion. The plain regex alone cannot tell a suggestion from a draft with the cursor at Home,
+    # so Qwen also needs the SGR check in qwen_sgr_empty() (capture-pane -e).
+    "qwen":     (r'^> [^​]*$',                              lambda l: 2),
 }
-EXPECT = {"empty": True, "after-turn": True, "draft": False, "space": False, "draft-home": False, "draft-session": False, "empty-rotated": True}
+EXPECT = {"empty": True, "after-turn": True, "draft": False, "space": False, "draft-home": False, "draft-session": False, "empty-rotated": True, "suggestion": True}
+
+SGR = re.compile(r'\x1b\[([0-9;]*)m')
+
+
+def qwen_sgr_empty(ansi_line, cursor_x):
+    """True when no character after the cursor cell is drawn in the default foreground.
+
+    Typed text is drawn in the default foreground; the placeholder and follow-up suggestions are drawn in a theme
+    grey. The cursor cell itself is always default-foreground and underlined, so it is skipped.
+    """
+    col, default_fg, pos = 0, True, 0
+    while pos < len(ansi_line):
+        m = SGR.match(ansi_line, pos)
+        if m:
+            params = m.group(1).split(";") if m.group(1) else ["0"]
+            if params[0] in ("0", "39"):
+                default_fg = True
+            elif params[0] == "38":
+                default_fg = False
+            pos = m.end()
+            continue
+        ch = ansi_line[pos]
+        if col > cursor_x and default_fg and ch not in " ​":
+            return False
+        col += 1
+        pos += 1
+    return True
 
 fails = 0
 for h, (rx, col) in PATTERNS.items():
@@ -32,6 +63,10 @@ for h, (rx, col) in PATTERNS.items():
         x = int(head.split()[0].split("=")[1])
         m = re.match(rx, line) is not None
         ok = m and x == col(line) if "┃" in line or h != "opencode" else m
+        if h == "qwen" and ok:
+            y = int(head.split()[1].split("=")[1])
+            ansi = (CAP / f"{f.stem}.ansi.txt").read_text().split("\n")[y]
+            ok = qwen_sgr_empty(ansi, x)
         got = bool(ok)
         verdict = "ok" if got == EXPECT[state] else "MISMATCH"
         if verdict != "ok":

@@ -17,7 +17,7 @@ The Executor ran this on 2026-10-05, 21:38–21:55 PDT, on Linux (Arch, kernel 7
   | Copilot CLI | 1.0.92 | default (GPT-5.6 Terra) |
   | Antigravity CLI (`agy`) | 1.2.17. 1.2.13 was installed, and it updated itself on first launch | Gemini 3.8 Flash |
   | Muse Code | 1.4.3-R5018.1 | default (muse-spark-1.3-contributor) |
-  | Qwen Code | not installed | none |
+  | Qwen Code | not installed here. MH-U30 later ran 0.25.0 (see `qwen.md`) | none here |
 
 - **Isolation:** every TUI ran with `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`
   pointing into `/tmp/claude-1000/spike-1118/home`. Auth files were copied in from the real home, and the real
@@ -32,7 +32,7 @@ The Executor ran this on 2026-10-05, 21:38–21:55 PDT, on Linux (Arch, kernel 7
 
 | # | Criterion | Result |
 |---|---|---|
-| 1 | Empty-prompt patterns: capture each idle input line empty and with a typed draft, and write one regex per harness that matches only the empty line | **PASS** for Claude Code, Codex, Gemini CLI, Antigravity CLI, Copilot CLI, Muse Code and OpenCode. 31 of 31 captures are classified correctly by `terminal-hosts/verify.py`. **Qwen Code: UNTESTED**, because it is not installed |
+| 1 | Empty-prompt patterns: capture each idle input line empty and with a typed draft, and write one regex per harness that matches only the empty line | **PASS** for Claude Code, Codex, Gemini CLI, Antigravity CLI, Copilot CLI, Muse Code and OpenCode. 31 of 31 captures are classified correctly by `terminal-hosts/verify.py`. **Qwen Code: PASS**, added later by MH-U30 (#1116): 6 of 6 Qwen captures are classified correctly, 37 of 37 in all. Qwen needs an SGR check on top of the regex (see `qwen.md`) |
 | 2 | Editor-integrated terminals (VS Code, Cursor): find the agent's terminal from a throwaway extension, read its input line, and `sendText` without `show()`, both unfocused and focused-and-typing | **UNTESTED**: VS Code and Cursor are not installed, and this spike may not open GUI windows |
 | 3 | Windows Terminal and conhost (Gemini CLI, Copilot CLI, Claude Code): is there documented IPC that writes to a pane's input without keystroke injection? | **UNTESTED**: no Windows machine |
 | 4a | Alacritty (Linux): the same question | **FAIL**. Alacritty's only IPC, `alacritty msg`, offers `create-window`, `config` and `get-config`, and none of them writes to a pane's input |
@@ -45,7 +45,7 @@ The Executor ran this on 2026-10-05, 21:38–21:55 PDT, on Linux (Arch, kernel 7
 A tmux check ran alongside criterion 1. A U14-style `send-keys` wake started a turn in all seven installed TUIs
 without moving OS focus. Codex, Gemini CLI and Muse Code need a pause before Enter, as described below.
 
-Criteria 2, 3, 4b, 4c and the Qwen Code part of 1 stay open until the operator runs them (see the last section).
+Criteria 2, 3, 4b and 4c stay open (MH-U30 later closed the Qwen Code part of 1) until the operator runs them (see the last section).
 
 ## Evidence
 
@@ -89,7 +89,7 @@ the cursor position tells them apart.
 | Copilot CLI | `^❯ ?$` | 2 | none |
 | Antigravity CLI | `^> ?$` | 2 | none |
 | Muse Code | `^❯ ?$` | 2 | none |
-| Qwen Code | UNTESTED | none | none |
+| Qwen Code | `^> [^​]*$`, **plus** the SGR check `qwen_sgr_empty` in `verify.py`: after the cursor cell, no character may be drawn in the default foreground (added by MH-U30, see `qwen.md`) | 2 | Grey (fg 108,112,134) `  Type your message or @path/to/file`, or after a turn a grey follow-up suggestion such as `check the khala channel` |
 
 Captured cursor lines (`cursor_x`, then the plain cursor line, trailing spaces trimmed):
 
@@ -330,7 +330,7 @@ without remote control.
   - read only the cursor line, never the whole screen;
   - optionally require dim SGR for Claude and Codex placeholders through `capture-pane -e`.
 - **U27 (#1141) Gemini, U29 (#1151) Antigravity, U31 Qwen, U33 Muse, and the OpenCode and Copilot adapters:** take
-  `emptyPrompt` from the table. Qwen Code still needs a capture, through U30, U31 or a rerun of U38.
+  `emptyPrompt` from the table. Qwen Code was captured later by U30 (`qwen.md`). Its guard also needs an SGR check.
 - **U41 (#1152), editor-terminal wake:** C2 is UNTESTED, so U41's path is unproven. It must not start on this evidence.
 - **U28 (#1115), Antigravity contract:** item 4 should check whether the Remote Control daemon or the local language
   server (CSRF token source, `SendUserCascadeMessage`) can start a turn in an already-running TUI without a launch
@@ -347,5 +347,4 @@ without remote control.
 2. **C3:** on Windows, test Windows Terminal and conhost with Gemini CLI, Copilot CLI and Claude Code.
 3. **C4b and C4c:** on Linux, install GNOME Terminal; on macOS, use Terminal.app. Look for documented IPC that writes
    to a pane's input.
-4. **C1 for Qwen Code:** install Qwen Code and capture its empty and draft lines with the same `capture-pane` method.
-   `verify.py` takes a capture directory as its argument.
+4. ~~**C1 for Qwen Code**~~: done by MH-U30 (#1116) on 2026-10-05 with Qwen Code 0.25.0. See `qwen.md`.
