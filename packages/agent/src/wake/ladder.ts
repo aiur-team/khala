@@ -43,6 +43,8 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder {
   };
   const evaluate = async () => {
     try {
+      for (const driver of deps.drivers) await driver.verify?.({ files: deps.files, harness: deps.harness,
+        sessionId: deps.sessionId, env: deps.env ?? process.env, signal: controller.signal, now: now() });
       if (deps.drivers.some(driver => driver.verification !== 'none')) await settleAttempts(deps.files.dir, { now: now(), activity: await readActivity(deps.files) });
       const driverStates = await readWakeState(deps.files.dir);
       for (const [id, state] of Object.entries(driverStates)) {

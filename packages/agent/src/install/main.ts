@@ -8,11 +8,12 @@ import { runMcpInstall } from './mcp';
 import { adapterFor } from '../harness';
 import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
+import { musePaths, installMuse } from './muse';
 import { cursorPaths, installCursor } from './cursor';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install muse [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -78,6 +79,28 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
   const override = env.KHALA_OPENCODE_PLUGIN_SPEC;
   const plugin = uninstall ? null : override || (await opencodePluginPublished(pkg!.version, deps.fetchRegistry) ? `khala-opencode@${pkg!.version}` : null);
   return installOpenCode({ paths, platform, uninstall, stdout, stderr, plugin,
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
+
+export async function runMuseInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? console.log;
+  const stderr = deps.stderr ?? console.error;
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) { stderr('khala: install runs from the published package (npx -y khala-cli install muse)'); return 1; }
+  const platform = deps.platform ?? process.platform;
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = musePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env }, pkg?.name);
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installMuse({ paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
@@ -215,7 +238,7 @@ export async function runInstall(argv: readonly string[], deps: InstallDeps = {}
     const wake = !flags.includes('--no-wake');
     const result = await run(flags.filter(flag => flag !== '--wake' && flag !== '--no-wake'), deps);
     if (result === 0 && !flags.includes('--uninstall')) {
-      const drivers = wakeDrivers(target).filter(driver => driver.optIn).map(driver => driver.id);
+      const drivers = wakeDrivers(target).filter(driver => driver.optIn || target === 'muse').map(driver => driver.id);
       if (drivers.length) {
         await setWake(target, drivers, wake, deps.env ?? process.env);
         (deps.stdout ?? console.log)(consentLine(target, drivers, wake));

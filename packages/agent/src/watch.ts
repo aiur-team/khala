@@ -6,9 +6,10 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
 import { listChannels } from './channels';
-import { readJson, readStatus, sessionFiles, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
-import { adapterFor } from './harness';
-import { resolveHarness, resolveSessionId } from './mcp/session-id';
+import { readJson, readStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
+import { readActivity } from './activity';
+import { driverAllowed, readWakeState, wakeLine } from './wake/shared';
+import { MUSE_WAKE_REQUEST, type MuseWakeRequest } from './wake/muse-monitor';
 
 const MARKER = 'monitor.json';
 const OBSERVATION = 'monitor-cursor.json';
@@ -37,6 +38,9 @@ function channelLabel(name: string): string {
 export async function watchSession(files: SessionFiles, io: {
   write: (line: string) => void;
   signal: AbortSignal;
+  harness?: string;
+  env?: NodeJS.ProcessEnv;
+  now?: () => number;
 }): Promise<number> {
   const nonce = randomUUID();
   let watcher: FSWatcher | undefined;
@@ -44,6 +48,7 @@ export async function watchSession(files: SessionFiles, io: {
   let running: Promise<void> | undefined;
   let dirty = false;
   let done = false;
+  let emittedRequest: string | undefined;
   let code = 0;
   let finish!: () => void;
   const finished = new Promise<void>(resolve => { finish = resolve; });
@@ -103,7 +108,7 @@ export async function watchSession(files: SessionFiles, io: {
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => entry.kind === 'message' && entry.sender !== session.userId
           && entry.roomId === session.roomId);
-        if (!done && mode !== 'async' && latestMode !== 'async' && messages.length) {
+        if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async' && messages.length) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
         }
@@ -120,6 +125,32 @@ export async function watchSession(files: SessionFiles, io: {
           }
         }
       }
+      if (io.harness === 'muse' && !done && await ownsSession()) {
+        const request = await readJson<MuseWakeRequest>(path.join(files.dir, MUSE_WAKE_REQUEST));
+        const now = (io.now ?? Date.now)();
+        const wakeNonce = typeof request?.line === 'string' ? /\(k-([a-f0-9]{8})\)$/.exec(request.line)?.[1] : undefined;
+        if (request?.owner === nonce && wakeNonce && wakeLine(wakeNonce) === request.line
+          && request.line !== emittedRequest && now >= request.at && now < request.deadline
+          && await driverAllowed(stateRoot(io.env ?? process.env), 'muse', 'monitor', false)
+          && !(await readWakeState(files.dir)).monitor?.disabled
+          && (await readActivity(files)).state === 'idle') {
+          const channels = await listChannels(files);
+          let eligible = false;
+          for (const channel of channels) {
+            if (await readListeningMode(channel.files) === 'async') continue;
+            const session = await readJson<{ userId: string }>(channel.files.session);
+            const status = await readStatus(channel.files);
+            if (!['connected', 'send_failed'].includes(status?.state ?? '')) continue;
+            const cursor = await readCursor(channel.files);
+            eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
+              .some(entry => entry.kind === 'message' && entry.sender !== session?.userId);
+          }
+          if (eligible && await ownsSession() && (await readActivity(files)).state === 'idle') {
+            io.write(request.line + '\n');
+            emittedRequest = request.line;
+          }
+        }
+      }
     };
     const notify = () => {
       if (done) return;
@@ -129,13 +160,15 @@ export async function watchSession(files: SessionFiles, io: {
         do { dirty = false; await evaluate(); } while (dirty && !done);
       })().catch(() => stop(1)).finally(() => { running = undefined; if (dirty && !done) notify(); });
     };
-    await writeJsonAtomic(leaseFile(files, nonce), { nonce, pid: process.pid });
-    await writeJsonAtomic(path.join(files.dir, MARKER), { nonce, pid: process.pid });
+    let published = false;
     // Watch the directory rather than an inode: status/mode/session use atomic rename.
     watcher = watchDirectory(files.dir, (_event, filename) => {
-      if (filename === null || [MARKER, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename))) notify();
+      if (published && (filename === null || [MARKER, MUSE_WAKE_REQUEST, 'inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'status.json'].includes(String(filename)))) notify();
     });
     watcher.on('error', () => stop(1));
+    await writeJsonAtomic(leaseFile(files, nonce), { nonce, pid: process.pid });
+    await writeJsonAtomic(path.join(files.dir, MARKER), { nonce, pid: process.pid });
+    published = true;
     // Re-list on every tick: subdirectory writes and channels joined after startup
     // need observation even on platforms without recursive fs.watch.
     timer = setInterval(notify, 100);
@@ -156,14 +189,16 @@ export async function watchSession(files: SessionFiles, io: {
   }
 }
 
-export const WATCH_USAGE = 'usage: khala watch [--harness claude|codex|cursor --session <id>]';
+export const WATCH_USAGE = 'usage: khala watch [--harness <id>] [--session <id>]';
 
 export default async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0]!)) { console.log(WATCH_USAGE); return 0; }
   const invalid = (reason: string) => { console.error(`khala: ${reason}\n${WATCH_USAGE}`); return 1; };
   // Explicit session id also works when Claude does not export its id to Monitor.
-  if (argv.length !== 0 && !(argv.length === 2 && argv[0] === '--session')
+  if (argv.length !== 0 && !(argv.length === 2 && ['--session', '--harness'].includes(argv[0]!))
     && !(argv.length === 4 && argv[0] === '--harness' && argv[2] === '--session')) return invalid('invalid_arguments');
+  const { resolveHarness, resolveSessionId } = await import('./mcp/session-id');
+  const { adapterFor } = await import('./harness');
   const harness = resolveHarness(argv, process.env);
   if (harness === 'invalid' || !adapterFor(harness)?.codec) return invalid('invalid_harness');
   const index = argv.indexOf('--session');
@@ -175,6 +210,6 @@ export default async function run(argv: readonly string[]): Promise<number> {
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal }); }
+  try { return await watchSession(files, { write: line => { process.stdout.write(line); }, signal: controller.signal, harness }); }
   finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
 }

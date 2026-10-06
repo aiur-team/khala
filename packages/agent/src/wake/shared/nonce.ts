@@ -46,6 +46,8 @@ export async function settleAttempts(dir: string, input: {
   now: number;
   activity: { state: string; updatedAt: string | number } | null;
   promptText?: string;
+  /** Timestamp of verified native model ingress, independent of turn duration. */
+  verifiedAt?: number;
 }): Promise<WakeSettlement[]> {
   // The atomic journal is authoritative. An attempt published after this read
   // remains pending for the next hook or poll; never overwrite it from this snapshot.
@@ -62,8 +64,9 @@ export async function settleAttempts(dir: string, input: {
       const activityChanged = input.activity && (input.activity.state !== 'idle' || activityAt > baselineAt);
       // Prompt integrations settle before writing their own busy boundary.
       // Any changed activity here therefore belongs to prior user activity.
-      if (activityChanged) status = 'void';
-      else if (verified && input.now <= attempt.deadline) status = 'success';
+      if (verified && input.verifiedAt !== undefined && input.verifiedAt >= attempt.at && input.verifiedAt <= attempt.deadline) status = 'success';
+      else if (activityChanged) status = 'void';
+      else if (verified && input.verifiedAt === undefined && input.now <= attempt.deadline) status = 'success';
       else if (input.now >= attempt.deadline && input.activity?.state === 'idle') status = 'failure';
       else if (input.promptText !== undefined) status = 'void';
       if (!status) { remaining.push(attempt); continue; }

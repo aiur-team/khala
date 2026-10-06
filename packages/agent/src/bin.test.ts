@@ -41,7 +41,7 @@ const echo = `export default async function run(stdin: string, argv: readonly st
 describe('C12 source dispatcher', () => {
   it('prints the version and reports usage for unknown commands', async () => {
     expect(await run(['--version'])).toEqual({ code: 0, stdout: '0.0.0\n', stderr: '' });
-    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala install opencode | khala install mcp --print [--harness <id>] | khala --version\n' });
+    for (const args of [[], ['bogus']]) expect(await run(args)).toEqual({ code: 1, stdout: '', stderr: 'usage: khala mcp | khala watch [--harness <id>] [--session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala install opencode | khala install muse | khala install mcp --print [--harness <id>] | khala --version\n' });
   });
   it('reports absent MCP modules and passes argv and the module exit code', async () => {
     expect(await run(['mcp'])).toEqual({ code: 1, stdout: '', stderr: 'khala: mcp not available\n' });

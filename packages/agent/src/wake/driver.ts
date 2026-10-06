@@ -10,4 +10,7 @@ export type WakeDriverContext = Readonly<{
   now: number;
 }>;
 
-export type WakeDriver = SharedWakeDriver<WakeDriverContext>;
+export type WakeDriver = SharedWakeDriver<WakeDriverContext> & {
+  /** Native ingress proof must settle before activity-only polling voids attempts. */
+  verify?: (ctx: WakeDriverContext) => Promise<void>;
+};

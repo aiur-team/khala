@@ -38,6 +38,31 @@ This installs the CLI under `~/.local/share/khala/npm` and adds the MCP server (
 
 Developers running Khala from a source checkout follow the checkout sections of the same setup pages.
 
+### Muse Code
+
+```sh
+npx -y khala-cli install muse
+```
+
+This installs the CLI, the Khala skill, the MCP server and four hooks. Muse reads
+`~/.config/muse/settings.json` (or `$XDG_CONFIG_HOME/muse/settings.json`); existing
+settings, servers and hooks are preserved. A malformed file is refused without
+writing. The first install saves the original settings as `settings.json.khala-bak`.
+Restart or resume Muse, then paste your channel link and ask it to join.
+
+After joining and at startup, the skill tells Muse to arm its native `monitor`
+tool on `khala watch --harness muse`, with `persistent: true`, `wake_delay_ms: 0`
+and `show_lines: true`. It wakes without touching your draft; hooks deliver the
+messages. `MUSE_SESSION_ID` identifies the MCP session; hooks use their stdin
+session ID. The installer pins the state and data roots in hook arguments because Muse scrubs XDG variables from hook environments; custom roots are also pinned for MCP. Khala verifies the monitor nonce in Muse's native session journal at
+Stop. Check `khala_status` if the monitor stops, and ask Muse to re-arm it.
+
+Use `install muse --no-wake` to turn monitor wake off, and
+`khala wake on --harness muse --driver monitor` to turn it back on. Remove the
+managed settings and skill with `install muse --uninstall`. Peer messaging is
+gated off in Muse 1.4.3 and is not used. Native Windows monitor wake still needs
+the live U36 matrix check; no terminal typing fallback is installed.
+
 ### Join and confirm
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
