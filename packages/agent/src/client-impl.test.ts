@@ -1012,11 +1012,16 @@ it('does not restore authorization from another workspace', async () => {
   await restartMulti(f, { XDG_STATE_HOME: root, PWD: path.join(root, 'other-workspace') });
   expect(f.start).not.toHaveBeenCalled();
 });
-it('never polls or starts a hosted session when the rejoin needs new owner approval', async () => {
+it('keeps hosted restoration non-terminal when old control needs owner approval', async () => {
   const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
   await f.join(0); (f.api.requestJoin as Mock<typeof requestJoin>).mockResolvedValue(created);
   await restartMulti(f); expect(f.api.pollJoin).not.toHaveBeenCalled(); expect(f.start).not.toHaveBeenCalled();
-  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).toBeNull();
+  expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).not.toBeNull();
+  expect(await client.status('A')).toMatchObject({ state: 'disconnected', detail: 'rejoin_needed' });
+  expect(await readJoinFile(f.files, 'http://127.0.0.1:47830/join/0')).toBeNull();
+  (f.api.requestJoin as Mock<typeof requestJoin>).mockResolvedValue({ ...created, joinId: 'http://127.0.0.1:47830/join/0' });
+  expect(await f.join(0)).toEqual({ state: 'awaiting_confirmation', confirmUrl: created.confirmUrl });
+  await vi.waitFor(async () => expect(await client.status('A')).toMatchObject({ state: 'connected' }));
 });
 it('retains authorization after transient hosted restoration failures and retries next startup', async () => {
   const f = await multiClient(['A']); delete (f.controls[0]!.creds as AgentCredentials).transport;
@@ -1044,6 +1049,9 @@ it('preserves per-channel name metadata during startup and transient hosted fail
   await client.resume!();
   const directory = channelFiles(f.files, '!A:local').dir;
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'joining', channelName: 'A', displayName: 'owner-Codex-0' }));
+  // Joining status is written before the request starts; wait until the client
+  // has attached its request handler before rejecting the deferred response.
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
   pending.reject(new KhalaClientError('internal_error', 'network'));
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'network', channelName: 'A', displayName: 'owner-Codex-0' }));
 });

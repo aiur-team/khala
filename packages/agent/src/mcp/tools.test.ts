@@ -225,3 +225,11 @@ it('preserves update-required guidance through khala_join stdio', async () => {
     content: [{ type: 'text', text: JSON.stringify({ message, error: 'update_required' }) }],
   });
 });
+
+it('hints to rejoin an old-control restore using the previously authorized link', async () => {
+  const client = fake();
+  client.status = vi.fn(async () => ({ state: 'disconnected' as const, unread: 0,
+    channels: [{ channel: 'A', state: 'disconnected' as const, detail: 'rejoin_needed', unread: 0, listeningMode: 'sync' as const }] }));
+  const { responses } = await exchange([call('khala_status')], client);
+  expect(responses[0].result.content[0].text).toContain('previously authorized');
+});
