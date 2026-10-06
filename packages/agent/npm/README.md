@@ -46,13 +46,15 @@ tool call (Steer).
 npx -y khala-cli install opencode
 ```
 
-This installs a stable CLI and pins `khala-opencode` at the same version in the global
+This installs a stable CLI and, when published on npm, pins `khala-opencode` at the same version in the global
 `~/.config/opencode/opencode.json` (or under `XDG_CONFIG_HOME`). The plugin registers
-Khala's MCP server. Restart OpenCode after installation. Existing settings and sibling
+Khala's MCP server. If the version is unpublished or the registry check fails, it configures
+MCP-only mode (Async, no wake); re-run `khala install opencode` after updating. Existing
+`opencode.jsonc` files require a manual merge or conversion to JSON before retrying. Restart OpenCode after installation. Existing settings and sibling
 plugins are preserved. Undo with `npx -y khala-cli install opencode --uninstall`.
 
 For unpublished-build testing only, `KHALA_INSTALL_SPEC` selects a CLI tarball and
-`KHALA_OPENCODE_PLUGIN_SPEC` selects a plugin spec such as
+`KHALA_OPENCODE_PLUGIN_SPEC` forces plugin mode with a spec such as
 `file:/tmp/khala-opencode-0.1.0.tgz`.
 
 ## Then
