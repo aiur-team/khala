@@ -1,3 +1,4 @@
+import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type LocalChannelSummary, type LocalEvent } from '@khala/contracts/m1/local';
 import { decodeRoomId, decodeOwnerId } from '@khala/contracts/messaging/ids';
@@ -38,6 +39,7 @@ function setup(options?: { initialSeen?: string | undefined; storage?: Pick<Stor
     setItem: (key: string, value: string) => { data.set(key, value); } } : options.storage;
   const http: LocalHttp = { origin: 'http://localhost:47830',
     get: (path, decode, signal, timeoutMs) => new Promise(resolve => {
+      assertHarnessWireSupport(path, decode);
       requests.push({ path, signal, timeoutMs, answer(result) {
         if (result.kind !== 'ok') { resolve(result); return; }
         const decoded = decode(result.value);
@@ -60,7 +62,7 @@ describe('local conversations', () => {
   it('distinguishes initial loading and error, then recovers through retry', async () => {
     vi.useFakeTimers(); const s = setup(); const listener = vi.fn();
     expect(s.snapshot()).toBeUndefined(); s.port.subscribe(ownerId, 1, listener);
-    expect(s.polls()[0]).toMatchObject({ path: '/api/local/channels?wait=25&wire=2', timeoutMs: 35_000 });
+    expect(s.polls()[0]).toMatchObject({ path: '/api/local/channels?wait=25', timeoutMs: 35_000 });
     s.polls()[0]!.answer({ kind: 'unavailable' }); await flush();
     expect(s.snapshot()).toBeNull(); expect(s.port.syncStatus.live(ownerId, 1)).toBe(false);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -68,11 +70,11 @@ describe('local conversations', () => {
     await vi.advanceTimersByTimeAsync(1); expect(s.polls()).toHaveLength(2);
     await s.list([]); expect(s.snapshot()).toEqual([]);
     expect(s.port.syncStatus.live(ownerId, 1)).toBe(true);
-    expect(s.polls().at(-1)?.path).toBe('/api/local/channels?since=42&wait=25&wire=2');
+    expect(s.polls().at(-1)?.path).toBe('/api/local/channels?since=42&wait=25');
   });
   it('maps every channel, avatars and latest sender and sorts by activity', async () => {
     const s = setup({ initialSeen: '5' }); s.snapshot(); await s.list();
-    expect(s.unread()[0]?.path).toBe('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/events?after=5&wait=0&wire=2');
+    expect(s.unread()[0]?.path).toBe('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/events?after=5&wait=0');
     s.unread()[0]!.answer({ kind: 'ok', value: page([event(6, LOCAL_OWNER_USER_ID), event(7), event(8, agentId, 'm.room.name')]) });
     await flush();
     expect(s.snapshot()).toEqual([{ id: roomId, title: 'refactor', preview: 'On it.', timestamp: '2025-10-02T09:01:40.000Z',

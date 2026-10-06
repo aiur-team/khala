@@ -27,7 +27,7 @@ export function createLocalMembers(http: LocalHttp, limits: ContentLimits): Loca
     // Defer the request until the shared promise has been registered.
     const request = Promise.resolve().then(async () => {
       try {
-        const result = await http.get(localRoomPath(roomId, '/members?wire=2'), decodeLocalMembersResponse);
+        const result = await http.get(localRoomPath(roomId, '/members'), decodeLocalMembersResponse);
         if (result.kind !== 'ok') return;
         const members = result.value.members;
         const fallback = members.find(m => m.userId === LOCAL_OWNER_USER_ID)?.displayName ?? 'owner';

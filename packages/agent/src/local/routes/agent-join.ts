@@ -2,8 +2,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { agentConfirmPagePath, validAgentSessionId, validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated } from '@khala/contracts/m1/agent-join';
 import { LOCAL_LINK_TTL_MS, LOCAL_OWNER_USER_ID, LOCAL_TOKEN_BYTES, newLocalAgentUserId } from '@khala/contracts/m1/local';
 import { isHarnessId } from '@khala/contracts/m1/harness';
-import { defaultLocalAgentName, freeLocalAgentName } from '../identity';
-import { checkName } from '@khala/contracts/m1/names';
+import { freeAgentName } from '@khala/contracts/m1/channel-names';
+import { checkName, defaultAgentName } from '@khala/contracts/m1/names';
 import { parseChannelLink } from '../../join';
 import type { HelperContext, LocalRequest, LocalResponse, LocalRoute, PendingJoin } from '../types';
 
@@ -49,7 +49,7 @@ export function agentJoinRoutes(): LocalRoute[] {
       const token = url.pathname.slice('/join/'.length);
       if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) return fail(404, 'link_unavailable');
       const username = ctx.store.owner().username;
-      if (!checkName(defaultLocalAgentName(username, harness, 2), 'agent').ok) return fail(503, 'unavailable');
+      if (!checkName(defaultAgentName(username, harness, 2), 'agent').ok) return fail(503, 'unavailable');
       return await queue(async () => {
         const link = await ctx.store.consumeLink(token);
         if (!link || !ctx.store.hasChannel(link.roomId)) return fail(404, 'link_unavailable');
@@ -57,7 +57,7 @@ export function agentJoinRoutes(): LocalRoute[] {
         const sessionKey = body.sessionId === undefined || body.rejoinSecret === undefined ? undefined : sha256hex(JSON.stringify([harness, body.sessionId, body.rejoinSecret]));
         const previous = sessionKey ? ctx.store.memberForSession(roomId, sessionKey) : undefined;
         // Names are unique per channel only: a taken default gets the lowest free `-N` here.
-        const checked = checkName(freeLocalAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
+        const checked = checkName(freeAgentName(username, harness, ctx.store.members(roomId).map(member => member.displayName)), 'agent');
         if (!checked.ok) return fail(503, 'unavailable');
         let userId = previous?.userId ?? newLocalAgentUserId(ctx.random(4));
         for (let attempt = 0; attempt < 5 && !previous && ctx.store.channelOfMember(userId) !== undefined; attempt++) userId = newLocalAgentUserId(ctx.random(4));

@@ -1,3 +1,4 @@
+import { decodeLocalEventsPage, decodeLocalHistoryPage, decodeLocalMembersResponse, decodeLocalMemberContent } from '@khala/contracts/m1/local';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +18,8 @@ const room = '!c7Kq2vXbT1nP0aZ9yW3eQw:local';
 const token = 'secret-local-access-token';
 const creds: AgentCredentials = { homeserver: 'http://127.0.0.1:47830', accessToken: token, roomId: room, userId: self, deviceId: 'KH_LOCAL_a1b2c3d4', transport: 'local' };
 const sessions: ChannelSession[] = [];
-afterEach(async () => { await Promise.all(sessions.splice(0).map(s => s.stop())); vi.useRealTimers(); });
+const harnessWireProbes: boolean[] = [];
+afterEach(async () => { await Promise.all(sessions.splice(0).map(s => s.stop())); vi.useRealTimers(); for (const supported of harnessWireProbes.splice(0)) expect(supported, 'wire=2 requires a decoder that accepts Gemini').toBe(true); });
 const tick = async (): Promise<void> => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const json = (value: unknown, status = 200): Response => new Response(JSON.stringify(value), { status });
 const network = (code: string): Error => new TypeError('fetch failed', { cause: { code } });
@@ -63,6 +65,17 @@ function fakeHelper() {
     if (override !== undefined) return override;
     if (h.down) throw network('ECONNREFUSED');
     const tail = url.pathname.split('/').at(-1);
+    if (url.searchParams.get('wire') === '2') {
+      const content = { user: other, membership: 'join', displayname: 'kevin-Gemini', kind: 'agent', harness: 'gemini' };
+      const event = { ...events[0]!, type: 'm.room.member', content };
+      if (tail === 'events') harnessWireProbes.push(decodeLocalEventsPage({ events: [event], next: event.seq }).ok);
+      if (tail === 'messages') {
+        harnessWireProbes.push(decodeLocalMemberContent(content).ok);
+        harnessWireProbes.push(decodeLocalHistoryPage({ events: [{ ...event, type: 'm.room.message', content: { msgtype: 'm.text', body: 'hello' } }] }).ok);
+      }
+      if (tail === 'members') harnessWireProbes.push(decodeLocalMembersResponse({ members: [{ ...h.members[2]!, harness: 'gemini' }] }).ok);
+    }
+
     if (tail === 'me') return json({ userId: h.meUser, roomId: room, roomName: 'refactor', membership: h.membership,
       displayName: 'agent', ...(h.invitedBy !== undefined ? { invitedBy: h.invitedBy } : {}) });
     if (tail === 'join') {
@@ -500,7 +513,7 @@ it('requests previous membership and keeps a rename when the post-join roster al
     h.members.find(m => m.userId === other)!.displayName = 'reviewer';
   };
   await s.join(room); await tick();
-  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1&wire=2');
+  expect(h.calls.find(call => call.url.includes('/events?'))?.url).toContain('&prev=1');
   expect(seen).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'm.room.member',
     previousContent: expect.objectContaining({ displayname: 'kevin-Codex' }) }));
 });

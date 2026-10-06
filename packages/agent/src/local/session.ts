@@ -166,7 +166,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     let lastEnsureAt = 0;
     while (!stopped) {
       try {
-        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1&wire=2`, undefined,
+        const page = decoded(await request('GET', `events?after=${after}&wait=${LOCAL_LONG_POLL_MAX_S}&prev=1`, undefined,
           controller.signal, (LOCAL_LONG_POLL_MAX_S + 10) * 1000), decodeLocalEventsPage);
         if (stopped) return;
         for (const event of page.events) {
@@ -231,7 +231,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
         const result = decoded(await withHelper(() => request('POST', 'join', {})), decodeLocalJoined);
         after = result.seq;
         await me();
-        const members = decoded(await withHelper(() => request('GET', 'members?wire=2')), decodeLocalMembersResponse);
+        const members = decoded(await withHelper(() => request('GET', 'members')), decodeLocalMembersResponse);
         check(roomId);
         for (const member of members.members) {
           names.set(member.userId, member.displayName);
@@ -245,7 +245,7 @@ export async function createLocalSession(creds: AgentCredentials, opts: LocalSes
     },
     async history(roomId, limit, before) {
       check(roomId);
-      const page = decoded(await withHelper(() => request('GET', `messages?wire=2&limit=${limit}${before !== undefined ? `&before=${encodeURIComponent(before)}` : ''}`)), decodeLocalHistoryPage);
+      const page = decoded(await withHelper(() => request('GET', `messages?limit=${limit}${before !== undefined ? `&before=${encodeURIComponent(before)}` : ''}`)), decodeLocalHistoryPage);
       const result = page.events.filter(e => e.roomId === creds.roomId).map(message);
       return { messages: result, ...(page.nextBefore !== undefined ? { nextBefore: page.nextBefore } : {}) };
     },

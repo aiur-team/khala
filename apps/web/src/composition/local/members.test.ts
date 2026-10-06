@@ -1,3 +1,4 @@
+import { assertHarnessWireSupport } from './fixtures/wire-harness';
 import { describe, expect, it, vi } from 'vitest';
 import { LOCAL_OWNER_ID, LOCAL_OWNER_USER_ID, type LocalMember } from '@khala/contracts/m1/local';
 import { decodeContentLimits } from '@khala/contracts/messaging/decode';
@@ -23,6 +24,7 @@ function setup() {
   let failure = false;
   const get = vi.fn<LocalHttp['get']>().mockImplementation(async (...args) => {
     const decode = args[1];
+    assertHarnessWireSupport(args[0], decode);
     if (failure) return { kind: 'unavailable' };
     const result = decode(payload);
     return result.ok ? { kind: 'ok', value: result.value } : { kind: 'error', status: 200, code: 'invalid_response' };
@@ -44,7 +46,7 @@ describe('local members', () => {
     expect(cache.listeningMode(roomId, agent.userId)).toBe('sync');
     expect(get).not.toHaveBeenCalled();
     await cache.refresh(roomId);
-    expect(get).toHaveBeenCalledWith('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/members?wire=2', expect.any(Function));
+    expect(get).toHaveBeenCalledWith('/api/local/rooms/!c7Kq2vXbT1nP0aZ9yW3eQw%3Alocal/members', expect.any(Function));
     expect(cache.members(roomId)).toEqual([owner, agent, claude]);
     expect(cache.describe(agent.userId)).toEqual({ matrixUserId: agent.userId, participantId: agent.userId,
       ownerId: LOCAL_OWNER_ID, displayName: 'kevin-Codex', kind: 'agent', ownerLabel: 'kevin', harness: 'codex' });
