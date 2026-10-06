@@ -45,12 +45,9 @@ async function seed(entries: InboxEntry[], harness: 'claude' | 'codex' = 'claude
   await appendEntries(files, entries);
   await writeStatus(files, 'connected');
 }
-it('records a prompt session mapping before join without delivering context', async () => {
-  expect(await hook()).toEqual({ code: 0, stdout: '', stderr: '' });
-  expect(await fs.readdir(path.join(root, 'khala', 'claude'))).toEqual(['.by-pid']);
-  const dir = path.join(root, 'khala', 'claude', '.by-pid');
-  const [entry] = await fs.readdir(dir);
-  expect(JSON.parse(await fs.readFile(path.join(dir, entry!), 'utf8'))).toMatchObject({ sessionId: 'session' });
+it.each(['claude', 'codex'])('ignores an unjoined %s prompt without creating state', async harness => {
+  expect(await hook('UserPromptSubmit', harness)).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await fs.readdir(root)).toEqual([]);
 });
 it('silently ignores inactive non-prompt events without creating state', async () => {
   expect(await hook('Stop')).toEqual({ code: 0, stdout: '', stderr: '' });
@@ -313,7 +310,7 @@ describe('cursor', () => {
     expect(await cursorHook('postToolUse')).toEqual({});
     expect(await cursorHook('stop', { status: 'completed', loop_count: 0 })).toEqual({});
     expect(await cursorHook('afterFileEdit')).toEqual({});
-    expect(await fs.readdir(path.join(root, 'khala', 'cursor'))).toEqual(['.by-pid']);
+    expect(await fs.readdir(root)).toEqual([]);
   });
   it('sync: stop returns one followup_message and never loops', async () => {
     await seedCursor([message()]);

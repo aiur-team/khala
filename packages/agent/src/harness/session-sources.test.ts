@@ -84,7 +84,7 @@ it('rejects a symlink mapping directory', async () => {
 
 it.each(['SessionStart', 'UserPromptSubmit'])('records %s before a session has joined', async hook_event_name => {
   const stdout = vi.fn(); const stderr = vi.fn();
-  await deliverCore(JSON.stringify({ hook_event_name, session_id: 'first', cwd: '/work' }), { ...claude, id: 'codex' },
+  await deliverCore(JSON.stringify({ hook_event_name, session_id: 'first', cwd: '/work' }), { ...claude, id: 'codex', sessionSources: [hookMapSource] },
     { stdout: { write: stdout }, stderr: { write: stderr }, env, now, pid: 300, readProcess });
   expect(await resolve()).toEqual({ sessionId: 'first', rejoinable: true });
   expect(stdout).not.toHaveBeenCalled(); expect(stderr).not.toHaveBeenCalled();
