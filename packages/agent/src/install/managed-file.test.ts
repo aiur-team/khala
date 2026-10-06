@@ -28,6 +28,12 @@ const uninstall = async (file: string) => {
 const exists = (file: string) => fs.stat(file).then(() => true, () => false);
 
 describe('managed JSON file', () => {
+  it.skipIf(process.platform === 'win32')('creates a private state directory accepted by MCP', async () => {
+    await install(path.join(home, 'settings.json'));
+    expect((await fs.stat(state)).mode & 0o077).toBe(0);
+    expect((await fs.stat(path.join(state, 'install-originals.json'))).mode & 0o077).toBe(0);
+  });
+
   it('leaves an absent file absent, with the directories it created', async () => {
     const file = path.join(home, 'cfg', 'tool', 'settings.json');
     await install(file);
