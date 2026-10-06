@@ -14,8 +14,7 @@
   ],
   "files": {
     ".cursor/hooks.json": "{\n  \"version\": 1,\n  \"hooks\": {\n    \"beforeSubmitPrompt\": [\n      {\n        \"command\": \"/opt/node <HOME>/.local/share/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs hook deliver --harness cursor\",\n        \"timeout\": 10\n      }\n    ],\n    \"postToolUse\": [\n      {\n        \"command\": \"/opt/node <HOME>/.local/share/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs hook deliver --harness cursor\",\n        \"timeout\": 10\n      }\n    ],\n    \"stop\": [\n      {\n        \"command\": \"/opt/node <HOME>/.local/share/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs hook deliver --harness cursor\",\n        \"timeout\": 10\n      }\n    ]\n  }\n}\n",
-    ".cursor/hooks.json.khala-bak": "{\"hooks\":{}}\n",
     ".cursor/mcp.json": "{\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"existing\"\n    },\n    \"khala\": {\n      \"type\": \"stdio\",\n      \"command\": \"/opt/node\",\n      \"args\": [\n        \"<HOME>/.local/share/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs\",\n        \"mcp\",\n        \"--harness\",\n        \"cursor\"\n      ],\n      \"env\": {\n        \"KHALA_CURSOR_WORKSPACE\": \"${workspaceFolder}\"\n      }\n    }\n  }\n}\n",
-    ".cursor/mcp.json.khala-bak": "{\"mcpServers\":{\"other\":{\"command\":\"existing\"}}}\n"
+    ".local/state/khala/install-originals.json": "{\n  \"<HOME>/.cursor/mcp.json\": {\n    \"existed\": true,\n    \"bytes\": \"eyJtY3BTZXJ2ZXJzIjp7Im90aGVyIjp7ImNvbW1hbmQiOiJleGlzdGluZyJ9fX0K\",\n    \"createdDirs\": []\n  },\n  \"<HOME>/.cursor/hooks.json\": {\n    \"existed\": true,\n    \"bytes\": \"eyJob29rcyI6e319Cg==\",\n    \"createdDirs\": []\n  }\n}\n"
   }
 }
