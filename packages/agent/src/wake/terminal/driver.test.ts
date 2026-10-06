@@ -11,6 +11,7 @@ import { createClaudeWatcherDriver, createTerminalWakeDriver, promptPrefix } fro
 import type { WakeDriverContext } from '../driver';
 import type { ProcessReader } from '../../harness/proc';
 import type { CommandRunner } from './process';
+import { gemini } from '../../harness/gemini';
 let root: string, ctx: WakeDriverContext;
 let line: string, column: number, mode: string, sync: string, row: number, tty: string;
 let calls: string[][];
@@ -43,6 +44,38 @@ it('sends only the fixed line then delayed Enter, rechecking ownership twice', a
  await driver.wake(ctx, wakeLine('1234abcd'));
  expect(sends()).toEqual([['send-keys', '-t', '%7', '-l', wakeLine('1234abcd')], ['send-keys', '-t', '%7', 'Enter']]);
  expect(owns).toHaveBeenCalledTimes(2); expect(pause).toHaveBeenCalledOnce();
+});
+it.each(['submit', 'activity', 'consent', 'draft', 'ownership', 'row', 'column'])('handles a tmux-trimmed Gemini composer during %s', async kind => {
+ ctx = { ...ctx, harness: 'gemini' };
+ await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: { 'gemini/terminal': { at: 'now' } }, off: {} });
+ line = ' >'; column = 3;
+ let owned = true;
+ const text = wakeLine('1234abcd');
+ const geminiRun: CommandRunner = async (command, argv, env, signal) => {
+  if (argv[0] === 'capture-pane') { calls.push([...argv]); return `${line}\n`; }
+  if (argv.includes('-l')) {
+   calls.push([...argv]); line = ` > ${argv.at(-1)}`; column = line.length; return '';
+  }
+  if (argv.includes('BSpace')) { line = ' >'; column = 3; }
+  return run(command, argv, env, signal);
+ };
+ const driver = createTerminalWakeDriver(gemini.emptyPrompt, { run: geminiRun, readProcess: read, ownsTerminal: async () => owned, delay: async () => {
+  if (kind === 'activity') await writeActivity(ctx.files, 'busy', () => new Date(at));
+  if (kind === 'consent') await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: {}, off: {} });
+  if (kind === 'draft') { line += ' user'; column += 5; }
+  if (kind === 'ownership') owned = false;
+  if (kind === 'row') row++;
+  if (kind === 'column') column--;
+ } });
+ expect(await driver.available(ctx)).toBe(true);
+ await driver.wake(ctx, text);
+ expect(sends()[0]).toEqual(['send-keys', '-t', '%7', '-l', text]);
+ if (kind === 'submit') expect(sends()[1]).toEqual(['send-keys', '-t', '%7', 'Enter']);
+ else if (kind === 'activity' || kind === 'consent') {
+  expect(sends()[1]).toEqual(['send-keys', '-t', '%7', '-N', String(text.length), 'BSpace']);
+  expect(line).toBe(' >');
+ } else expect(sends()).toHaveLength(1);
+ expect(sends()).toHaveLength(['submit', 'activity', 'consent'].includes(kind) ? 2 : 1);
 });
 describe('trimmed prompt captures', () => {
  // Each case: guard, the on-screen empty prompt, and what a trimming capture returns for it.
