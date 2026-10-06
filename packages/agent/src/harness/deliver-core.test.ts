@@ -8,7 +8,7 @@ import { hookMapSource } from './session-sources';
 import type { DeliverCodec } from './adapter';
 import { openSessionDir, type SessionFiles } from '../state';
 import { appendEntries, readCursor } from '../inbox';
-import { readActivity } from '../activity';
+import { readActivity, writeActivity } from '../activity';
 
 let root: string, files: SessionFiles, io: HookIO;
 let stdout: string, stderr: string;
@@ -146,4 +146,55 @@ it.each(['claude', 'codex', 'cursor'])('does not walk processes or create hook m
   expect(readProcess).not.toHaveBeenCalled();
   await expect(fs.stat(path.join(root, 'khala', harness, '.by-pid'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(stderr).toBe('');
+});
+
+it.each(['sync', 'steer', 'async'] as const)('preserves %s delivery boundaries when Monitor submits a busy Claude prompt', async mode => {
+  const active = await openSessionDir('claude', 'session', io.env);
+  await fs.writeFile(active.mode, JSON.stringify({ mode }));
+  const hook = (event: string, extra = {}) => deliverCore(JSON.stringify({
+    session_id: 'session', hook_event_name: event, ...extra,
+  }), adapterFor('claude')!, io);
+  await writeActivity(active, 'idle', io.now);
+  await hook('UserPromptSubmit', { prompt: 'Run two sleeps, then answer sleeps done' });
+  await appendEntries(active, [{ eventId: '$mid-turn', roomId: '!room', ts: instant.toISOString(),
+    sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'sync-msg-1 mid-turn note' }]);
+  await hook('UserPromptSubmit', { prompt: 'Monitor event: khala: 1 new message in #room (0 mentions you)' });
+  expect(stdout.includes('sync-msg-1')).toBe(mode === 'steer');
+  expect((await readCursor(active)).deliveredCount).toBe(mode === 'steer' ? 1 : 0);
+  stdout = '';
+  await hook('PostToolUse');
+  expect(stdout).toBe('');
+  await appendEntries(active, [{ eventId: '$tool-boundary', roomId: '!room', ts: instant.toISOString(),
+    sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'second note' }]);
+  await hook('PostToolUse');
+  expect(stdout.includes('second note')).toBe(mode === 'steer');
+  expect((await readCursor(active)).deliveredCount).toBe(mode === 'steer' ? 2 : 0);
+  stdout = '';
+  await hook('Stop');
+  if (mode === 'sync') {
+    expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
+    expect(stdout).toContain('second note');
+    expect((await readCursor(active)).deliveredCount).toBe(2);
+    stdout = '';
+    await hook('Stop', { stop_hook_active: true });
+  } else {
+    expect(stdout).toBe('');
+    expect((await readCursor(active)).deliveredCount).toBe(mode === 'steer' ? 2 : 0);
+  }
+  expect((await readActivity(active)).state).toBe('idle');
+});
+
+it('delivers Sync on an idle Claude Monitor mention and at the next idle user prompt', async () => {
+  const active = await openSessionDir('claude', 'session', io.env);
+  await fs.writeFile(active.mode, JSON.stringify({ mode: 'sync' }));
+  for (const prompt of ['Monitor event: khala: 1 new message in #room (1 mentions you)', 'Continue my task']) {
+    await writeActivity(active, 'idle', io.now);
+    await appendEntries(active, [{ eventId: prompt, roomId: '!room', ts: instant.toISOString(),
+      sender: '@maya', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: '@Scout hello' }]);
+    stdout = '';
+    await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', prompt }), adapterFor('claude')!, io);
+    expect(JSON.parse(stdout).hookSpecificOutput).toMatchObject({ hookEventName: 'UserPromptSubmit', additionalContext: expect.stringContaining('@Scout hello') });
+    expect((await readActivity(active)).state).toBe('busy');
+  }
+  expect((await readCursor(active)).deliveredCount).toBe(2);
 });
