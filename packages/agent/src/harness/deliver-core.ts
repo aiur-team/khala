@@ -6,6 +6,7 @@ import { unread, advanceCursor, type Cursor } from '../inbox';
 import { listChannels, type ChannelRef } from '../channels';
 import { readActivity, writeActivity } from '../activity';
 import { settleAttempts } from '../wake/shared/nonce';
+import { capturePane } from '../wake/terminal/capture';
 import { readListeningMode } from '../mode';
 import { isWakeEntry } from '../events/receive';
 import type { ProcessReader } from './proc';
@@ -176,7 +177,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     try { await recordHookSession(adapter.id, input.sessionId, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}), ...(io.readProcess ? { readProcess: io.readProcess } : {}), ...(input.workspace !== undefined ? { workspace: input.workspace } : {}) }); }
     catch (error) { diagnostic(io, error instanceof StateError ? error.code : 'internal_error'); }
   }
-  if (input && input.event !== 'start') {
+  if (input) {
     let files: SessionFiles | null = null;
     try { files = await activeFiles(adapter, input.sessionId, io); }
     catch (error) {
@@ -185,22 +186,29 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     }
     if (files) {
       try {
-        if (input.event === 'prompt') {
-          try {
-            await settleAttempts(files.dir, { now: io.now().getTime(), activity: await readActivity(files),
-              promptText: input.promptText ?? '' });
-          } catch { diagnostic(io, 'wake_verification_failed'); }
-          await writeActivity(files, 'busy', io.now);
+        if (adapter.emptyPrompt && (input.event === 'start' || input.event === 'prompt')) {
+          try { await capturePane(files, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}),
+            ...(io.readProcess ? { readProcess: io.readProcess } : {}) }); }
+          catch { diagnostic(io, 'pane_capture_failed'); }
         }
-        if (input.event === 'stop' && input.continuation) {
-          await writeActivity(files, 'idle', io.now);
-        } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
-          const frame = await channelFrames(files, input.event === 'tool',
-            input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
-          if (frame) {
+        if (input.event !== 'start') {
+          if (input.event === 'prompt') {
+            try {
+              await settleAttempts(files.dir, { now: io.now().getTime(), activity: await readActivity(files),
+                promptText: input.promptText ?? '' });
+            } catch { diagnostic(io, 'wake_verification_failed'); }
             await writeActivity(files, 'busy', io.now);
-            output = codec.render(input.event, frame);
-          } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
+          }
+          if (input.event === 'stop' && input.continuation) {
+            await writeActivity(files, 'idle', io.now);
+          } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
+            const frame = await channelFrames(files, input.event === 'tool',
+              input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
+            if (frame) {
+              await writeActivity(files, 'busy', io.now);
+              output = codec.render(input.event, frame);
+            } else if (input.event === 'stop') await writeActivity(files, 'idle', io.now);
+          }
         }
       } catch (error) {
         diagnostic(io, error instanceof StateError ? error.code : 'internal_error');

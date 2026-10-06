@@ -82,7 +82,9 @@ describe('MCP command lifecycle', () => {
       });
       const completed = (async () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
-        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
+          wakeDrivers: [{ id: 'watcher', available: false },
+            { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill('SIGTERM');
         expect(await closed).toEqual({ code: 0, signal: null });
@@ -103,10 +105,10 @@ describe('MCP command lifecycle', () => {
     writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
-        env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, XDG_STATE_HOME: dir, CLAUDE_CODE_SESSION_ID: 'console-diagnostic' }, encoding: 'utf8',
         input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
       });
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout).result.tools.map((tool: { name: string }) => tool.name))
         .toEqual(['khala_join', 'khala_status', 'khala_read', 'khala_send', 'khala_leave', 'khala_event']);
       expect(result.stderr).toBe('sdk-diagnostic\n');
@@ -123,7 +125,9 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
+          wakeDrivers: [{ id: 'watcher', available: false },
+            { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
       expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -164,7 +168,8 @@ describe('MCP command lifecycle', () => {
       expect(result.stderr).toBe('');
       const status = JSON.parse(result.stdout).result.structuredContent;
       expect(status).toMatchObject({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
-        wakeDrivers: [{ id: 'queue', available: expect.any(Boolean) }] });
+        wakeDrivers: [{ id: 'queue', available: expect.any(Boolean) },
+          { id: 'terminal', available: false, reason: 'terminal_consent_required' }] });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });

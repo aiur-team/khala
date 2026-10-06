@@ -83,3 +83,17 @@ it('does not create wake files or acquire a lock when no journal exists', async 
   expect(await settleAttempts(root, { now: 100, activity: idle, promptText: 'hello' })).toEqual([]);
   expect((await fs.readdir(root)).sort()).toEqual(['wake.lock']);
 });
+
+it('cancels only the unsent attempt and leaves another pending nonce intact', async () => {
+  const { cancelAttempt } = await import('./nonce');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-cancel-nonce-'));
+  try {
+    await recordAttempt(dir, { nonce: '00000001', driver: 'terminal', at: 1, deadline: 10 });
+    await recordAttempt(dir, { nonce: '00000002', driver: 'queue', at: 1, deadline: 10 });
+    await cancelAttempt(dir, '00000001');
+    expect(await settleAttempts(dir, { now: 10, activity: { state: 'idle', updatedAt: 0 } })).toEqual([
+      { nonce: '00000002', driver: 'queue', status: 'failure' },
+    ]);
+    expect(await readWakeState(dir)).toEqual({ queue: { failures: 1 } });
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});

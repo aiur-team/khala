@@ -147,3 +147,40 @@ it.each(['claude', 'codex', 'cursor'])('does not walk processes or create hook m
   await expect(fs.stat(path.join(root, 'khala', harness, '.by-pid'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(stderr).toBe('');
 });
+
+it.each(['SessionStart', 'UserPromptSubmit'])('captures the own pane during a joined %s hook', async hook_event_name => {
+  io.env.TMUX = '/tmp/test-tmux,10,0';
+  io.env.TMUX_PANE = '%7';
+  io.pid = 300;
+  io.readProcess = async pid => ({ pid, ppid: pid === 300 ? 200 : pid === 200 ? 100 : 0,
+    command: pid === 200 ? 'sh' : pid === 100 ? 'codex' : 'khala', startTime: String(pid) });
+  await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name }), adapterFor('codex')!, io);
+  expect(JSON.parse(await fs.readFile(path.join(files.dir, 'pane.json'), 'utf8'))).toMatchObject({
+    kind: 'tmux', paneId: '%7', socket: '/tmp/test-tmux', agentPid: 100, capturedAt: instant.toISOString(),
+  });
+  if (hook_event_name === 'SessionStart') {
+    expect(stdout).toBe('');
+    expect((await readCursor(files)).deliveredCount).toBe(0);
+    await expect(fs.stat(path.join(files.dir, 'activity.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } else expect((await readActivity(files)).state).toBe('busy');
+  expect(stderr).toBe('');
+});
+
+it.each(['PostToolUse', 'Stop'])('does not recapture a pane during %s', async hook_event_name => {
+  io.env.TMUX = '/tmp/test-tmux,10,0'; io.env.TMUX_PANE = '%7';
+  io.readProcess = vi.fn();
+  await deliverCore(JSON.stringify({ session_id: 'session', hook_event_name }), adapterFor('codex')!, io);
+  expect(io.readProcess).not.toHaveBeenCalled();
+  await expect(fs.stat(path.join(files.dir, 'pane.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('does not capture terminal metadata for an adapter without an empty-prompt guard', async () => {
+  const adapter = { ...adapterFor('codex')! };
+  delete adapter.emptyPrompt;
+  io.env.TMUX = '/tmp/test-tmux,10,0'; io.env.TMUX_PANE = '%7';
+  io.readProcess = vi.fn();
+  await deliverCore('{"session_id":"session","hook_event_name":"UserPromptSubmit"}', adapter, io);
+  expect(io.readProcess).not.toHaveBeenCalled();
+  await expect(fs.stat(path.join(files.dir, 'pane.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(stdout).toContain('CI passed');
+});

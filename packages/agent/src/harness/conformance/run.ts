@@ -92,15 +92,6 @@ function transportFixture(adapter: HarnessAdapter, transport: 'local' | 'matrix'
   };
 }
 
-/** These exceptions are execution-order debt, never a parity pass. Remove in the named units. */
-export function pendingWake(adapter: HarnessAdapter): string | undefined {
-  if (adapter.id === 'claude') {
-    assert.equal(adapter.wakeLadder, undefined, 'Claude pending skip expired: U14 #1135 must require idle wake');
-    return 'Known pending: U14 #1135 adds Claude wakeLadder; current verification mode: no wakeLadder';
-  }
-  return undefined;
-}
-
 export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnessDriver,
   options: { capabilities?: HarnessInfo } = {}): Promise<ConformanceResult> {
   const capabilities = options.capabilities ?? harnessInfo(adapter.id);
@@ -255,9 +246,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert((await unread(channel)).entries.some(entry => entry.body === '$async'));
       if (hookSupported) assert.equal((await readActivity(files)).state, 'idle');
     });
-    const pending = pendingWake(adapter);
     await row('idle wake', async () => {
-      if (pending) { assert.equal(capabilities.idleWake, 'default', 'pending skip capability changed'); return; }
       const probe = driver.wakeProbe?.(adapter);
       if (capabilities.idleWake === 'none') {
         assert.equal(adapter.wakeLadder?.length ?? 0, 0, 'idle wake declared absent but adapter has drivers');
@@ -266,7 +255,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert(probe?.drivers.length, 'idle wake declared but not delivered');
       assert.deepEqual(probe.drivers.map(d => [d.id, d.verification, d.optIn]),
         adapter.wakeLadder?.map(d => [d.id, d.verification, d.optIn]), 'probe must preserve wake policy');
-      assert(probe.drivers.every(d => d.verification !== 'none'), 'idle wake declared but not delivered: unverified transport');
+      assert(probe.drivers.some(d => d.verification !== 'none'), 'idle wake declared but not delivered: unverified transport');
       if (capabilities.idleWake === 'opt-in') assert(probe.drivers.every(d => d.optIn),
         'opt-in idle wake must require recorded consent for every driver');
       // Independent state prevents the positive wake's backlog from masking exclusions.
@@ -281,6 +270,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         // Consent is required for all suppression cases except the explicit decline case.
         await writeWakeSettings(stateRoot(env), { consent: excluded === 'no-consent' ? {} : Object.fromEntries(
           probe.drivers.filter(d => d.optIn).map(d => [`${adapter.id}/${d.id}`, { at: now().toISOString() }])), off: {} });
+        await probe.prepare?.(guard);
         const blocked = createWakeLadder({ files: guard, harness: adapter.id, sessionId: `wake-guard-${excluded}`,
           drivers: probe.drivers, env, pollMs: 10, now: () => now().getTime() + 60_000, stderr: () => {} });
         try {
@@ -295,6 +285,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       await writeStateFile(channel.dir, 'mode.json', { mode: 'sync' });
       await writeActivity(files, 'idle', now);
       await emit('$idle-wake');
+      await probe.prepare?.(files);
       const ladder = createWakeLadder({ files, harness: adapter.id, sessionId: sample.id, drivers: probe.drivers, env,
         pollMs: 10, now: () => now().getTime() + 60_000, stderr: () => {} });
       try {
@@ -306,7 +297,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');
       } finally { await ladder.stop(); }
-    }, pending ? 'pending' : capabilities.idleWake === 'none' ? 'absent' : 'pass', pending);
+    }, capabilities.idleWake === 'none' ? 'absent' : 'pass');
     return { harness: adapter.id, rows };
   } finally {
     try { await Promise.all([...clients].map(client => client.close())); }

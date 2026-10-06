@@ -121,3 +121,8 @@ export async function settleAttempts(dir: string, input: {
     return results;
   });
 }
+
+/** Cancel only the attempt whose transport was skipped; preserve concurrent wakes. */
+export async function cancelAttempt(dir: string, nonce: string): Promise<void> {
+  await locked(dir, data => { data.attempts = data.attempts.filter(attempt => attempt.nonce !== nonce); });
+}
