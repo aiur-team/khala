@@ -17,7 +17,8 @@ export const claudeDriver: FakeHarnessDriver = {
           delay: async () => {},
           async run(_command, argv) {
             if (argv[0] === 'display-message') return `100|0|0|${2 + (composer?.length ?? 0)}|0|/dev/pts/7|0`;
-            if (argv[0] === 'capture-pane') return composer ? `❯ ${composer}` : '❯ ';
+            // Real tmux drops trailing blank cells, so the empty prompt captures as a bare glyph.
+            if (argv[0] === 'capture-pane') return composer ? `❯ ${composer}` : '❯';
             if (argv[0] === 'send-keys') {
               if (argv.includes('-l')) composer = argv[argv.indexOf('-l') + 1];
               else if (argv.at(-1) === 'Enter') { prompt = composer; composer = undefined; }
