@@ -2,9 +2,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CODEX_DAEMON_WAKE_NOTE } from '../wake/status';
+import { channelFiles, ensureStateDir, openSessionDir, writeStateFile } from '../state';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import main, { createPlaceholderClient, runMcpCommand } from './main';
+import main, { createPlaceholderClient, runMcpCommand, type ClientFactory } from './main';
 
 const call = (name: string, threadId?: string, args = {}) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
   name, arguments: args, ...(threadId === undefined ? {} : { _meta: { threadId } }),
@@ -162,7 +164,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.' } });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.', note: CODEX_DAEMON_WAKE_NOTE } });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
@@ -226,4 +228,30 @@ it.each(['generic', 'cline'])('routes %s MCP requests through the resolved envir
   expect(createClient).toHaveBeenCalledExactlyOnceWith({ harness, sessionId: 'stable', rejoinable: true });
   expect(io.responses().map(response => response.result.structuredContent.you)).toEqual(['kevin-Agent', 'kevin-Agent']);
   expect(client.close).toHaveBeenCalledOnce();
+});
+
+it('restores every authorized Codex session in this workspace before input without guessing tool identity', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'khala-daemon-restore-'));
+  const env = { XDG_STATE_HOME: root, PWD: process.cwd() };
+  for (const [id, workspace] of [['first', process.cwd()], ['second', process.cwd()], ['other', '/other']] as const) {
+    const files = await openSessionDir('codex', id, env);
+    const nested = channelFiles(files, '!room:local');
+    await ensureStateDir(nested.dir);
+    await writeStateFile(nested.dir, 'channel.json', { roomId: '!room:local' });
+    await writeStateFile(nested.dir, 'resume.json', { workspace });
+  }
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const createClient = vi.fn<ClientFactory>(createPlaceholderClient);
+  const running = runMcpCommand(['--harness', 'codex'], { env, input, output, createClient });
+  try {
+    await vi.waitFor(() => expect(createClient).toHaveBeenCalledTimes(2));
+    expect(createClient.mock.calls.map(([session]) => session.sessionId).sort()).toEqual(['first', 'second']);
+    input.end(JSON.stringify(call('khala_status')) + '\n' + JSON.stringify(call('khala_status', 'second')) + '\n');
+    await running;
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(output.read().toString()).toContain('session_unknown');
+  } finally {
+    input.end(); await running; output.destroy(); rmSync(root, { recursive: true, force: true });
+  }
 });

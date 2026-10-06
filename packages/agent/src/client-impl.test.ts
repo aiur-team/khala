@@ -164,7 +164,7 @@ it('guards read/send and recovers from sanitized send failures', async () => {
   await connected();
   vi.mocked(session.send).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.send('x')).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.send('x')).toEqual({ eventId: '$sent' }); expect((await statusFile())?.state).toBe('connected');
 });
 it.each([new KhalaClientError('invalid_link'), new KhalaClientError('internal_error', 'rate_limited'), new Error('SECRET')])('sanitizes request failure %s', async error => {
@@ -329,7 +329,7 @@ it('guards event sends and restores connected status after retry', async () => {
   await connected();
   vi.mocked(session.sendChannelEvent).mockRejectedValueOnce(new Error('SECRET'));
   await expect(client.sendChannelEvent(content)).rejects.toMatchObject({ code: 'send_failed', message: 'send_failed' });
-  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', channelName: 'Release room', updatedAt: now().toISOString() });
+  expect(await statusFile()).toEqual({ state: 'send_failed', detail: 'send_failed', owner: { pid: process.pid, startTime: expect.any(String) }, channelName: 'Release room', updatedAt: now().toISOString() });
   expect(await client.sendChannelEvent(content)).toEqual({ eventId: '$event' });
   expect((await statusFile())?.state).toBe('connected');
 });

@@ -5,6 +5,8 @@ import { filesForDir, readStateFile, stateRoot, type SessionFiles } from '../sta
 import { readWakeSettings, readWakeState } from './shared';
 import type { WakeDriver } from './driver';
 
+export const CODEX_DAEMON_WAKE_NOTE = 'Codex threads can keep answering mentions while the app-server daemon runs, even after the TUI exits. Stop with khala_leave, khala wake off --harness codex, or codex app-server daemon stop.';
+
 export const WAKE_STATES = {
   active: { reason: 'Idle wake is on.', remedy: '' },
   needs_consent: { reason: 'Idle wake needs consent.', remedy: 'khala wake on --driver <d>' },
@@ -39,7 +41,7 @@ export const WAKE_STATES = {
   none_by_design: { reason: 'The generic tier has no idle wake by design.', remedy: '' },
 } as const;
 export type WakeStateName = keyof typeof WAKE_STATES;
-export type IdleWakeStatus = { driver: string; state: WakeStateName; reason: string; remedy?: string };
+export type IdleWakeStatus = { driver: string; state: WakeStateName; reason: string; remedy?: string; note?: string };
 export type WakeStatusRow = IdleWakeStatus & { harness: string; rung: number };
 export type WakeUnavailableReason = keyof typeof WAKE_STATES.unavailable.reasons;
 export function wakeStatusText(driver: string, state: WakeStateName, unavailableReason?: WakeUnavailableReason): IdleWakeStatus {
@@ -91,14 +93,15 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
       state = 'unavailable';
       unavailableReason = process.platform === 'win32' && driver.id === 'terminal' ? 'windows' : 'driver_missing';
     }
-    rows.push({ harness, rung: driver.rung, ...wakeStatusText(driver.id, state, unavailableReason) });
+    rows.push({ harness, rung: driver.rung, ...wakeStatusText(driver.id, state, unavailableReason),
+      ...(harness === 'codex' && driver.id === 'queue' ? { note: CODEX_DAEMON_WAKE_NOTE } : {}) });
   }
   return rows;
 }
 export function selectedWakeStatus(rows: WakeStatusRow[]): IdleWakeStatus {
   const row = rows.find(item => item.state === 'active') ?? rows[0]!;
-  const { driver, state, reason, remedy } = row;
-  return { driver, state, reason, ...(remedy ? { remedy } : {}) };
+  const { driver, state, reason, remedy, note } = row;
+  return { driver, state, reason, ...(remedy ? { remedy } : {}), ...(note ? { note } : {}) };
 }
 export const WAKE_HARNESSES = HARNESS_REGISTRY.map(row => row.id);
 

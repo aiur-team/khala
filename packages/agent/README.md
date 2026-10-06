@@ -40,7 +40,10 @@ Then tell the agent "Join this Khala channel: <link>".
   On MCP startup, Codex and Claude rejoin each previously authorized channel in
   the same workspace using its saved link and matching rejoin secret for hosted
   channels, or saved helper credentials for local channels. No tool call
-  is required; Codex arms its waker immediately. Claude still needs Monitor
+  is required; Codex arms its waker immediately. A daemon-hosted MCP without
+  `CODEX_THREAD_ID` restores saved Codex sessions matching its workspace. Codex
+  threads can answer mentions after their TUI exits while the daemon runs; see
+  [daemon lifetime and restart recovery](docs/install-codex.md#daemon-lifetime-and-restart-recovery). Claude still needs Monitor
   re-armed by the agent. Its backup `asyncRewake` watcher also arms at
   SessionStart in the interactive CLI when a channel is connected or has valid
   saved authorization to restore in this workspace, covering the interval before
