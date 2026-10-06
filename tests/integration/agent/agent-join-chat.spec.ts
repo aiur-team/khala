@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { channelFiles, readStatus, sessionFiles } from '../../../packages/agent/src/state';
+import type { AgentCredentials } from '../../../packages/contracts/src/m1/agent-join';
 import type { InboxEntry } from '../../../packages/contracts/src/m1/inbox';
 import { freshPage, readLiveHumanEnvironment, signIn } from '../human/fixtures';
 import { startMcp } from './mcp-stdio';
@@ -217,5 +218,77 @@ test('a real MCP agent chats and restores two channel inboxes without tool calls
       await Promise.allSettled([aliceContext.close(), bobContext.close()]);
       await rm(stateHome, { recursive: true, force: true });
     }
+  }
+});
+
+test('a real MCP restart preserves Steer and confirms a later owner switch to Async', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const environment = readLiveHumanEnvironment();
+  const stateHome = await mkdtemp(path.join(os.tmpdir(), 'khala-mode-restore-'));
+  const sessionId = `mode-restore-${randomUUID()}`;
+  const env = { ...process.env, XDG_STATE_HOME: stateHome, CLAUDE_CODE_SESSION_ID: sessionId };
+  const files = sessionFiles('claude', sessionId, { XDG_STATE_HOME: stateHome });
+  const context = await browser.newContext();
+  let mcp: ReturnType<typeof startMcp> | undefined;
+  try {
+    const alice = await freshPage(context, environment);
+    await signIn(alice, environment, environment.users[0]);
+    await chooseUsername(alice);
+    await alice.getByRole('button', { name: 'New channel', exact: true }).click();
+    await alice.getByLabel('Channel name', { exact: true }).fill(`Mode restore ${sessionId.slice(-8)}`);
+    await alice.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(alice).toHaveURL(/\/channels\//u);
+    const channelUrl = alice.url();
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
+    const link = await agentLink(alice);
+    mcp = startMcp({ env });
+    const join = await mcp.call('khala_join', { link, label: 'Agent' });
+    expect(join.isError).not.toBe(true);
+    await alice.goto(join.structuredContent.confirmUrl as string);
+    await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(alice.locator('.kh-fin-ok')).toContainText('joined', { timeout: 120_000 });
+    const agent = mcp;
+    let channels: { roomId: string; you: string }[] = [];
+    await expect.poll(async () => {
+      const status = await agent.call('khala_status', {});
+      channels = status.structuredContent.channels as typeof channels;
+      return status.structuredContent.state;
+    }, { timeout: 120_000, intervals: [2000] }).toBe('connected');
+    const channel = channels[0]!;
+    const nested = channelFiles(files, channel.roomId);
+    const memberState = async () => {
+      // Keep credentials out of assertion output and artifacts.
+      const credentials: AgentCredentials = JSON.parse(await readFile(nested.session, 'utf8'));
+      const response = await fetch(`${credentials.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(channel.roomId)}/state/m.room.member/${encodeURIComponent(credentials.userId)}`,
+        { headers: { authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(5000) });
+      expect(response.status).toBe(200);
+      return await response.json() as Record<string, unknown>;
+    };
+    await alice.goto(channelUrl);
+    await expect(alice.getByLabel('Message', { exact: true })).toBeEnabled({ timeout: 30_000 });
+    await alice.locator('#kh-head-btn').click();
+    const row = alice.locator('.kh-rrow').filter({ has: alice.getByText(channel.you, { exact: true }) });
+    const modeStatus = row.locator('+ .kh-mode-status');
+    await row.locator('[role="radio"][data-v="steer"]').click();
+    await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe('steer');
+    await expect(modeStatus).toBeHidden({ timeout: 30_000 });
+    const before = await memberState();
+    expect(typeof before['com.khala.invited_by']).toBe('string');
+    await agent.close();
+    mcp = startMcp({ env });
+    // Startup must restore without any tool call before the owner's next command.
+    await expect.poll(async () => (await readStatus(nested))?.state, { timeout: 120_000, intervals: [2000] }).toBe('connected');
+    expect(JSON.parse(await readFile(nested.mode, 'utf8')).mode).toBe('steer');
+    const restored = await memberState();
+    expect(restored['com.khala.invited_by']).toBe(before['com.khala.invited_by']);
+    expect(restored['com.khala.listening_mode']).toBe('steer');
+    await row.locator('[role="radio"][data-v="async"]').click();
+    await expect.poll(async () => (await memberState())['com.khala.listening_mode'], { timeout: 30_000 }).toBe('async');
+    await expect(modeStatus).toBeHidden({ timeout: 30_000 });
+    await expect(row.locator('[role="radio"][data-v="async"]')).toHaveAttribute('aria-checked', 'true');
+    expect((await mcp.call('khala_status', {})).structuredContent.listeningMode).toBe('async');
+  } finally {
+    try { await mcp?.close(); }
+    finally { await context.close(); await rm(stateHome, { recursive: true, force: true }); }
   }
 });
