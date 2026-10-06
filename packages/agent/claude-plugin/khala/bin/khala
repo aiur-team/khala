@@ -13,7 +13,7 @@
 # KHALA_PACKAGE and KHALA_VERSION are written by packages/agent/scripts/sync-release.mjs
 # from packages/agent/npm/package.json; do not edit them by hand.
 KHALA_PACKAGE=khala-cli
-KHALA_VERSION=0.4.6
+KHALA_VERSION=0.4.7
 
 data="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/khala/claude-plugin}"
 dir="$data/npm-$KHALA_VERSION"
