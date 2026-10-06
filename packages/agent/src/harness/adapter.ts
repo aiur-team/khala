@@ -1,6 +1,7 @@
 import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
 import type { WakeDriver } from '../wake/driver';
+import type { EmptyPrompt } from '../wake/terminal/prompt-guard';
 
 import type { SessionSource } from './session-sources';
 export type { SessionSource } from './session-sources';
@@ -25,6 +26,10 @@ export type HarnessAdapter = Readonly<{
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   wakeLadder?: readonly WakeDriver[];
+  /** Measured empty input text and cursor column for safe terminal wakes. */
+  emptyPrompt?: EmptyPrompt;
+  /** Planned consent-gated fallbacks; runtime availability remains explicit. */
+  wakeConsentDrivers?: readonly Pick<WakeDriver, 'id' | 'rung' | 'optIn'>[];
   /** Diagnostic prefix for wake errors; defaults to wake. */
   wakeWarningName?: string;
   /** Restore a known session before the first MCP request. */

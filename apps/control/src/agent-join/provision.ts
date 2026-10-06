@@ -77,11 +77,9 @@ export function createAgentProvisioner(options: AgentProvisionerOptions): AgentP
       if (login.status !== 200) return { kind: 'unavailable' };
       const loggedIn = await login.json() as { user_id?: unknown; device_id?: unknown; access_token?: unknown } | null;
       if (loggedIn?.user_id !== userId || loggedIn.device_id !== deviceId || typeof loggedIn.access_token !== 'string') return { kind: 'unavailable' };
-      try {
-        await request(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, { method: 'PUT',
-          headers: { authorization: `Bearer ${loggedIn.access_token}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ displayname: input.label }) });
-      } catch { /* Display names are best effort, including repairs on registration retries. */ }
+      // Registration sets the initial display name. Do not PUT the global
+      // profile here: Synapse asynchronously regenerates bare member events,
+      // erasing the inviter and listening mode on restored memberships.
       return { kind: 'ok', credentials: { homeserver: options.homeserverOrigin, userId, deviceId, accessToken: loggedIn.access_token, roomId: input.roomId } };
     } catch { return { kind: 'unavailable' }; }
   } };

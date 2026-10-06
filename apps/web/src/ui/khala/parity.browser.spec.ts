@@ -845,17 +845,17 @@ describe('behaviour', { concurrency: 1 }, () => {
         toggle: document.querySelectorAll('.kh-to-tog').length,
       }));
       const release = await chips();
-      assert.deepEqual(release.flat, ['@OpusYO', '@SonnetYO', 'MC@Maya']);
+      assert.deepEqual(release.flat, ['@OpusOP', '@SonnetSO', 'MC@Maya']);
       assert.equal(release.toggle, 1);
       await page.locator('.kh-to-tog').click();
       const grid = await page.evaluate(() => [...document.querySelectorAll('.kh-to-grid > *')].map(group => group.textContent));
-      assert.deepEqual(grid, ['YOYou', '@OpusYO@SonnetYO', 'MC@Maya', '@CodexMC@CodexMC', 'KW@Kai', '@SonnetKW@SonnetKW']);
+      assert.deepEqual(grid, ['YOYou', '@OpusOP@SonnetSO', 'MC@Maya', '@CodexMC@CodexMC', 'KW@Kai', '@SonnetKW@SonnetKW']);
       results.push({ check: 'chips', release, grid });
 
       await page.locator('[data-kh-convo="ci"]').click();
       await page.waitForTimeout(150);
       const ci = await chips();
-      assert.deepEqual(ci.flat, ['@OpusYO']);
+      assert.deepEqual(ci.flat, ['@OpusOP']);
       assert.equal(ci.toggle, 0, 'no toggle with 3 or fewer chips');
 
       await page.locator('[data-kh-convo="docs-launch"]').click();

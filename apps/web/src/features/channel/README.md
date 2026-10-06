@@ -19,3 +19,5 @@ The browser harness uses only in-memory fixtures. Run the feature checks with:
 pnpm --filter @khala/web test
 pnpm --filter @khala/web test:browser
 ```
+
+Name collisions appear in a dismissible inline notice with a suggested channel name. The notice does not take focus or block the channel. Own-agent avatar badges use the agent display-name initials unless the owner has chosen initials.

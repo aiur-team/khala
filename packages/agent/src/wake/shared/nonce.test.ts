@@ -83,3 +83,69 @@ it('does not create wake files or acquire a lock when no journal exists', async 
   expect(await settleAttempts(root, { now: 100, activity: idle, promptText: 'hello' })).toEqual([]);
   expect((await fs.readdir(root)).sort()).toEqual(['wake.lock']);
 });
+
+it('cancels only the unsent attempt and leaves another pending nonce intact', async () => {
+  const { cancelAttempt } = await import('./nonce');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-cancel-nonce-'));
+  try {
+    await recordAttempt(dir, { nonce: '00000001', driver: 'terminal', at: 1, deadline: 10 });
+    await recordAttempt(dir, { nonce: '00000002', driver: 'queue', at: 1, deadline: 10 });
+    await cancelAttempt(dir, '00000001');
+    expect(await settleAttempts(dir, { now: 10, activity: { state: 'idle', updatedAt: 0 } })).toEqual([
+      { nonce: '00000002', driver: 'queue', status: 'failure' },
+    ]);
+    expect(await readWakeState(dir)).toEqual({ queue: { failures: 1 } });
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});
+
+it('fails only the inserted nonce immediately, once, despite changed activity', async () => {
+  const { failAttempt } = await import('./nonce');
+  await recordAttempt(root, { nonce: '00000001', driver: 'terminal', at: 1, deadline: 10 });
+  await recordAttempt(root, { nonce: '00000002', driver: 'queue', at: 1, deadline: 10 });
+  await failAttempt(root, '00000001', 2);
+  await failAttempt(root, '00000001', 2);
+  expect(await readWakeState(root)).toEqual({ terminal: { failures: 1 } });
+  expect(await settleAttempts(root, { now: 3, activity: { state: 'busy', updatedAt: 3 } })).toEqual([
+    { nonce: '00000002', driver: 'queue', status: 'void' },
+  ]);
+  await recordAttempt(root, { nonce: '00000003', driver: 'terminal', at: 3, deadline: 10 });
+  await failAttempt(root, '00000003', 4);
+  expect((await readWakeState(root)).terminal).toMatchObject({ failures: 2, disabled: true });
+});
+
+it('does not write wake files for empty re-consent or notice claims', async () => {
+  const { resetWakeDriver, takeWakeDisableNotices } = await import('./nonce');
+  await resetWakeDriver(root, 'queue');
+  expect(await takeWakeDisableNotices(root)).toEqual([]);
+  for (const name of ['wake-journal.json', 'wake-state.json']) {
+    await expect(fs.stat(path.join(root, name))).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+  await attempt();
+  const snapshot = async () => Promise.all(['wake-journal.json', 'wake-state.json'].map(async name => {
+    const file = path.join(root, name);
+    return [await fs.readFile(file, 'utf8'), (await fs.stat(file)).mtimeMs];
+  }));
+  const before = await snapshot();
+  await resetWakeDriver(root, 'terminal');
+  expect(await takeWakeDisableNotices(root)).toEqual([]);
+  expect(await snapshot()).toEqual(before);
+});
+
+it('emits one disable notice across transport failures until re-consent resets it', async () => {
+  const { failAttempt, takeWakeDisableNotices, resetWakeDriver } = await import('./nonce');
+  for (let i = 1; i <= 2; i++) {
+    await recordAttempt(root, { nonce: `0000000${i}`, driver: 'terminal', at: i, deadline: 10 });
+    await failAttempt(root, `0000000${i}`, i + 1);
+  }
+  expect(await takeWakeDisableNotices(root)).toEqual(['terminal']);
+  await recordAttempt(root, { nonce: '00000003', driver: 'terminal', at: 3, deadline: 10 });
+  await failAttempt(root, '00000003', 4);
+  expect(await takeWakeDisableNotices(root)).toEqual([]);
+  await resetWakeDriver(root, 'terminal');
+  expect(await readWakeState(root)).toEqual({});
+  for (let i = 4; i <= 5; i++) {
+    await recordAttempt(root, { nonce: `0000000${i}`, driver: 'terminal', at: i, deadline: 10 });
+    await failAttempt(root, `0000000${i}`, i + 1);
+  }
+  expect(await takeWakeDisableNotices(root)).toEqual(['terminal']);
+});
