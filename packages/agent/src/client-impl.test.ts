@@ -554,6 +554,19 @@ it('never sends a rejoin identity for Cursor windows that share cursor-default o
   } finally { await Promise.all(windows.map(window => window.close())); }
 });
 
+it('process sources create fresh hosted members and never persist a rejoin secret', async () => {
+  const env = { XDG_STATE_HOME: root };
+  const clients = [0, 1].map(() => createKhalaAgentClient({ harness: 'codex', sessionId: 'proc-100-start-100',
+    rejoinable: false, env, now, startSession, joinApi }));
+  try {
+    for (const client of clients) await client.join(link, 'Codex');
+    expect(joinApi.requestJoin.mock.calls.map(call => call[0])).toEqual([
+      { link, harness: 'codex', label: 'Codex' }, { link, harness: 'codex', label: 'Codex' },
+    ]);
+    expect(await readStateFile(resolveStateDir('codex', 'proc-100-start-100', env), 'rejoin.json')).toBeNull();
+  } finally { await Promise.all(clients.map(client => client.close())); }
+});
+
 it('delivers member renames once, including self changes, without waking on events', async () => {
   await connected();
   const renamed: SessionMessage = { ...message('$rename', credentials.userId), type: 'm.room.member',

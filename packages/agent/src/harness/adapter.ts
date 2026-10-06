@@ -2,13 +2,14 @@ import type { HarnessId } from '@khala/contracts/m1/harness';
 import type { InstallDeps } from '../install/main';
 import type { WakeDriver } from '../wake/driver';
 
-export type SessionSource = (meta: Readonly<Record<string, unknown>> | undefined, env: NodeJS.ProcessEnv) => unknown;
+import type { SessionSource } from './session-sources';
+export type { SessionSource } from './session-sources';
 
 /** Hook dialect parsing and stdout, separate from shared delivery state. */
 export type DeliverCodec = Readonly<{
-  parse(stdin: string): { sessionId?: string; event: 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string } | null;
+  parse(stdin: string): { sessionId?: string; event: 'start' | 'prompt' | 'tool' | 'stop'; continuation: boolean; promptText?: string; workspace?: string } | null;
   render(kind: 'prompt' | 'tool' | 'stop', frame: string): string;
-  noop(kind?: 'prompt' | 'tool' | 'stop'): string;
+  noop(kind?: 'start' | 'prompt' | 'tool' | 'stop'): string;
   /** Some prompt hooks can only record activity, without injecting context. */
   promptAcceptsContext: boolean;
   /** Cursor silently tolerates a closed stdout pipe; Claude-style reports it. */
@@ -24,7 +25,6 @@ export type HarnessAdapter = Readonly<{
   install?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   uninstall?: (flags: readonly string[], deps: InstallDeps) => Promise<number>;
   wakeLadder?: readonly WakeDriver[];
-  rejoinable(source: string): boolean;
   /** Restore a known session before the first MCP request. */
   restoreAtStartup: boolean;
   /** Claude's status exposes the external watcher lease. */
