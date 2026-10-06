@@ -24,7 +24,7 @@ import { createHumanPendingSendStore } from './pending-send-store';
 import { guardedListeningModeSetter } from './listening-modes';
 import { useProfile } from '../../features/profile/ProfileProvider';
 
-function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
+export function hostedPresence(context: Pick<Parameters<HumanRoomRenderer>[0], 'generation' | 'roomParticipants'>, onParticipants: (participants: readonly ParticipantView[]) => void): ChannelUiPort {
   let readEpoch = 0;
   const agents: ChannelUiPort['agents'] = async (roomId, signal) => {
     const epoch = ++readEpoch;
@@ -43,12 +43,14 @@ function hostedPresence(context: Parameters<HumanRoomRenderer>[0], onParticipant
       let epoch = 0;
       let request: AbortController | null = null;
       const timer = setInterval(() => {
-        request?.abort();
+        // A full directory read can take longer than this interval. Aborting it
+        // on every tick would keep the human roster stale indefinitely.
+        if (request) return;
         request = new AbortController();
         const current = ++epoch;
         void agents(roomId, request.signal).then(snapshot => {
           if (current === epoch && !request?.signal.aborted) listener(snapshot);
-        }).catch(() => {});
+        }).catch(() => {}).finally(() => { request = null; });
       }, 5_000);
       return () => { ++epoch; request?.abort(); clearInterval(timer); };
     },
