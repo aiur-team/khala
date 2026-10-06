@@ -7,10 +7,10 @@ const install: NonNullable<HarnessAdapter['install']> = async (flags, deps) =>
 
 export const cursor: HarnessAdapter = {
   id: 'cursor',
-  sessionSources: [(_meta, env) => cursorSessionId(env[CURSOR_WORKSPACE_ENV])],
+  sessionSources: [{ kind: 'workspace', resolve: (_meta, env) => cursorSessionId(env[CURSOR_WORKSPACE_ENV]),
+    rejoinable: sessionId => sessionId !== CURSOR_DEFAULT_SESSION }],
   codec: cursorCodec,
   restoreAtStartup: false,
   install,
   uninstall: (flags, deps) => install([...flags, '--uninstall'], deps),
-  rejoinable: source => source !== CURSOR_DEFAULT_SESSION,
 };

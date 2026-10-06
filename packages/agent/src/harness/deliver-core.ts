@@ -9,6 +9,8 @@ import { wakeDisableNotice } from '../wake/status';
 import { settleAttempts } from '../wake/shared/nonce';
 import { readListeningMode } from '../mode';
 import { isWakeEntry } from '../events/receive';
+import type { ProcessReader } from './proc';
+import { recordHookSession } from './session-sources';
 import type { HarnessAdapter } from './adapter';
 
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -19,6 +21,8 @@ export type HookIO = {
   stderr: { write: (text: string) => unknown };
   env: NodeJS.ProcessEnv;
   now: () => Date;
+  pid?: number;
+  readProcess?: ProcessReader;
 };
 
 export function renderLine(entry: InboxEntry): string {
@@ -168,7 +172,12 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
   if (!codec) return 0;
   const input = codec.parse(stdin);
   let output = codec.noop(input?.event);
-  if (input) {
+  if (input && (input.event === 'prompt' || input.event === 'start') && input.sessionId
+    && adapter.sessionSources.some(source => source.kind === 'hook-map')) {
+    try { await recordHookSession(adapter.id, input.sessionId, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}), ...(io.readProcess ? { readProcess: io.readProcess } : {}), ...(input.workspace !== undefined ? { workspace: input.workspace } : {}) }); }
+    catch (error) { diagnostic(io, error instanceof StateError ? error.code : 'internal_error'); }
+  }
+  if (input && input.event !== 'start') {
     let files: SessionFiles | null = null;
     try { files = await activeFiles(adapter, input.sessionId, io); }
     catch (error) {

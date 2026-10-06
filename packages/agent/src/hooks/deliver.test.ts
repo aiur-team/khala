@@ -45,8 +45,12 @@ async function seed(entries: InboxEntry[], harness: 'claude' | 'codex' = 'claude
   await appendEntries(files, entries);
   await writeStatus(files, 'connected');
 }
-it('silently ignores inactive sessions without creating state', async () => {
-  expect(await hook()).toEqual({ code: 0, stdout: '', stderr: '' });
+it.each(['claude', 'codex'])('ignores an unjoined %s prompt without creating state', async harness => {
+  expect(await hook('UserPromptSubmit', harness)).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await fs.readdir(root)).toEqual([]);
+});
+it('silently ignores inactive non-prompt events without creating state', async () => {
+  expect(await hook('Stop')).toEqual({ code: 0, stdout: '', stderr: '' });
   expect(await fs.readdir(root)).toEqual([]);
 });
 it('delivers exact prompt frame once and marks busy', async () => {

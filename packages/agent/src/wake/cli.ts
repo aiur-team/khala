@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { adapterFor } from '../harness';
+import { resolveSources } from '../harness/session-sources';
 import { CURSOR_DEFAULT_SESSION } from '../cursor';
 import { SESSION_ID_PATTERN, stateRoot, filesForDir } from '../state';
 import { updateWakeSettings } from './shared';
@@ -33,10 +34,11 @@ export function consentLine(harness: string, drivers: readonly string[], on: boo
     ? `Idle wake is on (${drivers.join(', ')}): Khala may send a fixed wake line into this agent's existing session when messages wait and the prompt is empty. Run \`khala wake off --harness ${harness}\` to turn it off.`
     : `Idle wake is off for ${drivers.join(', ')}. Run \`khala wake on --harness ${harness}\` to turn it on.`;
 }
-function currentSessionId(harness: string, env: NodeJS.ProcessEnv): string | undefined {
-  const value = adapterFor(harness)?.sessionSources.map(source => source(undefined, env))
-    .find(value => typeof value === 'string' && SESSION_ID_PATTERN.test(value) && value !== CURSOR_DEFAULT_SESSION);
-  return typeof value === 'string' ? value : undefined;
+async function currentSessionId(harness: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const adapter = adapterFor(harness);
+  if (!adapter) return undefined;
+  const session = await resolveSources(adapter.sessionSources.filter(source => source.kind !== 'process'), undefined, env, { harness: adapter.id });
+  return session?.sessionId !== CURSOR_DEFAULT_SESSION ? session?.sessionId : undefined;
 }
 export async function runWake(argv: readonly string[], deps: WakeCliDeps = {}): Promise<number> {
   const env = deps.env ?? process.env;
@@ -60,7 +62,9 @@ export async function runWake(argv: readonly string[], deps: WakeCliDeps = {}): 
   const valid = [...new Set(candidates.flatMap(id => wakeDrivers(id).map(item => item.id)))];
   if (driver && !valid.includes(driver)) { err(`Unknown driver ${driver}. Valid drivers: ${valid.join(', ') || 'none'}`); return 2; }
   if (!harness && command !== 'status') {
-    harness = WAKE_HARNESSES.find(id => currentSessionId(id, env) !== undefined);
+    for (const id of WAKE_HARNESSES) {
+      if (await currentSessionId(id, env) !== undefined) { harness = id; break; }
+    }
     if (!harness && driver) {
       const matches = WAKE_HARNESSES.filter(id => wakeDrivers(id).some(item => item.id === driver));
       if (matches.length === 1) harness = matches[0];
@@ -75,7 +79,7 @@ export async function runWake(argv: readonly string[], deps: WakeCliDeps = {}): 
   if (command === 'status') {
     const rows = [];
     for (const id of harnesses) {
-      const sessionId = currentSessionId(id, env);
+      const sessionId = await currentSessionId(id, env);
       rows.push(...await wakeStatus(id, { env, ...(sessionId ? { files: filesForDir(path.join(stateRoot(env), id, sessionId)), sessionId } : {}) }));
     }
     const selected = driver ? rows.filter(row => row.driver === driver) : rows;
