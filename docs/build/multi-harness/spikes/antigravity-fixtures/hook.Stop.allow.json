@@ -1,0 +1,26 @@
+{
+  "event": "Stop",
+  "hookEnv": {
+    "PWD": "/tmp/claude-1000/spike-1115/home/.gemini/config",
+    "TERMINAL": "xdg-terminal-exec",
+    "ANTIGRAVITY_CONVERSATION_ID": "a96960d4-e7c1-4c2e-8818-0d11adaf46a1",
+    "TERM": "xterm-256color"
+  },
+  "hookCwd": "/tmp/claude-1000/spike-1115/home/.gemini/config",
+  "stdin": {
+    "artifactDirectoryPath": "/tmp/claude-1000/spike-1115/home/.gemini/antigravity-cli/brain/a96960d4-e7c1-4c2e-8818-0d11adaf46a1",
+    "conversationId": "a96960d4-e7c1-4c2e-8818-0d11adaf46a1",
+    "error": "",
+    "executionNum": 1,
+    "fullyIdle": true,
+    "modelName": "gemini-3.8-flash-low",
+    "terminationReason": "NO_TOOL_CALL",
+    "transcriptPath": "/tmp/claude-1000/spike-1115/home/.gemini/antigravity-cli/brain/a96960d4-e7c1-4c2e-8818-0d11adaf46a1/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/tmp/claude-1000/spike-1115/proj"
+    ]
+  },
+  "stdout": {
+    "decision": "stop"
+  }
+}
