@@ -41,3 +41,18 @@ it.each([null, {}, { kind: 'tmux', paneId: '%7', agentPid: 0, capturedAt: 'today
   await writeJsonAtomic(path.join(files.dir, 'pane.json'), pane);
   expect(await readPane(files)).toBeNull();
 });
+
+it('captures kitty window and socket including unsupported sockets for diagnostics', async () => {
+ for (const socket of ['unix:/tmp/kitty', 'tcp:localhost:1234']) {
+  expect(await capturePane(files, { KITTY_WINDOW_ID: '9', KITTY_LISTEN_ON: socket }, options)).toMatchObject({ kind: 'kitty', paneId: '9', socket });
+  expect((await readPane(files))?.kind).toBe('kitty');
+ }
+});
+it('captures only a valid iTerm session UUID', async () => {
+ const uuid = '12345678-abcd-abcd-abcd-123456789abc';
+ expect(await capturePane(files, { ITERM_SESSION_ID: `w0t0p0:${uuid}` }, options)).toMatchObject({ kind: 'iterm2', paneId: uuid });
+ expect((await readPane(files))?.paneId).toBe(uuid);
+ for (const value of [uuid, 'w0t0p0:bad', `other:${uuid}`]) {
+  expect(await capturePane(files, { ITERM_SESSION_ID: value }, options)).toBeNull();
+ }
+});

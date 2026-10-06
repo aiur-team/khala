@@ -45,6 +45,7 @@ const result = await build({
   logLevel: 'warning',
   metafile: true,
 });
+await fs.copyFile(`${agent}src/wake/terminal/iterm2_send.py`, `${dist}/iterm2_send.py`);
 // These package-level dependencies are irrelevant to the Node shim and must never ship.
 for (const input of Object.keys(result.metafile.inputs)) {
   if (/node_modules\/(?:canvas|@node-static\/node-static)\//.test(input)) {
