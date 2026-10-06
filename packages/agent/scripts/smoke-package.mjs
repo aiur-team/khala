@@ -110,19 +110,19 @@ try {
   const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
   if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
 
-  // U20(a) passed: OpenCode's plugin owns MCP registration; install writes only the pin.
+  // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
-  check('install opencode', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  check('install opencode', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball, KHALA_OPENCODE_PLUGIN_SPEC: `khala-opencode@${version}` } });
   const oc = JSON.parse(await fs.readFile(opencodeConfig, 'utf8'));
   if (JSON.stringify(oc) !== JSON.stringify({ plugin: [`khala-opencode@${version}`] })) throw new Error(`opencode.json: ${JSON.stringify(oc)}`);
-  check('install opencode (again)', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  check('install opencode (again)', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball, KHALA_OPENCODE_PLUGIN_SPEC: `khala-opencode@${version}` } });
   if (JSON.stringify(JSON.parse(await fs.readFile(opencodeConfig, 'utf8'))) !== JSON.stringify(oc)) throw new Error('install opencode is not idempotent');
   await mcpSmoke('mcp --harness opencode', process.execPath, [script, 'mcp', '--harness', 'opencode']);
   const ocHook = check('opencode session-start', process.execPath, [script, 'hook', 'deliver', '--harness', 'opencode'],
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin.length) throw new Error('uninstall left OpenCode plugin');
+  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin !== undefined) throw new Error('uninstall left OpenCode plugin');
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.

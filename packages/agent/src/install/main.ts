@@ -9,7 +9,7 @@ import { adapterFor } from '../harness';
 import { consentLine, setWake } from '../wake/cli';
 import { wakeDrivers } from '../wake/status';
 import { cursorPaths, installCursor } from './cursor';
-import { opencodePaths, installOpenCode } from './opencode';
+import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
 const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install mcp --print [--harness <id>]';
@@ -17,6 +17,8 @@ const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
   package?: { name: string; version: string } | undefined;
+  /** Registry fetch seam for the OpenCode plugin availability check. */
+  fetchRegistry?: typeof fetch;
   /** Installs `spec` globally under `prefix`; returns true on success. */
   npmInstall?: (prefix: string, spec: string) => boolean;
   stdout?: (line: string) => void;
@@ -73,8 +75,9 @@ export async function runOpenCodeInstall(flags: readonly string[], deps: Install
   const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
   const paths = opencodePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env });
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
-  return installOpenCode({ paths, uninstall, stdout, stderr,
-    plugin: env.KHALA_OPENCODE_PLUGIN_SPEC || `khala-opencode@${pkg?.version ?? '0.0.0'}`,
+  const override = env.KHALA_OPENCODE_PLUGIN_SPEC;
+  const plugin = uninstall ? null : override || (await opencodePluginPublished(pkg!.version, deps.fetchRegistry) ? `khala-opencode@${pkg!.version}` : null);
+  return installOpenCode({ paths, platform, uninstall, stdout, stderr, plugin,
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;

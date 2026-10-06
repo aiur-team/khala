@@ -2,7 +2,8 @@ import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { driverAllowed } from '../src/wake/shared/settings';
-import { stateRoot, resolveStateDir } from '../src/state';
+import { filesForDir, stateRoot, resolveStateDir } from '../src/state';
+import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -71,11 +72,18 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
   try {
     const parent = process.ppid;
     const input = JSON.parse(stdin);
-    if (input?.hook_event_name !== 'Stop' || typeof input.session_id !== 'string'
+    if (!['Stop', 'SessionStart'].includes(input?.hook_event_name) || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
     if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false)) return 0;
     const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
+    if (input.hook_event_name === 'SessionStart') {
+      // Claude maps -p to sdk-cli; hooks have piped stdio even in the TUI.
+      // Fail closed for SDK, desktop and unknown hosts. Stop keeps its existing behavior.
+      if (io.env.CLAUDE_CODE_ENTRYPOINT !== 'cli' || !['startup', 'resume'].includes(input.source)) return 0;
+      const files = filesForDir(dir);
+      if (!(await sessionStartWakeChannels(files, io.env)).length) return 0;
+    }
     const nonce = randomBytes(6).toString('hex');
     const owner = path.join(dir, 'watcher.json');
     temporary = path.join(dir, `.watcher-${nonce}.tmp`);
@@ -102,11 +110,20 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
       const activity = await readJson(path.join(dir, 'activity.json'));
       return activity?.state === 'idle' && typeof activity.updatedAt === 'string' && Number.isFinite(Date.parse(activity.updatedAt));
     };
+    const unread = async () => {
+      if (input.hook_event_name !== 'SessionStart') return unreadMessages(dir);
+      let messages = 0;
+      for (const channel of await sessionStartWakeChannels(filesForDir(dir), io.env)) {
+        if (channel.connected && (await readJson(channel.files.mode))?.mode !== 'async') messages += await unreadChannelMessages(channel.files.dir);
+      }
+      return messages;
+    };
     while (io.now().getTime() < deadline) {
       if (!await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) || !await owns() || !parentAlive(parent)) return 0;
-      if (await idle() && await unreadMessages(dir) > 0) {
+      if (input.hook_event_name === 'SessionStart' && !(await sessionStartWakeChannels(filesForDir(dir), io.env)).length) return 0;
+      if (await idle() && await unread() > 0) {
         // Delivery or a new prompt may have raced the first observation.
-        if (await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) && await unreadMessages(dir) > 0 && await idle() && await owns()
+        if (await driverAllowed(stateRoot(io.env), 'claude', 'watcher', false) && await unread() > 0 && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
           state = 'woke';
