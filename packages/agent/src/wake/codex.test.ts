@@ -54,17 +54,31 @@ beforeEach(async () => {
 });
 afterEach(async () => { await waker?.stop(); waker = undefined; vi.useRealTimers(); vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 
+function controlledEvaluations() {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const listChannels = vi.spyOn(channels, 'listChannels');
+  return async () => {
+    const before = listChannels.mock.calls.length;
+    waker!.notify();
+    await vi.waitFor(() => expect(listChannels.mock.settledResults.filter(result => result.type === 'fulfilled').length).toBeGreaterThanOrEqual(before + 1));
+    // A second evaluation starts only after the preceding evaluation has finished.
+    const next = listChannels.mock.calls.length + 1;
+    waker!.notify();
+    await vi.waitFor(() => expect(listChannels.mock.settledResults.filter(result => result.type === 'fulfilled').length).toBeGreaterThanOrEqual(next));
+  };
+}
+
 it('queues the fixed notice once for a burst of five appends', async () => {
   await activity('idle'); start();
   for (let i = 0; i < 5; i++) { await append(String(i)); waker!.notify(); }
-  await wait();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   expect(run).toHaveBeenCalledTimes(1);
   expect(run.mock.calls[0]).toEqual([['queue', '--thread', 'thread-1', '--message', expect.stringMatching(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/)], expect.any(AbortSignal)]);
 });
 it('does not wake busy sessions, then wakes when idle', async () => {
   await append('1'); await activity('busy'); start(); await wait(300);
   expect(run).not.toHaveBeenCalled();
-  await activity('idle'); await wait(); expect(run).toHaveBeenCalledTimes(1);
+  await activity('idle'); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
 });
 it('does not wake for events only or missing activity', async () => {
   await append('1', 'event'); await activity('idle'); start(); await wait();
@@ -73,28 +87,33 @@ it('does not wake for events only or missing activity', async () => {
   expect(run).not.toHaveBeenCalled();
 });
 it('clears pending after a later hook boundary and stops when unread is zero', async () => {
-  await append('1'); await activity('idle'); start(); await wait();
+  const reevaluate = controlledEvaluations();
+  await append('1'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   time += 100;
-  await activity('busy', time); await wait(); expect(run).toHaveBeenCalledTimes(1);
-  await activity('idle', time); await wait(); expect(run).toHaveBeenCalledTimes(2);
+  await activity('busy', time); await reevaluate(); expect(run).toHaveBeenCalledTimes(1);
+  await activity('idle', time); waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: '1', deliveredCount: 1 });
-  time += 100; await activity('idle', time); await wait(); expect(run).toHaveBeenCalledTimes(2);
+  time += 100; await activity('idle', time); await reevaluate(); expect(run).toHaveBeenCalledTimes(2);
 });
 it('allows at most two wakes per cursor count, and permits waking after cursor advances', async () => {
-  await append('1'); await append('2'); await activity('idle'); start(); await wait();
-  for (let i = 0; i < 3; i++) { time += 60_000; waker!.notify(); await wait(); }
+  const reevaluate = controlledEvaluations();
+  await append('1'); await append('2'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
+  for (let i = 0; i < 2; i++) { time += 60_000; await reevaluate(); }
   expect(run).toHaveBeenCalledTimes(2);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: '1', deliveredCount: 1 });
-  waker!.notify(); await wait(); expect(run).toHaveBeenCalledTimes(3);
+  waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(3));
 });
 it('resets the attempt cap and pending retry when switching channels at cursor zero', async () => {
+  const reevaluate = controlledEvaluations();
   const credentials = { homeserver: 'https://example.test', userId: '@agent-a:example.test',
     accessToken: 'token', deviceId: 'device-a', roomId: layout === 'legacy' ? '!room-a:example.test' : 'room' };
   await saveSession(files, credentials);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
-  await append('a'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  waker!.notify(); await wait();
+  await append('a'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
+  await reevaluate();
   expect(run).toHaveBeenCalledTimes(2);
 
   await fs.unlink(files.inbox);
@@ -103,17 +122,17 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
   await appendEntries(files, [{ eventId: 'b', roomId: layout === 'legacy' ? '!room-b:example.test' : 'room', ts: new Date(time).toISOString(),
     sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
-  waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
-  time += 60_000; waker!.notify(); await wait();
+  waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(3));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(4));
+  time += 60_000; await reevaluate();
   expect(run).toHaveBeenCalledTimes(4);
 });
 it('reports failure without content and waits before retrying', async () => {
   outcome = { status: 'exited', code: 1 };
-  await append('1'); await activity('idle'); start(); await wait();
+  await append('1'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   expect(run).toHaveBeenCalledTimes(1);
   expect(diagnostics.map(line => JSON.parse(line))).toEqual([{ ok: false, warning: 'codex_queue_failed', status: 'exited' }]);
-  time += 60_001; await wait(); expect(run).toHaveBeenCalledTimes(2);
+  time += 60_001; waker!.notify(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
 });
 it('coalesces notifications during a queue, aborts it and waits for settlement on stop', async () => {
   await append('1'); await activity('idle');
@@ -124,7 +143,7 @@ it('coalesces notifications during a queue, aborts it and waits for settlement o
     return new Promise<CodexIdleWakeOutcome>(resolve => { settle = () => resolve({ status: 'queued' }); });
   });
   waker = createCodexWaker({ files: session, threadId: 'thread-1', port: { run: slow }, probe: async () => ({ available: true }), pollMs: 20, now: () => time });
-  waker.notify(); await wait();
+  waker.notify(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
   for (let i = 0; i < 5; i++) waker.notify();
   await wait(); expect(slow).toHaveBeenCalledTimes(1);
   let stopped = false;
@@ -145,10 +164,10 @@ it('runs exactly one coalesced reevaluation after an in-flight queue settles', a
   settle(); await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(2));
 });
 it('reports content-free errors and continues after a storage failure', async () => {
-  await fs.mkdir(files.inbox); start(); await wait();
+  await fs.mkdir(files.inbox); start(); await vi.waitFor(() => expect(diagnostics.length).toBeGreaterThan(0));
   expect(diagnostics.every(line => line === '{"ok":false,"warning":"codex_waker_error"}\n')).toBe(true);
   expect(diagnostics.length).toBeGreaterThan(0);
-  await fs.rmdir(files.inbox); await append('1'); await activity('idle'); await wait(); expect(run).toHaveBeenCalledTimes(1);
+  await fs.rmdir(files.inbox); await append('1'); await activity('idle'); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
 });
 it.each([false, true])('disables queue after two unverified wakes; terminal consent=%s', async consent => {
   const env = { XDG_STATE_HOME: root };
@@ -159,10 +178,11 @@ it.each([false, true])('disables queue after two unverified wakes; terminal cons
   waker = createWakeLadder({ files: session, harness: 'codex', sessionId: 'thread-1', env, now: () => time, pollMs: 100_000,
     drivers: [createCodexWakeDriver({ port: { run: queued }, probe: async () => ({ available: true }) }),
       { id: 'terminal', rung: 4, optIn: true, minIdleMs: 30_000, deadlineMs: 10_000, available: () => true, wake: terminal }] });
-  waker.notify(); await vi.waitFor(() => expect(queued).toHaveBeenCalledTimes(1));
-  time += 60_000; waker.notify(); await vi.waitFor(() => expect(queued).toHaveBeenCalledTimes(2));
+  waker.notify(); await vi.waitFor(() => expect(queued).toHaveResolvedTimes(1));
+  time += 60_000; waker.notify(); await vi.waitFor(() => expect(queued).toHaveResolvedTimes(2));
   time += 30_000; waker.notify();
   await vi.waitFor(async () => expect((await readWakeState(session.dir)).queue).toMatchObject({ disabled: true, failures: 2, reason: 'nonce_timeout' }));
+  if (consent) await vi.waitFor(() => expect(terminal).toHaveBeenCalledTimes(1));
   await wait();
   expect(queued).toHaveBeenCalledTimes(2);
   expect(terminal).toHaveBeenCalledTimes(consent ? 1 : 0);
@@ -186,16 +206,7 @@ it('uses the real no-shell process runner with scrubbed env and no message marke
 });
 
 it('requires a strictly later hook timestamp and retries at exactly 60 seconds', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-  const listChannels = vi.spyOn(channels, 'listChannels');
-  const reevaluate = async () => {
-    const before = listChannels.mock.calls.length;
-    waker!.notify();
-    await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(before + 1));
-    // The next evaluation cannot start until the preceding one has finished.
-    waker!.notify();
-    await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(before + 2));
-  };
+  const reevaluate = controlledEvaluations();
   await append('1'); await activity('idle'); start(100_000);
   await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   await activity('idle', time); await reevaluate();
@@ -214,16 +225,17 @@ it('suppresses async wakes and resumes on sync without moving the cursor', async
   expect(run).not.toHaveBeenCalled();
   await writeJsonAtomic(files.mode, { mode: 'sync' });
   waker!.notify();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
 });
 it('clears a pending wake when async is entered', async () => {
-  await append('1'); await activity('idle'); start(); await wait();
+  const reevaluate = controlledEvaluations();
+  await append('1'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   expect(run).toHaveBeenCalledTimes(1);
   await writeJsonAtomic(files.mode, { mode: 'async' });
-  waker!.notify(); await wait();
+  await reevaluate();
   await writeJsonAtomic(files.mode, { mode: 'steer' });
   waker!.notify();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
 });
 
 
@@ -254,25 +266,26 @@ async function joinedB(mode = 'sync', messages = 1) {
   return target;
 }
 it('coalesces two sync channels and renews the composite budget after delivery in either', async () => {
+  const reevaluate = controlledEvaluations();
   await append('a1'); await append('a2');
   const b = await joinedB('sync', 2);
   await activity('idle'); start();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
   await append('a3');
   time += 60_000; waker!.notify();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   await appendEntries(b, [{ eventId: 'b3', roomId: 'room-b', ts: new Date(time).toISOString(), sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
-  time += 60_000; waker!.notify(); await wait();
+  time += 60_000; await reevaluate();
   expect(run).toHaveBeenCalledTimes(2);
   await writeJsonAtomic(b.cursor, { lastDeliveredEventId: 'b0', deliveredCount: 1 });
   const cursor = await fs.readFile(b.cursor);
   waker!.notify();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(3));
   expect(await fs.readFile(b.cursor)).toEqual(cursor);
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: 'a1', deliveredCount: 1 });
   time += 60_000; waker!.notify();
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(4));
 });
 it('does not wake for ten unread async messages beside an empty sync channel', async () => {
   await joinedB('async', 10);
@@ -286,21 +299,21 @@ it('does not wake for unread async A beside empty sync B', async () => {
   expect(run).not.toHaveBeenCalled();
 });
 it('joining and rejoining an empty channel preserves the other channel wake budget', async () => {
-  await append('a1'); await activity('idle'); start(); await wait();
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  const reevaluate = controlledEvaluations();
+  await append('a1'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
+  time += 60_000; waker!.notify();
+  await vi.waitFor(() => expect(run).toHaveResolvedTimes(2));
   const b = await joinedB('sync', 0);
-  time += 60_000; waker!.notify(); await wait();
+  time += 60_000; await reevaluate();
   expect(run).toHaveBeenCalledTimes(2);
   await saveSession(b, { homeserver: 'https://example.test', userId: '@rejoined:example.test', accessToken: 'token', deviceId: 'b', roomId: 'room-b' });
-  waker!.notify(); await wait();
+  await reevaluate();
   expect(run).toHaveBeenCalledTimes(2);
   await expect(fs.readFile(files.cursor)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 it('does not renew an exhausted cursor budget by toggling async', async () => {
-  // Drive evaluations explicitly while filesystem I/O and waitFor use real timers.
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const reevaluate = controlledEvaluations();
   const readMode = vi.spyOn(listeningMode, 'readListeningMode');
   await append('a1'); await activity('idle'); start(100_000);
   await vi.waitFor(() => expect(run).toHaveResolvedTimes(1));
@@ -310,13 +323,8 @@ it('does not renew an exhausted cursor budget by toggling async', async () => {
   waker!.notify();
   // Observe the async evaluation before switching back; a sleep can skip it.
   await vi.waitFor(() => expect(readMode.mock.settledResults).toContainEqual({ type: 'fulfilled', value: 'async' }));
-  const listChannels = vi.spyOn(channels, 'listChannels');
   await writeJsonAtomic(files.mode, { mode: 'sync' });
-  time += 60_000; waker!.notify();
-  await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(1));
-  // Starting a second evaluation proves the first finished, including any wake.
-  waker!.notify();
-  await vi.waitFor(() => expect(listChannels).toHaveResolvedTimes(2));
+  time += 60_000; await reevaluate();
   await waker!.stop();
   expect(run).toHaveBeenCalledTimes(2);
 });
