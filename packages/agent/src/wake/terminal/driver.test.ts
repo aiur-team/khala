@@ -1,3 +1,4 @@
+import { kittyLsFixture } from './kitty-fixture';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -17,7 +18,7 @@ let line: string, column: number, mode: string, sync: string, row: number, tty: 
 let calls: string[][];
 const at = Date.parse('2026-10-05T12:00:00Z');
 const guard = { pattern: /^›$/, cursorColumn: 2 };
-const read: ProcessReader = async pid => pid === 100 ? { pid, ppid: 50, command: 'codex', startTime: '1' } : pid === 50 ? { pid, ppid: 1, command: 'shell', startTime: '2' } : null;
+const read: ProcessReader = async pid => pid === 100 ? { pid, ppid: 50, command: 'codex', startTime: '1' } : pid === 101 ? { pid, ppid: 100, command: 'child', startTime: '3' } : pid === 50 ? { pid, ppid: 1, command: 'shell', startTime: '2' } : null;
 const run: CommandRunner = async (_command, argv) => {
   calls.push([...argv]);
   if (argv[0] === 'display-message') return `50|${mode}|0|${column}|${row}|${tty}|${sync === 'on' ? 1 : 0}`;
@@ -271,11 +272,11 @@ it('reports capture pending for Codex until its first prompt in a supported term
  expect(await make().unavailableReason!(ctx)).toBe('no remote-control API');
 });
 
-it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and submission guards', async kind => {
+it.each(['kitty', 'iterm2'] as const)('%s submits and cleans up a trimmed empty row while preserving drafts', async kind => {
  const paneId = kind === 'kitty' ? '9' : '12345678-abcd-abcd-abcd-123456789abc';
  await writeJsonAtomic(path.join(ctx.files.dir, 'pane.json'), { kind, paneId, ...(kind === 'kitty' ? { socket: 'unix:/tmp/kitty' } : {}),
   agentPid: 100, agentStartTime: '1', capturedAt: new Date(at).toISOString() });
- let text = '› ', cursorX = 2, cursorY = 1, owned = true, skipEnter = false;
+ let text = '›', cursorX = 2, cursorY = 1, owned = true, skipEnter = false;
  const sent: string[] = [];
  const hostRun: CommandRunner = async (_command, args) => {
   if (kind === 'iterm2') {
@@ -285,17 +286,17 @@ it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and sub
    if (JSON.stringify(view) !== args[3]) return '{"status":"not_empty"}';
    const value = args[2]!; sent.push(value);
    if (/^\x7f+$/.test(value)) text = text.slice(0, -value.length);
-   else if (value !== '\r') text += value;
+   else if (value !== '\r') text = text.padEnd(cursorX, ' ') + value;
    cursorX = text.length;
    return '{"status":"sent"}';
   }
-  if (args.at(-1) === 'ls') return JSON.stringify([{ tabs: [{ windows: [{ id: 9, foreground_processes: [{ pid: 100 }] }] }] }]);
+  if (args.at(-1) === 'ls') return JSON.stringify(kittyLsFixture());
   if (args[0] === '-o') return 'ttys001';
   if (args.includes('get-text')) return `transcript\n${text}\nfooter\x1b[?25h\x1b[${cursorY + 1};${cursorX + 1}H\x1b[?12h`;
   if (args.includes('send-text')) {
    const value = args.at(-1)!; sent.push(value);
    if (/^\x7f+$/.test(value)) text = text.slice(0, -value.length);
-   else if (value !== '\\r') text += value;
+   else if (value !== '\\r') text = text.padEnd(cursorX, ' ') + value;
    cursorX = text.length;
   }
   return '';
@@ -307,7 +308,7 @@ it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and sub
  for (const body of ['$(evil);\n\r', '"`shell`💬', '\x1b[2J']) {
   await expect(driver.wake(ctx, body)).rejects.toThrow('invalid_terminal_wake_line');
  }
- text = '› '; cursorX = 2;
+ text = '›'; cursorX = 2;
  await driver.wake(ctx, wakeLine('1234abcd'));
  expect(sent).toEqual([wakeLine('1234abcd'), kind === 'kitty' ? '\\r' : '\r']);
  // As in U14, exercise arbitrary inbox bodies through the real ladder.
@@ -320,7 +321,7 @@ it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and sub
   const body = Array.from({ length: 8 }, (_, i) => alphabet[(seed * 7 + i * 3) % alphabet.length]).join('');
   await appendEntries(files, [{ eventId: `event-${seed}`, roomId: 'room', ts: 'now', sender: 'peer', senderLabel: body,
    senderKind: 'human', body, kind: 'message' }]);
-  text = '› '; cursorX = 2; sent.length = 0;
+  text = '›'; cursorX = 2; sent.length = 0;
   const loop = createWakeLadder({ files, harness: 'codex', sessionId: `${kind}-fuzz-${seed}`, env: ctx.env,
    drivers: [driver], pollMs: 100_000, now: () => at });
   try {
@@ -335,7 +336,7 @@ it.each(['kitty', 'iterm2'] as const)('%s follows fixed-line, draft-skip and sub
    agentPid: 100, agentStartTime: '1', capturedAt: new Date(at).toISOString() });
   await writeActivity(files, 'idle', () => new Date(at - 30_000));
   await writeJsonAtomic(path.join(stateRoot(ctx.env), 'wake-settings.json'), { consent: { 'codex/terminal': { at: 'now' } }, off: {} });
-  text = '› '; cursorX = 2; cursorY = 1; owned = true; skipEnter = false; sent.length = 0;
+  text = '›'; cursorX = 2; cursorY = 1; owned = true; skipEnter = false; sent.length = 0;
   const controller = new AbortController();
   const cancelled = make({ run: hostRun, platform: 'darwin', ownsTerminal: async () => owned, delay: async () => {
    if (change === 'activity') await writeActivity(files, 'busy', () => new Date(at));
