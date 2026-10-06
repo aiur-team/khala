@@ -24,7 +24,7 @@ export type WakeLadderDeps = Readonly<{
 }>;
 export type WakeLadder = Readonly<{ notify(): void; stop(): Promise<void> }>;
 
-export function createWakeLadder(deps: WakeLadderDeps): WakeLadder {
+export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): Promise<void> } {
   if (!SESSION_ID_PATTERN.test(deps.sessionId)) throw new TypeError('invalid_session_id');
   const now = deps.now ?? Date.now;
   const stderr = deps.stderr ?? (line => { process.stderr.write(line); });
@@ -158,6 +158,7 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder {
   timer.unref();
   return {
     notify,
+    async poll() { notify(); await inFlight; },
     async stop() {
       stopped = true;
       again = false;

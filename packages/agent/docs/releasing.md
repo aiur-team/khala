@@ -40,3 +40,16 @@ packages/agent/scripts/sync-release.mjs`, and replace `khala-cli` in the install
 (`packages/agent/README.md`, `packages/agent/npm/README.md`, `packages/agent/docs/`,
 `docs/user-guide.md`, `apps/web/src/landing/public/AGENTS.md`). Tests fail while the plugin
 pins disagree with `npm/package.json`.
+
+## OpenCode plugin
+
+`khala-opencode` is bundled from `packages/opencode-plugin/` and versioned with
+`khala-cli` by `sync-release.mjs`. The same `release-npm.yml` builds/tests/packs
+both packages and publishes the plugin with npm OIDC. Before U22 merges, the
+operator must hand-publish a placeholder plugin version, configure its trusted
+publisher for `aiur-team/khala` and `release-npm.yml`, and confirm the dry-run
+workflow above. Until the package exists, the workflow skips plugin publication
+with a warning. The installer uses MCP-only mode when the matching plugin
+version is unavailable, so this prerequisite must be checked before shipping
+plugin support. A registry lookup failure also skips publication; inspect the
+workflow warning rather than treating the CLI publication as plugin success.
