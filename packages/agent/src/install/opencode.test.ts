@@ -106,7 +106,7 @@ it('checks the exact version with a short timeout', async () => {
   expect(timeout).toHaveBeenCalledWith(3000);
   expect(await opencodePluginPublished('1.2.3', vi.fn(async () => { throw new DOMException('timeout', 'TimeoutError'); }))).toBe(false);
 });
-it.each([false, true])('merges comment-free JSONC in place (JSON exists: %s)', async jsonExists => {
+it('merges a single comment-free JSONC in place', async () => {
   const deps = { home, env: { HOME: home }, package: { name: 'khala-cli', version: '1.2.3' },
     fetchRegistry: vi.fn(async () => new Response('{}')), npmInstall: vi.fn(() => true), stdout: vi.fn(), stderr: vi.fn() };
   const paths = opencodePaths({ home, env: deps.env, platform: process.platform, path });
@@ -114,7 +114,6 @@ it.each([false, true])('merges comment-free JSONC in place (JSON exists: %s)', a
   const jsonc = paths.configFile.replace(/\.json$/u, '.jsonc');
   const original = '{"$schema": "https://opencode.ai/config.json"}';
   await fs.writeFile(jsonc, original);
-  if (jsonExists) await fs.writeFile(paths.configFile, '{"model":"mine"}');
   expect(await runInstall(['opencode'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(jsonc, 'utf8'))).toEqual({
     $schema: 'https://opencode.ai/config.json', plugin: ['khala-opencode@1.2.3'],
@@ -125,8 +124,36 @@ it.each([false, true])('merges comment-free JSONC in place (JSON exists: %s)', a
   expect(await fs.readFile(jsonc + '.khala-bak', 'utf8')).toBe(original);
   expect(await runInstall(['opencode', '--uninstall'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(jsonc, 'utf8'))).toEqual({ $schema: 'https://opencode.ai/config.json' });
-  if (jsonExists) expect(await fs.readFile(paths.configFile, 'utf8')).toBe('{"model":"mine"}');
-  else await expect(fs.stat(paths.configFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(fs.stat(paths.configFile)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it.each(['plugin', 'mcp', 'uninstall'] as const)('refuses both config files before any mutation in %s mode', async mode => {
+  const deps = { home, env: { HOME: home }, package: { name: 'khala-cli', version: '1' },
+    fetchRegistry: vi.fn(async () => new Response('{}', { status: mode === 'mcp' ? 404 : 200 })),
+    npmInstall: vi.fn(() => true), stdout: vi.fn(), stderr: vi.fn() };
+  const paths = opencodePaths({ home, env: deps.env, platform: process.platform, path });
+  await fs.mkdir(paths.configDir, { recursive: true });
+  const jsonc = paths.configFile.replace(/\.json$/u, '.jsonc');
+  const schema = { $schema: 'https://opencode.ai/config.json' };
+  const scenarios = [
+    { json: { mcp: { khala: { type: 'remote', url: 'https://foreign.example/mcp' } } }, jsonc: schema },
+    { json: { plugin: ['sibling@1'] }, jsonc: schema },
+    { json: { plugin: ['khala-opencode@0'], mcp: { khala: opencodeMcpEntry(process.platform, paths.bin) } },
+      jsonc: { ...schema, plugin: ['file:/old-plugin.tgz'] } },
+  ];
+  for (const scenario of scenarios) {
+    const files = new Map([
+      [paths.configFile, JSON.stringify(scenario.json)], [jsonc, JSON.stringify(scenario.jsonc)],
+      [paths.configFile + '.khala-plugin', 'file:/old-plugin.tgz\n'],
+    ]);
+    for (const [file, content] of files) await fs.writeFile(file, content);
+    expect(await runInstall(mode === 'uninstall' ? ['opencode', '--uninstall'] : ['opencode'], deps)).toBe(1);
+    expect(deps.npmInstall).not.toHaveBeenCalled();
+    expect(deps.stderr).toHaveBeenLastCalledWith(expect.stringContaining(`${paths.configFile} and ${jsonc}`));
+    expect(deps.stderr).toHaveBeenLastCalledWith(expect.stringContaining(mode === 'uninstall'
+      ? 'remove the Khala config manually' : 'merge the Khala config manually'));
+    for (const [file, content] of files) expect(await fs.readFile(file, 'utf8')).toBe(content);
+    expect((await fs.readdir(paths.configDir)).sort()).toEqual([...files.keys()].map(file => path.basename(file)).sort());
+  }
 });
 it('preserves sibling settings and removes arbitrary plugin overrides in JSONC', async () => {
   const deps = { home, env: { HOME: home, KHALA_OPENCODE_PLUGIN_SPEC: 'file:/custom.tgz' },
@@ -170,7 +197,7 @@ it.each([
   if (jsonExists) await fs.writeFile(paths.configFile, '{}');
   expect(await runInstall(['opencode'], deps)).toBe(1);
   expect(deps.npmInstall).not.toHaveBeenCalled();
-  expect(deps.stderr).toHaveBeenCalledWith(expect.stringContaining('opencode.jsonc exists'));
+  expect(deps.stderr).toHaveBeenCalledWith(expect.stringContaining(jsonExists ? `both ${paths.configFile} and ${jsonc} exist` : 'opencode.jsonc exists'));
   expect(await fs.readFile(jsonc, 'utf8')).toBe(original);
   if (jsonExists) expect(await fs.readFile(paths.configFile, 'utf8')).toBe('{}');
   else await expect(fs.stat(paths.configFile)).rejects.toMatchObject({ code: 'ENOENT' });

@@ -62,6 +62,15 @@ export async function installOpenCode(input: {
     try { text = await fs.readFile(configFile, 'utf8'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
+  if (configFile !== paths.configFile) {
+    let jsonExists = false;
+    try { await fs.stat(paths.configFile); jsonExists = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (jsonExists) {
+      stderr(`khala: both ${paths.configFile} and ${configFile} exist; ${uninstall ? 'remove' : 'merge'} the Khala config manually, or combine your settings into one config and remove the other before retrying`);
+      return 1;
+    }
+  }
   let config: unknown;
   // Strict JSON accepts OpenCode's generated schema-only JSONC while refusing
   // comments and other syntax we cannot preserve when serializing the merge.
