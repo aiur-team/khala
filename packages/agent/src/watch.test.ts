@@ -5,7 +5,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { appendEntries } from './inbox';
+import { appendEntries, readCursor } from './inbox';
+import { readActivity, writeActivity } from './activity';
+import { deliverCore } from './harness/deliver-core';
+import { adapterFor } from './harness';
 import { channelFiles, ensureStateDir, openSessionDir, writeJsonAtomic, writeStatus, type SessionFiles } from './state';
 import { mentions, monitorArmed, watchSession } from './watch';
 
@@ -280,4 +283,37 @@ it('notifies after a same-identity channel inbox is reset on rejoin', async () =
   await writeJsonAtomic(target.cursor, { deliveredCount: 0, lastDeliveredEventId: null });
   await appendEntries(target, [{ ...entry(2), roomId: '!a:local' }]);
   await vi.waitFor(() => expect(lines).toHaveLength(1));
+});
+
+it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', async () => {
+  await writeJsonAtomic(files.mode, { mode: 'sync' });
+  const env = { XDG_STATE_HOME: root };
+  let stdout = '', stderr = '';
+  const hook = (event: string, prompt?: string) => deliverCore(JSON.stringify({
+    session_id: 'session', hook_event_name: event, ...(prompt ? { prompt } : {}),
+  }), adapterFor('claude')!, { env, now: () => new Date(),
+    stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } } });
+  await writeActivity(files, 'idle');
+  await hook('UserPromptSubmit', 'Run two separate sleeps');
+  await armed();
+  await appendEntries(files, [entry(1, 'sync-msg-1 mid-turn note')]);
+  await vi.waitFor(() => expect(lines).toHaveLength(1));
+  await hook('UserPromptSubmit', lines[0]);
+  await hook('PostToolUse');
+  expect(stdout).toBe('');
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+  await hook('Stop');
+  expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
+  expect((await readCursor(files)).deliveredCount).toBe(1);
+  stdout = '';
+  await hook('Stop');
+  expect((await readActivity(files)).state).toBe('idle');
+  await appendEntries(files, [entry(2, '@Owner-Claude idle mention')]);
+  await vi.waitFor(() => expect(lines).toHaveLength(2));
+  expect(lines[1]).toContain('(1 mentions you)');
+  await hook('UserPromptSubmit', lines[1]);
+  expect(JSON.parse(stdout).hookSpecificOutput).toMatchObject({ hookEventName: 'UserPromptSubmit',
+    additionalContext: expect.stringContaining('idle mention') });
+  expect((await readCursor(files)).deliveredCount).toBe(2);
+  expect(stderr).toBe('');
 });

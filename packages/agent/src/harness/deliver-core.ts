@@ -99,11 +99,11 @@ export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_B
   return selected;
 }
 
-async function channelFrames(files: SessionFiles, tool: boolean, requireWake: boolean, io: HookIO): Promise<string | null> {
+async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWake: boolean, io: HookIO): Promise<string | null> {
   const groups: FrameGroup[] = [];
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
-    if (mode === 'async' || (tool && mode !== 'steer')) continue;
+    if (mode === 'async' || (steerOnly && mode !== 'steer')) continue;
     const [status, pending] = await Promise.all([readStatus(channel.files), unread(channel.files)]);
     groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
       ...pending, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
@@ -209,9 +209,15 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
           } catch { diagnostic(io, 'wake_verification_failed'); }
         }
         if (input.event !== 'start') {
+          let steerOnly = input.event === 'tool';
           if (input.event === 'prompt') {
+            const activity = await readActivity(files);
+            // Claude Monitor/task notifications can submit a prompt inside a turn.
+            // The epoch fallback has no recorded turn; preserve first-prompt delivery.
+            steerOnly = adapter.id === 'claude' && activity.state === 'busy'
+              && Date.parse(activity.updatedAt) !== 0;
             try {
-              await settleAttempts(files.dir, { now: io.now().getTime(), activity: await readActivity(files),
+              await settleAttempts(files.dir, { now: io.now().getTime(), activity,
                 promptText: input.promptText ?? '' });
             } catch { diagnostic(io, 'wake_verification_failed'); }
             await writeActivity(files, 'busy', io.now);
@@ -219,7 +225,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
           if (input.event === 'stop' && input.continuation) {
             await writeActivity(files, 'idle', io.now);
           } else if (input.event !== 'prompt' || codec.promptAcceptsContext) {
-            const frame = await channelFrames(files, input.event === 'tool',
+            const frame = await channelFrames(files, steerOnly,
               input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
             if (frame) {
               await writeActivity(files, 'busy', io.now);
