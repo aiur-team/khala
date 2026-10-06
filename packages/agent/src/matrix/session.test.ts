@@ -7,7 +7,7 @@ vi.mock('./crypto-store', () => ({ openCryptoStore: vi.fn(async () => sdk.store)
 vi.mock('matrix-js-sdk', () => ({
   createClient: vi.fn(() => sdk.client),
   ClientEvent: { Sync: 'sync', Room: 'room' }, RoomEvent: { Timeline: 'timeline', MyMembership: 'membership' },
-  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR' },
+  MatrixEventEvent: { Decrypted: 'decrypted' }, SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING', Error: 'ERROR', Stopped: 'STOPPED' },
   EventType: { RoomMember: 'm.room.member' },
   Direction: { Backward: 'b' }, Method: { Get: 'GET' },
 }));
@@ -35,7 +35,7 @@ function fake() {
     crypto, auth, room, initRustCrypto: vi.fn().mockResolvedValue(undefined), getCrypto: () => crypto,
     getSyncState: () => sync,
     startClient: vi.fn(async () => { sync = 'PREPARED'; bus.emit('sync', sync); }),
-    stopClient: vi.fn(), getRoom: vi.fn(() => room),
+    stopClient: vi.fn(() => { sync = 'STOPPED'; bus.emit('sync', sync); }), getRoom: vi.fn(() => room),
     joinRoom: vi.fn(async () => { membership = 'join'; bus.emit('membership', room, 'join'); return room; }),
     decryptEventIfNeeded: vi.fn().mockResolvedValue(undefined),
     getEventMapper: () => (e: unknown) => e,
@@ -370,4 +370,40 @@ it('uses different transaction IDs for successive rejoins on the same device', a
   client = fake(); sdk.client = client;
   session = await createAgentMatrixSession(creds); await session.join('!r:hs');
   expect(client.sendEvent.mock.calls[0]![3]).not.toBe(first);
+});
+
+
+it('removes persisted credentials immediately but waits for sync completion before destroying stores', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    forgetIdentity: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  await session.join('!r:hs');
+  // Model an in-flight sync save: stopClient aborts polling but STOPPED only
+  // arrives after the response currently being processed has finished saving.
+  client.stopClient.mockImplementation(() => {});
+  client.emit('membership', client.room, 'leave');
+  await flush();
+  expect(store.forgetIdentity).toHaveBeenCalledOnce();
+  expect(store.wipe).not.toHaveBeenCalled();
+  expect(store.close).not.toHaveBeenCalled();
+  client.emit('sync', 'STOPPED');
+  await session.stop();
+  expect(store.wipe).toHaveBeenCalledOnce();
+  expect(store.close).toHaveBeenCalledOnce();
+});
+
+it('still stops and releases the store when the first identity deletion fails', async () => {
+  const store = { prefix: 'channel-store', restored: true, joinedAt: 100,
+    sync: { startup: vi.fn().mockResolvedValue(undefined) }, rememberJoin: vi.fn().mockResolvedValue(undefined),
+    forgetIdentity: vi.fn().mockRejectedValue(new Error('disk busy')), close: vi.fn().mockResolvedValue(undefined), wipe: vi.fn().mockResolvedValue(undefined) };
+  sdk.store = store;
+  session = await createAgentMatrixSession(creds, { cryptoStore: { dir: '/private/channel', root: '/private' } });
+  await session.join('!r:hs');
+  client.emit('membership', client.room, 'leave');
+  await session.stop();
+  expect(client.stopClient).toHaveBeenCalledOnce();
+  expect(store.wipe).toHaveBeenCalledOnce();
+  expect(store.close).toHaveBeenCalledOnce();
 });

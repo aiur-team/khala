@@ -3,6 +3,7 @@ import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/chan
 import type { ChannelSession, SessionEndReason, SessionMessage, SessionModeCommand, SessionOptions } from '../transport';
 import type { AgentCredentials } from '@khala/contracts/m1/agent-join';
 import { randomUUID } from 'node:crypto';
+import { StateError } from '../state';
 import { memberRenameContent } from '../events/member-rename';
 import { createClient, ClientEvent, RoomEvent, MatrixEventEvent, SyncState, Direction, Method, EventType } from 'matrix-js-sdk';
 import type { MatrixEvent, Room, IRoomTimelineData } from 'matrix-js-sdk';
@@ -134,6 +135,25 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const stopSession = async () => {
     if (stopped) return;
     stopped = true;
+    if (wipe && persistent?.forgetIdentity) {
+      // Still stop the client and release its lease if the filesystem refuses
+      // this first attempt. wipe retries deletion after the sync has drained.
+      try { await persistent.forgetIdentity(); } catch { log('crypto_cleanup_failed'); }
+    }
+    // stopClient only aborts the HTTP request; STOPPED is emitted after the
+    // current sync response and its store save have actually finished.
+    let syncStopped: Promise<void> | undefined;
+    if (persistent && client.getSyncState() !== null && client.getSyncState() !== SyncState.Stopped) {
+      syncStopped = new Promise<void>((resolve, reject) => {
+        const done = (state: SyncState) => { if (state === SyncState.Stopped) finish(); };
+        const timer = setTimeout(() => finish(new Error('crypto_sync_stop_timeout')), 10_000);
+        const finish = (error?: Error) => {
+          clearTimeout(timer); client.removeListener(ClientEvent.Sync, done);
+          if (error) reject(error); else resolve();
+        };
+        client.on(ClientEvent.Sync, done);
+      });
+    }
     client.stopClient();
     client.removeListener(RoomEvent.Timeline, timeline);
     client.removeListener(MatrixEventEvent.Decrypted, decrypted);
@@ -146,7 +166,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     modeHandlers.clear();
     ended.clear();
     if (persistent) {
-      try { if (wipe) await persistent.wipe(); } finally { await persistent.close(); }
+      try { await syncStopped; if (wipe) await persistent.wipe(); } finally { await persistent.close(); }
     }
   };
   const membershipEnded = (room: Room, membership: string) => {
@@ -157,14 +177,22 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
     if (stopped) return;
     const listeners = [...ended];
     wipe = true;
-    void stop().catch(() => log('crypto_cleanup_failed'));
+    void stop().catch(() => { log('crypto_cleanup_failed'); console.error('khala: crypto_cleanup_failed'); });
     for (const handler of listeners) {
       try { handler(reason); } catch { log('ended_handler_error'); }
     }
   };
   try {
     if (persistent) await persistent.sync.startup();
-    await client.initRustCrypto(persistent ? { useIndexedDB: true, cryptoDatabasePrefix: persistent.prefix } : { useIndexedDB: false });
+    try {
+      await client.initRustCrypto(persistent ? { useIndexedDB: true, cryptoDatabasePrefix: persistent.prefix } : { useIndexedDB: false });
+    } catch (error) {
+      if (!persistent?.restored || (error instanceof StateError && error.code === 'unsafe_state_dir')) throw error;
+      // Never attach a new key store to the old device. The caller can make one
+      // bounded retry using the replacement credentials authorized by control.
+      wipe = true;
+      throw new (await import('./crypto-store')).CryptoStoreCorruptError();
+    }
     const crypto = client.getCrypto();
     if (!crypto) throw new Error('crypto_unavailable');
     log(`crypto_version=${crypto.getVersion()}`);
@@ -202,6 +230,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
 
   return {
     userId: creds.userId,
+    ...(persistent?.recovered ? { cryptoReset: true } : {}),
     onEnded(handler) { if (!stopped) ended.add(handler); return () => { ended.delete(handler); }; },
     listeningMode: roomId => memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents('m.room.member', creds.userId)?.getContent()),
     inviter(roomId) { return inviters.get(roomId); },

@@ -1,8 +1,8 @@
 import { fork } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, readFile, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createClient, ClientEvent, SyncState, Preset } from 'matrix-js-sdk';
 import { logger } from 'matrix-js-sdk/lib/logger';
@@ -33,8 +33,13 @@ const children: ChildProcess[] = [];
 const owner = await register('owner', 'OWNER');
 const agent = await register('agent', 'AGENT');
 const human = createClient({ baseUrl: homeserver, userId: owner.userId, deviceId: owner.deviceId, accessToken: owner.accessToken });
+async function freshCredentials() {
+  const login = await request('/_matrix/client/v3/login', { type: 'm.login.password', identifier: { type: 'm.id.user', user: agent.userId }, password: agent.password, device_id: 'CONTROL_' + randomBytes(4).toString('hex') });
+  agent.accessToken = login.access_token; agent.deviceId = login.device_id;
+}
 async function boot(restore = false) {
-  type Event = { kind: string; message?: { body?: string }; command?: { content: { mode: string } }; page?: { messages: { body: string }[] } };
+  if (restore) await freshCredentials();
+  type Event = { kind: string; message?: { body?: string }; command?: { content: { mode: string } }; page?: { messages: { body: string }[] }; status?: { state: string; detail?: string } };
   const events: Event[] = [];
   const child = fork('fixtures/crypto-store/live-agent.ts', [], { execArgv: ['--import', 'tsx'], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   children.push(child);
@@ -67,8 +72,6 @@ try {
   for (let i = 0; i < 40; i++) await human.sendTextMessage(roomId, `backlog-${i}`);
   // Control still issues fresh credentials; automatic resume must retain the
   // saved device/token instead of discarding the existing keys for that device.
-  const relogin = await request('/_matrix/client/v3/login', { type: 'm.login.password', identifier: { type: 'm.id.user', user: agent.userId }, password: agent.password, device_id: 'FRESH_CONTROL_DEVICE' });
-  agent.accessToken = relogin.access_token; agent.deviceId = relogin.device_id;
   console.log('offline sends done');
   const second = await boot(true); await second.ready(); second.child.send('mode');
   await eventually(() => ['offline-one', 'offline-two'].every(body => second.events.some(e => e.message?.body === body)) && second.events.some(e => e.kind === 'mode' && e.command?.content.mode === 'async'), 'offline_decryption', 60_000);
@@ -80,10 +83,48 @@ try {
   second.child.send('close'); await new Promise(resolve => second.child.once('exit', resolve));
   await human.sendTextMessage(roomId, 'after-exit');
   console.log('exit done');
+  const orphanCheck = await fetch(homeserver + '/_matrix/client/v3/account/whoami', { headers: { authorization: 'Bearer ' + agent.accessToken } });
+  if (orphanCheck.status !== 401) throw new Error('discarded_token_still_valid');
   const third = await boot(true); await third.ready();
   await eventually(() => third.events.some(e => e.message?.body === 'after-exit'), 'exit_resume');
+  const channelDir = path.join(root, 'khala', 'codex', 'live-restart', 'channels', createHash('sha256').update(roomId).digest('hex').slice(0, 24));
+  await human.kick(roomId, agent.userId, 'fixture removal');
+  for (let i = 0; i < 100; i++) {
+    third.child.send('status'); await delay(100);
+    if (third.events.some(e => e.status?.detail === 'removed')) break;
+  }
+  if (!third.events.some(e => e.status?.detail === 'removed')) throw new Error('removal_status_missing');
+  for (const file of ['crypto.json', 'crypto.sqlite', 'sync.sqlite']) {
+    const deadline = Date.now() + 10_000;
+    while (await stat(path.join(channelDir, file)).then(() => true, () => false)) {
+      if (Date.now() > deadline) throw new Error('removal_left_' + file);
+      await delay(100);
+    }
+  }
+  await human.invite(roomId, agent.userId); await freshCredentials();
+  third.child.send({ rejoin: agent });
+  await eventually(() => third.events.some(e => e.kind === 'rejoined'), 'same_process_reinvite', 70_000);
+  await human.getCrypto()!.forceDiscardSession(roomId);
+  await human.sendTextMessage(roomId, 'after-reinvite');
+  await eventually(() => third.events.some(e => e.message?.body === 'after-reinvite'), 'reinvite_decryption');
   third.child.send('close'); await new Promise(resolve => third.child.once('exit', resolve));
-  console.log(JSON.stringify({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true }));
+  for (const file of ['crypto.json', 'crypto.sqlite']) {
+    // Preserve the SQLite header so recovery must also handle a Rust/SQLite
+    // open failure, rather than only the inexpensive header check.
+    const corrupt = file === 'crypto.sqlite' ? Buffer.alloc(4096, 0x41) : Buffer.from('corrupt fixture');
+    if (file === 'crypto.sqlite') corrupt.write('SQLite format 3\0', 'ascii');
+    await writeFile(path.join(channelDir, file), corrupt, { mode: 0o600 });
+    const recovered = await boot(true); await recovered.ready();
+    const identity = JSON.parse(await readFile(path.join(channelDir, 'crypto.json'), 'utf8'));
+    if (identity.deviceId !== agent.deviceId) throw new Error('corruption_kept_old_device');
+    recovered.child.send('status');
+    await eventually(() => recovered.events.some(e => e.status?.detail === 'crypto_reset'), 'corruption_status');
+    await human.getCrypto()!.forceDiscardSession(roomId);
+    await human.sendTextMessage(roomId, 'after-corrupt-' + file);
+    await eventually(() => recovered.events.some(e => e.message?.body === 'after-corrupt-' + file), 'corruption_decryption');
+    recovered.child.send('close'); await new Promise(resolve => recovered.child.once('exit', resolve));
+  }
+  console.log(JSON.stringify({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true, unusedTokenRevoked: true, removalWiped: true, sameProcessReinvite: true, corruptIdentityRecovered: true, corruptDatabaseRecovered: true }));
 } finally {
   human.stopClient();
   for (const child of children) if (child.exitCode === null) child.kill('SIGKILL');

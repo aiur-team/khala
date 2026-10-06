@@ -55,7 +55,6 @@ it.each([[200, 'valid'], [401, 'revoked'], [503, 'unavailable']] as const)('chec
   expect(await validateCryptoToken(dir, fetcher)).toBe(expected);
   expect(fetcher).toHaveBeenCalledWith('https://matrix.test/_matrix/client/v3/account/whoami', expect.objectContaining({ headers: { authorization: 'Bearer secret' } }));
 });
-
 it('retains saved device credentials only for a reauthorized matching account', async () => {
   const dir = await root();
   const issued = { homeserver: 'https://matrix.test', userId: '@agent:test', deviceId: 'NEW', accessToken: 'new-token', roomId: '!r:test' };
@@ -65,3 +64,32 @@ it('retains saved device credentials only for a reauthorized matching account', 
   await expect(restoredCredentials(dir, { ...issued, userId: '@other:test' })).rejects.toThrow();
   await expect(restoredCredentials(dir, { ...issued, homeserver: 'https://other.test' })).rejects.toThrow();
 });
+
+it('recognizes corrupt identity before attempting token validation', async () => {
+  const dir = await root();
+  await writeFile(path.join(dir, 'crypto.json'), '{broken', { mode: 0o600 });
+  const fetcher = vi.fn<typeof fetch>();
+  expect(await validateCryptoToken(dir, fetcher)).toBe('corrupt');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(['crypto.json', 'crypto.sqlite'] as const)('recovers corrupt %s with a replacement device and new keys', async name => {
+  const dir = await root();
+  const first = await restart(dir);
+  await writeFile(path.join(first.dir, name), 'not a valid crypto store', { mode: 0o600 });
+  const result = await exec(process.execPath, ['--import', 'tsx', 'fixtures/crypto-store/restart.ts', dir,
+    name === 'crypto.json' ? 'NEW' : 'DEVICE', 'keep', 'recover'], { cwd: path.resolve(import.meta.dirname, '../..') });
+  const recovered = JSON.parse(result.stdout) as { keys: unknown; savedToken: string | null; restored: boolean };
+  expect(recovered.restored).toBe(false);
+  expect(recovered.keys).not.toEqual(first.keys);
+  expect(recovered.savedToken).toBeNull();
+}, 20_000);
+it('wipes after an in-flight SDK save finishes, and tolerates a repeated wipe', async () => {
+  const dir = await root();
+  const result = await exec(process.execPath, ['--import', 'tsx', 'fixtures/crypto-store/restart.ts', dir, 'DEVICE', 'wipe-during-save'],
+    { cwd: path.resolve(import.meta.dirname, '../..') });
+  const saved = JSON.parse(result.stdout) as { dir: string };
+  expect(await readdir(saved.dir)).not.toEqual(expect.arrayContaining(['crypto.json', 'crypto.sqlite', 'sync.sqlite']));
+  for (const name of ['crypto.json', 'crypto.sqlite', 'sync.sqlite']) expect(await readdir(saved.dir)).not.toContain(name);
+  expect(result.stderr).not.toContain('degrading');
+}, 20_000);
