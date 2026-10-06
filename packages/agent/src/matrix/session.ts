@@ -1,3 +1,4 @@
+import { retryUnexpired } from './decryption-retry';
 import { LISTENING_MODE_COMMAND_TYPE, LISTENING_MODE_MEMBER_KEY, memberListeningMode } from '@khala/contracts/m1/listening-mode';
 import { encodeChannelEvent, CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
 import { RESTORE_HISTORY_MAX_PAGES, type ChannelSession, type SessionEndReason, type SessionMessage, type SessionModeCommand, type SessionOptions } from '../transport';
@@ -36,6 +37,20 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const emitted = new Set<string>();
   // Only events originating in a live timeline may later be emitted by Decrypted.
   const liveEvents = new Set<MatrixEvent>();
+  const undecryptableIds = new Map((persistent?.undecryptableEventIds ?? []).map(entry => [entry.id, entry]));
+  let retrySave = Promise.resolve();
+  const saveRetries = () => {
+    const entries = [...undecryptableIds.values()];
+    retrySave = retrySave.then(() => persistent?.rememberUndecryptable(entries)).catch(() => log('decryption_retry_save_failed'));
+  };
+  const rememberDecryption = (event: MatrixEvent) => {
+    const id = event.getId();
+    if (stopped || !persistent || !id) return;
+    const failed = event.getType() === 'm.room.encrypted' || event.isDecryptionFailure();
+    if (failed) { if (undecryptableIds.has(id)) return; undecryptableIds.set(id, { id, firstSeen: Date.now() }); } else if (!undecryptableIds.delete(id)) return;
+    if (undecryptableIds.size > 100) undecryptableIds.delete(undecryptableIds.keys().next().value!);
+    saveRetries();
+  };
   const joinTimes = new Map<string, number>();
   const cancellations = new Set<() => void>();
   let joinedRoom: string | undefined;
@@ -43,7 +58,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   let recovering = persistent?.restored ?? false;
 
   const deliver = (event: MatrixEvent) => {
-    if (stopped || recovering || !liveEvents.has(event)) return;
+    if (stopped) return;
+    if (liveEvents.has(event)) rememberDecryption(event);
+    if (recovering || !liveEvents.has(event)) return;
     const command = event.getType() === LISTENING_MODE_COMMAND_TYPE && !event.isDecryptionFailure()
       && event.getId() && event.getRoomId() && event.getSender()
       ? { eventId: event.getId()!, roomId: event.getRoomId()!, sender: event.getSender()!, ts: event.getTs(), content: event.getContent() } : undefined;
@@ -75,7 +92,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const timeline = (event: MatrixEvent, _room: Room | undefined, toStart: boolean | undefined, _removed: boolean, data: IRoomTimelineData) => {
     if (stopped || toStart || (data?.liveEvent === false && !persistent?.restored)) return;
     liveEvents.add(event);
-    void client.decryptEventIfNeeded(event).then(() => deliver(event), () => log('live_decryption_failed'));
+    void client.decryptEventIfNeeded(event).then(() => deliver(event), () => { rememberDecryption(event); log('live_decryption_failed'); });
   };
   const decrypted = (event: MatrixEvent) => deliver(event);
   const syncLog = (state: SyncState, _previous: SyncState | null, data?: { error?: Error }) => {
@@ -135,11 +152,16 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const stopSession = async () => {
     if (stopped) return;
     stopped = true;
+    await retrySave;
     if (wipe) {
       // Retire the device while its token is still available. A failed/offline
       // logout must not prevent local cleanup or release of the store lease.
       try { await client.http.authedRequest(Method.Post, '/logout', undefined, {}, { localTimeoutMs: 5000 }); }
-      catch { log('discarded_device_logout_failed'); console.error('khala: discarded_device_logout_failed'); }
+      catch (error) {
+        if (matrixCode(error) !== 'M_UNKNOWN_TOKEN' && !(typeof error === 'object' && error !== null && 'httpStatus' in error && error.httpStatus === 401)) {
+          log('discarded_device_logout_failed'); console.error('khala: discarded_device_logout_failed');
+        }
+      }
     }
     if (wipe && persistent?.forgetIdentity) {
       // Still stop the client and release its lease if the filesystem refuses
@@ -284,6 +306,26 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
         // A limited /sync can omit an offline command. Replay to the durable
         // inbox tail, falling back to the original join when it is unavailable.
         // Inbox IDs and command metadata keep saved-sync replay idempotent.
+        let pruned = false;
+        for (const [id, entry] of [...undecryptableIds]) {
+          if (stopped) throw new Error('session_stopped');
+          if (!retryUnexpired(entry)) { undecryptableIds.delete(id); pruned = true; continue; }
+          try {
+            const raw = await client.fetchRoomEvent(roomId, id);
+            const event = client.getEventMapper()({ ...raw, room_id: roomId });
+            if (event.getTs() < joinedAt) { undecryptableIds.delete(id); pruned = true; continue; }
+            liveEvents.add(event);
+            await client.decryptEventIfNeeded(event).catch(() => log('recovery_decryption_failed'));
+            rememberDecryption(event);
+          } catch (error) {
+            const status = typeof error === 'object' && error !== null && 'httpStatus' in error ? error.httpStatus : undefined;
+            if (matrixCode(error) === 'M_NOT_FOUND' || matrixCode(error) === 'M_FORBIDDEN' || status === 404 || status === 403) {
+              undecryptableIds.delete(id); pruned = true;
+            }
+            log('recovery_event_retry_failed');
+          }
+        }
+        if (pruned) saveRetries();
         let token: string | null = null;
         const seenTokens = new Set<string>();
         let pages = 0;
@@ -298,6 +340,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
             if ((opts?.restoreStopAtEventId && event.getId() === opts.restoreStopAtEventId) || event.getTs() < joinedAt) { reachedBoundary = true; break; }
             liveEvents.add(event);
             await client.decryptEventIfNeeded(event).catch(() => log('recovery_decryption_failed'));
+            rememberDecryption(event);
             if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) { undecryptable++; liveEvents.delete(event); }
           }
           if (reachedBoundary || page.chunk.length === 0 || !page.end) break;
@@ -342,6 +385,7 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
           break;
         }
         try { await client.decryptEventIfNeeded(event); } catch { /* Report decryption failures below. */ }
+        rememberDecryption(event);
         if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) {
           undecryptable++;
           const eventId = event.getId(), sender = event.getSender();

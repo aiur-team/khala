@@ -22,3 +22,16 @@ it('bounds rate-limit retries and propagates other failures immediately', async 
   await expect(rateLimitSafe(failed)).rejects.toBe(forbidden);
   expect(failed).toHaveBeenCalledOnce();
 });
+
+it('reports HTTP status for non-JSON error pages and retains Matrix retry metadata', async () => {
+  const { proofRequest } = await import('../../fixtures/crypto-store/request');
+  const fetcher = vi.spyOn(globalThis, 'fetch');
+  try {
+    fetcher.mockResolvedValueOnce(new Response('<html>unavailable</html>', { status: 502 }));
+    await expect(proofRequest('https://hs', '/test')).rejects.toThrow('request_502');
+    fetcher.mockResolvedValueOnce(Response.json({ errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 1234 }, { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    expect(await proofRequest('https://hs', '/test')).toEqual({ ok: true });
+    expect(delay).toHaveBeenLastCalledWith(1234);
+  } finally { fetcher.mockRestore(); }
+});

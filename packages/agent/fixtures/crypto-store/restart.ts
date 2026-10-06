@@ -36,9 +36,14 @@ if (process.argv[4] === 'wipe-during-save') {
   backend.syncToDatabase = async users => { await new Promise(resolve => setTimeout(resolve, 100)); await original(users); };
   saving = store.sync.save(true);
 }
+const undecryptableEventIds = store.undecryptableEventIds ?? [];
+if (process.argv[4] === 'retry-ids') {
+  await store.rememberUndecryptable(Array.from({ length: 105 }, (_, i) => ({ id: `$missing-${i}`, firstSeen: Date.now() })));
+  await store.rememberJoin(100);
+}
 client.stopClient();
 if (process.argv[4] === 'wipe' || process.argv[4] === 'wipe-during-save') await store.wipe();
 if (process.argv[4] === 'wipe-during-save') await store.wipe();
 await saving;
 await store.close();
-process.stdout.write(JSON.stringify({ keys, savedToken, reset, restored: store.restored, dir: channel.dir }));
+process.stdout.write(JSON.stringify({ keys, savedToken, undecryptableEventIds, reset, restored: store.restored, dir: channel.dir }));
