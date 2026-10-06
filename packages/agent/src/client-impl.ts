@@ -310,7 +310,8 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const channelDir = attempt.files.dir;
       await writeStateFile(channelDir, 'session.json', credentials);
       if (!current(attempt)) return;
-      const start = () => (options.startSession ?? startChannelSession)(credentials, { ...(credentials.transport === 'local' ? {} : { cryptoStore: { dir: channelDir, root: stateRoot(options.env) } }), checkRemoved: async () => {
+      const restoreStopAtEventId = savedEntries.at(-1)?.eventId;
+      const start = () => (options.startSession ?? startChannelSession)(credentials, { ...(credentials.transport === 'local' ? {} : { cryptoStore: { dir: channelDir, root: stateRoot(options.env) } }), ...(restoreStopAtEventId ? { restoreStopAtEventId } : {}), checkRemoved: async () => {
         try {
           const url = new URL('/api/agent/session/status', attempt.created.origin);
           url.searchParams.set('userId', credentials.userId);

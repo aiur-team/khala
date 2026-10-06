@@ -135,6 +135,12 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
   const stopSession = async () => {
     if (stopped) return;
     stopped = true;
+    if (wipe) {
+      // Retire the device while its token is still available. A failed/offline
+      // logout must not prevent local cleanup or release of the store lease.
+      try { await client.http.authedRequest(Method.Post, '/logout', undefined, {}, { localTimeoutMs: 5000 }); }
+      catch { log('discarded_device_logout_failed'); console.error('khala: discarded_device_logout_failed'); }
+    }
     if (wipe && persistent?.forgetIdentity) {
       // Still stop the client and release its lease if the filesystem refuses
       // this first attempt. wipe retries deletion after the sync has drained.
@@ -275,9 +281,9 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
       await persistent?.rememberJoin(joinedAt);
       joinTimes.set(roomId, joinedAt);
       if (persistent?.restored) {
-        // A limited /sync can omit an offline command. Replay from the original
-        // join boundary; inbox IDs and command metadata make replay idempotent,
-        // including a crash after sync was saved but before intake was appended.
+        // A limited /sync can omit an offline command. Replay to the durable
+        // inbox tail, falling back to the original join when it is unavailable.
+        // Inbox IDs and command metadata keep saved-sync replay idempotent.
         let token: string | null = null;
         const seenTokens = new Set<string>();
         let pages = 0;
@@ -286,15 +292,15 @@ export async function createAgentMatrixSession(creds: AgentCredentials, opts?: S
           if (stopped) throw new Error('session_stopped');
           const page = await client.createMessagesRequest(roomId, token, 100, Direction.Backward);
           pages++;
-          let reachedJoin = false;
+          let reachedBoundary = false;
           for (const raw of page.chunk) {
             const event = client.getEventMapper()({ ...raw, room_id: roomId });
-            if (event.getTs() < joinedAt) { reachedJoin = true; continue; }
+            if ((opts?.restoreStopAtEventId && event.getId() === opts.restoreStopAtEventId) || event.getTs() < joinedAt) { reachedBoundary = true; break; }
             liveEvents.add(event);
             await client.decryptEventIfNeeded(event).catch(() => log('recovery_decryption_failed'));
             if (event.getType() === 'm.room.encrypted' || event.isDecryptionFailure()) { undecryptable++; liveEvents.delete(event); }
           }
-          if (reachedJoin || page.chunk.length === 0 || !page.end) break;
+          if (reachedBoundary || page.chunk.length === 0 || !page.end) break;
           if (pages >= RESTORE_HISTORY_MAX_PAGES) {
             const count = `restore_catchup_truncated pages=${pages}`;
             if (opts?.log) log(count); else process.stderr.write(`${count}\n`);

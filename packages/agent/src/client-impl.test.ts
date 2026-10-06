@@ -1116,6 +1116,7 @@ it('backfills paginated gap mentions before live traffic, dedupes, and keeps the
   const wake = vi.fn();
   client = createKhalaAgentClient({ harness: 'codex', sessionId: 'multi', env: { XDG_STATE_HOME: root }, now: () => new Date(now().getTime() + 10_000), joinApi: f.api, startSession: f.start, onInboxAppend: wake });
   await restoreAndWait();
+  expect(f.start).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ restoreStopAtEventId: '$seen' }));
   expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual(['$seen', '$gap1', '$gap2', '$live']);
   expect((await client.status()).unread).toBe(4);
   expect(wake.mock.calls.map(([entry]) => entry.eventId)).toEqual(['$gap1', '$gap2', '$live']);

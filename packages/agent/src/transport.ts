@@ -29,7 +29,7 @@ export interface ChannelSession {
   stop(): Promise<void>;
 }
 
-export type SessionOptions = { cryptoStore?: { dir: string; root: string }; checkRemoved?: () => Promise<boolean> };
+export type SessionOptions = { cryptoStore?: { dir: string; root: string }; restoreStopAtEventId?: string; checkRemoved?: () => Promise<boolean> };
 export type StartSession = (creds: AgentCredentials, options?: SessionOptions) => Promise<ChannelSession>;
 export const startChannelSession: StartSession = async (creds, options) => creds.transport === 'local'
   ? (await import('./local/session')).createLocalSession(creds)

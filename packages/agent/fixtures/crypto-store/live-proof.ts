@@ -7,15 +7,19 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createClient, ClientEvent, SyncState, Preset } from 'matrix-js-sdk';
 import { logger } from 'matrix-js-sdk/lib/logger';
 import { LISTENING_MODE_COMMAND_TYPE } from '@khala/contracts/m1/listening-mode';
+import { rateLimitSafe } from './rate-limit';
 logger.disableAll();
 const root = path.join(process.argv[3]!, 'crypto-' + randomBytes(4).toString('hex'));
 await mkdir(root, { recursive: true, mode: 0o700 });
 const homeserver = process.argv[2]!;
 const secret = process.env.KHALA_CRYPTO_TEST_SECRET!;
 async function request(endpoint: string, body?: unknown) {
-  const res = await fetch(homeserver + endpoint, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`request_${res.status}_${endpoint}`);
-  return res.json();
+  return rateLimitSafe(async () => {
+    const res = await fetch(homeserver + endpoint, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw Object.assign(new Error(`request_${res.status}_${endpoint}`), { errcode: data.errcode, data });
+    return data;
+  });
 }
 async function register(label: string, deviceId: string) {
   const username = label + randomBytes(4).toString('hex'), password = randomBytes(24).toString('hex');
@@ -62,14 +66,14 @@ try {
   ] });
   agent.roomId = roomId;
   await eventually(() => !!human.getRoom(roomId)?.currentState.getStateEvents('m.room.encryption', ''), 'owner_room');
-  const first = await boot(); await human.invite(roomId, agent.userId); await first.ready();
-  await human.sendTextMessage(roomId, 'before-restart');
+  const first = await boot(); await rateLimitSafe(() => human.invite(roomId, agent.userId)); await first.ready();
+  await rateLimitSafe(() => human.sendTextMessage(roomId, 'before-restart'));
   await eventually(() => first.events.some(e => e.message?.body === 'before-restart'), 'initial_decryption');
   console.log('initial decrypted');
   first.child.kill('SIGKILL'); await new Promise(resolve => first.child.once('exit', resolve));
-  await human.sendTextMessage(roomId, 'offline-one'); await human.sendTextMessage(roomId, 'offline-two');
-  await human.sendEvent(roomId, LISTENING_MODE_COMMAND_TYPE as never, { v: 1, agent: agent.userId, mode: 'async' } as never);
-  for (let i = 0; i < 40; i++) await human.sendTextMessage(roomId, `backlog-${i}`);
+  await rateLimitSafe(() => human.sendTextMessage(roomId, 'offline-one')); await rateLimitSafe(() => human.sendTextMessage(roomId, 'offline-two'));
+  await rateLimitSafe(() => human.sendEvent(roomId, LISTENING_MODE_COMMAND_TYPE as never, { v: 1, agent: agent.userId, mode: 'async' } as never));
+  for (let i = 0; i < 40; i++) await rateLimitSafe(() => human.sendTextMessage(roomId, `backlog-${i}`));
   // Control still issues fresh credentials; automatic resume must retain the
   // saved device/token instead of discarding the existing keys for that device.
   console.log('offline sends done');
@@ -81,14 +85,15 @@ try {
   const history = second.events.find(e => e.kind === 'history')!.page!.messages;
   if (!['offline-one', 'offline-two'].every(body => history.some((e: { body: string }) => e.body === body))) throw new Error('history_decryption_failed');
   second.child.send('close'); await new Promise(resolve => second.child.once('exit', resolve));
-  await human.sendTextMessage(roomId, 'after-exit');
+  await rateLimitSafe(() => human.sendTextMessage(roomId, 'after-exit'));
   console.log('exit done');
   const orphanCheck = await fetch(homeserver + '/_matrix/client/v3/account/whoami', { headers: { authorization: 'Bearer ' + agent.accessToken } });
   if (orphanCheck.status !== 401) throw new Error('discarded_token_still_valid');
   const third = await boot(true); await third.ready();
   await eventually(() => third.events.some(e => e.message?.body === 'after-exit'), 'exit_resume');
   const channelDir = path.join(root, 'khala', 'codex', 'live-restart', 'channels', createHash('sha256').update(roomId).digest('hex').slice(0, 24));
-  await human.kick(roomId, agent.userId, 'fixture removal');
+  const removedIdentity = JSON.parse(await readFile(path.join(channelDir, 'crypto.json'), 'utf8'));
+  await rateLimitSafe(() => human.kick(roomId, agent.userId, 'fixture removal'));
   for (let i = 0; i < 100; i++) {
     third.child.send('status'); await delay(100);
     if (third.events.some(e => e.status?.detail === 'removed')) break;
@@ -101,11 +106,13 @@ try {
       await delay(100);
     }
   }
-  await human.invite(roomId, agent.userId); await freshCredentials();
+  const removedToken = await fetch(homeserver + '/_matrix/client/v3/account/whoami', { headers: { authorization: 'Bearer ' + removedIdentity.accessToken } });
+  if (removedToken.status !== 401) throw new Error('removed_token_still_valid');
+  await rateLimitSafe(() => human.invite(roomId, agent.userId)); await freshCredentials();
   third.child.send({ rejoin: agent });
   await eventually(() => third.events.some(e => e.kind === 'rejoined'), 'same_process_reinvite', 70_000);
   await human.getCrypto()!.forceDiscardSession(roomId);
-  await human.sendTextMessage(roomId, 'after-reinvite');
+  await rateLimitSafe(() => human.sendTextMessage(roomId, 'after-reinvite'));
   await eventually(() => third.events.some(e => e.message?.body === 'after-reinvite'), 'reinvite_decryption');
   third.child.send('close'); await new Promise(resolve => third.child.once('exit', resolve));
   for (const file of ['crypto.json', 'crypto.sqlite']) {
@@ -130,11 +137,11 @@ try {
     recovered.child.send('status');
     await eventually(() => recovered.events.some(e => e.status?.detail === 'crypto_reset'), 'corruption_status');
     await human.getCrypto()!.forceDiscardSession(roomId);
-    await human.sendTextMessage(roomId, 'after-corrupt-' + file);
+    await rateLimitSafe(() => human.sendTextMessage(roomId, 'after-corrupt-' + file));
     await eventually(() => recovered.events.some(e => e.message?.body === 'after-corrupt-' + file), 'corruption_decryption');
     recovered.child.send('close'); await new Promise(resolve => recovered.child.once('exit', resolve));
   }
-  console.log(JSON.stringify({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true, unusedTokenRevoked: true, removalWiped: true, sameProcessReinvite: true, corruptIdentityRecovered: true, corruptDatabaseRecovered: true }));
+  console.log(JSON.stringify({ initialDecrypted: true, abruptRestartMessages: 2, offlineModeApplied: true, historyDecrypted: true, savedDeviceCredentials: true, exitResumeDecrypted: true, unusedTokenRevoked: true, removalWiped: true, removedTokenRevoked: true, sameProcessReinvite: true, corruptIdentityRecovered: true, corruptDatabaseRecovered: true }));
 } finally {
   human.stopClient();
   for (const child of children) if (child.exitCode === null) child.kill('SIGKILL');
