@@ -306,3 +306,17 @@ it.each(['are missing', 'were rejected'])('renders installed Antigravity registr
   expect(responses[0].result.content[0].text).toContain('wake register --harness antigravity');
   expect(responses[0].result.content[0].text).not.toContain('npx');
 });
+it('Muse join and status supply an absolute watcher command with explicit session identity', async () => {
+  const client = fake();
+  client.join = vi.fn(async () => ({ state: 'connected' as const, channelName: 'Review' }));
+  client.status = vi.fn(async () => ({ state: 'connected', unread: 0, watcherArmed: false }));
+  const tools = createKhalaTools({ harness: 'muse', clientFor: () => client, museSessionId: 'muse-explicit' });
+  for (const name of ['khala_join', 'khala_status']) {
+    const result = await tools.find(tool => tool.name === name)!.call(name === 'khala_join' ? { link } : {}, { id: 7, notification: false, meta: undefined });
+    const text = JSON.stringify(result);
+    expect(text).toContain('--session');
+    expect(text).toContain('muse-explicit');
+    expect(text).toContain('/khala/npm/bin/khala');
+    expect(text).toContain('wake_delay_ms: 0');
+  }
+});

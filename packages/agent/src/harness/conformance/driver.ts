@@ -18,9 +18,12 @@ export interface FakeHarnessDriver {
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;
   readHookStdout(stdout: string): { kind: 'context' | 'continue' | 'none'; frame?: string };
   /** Replace only external I/O, keeping the adapter's real wake implementation. */
-  wakeProbe?(adapter: HarnessAdapter): {
+  /** Native notification wakes may complete at Stop instead of UserPromptSubmit. */
+  wakeHook?(session: FakeSession, text: string): string | Promise<string>;
+  wakeProbe?(adapter: HarnessAdapter, env: NodeJS.ProcessEnv): {
     drivers: readonly WakeDriver[];
     prompt(): string | undefined;
+    stop?(): Promise<void>;
     prepare?(files: SessionFiles): Promise<void>;
     /** Harnesses that append wake input after the prompt hook acknowledge at the next hook. */
     afterPrompt?(): Promise<void>;

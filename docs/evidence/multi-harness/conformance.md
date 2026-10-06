@@ -2,7 +2,7 @@
 
 In-process client and hook checks against fake transport boundaries. Pending is execution-order debt, not verified parity.
 
-| Feature | claude | codex | cursor | opencode | gemini | antigravity | copilot | generic |
+| Feature | claude | codex | cursor | opencode | muse | gemini | copilot | generic |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | join (local) | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 | join (hosted) | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |

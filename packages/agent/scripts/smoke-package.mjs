@@ -96,6 +96,7 @@ async function mcpSmoke(label, command, args, callStatus = false, childEnv = env
   }
 }
 
+
 try {
   check('npm install -g', 'npm', ['install', '--global', '--prefix', quote(prefix), quote(tarball)]);
   const bin = path.join(binDir, windows ? 'khala.cmd' : 'khala');

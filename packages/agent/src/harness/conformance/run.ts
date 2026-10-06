@@ -116,9 +116,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
     // U8 opens client/state wire ids; keep this adapter-facing runner ready for that widening.
     const harness = adapter.id as Harness;
     const files = await openSessionDir(harness, sample.id, env);
-    const hook = async (event: HookEvent, extra: Partial<FakeSession & { continuation: boolean; promptText: string }> = {}) => {
+    const hook = async (event: HookEvent, extra: Partial<FakeSession & { continuation: boolean; promptText: string }> = {}, stdin?: string) => {
       let stdout = '', stderr = '';
-      assert.equal(await deliverCore(driver.hookStdin(event, { ...sample, ...extra }), adapter, {
+      assert.equal(await deliverCore(stdin ?? driver.hookStdin(event, { ...sample, ...extra }), adapter, {
         env, now: () => new Date(hookAt), stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } },
       }), 0);
       assert.equal(stderr, '', 'hook diagnostics');
@@ -259,7 +259,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       if (hookSupported) assert.equal((await readActivity(files)).state, 'idle');
     });
     await row('idle wake', async () => {
-      const probe = driver.wakeProbe?.(adapter);
+      const probe = driver.wakeProbe?.(adapter, env);
       if (capabilities.idleWake === 'none') {
         assert.equal(adapter.wakeLadder?.length ?? 0, 0, 'idle wake declared absent but adapter has drivers');
         return;
@@ -289,7 +289,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         try {
           blocked.notify();
           await delay(100);
-        } finally { await blocked.stop(); }
+        } finally { await blocked.stop(); await probe.stop?.(); }
         assert.equal(probe.prompt(), undefined, `idle wake must be suppressed for ${excluded}`);
         assert.deepEqual(await readWakeState(guard.dir), {}, 'suppression must not settle a wake');
       }
@@ -306,11 +306,12 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         await until(async () => probe.prompt() !== undefined, 'idle wake declared but not delivered');
         assert.match(probe.prompt()!, /^Khala: channel messages are waiting\. Continue\. \(k-[0-9a-f]{8}\)$/);
         hookAt = now().getTime() + 60_001;
-        await hook('prompt', { promptText: probe.prompt()! });
+        if (driver.wakeHook) await hook('stop', {}, await driver.wakeHook(sample, probe.prompt()!));
+        else await hook('prompt', { promptText: probe.prompt()! });
         if (probe.afterPrompt) { await probe.afterPrompt(); await hook('tool'); }
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');
-      } finally { await ladder.stop(); }
+      } finally { await ladder.stop(); await probe.stop?.(); }
     }, capabilities.idleWake === 'none' ? 'absent' : 'pass');
     return { harness: adapter.id, rows };
   } finally {
