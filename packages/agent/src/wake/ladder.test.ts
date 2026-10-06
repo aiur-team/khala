@@ -13,7 +13,7 @@ let root: string;
 let ctx: WakeDriverContext;
 let loop: WakeLadder | undefined;
 const at = Date.parse('2026-10-05T00:00:00Z');
-const driver = (extra: Partial<WakeDriver> = {}): WakeDriver => ({ id: 'native', rung: 1, optIn: false, minIdleMs: 0, available: () => true, wake: vi.fn(), ...extra });
+const driver = (extra: Partial<WakeDriver> = {}): WakeDriver => ({ id: 'native', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 30_000, available: () => true, wake: vi.fn(), ...extra });
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'khala-ladder-'));
   const env = { XDG_STATE_HOME: root };
@@ -115,4 +115,15 @@ it('starts nonce deadlines after a slow availability probe completes', async () 
   const journal = JSON.parse(await fs.readFile(path.join(ctx.files.dir, 'wake-journal.json'), 'utf8'));
   expect(journal.attempts[0]).toMatchObject({ at: at + 40_000, deadline: at + 70_000 });
   expect(wake.mock.calls[0]?.[0].now).toBe(at + 40_000);
+});
+
+it.each([1, 4])('uses a companion deadline independent of rung %s', async rung => {
+  const wake = vi.fn();
+  await writeActivity(ctx.files, 'idle', () => new Date(at - 1));
+  await appendEntries(ctx.files, [{ eventId: 'peer', roomId: 'room', ts: 'now', sender: 'peer', senderLabel: 'peer', senderKind: 'human', body: 'hello', kind: 'message' }]);
+  loop = createWakeLadder({ files: ctx.files, harness: 'codex', sessionId: 'ladder', env: ctx.env,
+    drivers: [driver({ id: 'companion', rung, deadlineMs: 10_000, wake })], pollMs: 100_000, now: () => at });
+  loop.notify(); await vi.waitFor(() => expect(wake).toHaveBeenCalledOnce());
+  const journal = JSON.parse(await fs.readFile(path.join(ctx.files.dir, 'wake-journal.json'), 'utf8'));
+  expect(journal.attempts[0]).toMatchObject({ driver: 'companion', at, deadline: at + 10_000 });
 });
