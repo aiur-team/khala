@@ -65,6 +65,8 @@ function parentAlive(parent: number): boolean {
 
 export async function watch(stdin: string, _argv: readonly string[], io: IO = { stderr: process.stderr, env: process.env, now: () => new Date() }): Promise<number> {
   let temporary: string | undefined;
+  let finish: (() => Promise<void>) | undefined;
+  let state: 'woke' | 'exited' | 'expired' = 'exited';
   try {
     const parent = process.ppid;
     const input = JSON.parse(stdin);
@@ -76,9 +78,21 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
     const owner = path.join(dir, 'watcher.json');
     temporary = path.join(dir, `.watcher-${nonce}.tmp`);
     const started = io.now();
-    await fs.writeFile(temporary, JSON.stringify({ nonce, armedAt: started.toISOString() }) + '\n', { mode: 0o600, flag: 'wx' });
+    const record = { nonce, armedAt: started.toISOString(), pid: process.pid, parentPid: parent, state: 'armed' };
+    await fs.writeFile(temporary, JSON.stringify(record) + '\n', { mode: 0o600, flag: 'wx' });
     await fs.rename(temporary, owner);
     temporary = undefined;
+    finish = async () => {
+      // Re-arm replaces the inode. Updating this handle cannot overwrite a
+      // newer owner, even if its rename races the nonce check below.
+      const file = await fs.open(owner, 'r+');
+      try {
+        if (JSON.parse(await file.readFile('utf8')).nonce !== nonce) return;
+        const body = JSON.stringify({ ...record, state }) + '\n';
+        await file.write(body, 0, 'utf8');
+        await file.truncate(Buffer.byteLength(body));
+      } finally { await file.close(); }
+    };
     const deadline = started.getTime() + testDuration(io.env.KHALA_WAKE_TEST_DEADLINE_MS, DEADLINE_MS);
     const poll = testDuration(io.env.KHALA_WAKE_TEST_POLL_MS, POLL_MS);
     const owns = async () => (await readJson(owner))?.nonce === nonce;
@@ -93,13 +107,18 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
         if (await unreadMessages(dir) > 0 && await idle() && await owns()
           && parentAlive(parent) && io.now().getTime() < deadline) {
           io.stderr.write(NOTICE);
+          state = 'woke';
           return 2;
         }
       }
       await sleep(Math.min(poll, Math.max(0, deadline - io.now().getTime())));
     }
+    state = 'expired';
   } catch { /* A watcher error must never become a wake prompt. */ }
-  finally { if (temporary) { try { await fs.unlink(temporary); } catch { /* Best effort. */ } } }
+  finally {
+    if (finish) { try { await finish(); } catch { /* Storage failure must not become a wake prompt. */ } }
+    if (temporary) { try { await fs.unlink(temporary); } catch { /* Best effort. */ } }
+  }
   return 0;
 }
 export default async function run(stdin: string, argv: readonly string[]): Promise<number> {
