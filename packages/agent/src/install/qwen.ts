@@ -83,6 +83,7 @@ export async function installQwen(input: {
   const merged = mergeQwenSettings(config, input.uninstall ? null : input.entry, input.uninstall ? null : input.command, input.backgroundWake, input.watchCommand, input.watchPermission, previousPermission);
   if ('error' in merged) { input.stderr(`khala: ${merged.error}`); return 1; }
   const credentialFile = qwenControllerFile(input.env);
+  const registryFile = path.join(qwenHome(input.env), 'peer-controllers.json');
   let minted: { id: string; token: string } | undefined;
   try {
     // XDG_STATE_HOME may be shared; only Khala-owned directories must be private.
@@ -91,6 +92,10 @@ export async function installQwen(input: {
     }
     if (!input.uninstall && input.install && !input.install()) { input.stderr('khala: npm install failed'); return 1; }
     if (!input.uninstall && input.mint) {
+      // Qwen's CLI creates the registry (and potentially QWEN_HOME) during mint.
+      // Record both originals first, including directory ownership, across reinstalls.
+      await managed.record(file);
+      await managed.record(registryFile);
       let existing;
       try {
         const stat = await fs.lstat(credentialFile);
@@ -111,6 +116,25 @@ export async function installQwen(input: {
       await fs.chmod(credentialFile, 0o600);
     }
     if (input.uninstall) {
+      let credential;
+      try { credential = JSON.parse(await fs.readFile(credentialFile, 'utf8')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const activeIds = input.list?.();
+      if (typeof credential?.id === 'string' && (!activeIds || activeIds.includes(credential.id)) && input.remove && !input.remove(credential.id)) {
+        input.stderr('khala: could not revoke Qwen controller; credential retained for retry'); return 1;
+      }
+      // Qwen owns registry edits. Restore exact original bytes when equivalent;
+      // remove only a recorded, newly created empty registry with the known schema.
+      // Unknown fields and subsequent user changes stay byte-for-byte as Qwen left them.
+      if (await managed.original(registryFile) !== undefined) {
+        await managed.restore(await readManaged(registryFile), {
+          ...jsonFormat, prune: value => value,
+          serialize: (_value, like) => like ?? '',
+          empty: value => object(value) && value.schemaVersion === 1
+            && Array.isArray(value.controllers) && value.controllers.length === 0
+            && Object.keys(value).every(key => key === 'schemaVersion' || key === 'controllers'),
+        }, value => value);
+      }
       await managed.restore(current, jsonFormat, (value, original) => {
         const removed = mergeQwenSettings(value, null, null, input.backgroundWake, input.watchCommand, input.watchPermission, previousPermission);
         if ('error' in removed) throw new Error(removed.error);
@@ -132,13 +156,6 @@ export async function installQwen(input: {
       }
     }
     if (input.uninstall) {
-      let credential;
-      try { credential = JSON.parse(await fs.readFile(credentialFile, 'utf8')); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      const activeIds = input.list?.();
-      if (typeof credential?.id === 'string' && (!activeIds || activeIds.includes(credential.id)) && input.remove && !input.remove(credential.id)) {
-        input.stderr('khala: could not revoke Qwen controller; credential retained for retry'); return 1;
-      }
       await fs.rm(credentialFile, { force: true });
     }
   } catch {
