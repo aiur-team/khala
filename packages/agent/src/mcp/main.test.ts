@@ -162,7 +162,9 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+      const status = JSON.parse(result.stdout).result.structuredContent;
+      expect(status).toMatchObject({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [],
+        wakeDrivers: [{ id: 'queue', available: expect.any(Boolean) }] });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });

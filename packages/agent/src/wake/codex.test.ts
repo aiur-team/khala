@@ -90,9 +90,8 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
     accessToken: 'token', deviceId: 'device-a', roomId: layout === 'legacy' ? '!room-a:example.test' : 'room' };
   await saveSession(files, credentials);
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
-  await append('a'); await activity('idle'); start(); await wait();
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(2);
+  await append('a'); await activity('idle'); start(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(2);
 
@@ -102,10 +101,8 @@ it('resets the attempt cap and pending retry when switching channels at cursor z
   await writeJsonAtomic(files.cursor, { lastDeliveredEventId: null, deliveredCount: 0 });
   await appendEntries(files, [{ eventId: 'b', roomId: layout === 'legacy' ? '!room-b:example.test' : 'room', ts: new Date(time).toISOString(),
     sender: 'sender', senderLabel: 'LABELMARK', senderKind: 'human', body: 'BODYMARK', kind: 'message' }]);
-  waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(3);
-  time += 60_000; waker!.notify(); await wait();
-  expect(run).toHaveBeenCalledTimes(4);
+  waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  time += 60_000; waker!.notify(); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
   time += 60_000; waker!.notify(); await wait();
   expect(run).toHaveBeenCalledTimes(4);
 });
