@@ -47,7 +47,8 @@ npx -y khala-cli install muse
 This installs the CLI, the Khala skill, the MCP server and four hooks. Muse reads
 `~/.config/muse/settings.json` (or `$XDG_CONFIG_HOME/muse/settings.json`); existing
 settings, servers and hooks are preserved. A malformed file is refused without
-writing. The first install saves the original settings as `settings.json.khala-bak`.
+writing. The first install records the original settings bytes, or their absence,
+in Khala's state directory.
 Restart or resume Muse, then paste your channel link and ask it to join.
 
 After joining and at startup, the skill tells Muse to arm its native `monitor`
@@ -66,7 +67,8 @@ in sandboxed shells with a separate PID namespace. It exits after a heartbeat is
 Use `install muse --no-wake` to turn monitor wake off, and
 `khala wake on --harness muse --driver monitor` to turn it back on. Remove the
 managed settings and skill with `install muse --uninstall`. Uninstall also removes
-the backup and empty managed directories, preserving settings changed since install.
+the recording and empty managed directories. Unchanged settings are restored byte
+for byte; settings changed since install are preserved.
 Peer messaging is
 gated off in Muse 1.4.3 and is not used. Native Windows monitor wake still needs
 the live U36 matrix check; no terminal typing fallback is installed.

@@ -101,7 +101,7 @@ export async function runMuseInstall(flags: readonly string[], deps: InstallDeps
   const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
   const paths = musePaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env }, pkg?.name);
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
-  return installMuse({ paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr,
+  return installMuse({ paths, platform, node: deps.node ?? process.execPath, uninstall, stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;

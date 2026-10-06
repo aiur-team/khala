@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
 import { watchSession, monitorArmed } from '../../../watch';
+import { listChannels } from '../../../channels';
 import { writeStatus, readStatus, type SessionFiles } from '../../../state';
 import { MUSE_WAKE_REQUEST, museJournalPath, type MuseWakeRequest } from '../../../wake/muse-monitor';
 
@@ -25,8 +26,12 @@ export const museDriver: FakeHarnessDriver = {
       drivers: adapter.wakeLadder ?? [], prompt: () => prompt, stop,
       async prepare(files: SessionFiles) {
         await stop();
-        const status = await readStatus(files);
-        await writeStatus(files, status?.state ?? 'connected', status?.detail, undefined, status?.channelName, status?.displayName);
+        // The fake MCP clock predates wall time; refresh fixture heartbeats before
+        // starting the real filesystem watcher, just as a live MCP server does.
+        for (const target of [files, ...(await listChannels(files)).map(channel => channel.files)]) {
+          const status = await readStatus(target);
+          await writeStatus(target, status?.state ?? 'connected', status?.detail, undefined, status?.channelName, status?.displayName);
+        }
         controller = new AbortController();
         dataHome = await fs.mkdtemp(path.join(path.dirname(files.dir), 'muse-data-'));
         env.XDG_DATA_HOME = dataHome;

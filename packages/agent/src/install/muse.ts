@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import nodePath from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
+import { ManagedFiles, formatJson, jsonFormat, textFormat } from './managed-file';
 import { renderMuseSkill, MUSE_SKILL_MARKER } from './muse-skill';
 import { museWatchCommand } from '../wake/muse-monitor';
 import { cursorPaths, type CursorPlatform } from './cursor';
@@ -79,7 +79,7 @@ export function mergeMuseSettings(config: unknown, entry: object | null, command
 }
 
 export async function installMuse(input: {
-  paths: MusePaths; platform: NodeJS.Platform; node: string; uninstall: boolean;
+  paths: MusePaths; platform: NodeJS.Platform; node: string; uninstall: boolean; stateDir: string;
   install?: () => boolean; stdout: (line: string) => void; stderr: (line: string) => void;
 }): Promise<number> {
   const { paths, uninstall, stdout, stderr } = input;
@@ -97,22 +97,20 @@ export async function installMuse(input: {
     try { skillsParentCreated = JSON.parse(await fs.readFile(metadataFile, 'utf8')).skillsParentCreated === true; }
     catch (error) { if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
-  let backup: string | null = null;
+  const managed = new ManagedFiles(input.stateDir);
+  const legacy = await fs.readFile(backupFile).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  });
+  const originalBytes = legacy?.length === 0 ? null : await managed.original(paths.settingsFile);
   let original: Record<string, unknown> | undefined;
-  if (uninstall) {
-    try { backup = await fs.readFile(backupFile, 'utf8'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    if (backup !== null) {
-      // An empty backup records that installation created settings; existing empty files are refused.
-      try {
-        const parsed: unknown = backup === '' ? {} : JSON.parse(backup.replace(/^\uFEFF/u, ''));
-        if (object(parsed)) original = parsed;
-      } catch { /* An unreadable backup must never replace the user's current settings. */ }
-    }
+  if (originalBytes) {
+    try { const parsed = jsonFormat.parse(originalBytes.toString('utf8')); if (object(parsed)) original = parsed; }
+    catch { /* Never restore a malformed original over current settings. */ }
   }
   const merged = mergeMuseSettings(config, uninstall ? null : museMcpEntry(input.platform, paths.bin, paths.customEnv),
     uninstall ? null : museHookCommand(input.platform, paths.bin, paths), original);
-  if ('config' in merged && uninstall && backup === '' && merged.config.schema_version === 1) delete merged.config.schema_version;
+  if ('config' in merged && uninstall && originalBytes === null && merged.config.schema_version === 1) delete merged.config.schema_version;
   if ('error' in merged) {
     stderr(merged.error === 'muse_mcp_exists'
       ? `khala: ${paths.settingsFile} already has a "khala" server that is not this CLI; remove it and run this again`
@@ -127,50 +125,34 @@ export async function installMuse(input: {
     stderr(`khala: ${skillFile} already exists and is not managed by this CLI; move it and run this again (nothing written)`);
     return 1;
   }
-  if (uninstall && before === null && skill === null) {
-    await fs.rm(backupFile, { force: true });
-    await fs.rm(metadataFile, { force: true });
-    return 0;
-  }
   if (!uninstall && input.install && !input.install()) return 1;
-  await fs.mkdir(nodePath.dirname(paths.settingsFile), { recursive: true });
-  if (!uninstall) {
-    const skillsParent = nodePath.dirname(nodePath.dirname(skillFile));
-    try { await fs.stat(skillsParent); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; skillsParentCreated = true; }
-    try { await fs.writeFile(metadataFile, JSON.stringify({ skillsParentCreated }), { flag: 'wx', mode: 0o600 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    try { await fs.writeFile(backupFile, before ?? '', { flag: 'wx', mode: 0o600 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  }
+  // Older Muse installers used an empty backup as an absent-file sentinel.
+  if (legacy?.length === 0) await managed.record(paths.settingsFile, { original: null });
+  if (legacy !== null && skill?.includes(MUSE_SKILL_MARKER)) await managed.record(skillFile, { original: null });
   if (uninstall) {
+    await managed.restore({ file: skillFile, text: skill }, textFormat, value =>
+      String(value).includes(MUSE_SKILL_MARKER) ? '' : value);
     if (skill?.includes(MUSE_SKILL_MARKER)) {
-      await fs.unlink(skillFile);
-      try { await fs.rmdir(nodePath.dirname(skillFile)); }
-      catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
       if (skillsParentCreated) {
-        try { await fs.rmdir(nodePath.dirname(nodePath.dirname(skillFile))); }
-        catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+        for (const dir of [nodePath.dirname(skillFile), nodePath.dirname(nodePath.dirname(skillFile))]) {
+          await fs.rmdir(dir).catch(error => {
+            if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+          });
+        }
       }
     }
-  } else {
-    await fs.mkdir(nodePath.dirname(skillFile), { recursive: true });
-    const nextSkill = renderMuseSkill(museWatchCommand(undefined, paths.bin));
-    if (skill !== nextSkill) await fs.writeFile(skillFile, nextSkill, { mode: 0o600 });
-  }
-  const style = uninstall && backup !== null && backup !== '' ? backup : before;
-  const indent = style?.match(/\n([ \t]+)"/u)?.[1];
-  const newline = style === null || style?.endsWith('\n') ? '\n' : '';
-  const text = uninstall && backup !== null && backup !== '' && original && isDeepStrictEqual(merged.config, original)
-    ? backup : (style?.startsWith('\uFEFF') ? '\uFEFF' : '') + JSON.stringify(merged.config, null, indent ?? (style === null ? 2 : undefined)) + newline;
-  if (uninstall && backup === '' && Object.keys(merged.config).length === 0) {
-    await fs.rm(paths.settingsFile, { force: true });
-  } else if (text !== before && (!uninstall || before !== null)) {
-    await fs.writeFile(paths.settingsFile, text, { mode: 0o600 });
-  }
-  if (uninstall) {
-    await fs.rm(backupFile, { force: true });
+    await managed.restore({ file: paths.settingsFile, text: before }, {
+      ...jsonFormat,
+      prune: value => value,
+      serialize: value => before !== null && jsonFormat.equal(value, config) ? before
+        : formatJson(value, originalBytes?.toString('utf8') ?? before),
+    }, () => merged.config);
     await fs.rm(metadataFile, { force: true });
+  } else {
+    await managed.write([
+      { current: { file: paths.settingsFile, text: before }, text: formatJson(merged.config, before), mode: 0o600 },
+      { current: { file: skillFile, text: skill }, text: renderMuseSkill(museWatchCommand(undefined, paths.bin)), mode: 0o600 },
+    ]);
   }
   stdout(uninstall ? `removed Khala from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`
     : `configured ${paths.settingsFile}; restart or resume Muse, then ask it to join your Khala channel`);

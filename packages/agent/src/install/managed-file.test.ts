@@ -146,3 +146,15 @@ describe('khala install codex (TOML and JSON)', () => {
     expect(await exists(path.join(codex(), 'hooks.json'))).toBe(false);
   });
 });
+
+it('adopts a harness-specific absent-file sentinel without restoring an empty file', async () => {
+  const file = path.join(home, 'settings.json'), managed = new ManagedFiles(state);
+  await fs.writeFile(file, '{"managed":true}');
+  await fs.writeFile(file + '.khala-bak', '');
+  await managed.record(file, { original: null });
+  expect(await managed.original(file)).toBeNull();
+  await managed.record(file, { original: Buffer.from('do not replace the first recording') });
+  await managed.restore(await readManaged(file), jsonFormat, () => ({}));
+  expect(await exists(file)).toBe(false);
+  expect(await exists(file + '.khala-bak')).toBe(false);
+});

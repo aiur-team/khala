@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mergeMuseSettings, musePaths, museMcpEntry, museHookCommand } from './muse';
 import { runInstall } from './main';
+import { ManagedFiles } from './managed-file';
 
 const entry = museMcpEntry('linux', '/prefix/bin/khala');
 const command = museHookCommand('linux', '/prefix/bin/khala');
@@ -62,9 +63,9 @@ it('installs in one step, backs up once, reinstalls and uninstalls only its own 
   expect(skill).not.toContain('/node');
   expect(JSON.stringify(config.hooks)).toContain(path.join(home, '.local/share/khala/npm/bin/khala'));
   expect(Object.keys(config.hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']);
-  expect(await fs.readFile(settingsFile + '.khala-bak', 'utf8')).toBe(original);
+  expect((await new ManagedFiles(path.join(home, 'state/khala')).original(settingsFile))?.toString()).toBe(original);
   expect(await runInstall(['muse', '--no-wake'], deps)).toBe(0);
-  expect(await fs.readFile(settingsFile + '.khala-bak', 'utf8')).toBe(original);
+  expect((await new ManagedFiles(path.join(home, 'state/khala')).original(settingsFile))?.toString()).toBe(original);
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   await expect(fs.stat(path.join(home, '.config/muse/skills/khala/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(JSON.parse(await fs.readFile(settingsFile, 'utf8'))).toEqual({ schema_version: 1, model: 'custom', mcp_servers: { other: {} } });
@@ -112,7 +113,7 @@ it('removes settings created by install after reinstall, without leaving backup 
   const deps = installDeps(), file = settingsPath();
   expect(await runInstall(['muse'], deps)).toBe(0);
   expect(JSON.parse(await fs.readFile(file, 'utf8')).schema_version).toBe(1);
-  expect(await fs.readFile(file + '.khala-bak', 'utf8')).toBe('');
+  expect(await new ManagedFiles(path.join(home, 'state/khala')).original(file)).toBeNull();
   expect(await runInstall(['muse'], deps)).toBe(0);
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   for (const target of [file, file + '.khala-bak', file + '.khala-meta', path.join(path.dirname(file), 'skills')]) {
@@ -192,4 +193,24 @@ it('retains a preexisting empty skills parent', async () => {
   expect(await runInstall(['muse'], deps)).toBe(0);
   expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
   expect(await fs.readdir(parent)).toEqual([]);
+});
+
+it('migrates the legacy absent-settings sentinel and removes its managed skill', async () => {
+  const file = settingsPath(), deps = installDeps();
+  expect(await runInstall(['muse'], deps)).toBe(0);
+  await fs.rm(path.join(home, 'state/khala/install-originals.json'));
+  await fs.writeFile(file + '.khala-bak', '');
+  await fs.writeFile(file + '.khala-meta', '{"skillsParentCreated":true}');
+  expect(await runInstall(['muse', '--uninstall'], deps)).toBe(0);
+  for (const target of [file, file + '.khala-bak', file + '.khala-meta', path.join(path.dirname(file), 'skills')]) {
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+});
+
+it('uninstall before installation preserves existing unmanaged settings bytes', async () => {
+  const file = settingsPath(), original = '{ "model": "custom" }';
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, original);
+  expect(await runInstall(['muse', '--uninstall'], installDeps())).toBe(0);
+  expect(await fs.readFile(file, 'utf8')).toBe(original);
 });
