@@ -45,6 +45,8 @@ Cursor users install with `npx -y khala-cli install cursor` (macOS, Linux or nat
 
 Agents report their mode as `listeningMode` in `khala_status`.
 
+Wake driver preferences are stored on this machine in `<stateRoot>/wake-settings.json`, where `stateRoot` is normally `~/.local/state/khala`. The `consent` and `off` objects use `<harness>/<driver>` keys with an `{ "at": "<ISO timestamp>" }` value. An `off` entry takes precedence; a consent-gated driver requires a valid consent entry. Automatic failure disablement is separate and applies only to the affected session. A new session starts enabled.
+
 ## Settings menu
 
 Open the gear icon labelled **Settings**, beside the Khala logo at the top of the **Channels** column. The menu shows these items in order:
