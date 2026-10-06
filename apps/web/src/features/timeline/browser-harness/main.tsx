@@ -17,6 +17,7 @@ const controller = params.has('cached') ? baseController : { ...baseController, 
 declare global {
   interface Window {
     __timelineHarness: {
+      readEvents: string[];
       historyCalls: () => number;
       delayHistory: () => void;
       releaseHistory: () => void;
@@ -31,7 +32,9 @@ declare global {
     };
   }
 }
+const readEvents: string[] = [];
 window.__timelineHarness = {
+  readEvents,
   historyCalls: harness.historyCalls,
   delayHistory: harness.delayHistory,
   releaseHistory: harness.releaseHistory,
@@ -50,6 +53,7 @@ function Harness() {
     <AiurShell mode="standalone" navigation={navigation} theme={{ theme: new URLSearchParams(location.search).get('theme') === 'light' ? 'light' : 'dark', onThemeChange: () => {} }} collapsed={false} onCollapsedChange={() => {}}>
       <KhalaPageFrame model={{ title: 'Conversation', labelledBy: 'timeline-heading' }}>
         <TimelineScreen
+          onReadLatest={eventId => { readEvents.push(eventId); }}
           controller={controller}
           roomPort={harness.port}
           roomId={harness.roomId}

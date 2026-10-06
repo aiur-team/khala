@@ -103,6 +103,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
           data-kh-convo={item.id} aria-label={label} aria-current={selectedId === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
           <span className="kh-cv-av" aria-hidden="true">
             {members.length ? members.map(member => <MemberAvatar key={member.id} member={member} members={item.members ?? []} viewerOwnerId={viewerOwnerId} viewerInitials={viewerInitials} />) : <Avatar kind="generic" />}
+            {item.unreadCount ? <span className="kh-cv-unread" /> : null}
           </span>
           <span className="kh-cv-t">
             <span><b dir="auto">{item.title}</b>{item.timestamp ? <time dateTime={item.timestamp}>{time}</time> : null}</span>
