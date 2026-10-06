@@ -18,6 +18,12 @@ export function errorCode(error: unknown): KhalaErrorCode {
 }
 
 export function createKhalaTools(input: { harness: Harness; clientFor: ClientLookup }): readonly McpTool[] {
+  const sessionProperties = input.harness === 'opencode'
+    ? { khala_session: { type: 'string', minLength: 1, description: 'Session ID stamped by the OpenCode plugin.' } } : {};
+  const validSession = (args: Record<string, unknown>) => !Object.hasOwn(args, 'khala_session')
+    || input.harness === 'opencode' && typeof args.khala_session === 'string' && args.khala_session.length > 0;
+  const sessionMeta = (args: Record<string, unknown>, meta: Readonly<Record<string, unknown>> | undefined) =>
+    input.harness === 'opencode' && Object.hasOwn(args, 'khala_session') ? { ...meta, khala_session: args.khala_session } : meta;
   function tool(
     name: string,
     description: string,
@@ -29,11 +35,11 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
   ): McpTool {
     return {
       name,
-      definition: () => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } }),
+      definition: () => ({ name, description, inputSchema: { type: 'object', properties: { ...properties, ...sessionProperties }, required, additionalProperties: false } }),
       async call(args, context) {
-        if (!hasOnly(args, Object.keys(properties)) || !validate(args)) return failure(context.id, -32602, 'Invalid params');
+        if (!hasOnly(args, Object.keys({ ...properties, ...sessionProperties })) || !validSession(args) || !validate(args)) return failure(context.id, -32602, 'Invalid params');
         try {
-          const client = await input.clientFor(context.meta);
+          const client = await input.clientFor(sessionMeta(args, context.meta));
           if (client === null) return success(context.id, toolError('session_unknown', { hint: SESSION_UNKNOWN_HINT }));
           const structuredContent = await invoke(client, args);
           return success(context.id, { content: [{ type: 'text', text: render(structuredContent) }], structuredContent });
@@ -87,15 +93,16 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
         description: 'Select channel by name or channel ID; required when joined to more than one channel. Post a compact progress event (PR, CI, ticket status) into the Khala channel. Events are progress signals, not channel messages: they never wake other agents. Pass Khala JSON as "event", or a raw Aiur bus event, wake record or alert as "aiur".',
         inputSchema: {
           type: 'object',
-          properties: { channel: channelProperty, event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
+          properties: { ...sessionProperties, channel: channelProperty, event: { type: 'object' }, aiur: { type: 'object' }, ticketPrefix: { type: 'string', minLength: 0, maxLength: 16 } },
           required: [],
           additionalProperties: false,
           oneOf: [{ required: ['event'], not: { required: ['aiur'] } }, { required: ['aiur'], not: { required: ['event'] } }],
         },
       }),
       async call(args, context) {
-        if (!validChannel(args)) return failure(context.id, -32602, 'Invalid params');
+        if (!validSession(args) || !validChannel(args)) return failure(context.id, -32602, 'Invalid params');
         const { channel, ...eventArgs } = args;
+        if (input.harness === 'opencode') delete eventArgs.khala_session;
         const resolved = resolveEventInput(eventArgs);
         if (resolved.kind === 'invalid') {
           const error = { error: 'invalid_event', path: resolved.path, code: resolved.code };
@@ -105,7 +112,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
           return success(context.id, { content: [{ type: 'text', text: 'Skipped channel event.' }], structuredContent: { skipped: true } });
         }
         try {
-          const client = await input.clientFor(context.meta);
+          const client = await input.clientFor(sessionMeta(args, context.meta));
           if (client === null) return success(context.id, toolError('session_unknown', { hint: SESSION_UNKNOWN_HINT }));
           const sent = await (channel === undefined ? client.sendChannelEvent(resolved.content) : client.sendChannelEvent(resolved.content, channel as string));
           return success(context.id, { content: [{ type: 'text', text: `Posted channel event: ${resolved.content.body}` }], structuredContent: sent });
