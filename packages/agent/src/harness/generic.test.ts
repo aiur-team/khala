@@ -21,10 +21,11 @@ describe('generic MCP adapter', () => {
       .toEqual({ sessionId: 'proc-100-start', rejoinable: false });
     expect(await resolveSession(id, undefined, { KHALA_SESSION_ID: '../invalid' })).toBeNull();
   });
-  it('keeps Cline identity and passes MCP rows while hook rows are unsupported', async () => {
-    expect(defaultAgentName('kevin', 'cline')).toBe('kevin-Agent');
-    expect(harnessInfo('cline').displayName).toBe('Cline');
-    const result = await runConformance(adapterFor('cline')!, genericDriver);
+  it.each(['generic', 'cline'])('keeps %s identity and passes MCP rows while hook rows are unsupported', async id => {
+    expect(defaultAgentName('kevin', id)).toBe('kevin-Agent');
+    expect(harnessInfo(id).displayName).toBe(id === 'generic' ? 'MCP agent' : 'Cline');
+    expect(harnessInfo(id)).toMatchObject({ steer: false, sync: false, idleWake: 'none' });
+    const result = await runConformance(adapterFor(id)!, genericDriver);
     for (const feature of ['read', 'send', 'you=', 'async']) {
       expect(result.rows.find(row => row.feature === feature)?.status).toBe('pass');
     }
