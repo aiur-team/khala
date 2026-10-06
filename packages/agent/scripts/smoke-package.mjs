@@ -4,6 +4,7 @@
 // an MCP initialize + tools/list over stdio, a delivery hook, `install cursor` (MCP server
 // started exactly as mcp.json says, a Cursor hook through the shell, uninstall) and
 // `npx -y <tgz> --version`. Runs on Linux, macOS and native Windows.
+import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
@@ -36,6 +37,20 @@ function check(label, command, args, options = {}) {
   return result.stdout;
 }
 const quote = value => windows ? `"${value}"` : value;
+
+/** Captures bytes or absence before install and verifies exact restoration after uninstall. */
+async function readOriginal(file) {
+  try { return await fs.readFile(file); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+async function captureOriginals(files) {
+  return Promise.all(files.map(async file => [file, await readOriginal(file)]));
+}
+async function assertRestored(originals) {
+  for (const [file, original] of originals) {
+    assert.deepStrictEqual(await readOriginal(file), original, `uninstall did not restore ${file}`);
+  }
+}
 
 /** Starts an MCP server, runs initialize + tools/list and stops it. */
 async function mcpSmoke(label, command, args, callStatus = false) {
@@ -88,8 +103,9 @@ try {
   await mcpSmoke('mcp --harness claude', process.execPath, [script, 'mcp', '--harness', 'claude']);
 
   // Cursor: install from this tarball into the temp profile, then run exactly what Cursor would.
-  check('install cursor', process.execPath, [script, 'install', 'cursor'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
   const cursorDir = path.join(home, '.cursor');
+  const cursorOriginals = await captureOriginals(['mcp.json', 'hooks.json'].map(file => path.join(cursorDir, file)));
+  check('install cursor', process.execPath, [script, 'install', 'cursor'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
   const mcp = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
   const server = mcp.mcpServers?.khala;
   if (!server || server.env?.KHALA_CURSOR_WORKSPACE !== '${workspaceFolder}') throw new Error(`mcp.json: ${JSON.stringify(mcp)}`);
@@ -107,11 +123,11 @@ try {
   const again = JSON.parse(await fs.readFile(path.join(cursorDir, 'hooks.json'), 'utf8'));
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
-  const removed = JSON.parse(await fs.readFile(path.join(cursorDir, 'mcp.json'), 'utf8'));
-  if (removed.mcpServers?.khala) throw new Error('uninstall left mcpServers.khala');
+  await assertRestored(cursorOriginals);
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
   const opencodeConfig = path.join(root, 'config', 'opencode', 'opencode.json');
+  const opencodeOriginals = await captureOriginals([opencodeConfig]);
   check('install opencode', process.execPath, [script, 'install', 'opencode'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball, KHALA_OPENCODE_PLUGIN_SPEC: `khala-opencode@${version}` } });
   const oc = JSON.parse(await fs.readFile(opencodeConfig, 'utf8'));
   if (JSON.stringify(oc) !== JSON.stringify({ plugin: [`khala-opencode@${version}`] })) throw new Error(`opencode.json: ${JSON.stringify(oc)}`);
@@ -122,7 +138,7 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  if (JSON.parse(await fs.readFile(opencodeConfig, 'utf8')).plugin !== undefined) throw new Error('uninstall left OpenCode plugin');
+  await assertRestored(opencodeOriginals);
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
