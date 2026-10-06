@@ -84,7 +84,8 @@ async function readIdentity(file: string): Promise<Identity | null> {
     const value = JSON.parse(await handle.readFile('utf8')) as Identity;
     if (!value || typeof value.homeserver !== 'string' || typeof value.userId !== 'string' || typeof value.deviceId !== 'string'
       || (value.accessToken !== undefined && typeof value.accessToken !== 'string')
-      || (value.joinedAt !== undefined && !Number.isFinite(value.joinedAt))) throw new CryptoStoreCorruptError();
+      || (value.joinedAt !== undefined && !Number.isFinite(value.joinedAt))
+      || (value.undecryptableEventIds !== undefined && (!Array.isArray(value.undecryptableEventIds) || value.undecryptableEventIds.length > 100 || value.undecryptableEventIds.some(id => typeof id !== 'string')))) throw new CryptoStoreCorruptError();
     return value;
   } catch (error) {
     if (error instanceof StateError) throw error;
@@ -93,9 +94,11 @@ async function readIdentity(file: string): Promise<Identity | null> {
   }
   finally { await handle.close(); }
 }
-type Identity = { homeserver: string; userId: string; deviceId: string; accessToken?: string; joinedAt?: number };
+type Identity = { homeserver: string; userId: string; deviceId: string; accessToken?: string; joinedAt?: number; undecryptableEventIds?: string[] };
 export type PersistentCryptoStore = {
   recovered?: boolean; prefix: string; sync: IndexedDBStore; restored: boolean; joinedAt?: number;
+  undecryptableEventIds?: string[];
+  rememberUndecryptable(ids: string[]): Promise<void>;
   rememberJoin(ts: number): Promise<void>;
   forgetIdentity(): Promise<void>; close(): Promise<void>; wipe(): Promise<void>;
 };
@@ -182,11 +185,20 @@ export async function openCryptoStore(dir: string, root: string, creds: AgentCre
     if (!restored) {
       await deleteStores(prefix, dir);
     }
-    await writeJsonAtomic(identityFile, { ...identity, ...(restored && previous?.joinedAt !== undefined ? { joinedAt: previous?.joinedAt } : {}) });
+    const saved: Identity = { ...identity, ...(restored && previous?.joinedAt !== undefined ? { joinedAt: previous.joinedAt } : {}), ...(restored && previous?.undecryptableEventIds ? { undecryptableEventIds: previous.undecryptableEventIds } : {}) };
+    await writeJsonAtomic(identityFile, saved);
     const sync = new DurableSyncStore({ indexedDB: globalThis.indexedDB, dbName: prefix });
     let closed: Promise<void> | undefined;
+    let identitySave = Promise.resolve();
+    const saveIdentity = () => {
+      const saving = identitySave.then(() => writeJsonAtomic(identityFile, saved));
+      identitySave = saving.catch(() => {});
+      return saving;
+    };
     return { prefix, sync, restored, ...(recovered ? { recovered } : {}), ...(restored && previous?.joinedAt !== undefined ? { joinedAt: previous?.joinedAt } : {}),
-      async rememberJoin(this: PersistentCryptoStore, ts) { if (this.joinedAt === undefined) { await writeJsonAtomic(identityFile, { ...identity, joinedAt: ts }); this.joinedAt = ts; } },
+      undecryptableEventIds: saved.undecryptableEventIds ?? [],
+      async rememberUndecryptable(ids) { saved.undecryptableEventIds = ids.slice(-100); await saveIdentity(); },
+      async rememberJoin(this: PersistentCryptoStore, ts) { if (this.joinedAt === undefined) { saved.joinedAt = ts; await saveIdentity(); this.joinedAt = ts; } },
       forgetIdentity() { return unlink(identityFile); },
       close() { return closed ??= sync.destroy().finally(release); },
       async wipe() {

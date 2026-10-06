@@ -131,3 +131,12 @@ it('refuses to wipe through a symlinked state directory', async () => {
   await expect(wipeCryptoStore(dir, base, vi.fn<typeof fetch>())).rejects.toThrow('unsafe_state_dir');
   expect(await readFile(target, 'utf8')).toBe('secret');
 });
+
+it('persists a bounded retry set across fresh processes and join metadata updates', async () => {
+  const dir = await root();
+  await exec(process.execPath, ['--import', 'tsx', 'fixtures/crypto-store/restart.ts', dir, 'DEVICE', 'retry-ids'], { cwd: path.resolve(import.meta.dirname, '../..') });
+  const second = await restart(dir);
+  const saved = JSON.parse(await readFile(path.join(second.dir, 'crypto.json'), 'utf8'));
+  expect(saved.undecryptableEventIds).toEqual(Array.from({ length: 100 }, (_, i) => `$missing-${i + 5}`));
+  expect(saved.joinedAt).toBe(100);
+}, 20_000);
