@@ -28,6 +28,8 @@ export type KhalaAgentClientOptions = {
   fetch?: typeof fetch; inviteTimeoutMs?: number; autoConfirmWaitMs?: number; onInboxAppend?: (entry: InboxEntry) => void;
 };
 type ResumeAuthorization = { link: string; label: string; workspace: string; secretHash: string; roomId: string; localCredentials?: AgentCredentials };
+// Bound restart work even when a room has no surviving intake boundary.
+const RESTORE_HISTORY_MAX_PAGES = 20;
 const terminal: readonly string[] = TERMINAL_SESSION_DETAILS;
 type Attempt = {
   label: string; restore?: ResumeAuthorization; link: string; created: AgentJoinCreated & { origin: string }; controller: AbortController;
@@ -356,6 +358,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
           const boundary = page.messages.findIndex(message => message.eventId === lastEventId);
           missed.push(page.messages.slice(boundary + 1).filter(message => message.ts >= cutoff));
           if (page.reachedBoundary || (page.oldestTs !== undefined && page.oldestTs < cutoff) || boundary !== -1 || page.messages.some(message => message.ts < cutoff) || !page.nextBefore || visited.has(page.nextBefore)) break;
+          if (missed.length >= RESTORE_HISTORY_MAX_PAGES) {
+            process.stderr.write(`restore_catchup_truncated pages=${missed.length}\n`);
+            break;
+          }
           visited.add(page.nextBefore);
           before = page.nextBefore;
         }

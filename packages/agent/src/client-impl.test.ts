@@ -1181,6 +1181,30 @@ it.each(['tail', 'cutoff'])('stops restored encrypted history at its raw %s boun
   expect(wake).not.toHaveBeenCalled();
 });
 
+it.each([false, true])('caps restore history and preserves chronological intake (boundary on last page: %s)', async reachedBoundary => {
+  const f = await multiClient(['A']); await f.join(0); await client.close();
+  const control = f.controls[0]!;
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  let pages = 0;
+  const gap = (id: string, ts: number) => ({ ...message(id), roomId: control.creds.roomId, ts: now().getTime() + ts });
+  vi.mocked(control.session.history).mockImplementation(async () => {
+    pages++;
+    if (pages === 1) control.receive(gap('$live', 30));
+    return { messages: [gap(`$page-${pages}`, 21 - pages)], nextBefore: `$older-${pages}`,
+      ...(reachedBoundary && pages === 20 ? { reachedBoundary: true } : {}) };
+  });
+  try {
+    await restartMulti(f);
+    expect(pages).toBe(20);
+    expect((await client.status()).state).toBe('connected');
+    expect((await f.inbox(0)).map(entry => entry.eventId)).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => `$page-${20 - i}`), '$live',
+    ]);
+    if (reachedBoundary) expect(stderr).not.toHaveBeenCalled();
+    else expect(stderr).toHaveBeenCalledExactlyOnceWith('restore_catchup_truncated pages=20\n');
+  } finally { stderr.mockRestore(); }
+});
+
 it('keeps restore disconnected when catch-up fails rather than claiming a complete inbox', async () => {
   const f = await multiClient(['A']); await f.join(0); await client.close();
   vi.mocked(f.controls[0]!.session.history).mockRejectedValue(new Error('history unavailable'));
