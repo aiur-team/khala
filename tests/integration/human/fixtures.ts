@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import type { BrowserContext, Page } from '@playwright/test';
+import { expect, type BrowserContext, type Page } from '@playwright/test';
 
 type DisposableUserConfig = Readonly<{
   usernameEnv: string;
@@ -126,6 +126,20 @@ export async function signIn(page: Page, environment: LiveHumanEnvironment, user
   await page.getByLabel(environment.oauth.passwordLabel).fill(user.password);
   await page.getByRole('button', { name: environment.oauth.submitName }).click();
   await page.waitForURL(url => url.origin === environment.appOrigin);
+  // The profile gate loads asynchronously after OAuth. Wait for either setup
+  // or the owner shell rather than checking setup before it has rendered.
+  const setup = page.getByRole('heading', { name: 'Choose your username', exact: true });
+  // The pending shell also has this button, disabled while the profile loads.
+  const ready = page.getByRole('button', { name: 'New channel', exact: true }).and(page.locator(':enabled'));
+  await expect(setup.or(ready)).toBeVisible({ timeout: 30_000 });
+  if (await setup.isVisible()) {
+    // Provider usernames may be email addresses. Choose a valid, unique Khala
+    // name only for a fresh account; returning users keep their saved profile.
+    await page.getByRole('textbox', { name: 'Username', exact: true })
+      .fill(`e2e-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(ready).toBeVisible({ timeout: 30_000 });
+  }
 }
 
 export async function freshPage(context: BrowserContext, environment: LiveHumanEnvironment): Promise<Page> {

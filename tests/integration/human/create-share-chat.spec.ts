@@ -62,10 +62,10 @@ async function requireAutomaticHistoryAfterReload(page: Page, expectedMessage: s
           .some(node => node.textContent?.includes('Conversation history is unavailable right now.'));
         const loading = Boolean(timeline?.querySelector('.kh-loading'));
         const phase = historyAlert ? 'unavailable' : loading ? 'loading'
-          : timeline?.querySelector('.timeline__empty') ? 'ready_empty'
+          : timeline?.querySelector('.kh-empty') ? 'ready_empty'
             : timeline?.querySelector('.timeline__row') ? 'ready_or_partial' : 'absent';
         return { phase, historyAlert, appRendered: Boolean(document.querySelector('#app')?.firstElementChild),
-          unavailableRows: timeline?.querySelectorAll('.timeline__row.message-content__unavailable').length ?? 0,
+          unavailableRows: timeline?.querySelectorAll('.message-content__unavailable').length ?? 0,
           stages: (target.__khalaHistoryStages ?? []).filter(stage =>
             stage === 'history_participants' || stage === 'history_device_info').slice(-8) };
       });
@@ -103,17 +103,20 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(typeof creatorAccessToken).toBe('string');
 
     const intro = syntheticCanary('intro');
-    await alice.getByRole('button', { name: 'Create channel' }).last().click();
-    await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
-    await alice.getByRole('button', { name: 'Create channel' }).last().click();
+    await alice.getByRole('button', { name: 'New channel', exact: true }).click();
+    await alice.getByRole('textbox', { name: 'Channel name', exact: true }).fill(`Live ${environment.environmentId}`);
+    await alice.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(alice).toHaveURL(/\/channels\//u);
+    const roomId = decodeURIComponent(new URL(alice.url()).pathname.slice('/channels/'.length));
+    expect(roomId).not.toBe('');
     recordStage('alice-send');
     await alice.getByLabel('Message', { exact: true }).fill(intro);
-    await alice.getByRole('button', { name: 'Send message', exact: true }).click();
+    await alice.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(alice.locator('.timeline__row:not(.timeline__row--pending)', { hasText: intro })).toBeVisible({ timeout: 30_000 });
     recordStage('alice-share');
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
-    await alice.getByRole('button', { name: 'Copy my channel link' }).click();
+    await alice.getByRole('button', { name: 'Invite', exact: true }).click();
+    await alice.getByRole('button', { name: 'Copy link', exact: true }).click();
     await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
     const shareUrl = await alice.evaluate(() => navigator.clipboard.readText());
     expect(shareUrl).toMatch(/\/join\/[^/?#]+$/u);
@@ -126,9 +129,6 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await bob.goto(shareUrl, { waitUntil: 'networkidle' });
     await signIn(bob, environment, environment.users[1]);
     await expect(bob.getByText("You're in.")).toBeVisible();
-    const roomText = await bob.locator('.join-joined__room-id').innerText();
-    const roomId = roomText.replace(/^Channel:\s*/u, '');
-    expect(roomId).not.toBe('');
 
     // The disposable observer has not been admitted. A 403 proves private
     // history is inaccessible; it is not a source of ciphertext evidence.
@@ -139,15 +139,15 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await bob.getByRole('button', { name: 'Open channel' }).click();
     await expect(bob).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     // M1 (R4, AE7): a link joiner reads from their join onward; earlier messages are hidden, not shown as broken.
-    await expect(bob.getByRole('list', { name: 'Messages' }).getByText('No messages yet.')).toBeVisible();
+    await expect(bob.getByRole('list', { name: 'Messages' }).getByText('No messages yet', { exact: true })).toBeVisible();
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
     await expect(bob.locator('.message-content__unavailable')).toHaveCount(0);
     recordStage('bob-send');
     const reply = syntheticCanary('reply');
     await bob.getByLabel('Message', { exact: true }).fill(reply);
-    await bob.getByRole('button', { name: 'Send message', exact: true }).click();
+    await bob.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(bob.locator('.timeline__row:not(.timeline__row--pending)', { hasText: reply })).toBeVisible({ timeout: 30_000 });
-    await expect(bob.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('You');
+    await expect(bob.locator('.timeline__row', { hasText: reply })).toHaveClass(/\bme\b/u);
 
     recordStage('matrix-ciphertext');
     const rawEvents = await rawRoomMessages(environment, roomId, creatorAccessToken as string);
@@ -171,7 +171,9 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     await requireAutomaticHistoryAfterReload(alice, reply, 'alice-history');
     await expect(alice.getByRole('list', { name: 'Messages' }).getByText(intro)).toBeVisible();
-    await expect(alice.locator('.timeline__row', { hasText: reply }).locator('.conversation-message__kind')).toHaveText('Human');
+    const receivedReply = alice.locator('.timeline__row', { hasText: reply });
+    await expect(receivedReply).toHaveClass(/\bhuman\b/u);
+    await expect(receivedReply.getByRole('img', { name: 'Human', exact: true })).toBeVisible();
 
     await requireAutomaticHistoryAfterReload(bob, reply, 'bob-history');
     await expect(bob.getByRole('list', { name: 'Messages' }).getByText(intro)).toHaveCount(0);
@@ -190,15 +192,15 @@ test('an account without admission cannot read a protected room', async ({ brows
     recordStage('outsider-signin');
     await signIn(owner, environment, environment.users[0]);
     recordStage('outsider-room');
-    await owner.getByRole('button', { name: 'Create channel' }).last().click();
+    await owner.getByRole('button', { name: 'New channel', exact: true }).click();
     const canary = syntheticCanary('protected');
-    await owner.getByRole('button', { name: 'Create channel' }).last().click();
+    await owner.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(owner).toHaveURL(/\/channels\//u);
     const roomId = decodeURIComponent(new URL(owner.url()).pathname.slice('/channels/'.length));
     expect(roomId).not.toBe('');
     recordStage('outsider-send');
     await owner.getByLabel('Message', { exact: true }).fill(canary);
-    await owner.getByRole('button', { name: 'Send message', exact: true }).click();
+    await owner.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(owner.locator('.timeline__row:not(.timeline__row--pending)', { hasText: canary })).toBeVisible({ timeout: 30_000 });
 
     const outsider = await freshPage(outsiderContext, environment);
@@ -212,8 +214,11 @@ test('an account without admission cannot read a protected room', async ({ brows
     await expect(rawRoomMessages(environment, roomId, outsiderSession.session!.accessToken as string))
       .rejects.toThrow('Matrix event request failed with 403');
     await outsider.goto(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
-    await expect(outsider.getByRole('list', { name: 'Messages' }).getByText(canary)).toHaveCount(0);
-    await expect(outsider.getByRole('alert')).toBeVisible();
+    // An inaccessible channel returns to the list rather than mounting a timeline.
+    await expect(outsider).toHaveURL(`${environment.appOrigin}/conversations`);
+    await expect(outsider.getByRole('region', { name: 'No channel selected', exact: true })).toBeVisible();
+    await expect(outsider.getByRole('list', { name: 'Messages' })).toHaveCount(0);
+    await expect(outsider.getByText(canary, { exact: true })).toHaveCount(0);
   } finally {
     await Promise.all([ownerContext.close(), outsiderContext.close()]);
   }
