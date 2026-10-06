@@ -353,3 +353,48 @@ fixed wake line in an existing idle session with an empty prompt. It does not
 make an unavailable transport available; check `khala wake status` for the actual
 state. The Codex terminal fallback is currently declared for consent while its
 runtime is built in the following wake unit.
+
+
+### Qwen Code
+
+Run `npx -y khala-cli install qwen`, then restart or resume Qwen. The installer
+merges the Khala MCP server and SessionStart, UserPromptSubmit, PostToolUse, and
+Stop hooks into `$QWEN_HOME/settings.json` (default `~/.qwen/settings.json`),
+keeping other servers and hooks. `khala install qwen --uninstall` removes those
+entries, revokes the trusted controller in Qwen, and removes its local credential;
+it leaves the installed CLI intact. If Qwen is missing, uninstall reports that
+revocation could not run. Config edits use the shared installer recording:
+uninstall restores the original bytes when only Khala changed the file, or
+removes only Khala entries when you added other settings. A config created by
+Khala is removed when nothing else remains.
+
+On Linux and macOS, install mints a trusted Qwen controller credential and stores
+it with mode 0600 under Khala's state directory. Reinstall checks that Qwen still
+trusts that controller and replaces a revoked credential. Native socket idle wake is on by
+default. The socket carries only Khala's fixed wake line and a verification nonce;
+channel messages arrive through the hooks. Stop verifies the nonce in Qwen's
+transcript because socket wakes do not fire UserPromptSubmit. The waker also
+checks the recorded transcript while a long woken turn is running. Two failed or
+unverified wakes disable the socket driver for that session.
+
+Use `khala install qwen --no-wake` to disable wakes, or
+`khala wake off --harness qwen`; re-enable with
+`khala wake on --harness qwen`. Use `--driver socket` or
+`--driver background-shell` to select a transport. Inspect
+`khala wake status --harness qwen` or the agent's `khala_status` tool for the
+current state. Qwen's `agents.crossSessionInbound: hold` is respected: status
+reports “Held by your Qwen setting” and suggests `/peers accept` or changing the
+setting. Khala does not repeatedly send held messages or bypass hold with another
+transport. `refuse` and disabled cross-session messaging also prevent wakes.
+
+On native Windows, Qwen uses an agent-armed background shell watcher. After
+joining, follow the command in Khala's join/status hint with `run_shell_command`
+and `is_background: true`. The command uses the private npm launcher
+(`khala.cmd` on Windows); install grants a narrow permission for that watcher
+command, including when the install path contains spaces. The watcher exits after the
+first message notification, so re-arm it after processing messages. It observes
+the inbox without consuming it; Qwen's hooks deliver the channel content.
+`agents.crossSessionInbound: hold` prevents the watcher from notifying or arming.
+
+Socket status outside Qwen's process tree cannot inspect its inherited socket;
+check `khala_status` inside the Qwen session for the native wake state.

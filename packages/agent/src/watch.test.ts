@@ -319,6 +319,33 @@ it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', a
   expect(stderr).toBe('');
 });
 
+it('Qwen background watcher exits after one notice without advancing delivery', async () => {
+  const errors: string[] = [];
+  result = watchSession(files, { harness: 'qwen', env: { QWEN_HOME: root, XDG_STATE_HOME: root }, signal: controller.signal, write: line => lines.push(line), stderr: line => errors.push(line) });
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await appendEntries(files, [entry(1)]);
+  await expect(result).resolves.toBe(0);
+  expect(lines).toHaveLength(1);
+  expect(errors).toEqual([]);
+  expect(await monitorArmed(files)).toBe(false);
+  expect((await readCursor(files)).deliveredCount).toBe(0);
+});
+it.each(['user', 'workspace'])('Qwen %s hold keeps an armed background task silent until released', async location => {
+  const settings = location === 'user' ? path.join(root, 'settings.json') : path.join(root, '.qwen', 'settings.json');
+  await fs.mkdir(path.dirname(settings), { recursive: true });
+  await writeJsonAtomic(settings, { agents: { crossSessionInbound: 'hold' } });
+  const io = { harness: 'qwen', env: { QWEN_HOME: root, PWD: root }, signal: controller.signal, write: (line: string) => lines.push(line) };
+  result = watchSession(files, io);
+  await vi.waitFor(async () => expect(await monitorArmed(files)).toBe(true));
+  await writeJsonAtomic(settings, { agents: { crossSessionInbound: 'hold' } });
+  await appendEntries(files, [entry(1)]);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  expect(await monitorArmed(files)).toBe(true);
+  expect(lines).toEqual([]);
+  await writeJsonAtomic(settings, { agents: { crossSessionInbound: 'accept' } });
+  await expect(result).resolves.toBe(0);
+  expect(lines).toHaveLength(1);
+});
 it('keeps a watcher alive across PID namespaces and reports stale heartbeat once', async () => {
   await writeJsonAtomic(files.status, { state: 'connected', owner: { pid: 2147483647, startTime: 'invisible' }, heartbeatAt: new Date().toISOString() });
   const errors: string[] = [];
