@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+import { channelFiles, readStatus, sessionFiles } from '../../../packages/agent/src/state';
 import type { InboxEntry } from '../../../packages/contracts/src/m1/inbox';
 import { freshPage, readLiveHumanEnvironment, signIn } from '../human/fixtures';
 import { startMcp } from './mcp-stdio';
@@ -21,11 +22,34 @@ async function send(page: Page, text: string) {
   await expect(page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: text })).toBeVisible({ timeout: 30_000 });
 }
 
+async function chooseUsername(page: Page) {
+  // The profile gate is asynchronous and may keep the requested URL unchanged.
+  await expect(page.getByRole('heading', { name: 'Choose your username' })
+    .or(page.locator('.khala-owner-shell:has(button[aria-label="New channel"]:enabled)'))).toBeVisible({ timeout: 120_000 });
+  const heading = page.getByRole('heading', { name: 'Choose your username' });
+  if (await heading.isVisible()) {
+    await page.getByRole('textbox', { name: 'Username', exact: true }).fill(`e2e${randomUUID().replaceAll('-', '').slice(0, 12)}`);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(heading).toBeHidden();
+  }
+}
+async function agentLink(page: Page): Promise<string> {
+  const roster = page.locator('#kh-head-btn');
+  if (await roster.getAttribute('aria-expanded') !== 'true') await roster.click();
+  await page.getByRole('button', { name: 'Add agent', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy link', exact: true }).click();
+  await expect(page.getByText('Copied', { exact: true })).toBeVisible();
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  expect(link).toMatch(/\/join\/[^/?#]+$/u);
+  await page.keyboard.press('Escape');
+  return link;
+}
+
 // Run this spec alone on a fresh operator-started stack. Each human must use
 // their first browser device so MSC4268 can share the owner's historical keys.
 test.use({ actionTimeout: 15_000 });
 
-test('a real MCP agent joins, reads owner history, receives and sends attributed chat', async ({ browser }) => {
+test('a real MCP agent chats and restores two channel inboxes without tool calls', async ({ browser }) => {
   test.setTimeout(300_000);
   const environment = readLiveHumanEnvironment();
   const cert = process.env.NODE_EXTRA_CA_CERTS
@@ -34,9 +58,9 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
   catch { throw new Error('Local stack certificate is absent; run pnpm stack:up and source .khala-local/e2e.env.'); }
   const stateHome = await mkdtemp(path.join(os.tmpdir(), 'khala-agent-'));
   const sessionId = `km150-${randomUUID()}`;
-  const dir = path.join(stateHome, 'khala', 'claude', sessionId);
-  const inboxFile = path.join(dir, 'inbox.jsonl');
-  const sessionFile = path.join(dir, 'session.json');
+  let inboxFile = '';
+  let sessionFile = '';
+  const files = sessionFiles('claude', sessionId, { XDG_STATE_HOME: stateHome });
   const aliceContext = await browser.newContext();
   const bobContext = await browser.newContext();
   let mcp: ReturnType<typeof startMcp> | undefined;
@@ -44,20 +68,24 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
   try {
     const alice = await freshPage(aliceContext, environment);
     await signIn(alice, environment, environment.users[0]);
+    await chooseUsername(alice);
     await alice.getByRole('button', { name: 'New channel', exact: true }).click();
     await alice.getByLabel('Channel name', { exact: true }).fill(`Agent ${environment.environmentId}`);
     await alice.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(alice).toHaveURL(/\/channels\//u);
     const channelUrl = alice.url();
     await aliceContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: environment.appOrigin });
-    await alice.getByRole('button', { name: 'Copy my channel link' }).click();
+    await alice.locator('.kh-hacts').getByRole('button', { name: 'Invite', exact: true }).click();
+    await alice.getByRole('button', { name: 'Copy link', exact: true }).click();
     await expect(alice.getByText('Copied', { exact: true })).toBeVisible();
-    const link = await alice.evaluate(() => navigator.clipboard.readText());
-    expect(link).toMatch(/\/join\/[^/?#]+$/u);
+    const humanLink = await alice.evaluate(() => navigator.clipboard.readText());
+    await alice.keyboard.press('Escape');
+    const link = await agentLink(alice);
 
     const bob = await bobContext.newPage();
-    await bob.goto(link, { waitUntil: 'networkidle' });
+    await bob.goto(humanLink, { waitUntil: 'networkidle' });
     await signIn(bob, environment, environment.users[1]);
+    await chooseUsername(bob);
     await expect(bob.getByText("You're in.")).toBeVisible();
     await bob.getByRole('button', { name: 'Open channel' }).click();
     await expect(bob).toHaveURL(channelUrl);
@@ -77,9 +105,10 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
     const confirmUrl = joined.structuredContent.confirmUrl;
     expect(typeof confirmUrl).toBe('string');
     expect((confirmUrl as string).startsWith(`${environment.appOrigin}/agent/confirm?joinId=`)).toBe(true);
-    await bob.goto(confirmUrl as string);
-    await bob.getByRole('button', { name: 'Confirm', exact: true }).click();
-    await expect(bob.getByText(/Agent joined/u)).toBeVisible({ timeout: 120_000 });
+    await alice.goto(confirmUrl as string);
+    await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await expect(alice.locator('.kh-fin-ok')).toContainText('joined', { timeout: 120_000 });
+    await alice.goto(channelUrl);
     const agent = mcp;
     let agentUserId: unknown;
     await expect.poll(async () => {
@@ -88,6 +117,10 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
       return result.structuredContent.state;
     }, { timeout: 120_000, intervals: [2000] }).toBe('connected');
     expect(agentUserId).toMatch(/^@agent-[0-9a-f]{8}-[a-z0-9]{6}:/u);
+    const status = await agent.call('khala_status', {});
+    const channels = status.structuredContent.channels as { roomId: string; you: string }[];
+    const nested = channelFiles(files, channels[0]!.roomId);
+    inboxFile = nested.inbox; sessionFile = nested.session;
     // Assert existence only: session.json contains credentials, never print it.
     await access(sessionFile);
     await expect.poll(async () => {
@@ -115,21 +148,68 @@ test('a real MCP agent joins, reads owner history, receives and sends attributed
     await bob.goto(channelUrl);
     const row = bob.locator('.timeline__row:not(.timeline__row--pending)', { hasText: reply });
     await expect(row).toBeVisible({ timeout: 30_000 });
-    await expect(row).toContainText('Agent · ');
-    await expect(row).toContainText('Claude Code agent');
+    await expect(row).toContainText(channels[0]!.you);
+    await expect(row.getByRole('img', { name: 'Agent', exact: true })).toBeVisible();
     for (const page of [alice, bob]) {
       await page.reload();
       await expect(page.locator('.timeline__row', { hasText: reply })).toBeVisible({ timeout: 30_000 });
     }
     for (const text of history) await expect(bob.locator('.timeline__row', { hasText: text })).toBeVisible();
-    test.info().annotations.push({ type: 'acceptance', description: 'join, AE1 history, live intake, AE4 own-sender filter, attributed reply and reload passed' });
+
+    // Join a second channel with the same MCP session, then prove startup restores
+    // both independent inboxes without a status/read/join tool call.
+    await alice.goto(`${environment.appOrigin}/new`);
+    await alice.getByRole('button', { name: 'New channel', exact: true }).click();
+    await alice.getByLabel('Channel name', { exact: true }).fill(`Restore ${id.slice(0, 8)}`);
+    await alice.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(alice).toHaveURL(/\/channels\//u);
+    const secondUrl = alice.url();
+    const secondLink = await agentLink(alice);
+    const secondJoin = await agent.call('khala_join', { link: secondLink, label: 'Agent' });
+    expect(secondJoin.isError).not.toBe(true);
+    if (secondJoin.structuredContent.autoConfirmed !== true && secondJoin.structuredContent.state !== 'connected') {
+      await alice.goto(secondJoin.structuredContent.confirmUrl as string);
+      await alice.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await expect(alice.locator('.kh-fin-ok')).toContainText('joined', { timeout: 120_000 });
+    }
+    let joinedChannels: { roomId: string; state: string; you: string }[] = [];
+    await expect.poll(async () => {
+      const result = await agent.call('khala_status', {});
+      joinedChannels = result.structuredContent.channels as typeof joinedChannels;
+      return joinedChannels.filter(channel => channel.state === 'connected').length;
+    }, { timeout: 120_000, intervals: [2000] }).toBe(2);
+    const first = joinedChannels.find(channel => channel.roomId === channels[0]!.roomId)!;
+    const second = joinedChannels.find(channel => channel.roomId !== first.roomId)!;
+    const secondFiles = channelFiles(files, second.roomId);
+    await agent.close(); mcp = undefined;
+    await expect(access(sessionFile)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(secondFiles.session)).rejects.toMatchObject({ code: 'ENOENT' });
+    mcp = startMcp({ env: { ...process.env, XDG_STATE_HOME: stateHome,
+      CLAUDE_CODE_SESSION_ID: sessionId, NODE_EXTRA_CA_CERTS: cert } });
+    // Read files, never call a tool on the fresh process before the mentions.
+    await expect.poll(async () => Promise.all([first, second].map(async channel => {
+      try { return (await readStatus(channelFiles(files, channel.roomId)))?.state ?? null; }
+      catch { return null; }
+    })), { timeout: 120_000, intervals: [2000] }).toEqual(['connected', 'connected']);
+    const mentions = [`@${first.you} restore-first-${id}`, `@${second.you} restore-second-${id}`];
+    for (const [url, text] of [[channelUrl, mentions[0]!], [secondUrl, mentions[1]!] ] as const) {
+      await alice.goto(url);
+      await send(alice, text);
+    }
+    await expect.poll(async () => (await inbox(inboxFile)).filter(entry => entry.body === mentions[0]).length,
+      { timeout: 30_000, intervals: [2000] }).toBe(1);
+    await expect.poll(async () => (await inbox(secondFiles.inbox)).filter(entry => entry.body === mentions[1]).length,
+      { timeout: 30_000, intervals: [2000] }).toBe(1);
+    expect((await inbox(inboxFile)).some(entry => entry.body === mentions[1])).toBe(false);
+    expect((await inbox(secondFiles.inbox)).some(entry => entry.body === mentions[0])).toBe(false);
+    test.info().annotations.push({ type: 'acceptance', description: 'join, AE1 history, live intake, AE4 own-sender filter, attributed reply, reload and two-channel startup restore with isolated mentions passed' });
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     try {
       await mcp?.close();
-      await expect(access(sessionFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      if (sessionFile) await expect(access(sessionFile)).rejects.toMatchObject({ code: 'ENOENT' });
     } catch (cleanupError) {
       if (failure === undefined) throw cleanupError;
       test.info().annotations.push({ type: 'cleanup failure', description: cleanupError instanceof Error ? cleanupError.message : 'unknown' });

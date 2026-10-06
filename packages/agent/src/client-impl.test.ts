@@ -1004,7 +1004,7 @@ it('keeps hosted restoration non-terminal when old control needs owner approval'
   expect(await readStateFile(channelFiles(f.files, '!A:local').dir, 'resume.json')).not.toBeNull();
   expect(await client.status('A')).toMatchObject({ state: 'disconnected', detail: 'rejoin_needed' });
   expect(await readJoinFile(f.files, 'http://127.0.0.1:47830/join/0')).toBeNull();
-  f.api.requestJoin.mockResolvedValue({ ...created, joinId: 'http://127.0.0.1:47830/join/0' });
+  (f.api.requestJoin as Mock<typeof requestJoin>).mockResolvedValue({ ...created, joinId: 'http://127.0.0.1:47830/join/0' });
   expect(await f.join(0)).toEqual({ state: 'awaiting_confirmation', confirmUrl: created.confirmUrl });
   await vi.waitFor(async () => expect(await client.status('A')).toMatchObject({ state: 'connected' }));
 });
@@ -1034,6 +1034,9 @@ it('preserves per-channel name metadata during startup and transient hosted fail
   await client.resume!();
   const directory = channelFiles(f.files, '!A:local').dir;
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'joining', channelName: 'A', displayName: 'owner-Codex-0' }));
+  // Joining status is written before the request starts; wait until the client
+  // has attached its request handler before rejecting the deferred response.
+  await vi.waitFor(() => expect(f.api.requestJoin).toHaveBeenCalledTimes(2));
   pending.reject(new KhalaClientError('internal_error', 'network'));
   await vi.waitFor(async () => expect(await readStateFile(directory, 'status.json')).toMatchObject({ state: 'disconnected', detail: 'network', channelName: 'A', displayName: 'owner-Codex-0' }));
 });
