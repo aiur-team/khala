@@ -64,7 +64,7 @@ export async function runLocalCommand(argv: readonly string[], deps: LocalCliDep
       return value;
     }
     async function channels(): Promise<LocalChannelsPage['channels']> {
-      const page = await call('GET', '/api/local/channels') as LocalChannelsPage;
+      const page = await call('GET', '/api/local/channels?wire=2') as LocalChannelsPage;
       if (!Array.isArray(page?.channels)) throw new CliError('internal_error');
       return page.channels;
     }

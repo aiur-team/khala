@@ -37,7 +37,7 @@ describe('local commands', () => {
   });
   it('resolves exact names, rejects ambiguity and bypasses lookup for ids', async () => {
     for (const count of [0, 1, 2]) {
-      const f = fixture(url => url.endsWith('/channels') ? Response.json({ revision: 7, channels: Array.from({ length: count }, () => ({ roomId, name: 'refactor' })) }) : Response.json({ shareLink: 'share', expiresAt: 'later' }));
+      const f = fixture(url => url.endsWith('/channels?wire=2') ? Response.json({ revision: 7, channels: Array.from({ length: count }, () => ({ roomId, name: 'refactor' })) }) : Response.json({ shareLink: 'share', expiresAt: 'later' }));
       expect(await runLocalCommand(['link', 'refactor'], f.deps)).toBe(count === 1 ? 0 : 1);
       expect(f.stdout).toHaveBeenLastCalledWith(count === 1 ? '{"shareLink":"share","expiresAt":"later"}\n' : JSON.stringify({ error: count ? 'ambiguous_channel' : 'not_found' }) + '\n');
     }
@@ -48,7 +48,7 @@ describe('local commands', () => {
   it('opens, lists and deletes using the owner endpoints', async () => {
     const f = fixture((url, init) => {
       if (init?.method === 'DELETE') return new Response(null, { status: 204 });
-      if (url.endsWith('/channels')) return Response.json({ revision: 3, channels: [{ roomId, name: 'refactor' }] });
+      if (url.endsWith('/channels?wire=2')) return Response.json({ revision: 3, channels: [{ roomId, name: 'refactor' }] });
       if (url.endsWith('/open')) { expect(JSON.parse(init!.body as string)).toEqual({ roomId }); return Response.json({ openUrl: 'url', expiresAt: 'later' }); }
       return new Response('index');
     });
@@ -134,4 +134,16 @@ it.each(['0.0.0-beta.1', undefined])('status explains an older helper version %s
   expect(await runLocalCommand(['status'], f.deps)).toBe(0);
   expect(JSON.parse(f.stdout.mock.calls.at(-1)![0])).toMatchObject({ running: true, detail: 'older helper in use' });
   expect(f.ensureHelper).not.toHaveBeenCalled();
+});
+
+it('requests open harness metadata when listing local channels', async () => {
+  const member = { userId: '@agent-a1b2c3d4:local', displayName: 'kevin-Gemini', kind: 'agent', harness: 'gemini' };
+  const channel = { roomId, name: 'refactor', members: [member] };
+  const f = fixture(url => {
+    expect(new URL(url).pathname).toBe('/api/local/channels');
+    expect(new URL(url).searchParams.get('wire')).toBe('2');
+    return Response.json({ revision: 1, channels: [channel] });
+  });
+  expect(await runLocalCommand(['list'], f.deps)).toBe(0);
+  expect(f.stdout).toHaveBeenLastCalledWith(JSON.stringify({ channels: [channel] }) + '\n');
 });

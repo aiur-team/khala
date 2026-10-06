@@ -24,10 +24,10 @@ it('resolves absolute XDG state paths and HOME fallbacks without I/O', () => {
 it.each(['../x', '', 'a/b', '..', '.hidden', '-x', 'a'.repeat(129)])('rejects unsafe session id %s', id => {
   expect(() => sessionFiles('claude', id)).toThrowError(expect.objectContaining({ code: 'invalid_session_id' }));
 });
-it('accepts boundary session ids and rejects unknown harnesses', () => {
+it('accepts boundary session ids and rejects malformed harnesses', () => {
   expect(() => sessionFiles('codex', 'thr_1:a.b-c')).not.toThrow();
   expect(() => sessionFiles('claude', 'a'.repeat(128))).not.toThrow();
-  expect(() => sessionFiles('gemini' as Harness, 'id')).toThrowError(expect.objectContaining({ code: 'invalid_session_id' }));
+  expect(() => sessionFiles('Gemini' as Harness, 'id')).toThrowError(expect.objectContaining({ code: 'invalid_session_id' }));
   expect(() => sessionFiles('cursor', 'ws-0123')).not.toThrow();
 });
 it('creates private directories and reopens them', async () => {
@@ -122,7 +122,8 @@ it.each(['channel', 'channels', 'session', 'harness', 'root'])('checks all chann
   await fs.chmod(dir, 0o755);
   await expect(ensureStateDir(nested.dir)).rejects.toMatchObject({ code: 'unsafe_state_dir' });
 });
-it.each(['channel', 'channels', 'session'])('rejects symlink channel ancestor: %s', async level => {
+it.each(['channel', 'channels', 'session'])('rejects open-harness symlink channel ancestor: %s', async level => {
+  files = await openSessionDir('opencode', 'session-1', { XDG_STATE_HOME: root });
   const nested = channelFiles(files, '!eco:test');
   await ensureStateDir(nested.dir);
   const dir = { channel: nested.dir, channels: channelsDir(files), session: files.dir }[level]!;
@@ -159,4 +160,15 @@ it('allows channel metadata through state-file helpers', async () => {
   expect(await readStateFile(files.dir, 'channel.json')).toEqual({ roomId: '!eco:test' });
   await removeStateFile(files.dir, 'channel.json');
   expect(await readStateFile(files.dir, 'channel.json')).toBeNull();
+});
+
+it.each(['opencode', 'cline'])('stores sessions and channels under the open harness %s', async harness => {
+  const opened = await openSessionDir(harness, 'session-1', { XDG_STATE_HOME: root });
+  expect(opened.dir).toBe(path.join(root, 'khala', harness, 'session-1'));
+  const channel = channelFiles(opened, '!room:local');
+  await ensureStateDir(channel.dir);
+  expect((await fs.stat(channel.dir)).isDirectory()).toBe(true);
+});
+it.each(['Gemini', 'g', '../x', 'ab\n'])('rejects unsafe harness %s', harness => {
+  expect(() => sessionFiles(harness, 'session-1')).toThrow(StateError);
 });

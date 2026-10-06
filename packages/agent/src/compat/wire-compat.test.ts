@@ -203,6 +203,8 @@ describe('new local harness wire and disk compatibility', () => {
       expect(e.previousContent !== undefined).toBe(query.includes('prev=1'));
       if (e.previousContent?.['displayname'] === 'kevin-Gemini') expect(e.previousContent['harness']).toBe(newWire ? 'gemini' : undefined);
     }
+    expect(decodeLocalEventsPage(response.json).ok).toBe(true);
+    if (newWire) expect(releasedEventsPage(response.json).ok).toBe(false);
     if (!newWire) {
       expect(releasedEventsPage(response.json).ok).toBe(true);
       if (!query) expect(frozenEventsPage(response.json).ok).toBe(true);

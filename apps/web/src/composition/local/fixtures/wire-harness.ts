@@ -10,7 +10,6 @@ afterEach(() => {
 /** Every advertised wire=2 capability must be supported by the actual response decoder. */
 export function assertHarnessWireSupport(path: string, decode: (value: unknown) => Decoded<unknown>): void {
   const url = new URL(path, 'http://localhost');
-  if (url.searchParams.get('wire') !== '2') return;
   const user = '@agent-b2c3d4e5:local';
   const roomId = '!c7Kq2vXbT1nP0aZ9yW3eQw:local';
   const content = { user, membership: 'join', displayname: 'kevin-Gemini', kind: 'agent', harness: 'gemini' };
@@ -29,5 +28,6 @@ export function assertHarnessWireSupport(path: string, decode: (value: unknown) 
   else if (url.pathname === '/api/local/channels') payload = { revision: 1, channels: [summary] };
   else if (/\/channels\/[^/]+$/u.test(url.pathname)) payload = summary;
   else return;
+  expect(url.searchParams.get('wire'), `${path} must request open harness wire`).toBe('2');
   probes.push({ path, supported: decode(payload).ok });
 }
