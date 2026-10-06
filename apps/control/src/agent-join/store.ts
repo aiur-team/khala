@@ -1,6 +1,7 @@
+import { isHarnessId } from '@khala/contracts/m1/harness';
 import { inviteRemovalState } from '../invitations/removals';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { decodeAgentCredentials, HARNESSES, validAgentSessionId, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
+import { decodeAgentCredentials, validAgentSessionId, type AgentCredentials, type Harness } from '@khala/contracts/m1/agent-join';
 import { nameKey } from '@khala/contracts/m1/names';
 import { decodeNameReservation } from '@khala/contracts/m1/profile';
 import { validateAgentName } from '@khala/contracts/messaging/agent-names';
@@ -46,7 +47,7 @@ export function decodeJoinRecord(value: unknown): JoinRecord | null {
     || required.some(key => typeof r[key] !== 'string')
     || optional.some(key => Object.hasOwn(r, key) && (typeof r[key] !== 'string' || !r[key]))) return null;
   if (!isJoinId(r.joinId) || !/^[a-f0-9]{64}$/u.test(r.pollSecretHash as string)
-    || !r.roomId || !r.channelName || !(HARNESSES as readonly string[]).includes(r.harness as string)
+    || !r.roomId || !r.channelName || !isHarnessId(r.harness)
     || !['pending', 'confirmed', 'claimed', 'ready', 'expired'].includes(r.state as string)) return null;
   const label = validateAgentName(r.label);
   if (!label.ok || label.name !== r.label || [...label.name].length > 40) return null;

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { checkName, decodeOwnerAgents, ownerAgentsKey, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
+import { checkName, checkNewUsername, decodeOwnerAgents, ownerAgentsKey, defaultAgentName, isDefaultAgentName, nameKey, suggestUsername } from './names';
 
 it('accepts mention-safe usernames and trims the display form', () => {
   for (const name of ['Kevin', 'kw', 'kevin.weaver', 'K-9', 'a'.repeat(24)]) {
@@ -51,4 +51,30 @@ it('decodes a bounded owner agent index and escapes its key', () => {
   }
   expect(decodeOwnerAgents({ ...record, agents: ['@agent:matrix.test', '@agent:matrix.test'] }))
     .toEqual({ ok: false, error: { path: 'agents[1]', code: 'duplicate' } });
+});
+
+
+it('uses registry model names and the generic fallback for default names', () => {
+  for (const [harness, model] of [['claude', 'Claude'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['gemini', 'Gemini'], ['antigravity', 'Antigravity'], ['cline', 'Agent']] as const) {
+    expect(defaultAgentName('kevin', harness)).toBe(`kevin-${model}`);
+    expect(defaultAgentName('kevin', harness, 99)).toBe(`kevin-${model}-99`);
+    expect(isDefaultAgentName(`KEVIN-${model}-99`, 'kevin', harness)).toBe(true);
+    expect(isDefaultAgentName(`kevin-${model}-extra`, 'kevin', harness)).toBe(false);
+  }
+  const name = `${'a'.repeat(24)}-Antigravity-99`;
+  expect(checkName(name, 'agent')).toEqual({ ok: true, name });
+});
+it('reserves registry model suffixes for new usernames without changing decode validation', () => {
+  for (const model of ['Claude', 'Codex', 'Cursor', 'OpenCode', 'Copilot', 'VSCode', 'Gemini', 'Antigravity', 'Qwen', 'Muse']) {
+    for (const name of [`bob-${model}`, `bob-${model.toLowerCase()}-99`]) {
+      expect(checkNewUsername(name)).toEqual({ ok: false, error: 'reserved' });
+    }
+  }
+  expect(checkName('bob-gemini', 'username')).toEqual({ ok: true, name: 'bob-gemini' });
+  for (const name of ['secret-agent', 'bob-gemini-extra', 'bobgemini']) {
+    expect(checkNewUsername(` ${name} `)).toEqual({ ok: true, name });
+  }
+  for (const name of [null, 'x', 'a'.repeat(25), 'bad name', 'admin']) {
+    expect(checkNewUsername(name)).toEqual(checkName(name, 'username'));
+  }
 });

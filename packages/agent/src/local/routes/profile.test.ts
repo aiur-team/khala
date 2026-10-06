@@ -85,7 +85,7 @@ describe('local owner profile routes', () => {
 
   it.each([
     ['k', 'too_short'], ['k'.repeat(25), 'too_long'], ['bad name', 'invalid_characters'],
-    [42, 'invalid_characters'], ['kevin-Claude', 'reserved'],
+    [42, 'invalid_characters'], ['kevin-Claude', 'reserved'], ['bob-Gemini', 'reserved'], ['bob-qwen-2', 'reserved'],
   ])('returns the hosted username error for %s', async (username, reason) => {
     const s = setup();
     expect(await s.request('/username', { username })).toEqual({ status: 400, json: { error: 'invalid_username', reason } });

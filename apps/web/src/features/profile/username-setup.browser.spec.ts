@@ -547,3 +547,29 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
     });
   });
 }
+
+for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+  test(`existing registry-suffixed usernames keep profile changes usable at ${viewport.width}px`, { timeout: 60_000 }, async () => {
+    await withFixture(viewport, 'bob-Gemini', async (page, saved, colors) => {
+      await page.goto(`${page.url()}?list`);
+      await page.locator('.khala-owner-shell .kh-brand').getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('menuitem', { name: /^Profile/u }).click();
+      const dialog = page.getByRole('dialog', { name: 'Profile' });
+      const input = dialog.getByRole('textbox', { name: 'Username' });
+      await expect(input).toHaveValue('bob-Gemini');
+      await expect(dialog.getByRole('alert')).toHaveCount(0);
+      await dialog.getByRole('radio', { name: 'Blue' }).click();
+      const save = dialog.getByRole('button', { name: 'Save', exact: true });
+      await expect(save).toBeEnabled();
+      await input.fill('bob-qwen');
+      await expect(dialog.getByRole('alert')).toHaveText('That name is reserved.');
+      await expect(save).toBeDisabled();
+      await input.fill('bob-Gemini');
+      await expect(save).toBeEnabled();
+      await save.click();
+      await expect(dialog).toBeHidden();
+      assert.deepEqual(saved, []);
+      assert.deepEqual(colors, ['blue']);
+    });
+  });
+}
