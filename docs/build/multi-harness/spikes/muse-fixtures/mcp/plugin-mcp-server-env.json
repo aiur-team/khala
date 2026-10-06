@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/tmp/claude-1000/s1117/home/.local/share/muse/plugins/cache/local/khala-spike/6efa41fe57ddfc76cfa90830a3af3b879e8dc3cd8962bc06a05f1d9f021549c7/package/mcp/server.py"
+  ],
+  "env_subset": {
+    "HOME": "/tmp/claude-1000/s1117/home",
+    "MUSE_PLUGIN_DATA_DIR": "/tmp/claude-1000/s1117/home/.local/share/muse/plugins/data/khala-spike",
+    "MUSE_PLUGIN_ID": "khala-spike",
+    "MUSE_PLUGIN_ROOT": "/tmp/claude-1000/s1117/home/.local/share/muse/plugins/cache/local/khala-spike/6efa41fe57ddfc76cfa90830a3af3b879e8dc3cd8962bc06a05f1d9f021549c7/package",
+    "MUSE_SESSION_ID": "01a10fd5-bf87-76a3-a96f-78c73bb9b712"
+  }
+}
