@@ -73,3 +73,38 @@ it.skipIf(process.platform === 'win32')('probes only queue help and reports an a
     expect(rows.find(row => row.driver === 'queue')).toMatchObject({ state: 'active', reason: WAKE_STATES.active.reason });
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+it('lists each runtime driver once without consent placeholders', async () => {
+  const { wakeDrivers } = await import('./status');
+  expect(wakeDrivers('claude').map(driver => driver.id)).toEqual(['watcher', 'terminal']);
+  expect(wakeDrivers('codex').map(driver => driver.id)).toEqual(['queue', 'terminal']);
+  for (const harness of ['claude', 'codex']) {
+    expect(wakeDrivers(harness).find(driver => driver.id === 'terminal')?.runtime).toBeDefined();
+  }
+});
+
+it('explains terminal guard failures instead of a generic remote-control message', () => {
+  expect(wakeStatusText('terminal', 'unavailable', 'terminal_prompt_not_empty').reason).toContain('draft');
+  expect(wakeStatusText('terminal', 'unavailable', 'terminal_pane_not_owned').reason).toContain('foreground process group');
+  expect(wakeStatusText('terminal', 'unavailable', 'wezterm_tty_unavailable').reason).toContain('ownership cannot be verified');
+});
+
+it('reports Codex capture pending after terminal consent until its first prompt', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { runWake } = await import('./cli');
+  const { readWakeSettings } = await import('./shared');
+  const { stateRoot, sessionFiles } = await import('../state');
+  const { wakeStatus } = await import('./status');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-capture-pending-'));
+  const env = { XDG_STATE_HOME: root, CODEX_THREAD_ID: 'session', TMUX: '/tmp/test,1,0', PATH: '' };
+  try {
+    expect(await runWake(['on', '--driver', 'terminal'], { env, stdout: () => undefined, stderr: () => undefined })).toBe(0);
+    expect((await readWakeSettings(stateRoot(env))).consent['codex/terminal']).toBeDefined();
+    const rows = await wakeStatus('codex', { env, files: sessionFiles('codex', 'session', env) });
+    const terminal = rows.filter(row => row.driver === 'terminal');
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({ state: 'unavailable', reason: WAKE_STATES.unavailable.reasons.terminal_capture_pending_prompt });
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

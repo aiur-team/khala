@@ -2,13 +2,12 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { claude } from '../claude';
 import { codex } from '../codex';
 import { ADAPTERS } from '../index';
 import { harnessInfo } from '@khala/contracts/m1/harness';
 import type { HarnessAdapter } from '../adapter';
 import type { WakeDriver } from '../../wake/driver';
-import { pendingWake, runConformance, type ConformanceResult } from './run';
+import { runConformance, type ConformanceResult } from './run';
 import { conformanceDrivers } from './drivers';
 import { renderConformanceReport, writeConformanceReport } from './report';
 import type { FakeHarnessDriver } from './driver';
@@ -31,12 +30,7 @@ describe('Tier A conformance', () => {
       const result = await runConformance(adapter, harnessDriver!);
       results.push(result);
       expect(result.rows).toHaveLength(11);
-      expect(result.rows.filter(row => row.status === 'pending').map(row => row.feature))
-        .toEqual(adapter.id === 'claude' ? ['idle wake'] : []);
-      if (adapter.id === 'claude') {
-        expect(result.rows.find(row => row.feature === 'idle wake')).toMatchObject({ status: 'pending',
-          detail: expect.stringContaining('U14 #1135') });
-      }
+      expect(result.rows.some(row => row.status === 'pending')).toBe(false);
       expect(result.rows.filter(row => row.feature !== 'idle wake').every(row => row.status !== 'pending')).toBe(true);
     });
   }
@@ -71,12 +65,6 @@ describe('Tier A conformance', () => {
     await expect(runConformance(consuming, driver, { capabilities: noSync }))
       .rejects.toThrow('absent sync must not consume backlog');
   });
-  it('Claude pending skip fails once nonce support lands', () => {
-    const nonceDriver: WakeDriver = { id: 'queue', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,
-      verification: 'nonce', available: () => true, wake: () => {} };
-    expect(() => pendingWake({ ...claude, wakeLadder: [nonceDriver] }))
-      .toThrow('pending skip expired');
-  });
   it('requires verified delivery, records opt-in consent, and rejects an unverified prompt', async () => {
     function nonceFixture(wrongNonce: boolean) {
       let prompt: string | undefined;
@@ -93,6 +81,14 @@ describe('Tier A conformance', () => {
     const invalid = nonceFixture(true);
     await expect(runConformance(invalid.adapter, invalid.probe, { capabilities: { ...capabilities, idleWake: 'opt-in' } }))
       .rejects.toThrow('idle wake');
+  });
+  it('rejects mixed verified and unverified transports outside the Claude watcher exception', async () => {
+    const verified: WakeDriver = { id: 'verified', rung: 1, optIn: true, minIdleMs: 0, deadlineMs: 3_000,
+      verification: 'nonce', available: () => true, wake: () => {} };
+    const unverified: WakeDriver = { ...verified, id: 'watcher', verification: 'none' };
+    const adapter = { ...synthetic, wakeLadder: [verified, unverified] };
+    const probe = { ...driver, wakeProbe: () => ({ drivers: adapter.wakeLadder, prompt: () => undefined }) };
+    await expect(runConformance(adapter, probe, { capabilities })).rejects.toThrow('unverified transport');
   });
   it('rejects an opt-in registry entry with an ungated driver', async () => {
     const wake: WakeDriver = { id: 'fixture', rung: 1, optIn: false, minIdleMs: 0, deadlineMs: 3_000,

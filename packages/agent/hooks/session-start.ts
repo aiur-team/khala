@@ -1,7 +1,8 @@
+import { capturePane } from '../src/wake/terminal/capture';
 import { sessionStartWakeChannels } from '../src/session-start-wake';
 import { writeActivity } from '../src/activity';
 import { listChannels } from '../src/channels';
-import { TERMINAL_SESSION_DETAILS, readStatus, sessionFiles } from '../src/state';
+import { TERMINAL_SESSION_DETAILS, readStatus, openSessionDir } from '../src/state';
 
 /** Remind the resumed agent before its first Stop; never expose channel credentials. */
 export default async function run(stdin: string, argv: readonly string[]): Promise<number> {
@@ -9,7 +10,8 @@ export default async function run(stdin: string, argv: readonly string[]): Promi
   try {
     const input = JSON.parse(stdin);
     if (input?.hook_event_name !== 'SessionStart' || typeof input.session_id !== 'string') return 0;
-    const files = sessionFiles('claude', input.session_id);
+    const files = await openSessionDir('claude', input.session_id);
+    await capturePane(files, process.env);
     const channels = await listChannels(files);
     const statuses = channels.length
       ? await Promise.all(channels.map(async channel => ({ status: await readStatus(channel.files), channelName: channel.channelName ?? channel.roomId })))
