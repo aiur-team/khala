@@ -38,10 +38,20 @@ export function wakeDrivers(harness: string): WakeDescriptor[] {
   return drivers.sort((a, b) => a.rung - b.rung);
 }
 /** A bounded read-only probe; no queue command sends a message here. */
-async function codexQueueAvailable(env: NodeJS.ProcessEnv): Promise<boolean> {
-  return new Promise(resolve => {
+const queueAvailability = new WeakMap<NodeJS.ProcessEnv, { path: string | undefined; result: Promise<boolean> }>();
+function codexQueueAvailable(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const cached = queueAvailability.get(env);
+  if (cached && cached.path === env.PATH) return cached.result;
+  const result = new Promise<boolean>(resolve => {
     execFile('codex', ['queue', '--help'], { env, timeout: 1000, maxBuffer: 16 * 1024, windowsHide: true }, error => resolve(error === null));
   });
+  queueAvailability.set(env, { path: env.PATH, result });
+  return result;
+}
+function watcherAlive(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 export async function wakeStatus(harness: string, options: { env?: NodeJS.ProcessEnv; files?: SessionFiles; sessionId?: string } = {}): Promise<WakeStatusRow[]> {
   const env = options.env ?? process.env;
@@ -58,8 +68,8 @@ export async function wakeStatus(harness: string, options: { env?: NodeJS.Proces
     else if (states[driver.id]?.disabled) state = 'disabled_after_failures';
     else if (driver.optIn && !Object.hasOwn(settings.consent, key)) state = 'needs_consent';
     else if (driver.id === 'watcher') {
-      const watcher = options.files ? await readStateFile<{ state?: string }>(options.files.dir, 'watcher.json') : null;
-      state = watcher?.state === 'expired' ? 'lapsed' : watcher?.state === 'armed' ? 'active' : 'unavailable';
+      const watcher = options.files ? await readStateFile<{ state?: string; pid?: unknown }>(options.files.dir, 'watcher.json') : null;
+      state = watcher?.state === 'expired' ? 'lapsed' : watcher?.state === 'armed' && watcherAlive(watcher.pid) ? 'active' : 'unavailable';
       if (state === 'unavailable') unavailableReason = 'watcher_missing';
     } else if (driver.runtime) {
       const files = options.files ?? filesForDir(path.join(stateRoot(env), harness, 'status'));

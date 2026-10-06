@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { wakeStatusText, WAKE_STATES } from './status';
 it('renders every state from one fixed reason and remedy table', () => {
   for (const state of Object.keys(WAKE_STATES) as (keyof typeof WAKE_STATES)[]) {
@@ -20,9 +22,59 @@ it('reports Claude expiry from the U12 watcher file', async () => {
   try {
     await fs.mkdir(files.dir, { recursive: true });
     for (const [state, expected] of [['armed', 'active'], ['expired', 'lapsed'], ['exited', 'unavailable']] as const) {
-      await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state }));
+      await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state, pid: process.pid }));
       expect((await wakeStatus('claude', { env, files }))[0]!.state).toBe(expected);
     }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('requires a live valid PID for an armed Claude watcher', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { sessionFiles } = await import('../state');
+  const { wakeStatus } = await import('./status');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-status-pid-'));
+  const env = { XDG_STATE_HOME: root };
+  const files = sessionFiles('claude', 'session', env);
+  const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
+  const deadPid = child.pid;
+  await once(child, 'exit');
+  expect(deadPid).toBeGreaterThan(0);
+  try {
+    await fs.mkdir(files.dir, { recursive: true });
+    for (const pid of [deadPid, undefined, null, '123', -1, 0, 1.5]) {
+      await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state: 'armed', pid }));
+      expect((await wakeStatus('claude', { env, files }))[0]).toMatchObject({ state: 'unavailable', reason: WAKE_STATES.unavailable.reasons.watcher_missing });
+    }
+    await fs.writeFile(path.join(files.dir, 'watcher.json'), JSON.stringify({ state: 'armed', pid: process.pid }));
+    expect((await wakeStatus('claude', { env, files }))[0]!.state).toBe('active');
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('Permission denied'), { code: 'EPERM' }); });
+    try { expect((await wakeStatus('claude', { env, files }))[0]!.state).toBe('active'); }
+    finally { kill.mockRestore(); }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it.skipIf(process.platform === 'win32')('memoizes queue availability for each environment including concurrent probes', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { wakeStatus } = await import('./status');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wake-queue-cache-'));
+  const calls = path.join(root, 'calls');
+  try {
+    await fs.writeFile(path.join(root, 'codex'), `#!/bin/sh\n[ "$1" = queue ] && [ "$2" = --help ] || exit 1\nprintf 'probe\\n' >> "$PROBE_CALLS"\n`, { mode: 0o700 });
+    const env = { PATH: root, XDG_STATE_HOME: root, PROBE_CALLS: calls };
+    await Promise.all([wakeStatus('codex', { env }), wakeStatus('codex', { env })]);
+    await wakeStatus('codex', { env });
+    expect(await fs.readFile(calls, 'utf8')).toBe('probe\n');
+    await wakeStatus('codex', { env: { ...env } });
+    expect(await fs.readFile(calls, 'utf8')).toBe('probe\nprobe\n');
+    env.PATH = '';
+    expect((await wakeStatus('codex', { env })).find(row => row.driver === 'queue')!.state).toBe('unavailable');
+    env.PATH = root;
+    await wakeStatus('codex', { env });
+    expect(await fs.readFile(calls, 'utf8')).toBe('probe\nprobe\nprobe\n');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
