@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { withWakeLock } from './lock';
 
 export interface WakeSettings {
   consent: Record<string, { at: string }>;
@@ -27,6 +28,13 @@ export async function writeWakeSettings(root: string, settings: WakeSettings): P
     await fs.writeFile(temp, JSON.stringify(settings), { mode: 0o600 });
     await fs.rename(temp, target);
   } finally { await fs.rm(temp, { force: true }); }
+}
+export async function updateWakeSettings(root: string, update: (settings: WakeSettings) => void): Promise<void> {
+  await withWakeLock(root, 'wake-settings.lock', async () => {
+    const settings = await readWakeSettings(root);
+    update(settings);
+    await writeWakeSettings(root, settings);
+  });
 }
 export async function driverAllowed(root: string, harness: string, driver: string, optIn: boolean): Promise<boolean> {
   const settings = await readWakeSettings(root);
