@@ -5,6 +5,7 @@ import { ensureStateDir, removeStateFile, sessionFiles } from '../state';
 import type { createCodexWaker } from '../wake/codex';
 import { createWakeLadder } from '../wake/ladder';
 import { adapterFor } from '../harness';
+import { wakeStatus, selectedWakeStatus, wakeDisableNotice } from '../wake/status';
 import { monitorArmed } from '../watch';
 import type { ClientFactory } from './main';
 
@@ -38,11 +39,16 @@ export function createRealClientFactory(env: NodeJS.ProcessEnv, deps: {
       async join(link, label) { await initialize(); return client.join(link, label); },
       async status(channel) {
         await initialize();
-        const status = await (channel === undefined ? client.status() : client.status(channel));
+        const status = { ...await (channel === undefined ? client.status() : client.status(channel)), idleWake: selectedWakeStatus(await wakeStatus(harness, { env, files, sessionId })) };
         return adapter?.watcherStatus && ['connected', 'send_failed'].includes(status.state)
           ? { ...status, watcherArmed: await monitorArmed(files) } : status;
       },
-      async read(limit, before, channel) { await initialize(); return channel === undefined ? client.read(limit, before) : client.read(limit, before, channel); },
+      async read(limit, before, channel) {
+        await initialize();
+        const result = await (channel === undefined ? client.read(limit, before) : client.read(limit, before, channel));
+        const wakeNotice = await wakeDisableNotice(files.dir);
+        return { ...result, ...(wakeNotice ? { wakeNotice } : {}) };
+      },
       async send(text, channel) { await initialize(); return channel === undefined ? client.send(text) : client.send(text, channel); },
       async sendChannelEvent(content, channel) { await initialize(); return channel === undefined ? client.sendChannelEvent(content) : client.sendChannelEvent(content, channel); },
       async leave(channel) { await initialize(); return client.leave(channel); },

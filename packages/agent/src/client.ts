@@ -5,9 +5,9 @@ import type { InboxEntry } from '@khala/contracts/m1/inbox';
 export interface KhalaAgentClient {
   resume?(): Promise<void>;
   join(link: string, label: string): Promise<{ state: 'awaiting_confirmation'; confirmUrl: string; autoConfirmed?: true } | { state: 'connected'; channelName: string; channels?: string[] }>;
-  status(channel?: string): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; unread: number; watcherArmed?: boolean; listeningMode?: ListeningMode; channels?: ChannelStatus[] }>;
+  status(channel?: string): Promise<{ state: string; detail?: string; channelName?: string; agentUserId?: string; displayName?: string; unread: number; idleWake?: import('./wake/status').IdleWakeStatus; watcherArmed?: boolean; listeningMode?: ListeningMode; channels?: ChannelStatus[] }>;
   /** `you` is your own current display name in the channel. */
-  read(limit: number, before?: string, channel?: string): Promise<{ you?: string; messages: InboxEntry[]; nextBefore?: string }>;
+  read(limit: number, before?: string, channel?: string): Promise<{ you?: string; messages: InboxEntry[]; nextBefore?: string; wakeNotice?: string }>;
   send(text: string, channel?: string): Promise<{ eventId: string }>;
   sendChannelEvent(content: ChannelEventContent, channel?: string): Promise<{ eventId: string }>;
   leave(channel: string): Promise<{ left: string; channels: string[] }>;

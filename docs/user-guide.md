@@ -279,3 +279,34 @@ Hosted sessions retain their rejoin secret in `rejoin.json`. Once approved on a 
 Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt.
 
 Use `khala watch --help` (or `-h`) for the Monitor command's usage. Unknown flags print an argument error and usage.
+
+## Idle wake controls
+
+Use the installed `khala` CLI to inspect idle wake for every harness:
+
+```sh
+khala wake status
+khala wake status --harness codex --json
+khala wake on --harness codex
+khala wake off --harness codex
+```
+
+`status` reports each harness and driver, its ladder rung, state, fixed reason and
+remedy. Add `--driver <d>` to select a driver. Without a driver, `on` selects the
+harness's first consent-gated driver; `off` disables all its drivers. Omit
+`--harness` inside an agent session to use its harness. Unknown harnesses or
+drivers exit with code 2 and list valid values.
+
+Consent is machine-wide. `on` also clears the selected driver's failure disable
+in existing sessions. Two unverified wakes disable a driver for that session;
+the next delivered frame or `khala_read` result shows its re-enable command once.
+`khala_status` includes `idleWake: {driver, state, reason}` from the same status
+table. Claude's expired watcher reports `lapsed`; any prompt re-arms it.
+
+A successful `khala install <harness>` records consent for every consent-gated
+driver declared by its adapter and prints how to withdraw. Use `--no-wake` to
+withhold that consent or `--wake` to explicitly renew it. Consent permits only a
+fixed wake line in an existing idle session with an empty prompt. It does not
+make an unavailable transport available; check `khala wake status` for the actual
+state. The Codex terminal fallback is currently declared for consent while its
+runtime is built in the following wake unit.

@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { wakeLine } from './rules';
 
 export interface WakeAttempt { nonce: string; driver: string; at: number; deadline: number; activityUpdatedAt?: string | number }
-export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string }
+export interface WakeDriverState { failures: number; disabled?: boolean; reason?: string; at?: string; noticeShown?: boolean }
 export type WakeState = Record<string, WakeDriverState>;
 export interface WakeSettlement { nonce: string; driver: string; status: 'success' | 'failure' | 'void' }
 interface SessionData { attempts: WakeAttempt[]; state: WakeState }
@@ -115,5 +115,25 @@ export async function settleAttempts(dir: string, input: {
     }
     data.attempts = remaining;
     return results;
+  });
+}
+
+/** Re-consent clears attempts as well as failures so an old deadline cannot disable again. */
+export async function resetWakeDriver(dir: string, driver: string): Promise<void> {
+  await locked(dir, data => {
+    delete data.state[driver];
+    data.attempts = data.attempts.filter(attempt => attempt.driver !== driver);
+  });
+}
+/** Claim notice generations under the same lock as settlement and re-consent. */
+export async function takeWakeDisableNotices(dir: string): Promise<string[]> {
+  return locked(dir, data => {
+    const drivers: string[] = [];
+    for (const [driver, state] of Object.entries(data.state)) {
+      if (!state.disabled || state.noticeShown) continue;
+      state.noticeShown = true;
+      drivers.push(driver);
+    }
+    return drivers;
   });
 }

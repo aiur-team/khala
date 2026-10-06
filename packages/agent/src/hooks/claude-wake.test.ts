@@ -279,3 +279,16 @@ it('does not overwrite a re-arm that races the exit-state write', async () => {
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(reads++ === 0 ? 0 : DEADLINE_MS), stderr: { write: vi.fn() } })).toBe(0);
   expect(await watcher()).toEqual(replacement);
 });
+
+it('does not arm or wake after machine-wide withdrawal', async () => {
+  const { writeWakeSettings } = await import('../wake/shared');
+  const { stateRoot } = await import('../state');
+  const env = { XDG_STATE_HOME: root };
+  await seed('idle', [entry()]);
+  await writeWakeSettings(stateRoot(env), { consent: {}, off: { 'claude/watcher': { at: 'now' } } });
+  const { watch } = await import('../../hooks/claude-wake');
+  let stderr = '';
+  expect(await watch(input, [], { env, now: () => new Date(), stderr: { write: line => { stderr += line; return true; } } })).toBe(0);
+  expect(stderr).toBe('');
+  expect(await owner()).toBeUndefined();
+});

@@ -223,3 +223,22 @@ it('hints to rejoin an old-control restore using the previously authorized link'
   const { responses } = await exchange([call('khala_status')], client);
   expect(responses[0].result.content[0].text).toContain('previously authorized');
 });
+
+it('renders each idle wake state using the shared reason and remedy', async () => {
+  const { WAKE_STATES, wakeStatusText } = await import('../wake/status');
+  for (const state of Object.keys(WAKE_STATES) as (keyof typeof WAKE_STATES)[]) {
+    const idleWake = wakeStatusText('terminal', state);
+    const client = fake();
+    client.status = async () => ({ state: 'connected', unread: 0, idleWake });
+    const { responses } = await exchange([call('khala_status')], client);
+    expect(responses[0].result.structuredContent.idleWake).toEqual(idleWake);
+    expect(responses[0].result.content[0].text).toContain(idleWake.reason);
+    if (idleWake.remedy) expect(responses[0].result.content[0].text).toContain(idleWake.remedy);
+  }
+});
+it('puts the once-per-disable read notice in agent-facing text as well as structured content', async () => {
+  const client = fake();
+  client.read = async () => ({ messages: [], wakeNotice: 'Idle wake (terminal): Run `khala wake on --driver terminal` to re-enable it.' });
+  const { responses } = await exchange([call('khala_read')], client);
+  expect(responses[0].result.content[0].text).toContain('\nIdle wake (terminal):');
+});

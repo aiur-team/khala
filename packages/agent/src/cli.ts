@@ -14,12 +14,13 @@ export type CliModules = {
   local(): Load<Main>;
   watch(): Load<Main>;
   install(): Load<Main>;
+  wake?(): Load<Main>;
   hook(name: string): Load<Hook>;
 };
 
 const HOOK_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const STDIN_CAP = 1024 * 1024;
-export const USAGE = 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala --version';
+export const USAGE = 'usage: khala mcp | khala watch [--harness claude|codex|cursor --session <id>] | khala hook <name> | khala local <command> | khala install codex | khala install cursor | khala wake on|off|status [--driver <d>] [--harness <id>] [--json] | khala --version';
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
@@ -45,8 +46,8 @@ export async function runCli(argv: readonly string[], modules: CliModules): Prom
     console.log(KHALA_AGENT_VERSION);
     return 0;
   }
-  if (cmd === 'mcp' || cmd === 'install' || cmd === 'watch') {
-    const load = modules[cmd]();
+  if (cmd === 'mcp' || cmd === 'install' || cmd === 'watch' || cmd === 'wake') {
+    const load = modules[cmd]?.();
     if (!load) { console.error(`khala: ${cmd} not available`); return 1; }
     try { return exitCode(await (await load()).default(rest)); }
     catch { console.error('khala: internal_error'); return 1; }

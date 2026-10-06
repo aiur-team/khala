@@ -82,7 +82,7 @@ describe('MCP command lifecycle', () => {
       });
       const completed = (async () => {
         child.stdin.write(JSON.stringify(call('khala_status')) + '\n');
-        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+        expect(JSON.parse(await reply).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
         expect(existsSync(path.join(stateHome, 'khala/claude/signal-session/status.json'))).toBe(true);
         child.kill('SIGTERM');
         expect(await closed).toEqual({ code: 0, signal: null });
@@ -103,7 +103,7 @@ describe('MCP command lifecycle', () => {
     writeFileSync(preload, "process.stdin.once('end', () => console.log('sdk-diagnostic'));\n");
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'claude'], {
-        env: { ...process.env, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
+        env: { ...process.env, XDG_STATE_HOME: dir, NODE_OPTIONS: `--require=${preload}` }, encoding: 'utf8',
         input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
       });
       expect(result.status).toBe(0);
@@ -123,7 +123,7 @@ describe('MCP command lifecycle', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'watcher', state: 'unavailable', reason: 'The Claude watcher is not armed.' } });
       expect(JSON.parse(readFileSync(path.join(dir, 'khala/claude/deadline/status.json'), 'utf8')).detail).toBe('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -157,12 +157,12 @@ describe('MCP command lifecycle', () => {
     const stateHome = mkdtempSync(path.join(os.tmpdir(), 'khala-mcp-main-'));
     try {
       const result = spawnSync(process.execPath, ['bin/khala.mjs', 'mcp', '--harness', 'codex'], {
-        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        env: { ...process.env, PATH: '', XDG_STATE_HOME: stateHome },
         encoding: 'utf8', input: JSON.stringify(call('khala_status', 'a')) + '\n',
       });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [] });
+      expect(JSON.parse(result.stdout).result.structuredContent).toEqual({ state: 'idle', unread: 0, listeningMode: 'sync', channels: [], idleWake: { driver: 'queue', state: 'unavailable', reason: 'Codex queue is missing.' } });
     } finally { rmSync(stateHome, { recursive: true, force: true }); }
   });
 });
