@@ -1,0 +1,65 @@
+{
+  "mcp": {
+    "mcpServers": {
+      "other": {
+        "command": "other"
+      },
+      "khala": {
+        "type": "local",
+        "command": "/node",
+        "args": [
+          "<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs",
+          "mcp",
+          "--harness",
+          "copilot"
+        ],
+        "tools": [
+          "*"
+        ]
+      }
+    },
+    "extra": true
+  },
+  "hooks": {
+    "version": 1,
+    "hooks": {
+      "agentStop": [
+        {
+          "type": "command",
+          "bash": "audit.sh",
+          "powershell": "audit.ps1"
+        },
+        {
+          "type": "command",
+          "bash": "'/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event agentStop",
+          "powershell": "& '/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event agentStop",
+          "timeoutSec": 10
+        }
+      ],
+      "sessionStart": [
+        {
+          "type": "command",
+          "bash": "'/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event sessionStart",
+          "powershell": "& '/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event sessionStart",
+          "timeoutSec": 10
+        }
+      ],
+      "userPromptSubmitted": [
+        {
+          "type": "command",
+          "bash": "'/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event userPromptSubmitted",
+          "powershell": "& '/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event userPromptSubmitted",
+          "timeoutSec": 10
+        }
+      ],
+      "postToolUse": [
+        {
+          "type": "command",
+          "bash": "'/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event postToolUse",
+          "powershell": "& '/node' '<HOME>/data/khala/npm/lib/node_modules/khala-cli/dist/khala.mjs' hook deliver --harness copilot --event postToolUse",
+          "timeoutSec": 10
+        }
+      ]
+    }
+  }
+}
