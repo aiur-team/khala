@@ -8,7 +8,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import assert from 'node:assert/strict';
 
 const windows = process.platform === 'win32';
 const tarball = path.resolve(process.argv[2] ?? '');
@@ -108,8 +107,9 @@ try {
   const again = JSON.parse(await fs.readFile(path.join(cursorDir, 'hooks.json'), 'utf8'));
   if (JSON.stringify(again) !== JSON.stringify(hooks)) throw new Error('install cursor is not idempotent');
   check('install cursor --uninstall', process.execPath, [script, 'install', 'cursor', '--uninstall'], { shell: false });
-  for (const name of ['mcp.json', 'hooks.json']) {
-    await assert.rejects(fs.readFile(path.join(cursorDir, name)), { code: 'ENOENT' });
+  for (const file of ['mcp.json', 'hooks.json']) {
+    try { await fs.stat(path.join(cursorDir, file)); throw new Error(`uninstall left ${file}, which was originally absent`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
 
   // Force plugin mode so this smoke stays deterministic before plugin publication.
@@ -124,7 +124,8 @@ try {
     { shell: false, input: JSON.stringify({ session_id: 'smoke-session', event: 'session-start' }) });
   if (ocHook !== '') throw new Error(`opencode hook printed ${ocHook}`);
   check('install opencode --uninstall', process.execPath, [script, 'install', 'opencode', '--uninstall'], { shell: false });
-  await assert.rejects(fs.readFile(opencodeConfig), { code: 'ENOENT' });
+  try { await fs.stat(opencodeConfig); throw new Error('uninstall left OpenCode config, which was originally absent'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
 
   // npx needs a ./relative tarball path (an absolute one is taken for a command), and it resolves that path
   // against the nearest package.json ancestor, not cwd. Give the isolated npx directory its own package root.
