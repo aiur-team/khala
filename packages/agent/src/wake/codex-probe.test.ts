@@ -28,3 +28,15 @@ it('requires both flags and caches concurrent probes until binary mtime changes'
   expect(await Promise.all(Array.from({ length: 5 }, () => probeCodexQueue({ PATH: root })))).toEqual(Array(5).fill({ available: true, command: path.join(root, 'codex') }));
   expect((await fs.readFile(path.join(root, 'calls'), 'utf8')).trim().split('\n')).toEqual(['["queue","--help"]', '["queue","--help"]']);
 });
+it('isolates help initialization from the real home and cleans up probe files', async () => {
+  const home = path.join(root, 'user-home');
+  const codexHome = path.join(root, 'custom-codex');
+  await fs.mkdir(home);
+  await fs.mkdir(codexHome);
+  await fs.writeFile(path.join(root, 'codex'), `#!${process.execPath}\nimport fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(path.join(root, 'probe-home'))}, process.env.CODEX_HOME); fs.mkdirSync(process.env.CODEX_HOME + '/tmp', {recursive: true}); fs.mkdirSync(process.env.HOME + '/.codex/tmp', {recursive: true}); console.log('--thread --message');\n`, { mode: 0o700 });
+  expect(await probeCodexQueue({ PATH: root, HOME: home, CODEX_HOME: codexHome })).toMatchObject({ available: true });
+  expect(await fs.readdir(home)).toEqual([]);
+  expect(await fs.readdir(codexHome)).toEqual([]);
+  const probeHome = await fs.readFile(path.join(root, 'probe-home'), 'utf8');
+  await expect(fs.stat(probeHome)).rejects.toMatchObject({ code: 'ENOENT' });
+});

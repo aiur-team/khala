@@ -26,6 +26,7 @@
     "indexeddbshim": "19.0.7",
     "matrix-js-sdk": "42.4.0",
     "proper-lockfile": "4.1.2",
+    "smol-toml": "1.8.0",
     "tsx": "4.20.6"
   },
   "devDependencies": {
