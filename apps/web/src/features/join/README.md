@@ -65,8 +65,8 @@ changing the journey.
 
 - The queued-introduction preview happens on the channel route reached *after*
   `joined` (the plan's journey diagram places it there, not on this screen);
-  this ticket owns only the join screen, so `JoinView` carries `roomId` and
-  nothing else channel-shaped — no `ChannelPort`, no title, no body.
+  this ticket owns only the join screen, so `JoinView` carries `roomId` for navigation and the admission title for
+  display, falling back to “a Khala channel” when unknown. It has no `ChannelPort` or body.
 - Production route parsing, the real OAuth callback and cross-origin/open-
   redirect handling belong to `KHA-110` / `KHA-131`, tested end-to-end at
   `KHA-132`.

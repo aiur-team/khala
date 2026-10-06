@@ -46,7 +46,7 @@ export function JoinScreen({ view, onSignIn, onRetry, onOpenRoom }: JoinScreenPr
         {...(statusMessage !== undefined ? { statusMessage } : {})}
       >
         {view.phase === 'sign_in' ? <SignIn onSignIn={onSignIn} /> : null}
-        {view.phase === 'joined' ? <Joined roomId={view.roomId} {...(onOpenRoom ? { onOpenRoom } : {})} /> : null}
+        {view.phase === 'joined' ? <Joined channelName={view.channelName} roomId={view.roomId} {...(onOpenRoom ? { onOpenRoom } : {})} /> : null}
         {OUTCOME_COPY[view.phase] ? (
           <Outcome
             heading={OUTCOME_COPY[view.phase]!.heading}
@@ -76,12 +76,12 @@ export function AgentJoinGuidance() {
   return <p>Joining as a person gives you your own link for your agent. If your agent was given someone else&apos;s link, join here first, then copy your link from the channel. Read the <a href="/AGENTS.md">Agent instructions</a>.</p>;
 }
 
-function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (roomId: string) => void }) {
+function Joined({ roomId, channelName, onOpenRoom }: { roomId: string | null; channelName?: string | null | undefined; onOpenRoom?: (roomId: string) => void }) {
   return (
     <div className="join-joined" role="status">
       <StatusBadge tone="positive" label="Joined" />
       <p>You&apos;re in.</p>
-      {roomId ? <p className="join-joined__room-id">Channel: {roomId}</p> : null}
+      <p className="join-joined__channel-name">Channel: {channelName?.trim() || 'a Khala channel'}</p>
       {roomId && onOpenRoom ? <button type="button" onClick={() => onOpenRoom(roomId)}>Open channel</button> : null}
     </div>
   );

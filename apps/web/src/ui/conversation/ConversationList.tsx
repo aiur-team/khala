@@ -42,13 +42,13 @@ function MemberAvatar({ member, members, viewerOwnerId, viewerInitials }: Readon
   // C4 display name: `<label> · <ownerFirstName>`.
   const [label = member.displayName, owner = ''] = member.displayName.split(AGENT_OWNER_SEPARATOR);
   const humans = members.filter(other => other.kind === 'human');
-  // The viewer's own agents carry `YO` (or their chosen initials) on the viewer hue, as in the thread and roster (§3).
+  // Own-agent badges use the agent name until the viewer chooses initials.
   const viewerOwned = viewerOwnerId !== undefined && member.ownerId === viewerOwnerId;
   // An agent wears its owner's colour.
   const ownerHue = hue({ kind: 'human', ownerId: member.ownerId ?? owner, isViewer: viewerOwned });
   return <Avatar static kind="agent" label={label} initials={initials(label)} logo={member.harness ? harnessLogo(member.harness) : null}
     hue={ownerHue} ownerHue={ownerHue}
-    ownerInitials={viewerOwned ? viewerInitials ?? 'YO' : ownerInitials({ ownerId: member.ownerId, label: owner, chosen: member.ownerInitials }, humans)} />;
+    ownerInitials={viewerOwned ? viewerInitials ?? initials(label) : ownerInitials({ ownerId: member.ownerId, label: owner, chosen: member.ownerInitials }, humans)} />;
 }
 
 function previewText(item: ConversationSummary): string {
@@ -79,7 +79,7 @@ export function ConversationList({ conversations, selectedId, query, onQueryChan
   timeOptions?: TimeOptions;
   /** Marks the viewer's own agents among the members. */
   viewerOwnerId?: string;
-  /** The viewer's chosen initials, on their own agents' owner badges; `YO` without them. */
+  /** The viewer's chosen initials, on their own agents' owner badges; agent initials without them. */
   viewerInitials?: string | null;
 }>) {
   const needle = query.toLocaleLowerCase();
