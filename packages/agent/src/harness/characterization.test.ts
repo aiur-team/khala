@@ -151,6 +151,14 @@ it.each(harnesses)('%s waker selection is observable through the factory', async
   if (harness === 'codex') await createCodexWakeDriver({ port: { run }, probe: async () => ({ available: true }) }).wake({
     files: sessionFiles(harness, 'session', { XDG_STATE_HOME: root }), harness, sessionId: 'session', env: {}, now: 0, signal: new AbortController().signal,
   }, 'Khala: channel messages are waiting. Continue. (k-12345678)');
+  if (harness === 'claude') {
+    // U14 intentionally adds the watcher/terminal ladder; retain the earlier golden as history.
+    expect(createWaker).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(createClient.mock.calls[0]![0].onInboxAppend).toBeTypeOf('function');
+    return;
+  }
   await golden(`waker-${harness}`, {
     ...(harness === 'codex' ? { argv: run.mock.calls[0]![0] } : {}),
     threads: createWaker.mock.calls.map(() => 'session'),

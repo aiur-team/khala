@@ -74,12 +74,31 @@ export async function settleAttempts(dir: string, input: {
       else {
         const failures = prior.failures + 1;
         data.state[attempt.driver] = failures >= 2
-          ? { failures, disabled: true, reason: 'nonce_timeout', at: new Date(input.now).toISOString() }
+          ? { ...prior, failures, disabled: true, reason: 'nonce_timeout', at: new Date(input.now).toISOString() }
           : { failures };
       }
     }
     data.attempts = remaining;
     return results;
+  });
+}
+
+/** Cancel only the attempt whose transport was skipped; preserve concurrent wakes. */
+export async function cancelAttempt(dir: string, nonce: string): Promise<void> {
+  await locked(dir, data => { data.attempts = data.attempts.filter(attempt => attempt.nonce !== nonce); });
+}
+
+/** A transport inserted text but could not safely submit it. Settle only its nonce. */
+export async function failAttempt(dir: string, nonce: string, now: number): Promise<void> {
+  await locked(dir, data => {
+    const attempt = data.attempts.find(item => item.nonce === nonce);
+    if (!attempt) return;
+    data.attempts = data.attempts.filter(item => item.nonce !== nonce);
+    const prior = data.state[attempt.driver] ?? { failures: 0 };
+    const failures = prior.failures + 1;
+    data.state[attempt.driver] = failures >= 2
+      ? { ...prior, failures, disabled: true, reason: 'nonce_timeout', at: new Date(now).toISOString() }
+      : { failures };
   });
 }
 

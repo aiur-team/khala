@@ -55,7 +55,9 @@ it('claims auto-disable notices once even with simultaneous delivery consumers',
   expect(notices.find(Boolean)).toContain('khala wake on --driver terminal');
   expect(JSON.parse(await fs.readFile(path.join(files.dir, 'wake-state.json'), 'utf8')).terminal.noticeShown).toBe(true);
   expect(await wakeDisableNotice(files.dir)).toBeUndefined();
-  await run(['on']); await disable();
+  await run(['on', '--driver', 'terminal']);
+  expect(await readWakeState(files.dir)).toEqual({});
+  await disable();
   expect(await wakeDisableNotice(files.dir)).toContain('terminal');
 });
 it.each([{ flags: ['--harness'] }, { flags: ['--wat'] }, { flags: ['--driver', '--json'] }])('rejects malformed flags $flags', async ({ flags }) => {
@@ -69,14 +71,17 @@ it('routes the wake command through the shared CLI entry', async () => {
   expect(await runCli(['wake', 'status', '--json'], modules)).toBe(0);
   expect(JSON.parse(lines[0]!)).toBeInstanceOf(Array);
 });
-it('does not infer a synthetic Cursor session outside an agent and makes an unambiguous remedy executable', async () => {
+it('requires a harness for terminal consent outside an agent', async () => {
   delete env.CODEX_THREAD_ID;
   expect(await run(['on'])).toBe(2);
   expect(lines.pop()).toContain('Select --harness');
-  expect(await run(['on', '--driver', 'terminal'])).toBe(0);
+  expect(await run(['on', '--driver', 'terminal'])).toBe(2);
+  expect(lines.pop()).toContain('Select --harness');
+  expect(await run(['on', '--harness', 'codex', '--driver', 'terminal'])).toBe(0);
   expect((await readWakeSettings(stateRoot(env))).consent['codex/terminal']).toBeDefined();
   expect(await run(['on', '--driver', 'bogus'])).toBe(2);
-  expect(lines.pop()).toContain('Valid drivers: watcher, queue, terminal');
+  const choices = lines.pop()!;
+  for (const driver of ['watcher', 'queue', 'terminal']) expect(choices).toContain(driver);
 });
 
 it('preserves withdrawal and other harness consent updates across concurrent processes', async () => {
@@ -117,3 +122,18 @@ it('preserves withdrawal and other harness consent updates across concurrent pro
     }
   } finally { workers.forEach(child => child.kill()); }
 }, 15_000);
+
+it('clears the single immediate transport-failure notice through real terminal re-consent', async () => {
+  const { failAttempt } = await import('./shared');
+  const files = sessionFiles('codex', 'session', env);
+  for (const [nonce, at] of [['00000001', 1], ['00000002', 2]] as const) {
+    await recordAttempt(files.dir, { driver: 'terminal', nonce, at, deadline: 10 });
+    await failAttempt(files.dir, nonce, at + 1);
+  }
+  expect(await wakeDisableNotice(files.dir)).toContain('terminal');
+  expect(await wakeDisableNotice(files.dir)).toBeUndefined();
+  expect(await run(['on', '--driver', 'terminal'])).toBe(0);
+  expect((await readWakeSettings(stateRoot(env))).consent['codex/terminal']).toBeDefined();
+  expect(await readWakeState(files.dir)).toEqual({});
+  expect(await wakeDisableNotice(files.dir)).toBeUndefined();
+});

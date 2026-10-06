@@ -1,5 +1,6 @@
 import type { HarnessAdapter } from '../adapter';
 import type { WakeDriver } from '../../wake/driver';
+import type { SessionFiles } from '../../state';
 
 export type FakeSession = {
   id: string;
@@ -18,6 +19,7 @@ export interface FakeHarnessDriver {
   wakeProbe?(adapter: HarnessAdapter): {
     drivers: readonly WakeDriver[];
     prompt(): string | undefined;
+    prepare?(files: SessionFiles): Promise<void>;
   };
 }
 
