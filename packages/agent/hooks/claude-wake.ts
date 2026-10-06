@@ -1,7 +1,8 @@
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveStateDir } from '../src/state';
+import { filesForDir, readStatus, resolveStateDir } from '../src/state';
+import { listChannels } from '../src/channels';
 import { adapterFor } from '../src/harness';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -70,10 +71,19 @@ export async function watch(stdin: string, _argv: readonly string[], io: IO = { 
   try {
     const parent = process.ppid;
     const input = JSON.parse(stdin);
-    if (input?.hook_event_name !== 'Stop' || typeof input.session_id !== 'string'
+    if (!['Stop', 'SessionStart'].includes(input?.hook_event_name) || typeof input.session_id !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.session_id)) return 0;
     const dir = resolveStateDir(adapterFor('claude')!.id as Harness, input.session_id, io.env);
     if (!(await fs.stat(dir)).isDirectory()) return 0;
+    if (input.hook_event_name === 'SessionStart') {
+      // Claude maps -p to sdk-cli; hooks have piped stdio even in the TUI.
+      // Fail closed for SDK, desktop and unknown hosts. Stop keeps its existing behavior.
+      if (io.env.CLAUDE_CODE_ENTRYPOINT !== 'cli' || !['startup', 'resume'].includes(input.source)) return 0;
+      const files = filesForDir(dir);
+      const channels = await listChannels(files);
+      const statuses = await Promise.all((channels.length ? channels.map(channel => channel.files) : [files]).map(readStatus));
+      if (!statuses.some(status => status?.state === 'connected' || status?.state === 'send_failed')) return 0;
+    }
     const nonce = randomBytes(6).toString('hex');
     const owner = path.join(dir, 'watcher.json');
     temporary = path.join(dir, `.watcher-${nonce}.tmp`);

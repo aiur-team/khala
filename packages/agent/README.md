@@ -41,7 +41,11 @@ Then tell the agent "Join this Khala channel: <link>".
   the same workspace using its saved link and matching rejoin secret for hosted
   channels, or saved helper credentials for local channels. No tool call
   is required; Codex arms its waker immediately. Claude still needs Monitor
-  re-armed by the agent. `khala_leave` clears only the selected channel's resume
+  re-armed by the agent. Its backup `asyncRewake` watcher also arms at
+  SessionStart in the interactive CLI when a channel is connected, covering the
+  interval before the first Stop. Stop replaces that watcher through shared nonce
+  ownership and a 24-hour deadline. SessionStart does not arm this backup in
+  headless (`-p`), SDK or desktop hosts. `khala_leave` clears only the selected channel's resume
   authorization. Owner removal and missing or changed secrets prevent restoration.
   Older hosted control that needs confirmation leaves the channel disconnected
   with `rejoin_needed`; SessionStart and `khala_status` prompt an explicit rejoin

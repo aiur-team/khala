@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
-import { filesForDir, openSessionDir, writeJsonAtomic, type SessionFiles } from '../state';
+import { channelFiles, ensureStateDir, filesForDir, openSessionDir, writeJsonAtomic, writeStatus, writeStateFile, type SessionFiles } from '../state';
 import { appendEntries, unreadCount } from '../inbox';
 import { writeActivity } from '../activity';
+import sessionStartHook from '../../hooks/session-start';
 import { DEADLINE_MS, unreadMessages, watch } from '../../hooks/claude-wake';
 
 const bin = fileURLToPath(new URL('../../bin/khala.mjs', import.meta.url));
+const sessionStart = JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source: 'startup' });
 const input = JSON.stringify({ session_id: 'session', hook_event_name: 'Stop', stop_hook_active: false });
 const notice = 'Khala: new channel messages. They arrive in the next hook context.\n';
 let root: string;
@@ -29,9 +31,9 @@ function observe(child: ChildProcess) {
   });
   return { child, result };
 }
-function start(stdin = input, deadline = 3000) {
+function start(stdin = input, deadline = 3000, entrypoint = 'cli') {
   const process = observe(spawn(globalThis.process.execPath, [bin, 'hook', 'claude-wake'], {
-    env: { ...globalThis.process.env, XDG_STATE_HOME: root, KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: String(deadline) },
+    env: { ...globalThis.process.env, XDG_STATE_HOME: root, CLAUDE_CODE_ENTRYPOINT: entrypoint, KHALA_WAKE_TEST_POLL_MS: '50', KHALA_WAKE_TEST_DEADLINE_MS: String(deadline) },
   }));
   process.child.stdin!.end(stdin);
   return process;
@@ -56,6 +58,7 @@ afterEach(async () => {
   for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill();
   await Promise.all(children.map(child => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('close', resolve))));
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await fs.rm(root, { recursive: true, force: true });
 });
 it('ignores missing sessions without creating files or entering the timed watcher', async () => {
@@ -278,4 +281,99 @@ it('does not overwrite a re-arm that races the exit-state write', async () => {
   let reads = 0;
   expect(await watch(input, [], { env: { XDG_STATE_HOME: root }, now: () => new Date(reads++ === 0 ? 0 : DEADLINE_MS), stderr: { write: vi.fn() } })).toBe(0);
   expect(await watcher()).toEqual(replacement);
+});
+
+async function joinedChannel(state: 'connected' | 'send_failed' | 'disconnected' | 'joining' = 'connected') {
+  const target = channelFiles(files, '!joined:local');
+  await ensureStateDir(target.dir);
+  await writeStateFile(target.dir, 'channel.json', { roomId: '!joined:local', joinedAt: new Date().toISOString() });
+  await writeStatus(target, state);
+  return target;
+}
+it.each(['startup', 'resume'])('arms SessionStart %s with a joined channel and shares Stop ownership', async source => {
+  await seed('busy');
+  const target = await joinedChannel();
+  const first = start(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source }));
+  await armed();
+  const nonce = await owner();
+  expect(nonce).toMatch(/^[a-f0-9]{12}$/);
+  const second = start();
+  await armed(nonce);
+  expect(await first.result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(second.child.exitCode).toBeNull();
+  await appendEntries(target, [entry()]);
+  await writeActivity(files, 'idle');
+  expect(await second.result).toEqual({ code: 2, stdout: '', stderr: notice });
+  expect(await watcher()).toMatchObject({ pid: second.child.pid, state: 'woke' });
+});
+it.each(['missing', 'joining', 'disconnected'] as const)('does not arm SessionStart for %s channel status, even with aggregate connected', async state => {
+  await seed();
+  await writeStatus(files, 'connected');
+  const target = await joinedChannel(state === 'missing' ? 'connected' : state);
+  if (state === 'missing') await fs.unlink(target.status);
+  expect(await start(sessionStart).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await owner()).toBeUndefined();
+});
+it('does not arm an unjoined SessionStart session', async () => {
+  await seed();
+  expect(await start(sessionStart).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await owner()).toBeUndefined();
+});
+it.each(['sdk-cli', 'sdk-ts', 'sdk-py', 'claude-desktop', 'claude-vscode', 'unknown'])('exits SessionStart immediately in %s hosts despite joined channels', async entrypoint => {
+  await seed();
+  await joinedChannel();
+  const started = Date.now();
+  expect(await start(sessionStart, 24 * 60 * 60 * 1000, entrypoint).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(Date.now() - started).toBeLessThan(1500);
+  expect(await owner()).toBeUndefined();
+});
+it('uses the same 24-hour deadline for SessionStart', async () => {
+  await seed();
+  await joinedChannel('send_failed');
+  let reads = 0;
+  expect(await watch(sessionStart, [], { env: { XDG_STATE_HOME: root, CLAUDE_CODE_ENTRYPOINT: 'cli' }, now: () => new Date(reads++ === 0 ? 0 : DEADLINE_MS), stderr: { write: vi.fn() } })).toBe(0);
+  expect(await watcher()).toMatchObject({ armedAt: new Date(0).toISOString(), state: 'expired' });
+});
+
+it('wakes before the first Stop after synchronous startup initializes idle', async () => {
+  await seed('busy');
+  const target = await joinedChannel();
+  vi.stubEnv('XDG_STATE_HOME', root);
+  vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  await sessionStartHook(sessionStart, []);
+  stdout.mockRestore();
+  const running = start(sessionStart);
+  await armed();
+  await appendEntries(target, [entry()]);
+  expect(await running.result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('does not reset a first prompt that starts before the SessionStart watcher arms', async () => {
+  await seed('busy');
+  const target = await joinedChannel();
+  await appendEntries(target, [entry()]);
+  const activity = await fs.readFile(path.join(files.dir, 'activity.json'));
+  expect(await start(sessionStart, 150).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await fs.readFile(path.join(files.dir, 'activity.json'))).toEqual(activity);
+});
+
+it.each(['clear', 'compact'])('does not arm SessionStart %s during session maintenance', async source => {
+  await seed('busy');
+  await joinedChannel();
+  expect(await start(JSON.stringify({ session_id: 'session', hook_event_name: 'SessionStart', source })).result).toEqual({ code: 0, stdout: '', stderr: '' });
+  expect(await owner()).toBeUndefined();
+});
+
+it('arms SessionStart from a connected legacy channel status', async () => {
+  await seed('idle', [entry()]);
+  await writeStatus(files, 'connected');
+  expect(await start(sessionStart).result).toEqual({ code: 2, stdout: '', stderr: notice });
+});
+it('fails closed when the SessionStart host entrypoint is missing', async () => {
+  await seed();
+  await joinedChannel();
+  const now = vi.fn(() => new Date());
+  expect(await watch(sessionStart, [], { env: { XDG_STATE_HOME: root }, now, stderr: { write: vi.fn() } })).toBe(0);
+  expect(now).not.toHaveBeenCalled();
+  expect(await owner()).toBeUndefined();
 });
