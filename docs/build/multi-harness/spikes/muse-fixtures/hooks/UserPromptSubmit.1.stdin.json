@@ -1,0 +1,11 @@
+{
+  "cwd": "/tmp/claude-1000/s1117/ws",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "muse-spark-1.3",
+  "model_provider": "meta",
+  "permission_mode": "default",
+  "prompt": "Call the spike_ping tool exactly three times, one call at a time (not in parallel). After all three calls, list every NONCE-... token you have seen anywhere in your context, together with the secret it mentions. Then stop.",
+  "session_id": "01a10fd4-1959-7940-80e1-db5f5189fe43",
+  "transcript_path": null,
+  "turn_id": "d26809ba-297b-4bd0-ae9e-73cff86dbf60"
+}
