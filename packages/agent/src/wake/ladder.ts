@@ -43,8 +43,8 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
   };
   const evaluate = async () => {
     try {
-      for (const driver of deps.drivers) await driver.verify?.({ files: deps.files, harness: deps.harness,
-        sessionId: deps.sessionId, env: deps.env ?? process.env, signal: controller.signal, now: now() });
+      const verificationCtx: WakeDriverContext = { files: deps.files, harness: deps.harness, sessionId: deps.sessionId, env: deps.env ?? process.env, signal: controller.signal, now: now() };
+      for (const driver of deps.drivers) await driver.verify?.(verificationCtx);
       if (deps.drivers.some(driver => driver.verification !== 'none')) await settleAttempts(deps.files.dir, { now: now(), activity: await readActivity(deps.files) });
       const driverStates = await readWakeState(deps.files.dir);
       for (const [id, state] of Object.entries(driverStates)) {
@@ -125,10 +125,10 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
       const attemptAt = now();
       const nonce = newNonce();
       if (driver.verification !== 'none') {
-        await recordAttempt(deps.files.dir, { nonce, driver: driver.id, at: attemptAt, deadline: attemptAt + driver.deadlineMs, activityUpdatedAt: activity.updatedAt, ...(driver.startsActivity ? { startsActivity: true } : {}) });
+        await recordAttempt(deps.files.dir, { nonce, driver: driver.id, at: attemptAt, deadline: attemptAt + driver.deadlineMs, activityUpdatedAt: activity.updatedAt, ...(driver.startsActivity ? { startsActivity: true } : {}), ...(driver.verification === 'transcript' ? { verification: 'transcript' } : {}) });
         if (!await stillEligible()) {
           // No transport was used; void the journal entry rather than count a failure.
-          await settleAttempts(deps.files.dir, { now: now(), activity: await readActivity(deps.files), promptText: '' });
+          await cancelAttempt(deps.files.dir, nonce);
           return;
         }
       }

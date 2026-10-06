@@ -189,6 +189,10 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
     }
     if (files) {
       try {
+        if (adapter.verifyWake) {
+          try { await adapter.verifyWake(stdin, files, io.now().getTime()); }
+          catch { diagnostic(io, 'wake_verification_failed'); }
+        }
         if (adapter.emptyPrompt && (input.event === 'start' || input.event === 'prompt')) {
           try { await capturePane(files, io.env, { now: io.now, ...(io.pid !== undefined ? { pid: io.pid } : {}),
             ...(io.readProcess ? { readProcess: io.readProcess } : {}) }); }

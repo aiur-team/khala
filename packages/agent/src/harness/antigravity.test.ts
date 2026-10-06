@@ -72,7 +72,7 @@ it('matches captured empty prompts and refuses drafts and a moved cursor', async
 });
 it('falls back to the guarded terminal when native credentials are missing', async () => {
   await writeActivity(files, 'idle', now);
-  const probe = antigravityDriver.wakeProbe!(antigravity);
+  const probe = antigravityDriver.wakeProbe!(antigravity, env);
   await probe.prepare!(files);
   await fs.rm(path.join(files.dir, 'antigravity-wake.json'));
   await writeWakeSettings(stateRoot(env), { consent: { 'antigravity/antigravity-native': { at: now().toISOString() }, 'antigravity/terminal': { at: now().toISOString() } }, off: {} });

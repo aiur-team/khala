@@ -102,6 +102,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
   const sample = driver.newSession(root);
   const env = { ...sample.mcpEnv, XDG_STATE_HOME: root };
   try {
+    await driver.prepareSession?.(sample, env);
     let hookAt = now().getTime();
     if (adapter.sessionSources.some(source => source.kind === 'hook-map')) {
       await recordHookSession(adapter.id, sample.id, env, { now, ...(sample.workspace ? { workspace: sample.workspace } : {}) });
@@ -267,7 +268,9 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert(probe?.drivers.length, 'idle wake declared but not delivered');
       assert.deepEqual(probe.drivers.map(d => [d.id, d.verification, d.optIn]),
         adapter.wakeLadder?.map(d => [d.id, d.verification, d.optIn]), 'probe must preserve wake policy');
-      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')),
+      // Agent-armed watcher completion is a native tool notification, not a typed wake.
+      assert(probe.drivers.every(d => d.verification !== 'none' || (adapter.id === 'claude' && d.id === 'watcher')
+        || (adapter.id === 'qwen' && d.id === 'background-shell')),
         'idle wake declared but not delivered: unverified transport');
       if (capabilities.idleWake === 'opt-in') assert(probe.drivers.every(d => d.optIn),
         'opt-in idle wake must require recorded consent for every driver');
@@ -307,7 +310,7 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         assert.match(probe.prompt()!, /^Khala: channel messages are waiting\. Continue\. \(k-[0-9a-f]{8}\)$/);
         hookAt = now().getTime() + 60_001;
         if (driver.wakeHook) await hook('stop', {}, await driver.wakeHook(sample, probe.prompt()!));
-        else await hook('prompt', { promptText: probe.prompt()! });
+        else await hook(probe.verificationEvent ?? 'prompt', { promptText: probe.prompt()! });
         if (probe.afterPrompt) { await probe.afterPrompt(); await hook('tool'); }
         const states = await readWakeState(files.dir);
         assert(probe.drivers.some(d => states[d.id]?.failures === 0), 'idle wake declared but not delivered: nonce not verified');

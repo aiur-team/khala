@@ -7,7 +7,9 @@ export interface WakeDriver<Context> {
   /** Verification window independent of ladder order. */
   readonly deadlineMs: number;
   /** Async watchers carry no nonce. */
-  readonly verification?: 'nonce' | 'none';
+  readonly verification?: 'nonce' | 'transcript' | 'none';
+  /** Native transports may observe delivery before the finishing hook. */
+  verify?(ctx: Context): Promise<void>;
   available(ctx: Context): boolean | Promise<boolean>;
   unavailableReason?(ctx: Context): string | undefined | Promise<string | undefined>;
   /** A race that prevents all transport is a skip, not a failed nonce. */
