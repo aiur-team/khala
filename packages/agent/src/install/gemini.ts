@@ -2,7 +2,6 @@ import { ManagedFiles, formatJson, jsonFormat, readManaged } from './managed-fil
 import type { CursorPlatform } from './cursor';
 import { cursorPaths } from './cursor';
 import { nodeScriptCommand } from './command';
-import { ensureStateDir } from '../state';
 
 export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent'] as const;
 const HOOK_SUFFIX = ' hook deliver --harness gemini';
@@ -84,7 +83,6 @@ export async function installGemini(input: {
       return stripped;
     });
   } else {
-    await ensureStateDir(input.stateDir);
     await managed.write([{ current, text: formatJson(merged.config, current.text) }]);
   }
   if (uninstall) stdout(`removed the Khala MCP server and hooks from ${paths.settingsFile}; delete ${paths.prefix} to remove the CLI`);

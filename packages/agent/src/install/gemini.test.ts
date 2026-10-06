@@ -20,6 +20,22 @@ const deps = () => ({ home, env: { HOME: home, XDG_STATE_HOME: path.join(home, '
   node: process.execPath, package: { name: 'khala-cli', version: '1.2.3' }, npmInstall: () => true,
   stdout: (line: string) => { lines.push(line); }, stderr: (line: string) => { lines.push(line); } });
 
+it('installs under ordinary HOME state parents without changing their permissions', async () => {
+  const local = path.join(home, '.local');
+  const state = path.join(local, 'state');
+  await fs.mkdir(state, { recursive: true });
+  await fs.chmod(local, 0o755);
+  await fs.chmod(state, 0o755);
+  expect(await runInstall(['gemini'], { ...deps(), env: { HOME: home } })).toBe(0);
+  expect(JSON.parse(await fs.readFile(settingsFile(), 'utf8')).mcpServers.khala.args).toContain('gemini');
+  const root = stateRoot({ HOME: home });
+  expect((await readWakeSettings(root)).consent['gemini/terminal']).toHaveProperty('at');
+  expect((await fs.stat(local)).mode & 0o777).toBe(0o755);
+  expect((await fs.stat(state)).mode & 0o777).toBe(0o755);
+  expect((await fs.stat(root)).mode & 0o777).toBe(0o700);
+  expect((await fs.stat(path.join(root, 'install-originals.json'))).mode & 0o777).toBe(0o600);
+});
+
 it('merges siblings, installs without tool trust, reinstalls idempotently, and uninstalls only Khala', async () => {
   const audit = { matcher: '*', hooks: [{ type: 'command', command: './audit' }] };
   const original = { theme: 'dark', mcpServers: { other: { command: 'other' } }, hooks: { AfterTool: [audit] } };
