@@ -421,6 +421,33 @@ describe('multi-channel delivery', () => {
     expect((await readCursor(sync)).deliveredCount).toBe(1);
     expect((await readCursor(asyncChannel)).deliveredCount).toBe(0);
   });
+  it.each([120_000, 120_001])('delivers Sync after an interrupted turn with %i ms of stale activity', async age => {
+    const sync = await channel('Next-turn', 'sync', [message(1)]);
+    const now = new Date('2026-10-06T12:00:00Z');
+    await writeActivity(files, 'busy', () => new Date(now.getTime() - age));
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', prompt: 'Continue' }),
+      ['--harness', 'claude'], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => now });
+    expect(stdout.write.mock.calls[0]?.[0]).toContain('Next-turn');
+    expect((await readCursor(sync)).deliveredCount).toBe(1);
+    expect(await readActivity(files)).toEqual({ state: 'busy', updatedAt: now.toISOString() });
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+  it('refreshes empty PostToolUse activity so a mid-turn Monitor prompt still defers Sync', async () => {
+    const sync = await channel('Next-turn', 'sync', [message(1)]);
+    const now = new Date('2026-10-06T12:00:00Z');
+    await writeActivity(files, 'busy', () => new Date(now.getTime() - 180_000));
+    const stdout = { write: vi.fn() }, stderr = { write: vi.fn() };
+    const io = { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => now };
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'PostToolUse' }), ['--harness', 'claude'], io);
+    expect(await readActivity(files)).toEqual({ state: 'busy', updatedAt: now.toISOString() });
+    await deliver(JSON.stringify({ session_id: 'session', hook_event_name: 'UserPromptSubmit', prompt: 'Monitor notification' }),
+      ['--harness', 'claude'], { ...io, now: () => new Date(now.getTime() + 119_999) });
+    expect(stdout.write).not.toHaveBeenCalled();
+    expect((await readCursor(sync)).deliveredCount).toBe(0);
+    await run('Stop');
+    expect((await readCursor(sync)).deliveredCount).toBe(1);
+  });
   it('orders by oldest unread timestamp and leaves a 40 KiB channel for the next hook', async () => {
     const later = await channel('A', 'sync', [message(1, { body: 'a'.repeat(40960), ts: '2026-10-02T10:05:00Z' })]);
     const older = await channel('B', 'sync', [message(2, { body: 'b'.repeat(40960) })]);
