@@ -31,6 +31,7 @@ function rejectedFrom(result: LocalHttpResult<unknown>): ChannelRejection | null
 
 export function createLocalSubstrate(input: {
   http: LocalHttp; limits: ContentLimits; members: LocalMembersCache; generation: () => number;
+  onEvent?: (event: LocalEvent) => void;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>; now?: () => Date;
 }): ChannelSubstrate {
   const sleep = input.sleep ?? abortableTimeout;
@@ -48,6 +49,7 @@ export function createLocalSubstrate(input: {
     return fallback.value;
   }
   function project(roomId: RoomId, event: LocalEvent): SubstrateEvent | null {
+    input.onEvent?.(event);
     const participant = viewFor(roomId, event.sender);
     const projected = projectWireEvent({ type: event.type, content: event.content, eventId: event.eventId as EventId, participant,
       authorDeviceId: participant.deviceIds[0] ?? null, clientTxnId: event.sender === LOCAL_OWNER_USER_ID ? event.txnId ?? null : null,
