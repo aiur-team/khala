@@ -103,13 +103,16 @@ it('does not consent after a failed install', async () => {
 
 it('passes a custom Codex home to MCP and removes it on uninstall', async () => {
   const custom = path.join(home, 'custom codex');
+  const original = 'model = "gpt-5"\n';
+  await fs.mkdir(custom, { recursive: true });
+  await fs.writeFile(path.join(custom, 'config.toml'), original);
   expect(await run(['codex', '--codex-home', custom])).toBe(0);
   const config = () => fs.readFile(path.join(custom, 'config.toml'), 'utf8');
   expect(parse(await config())).toMatchObject({ mcp_servers: { khala: { env: { CODEX_HOME: custom } } } });
   expect(await run(['codex', '--codex-home', custom])).toBe(0);
   expect(parse(await config())).toMatchObject({ mcp_servers: { khala: { env: { CODEX_HOME: custom } } } });
   expect(await run(['codex', '--codex-home', custom, '--uninstall'])).toBe(0);
-  expect(await config()).not.toContain('CODEX_HOME');
+  expect(await config()).toBe(original);
 });
 it('passes an environment-selected custom home to MCP', async () => {
   const custom = path.join(home, 'env-codex');
