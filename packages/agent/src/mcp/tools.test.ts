@@ -293,6 +293,19 @@ it('advertises and forwards stamped sessions on every OpenCode tool', async () =
   expect(codex[0]!.definition().inputSchema.properties).not.toHaveProperty('khala_session');
 });
 
+it.each(['active', 'disabled', 'unavailable'] as const)('omits Antigravity registration prompts for %s without a credential failure', async state => {
+  const client = fake();
+  client.status = async () => ({ state: 'connected', unread: 0, idleWake: { driver: 'antigravity-native', state, reason: state === 'unavailable' ? 'Wake status is unavailable.' : 'Idle wake is on.' } });
+  const { responses } = await exchange([call('khala_status')], client, 'antigravity');
+  expect(responses[0].result.content[0].text).not.toContain('wake register');
+});
+it.each(['are missing', 'were rejected'])('renders installed Antigravity registration for credentials that %s', async detail => {
+  const client = fake();
+  client.status = async () => ({ state: 'connected', unread: 0, idleWake: { driver: 'antigravity-native', state: 'unavailable', reason: `Antigravity native wake credentials ${detail}.` } });
+  const { responses } = await exchange([call('khala_status')], client, 'antigravity');
+  expect(responses[0].result.content[0].text).toContain('wake register --harness antigravity');
+  expect(responses[0].result.content[0].text).not.toContain('npx');
+});
 it('Muse join and status supply an absolute watcher command with explicit session identity', async () => {
   const client = fake();
   client.join = vi.fn(async () => ({ state: 'connected' as const, channelName: 'Review' }));

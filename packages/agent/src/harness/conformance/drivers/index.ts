@@ -6,8 +6,9 @@ import { genericDriver } from './generic';
 import { qwenDriver } from './qwen';
 import { copilotDriver } from './copilot';
 import { cursorDriver } from './cursor';
+import { antigravityDriver } from './antigravity';
 import { geminiDriver } from './gemini';
 import { opencodeDriver } from './opencode';
 export const conformanceDrivers: Readonly<Record<string, FakeHarnessDriver>> = {
-  muse: museDriver, claude: claudeDriver, codex: codexDriver, cursor: cursorDriver, gemini: geminiDriver, opencode: opencodeDriver, generic: genericDriver, copilot: copilotDriver, qwen: qwenDriver,
+  muse: museDriver, claude: claudeDriver, codex: codexDriver, cursor: cursorDriver, gemini: geminiDriver, antigravity: antigravityDriver, opencode: opencodeDriver, generic: genericDriver, copilot: copilotDriver, qwen: qwenDriver,
 };

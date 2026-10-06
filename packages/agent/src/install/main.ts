@@ -11,13 +11,15 @@ import { installQwen } from './qwen';
 import { musePaths, installMuse } from './muse';
 import { copilotPaths, installCopilot } from './copilot';
 import { cursorPaths, installCursor } from './cursor';
+import { antigravityPaths, installAntigravity } from './antigravity';
 import { geminiPaths, installGemini } from './gemini';
 import { opencodePaths, installOpenCode, opencodePluginPublished } from './opencode';
 import { ManagedFiles, formatJson, jsonFormat, readManaged, textFormat } from './managed-file';
 import { stateRoot } from '../state';
+import { installedLauncher } from './launcher';
 
 export const MCP_MARKER = '# Khala MCP server, managed by `khala install codex`';
-const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install copilot [--wake|--no-wake] [--uninstall] | khala install muse [--wake|--no-wake] [--uninstall] | khala install qwen [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
+const USAGE = 'usage: khala install codex [--codex-home <dir>] [--wake|--no-wake] [--uninstall] | khala install cursor [--wake|--no-wake] [--uninstall] | khala install gemini [--trust-tools] [--wake|--no-wake] [--uninstall] | khala install opencode [--uninstall] | khala install copilot [--wake|--no-wake] [--uninstall] | khala install antigravity [--wake|--no-wake] [--uninstall] | khala install muse [--wake|--no-wake] [--uninstall] | khala install qwen [--wake|--no-wake] [--uninstall] | khala install mcp --print [--harness <id>]';
 
 export type InstallDeps = {
   env?: NodeJS.ProcessEnv;
@@ -85,6 +87,32 @@ export async function runGeminiInstall(flags: readonly string[], deps: InstallDe
   const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
   return installGemini({ paths, platform, node: deps.node ?? process.execPath, uninstall,
     trustTools: flags.includes('--trust-tools'), stdout, stderr, stateDir: installStateDir(env, home),
+    install: () => {
+      stdout(`installing ${spec} into ${paths.prefix}`);
+      if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
+      stderr('khala: npm install failed for ' + spec);
+      return false;
+    },
+  });
+}
+
+export async function runAntigravityInstall(flags: readonly string[], deps: InstallDeps): Promise<number> {
+  const env = deps.env ?? process.env;
+  const stdout = deps.stdout ?? (line => { process.stdout.write(line + '\n'); });
+  const stderr = deps.stderr ?? (line => { process.stderr.write(line + '\n'); });
+  if (flags.some(flag => flag !== '--uninstall')) { stderr(USAGE); return 1; }
+  const uninstall = flags.includes('--uninstall');
+  const pkg = 'package' in deps ? deps.package : bundle;
+  if (!pkg && !uninstall) {
+    stderr('khala: install runs from the published package (npx -y khala-cli install antigravity)');
+    return 1;
+  }
+  const platform = deps.platform ?? process.platform;
+  const home = deps.home ?? (platform === 'win32' ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir());
+  const paths = antigravityPaths({ platform, path: platform === 'win32' ? path.win32 : path.posix, home, env }, pkg?.name);
+  const spec = pkg ? env.KHALA_INSTALL_SPEC || `${pkg.name}@${pkg.version}` : '';
+  return installAntigravity({ paths, platform, node: deps.node ?? process.execPath, uninstall,
+    stdout, stderr, stateDir: installStateDir(env, home),
     install: () => {
       stdout(`installing ${spec} into ${paths.prefix}`);
       if ((deps.npmInstall ?? defaultNpmInstall)(paths.prefix, spec)) return true;
@@ -304,9 +332,8 @@ export async function runCodexInstall(flags: readonly string[], deps: InstallDep
     stderr('khala: install runs from the published package (npx -y <package> install codex); from a checkout follow packages/agent/docs/install-codex.md');
     return 1;
   }
-  const dataHome = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(env.HOME ?? os.homedir(), '.local/share');
-  const prefix = path.join(dataHome, 'khala', 'npm');
-  const bin = path.join(prefix, 'bin', 'khala');
+  const platform = deps.platform ?? process.platform;
+  const { prefix, bin } = installedLauncher(platform, platform === 'win32' ? path.win32 : path.posix, deps.home ?? env.HOME ?? os.homedir(), env);
   const command = `${shellQuote(bin)} hook deliver --harness codex`;
 
   const hooksFile = path.join(codexHome, 'hooks.json');

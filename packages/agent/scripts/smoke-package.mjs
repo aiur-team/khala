@@ -54,7 +54,10 @@ async function assertRestored(originals) {
 
 /** Starts an MCP server, runs initialize + tools/list and stops it. */
 async function mcpSmoke(label, command, args, callStatus = false, childEnv = env) {
-  const child = spawn(command, args, { env: childEnv, cwd: root, stdio: ['pipe', 'pipe', 'inherit'] });
+  // npm's Windows launcher is a command shim and needs cmd.exe; executable MCP servers do not.
+  const commandShim = windows && /\.(?:cmd|bat)$/iu.test(command);
+  const child = spawn(commandShim ? quote(command) : command, args, { env: childEnv, cwd: root,
+    shell: commandShim, stdio: ['pipe', 'pipe', 'inherit'] });
   const replies = new Map();
   let buffer = '';
   child.stdout.setEncoding('utf8').on('data', data => {
@@ -184,6 +187,25 @@ try {
   check('install gemini --uninstall', process.execPath, [script, 'install', 'gemini', '--uninstall'], { shell: false });
   await assert.rejects(fs.stat(geminiConfig), { code: 'ENOENT' });
 
+  const agyMcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
+  const agyHooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+  const agyOriginals = await captureOriginals([agyMcpFile, agyHooksFile]);
+  check('install antigravity', process.execPath, [script, 'install', 'antigravity'], { shell: false, env: { ...env, KHALA_INSTALL_SPEC: tarball } });
+  const agyMcp = JSON.parse(await fs.readFile(agyMcpFile, 'utf8')).mcpServers.khala;
+  const agyHooks = JSON.parse(await fs.readFile(agyHooksFile, 'utf8')).khala;
+  assert.deepEqual(Object.keys(agyHooks), ['PreInvocation', 'Stop']);
+  assert.equal(agyHooks.Stop[0].timeout, 10);
+  assert.deepEqual(agyMcp.args, ['mcp', '--harness', 'antigravity']);
+  assert.equal(agyMcp.command, path.join(windows ? env.LOCALAPPDATA : env.XDG_DATA_HOME, 'khala', 'npm', ...(windows ? ['khala.cmd'] : ['bin', 'khala'])));
+  await mcpSmoke('antigravity configured MCP', agyMcp.command, agyMcp.args, true, { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy' });
+  assert.equal(check('antigravity PreInvocation hook', agyHooks.PreInvocation[0].command, [],
+    { shell: true, input: JSON.stringify({ conversationId: 'smoke-agy', invocationNum: 0 }) }), '{}\n');
+  const registered = check('antigravity wake register', process.execPath,
+    [script, 'wake', 'register', '--harness', 'antigravity'], { shell: false,
+      env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'smoke-agy', ANTIGRAVITY_LS_ADDRESS: 'localhost:1234', ANTIGRAVITY_CSRF_TOKEN: 'smoke-private-token' } });
+  assert.ok(!registered.includes('smoke-private-token') && !registered.includes('localhost:1234'));
+  check('install antigravity --uninstall', process.execPath, [script, 'install', 'antigravity', '--uninstall'], { shell: false });
+  await assertRestored(agyOriginals);
   // Copilot: execute the installed shell command with the CLI's event-less camelCase payload.
   const copilotDir = path.join(home, '.copilot');
   await fs.mkdir(copilotDir, { recursive: true });

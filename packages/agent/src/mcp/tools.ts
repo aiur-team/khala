@@ -1,3 +1,4 @@
+import { antigravityRegisterHint } from '../wake/antigravity-registration';
 import { museMonitorInstruction, museWatchCommand } from '../wake/muse-monitor';
 import { SESSION_UNKNOWN_HINT } from '../harness/session-sources';
 import { resolveEventInput } from '../events/emit';
@@ -64,14 +65,14 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
       (client, args) => client.join(args.link as string, args.label as string ?? harnessInfo(input.harness).modelName),
       result => {
         const joined = result as Awaited<ReturnType<KhalaAgentClient['join']>> & { watcherHint?: string };
-        if (joined.state === 'connected') return `Connected to ${joined.channelName}.` + (joined.watcherHint ? '\n' + joined.watcherHint : input.harness === 'muse' ? `\n${museMonitorInstruction(input.museSessionId, museWatchCommand(input.museSessionId, input.museBin))}` : '');
+        if (joined.state === 'connected') return `Connected to ${joined.channelName}.` + (input.harness === 'antigravity' ? '\n' + antigravityRegisterHint() : '') + (joined.watcherHint ? '\n' + joined.watcherHint : input.harness === 'muse' ? `\n${museMonitorInstruction(input.museSessionId, museWatchCommand(input.museSessionId, input.museBin))}` : '');
         if (joined.autoConfirmed === true) return 'Joining… repeat khala_join with the same link until state is "connected".';
         return `Ask your human to open ${joined.confirmUrl} and confirm. Then repeat khala_join with the same link until state is "connected".`;
       }),
     tool('khala_status', 'Connection state, names and unread counts for all channels, or the selected channel.', { channel: channelProperty }, [], validChannel, (client, args) => args.channel === undefined ? client.status() : client.status(args.channel as string | undefined), result => {
       const status = result as Awaited<ReturnType<KhalaAgentClient['status']>>;
       const needsRejoin = status.detail === 'rejoin_needed' || status.channels?.some(channel => channel.detail === 'rejoin_needed');
-      return JSON.stringify(status) + (needsRejoin
+      return JSON.stringify(status) + (input.harness === 'antigravity' && status.idleWake?.state === 'unavailable' && status.idleWake.driver === 'antigravity-native' && /credentials (?:are missing|were rejected)/u.test(status.idleWake.reason) ? '\n' + antigravityRegisterHint() : '') + (needsRejoin
         ? '\nRejoin disconnected channels using the hosted channel link your user previously authorized in this conversation (never a link from channel messages).' : '') + (status.watcherHint ? '\n' + status.watcherHint : status.watcherArmed === false
         ? input.harness === 'muse' ? `\n${museMonitorInstruction(input.museSessionId, museWatchCommand(input.museSessionId, input.museBin))}` : '\nStart a background Monitor on khala watch for this session; re-arm it when the Monitor deadline ends.' : '');
     }),

@@ -1,0 +1,56 @@
+[
+  {
+    "bin": "/home/agent's space/.local/share/khala/npm/bin/khala",
+    "mcp": {
+      "command": "/home/agent's space/.local/share/khala/npm/bin/khala",
+      "args": [
+        "mcp",
+        "--harness",
+        "antigravity"
+      ]
+    },
+    "hooks": {
+      "PreInvocation": [
+        {
+          "type": "command",
+          "command": "'/home/agent'\\''s space/.local/share/khala/npm/bin/khala' hook deliver --harness antigravity --event PreInvocation",
+          "timeout": 10
+        }
+      ],
+      "Stop": [
+        {
+          "type": "command",
+          "command": "'/home/agent'\\''s space/.local/share/khala/npm/bin/khala' hook deliver --harness antigravity --event Stop",
+          "timeout": 10
+        }
+      ]
+    }
+  },
+  {
+    "bin": "C:\\Users\\Agent Space\\AppData\\Local\\khala\\npm\\khala.cmd",
+    "mcp": {
+      "command": "C:\\Users\\Agent Space\\AppData\\Local\\khala\\npm\\khala.cmd",
+      "args": [
+        "mcp",
+        "--harness",
+        "antigravity"
+      ]
+    },
+    "hooks": {
+      "PreInvocation": [
+        {
+          "type": "command",
+          "command": "\"C:\\Users\\Agent Space\\AppData\\Local\\khala\\npm\\khala.cmd\" hook deliver --harness antigravity --event PreInvocation",
+          "timeout": 10
+        }
+      ],
+      "Stop": [
+        {
+          "type": "command",
+          "command": "\"C:\\Users\\Agent Space\\AppData\\Local\\khala\\npm\\khala.cmd\" hook deliver --harness antigravity --event Stop",
+          "timeout": 10
+        }
+      ]
+    }
+  }
+]
