@@ -18,7 +18,8 @@ Requires Node 22 or newer with `npm` on `PATH`; no checkout, no pnpm.
    on the same state), and adds the three delivery hooks to `hooks.json`. The first install records the original
    files in Khala's state directory; `--uninstall` writes them back byte for byte (or keeps
    your later edits and removes only Khala's entries). Hooks run the installed copy directly (about 30 ms) rather
-   than `npx` (about 0.7 s per tool call). `--codex-home <dir>` targets another Codex home.
+   than `npx` (about 0.7 s per tool call). `--codex-home <dir>` targets another Codex home. A custom home (from this flag
+   or `CODEX_HOME`) is also passed to MCP so queue wake uses that same home.
 
    The installer also records consent for the terminal fallback and prints how to
    withdraw it. Use `--no-wake` to withhold consent, or `--wake` to renew it.
@@ -89,8 +90,10 @@ on this machine. Each agent's model provider sees what that agent reads.
 
 Codex 0.160.0 uses a managed `codex app-server` daemon. Its Khala MCP child may
 have no `CODEX_THREAD_ID`; on startup Khala restores the previously authorized
-Codex sessions whose saved workspace matches the MCP working directory and arms
-their wakers without a tool call. Tool calls still select their own thread from
+Codex session whose saved workspace matches the MCP working directory and has
+the newest `resume.json` modification time across its channels. Only that thread
+is restored and its wakers armed without a tool call; equal timestamps select
+the lexically first thread ID. Older threads restore when they make a tool call. Tool calls still select their own thread from
 Codex metadata.
 
 A thread can keep answering mentions while the daemon runs, even after `/quit`

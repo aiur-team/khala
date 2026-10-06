@@ -460,6 +460,16 @@ test('an unconfirmed listening mode reverts after 15 seconds', { timeout: 90_000
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.clock.install();
     await page.goto(`${server.resolvedUrls!.local[0]!}?offline`);
+    // Reload restores a displayed mode without proving it is fresh. Picking
+    // that checked menu item must still reach the command port.
+    await page.reload();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.locator('#kh-head-btn').click();
+    await page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..').locator('.kh-mode-btn').click();
+    await page.getByRole('menuitemradio', { name: 'Sync next turn', exact: true }).click();
+    assert.deepEqual(await page.evaluate(() => window.__modeRequests), [{ participantId: 'agent_scout', mode: 'sync' }]);
+    await page.locator('#kh-head-btn').click();
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.clock.pauseAt(Date.now() + 60_000);
     await page.locator('#kh-head-btn').click();
     const scout = page.locator('.kh-rai[data-kh-agent="agent_scout"]').locator('..');
@@ -468,8 +478,13 @@ test('an unconfirmed listening mode reverts after 15 seconds', { timeout: 90_000
     await status.filter({ hasText: 'Waiting for Scout to switch…' }).waitFor();
     await page.clock.runFor(14_000);
     assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'async');
+    await page.getByRole('button', { name: 'Rename Scout', exact: true }).click();
+    const detail = page.getByRole('complementary', { name: 'Scout details' });
+    await detail.getByLabel('Name for Scout').fill('Dolan');
+    await detail.getByRole('button', { name: 'Rename', exact: true }).click();
+    await status.filter({ hasText: 'Waiting for Dolan to switch…' }).waitFor();
     await page.clock.runFor(1_000);
-    await status.filter({ hasText: 'Scout didn\'t confirm. It may be offline.' }).waitFor({ timeout: 2_000 });
+    await status.filter({ hasText: 'Dolan didn\'t confirm. It may be offline.' }).waitFor({ timeout: 2_000 });
     assert.equal(await scout.locator('[role="radio"][aria-checked="true"]').getAttribute('data-v'), 'sync');
   } finally {
     await browser?.close();
