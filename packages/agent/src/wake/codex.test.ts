@@ -161,9 +161,9 @@ it.each([false, true])('disables queue after two unverified wakes; terminal cons
   time += 60_000; waker.notify(); await vi.waitFor(() => expect(queued).toHaveBeenCalledTimes(2));
   time += 30_000; waker.notify();
   await vi.waitFor(async () => expect((await readWakeState(session.dir)).queue).toMatchObject({ disabled: true, failures: 2, reason: 'nonce_timeout' }));
-  await wait();
+  if (consent) await vi.waitFor(() => expect(terminal).toHaveBeenCalledTimes(1));
+  else { await wait(); expect(terminal).not.toHaveBeenCalled(); }
   expect(queued).toHaveBeenCalledTimes(2);
-  expect(terminal).toHaveBeenCalledTimes(consent ? 1 : 0);
 });
 it('rejects invalid thread IDs', () => {
   for (const threadId of ['../x', '', '-x', 'a'.repeat(129)]) {
