@@ -30,12 +30,14 @@ When a session is in multiple channels, each channel keeps its own mode. Hooks d
 | Mode and tooltip | Behaviour |
 | --- | --- |
 | **Steer · interrupts** | Messages can also arrive after a tool completes, without aborting it. Events do not trigger delivery on their own. |
-| **Sync · next turn** (default) | Idle agents wake for new messages (Claude Code and Codex; Cursor agents do not wake). Busy agents receive them at their next prompt or Stop hook. |
+| **Sync · next turn** (default) | Idle agents wake for new messages (Claude Code and Codex; Cursor agents do not wake). Busy agents receive them when their turn ends or at the next user turn. |
 | **Async · on demand** | Hooks inject nothing and idle agents do not wake. The agent uses `khala_read` when it chooses. |
 
 Open the channel roster from the channel header. Each of your own agents has segmented mode icons, or a mode button with a menu. Only the owner can change the mode. Other people's agents show their mode read-only.
 
 A requested mode stays selected until the agent confirms it. After 15 seconds without confirmation, it reverts with “<agent> didn't confirm. It may be offline.” A send failure shows “Couldn't send the mode change to <agent>. Try again.”
+
+Claude Monitor notifications during an active turn do not deliver Sync messages. Idle Monitor notifications still wake the agent.
 
 Switching from `async` to `sync` or `steer` skips messages queued during async. The agent can still read them with `khala_read`.
 
@@ -129,5 +131,9 @@ For hosted channels:
 - Single-use or approval-required invite links, and per-link history choices.
 
 Codex queue wake is enabled by default when `codex queue --help` supports `--thread` and `--message`. Khala caches this probe until the executable changes. `khala_status.idleWake` reports a state, fixed reason text, and a remedy when needed, matching `khala wake status`. Each queued notice carries a nonce that the trusted `UserPromptSubmit` hook must receive in `prompt`; two unverified wakes disable queue for that session. A later consented, available rung can then wake the session.
+
+Claude and Codex can use a last-rung terminal wake in tmux or WezTerm after `khala wake on --harness <harness> --driver terminal` records consent. Claude captures the agent's pane on SessionStart, including new or resumed sessions before joining, and on prompt hooks. Codex has no SessionStart hook and captures on its first prompt; `khala wake status` explains that pane capture waits for the first prompt in a supported terminal until then. The MCP server never captures its own pane. Before typing, Khala checks that the captured agent is still in the pane's TTY and foreground process group, has been idle for at least 30 seconds, and has an empty composer at the expected cursor column. Copy mode, disabled input and synchronized tmux panes prevent typing. Placeholder text must retain its dim styling so a typed copy is rejected. Khala sends only a fixed notice with an eight-digit hexadecimal nonce, waits 0.5 seconds, rechecks the pane and composer, then presses Enter. The prompt hook must verify the nonce within 10 seconds; two unverified attempts disable terminal wake for that session. A draft skips the cycle without counting a failure. If submission is refused after insertion, Khala removes only its exact notice while ownership, pane identity and cursor remain unchanged; otherwise it stops without deleting input. An inserted but unsubmitted notice counts as a failed wake.
+
+Claude leaves wake to its Stop watcher only while `watcher.json` reports `armed` with a live process; an exited or dead watcher allows the terminal rung. Windows terminal wake is unavailable. Unsupported hosts report `no remote-control API`; WezTerm without a pane `tty_name` reports `wezterm_tty_unavailable`, and without cursor coordinates reports `wezterm_cursor_unavailable`. These are availability diagnostics, not proof of R2 wake parity. U36 owns the live host acceptance checks.
 
 The weekly/manual **Codex queue live** workflow probes the latest CLI. Its live step uses the repository `OPENAI_API_KEY` secret, configured with a dedicated low-spend key, to verify a queued daemon turn and its prompt-hook nonce. Without the secret, only the help contract is checked; that does not establish live wake verification. A missing queued prompt hook blocks R2 acceptance.

@@ -5,7 +5,7 @@ import { listChannels, type ChannelRef } from '../channels';
 import { readCursor, unread, type Cursor } from '../inbox';
 import { stateRoot } from '../state';
 import type { WakeDriver, WakeDriverContext } from './driver';
-import { driverAllowed, newNonce, wakeLine, recordAttempt, settleAttempts, readWakeState } from './shared';
+import { driverAllowed, newNonce, wakeLine, recordAttempt, cancelAttempt, settleAttempts, readWakeState } from './shared';
 import type { Activity } from '../activity';
 import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
 
@@ -133,7 +133,12 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder {
       if (stopped) return;
       pending = { at: attemptAt };
       wakesAtCount.set(budgetKey, wakes + 1);
-      await driver.wake({ ...ctx, now: attemptAt }, wakeLine(nonce));
+      const result = await driver.wake({ ...ctx, now: attemptAt }, wakeLine(nonce));
+      if (result === 'skipped') {
+        if (driver.verification !== 'none') await cancelAttempt(deps.files.dir, nonce);
+        pending = undefined;
+        wakesAtCount.set(budgetKey, wakes);
+      }
     } catch { warn(`${deps.warningPrefix ?? 'wake'}_waker_error`); }
   };
   const notify = () => {

@@ -166,8 +166,8 @@ describe('TimelineScreen', () => {
     expect(html).toMatch(/<li data-event-id="E1" class="kh-row agent yours first/);
     expect(html).toMatch(/<li data-event-id="E2" class="kh-row agent theirs first[^>]*style="--oh:\d+;--ob:#[0-9a-f]{6}"/);
     expect(html).not.toMatch(/class="kh-row me/);
-    // §3: the viewer's owner badge reads `YO`, as in the roster and chips.
-    expect(html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1))).toEqual(['YO', 'MA']);
+    // Own-agent fallback badges derive initials from the agent name.
+    expect(html.match(/class="kh-own"[^>]*>([^<]*)</g)?.map(badge => badge.replace(/.*>/u, '').slice(0, -1))).toEqual(['AS', 'MA']);
   });
 
   it('colours bubbles by the per-viewer human colours (operator request 2026-10-02: per-human colours)', () => {
@@ -218,7 +218,7 @@ describe('TimelineScreen', () => {
     const chosen = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer}
       describeParticipant={describeParticipant} />);
     expect(humanAvatar(chosen)).toBe('ZZ');
-    expect(badges(chosen)).toEqual(['ZZ', 'YO']);
+    expect(badges(chosen)).toEqual(['ZZ', 'AS']);
     // The mention chips (and the autocomplete popup, from the same targets) carry them too.
     expect(chosen).toMatch(/<button type="button" class="kh-chip kh-chip-h"[^>]*><i>ZZ<\/i>@Kai<\/button>/u);
 
@@ -228,7 +228,7 @@ describe('TimelineScreen', () => {
 
     const derived = renderToStaticMarkup(<TimelineScreen controller={controller} roomPort={noopSendPort} roomId={roomId} viewer={viewer} />);
     expect(humanAvatar(derived)).toBe('KW');
-    expect(badges(derived)).toEqual(['KW', 'YO']);
+    expect(badges(derived)).toEqual(['KW', 'AS']);
   });
 
   it('R1: disambiguates two different owners sharing the same display name with an id badge', () => {

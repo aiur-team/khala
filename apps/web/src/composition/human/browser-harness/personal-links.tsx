@@ -16,6 +16,7 @@ import type { JoinPorts } from '../../../features/join/ports';
 // back/forward and viewport tests exercise real navigation without a network.
 
 const params = new URLSearchParams(window.location.search);
+document.body.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
 const ownerFromUrl = params.get('owner');
 if (ownerFromUrl) localStorage.setItem('khala.test.owner', ownerFromUrl);
 const signedInOwner = ownerFromUrl ?? localStorage.getItem('khala.test.owner');
@@ -87,7 +88,7 @@ function JoinRoute() {
     admission: {
       share: async () => unavailable(),
       inspect: async () => inviteState === 'invalid_link' ? 'unavailable' : inviteState,
-      admit: async () => ok({ outcome: 'joined' as const, room: { roomId: 'room_1' as RoomId, title: null, membership: 'joined' as const, revision: 'r1' } }),
+      admit: async () => ok({ outcome: 'joined' as const, room: { roomId: 'room_1' as RoomId, title: params.get('title'), membership: 'joined' as const, revision: 'r1' } }),
     } satisfies AdmissionPort,
     channelLinks: {
       resolve: async () => ({ v: 1, kind: inviteState === 'eligible' ? 'join_required'

@@ -65,9 +65,18 @@ describe('createJoinController happy path', () => {
     const views = record(controller);
     controller.start('/join?invite=abc');
     await flush();
-    expect(views.at(-1)).toEqual({ phase: 'joined', email: 'person@example.com', roomId: 'room_1', retryAllowed: false, errorCode: null });
+    expect(views.at(-1)).toEqual({ phase: 'joined', email: 'person@example.com', roomId: 'room_1', channelName: null, retryAllowed: false, errorCode: null });
     expect(views.map(v => v.phase)).toEqual(['checking_identity', 'checking_invitation', 'initializing_device', 'joining', 'joined']);
   });
+});
+
+test.each(['joined', 'already_joined'] as const)('preserves the admission title for %s', async outcome => {
+  const ports = makePorts();
+  ports.admission.admit = async () => ok({ outcome, room: { ...room, title: 'Launch plans' } });
+  const controller = createJoinController(ports);
+  controller.start('/join?invite=abc');
+  await flush();
+  expect(controller.getView().channelName).toBe('Launch plans');
 });
 
 describe('personal channel-link resolution', () => {
@@ -490,7 +499,7 @@ describe('createJoinController already_joined', () => {
     const views = record(controller);
     controller.start('/join?invite=abc');
     await flush();
-    expect(views.at(-1)).toEqual({ phase: 'joined', email: 'person@example.com', roomId: 'room_1', retryAllowed: false, errorCode: null });
+    expect(views.at(-1)).toEqual({ phase: 'joined', email: 'person@example.com', roomId: 'room_1', channelName: null, retryAllowed: false, errorCode: null });
   });
 });
 
