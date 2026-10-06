@@ -7,6 +7,66 @@ import { installQwen, mergeQwenSettings, QWEN_WATCH_PERMISSION } from './qwen';
 import { parseQwenControllerIds, runInstall, runQwenInstall } from './main';
 import { qwenControllerFile } from '../wake/qwen-socket';
 
+it.each(['absent home', 'seeded settings', 'empty registry', 'existing controller', 'new controller', 'registry metadata'])
+('restores the Qwen controller registry without losing user data (%s)', async scenario => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'qw-registry-'));
+  const home = path.join(root, scenario === 'absent home' ? '.qwen' : 'custom-qwen');
+  const env = { HOME: root, ...(scenario === 'absent home' ? {} : { QWEN_HOME: home }), XDG_STATE_HOME: path.join(root, 'state') };
+  const registry = path.join(home, 'peer-controllers.json');
+  const settings = path.join(home, 'settings.json');
+  const originalSettings = '{\n  "model": {"name": "deepseek-chat"}\n}\n';
+  const originalRegistry = scenario === 'empty registry' ? '\uFEFF{\r\n\t"schemaVersion": 1, "controllers": []\r\n}\r\n'
+    : scenario === 'existing controller' ? '{"schemaVersion":1,"controllers":[{"id":"user"}]}\n' : null;
+  const readRegistry = () => JSON.parse(syncFs.readFileSync(registry, 'utf8').replace(/^\uFEFF/u, ''));
+  let minted = 0;
+  let revoke = false;
+  const input = { env, entry: { args: ['mcp', '--harness', 'qwen'] }, command: 'khala hook deliver --harness qwen',
+    uninstall: false, stdout: () => {}, stderr: () => {},
+    list: () => syncFs.existsSync(registry) ? readRegistry().controllers.map((c: { id: string }) => c.id) : [],
+    mint: () => {
+      const value = syncFs.existsSync(registry) ? readRegistry() : { schemaVersion: 1, controllers: [] };
+      value.controllers.push({ id: 'khala' });
+      syncFs.mkdirSync(home, { recursive: true });
+      syncFs.writeFileSync(registry, JSON.stringify(value));
+      minted++;
+      return { id: 'khala', token: 'qpc_' + 'a'.repeat(64) };
+    },
+    remove: (id: string) => {
+      if (!revoke) return false;
+      const value = readRegistry();
+      value.controllers = value.controllers.filter((c: { id: string }) => c.id !== id);
+      syncFs.writeFileSync(registry, JSON.stringify(value));
+      return true;
+    } };
+  try {
+    if (scenario !== 'absent home') {
+      await fs.mkdir(home); await fs.writeFile(settings, originalSettings);
+    }
+    if (originalRegistry !== null) await fs.writeFile(registry, originalRegistry);
+    expect(await installQwen(input)).toBe(0);
+    expect(await installQwen(input)).toBe(0);
+    expect(minted).toBe(1);
+    if (scenario === 'new controller' || scenario === 'registry metadata') {
+      const value = readRegistry();
+      if (scenario === 'new controller') value.controllers.push({ id: 'later-user' });
+      else value.metadata = { keep: true };
+      await fs.writeFile(registry, JSON.stringify(value));
+    }
+    expect(await installQwen({ ...input, uninstall: true })).toBe(1);
+    expect(readRegistry().controllers).toContainEqual({ id: 'khala' });
+    expect(JSON.parse(await fs.readFile(qwenControllerFile(env), 'utf8')).id).toBe('khala');
+    revoke = true;
+    expect(await installQwen({ ...input, uninstall: true })).toBe(0);
+    if (originalRegistry !== null) expect(await fs.readFile(registry, 'utf8')).toBe(originalRegistry);
+    else if (scenario === 'new controller') expect(readRegistry().controllers).toEqual([{ id: 'later-user' }]);
+    else if (scenario === 'registry metadata') expect(readRegistry()).toEqual({ schemaVersion: 1, controllers: [], metadata: { keep: true } });
+    else await expect(fs.stat(registry)).rejects.toMatchObject({ code: 'ENOENT' });
+    if (scenario === 'absent home') await expect(fs.stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect(await fs.readFile(settings, 'utf8')).toBe(originalSettings);
+    expect(await installQwen({ ...input, uninstall: true })).toBe(0);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 it('merges hooks idempotently and uninstalls only managed entries', () => {
   const original = { agents: { crossSessionInbound: 'hold' }, mcpServers: { other: { command: 'other' } },
     hooks: { Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'other' }] }] } };
