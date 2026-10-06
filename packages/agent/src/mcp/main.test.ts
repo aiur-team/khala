@@ -196,3 +196,20 @@ it.each(['codex', 'claude'] as const)('creates the %s startup client without inp
   expect(client.close).toHaveBeenCalledOnce();
   output.destroy();
 });
+
+it.each([undefined, '/work/project'])('skips Cursor startup restore for workspace %s but creates clients on tool calls', async workspace => {
+  const input = new PassThrough();
+  const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const client = createPlaceholderClient();
+  client.close = vi.fn(async () => {});
+  const createClient = vi.fn<(input: { harness: string; sessionId: string }) => typeof client>(() => client);
+  const env = workspace === undefined ? {} : { KHALA_CURSOR_WORKSPACE: workspace };
+  const running = runMcpCommand(['--harness', 'cursor'], { input, output, createClient, env });
+  expect(createClient).not.toHaveBeenCalled();
+  input.end(JSON.stringify(call('khala_status', undefined)) + '\n');
+  await running;
+  expect(createClient).toHaveBeenCalledOnce();
+  expect(createClient.mock.calls[0]![0]).toMatchObject({ harness: 'cursor' });
+  expect(client.close).toHaveBeenCalledOnce();
+  output.destroy();
+});

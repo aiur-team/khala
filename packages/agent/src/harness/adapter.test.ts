@@ -10,7 +10,8 @@ describe('harness adapters', () => {
     for (const adapter of ADAPTERS) {
       expect(HARNESS_REGISTRY.some(row => row.id === adapter.id)).toBe(true);
       expect(adapterFor(adapter.id)).toBe(adapter);
-      expect(adapter.codec).toBeUndefined();
+      expect(adapter.codec?.parse).toBeTypeOf('function');
+      expect(adapter.restoreAtStartup).toBe(adapter.id !== 'cursor');
     }
     expect(adapterFor('gemini')).toBeUndefined();
     expect(adapterFor('toString')).toBeUndefined();
