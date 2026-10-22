@@ -7,6 +7,7 @@ import { copilot } from './copilot';
 import { recordHookSession, resolveSources } from './session-sources';
 import { openSessionDir, channelFiles, writeStateFile, ensureStateDir } from '../state';
 import { appendEntries, unread } from '../inbox';
+import { STOP_NUDGE } from './adapter';
 
 it('resolves the native resume session without a hook map', async () => {
   expect(await resolveSources(copilot.sessionSources, undefined,
@@ -59,7 +60,7 @@ it('maps real event-less hook payloads to the MCP sibling and guards continuatio
       sender: '@maya:local', senderLabel: 'Maya', senderKind: 'human', kind: 'message', body: 'hello' }]);
     expect(await run('agentStop', { stop_hook_active: true })).toEqual({});
     expect((await unread(channel)).entries).toHaveLength(1);
-    expect(await run('agentStop')).toMatchObject({ decision: 'block', reason: expect.stringContaining('hello') });
+    expect(await run('agentStop')).toEqual({ decision: 'block', reason: STOP_NUDGE });
     expect((await unread(channel)).entries).toHaveLength(0);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

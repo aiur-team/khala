@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { antigravityCodec as codec } from './antigravity';
+import { STOP_NUDGE } from '../adapter';
 
 it('parses the captured PreInvocation and Stop fixtures and emits their accepted shapes', async () => {
   const dir = new URL('../fixtures/antigravity/', import.meta.url);
@@ -13,7 +14,7 @@ it('parses the captured PreInvocation and Stop fixtures and emits their accepted
     expect(parsed?.event).toBe(fixture.event === 'Stop' ? 'stop' : fixture.stdin.invocationNum === 0 ? 'prompt' : 'tool');
     expect(parsed?.continuation).toBe(false);
     if (name.includes('inject-ephemeral')) expect(JSON.parse(codec.render('tool', fixture.stdout.injectSteps[0].ephemeralMessage))).toEqual(fixture.stdout);
-    if (name.includes('continue')) expect(JSON.parse(codec.render('stop', fixture.stdout.reason))).toEqual(fixture.stdout);
+    if (name.includes('continue')) expect(JSON.parse(codec.render('stop', 'channel frame'))).toEqual({ ...fixture.stdout, reason: STOP_NUDGE });
     if (name.includes('allow')) expect(JSON.parse(codec.noop('stop'))).toEqual(fixture.stdout);
   }
 });

@@ -14,6 +14,7 @@ import { writeWakeSettings } from '../wake/shared';
 import { stateRoot } from '../state';
 import { runConformance } from './conformance/run';
 import { antigravityDriver, createAntigravityConformanceDriver } from './conformance/drivers/antigravity';
+import { STOP_NUDGE } from './adapter';
 
 let root: string, files: SessionFiles, env: NodeJS.ProcessEnv;
 const now = () => new Date('2026-10-05T12:00:00Z');
@@ -48,9 +49,9 @@ it('delivers steer only after tools and sync once per unread batch including con
   expect(await hook('PreInvocation', 2)).toEqual({});
   await writeStateFile(files.dir, 'mode.json', { mode: 'sync' }); await emit('$sync');
   expect(await hook('PreInvocation', 1)).toEqual({});
-  expect((await hook('Stop')).reason).toContain('$sync');
+  expect((await hook('Stop')).reason).toBe(STOP_NUDGE);
   expect(await hook('Stop')).toEqual({ decision: 'stop' });
-  await emit('$continued'); expect((await hook('Stop')).reason).toContain('$continued');
+  await emit('$continued'); expect((await hook('Stop')).reason).toBe(STOP_NUDGE);
   expect(await hook('Stop')).toEqual({ decision: 'stop' });
 });
 it('keeps async unread and rejects unsupported permission-changing hooks', async () => {

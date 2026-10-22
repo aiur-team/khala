@@ -37,8 +37,10 @@ it.each(['sync', 'steer', 'async'] as const)('delivers frames across all OpenCod
     await deliverCore(JSON.stringify({ session_id: `ses_${event}`, event }), opencode,
       { env, now, pid: 300, readProcess, stdout: { write: text => { stdout += text; } }, stderr: { write: text => { stderr += text; } } });
     const delivers = mode !== 'async' && event !== 'session-start' && (event !== 'post-tool' || mode === 'steer');
-    expect(stdout.includes('<khala-channel-messages')).toBe(delivers);
-    if (delivers && ['idle', 'turn-end'].includes(event)) expect(stdout).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)\n/);
+    const wakes = ['idle', 'turn-end'].includes(event);
+    // An idle wake is a new user message, so channel text stays out of it.
+    expect(stdout.includes('<khala-channel-messages')).toBe(delivers && !wakes);
+    if (delivers && wakes) expect(stdout).toMatch(/^Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)\nKhala: channel messages are waiting\. Call khala_read\.$/);
     expect((await readCursor(files)).deliveredCount).toBe(delivers ? 1 : 0);
     expect(stderr).toBe('');
   }

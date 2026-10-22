@@ -1,8 +1,6 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../../cursor';
 
-/** Cursor submits followup_message as a user turn, so it never carries channel content. */
-export const CURSOR_STOP_NUDGE = 'Khala: channel messages are waiting. Call khala_read.';
 const events = { beforeSubmitPrompt: 'prompt', postToolUse: 'tool', stop: 'stop' } as const;
 
 /** Cursor prompt hooks only record activity; tool hooks inject context; stop only nudges. */
@@ -11,7 +9,6 @@ export const cursorCodec: DeliverCodec = {
   promptAcceptsContext: false,
   suppressOutputErrors: true,
   fallbackSession: CURSOR_DEFAULT_SESSION,
-  stopNudgeOnly: true,
   parse(stdin) {
     try {
       const input = JSON.parse(stdin.replace(/^\uFEFF/u, ''));
@@ -27,6 +24,6 @@ export const cursorCodec: DeliverCodec = {
   noop: kind => JSON.stringify(kind === 'prompt' ? { continue: true } : {}) + '\n',
   render(kind, frame) {
     if (kind === 'prompt') return cursorCodec.noop(kind);
-    return JSON.stringify(kind === 'stop' ? { followup_message: CURSOR_STOP_NUDGE } : { additional_context: frame }) + '\n';
+    return JSON.stringify(kind === 'stop' ? { followup_message: STOP_NUDGE } : { additional_context: frame }) + '\n';
   },
 };

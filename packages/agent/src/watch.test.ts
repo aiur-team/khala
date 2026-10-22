@@ -13,6 +13,7 @@ import { channelFiles, ensureStateDir, openSessionDir, writeJsonAtomic, writeSta
 import { monitorArmed, monitorOwner, watchSession } from './watch';
 import { mentions } from './events/receive';
 import { monitorStorageCandidates } from './monitor-storage';
+import { STOP_NUDGE } from './harness/adapter';
 
 vi.mock('node:fs/promises', { spy: true });
 
@@ -305,7 +306,7 @@ it('Monitor prompts defer busy Sync frames to Stop and deliver idle mentions', a
   expect(stdout).toBe('');
   expect((await readCursor(files)).deliveredCount).toBe(0);
   await hook('Stop');
-  expect(JSON.parse(stdout)).toMatchObject({ decision: 'block', reason: expect.stringContaining('sync-msg-1') });
+  expect(JSON.parse(stdout)).toEqual({ decision: 'block', reason: STOP_NUDGE });
   expect((await readCursor(files)).deliveredCount).toBe(1);
   stdout = '';
   await hook('Stop');

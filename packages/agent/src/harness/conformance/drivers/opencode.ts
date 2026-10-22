@@ -1,8 +1,10 @@
 import type { FakeHarnessDriver } from '../driver';
+import { STOP_NUDGE } from '../../adapter';
 import path from 'node:path';
 import { readJson } from '../../../state';
 
 export const opencodeDriver: FakeHarnessDriver = {
+  syncNudge: STOP_NUDGE,
   newSession: () => ({ id: 'conformance-session', mcpEnv: {}, mcpMeta: { khala_session: 'conformance-session' } }),
   hookStdin: (event, session) => JSON.stringify({ session_id: session.id,
     event: { prompt: 'prompt', tool: 'post-tool', stop: 'idle' }[event],

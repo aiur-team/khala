@@ -10,6 +10,7 @@ import { appendEntries, readCursor } from '../inbox';
 import { readActivity } from '../activity';
 import { isEmptyPrompt } from '../wake/terminal/prompt-guard';
 import { readPane } from '../wake/terminal/capture';
+import { STOP_NUDGE } from './adapter';
 
 let root: string, files: SessionFiles;
 let env: NodeJS.ProcessEnv;
@@ -37,11 +38,11 @@ it('denies each Sync batch once and allows repeats without trusting stop_hook_ac
   await emit('$first');
   expect(await hook('AfterTool')).toEqual({});
   const output = await hook('AfterAgent');
-  expect(output.decision).toBe('deny'); expect(output.reason).toContain('$first');
+  expect(output.decision).toBe('deny'); expect(output.reason).toBe(STOP_NUDGE);
   expect((await readCursor(files)).deliveredCount).toBe(1);
   expect(await hook('AfterAgent')).toEqual({ decision: 'allow' });
   await emit('$second');
-  expect((await hook('AfterAgent', { stop_hook_active: true })).reason).toContain('$second');
+  expect((await hook('AfterAgent', { stop_hook_active: true })).reason).toBe(STOP_NUDGE);
   expect(await hook('AfterAgent', { stop_hook_active: true })).toEqual({ decision: 'allow' });
   expect((await readCursor(files)).deliveredCount).toBe(2);
   expect((await readActivity(files)).state).toBe('idle');

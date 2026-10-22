@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { claudeCodec, claudeStyleCodec as codec } from './claude-style';
+import { STOP_NUDGE } from '../adapter';
 
 it.each([
   ['UserPromptSubmit', 'prompt'], ['PostToolUse', 'tool'], ['Stop', 'stop'],
@@ -7,7 +8,7 @@ it.each([
   expect(codec.parse(JSON.stringify({ session_id: 'session', hook_event_name: name })))
     .toEqual({ sessionId: 'session', event, continuation: false });
   expect(codec.render(event, 'frame')).toBe(JSON.stringify(event === 'stop'
-    ? { decision: 'block', reason: 'frame' }
+    ? { decision: 'block', reason: STOP_NUDGE }
     : { hookSpecificOutput: { hookEventName: name, additionalContext: 'frame' } }) + '\n');
   expect(codec.noop(event)).toBe('');
 });
@@ -33,7 +34,7 @@ it('normalizes optional transcript paths and ignores non-string paths', () => {
 it('renders Claude Stop as additionalContext only for a verified Claude version', () => {
   expect(claudeCodec.stopContextFloor).toBe('2.1.307');
   expect(claudeCodec.render('stop', 'frame', true)).toBe(JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: 'frame' } }) + '\n');
-  expect(claudeCodec.render('stop', 'frame')).toBe(JSON.stringify({ decision: 'block', reason: 'frame' }) + '\n');
+  expect(claudeCodec.render('stop', 'frame')).toBe(JSON.stringify({ decision: 'block', reason: STOP_NUDGE }) + '\n');
   expect(claudeCodec.render('tool', 'frame')).toBe(codec.render('tool', 'frame'));
   expect(codec.stopContextFloor).toBeUndefined();
 });

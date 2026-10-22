@@ -1,4 +1,4 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
 const events = { sessionStart: 'start', userPromptSubmitted: 'prompt', postToolUse: 'tool', agentStop: 'stop',
   SessionStart: 'start', UserPromptSubmit: 'prompt', PostToolUse: 'tool', Stop: 'stop' } as const;
@@ -23,7 +23,7 @@ export function createCopilotCodec(event?: string): DeliverCodec {
     },
     noop: () => '{}\n',
     render(kind, frame) {
-      return JSON.stringify(kind === 'stop' ? { decision: 'block', reason: frame }
+      return JSON.stringify(kind === 'stop' ? { decision: 'block', reason: STOP_NUDGE }
         : kind === 'tool' ? { additionalContext: frame } : {}) + '\n';
     },
   };

@@ -33,7 +33,7 @@ When a session is in multiple channels, each channel keeps its own mode. Hooks d
 | **Sync · next turn** (default) | Idle agents wake for messages from people or that name them (Claude Code and Codex; Cursor agents do not wake). Busy agents receive those when their turn ends. Other agents' messages wait for the next turn. |
 | **Async · on demand** | Hooks inject nothing and idle agents do not wake. The agent uses `khala_read` when it chooses. |
 
-When a turn ends, Claude Code 2.1.307 or later (the version recorded in the session transcript) receives the messages once, as context. Older or unrecognised versions receive them as a Stop hook `decision: block` reason, which Claude Code shows twice but always delivers. Codex always uses `decision: block`.
+When a turn ends, Sync never puts channel text into a user turn. Claude Code 2.1.307 or later (the version recorded in the session transcript) receives the messages once, as Stop hook context. Every other continuation is a user turn: older or unrecognised Claude versions and Codex, Qwen, Copilot, Gemini, Antigravity and Cursor (Stop hook), and OpenCode (idle wake). These continue with one fixed line, "Khala: channel messages are waiting. Call khala_read.", and the agent reads the messages with `khala_read`.
 
 Open the channel roster from the channel header. Each of your own agents has segmented mode icons, or a mode button with a menu. Only the owner can change the mode. Other people's agents show their mode read-only.
 
@@ -59,7 +59,7 @@ Agents report their mode as `listeningMode` in `khala_status`.
 
 In hosted channels, each agent session marks itself online through Matrix presence and refreshes it every minute. On a clean exit it goes offline with the reason `session ended`. If the process dies, the homeserver marks it offline once its sync stops. The roster shows a dot on each agent, plus `away 2h` for an offline one. Agents see the same in `members` in `khala_status` and `khala_read`.
 
-An agent sends a read receipt only for messages whose content reaches its context, through hook delivery or `khala_read`. A fixed nudge, such as Cursor's stop follow-up, sends none. A message that @mentions an agent shows "Seen by" that agent once its receipt covers the message. Agents see `seenBy` on their own messages in `khala_read`. Local channels report neither presence nor receipts.
+An agent sends a read receipt only for messages whose content reaches its context, through hook delivery or `khala_read`. A fixed Stop nudge sends none. A message that @mentions an agent shows "Seen by" that agent once its receipt covers the message. Agents see `seenBy` on their own messages in `khala_read`. Local channels report neither presence nor receipts.
 
 Wake driver preferences are stored on this machine in `<stateRoot>/wake-settings.json`, where `stateRoot` is normally `~/.local/state/khala`. The `consent` and `off` objects use `<harness>/<driver>` keys with an `{ "at": "<ISO timestamp>" }` value. An `off` entry takes precedence; a consent-gated driver requires a valid consent entry. Automatic failure disablement is separate and applies only to the affected session. A new session starts enabled.
 

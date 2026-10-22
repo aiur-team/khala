@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { STOP_NUDGE } from '../../adapter';
 import * as fs from 'node:fs/promises';
 import { claudeStyleDriver, type FakeHarnessDriver } from '../driver';
 import { createQwenBackgroundDriver } from '../../qwen';
@@ -10,6 +11,7 @@ export const qwenDriver: FakeHarnessDriver = (() => {
   const base = claudeStyleDriver('unused');
   return {
     ...base,
+    syncNudge: STOP_NUDGE,
     newSession: () => ({ id: 'conformance-session', mcpEnv: {}, mcpMeta: { khala_session: 'conformance-session' } }),
     async prepareSession(session, env) {
       env.QWEN_HOME = path.join(env.XDG_STATE_HOME!, 'qwen-config');

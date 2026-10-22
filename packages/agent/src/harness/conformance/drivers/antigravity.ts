@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import path from 'node:path';
+import { STOP_NUDGE } from '../../adapter';
 import { registerAntigravityWake, createAntigravityWakeDriver } from '../../../wake/antigravity';
 import type { FakeHarnessDriver } from '../driver';
 import { createTerminalWakeDriver } from '../../../wake/terminal/driver';
@@ -10,6 +11,7 @@ export function createAntigravityConformanceDriver(transport: 'native' | 'termin
   let appendTranscript: (() => void) | undefined;
   return {
     syncGuard: 'cursor',
+    syncNudge: STOP_NUDGE,
     newSession: workspace => ({ ...(workspace ? { workspace } : {}), id: 'conformance-session', mcpEnv: { ANTIGRAVITY_CONVERSATION_ID: 'conformance-session' },
       mcpMeta: { 'antigravity.google/conversation_id': 'conformance-session' } }),
     hookStdin(event, session) {

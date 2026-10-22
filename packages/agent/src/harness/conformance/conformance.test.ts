@@ -39,13 +39,17 @@ describe('Tier A conformance', () => {
     await expect(runConformance(synthetic, driver, { capabilities })).rejects.toThrow('idle wake declared but not delivered');
   });
   it('asserts steer absent by actually invoking the tool hook', async () => {
-    const adapter: HarnessAdapter = { ...synthetic, codec: { ...codex.codec!, parse(stdin) {
+    // Real Stops only nudge; this test-only codec puts the frame there so a sync-only harness can prove identity.
+    const frameCodec = { ...codex.codec!, render: (kind: 'prompt' | 'tool' | 'stop', frame: string) =>
+      kind === 'stop' ? JSON.stringify({ decision: 'block', reason: frame }) + '\n' : codex.codec!.render(kind, frame) };
+    const adapter: HarnessAdapter = { ...synthetic, codec: { ...frameCodec, parse(stdin) {
       const parsed = codex.codec!.parse(stdin);
       return parsed?.event === 'tool' ? null : parsed;
     } } };
-    const result = await runConformance(adapter, driver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } });
+    const { syncNudge: _nudge, ...frameDriver } = driver;
+    const result = await runConformance(adapter, frameDriver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } });
     expect(result.rows.find(row => row.feature === 'steer')).toEqual({ feature: 'steer', status: 'absent' });
-    await expect(runConformance(synthetic, driver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } }))
+    await expect(runConformance({ ...synthetic, codec: frameCodec }, frameDriver, { capabilities: { ...capabilities, steer: false, idleWake: 'none' } }))
       .rejects.toThrow('steer');
   }, 15_000);
   it('supports steer-only identity frames and asserts sync absent without consuming backlog', async () => {

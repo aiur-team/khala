@@ -5,13 +5,14 @@ import { expect, it } from 'vitest';
 import { qwen, qwenCodec, createQwenBackgroundDriver } from './qwen';
 import { filesForDir, writeJsonAtomic, stateRoot } from '../state';
 import { confirmWakeText, readWakeState, recordAttempt, settleAttempts } from '../wake/shared/nonce';
+import { STOP_NUDGE } from './adapter';
 
 it('uses nested Claude envelopes and ignores background subagents', () => {
   const input = { session_id: 's', hook_event_name: 'PostToolUse' };
   expect(qwenCodec.parse(JSON.stringify(input))).toMatchObject({ event: 'tool', sessionId: 's' });
   expect(qwenCodec.parse(JSON.stringify({ ...input, agent_id: 'memory' }))).toBeNull();
   expect(JSON.parse(qwenCodec.render('tool', 'frame'))).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'frame' } });
-  expect(JSON.parse(qwenCodec.render('stop', 'frame'))).toEqual({ decision: 'block', reason: 'frame' });
+  expect(JSON.parse(qwenCodec.render('stop', 'frame'))).toEqual({ decision: 'block', reason: STOP_NUDGE });
 });
 
 it('keeps a socket nonce across tool activity and verifies only a delivered notification at Stop', async () => {
