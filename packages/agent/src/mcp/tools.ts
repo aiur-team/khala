@@ -4,19 +4,26 @@ import { SESSION_UNKNOWN_HINT } from '../harness/session-sources';
 import { resolveEventInput } from '../events/emit';
 import type { Harness } from '@khala/contracts/m1/agent-join';
 import { harnessInfo } from '@khala/contracts/m1/harness';
+import { detectSecret } from '@khala/contracts/m1/secrets';
 import { KhalaClientError, type KhalaAgentClient, type KhalaErrorCode } from '../client';
 import { failure, hasOnly, success, toolError, type McpTool, type McpToolDefinition } from './tool';
 
 export type ClientLookup = (meta: Readonly<Record<string, unknown>> | undefined) => KhalaAgentClient | null | Promise<KhalaAgentClient | null>;
 
 const ERROR_CODES: readonly KhalaErrorCode[] = [
-  'update_required', 'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'internal_error',
+  'update_required', 'channel_required', 'channel_unknown', 'channel_ambiguous', 'channel_limit', 'invalid_link', 'link_unavailable', 'join_expired', 'not_connected', 'send_failed', 'session_unknown', 'secret_detected', 'internal_error',
 ];
 
 export function errorCode(error: unknown): KhalaErrorCode {
   if (typeof error !== 'object' || error === null || !('code' in error)) return 'internal_error';
   const code = error.code;
   return typeof code === 'string' && ERROR_CODES.includes(code as KhalaErrorCode) ? code as KhalaErrorCode : 'internal_error';
+}
+
+/** E2EE: the server cannot see message bodies, so refuse secrets here before encrypting. */
+function guardSecret(text: string): void {
+  const kind = detectSecret(text);
+  if (kind !== null) throw new KhalaClientError('secret_detected', 'Remove the secret and resend.', { kind });
 }
 
 export function createKhalaTools(input: { harness: Harness; clientFor: ClientLookup; museSessionId?: string; museBin?: string }): readonly McpTool[] {
@@ -87,7 +94,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
     tool('khala_send', 'Send a message to the channel. Select channel by name or channel ID; required when joined to more than one channel. Never include secrets.',
       { text: { type: 'string', minLength: 1, maxLength: 8000 }, channel: channelProperty }, ['text'],
       args => validChannel(args) && typeof args.text === 'string' && args.text.length >= 1 && args.text.length <= 8000,
-      (client, args) => args.channel === undefined ? client.send(args.text as string) : client.send(args.text as string, args.channel as string | undefined)),
+      (client, args) => { guardSecret(args.text as string); return args.channel === undefined ? client.send(args.text as string) : client.send(args.text as string, args.channel as string | undefined); }),
     tool('khala_leave', 'Stop this channel session and remove its local state. Other channels stay connected. This does not remove server-side membership.',
       { channel: channelProperty }, ['channel'], args => typeof args.channel === 'string' && args.channel.length > 0,
       (client, args) => client.leave(args.channel as string)),
@@ -117,6 +124,7 @@ export function createKhalaTools(input: { harness: Harness; clientFor: ClientLoo
           return success(context.id, { content: [{ type: 'text', text: 'Skipped channel event.' }], structuredContent: { skipped: true } });
         }
         try {
+          guardSecret(JSON.stringify(resolved.content));
           const client = await input.clientFor(sessionMeta(args, context.meta));
           if (client === null) return success(context.id, toolError('session_unknown', { hint: SESSION_UNKNOWN_HINT }));
           const sent = await (channel === undefined ? client.sendChannelEvent(resolved.content) : client.sendChannelEvent(resolved.content, channel as string));

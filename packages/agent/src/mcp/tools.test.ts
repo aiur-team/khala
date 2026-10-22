@@ -147,6 +147,20 @@ describe('channel event tool through stdio', () => {
     const { responses } = await exchange([call('khala_event', { event })], null);
     expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'session_unknown' } });
   });
+  it('refuses secrets in khala_send and khala_event before sending, and sends ordinary text', async () => {
+    const client = fake();
+    const token = 'ghp_' + 'aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xYz123';
+    const { responses } = await exchange([
+      call('khala_send', { text: `here: ${token}` }),
+      call('khala_event', { event: { ...event, summary: `AIUR_API_KEY=${'x9Y8w7V6u5T4s3R2q1P0o9N8'}` } }),
+      call('khala_send', { text: 'Merged 3f2a9c1e8b7d6a5f4e3c2b1a0f9e8d7c6b5a4f3e' }),
+    ], client);
+    expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'secret_detected', kind: 'github_token' } });
+    expect(responses[1].result).toMatchObject({ isError: true, structuredContent: { error: 'secret_detected', kind: 'secret_assignment' } });
+    expect(JSON.stringify(responses.slice(0, 2))).not.toContain(token);
+    expect(client.send).toHaveBeenCalledExactlyOnceWith('Merged 3f2a9c1e8b7d6a5f4e3c2b1a0f9e8d7c6b5a4f3e');
+    expect(client.sendChannelEvent).not.toHaveBeenCalled();
+  });
   it('advertises the exclusive object inputs and bounded optional prefix', async () => {
     const { responses } = await exchange([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
     expect(responses[0].result.tools[5].inputSchema).toEqual({

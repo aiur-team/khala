@@ -1,4 +1,5 @@
 import { type SyntheticEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { detectSecret } from '@khala/contracts/m1/secrets';
 import { SendIcon } from '../khala/icons';
 import { MentionChips, type MentionTarget } from '../khala/MentionChips';
 import { MENTION_LIST_ID, MentionPopup, mentionOptionId } from '../khala/MentionPopup';
@@ -21,6 +22,9 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
   chipsOpen?: boolean; onChipsOpenChange?(open: boolean): void;
 }>) {
   const input = useRef<HTMLTextAreaElement>(null);
+  // E2EE: the server cannot see the draft, so the composer refuses secrets itself.
+  const secret = detectSecret(value);
+  const blocked = disabled || sendDisabled || secret !== null || !value.trim();
   const [localChipsOpen, setLocalChipsOpen] = useState(false);
   const open = chipsOpen ?? localChipsOpen;
   const setOpen = (next: boolean) => {
@@ -87,9 +91,10 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
   };
 
   return <>
+    {secret ? <p className="kh-secret-warning" role="alert">This message looks like it contains a secret ({secret}). Remove it to send.</p> : null}
     <MentionChips targets={mentionTargets} value={value} open={open} onOpenChange={setOpen}
       onChange={next => { onChange(next); setCaret(next.length); input.current?.focus(); }} />
-    <form className="kh-comp" onSubmit={event => { event.preventDefault(); onSend(); }}>
+    <form className="kh-comp" onSubmit={event => { event.preventDefault(); if (!blocked) onSend(); }}>
       {mentionOpen ? <MentionPopup options={options} active={active} onPick={pick} onHover={setActive} targets={mentionTargets} /> : null}
       <label className="sr-only" htmlFor="kh-input">Message</label>
       <textarea ref={input} className="kh-input" id="kh-input" rows={1} placeholder={placeholder} value={value}
@@ -123,9 +128,9 @@ export function ChatComposer({ value, onChange, onSend, disabled = false, sendDi
           }
           if (event.key !== 'Enter' || event.shiftKey || composing) return;
           event.preventDefault();
-          if (!disabled && !sendDisabled && value.trim()) onSend();
+          if (!blocked) onSend();
         }} />
-      <button className="kh-send" type="submit" disabled={disabled || sendDisabled || !value.trim()} aria-describedby={sendDescriptionId} aria-label="Send"><SendIcon /></button>
+      <button className="kh-send" type="submit" disabled={blocked} aria-describedby={sendDescriptionId} aria-label="Send"><SendIcon /></button>
     </form>
   </>;
 }
