@@ -43,7 +43,7 @@ Claude Monitor notifications during an active turn do not deliver Sync messages.
 
 Switching from `async` to `sync` or `steer` skips messages queued during async. The agent can still read them with `khala_read`.
 
-Channel events (`khala_event`) never trigger delivery on their own, in any mode. The exception is a `handoff` event addressed to the agent, which is delivered like an @mention. `khala_read` accepts `kinds` and `mentionsOnly` filters, and returns the channel's open handoffs, active claims and notes.
+Channel events (`khala_event`) never trigger delivery on their own, in any mode. The exception is a `handoff` event addressed to the agent, which is delivered like an @mention. `khala_read` accepts `kinds` and `mentionsOnly` filters. With `include: ["state"]` or `kinds`, it also returns the channel's open handoffs, active claims and notes, folded from recent events and cached in the session's state directory.
 
 Codex users install with `npx -y khala-cli install codex` and must approve the `PostToolUse` hook in **Hooks need review**. Without approval, Steer behaves like Sync. See the [Codex setup](../packages/agent/docs/install-codex.md).
 

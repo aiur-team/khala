@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { decodeListeningModeCommand, type ListeningMode } from '@khala/contracts/m1/listening-mode';
 import { applyListeningMode, readListeningMode } from './mode';
 import { createHash, randomBytes } from 'node:crypto';
-import { encodeChannelEvent, foldCoordination } from '@khala/contracts/m1/channel-event';
+import { encodeChannelEvent, foldCoordination, type CoordinationEvent } from '@khala/contracts/m1/channel-event';
 import { validAgentRejoinSecret, type AgentCredentials, type AgentJoinCreated, type Harness } from '@khala/contracts/m1/agent-join';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { CHANNEL_EVENT_TYPE } from '@khala/contracts/m1/channel-event';
@@ -126,12 +126,27 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     }
     return { entries, ...(cursor !== undefined ? { nextBefore: cursor } : {}) };
   }
-  function coordination(entries: readonly InboxEntry[]) {
-    const state = foldCoordination(entries.flatMap(entry => entry.eventKind && entry.data
-      ? [{ sender: entry.sender, by: entry.senderLabel, at: entry.ts, content: { kind: entry.eventKind, data: entry.data } }] : []));
+  function coordination(events: readonly CoordinationEvent[]) {
+    const state = foldCoordination(events);
     return { ...(state.openHandoffs.length ? { openHandoffs: state.openHandoffs } : {}),
       ...(state.activeClaims.length ? { activeClaims: state.activeClaims } : {}),
       ...(Object.keys(state.notes).length ? { notes: state.notes } : {}) };
+  }
+  // ponytail: fold.json keeps the newest FOLD_EVENTS coordination events; older ones are forgotten.
+  const FOLD_EVENTS = 1000;
+  /** Folds coordination state incrementally: pages back only to the newest entry fold.json has seen. */
+  async function foldedState(session: ChannelSession, roomId: string, dir: string | undefined) {
+    type Fold = { lastEventId: string; events: CoordinationEvent[] };
+    const cached = dir ? await readStateFile<Fold>(dir, 'fold.json').catch(() => null) : null;
+    const valid = cached && typeof cached.lastEventId === 'string' && Array.isArray(cached.events) ? cached : null;
+    const scanned = await scan(session, roomId, undefined, entries => valid !== null && entries.some(entry => entry.eventId === valid.lastEventId));
+    const seen = valid ? scanned.entries.findIndex(entry => entry.eventId === valid.lastEventId) : -1;
+    const events = [...(seen >= 0 ? valid!.events : []), ...(seen >= 0 ? scanned.entries.slice(seen + 1) : scanned.entries).flatMap(entry =>
+      entry.eventKind && entry.data ? [{ sender: entry.sender, by: entry.senderLabel, at: entry.ts, content: { kind: entry.eventKind, data: entry.data } }] : [])]
+      .slice(-FOLD_EVENTS);
+    const newest = scanned.entries.at(-1)?.eventId;
+    if (dir && newest && newest !== valid?.lastEventId) await writeStateFile(dir, 'fold.json', { lastEventId: newest, events }).catch(() => {});
+    return coordination(events);
   }
 
   function refs(): ChannelRef[] {
@@ -659,11 +674,12 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
     },
     async read(limit, before, channel, filter) {
       await initialize();
-      const { session, credentials } = requireSession(channel);
+      const { session, credentials, attempt } = requireSession(channel);
       try {
         const you = ownName(session);
-        const latest = await scan(session, credentials.roomId);
-        const state = coordination(latest.entries);
+        // Folding pages back through history, so it runs only when the caller asks for state (or filters by kind).
+        const state = filter?.include?.includes('state') || filter?.kinds
+          ? await foldedState(session, credentials.roomId, attempt.files?.dir) : {};
         // Hosted only: who is around, who has read your messages, and a read receipt for what you just read.
         const presence = (messages: InboxEntry[]) => {
           const newest = messages.at(-1);
@@ -674,10 +690,10 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
               return seenBy.length ? { ...entry, seenBy } : entry;
             }) };
         };
-        if (filter) {
+        if (filter?.kinds || filter?.mentionsOnly) {
           const matches = (entry: InboxEntry) => (!filter.kinds || filter.kinds.includes(entry.kind === 'message' ? 'message' : entry.eventKind ?? 'event'))
             && (!filter.mentionsOnly || entry.mention === true || mentions(entry, you));
-          const found = (before === undefined ? latest : await scan(session, credentials.roomId, before, entries => entries.filter(matches).length > limit));
+          const found = await scan(session, credentials.roomId, before, entries => entries.filter(matches).length > limit);
           const selected = found.entries.filter(matches);
           const messages = selected.slice(-limit);
           const nextBefore = selected.length > limit ? messages[0]!.eventId : found.nextBefore;
@@ -714,7 +730,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
       const claimKey = encoded.value.kind === 'claim' ? encoded.value.data?.key : undefined;
       const holder = async () => {
         if (claimKey === undefined) return undefined;
-        const claim = coordination((await scan(session, credentials.roomId)).entries).activeClaims?.find(item => item.key === claimKey);
+        const claim = (await foldedState(session, credentials.roomId, attempt.files?.dir)).activeClaims?.find(item => item.key === claimKey);
         return claim && claim.sender !== session.userId ? { error: 'claimed' as const, by: claim.by, at: claim.at } : undefined;
       };
       try {
@@ -744,7 +760,7 @@ export function createKhalaAgentClient(options: KhalaAgentClientOptions): KhalaA
         await statusWrites;
         await ensureStateDir(ref.files.dir);
         if (ref.legacy) {
-          for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json', 'session.json']) {
+          for (const name of ['inbox.jsonl', 'cursor.json', 'mode.json', 'session.json', 'fold.json']) {
             await removeStateFile(ref.files.dir, name);
           }
         } else {
