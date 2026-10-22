@@ -191,7 +191,8 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     await deliver(world.claude, 'UserPromptSubmit');
     expect(await deliver(world.claude, 'Stop'), context('AE4')).toBeNull();
     const wake = await armClaudeWake(world.claude);
-    const body = await send(world.codex, 'ae4-wake-claude');
+    // #1300: in sync, another agent's message wakes Claude only when it names Claude.
+    const body = await send(world.codex, '@kevin-Claude ae4-wake-claude');
     const woke = await wake.exited;
     expect(woke.code, context('AE4')).toBe(2);
     expect(woke.stderr, context('AE4')).toBe('Khala: new channel messages. They arrive in the next hook context.\n');
@@ -215,7 +216,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
       await deliver(wakeWorld.codex, 'UserPromptSubmit');
       expect(await deliver(wakeWorld.codex, 'Stop'), context('AE4')).toBeNull();
       const before = (await codexCalls(wakeWorld)).length;
-      const codexWake = message('ae4-wake-codex');
+      const codexWake = message('@kevin-Codex ae4-wake-codex');
       expect(toolData(await wakeWorld.claude.call('khala_send', { text: codexWake })), context('AE4')).toHaveProperty('eventId');
       await eventually(async () => (await codexCalls(wakeWorld)).length === before + 1);
       expect((await codexCalls(wakeWorld)).at(-1), context('AE4')).toMatch(/^queue --thread e2e-codex --message Khala: channel messages are waiting\. Continue\. \(k-[a-f0-9]{8}\)$/);
@@ -278,12 +279,14 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('local product acceptance A
     expect(steer, context('AE6')).toMatchObject({ hookSpecificOutput: { hookEventName: 'PostToolUse' } });
     expect(frameText(steer), context('AE6')).toContain(message('ae6-steer'));
     await setMode(world.claude, 'kevin-Claude', 'sync');
-    await received(world.claude, await send(world.codex, 'ae6-sync'));
+    // #1300: in sync, another agent's message re-opens Claude's Stop only when it names Claude.
+    const syncBody = await send(world.codex, '@kevin-Claude ae6-sync');
+    await received(world.claude, syncBody);
     expect(await deliver(world.claude, 'PostToolUse'), context('AE6')).toBeNull();
     const sync = await deliver(world.claude, 'Stop');
     // A block reason is a user turn, so Stop only nudges; the content comes from khala_read.
     expect(sync, context('AE6')).toEqual({ decision: 'block', reason: STOP_NUDGE });
-    expect(frameText(toolData(await world.claude.call('khala_read', { limit: 100 }))), context('AE6')).toContain(message('ae6-sync'));
+    expect(frameText(toolData(await world.claude.call('khala_read', { limit: 100 }))), context('AE6')).toContain(syncBody);
     await setMode(world.claude, 'kevin-Claude', 'async');
     await setMode(world.codex, 'kevin-Codex', 'async');
     expect(await deliver(world.claude, 'Stop'), context('AE6')).toBeNull();
@@ -572,7 +575,9 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('two-channel local acceptan
       expect(toolData(await agent.call('khala_send', { text: afterLeave }))).toHaveProperty('eventId');
       expect(await history(ecosystem)).toContain(afterLeave); expect(await history(optimism)).not.toContain(afterLeave);
       const beforeRestart = await human(ecosystem, 'multi-before-restart');
-      expect(frameText(await deliver(agent, 'Stop'))).toContain(beforeRestart);
+      // #1303: Stop only nudges; khala_read shows the content.
+      expect(await deliver(agent, 'Stop')).toEqual({ decision: 'block', reason: STOP_NUDGE });
+      expect(toolData<{ messages: InboxEntry[] }>(await agent.call('khala_read', { channel: ecosystem.name })).messages.some(entry => entry.body === beforeRestart)).toBe(true);
 
       const rejoinFile = path.join(agent.files.dir, 'rejoin.json');
       const rejoin = await readFile(rejoinFile, 'utf8');

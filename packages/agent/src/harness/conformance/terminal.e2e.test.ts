@@ -24,8 +24,10 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B terminal transport 
       await writeWakeSettings(stateRoot(world.env), { consent: { 'claude/terminal': { at: new Date().toISOString() } }, off: {} });
       await prepareTerminal(agent, kind);
       await writeActivity(agent.files, 'idle', () => new Date(Date.now() - 31_000));
-      expect((await peer.call('khala_send', { text: `terminal-${kind}-message` })).structuredContent).toHaveProperty('eventId');
-      await eventually(async () => (await inbox(agent)).some(entry => entry.body === `terminal-${kind}-message`));
+      // #1300: in sync, another agent's message wakes only when it names the recipient.
+      const text = `@kevin-Claude terminal-${kind}-message`;
+      expect((await peer.call('khala_send', { text })).structuredContent).toHaveProperty('eventId');
+      await eventually(async () => (await inbox(agent)).some(entry => entry.body === text));
       await eventually(async () => !!JSON.parse(await readFile(path.join(world.root, 'bin/terminal.json'), 'utf8')).submitted);
       const calls = (await wakeCalls(world)).filter(call => call.command === (kind === 'kitty' ? 'kitten' : 'wezterm'));
       const sends = calls.filter(call => call.argv.includes(kind === 'kitty' ? 'send-text' : 'send-text'));
