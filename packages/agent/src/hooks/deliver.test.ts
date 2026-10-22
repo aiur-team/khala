@@ -13,6 +13,7 @@ import * as channels from '../channels';
 import { readActivity, writeActivity } from '../activity';
 import { deliver, renderFrame, renderLine, selectFrames } from '../../hooks/deliver';
 import { CURSOR_DEFAULT_SESSION, cursorSessionId } from '../cursor';
+import { CURSOR_STOP_NUDGE } from '../harness/codecs/cursor';
 
 vi.mock('../harness/proc', { spy: true });
 
@@ -332,7 +333,7 @@ describe('cursor', () => {
     expect(await cursorHook('beforeSubmitPrompt')).toEqual({ continue: true });
     expect((await readActivity(files)).state).toBe('busy');
     expect(await cursorHook('postToolUse')).toEqual({});
-    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: exactFrame });
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: CURSOR_STOP_NUDGE });
     expect((await readCursor(files)).deliveredCount).toBe(1);
     await appendEntries(files, [message(2)]);
     expect(await cursorHook('stop', { loop_count: 1 })).toEqual({});
@@ -357,12 +358,12 @@ describe('cursor', () => {
   });
   it('follows an MCP server left on the default session', async () => {
     await seedCursor([message()], undefined, CURSOR_DEFAULT_SESSION);
-    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: exactFrame });
+    expect(await cursorHook('stop', { loop_count: 0 })).toEqual({ followup_message: CURSOR_STOP_NUDGE });
   });
   it('accepts the BOM-prefixed stdin Cursor sends on Windows, through the CLI', async () => {
     await seedCursor([message()]);
     const payload = '\uFEFF' + JSON.stringify({ hook_event_name: 'stop', loop_count: 0, workspace_roots: [workspace] });
-    expect(await hook('stop', 'cursor', {}, payload)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify({ followup_message: exactFrame }) + '\n' });
+    expect(await hook('stop', 'cursor', {}, payload)).toEqual({ code: 0, stderr: '', stdout: JSON.stringify({ followup_message: CURSOR_STOP_NUDGE }) + '\n' });
   });
 });
 
@@ -407,11 +408,13 @@ describe('multi-channel delivery', () => {
     expect((await readCursor(eco)).deliveredCount).toBe(0);
     await appendEntries(opt, [message(5)]);
     const stop = JSON.parse((await run(harness === 'cursor' ? 'stop' : 'Stop', harness))!);
-    const frame = harness === 'cursor' ? stop.followup_message : stop.reason;
-    expect(frame.match(/<khala-channel-messages /g)).toHaveLength(2);
-    expect(frame).toContain('channel="Ecosystem" you="Ecosystem-name" count="2"');
-    expect(frame).toContain('channel="Optimism" you="Optimism-name" count="1"');
-    expect(frame).not.toContain('Research');
+    if (harness === 'cursor') expect(stop).toEqual({ followup_message: CURSOR_STOP_NUDGE });
+    else {
+      expect(stop.reason.match(/<khala-channel-messages /g)).toHaveLength(2);
+      expect(stop.reason).toContain('channel="Ecosystem" you="Ecosystem-name" count="2"');
+      expect(stop.reason).toContain('channel="Optimism" you="Optimism-name" count="1"');
+      expect(stop.reason).not.toContain('Research');
+    }
     expect((await readCursor(eco)).deliveredCount).toBe(2);
     expect((await readCursor(opt)).deliveredCount).toBe(2);
     expect((await readCursor(research)).deliveredCount).toBe(0);
@@ -590,9 +593,11 @@ describe('multi-channel delivery', () => {
       : { session_id: 'session', hook_event_name: 'Stop' };
     await deliver(JSON.stringify(input), ['--harness', harness], { stdout, stderr, env: { XDG_STATE_HOME: root }, now: () => new Date() });
     const result = JSON.parse(stdout.write.mock.calls[0]![0] as string);
-    const frame = harness === 'cursor' ? result.followup_message : result.reason;
-    expect(frame).toContain('channel="A"');
-    expect(frame).not.toContain('channel="B"');
+    if (harness === 'cursor') expect(result).toEqual({ followup_message: CURSOR_STOP_NUDGE });
+    else {
+      expect(result.reason).toContain('channel="A"');
+      expect(result.reason).not.toContain('channel="B"');
+    }
     expect((await readCursor(a)).deliveredCount).toBe(1);
     expect((await readCursor(b)).deliveredCount).toBe(0);
     expect(stderr.write).toHaveBeenCalledWith(JSON.stringify({ ok: false, warning: 'khala_hook_suppressed', code: 'storage_failed' }) + '\n');
@@ -643,7 +648,7 @@ function expectedEnvelope(harness: string, event: string, emits: boolean, frame:
   if (harness === 'cursor') {
     if (event === 'beforeSubmitPrompt') return { continue: true };
     if (!emits) return {};
-    if (event === 'stop') return { followup_message: frame };
+    if (event === 'stop') return { followup_message: CURSOR_STOP_NUDGE };
     return { additional_context: frame };
   }
   if (!emits) return null;

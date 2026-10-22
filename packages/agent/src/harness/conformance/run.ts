@@ -173,9 +173,11 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
       assert.equal((await unread(channel)).entries.length, before, 'own messages must not enter hook inbox');
     });
     const hookSupported = !!adapter.codec && (capabilities.sync || capabilities.steer);
+    // A nudge-only Stop carries no frame, so its identity shows in the steer frame.
+    const viaStop = capabilities.sync && !driver.syncNudge;
     const identityHook = async () => {
-      await writeStateFile(channel.dir, 'mode.json', { mode: capabilities.sync ? 'sync' : capabilities.steer ? 'steer' : 'async' });
-      return hook(capabilities.sync ? 'stop' : 'tool');
+      await writeStateFile(channel.dir, 'mode.json', { mode: viaStop ? 'sync' : capabilities.steer ? 'steer' : 'async' });
+      return hook(viaStop ? 'stop' : 'tool');
     };
     await row('you=', async () => {
       assert.equal((await client.read(10)).you, defaultAgentName('kevin', adapter.id));
@@ -236,14 +238,14 @@ export async function runConformance(adapter: HarnessAdapter, driver: FakeHarnes
         assert((await unread(channel)).entries.some(entry => entry.body === '$sync'));
       }
       if (capabilities.sync) {
-        assert(output.frame?.includes('$sync'));
+        assert(driver.syncNudge ? output.frame === driver.syncNudge : output.frame?.includes('$sync'));
         // Repeated callbacks cannot replay the delivered batch, even without a retry flag.
         assert.equal((await hook('stop')).kind, 'none');
         await emit('$continuation');
         const retry = await hook('stop', { continuation: true });
         if (driver.syncGuard === 'cursor') {
           assert.equal(retry.kind, 'continue');
-          assert(retry.frame?.includes('$continuation'));
+          assert(driver.syncNudge ? retry.frame === driver.syncNudge : retry.frame?.includes('$continuation'));
           assert.equal((await hook('stop', { continuation: true })).kind, 'none');
         } else {
           assert.equal(retry.kind, 'none');

@@ -50,9 +50,11 @@ tools without hooks, so every listening mode behaves like Async (`khala_read` on
 - **Identity.** Cursor gives neither MCP servers nor hooks a shared chat id, so Khala keys a
   Cursor session by the window's workspace folder: all chats in one window share one Khala
   identity (`<username>-Cursor`). A window without a folder uses a shared default session.
-- **Sync** (default): when a chat finishes its turn, the `stop` hook returns new messages as
-  a `followup_message`, which Cursor submits as the next message. At most one follow-up per
-  turn. **Steer**: the `postToolUse` hook adds new messages as `additional_context` after a
+- **Sync** (default): when a chat finishes its turn, the `stop` hook returns a fixed
+  `followup_message` ("Khala: channel messages are waiting. Call khala_read."), which Cursor
+  submits as the next message; the agent reads the messages with `khala_read`. Channel text
+  never goes into that message, because Cursor treats it as a user turn. At most one
+  follow-up per turn. **Steer**: the `postToolUse` hook adds new messages as `additional_context` after a
   tool call. **Async**: nothing is injected. Event-only batches wait, as in other harnesses.
 - **No idle wake.** Cursor hooks run only while a chat is working; Khala cannot start an
   idle chat. Messages that arrive while no chat runs wait for the next turn, or for

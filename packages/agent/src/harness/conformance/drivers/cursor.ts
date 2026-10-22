@@ -1,7 +1,9 @@
 import { cursorSessionId } from '../../../cursor';
 import type { FakeHarnessDriver } from '../driver';
+import { CURSOR_STOP_NUDGE } from '../../codecs/cursor';
 const workspace = '/conformance/workspace';
 export const cursorDriver: FakeHarnessDriver = {
+  syncNudge: CURSOR_STOP_NUDGE,
   newSession: () => ({ id: cursorSessionId(workspace), workspace,
     mcpEnv: { KHALA_CURSOR_WORKSPACE: workspace } }),
   hookStdin: (event, session) => JSON.stringify({

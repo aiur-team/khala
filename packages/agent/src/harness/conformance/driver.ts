@@ -14,6 +14,8 @@ export type HookEvent = 'prompt' | 'tool' | 'stop';
 export interface FakeHarnessDriver {
   /** Cursor guards allow a new batch during a retry, but never replay a delivered batch. */
   syncGuard?: 'cursor';
+  /** Stop re-opens the turn with this constant line only; content stays out of user turns. */
+  syncNudge?: string;
   newSession(workspaceRoot?: string): FakeSession;
   prepareSession?(session: FakeSession, env: NodeJS.ProcessEnv): Promise<void>;
   hookStdin(event: HookEvent, session: FakeSession & { continuation?: boolean; promptText?: string }): string;

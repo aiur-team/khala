@@ -114,7 +114,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         expect(data(await agent.call('khala_read')).you).toBe(you);
         await setMode('sync');
         const output = await hook(agent, 'stop');
-        if (capabilities.sync) expect(output.frame).toContain(` you="${you}" `);
+        if (capabilities.sync) expect(output.frame).toContain(driver.syncNudge ?? ` you="${you}" `);
         else expect(output.kind).toBe('none');
       });
       await row('rename event', async () => {
@@ -123,7 +123,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
         await publish('tier-b-renamed');
         expect(data(await agent.call('khala_read')).you).toBe('Reviewer');
         const output = await hook(agent, 'stop');
-        if (capabilities.sync) { expect(output.frame).toContain(' you="Reviewer" '); expect(output.frame).toContain(' is now Reviewer'); }
+        if (capabilities.sync) for (const text of driver.syncNudge ? [driver.syncNudge] : [' you="Reviewer" ', ' is now Reviewer']) expect(output.frame).toContain(text);
         else expect(output.kind).toBe('none');
       });
       await row('rejoin', async () => {
@@ -147,7 +147,7 @@ describe.skipIf(process.env.KHALA_LOCAL_E2E !== '1')('Tier B spawned-process loc
           expect((await unread(files())).entries.some(entry => entry.body === 'tier-b-sync')).toBe(true);
           return;
         }
-        expect(output.kind).toBe('continue'); expect(output.frame).toContain('tier-b-sync');
+        expect(output.kind).toBe('continue'); expect(output.frame).toContain(driver.syncNudge ?? 'tier-b-sync');
         expect((await hook(agent, 'stop')).kind).toBe('none');
         await publish('tier-b-continuation');
         expect((await hook(agent, 'stop', { continuation: true })).kind).toBe(driver.syncGuard === 'cursor' ? 'continue' : 'none');
