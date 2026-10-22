@@ -6,9 +6,9 @@ import { profileRecordKey } from '@khala/contracts/m1/profile';
 import { agentOwnerRecordKey } from '@khala/contracts/m1/participants';
 import type { AuthPrincipal, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { Authentication, MutationAuthorization } from '../auth/index';
-import type { GatewayInspection } from '../invitations/index';
+import type { AdmissionService, GatewayInspection } from '../invitations/index';
 import { createControlStore } from '../runtime/control-store';
-import { createJoinStore, hashPollSecret, openCredentials, type JoinRecord } from './store';
+import { createJoinStore, hashPollSecret, openCredentials, sealInvite, type JoinRecord } from './store';
 import { agentIdentity, type AgentProvisioner } from './provision';
 import { renameAgent } from './rename';
 import { createAgentJoinHumanHandlers } from './human-routes';
@@ -16,13 +16,14 @@ import { durableStores } from './testing/store';
 const secret = 'invitation-secret-with-more-than-32-bytes';
 const credentials = { homeserver: 'https://matrix.test', userId: '@agent:matrix.test', accessToken: 'token', deviceId: 'DEVICE', roomId: '!room:matrix.test' };
 
-async function fixture(options: { username?: string; harness?: string; email?: string } = {}) {
+async function fixture(options: { username?: string; harness?: string; email?: string; invite?: boolean } = {}) {
   let now = Date.parse('2026-10-01T12:00:00.000Z'); const clock = () => now;
   const blobs = durableStores();
   const store = createControlStore({ records: blobs.storeFor('records'), operations: blobs.storeFor('operations'), clock });
   const joins = createJoinStore({ store, clock, random: randomBytes });
   const joinId = randomBytes(16).toString('base64url');
-  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString() };
+  const record: JoinRecord = { joinId, pollSecretHash: hashPollSecret('poll'), roomId: credentials.roomId, channelName: 'Channel', label: 'Claude', harness: options.harness ?? 'claude', state: 'pending', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 600000).toISOString(),
+    ...(options.invite ? { sealedInvite: sealInvite(secret, joinId, 'inv_abcdefgh') } : {}) };
   expect(await joins.create(record)).toBe('created');
   let ownerId = 'owner' as OwnerId;
   const principal = () => ({ ownerId, verifiedEmail: options.email ?? 'maya99@x' } as AuthPrincipal);
@@ -33,13 +34,18 @@ async function fixture(options: { username?: string; harness?: string; email?: s
     requireHumanMutation: vi.fn(async (): Promise<MutationAuthorization> => ({ kind: 'authorized', context: { principal: principal(), csrfToken: 'csrf' } })),
   };
   const roomNames: string[] = [];
+  const admission = {
+    inspect: vi.fn<AdmissionService['inspect']>(async () => 'eligible'),
+    admit: vi.fn<AdmissionService['admit']>(async () => ({ kind: 'ok', value: { outcome: 'joined', room: {} as never } })),
+  };
   const deps = { auth, joins, store, clock, random: randomBytes, sealSecret: secret,
+    admissionFor: vi.fn(async () => admission),
     roomMemberNames: vi.fn(async (): Promise<readonly string[] | null> => [...roomNames]),
     inspectMembership: vi.fn(async (): Promise<GatewayInspection> => ({ kind: 'joined', historyReady: true })),
     provisioner: { setDisplayName: vi.fn(async () => true), agentUserId: vi.fn<AgentProvisioner['agentUserId']>(() => credentials.userId), provision: vi.fn<AgentProvisioner['provision']>(async () => ({ kind: 'ok' as const, credentials })) },
   };
   const request = (method = 'GET', query = `joinId=${joinId}`) => new Request(`https://khala.test/api/human/agent-join?${query}`, { method });
-  return { deps, joins, store, record, joinId, request, roomNames, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
+  return { deps, admission, joins, store, record, joinId, request, roomNames, handlers: createAgentJoinHumanHandlers(deps), advance: () => { now += 600000; }, owner: (id: string) => { ownerId = id as OwnerId; } };
 }
 it('confirms, seals credentials and creates a permanent owner map through the real store', async () => {
   const f = await fixture();
@@ -376,6 +382,63 @@ it('auto-confirms a saved hosted session after one human approval, even after jo
   const read = await f.joins.read(removedId);
   expect(read.kind === 'found' && read.record.state).toBe('pending');
   expect(f.deps.provisioner.provision).toHaveBeenCalledTimes(2);
+  // Rejoins confirm automatically and never admit a human, even with a sealed invite and no membership.
+  expect(f.deps.admissionFor).not.toHaveBeenCalled();
+});
+
+it('lets a signed-in non-member join and add the agent in one click, by the same rules as /join', async () => {
+  const f = await fixture({ invite: true });
+  let member = false;
+  f.deps.inspectMembership.mockImplementation(async () => member ? { kind: 'joined', historyReady: true } : { kind: 'absent' });
+  f.admission.admit.mockImplementation(async () => { member = true; return { kind: 'ok', value: { outcome: 'joined', room: {} as never } }; });
+  const view = await f.handlers.view(f.request());
+  expect(view.status).toBe(200);
+  expect(await view.json()).toMatchObject({ state: 'pending', access: 'join' });
+  expect(f.admission.inspect).toHaveBeenCalledExactlyOnceWith('inv_abcdefgh');
+  expect(f.admission.admit).not.toHaveBeenCalled();
+  const confirmed = await f.handlers.confirm(f.request('POST'));
+  expect(confirmed.status).toBe(200);
+  expect(await confirmed.json()).toMatchObject({ state: 'confirmed', agentUserId: credentials.userId });
+  expect(f.admission.admit).toHaveBeenCalledExactlyOnceWith({ operationId: expect.stringMatching(new RegExp(`^agent-join\\.${f.joinId}\\.[a-f0-9]{16}$`)),
+    inviteRef: 'inv_abcdefgh', deviceId: `agent-join.${f.joinId}` });
+  // Already a member now: a repeat confirm never admits again, and no response carries the invite.
+  expect((await f.handlers.confirm(f.request('POST'))).status).toBe(200);
+  expect(f.admission.admit).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(await (await f.handlers.view(f.request())).json())).not.toContain('inv_');
+});
+
+it.each([
+  ['identity_mismatch', 403, 'wrong_account'],
+  ['expired', 410, 'invite_unavailable'],
+  ['revoked', 410, 'invite_unavailable'],
+  ['forbidden', 403, 'not_member'],
+  ['unavailable', 503, 'unavailable'],
+] as const)('refuses a non-member whose invite admission is %s, provisioning nothing', async (code, status, error) => {
+  const f = await fixture({ invite: true });
+  f.deps.inspectMembership.mockResolvedValue({ kind: 'absent' });
+  if (code !== 'forbidden') f.admission.inspect.mockResolvedValue(code);
+  f.admission.admit.mockResolvedValue(code === 'unavailable' ? { kind: 'unavailable', retryable: true } : { kind: 'rejected', code });
+  if (code !== 'forbidden') {
+    const view = await f.handlers.view(f.request());
+    expect([view.status, await view.json()]).toEqual([status, { error }]);
+  }
+  const confirmed = await f.handlers.confirm(f.request('POST'));
+  expect([confirmed.status, await confirmed.json()]).toEqual([status, { error }]);
+  expect(f.deps.provisioner.provision).not.toHaveBeenCalled();
+  const read = await f.joins.read(f.joinId);
+  expect(read.kind === 'found' && read.record.ownerId).toBeUndefined();
+});
+
+it('keeps legacy joins without a sealed invite as not_member, and never admits members', async () => {
+  const legacy = await fixture();
+  legacy.deps.inspectMembership.mockResolvedValue({ kind: 'absent' });
+  expect((await legacy.handlers.view(legacy.request())).status).toBe(403);
+  expect((await legacy.handlers.confirm(legacy.request('POST'))).status).toBe(403);
+  expect(legacy.deps.admissionFor).not.toHaveBeenCalled();
+  const member = await fixture({ invite: true });
+  expect(await (await member.handlers.view(member.request())).json()).not.toHaveProperty('access');
+  expect((await member.handlers.confirm(member.request('POST'))).status).toBe(200);
+  expect(member.deps.admissionFor).not.toHaveBeenCalled();
 });
 
 async function enableRejoin(f: Awaited<ReturnType<typeof fixture>>) {

@@ -32,8 +32,10 @@ export type AgentCredentials = {
 
 // GET  /api/human/agent-join?joinId=<joinId>          (human session cookie)
 export type AgentJoinView = { joinId: string; label: string; harness: Harness; channelName: string; roomId: string;
-  state: 'pending' | 'confirmed' | 'ready' | 'expired'; agentUserId?: string };
-// errors: 401 signed_out ; 403 not_member ; 404 not_found
+  state: 'pending' | 'confirmed' | 'ready' | 'expired'; agentUserId?: string;
+  /** `join`: the viewer is not in the channel, but the invite the agent used admits them; confirming adds both. */
+  access?: 'join' };
+// errors: 401 signed_out ; 403 not_member | wrong_account ; 404 not_found ; 410 invite_unavailable
 
 // POST /api/human/agent-join/confirm?joinId=<joinId>  (human session cookie + CSRF header as other human POSTs)
 // body: {} → 200 AgentJoinView (state 'confirmed', agentUserId set). Idempotent for the same owner; 409 already_confirmed_by_other.
@@ -48,7 +50,7 @@ export type AgentJoinView = { joinId: string; label: string; harness: Harness; c
 export const AGENT_LABEL_MAX_CHARS = 40;
 export const M1_LABEL_MAX_BYTES = 512;
 export const CHANNEL_LINK_MAX_BYTES = 2048;
-const ERROR_CODES = ['invalid_link', 'invalid_label', 'invalid_harness', 'link_unavailable', 'rate_limited', 'not_found', 'not_confirmed', 'signed_out', 'not_member', 'already_confirmed_by_other'] as const;
+const ERROR_CODES = ['invalid_link', 'invalid_label', 'invalid_harness', 'link_unavailable', 'rate_limited', 'not_found', 'not_confirmed', 'signed_out', 'not_member', 'already_confirmed_by_other', 'wrong_account', 'invite_unavailable'] as const;
 export type AgentJoinErrorCode = typeof ERROR_CODES[number];
 export type AgentJoinError = { error: AgentJoinErrorCode };
 export const AGENT_JOIN_PATH = '/api/agent/join';
@@ -159,7 +161,8 @@ export function decodeAgentJoinPoll(input: unknown): Decoded<AgentJoinPoll> {
 export function decodeAgentJoinView(input: unknown): Decoded<AgentJoinView> {
   return decodeWith(() => {
     const hasAgent = typeof input === 'object' && input !== null && Object.hasOwn(input, 'agentUserId');
-    const r = object(input, '', ['joinId', 'label', 'harness', 'channelName', 'roomId', 'state', ...(hasAgent ? ['agentUserId'] : [])]);
+    const hasAccess = typeof input === 'object' && input !== null && Object.hasOwn(input, 'access');
+    const r = object(input, '', ['joinId', 'label', 'harness', 'channelName', 'roomId', 'state', ...(hasAgent ? ['agentUserId'] : []), ...(hasAccess ? ['access'] : [])]);
     return {
       joinId: identifier(r.field('joinId'), r.at('joinId')),
       label: readAgentLabel(r.field('label'), r.at('label')),
@@ -168,6 +171,7 @@ export function decodeAgentJoinView(input: unknown): Decoded<AgentJoinView> {
       roomId: readRoomId(r.field('roomId'), r.at('roomId')),
       state: literal(r.field('state'), r.at('state'), ['pending', 'confirmed', 'ready', 'expired']),
       ...(hasAgent ? { agentUserId: readMatrixUserId(r.field('agentUserId'), r.at('agentUserId')) } : {}),
+      ...(hasAccess ? { access: literal(r.field('access'), r.at('access'), ['join']) } : {}),
     };
   });
 }

@@ -117,7 +117,7 @@ When you scroll away from the latest messages, a pill such as **2 new messages**
 
 ## Adding and moving agents
 
-Local links join without confirmation. Each hosted-channel join needs one owner confirmation. For a hosted channel, the agent returns a confirmation link; open it while signed in as a channel member and choose **Confirm**. The link expires after 10 minutes.
+Local links join without confirmation. Each hosted-channel join needs one owner confirmation. For a hosted channel, the agent returns a confirmation link; open it while signed in and choose **Confirm**. If you are not in the channel yet, the same page offers **Join <channel> and add <agent>**, provided the invite admits your account. The link expires after 10 minutes.
 
 An agent is in one channel at a time. Joining a different hosted channel link moves it there after a new confirmation.
 

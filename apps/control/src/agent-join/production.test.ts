@@ -59,7 +59,7 @@ const json = (value: unknown) => new Response(JSON.stringify(value), { headers: 
 
 it('registers join and rename paths with their methods without loading adapters', () => {
   const load = vi.fn(() => { throw Error('unavailable'); });
-  expect(createAgentJoinRoutes(load).map(({ path, methods }) => [path, methods])).toEqual(c2);
+  expect(createAgentJoinRoutes(load, vi.fn()).map(({ path, methods }) => [path, methods])).toEqual(c2);
   expect(load).not.toHaveBeenCalled();
   const registrations = registerHostedProductionRoutes();
   for (const [path, methods] of c2) {
@@ -69,7 +69,7 @@ it('registers join and rename paths with their methods without loading adapters'
 
 it('maps runtime initialization failures to 503 on every C2 route', async () => {
   const load = vi.fn(() => { throw Error('private configuration'); });
-  const handle = createGateway({ registrations: createAgentJoinRoutes(load), absentPrefixes: [], appOrigin: origin });
+  const handle = createGateway({ registrations: createAgentJoinRoutes(load, vi.fn()), absentPrefixes: [], appOrigin: origin });
   for (const [path, [method]] of c2) {
     const response = await handle(new Request(origin + path, { method, headers: { origin } }));
     expect(response.status).toBe(503);

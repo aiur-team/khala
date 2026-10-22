@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import type { ControlStore } from '@khala/contracts/messaging/index';
 import { createControlStore, type BlobsStoreLike } from '../runtime/control-store';
 import { createDigests } from '../invitations/internal';
-import { createJoinStore, hashPollSecret, joinKey, sealCredentials, type JoinRecord } from './store';
+import { createJoinStore, hashPollSecret, joinKey, openInvite, sealCredentials, type JoinRecord } from './store';
 import { createAgentJoinAgentHandlers } from './agent-routes';
 const origin = 'https://khala.test';
 const secret = 'invitation-secret-with-more-than-32-bytes';
@@ -56,6 +56,9 @@ it('creates normalized pending joins without persisting poll secrets', async () 
   const read = await f.joins.read(result.joinId); if (read.kind !== 'found') throw Error();
   expect(read.record.label).toBe('Agent'); expect(read.record.channelName).toBe('Channel'); expect(read.record.pollSecretHash).toBe(hashPollSecret(result.pollSecret));
   expect(JSON.stringify(read.record)).not.toContain(result.pollSecret);
+  // The invite it joined with is bound to the record, sealed, and never returned.
+  expect(openInvite(secret, result.joinId, read.record.sealedInvite!)).toBe('inv_abcdefgh');
+  expect(JSON.stringify(read.record)).not.toContain('inv_abcdefgh'); expect(JSON.stringify(result)).not.toContain('inv_abcdefgh');
   expect(f.deps.roomName).toHaveBeenCalledWith('owner', credentials.roomId);
   expect(response.headers.get('cache-control')).toBe('no-store'); expect(response.headers.get('x-content-type-options')).toBe('nosniff'); expect(response.headers.get('content-type')).toBe('application/json');
 });

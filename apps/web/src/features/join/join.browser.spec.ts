@@ -61,7 +61,7 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
 
       await page.goto(`${url}?invite=${SECRET_INVITE_REF}`);
       await page.getByRole('link', { name: 'Agent instructions' }).waitFor();
-      assert.match(await page.locator('body').innerText(), /Joining as a person gives you your own link for your agent/);
+      assert.match(await page.locator('body').innerText(), /To add your agent, give it this same link. It sends you a confirmation link, which also adds you if you have not joined yet./);
       assert.doesNotMatch(await page.locator('body').innerText(), new RegExp(SECRET_INVITE_REF));
       await page.getByRole('button', { name: 'Sign in' }).waitFor();
       await page.getByRole('button', { name: 'Sign in' }).click();

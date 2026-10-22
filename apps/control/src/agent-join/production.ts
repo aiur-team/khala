@@ -1,6 +1,7 @@
 import { AGENT_SESSION_STATUS_PATH, createAgentSessionStatusHandler } from './session-status';
 import { randomBytes } from 'node:crypto';
 import type { ProductionHumanRuntime } from '../composition/human/production';
+import type { LoadHumanServices } from '../composition/human/handlers';
 import type { RouteRegistration } from '../runtime/handler';
 import { createJoinStore } from './store';
 import { createProductionAgentProvisioner } from './production-provisioner';
@@ -9,7 +10,7 @@ import { createAgentJoinAgentHandlers, AGENT_JOIN_PATH, AGENT_JOIN_POLL_PATH, AG
 import { createAgentJoinHumanHandlers, AGENT_JOIN_HUMAN_VIEW_PATH, AGENT_JOIN_HUMAN_CONFIRM_PATH, AGENT_JOIN_HUMAN_STATUS_PATH } from './human-routes';
 
 /** Bind request-scoped handlers lazily; discovery performs no adapter I/O. */
-export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime, fetch?: typeof globalThis.fetch): readonly RouteRegistration[] {
+export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime, loadServices: LoadHumanServices, fetch?: typeof globalThis.fetch): readonly RouteRegistration[] {
   function handlers() {
     const active = loadRuntime();
     const random = (bytes: number) => randomBytes(bytes);
@@ -17,7 +18,8 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
     const provisioner = createProductionAgentProvisioner(active, fetch);
     const human = createAgentJoinHumanHandlers({ auth: active.auth, joins, store: active.store, clock: active.clock, random,
       sealSecret: active.env.invitationHmacSecret, inspectMembership: active.matrix.inspectOwnerMembership, revokeAgentSession: active.matrix.revokeAgentSession, provisioner,
-      roomMemberNames: async (ownerId, roomId) => (await active.matrix.roomMembers(ownerId, roomId))?.map(member => member.name) ?? null });
+      roomMemberNames: async (ownerId, roomId) => (await active.matrix.roomMembers(ownerId, roomId))?.map(member => member.name) ?? null,
+      admissionFor: async request => (await loadServices(request))?.admission ?? null });
     const agent = createAgentJoinAgentHandlers({ joins, store: active.store, clock: active.clock, random,
       origin: active.env.publicAppOrigin, secret: active.env.invitationHmacSecret, roomName: active.matrix.roomName, inviteAgent: active.matrix.inviteAgentAsOwner, autoConfirm: human.autoConfirm });
     const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner,
