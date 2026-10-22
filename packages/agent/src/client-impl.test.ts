@@ -1519,13 +1519,35 @@ describe('coordination events', () => {
       coord('$h1', 'handoff', { ticket: 'AIUR-2', from: 'Maya', to: 'Codex', reason: 'yours now', state: 'in_review' }),
       coord('$n1', 'note', { key: 'freeze', value: 'no merges' }),
     ] });
-    const read = await client.read(10, undefined, undefined, { mentionsOnly: true });
+    const read = await client.read(10, undefined, undefined, { mentionsOnly: true, include: ['state'] });
     expect(read.messages.map(entry => entry.eventId)).toEqual(['$ping', '$h1']);
     expect(read.activeClaims).toEqual([{ key: 'AIUR-1', by: 'Maya', sender: '@khala_abc:s', at: now().toISOString() }]);
     expect(read.openHandoffs).toMatchObject([{ ticket: 'AIUR-2', to: 'Codex' }]);
     expect(read.notes).toEqual({ freeze: 'no merges' });
     expect((await client.read(1, undefined, undefined, { kinds: ['claim', 'note'] })).messages.map(entry => entry.eventId)).toEqual(['$n1']);
     expect((await client.read(10, undefined, undefined, { kinds: ['message'] })).messages.map(entry => entry.eventId)).toEqual(['$hi', '$ping']);
+  });
+  it('folds state only on request, and refolds incrementally from fold.json', async () => {
+    await connected();
+    const older = Array.from({ length: 100 }, (_, i) => message(`$m${i}`));
+    vi.mocked(session.history).mockImplementation(async (_room, limit, before) => before === undefined
+      ? { messages: [coord('$c1', 'claim', { key: 'AIUR-1' }), message('$hi')], nextBefore: '$p2' }
+      : { messages: limit === 100 ? older : [] });
+    const plain = await client.read(30);
+    expect(plain.activeClaims).toBeUndefined();
+    expect(session.history).toHaveBeenCalledOnce();
+    vi.mocked(session.history).mockClear();
+    expect((await client.read(30, undefined, undefined, { include: ['state'] })).activeClaims).toMatchObject([{ key: 'AIUR-1' }]);
+    expect(vi.mocked(session.history).mock.calls.filter(call => call[1] === 100)).toHaveLength(2);
+    // The claim is now older than one page, so only fold.json remembers it.
+    vi.mocked(session.history).mockClear();
+    vi.mocked(session.history).mockImplementation(async (_room, _limit, before) => before === undefined
+      ? { messages: [message('$hi'), coord('$n1', 'note', { key: 'freeze', value: 'on' })], nextBefore: '$gone' }
+      : { messages: [] });
+    const refold = await client.read(30, undefined, undefined, { include: ['state'] });
+    expect(refold.activeClaims).toMatchObject([{ key: 'AIUR-1' }]);
+    expect(refold.notes).toEqual({ freeze: 'on' });
+    expect(vi.mocked(session.history).mock.calls.filter(call => call[1] === 100)).toHaveLength(1);
   });
   it('rejects a claim on a key another participant holds without posting', async () => {
     await connected();

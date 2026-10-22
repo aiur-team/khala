@@ -3,7 +3,8 @@ import type { ChannelEventContent } from '@khala/contracts/m1/channel-event';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import type { CoordinationState } from '@khala/contracts/m1/channel-event';
 
-export type ReadFilter = { kinds?: string[]; mentionsOnly?: boolean };
+/** include: ['state'] adds openHandoffs, activeClaims and notes (also implied by kinds). */
+export type ReadFilter = { kinds?: string[]; mentionsOnly?: boolean; include?: 'state'[] };
 export type ClaimConflict = { error: 'claimed'; by: string; at: string };
 import type { MemberPresence } from './transport';
 
