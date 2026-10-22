@@ -10,6 +10,7 @@ import {
   CALLBACK_PATH,
   LOGIN_PATH,
   type AuthService,
+  type CallbackRejection,
   type MutationAuthorization,
 } from '../../auth/index';
 import type { AdmissionService } from '../../invitations/index';
@@ -198,7 +199,7 @@ function defineRoutes(registrations: readonly RouteRegistration[]): readonly Rou
  */
 export function createHumanHandlers(
   loadServices: LoadHumanServices,
-  onCallbackFailure?: (stage: 'service_init' | 'handler_exception') => void,
+  onCallbackFailure?: (stage: 'service_init' | 'handler_exception' | CallbackRejection) => void,
 ): readonly RouteRegistration[] {
   async function withServices(
     request: Request,
@@ -247,10 +248,11 @@ export function createHumanHandlers(
           const response = unavailable();
           return withCookies(response, result.cookies);
         }
-        if (result.code === 'provider_denied' || result.code === 'provider_error') {
-          return redirect(303, result.code === 'provider_denied' ? '/?sign_in=cancelled' : '/?sign_in=error', result.cookies);
-        }
-        return withCookies(json(400, { code: result.code }), result.cookies);
+        if (result.code === 'provider_denied') return redirect(303, '/?sign_in=cancelled', result.cookies);
+        // Never a raw JSON dead end: the landing page offers a retry back to the page that began sign-in.
+        try { onCallbackFailure?.(result.code); } catch { /* Diagnostics cannot change the response. */ }
+        const stale = result.code === 'login_expired' || result.code === 'login_replayed' || result.code === 'state_mismatch';
+        return redirect(303, stale ? '/?sign_in=expired' : '/?sign_in=error', result.cookies);
       }, onCallbackFailure),
     },
     {

@@ -37,6 +37,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import { createIndexedDbMarkerStore, hasOwnerCryptoStore, type CredentialSource } from '@khala/messaging/browser-device/index';
 import { parsePublicOrigin } from './hosted-config';
+import { rememberSignInReturn } from './sign-in-return';
 import type { HumanChannelLinks } from './channel-links';
 
 const ME_PATH = '/api/human/me';
@@ -208,6 +209,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
 
     async beginSignIn(returnPath) {
       if (!isSameOriginReturnPath(returnPath)) return rejected('invalid_return_path');
+      rememberSignInReturn(returnPath);
       const url = new URL(LOGIN_PATH, origin);
       url.searchParams.set('return_to', returnPath);
       return { kind: 'ok', value: { kind: 'navigate', url: url.href } };

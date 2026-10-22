@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { ORIGIN, beginAndReturn, cookiePairs, harness, request, signIn } from './support.test';
 
+// Each sign-in has its own login cookie, named from its state.
+const CLEARED = expect.stringMatching(/^__Host-khala_login-[a-f0-9]{16}=; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=0$/);
+
 describe('startSignIn', () => {
   it('binds the code flow to state, nonce and S256 PKCE on the exact callback', async () => {
     const h = harness();
@@ -24,7 +27,7 @@ describe('startSignIn', () => {
     const started = await h.service.startSignIn('/');
     if (started.kind !== 'redirect') throw new Error('not started');
     const cookie = started.cookies[0]!;
-    expect(cookie).toMatch(/^__Host-khala_login=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
+    expect(cookie).toMatch(/^__Host-khala_login-[a-f0-9]{16}=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$/);
     const handle = cookie.split(';')[0]!.split('=')[1]!;
     expect([...h.store.records.keys()].some(key => key.includes(handle))).toBe(false);
   });
@@ -53,7 +56,7 @@ describe('completeSignIn', () => {
     url.searchParams.set('error_description', 'secret-provider-text');
     const cancelled = new Request(url, { headers: callback.headers });
     const result = await h.service.completeSignIn(cancelled);
-    expect(result).toEqual({ kind: 'rejected', code: 'provider_denied', cookies: ['__Host-khala_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'] });
+    expect(result).toEqual({ kind: 'rejected', code: 'provider_denied', cookies: [CLEARED] });
     expect(JSON.stringify([result, h.logs])).not.toMatch(/secret-provider-text|access_denied|state=/);
     expect(h.oidc.exchanges).toHaveLength(0);
     expect(await h.service.completeSignIn(cancelled)).toMatchObject({ kind: 'rejected', code: 'login_replayed' });
@@ -70,7 +73,7 @@ describe('completeSignIn', () => {
     url.searchParams.delete('state');
     expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
     url.searchParams.set('state', 'forged');
-    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'rejected', code: 'login_expired', cookies: [] });
     url.searchParams.set('state', new URL(callback.url).searchParams.get('state')!);
     const duplicateState = new URL(url);
     duplicateState.searchParams.append('state', 'forged');
@@ -104,14 +107,14 @@ describe('completeSignIn', () => {
     url.searchParams.delete('code');
     url.searchParams.set('error', 'access_denied');
     h.store.inject('compareAndSet', 'unavailable');
-    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'unavailable', cookies: ['__Host-khala_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'] });
+    expect(await h.service.completeSignIn(new Request(url, { headers: callback.headers }))).toEqual({ kind: 'unavailable', cookies: [CLEARED] });
   });
   it('mints a Secure HttpOnly host-only session and returns to the stored path', async () => {
     const h = harness();
     const { result } = await signIn(h);
     expect(result.location).toBe('/chats');
     expect(result.cookies[0]).toMatch(/^__Host-khala_session=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=28800$/);
-    expect(result.cookies[1]).toBe('__Host-khala_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0');
+    expect(result.cookies[1]).toEqual(CLEARED);
     expect(result.principal).toMatchObject({ v: 1, providerSubject: 'user-1', verifiedEmail: 'ada@example.test' });
   });
 
@@ -163,8 +166,21 @@ describe('completeSignIn', () => {
     const callback = await beginAndReturn(h);
     const forged = request('/api/human/auth/callback?code=attacker&state=forged', { cookies: [callback.headers.get('cookie')!] });
     // A forged callback must not clear the login cookie of the sign-in in progress.
-    expect(await h.service.completeSignIn(forged)).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    expect(await h.service.completeSignIn(forged)).toEqual({ kind: 'rejected', code: 'login_expired', cookies: [] });
     expect((await h.service.completeSignIn(callback)).kind).toBe('signed_in');
+  });
+
+  it('completes the first of two sign-ins begun in one browser (second tab, double tap, link preview)', async () => {
+    const h = harness();
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    const first = await beginAndReturn(h, '/agent/confirm?joinId=AAAAAAAAAAAAAAAAAAAAAA');
+    const second = await beginAndReturn(h, '/conversations');
+    const jar = [first.headers.get('cookie'), second.headers.get('cookie')].join('; ');
+    const result = await h.service.completeSignIn(new Request(first.url, { headers: { cookie: jar } }));
+    expect(result).toMatchObject({ kind: 'signed_in', location: '/agent/confirm?joinId=AAAAAAAAAAAAAAAAAAAAAA' });
+    // Only the first flow's cookie is cleared; the second can still finish.
+    expect(result.cookies[1]).toBe(`${first.headers.get('cookie')!.split('=')[0]}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`);
+    expect((await h.service.completeSignIn(new Request(second.url, { headers: { cookie: jar } }))).kind).toBe('signed_in');
   });
 
   it('rejects a callback delivered to another path or origin', async () => {
@@ -296,7 +312,7 @@ describe('completeSignIn', () => {
     const state = url.searchParams.get('state')!;
     url.searchParams.set('state', state.slice(0, -1) + (state.endsWith('A') ? 'B' : 'A'));
     const result = await h.service.completeSignIn(new Request(url, { headers: callback.headers }));
-    expect(result).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    expect(result).toEqual({ kind: 'rejected', code: 'login_expired', cookies: [] });
     expect(h.oidc.exchanges).toHaveLength(0);
   });
 

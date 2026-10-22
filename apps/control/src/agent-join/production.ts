@@ -19,7 +19,7 @@ export function createAgentJoinRoutes(loadRuntime: () => ProductionHumanRuntime,
       sealSecret: active.env.invitationHmacSecret, inspectMembership: active.matrix.inspectOwnerMembership, revokeAgentSession: active.matrix.revokeAgentSession, provisioner,
       roomMemberNames: async (ownerId, roomId) => (await active.matrix.roomMembers(ownerId, roomId))?.map(member => member.name) ?? null });
     const agent = createAgentJoinAgentHandlers({ joins, store: active.store, clock: active.clock, random,
-      origin: active.env.publicAppOrigin, secret: active.env.invitationHmacSecret, roomName: active.matrix.roomName, autoConfirm: human.autoConfirm });
+      origin: active.env.publicAppOrigin, secret: active.env.invitationHmacSecret, roomName: active.matrix.roomName, inviteAgent: active.matrix.inviteAgentAsOwner, autoConfirm: human.autoConfirm });
     const rename = createAgentRenameHandler({ auth: active.auth, store: active.store, clock: active.clock, provisioner,
       roomMembers: active.matrix.roomMembers });
     return { agent, human, rename, sessionStatus: createAgentSessionStatusHandler(active.store, { homeserverOrigin: active.env.publicHomeserverOrigin, ...(fetch ? { fetch } : {}) }) };

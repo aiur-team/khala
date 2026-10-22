@@ -737,18 +737,6 @@ export class MatrixSubstrate implements RoomSubstrate {
   }
 }
 
-/** Use the browser SDK invite so its verified identity can share encrypted history. */
-export async function inviteWithHistory(client: Pick<MatrixClient, 'getRoom' | 'invite'>, roomId: string, userId: string): Promise<boolean> {
-  try {
-    const room = client.getRoom(roomId);
-    if (!room?.hasEncryptionStateEvent() || !/^@[^:\s]+:\S+$/.test(userId)) return false;
-    const membership = room.getMember(userId)?.membership;
-    if (membership === 'invite' || membership === 'join') return true;
-    await client.invite(roomId, userId);
-    return true;
-  } catch { return false; }
-}
-
 /** The listening mode `userId` reports in its `m.room.member` content. */
 export function readListeningMode(client: Pick<MatrixClient, 'getRoom'>, roomId: string, userId: string): ListeningMode {
   return memberListeningMode(client.getRoom(roomId)?.currentState.getStateEvents(EventType.RoomMember, userId)?.getContent());
@@ -800,7 +788,6 @@ export type MatrixBrowserPorts = Readonly<{
   room: RoomPort & Pick<ChannelService, 'observeEntries'>;
   conversations: ConversationIndexPort;
   syncStatus: SyncStatusPort;
-  inviteAgent(roomId: RoomId, userId: string): Promise<boolean>;
   /** Current SDK membership, independent of timeline attribution readiness. */
   isJoined(roomId: RoomId): boolean;
   listeningMode(roomId: RoomId, userId: string): ListeningMode;
@@ -924,8 +911,6 @@ export function createMatrixBrowserPorts(input: Readonly<{
   };
 
   return {
-    inviteAgent: (roomId, userId) => runtime.active
-      ? inviteWithHistory(runtime.active.client, roomId, userId) : Promise.resolve(false),
     isJoined: roomId => runtime.active?.client.getRoom(roomId)?.getMyMembership() === 'join',
     listeningMode: (roomId, userId) => runtime.active
       ? readListeningMode(runtime.active.client, roomId, userId) : DEFAULT_LISTENING_MODE,

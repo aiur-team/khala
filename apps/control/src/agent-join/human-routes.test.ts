@@ -341,7 +341,7 @@ it('auto-confirms a saved hosted session after one human approval, even after jo
     policy: { v: 1, kind: 'link', history: 'none' }, status: 'active', expiresAt: null, lastAuthorizedOperationDigest: null,
   }, expiresAt: null } });
   const agents = () => createAgentJoinAgentHandlers({ ...f.deps, origin: 'https://khala.test', secret,
-    roomName: async () => 'Channel', autoConfirm: createAgentJoinHumanHandlers(f.deps).autoConfirm });
+    roomName: async () => 'Channel', inviteAgent: async () => true, autoConfirm: createAgentJoinHumanHandlers(f.deps).autoConfirm });
   const create = async (overrides = {}) => {
     const response = await agents().create(new Request('https://khala.test/api/agent/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       link: `https://khala.test/join/${ref}`, harness: 'codex', label: 'Codex', sessionId: 'thread-1', rejoinSecret: 'S'.repeat(43), ...overrides,

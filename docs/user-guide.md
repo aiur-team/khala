@@ -77,7 +77,7 @@ the live U36 matrix check; no terminal typing fallback is installed.
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
-3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
+3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
@@ -146,7 +146,7 @@ Call `khala_status` to check the connection and unread count. The local status s
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and keep the tab open. |
+| `joining` | Open the confirmation link and choose **Confirm**. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
@@ -204,7 +204,7 @@ Developers running Khala from a source checkout follow the checkout sections of 
 
 1. Paste the channel link into your existing session and ask: “Join this Khala channel.” Each coworker repeats this with their own session.
 2. The agent calls `khala_join` and returns a confirmation link (`confirmUrl`).
-3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Keep that tab open until joining completes. The agent must never open the confirmation link itself.
+3. Open it in the browser where you are signed in as a channel member and choose **Confirm**. Any tab or browser works, and the tab can be closed after confirming. The agent must never open the confirmation link itself.
 4. The agent repeats `khala_join` with the same link until that join returns `connected`, then can read available channel history with `khala_read` and reply with `khala_send`.
 5. Send “Please reply in this channel” in the channel and look for the agent's attributed reply.
 
@@ -271,7 +271,7 @@ Call `khala_status` to check the connection, unread count and your agent’s cur
 | State | What to do |
 | --- | --- |
 | `idle` | Ask the agent to join using the channel link. |
-| `joining` | Open the confirmation link and keep the tab open. |
+| `joining` | Open the confirmation link and choose **Confirm**. |
 | `connected` | Read messages and send; if no idle wake occurs, prompt the agent. |
 | `send_failed` | Check connectivity and retry the message; verify it appeared. |
 | `disconnected` | Restore connectivity and ask the agent to join again. |
@@ -319,7 +319,7 @@ Local `status.json` has `{ state: 'idle'|'joining'|'connected'|'send_failed'|'di
 
 Hosted sessions retain their rejoin secret in `rejoin.json`. Once approved on a control version that supports approval reuse, the same room, harness, session ID and secret reconnect without another owner confirmation. A different secret/session or removal of the owner invalidates that approval. Older control versions (including `825b365d`) retain agent identity but still require confirmation on each rejoin; existing approvals need one confirmation after upgrading. Local recovery is unchanged.
 
-Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt.
+Hosted rooms use Matrix `m.room.history_visibility: shared`. This permits fetching earlier events but does not supply their encryption keys. Key forwarding requires a verified inviter and compatible, signed devices; it can be unavailable for earlier messages, especially after device changes. `khala_read` shows an encrypted-message-unavailable placeholder when this device lacks a key and continues pagination. The message remains confidential; joining does not guarantee all earlier messages decrypt. Khala's server invites a confirmed agent as its owner, so that invite carries no encrypted-history bundle: expect messages sent before the agent joined to show the placeholder.
 
 Use `khala watch --help` (or `-h`) for the Monitor command's usage. Unknown flags print an argument error and usage.
 

@@ -11,6 +11,8 @@ export type AgentJoinAgentDeps = Readonly<{
   random: (bytes: number) => Uint8Array; origin: string; secret: string;
   autoConfirm?: (joinId: string) => Promise<boolean>;
   roomName(ownerId: OwnerId, roomId: RoomId): Promise<string | null>;
+  /** Invites the agent as its owner, so no browser tab or device lock is needed to finish joining. */
+  inviteAgent(ownerId: OwnerId, roomId: RoomId, userId: string): Promise<boolean>;
 }>;
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -89,6 +91,9 @@ export function createAgentJoinAgentHandlers(deps: AgentJoinAgentDeps) {
     const state = effectiveState(record, deps.clock());
     if (state === 'ready') return empty();
     if (state !== 'claimed') return error('not_confirmed', 409);
+    // Invite before marking ready: a failed invite leaves the join claimed, so the agent can retry ready.
+    if (!record.ownerId || !record.agentUserId
+      || !await deps.inviteAgent(record.ownerId as OwnerId, record.roomId as RoomId, record.agentUserId)) return error('unavailable', 503);
     const write = await deps.joins.replace(record.joinId, revision, { ...record, state: 'ready' }, 'ready');
     if (write.kind === 'applied') return empty();
     if (write.kind === 'conflict') {

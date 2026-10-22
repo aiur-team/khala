@@ -18,11 +18,10 @@ const errors: Record<AgentConfirmError, string> = {
   expired: 'This request expired. Ask your agent to run khala_join again.',
   already_confirmed_by_other: 'Another member already confirmed this agent.',
   ready_timeout: 'The agent did not finish connecting.',
-  invite_failed: 'Could not add the agent to the channel.',
   unavailable: 'Khala is unavailable right now. Try again.',
   signed_out: 'Khala is unavailable right now. Try again.',
 };
-const retryable: readonly AgentConfirmError[] = ['ready_timeout', 'invite_failed', 'unavailable', 'signed_out'];
+const retryable: readonly AgentConfirmError[] = ['ready_timeout', 'unavailable', 'signed_out'];
 
 function initialTheme(): ThemeChoice {
   return resolveInitialTheme(typeof localStorage === 'undefined' ? {} : { storage: localStorage });
@@ -94,7 +93,7 @@ export function AgentConfirm({ controller, roomHref, onOpenRoom, ...page }: Page
       </> : null}
       {snapshot.state === 'connecting' ? <>
         <span className="kh-spin" aria-hidden="true" />
-        <p className="kh-fin-p" role="status">Connecting {snapshot.view.label}… Keep this tab open.</p>
+        <p className="kh-fin-p" role="status">Connecting {snapshot.view.label}…</p>
       </> : null}
       {snapshot.state === 'done' ? <>
         <span className="kh-fin-ok"><CheckIcon />{snapshot.view.label} joined {snapshot.view.channelName}.</span>

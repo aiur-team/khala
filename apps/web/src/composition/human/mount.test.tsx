@@ -239,20 +239,6 @@ describe('HumanApplicationScreen', () => {
     expect(html).not.toContain('khala-route-loading');
   });
 
-  it.each([
-    { phase: 'ready', path: '/agent/confirm?joinId=j1', context: readyContext('/agent/confirm?joinId=j1') },
-    { phase: 'navigating', path: '/agent/confirm?joinId=j1', context: readyContext('/channels/room_1') },
-    { phase: 'initializing_device', path: '/agent/confirm?joinId=j1', context: null },
-    { phase: 'inactive', path: '/agent/confirm?joinId=j1', context: null },
-  ] as HumanApplicationSnapshot[])('renders the agent confirm page standalone while $phase', snapshot => {
-    const html = renderToStaticMarkup(<HumanApplicationScreen application={application(snapshot)}
-      identity={identity} routes={routes} renderRoom={renderRoom} />);
-    expect(html).toMatch(/^(<link [^>]*>)*<div class="khala-app kh-agent-confirm" data-theme="dark">/u);
-    expect(html).toContain('<section class="kh-fin kh-fin--page" aria-label="Confirm agent">');
-    expect(html).not.toContain('kh-card');
-    expect(html).not.toContain('aria-label="Channels"');
-  });
-
   it('derives the list view from the conversations route', () => {
     const context = readyContext('/conversations');
     const html = renderToStaticMarkup(<HumanApplicationScreen
@@ -293,21 +279,11 @@ describe('HumanApplicationScreen', () => {
 
 
 describe('agent confirmation mount', () => {
-  it('requires both confirmation capabilities', () => {
+  it('hands an in-app confirm path to its own page with a full load', () => {
     const path = '/agent/confirm?joinId=j1';
-    const context = readyContext(path);
-    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'ready', path, context })}
+    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'ready', path, context: readyContext(path) })}
       identity={identity} routes={routes} renderRoom={renderRoom} />);
-    expect(html).toContain('Agent confirmation unavailable');
-  });
-  it('mounts the confirmation screen when both ports are supplied', () => {
-    const path = '/agent/confirm?joinId=j1';
-    const context = { ...readyContext(path), agentJoin: { view: vi.fn(), confirm: vi.fn(), status: vi.fn() }, inviteAgent: vi.fn() };
-    const html = renderToStaticMarkup(<HumanApplicationScreen application={application({ phase: 'ready', path, context })}
-      identity={identity} routes={routes} renderRoom={renderRoom} />);
-    expect(html).toContain('Confirm agent');
-    expect(html).toContain('Loading agent request');
-    expect(context.agentJoin.view).not.toHaveBeenCalled();
+    expect(html).toContain(`<a href="${path}">Open the agent confirmation</a>`);
   });
 });
 

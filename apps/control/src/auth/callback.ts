@@ -40,6 +40,9 @@ type LoginRecord = {
 };
 
 const loginKey = (handle: string) => `auth.login.v1.${derive('login', handle)}`;
+// One cookie per sign-in, named from its state, so a second sign-in (another
+// tab, a double tap, a link preview) cannot overwrite the first one's binding.
+export const loginCookie = (state: string) => `${LOGIN_COOKIE}-${derive('login', `state.${state}`).slice(0, 16)}`;
 
 export type StartResult =
   | Readonly<{ kind: 'redirect'; location: string; cookies: readonly string[] }>
@@ -75,7 +78,7 @@ export async function startSignIn(deps: SignInDeps, returnPath: string): Promise
   return {
     kind: 'redirect',
     location: url.value,
-    cookies: [`${LOGIN_COOKIE}=${handle}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`],
+    cookies: [`${loginCookie(login.state)}=${handle}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`],
   };
 }
 
@@ -97,14 +100,20 @@ export async function completeSignIn(
   request: Pick<Request, 'url' | 'headers'>,
   onUnavailable?: (stage: CallbackUnavailableStage) => void,
 ): Promise<CallbackResult> {
-  const clear = [clearCookie(LOGIN_COOKIE)];
+  const callback = new URL(request.url);
+  const states = callback.searchParams.getAll('state');
+  if (states.length !== 1) return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
+  const cookieName = loginCookie(states[0]!);
+  const clear = [clearCookie(cookieName)];
   const reject = (code: CallbackRejection): CallbackResult => ({ kind: 'rejected', code, cookies: clear });
   const unavailable = (stage: CallbackUnavailableStage, cookies: readonly string[]): CallbackResult => {
     try { onUnavailable?.(stage); } catch { /* Diagnostics cannot change the callback outcome. */ }
     return { kind: 'unavailable', cookies };
   };
-  const handle = readCookie(request.headers.get('cookie'), LOGIN_COOKIE);
-  if (handle === null || !TOKEN.test(handle)) return reject('login_expired');
+  const handle = readCookie(request.headers.get('cookie'), cookieName);
+  // No cookie for this state: nothing to clear, and another sign-in's cookie stays untouched.
+  if (handle === null) return { kind: 'rejected', code: 'login_expired', cookies: [] };
+  if (!TOKEN.test(handle)) return reject('login_expired');
   const key = loginKey(handle);
   const read = await deps.store.read<LoginRecord>(key);
   // Keep the login cookie: the binding may still be intact once the store recovers.
@@ -112,10 +121,8 @@ export async function completeSignIn(
   if (read.kind === 'absent') return reject('login_expired');
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
-  const callback = new URL(request.url);
-  const states = callback.searchParams.getAll('state');
   // A forged callback keeps the login cookie, so it cannot cancel a sign-in in progress.
-  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || states.length !== 1 || !safeEqual(states[0]!, login.state)) {
+  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || !safeEqual(states[0]!, login.state)) {
     return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
   }
 

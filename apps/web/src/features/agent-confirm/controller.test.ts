@@ -12,17 +12,16 @@ function fixture(view = pending, readyTimeoutMs = 60_000) {
   const port = { view: vi.fn<AgentJoinPort['view']>().mockResolvedValue(ok(view)),
     confirm: vi.fn<AgentJoinPort['confirm']>().mockResolvedValue(ok(confirmed)),
     status: vi.fn<AgentJoinPort['status']>().mockResolvedValue(ok(confirmed)) };
-  const invite = vi.fn().mockResolvedValue(true);
-  const controller = createAgentConfirmController({ joinId: 'j1', port, invite, readyTimeoutMs });
-  return { port, invite, controller };
+  const controller = createAgentConfirmController({ joinId: 'j1', port, readyTimeoutMs });
+  return { port, controller };
 }
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('agent confirmation controller', () => {
-  it('confirms once, polls every second and invites once when ready (AE1 browser leg)', async () => {
-    const { port, invite, controller } = fixture();
+  it('confirms once, polls every second and finishes when ready, with no browser invite (AE1 browser leg)', async () => {
+    const { port, controller } = fixture();
     controller.start(); controller.start(); await flush();
     expect(controller.getSnapshot()).toEqual({ state: 'review', view: pending });
     port.status.mockResolvedValueOnce(ok(confirmed)).mockResolvedValueOnce(ok(confirmed)).mockResolvedValue(ok(ready));
@@ -33,7 +32,6 @@ describe('agent confirmation controller', () => {
     expect(port.status).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2001);
     expect(port.status).toHaveBeenCalledTimes(3);
-    expect(invite).toHaveBeenCalledExactlyOnceWith(pending.roomId, ready.agentUserId);
     expect(controller.getSnapshot()).toEqual({ state: 'done', view: ready });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(port.status).toHaveBeenCalledTimes(3);
@@ -41,14 +39,13 @@ describe('agent confirmation controller', () => {
   });
 
   it('times out after 60 seconds and retries status without another confirmation', async () => {
-    const { port, controller, invite } = fixture();
+    const { port, controller } = fixture();
     controller.start(); await flush(); await controller.confirm();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'ready_timeout' });
     port.status.mockResolvedValue(ok(ready));
     controller.retry(); controller.retry(); await vi.advanceTimersByTimeAsync(1000);
     expect(port.confirm).toHaveBeenCalledTimes(1);
-    expect(invite).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().state).toBe('done');
     controller.dispose();
   });
@@ -82,14 +79,10 @@ describe('agent confirmation controller', () => {
     controller.dispose();
   });
 
-  it('invites a ready request immediately and retries only failed invites', async () => {
-    const { port, controller, invite } = fixture(ready);
-    invite.mockResolvedValueOnce(false).mockResolvedValue(true);
+  it('shows a ready request as done immediately: the server already invited the agent', async () => {
+    const { port, controller } = fixture(ready);
     controller.start(); await flush();
-    expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'invite_failed' });
-    controller.retry(); controller.retry(); await flush();
-    expect(controller.getSnapshot().state).toBe('done');
-    expect(invite).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toEqual({ state: 'done', view: ready });
     expect(port.status).not.toHaveBeenCalled();
     expect(port.confirm).not.toHaveBeenCalled();
     controller.dispose();
@@ -127,7 +120,7 @@ describe('agent confirmation controller', () => {
   });
 
   it('disposes a pending status read, ignoring late ready results and notifications', async () => {
-    const { port, controller, invite } = fixture(confirmed);
+    const { port, controller } = fixture(confirmed);
     let resolve!: (result: AgentJoinResult) => void;
     port.status.mockImplementation(() => new Promise(done => { resolve = done; }));
     const listener = vi.fn(); controller.subscribe(listener);
@@ -135,24 +128,15 @@ describe('agent confirmation controller', () => {
     controller.dispose(); const notifications = listener.mock.calls.length;
     resolve(ok(ready)); await flush(); await vi.advanceTimersByTimeAsync(60_000);
     expect(port.status.mock.calls[0]?.[1]?.aborted).toBe(true);
-    expect(invite).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledTimes(notifications);
     expect(port.status).toHaveBeenCalledTimes(1);
   });
 
   it('ignores a late initial view after disposal', async () => {
-    const { port, controller, invite } = fixture();
+    const { port, controller } = fixture();
     let resolve!: (result: AgentJoinResult) => void;
     port.view.mockImplementation(() => new Promise(done => { resolve = done; }));
     controller.start(); controller.dispose(); resolve(ok(ready)); await flush();
     expect(controller.getSnapshot().state).toBe('loading');
-    expect(invite).not.toHaveBeenCalled();
-  });
-
-  it('rejects ready views without an agent identity', async () => {
-    const { controller, invite } = fixture({ ...pending, state: 'ready' });
-    controller.start(); await flush();
-    expect(controller.getSnapshot()).toMatchObject({ state: 'error', code: 'unavailable' });
-    expect(invite).not.toHaveBeenCalled(); controller.dispose();
   });
 });

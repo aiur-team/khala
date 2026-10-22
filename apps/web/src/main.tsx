@@ -1,5 +1,6 @@
-import { decodeContentLimits, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from './composition/human/application';
+import { mountAgentConfirmPage } from './composition/human/confirm-page';
 import { createBrowserTabHandoff } from './composition/human/tab-handoff';
 import { createHumanBrowserApi } from './composition/human/browser-api';
 import { readHumanEntry } from './composition/human/entry';
@@ -37,6 +38,13 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
 
   const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value, allowInsecureLoopback: localDev });
+  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });
+  const route = routes.parse(entry.path);
+  // Agent confirmation is its own light page: no Matrix client or device lock, so any tab or browser works.
+  if (route.kind === 'agent_confirm') {
+    mountAgentConfirmPage(target, { identity: api.identity, agentJoin: api.agentJoin, profile: api.profile, routes, joinId: route.joinId, path: entry.path });
+    return;
+  }
   const matrix = createMatrixBrowserPorts({
     identity: api.identity,
     credentials: api.credentials,
@@ -53,10 +61,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     syncStatus: matrix.syncStatus,
     admission: api.admission,
     channelLinks: api.channelLinks,
-    agentJoin: api.agentJoin,
     agentNames: api.agentNames,
     profile: api.profile,
-    inviteAgent: (roomId, userId) => matrix.inviteAgent(roomId as RoomId, userId),
     listeningMode: matrix.listeningMode,
     subscribeListeningModes: matrix.subscribeListeningModes,
     setListeningMode: matrix.setListeningMode,
@@ -67,7 +73,6 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     memberSince: matrix.memberSince,
     limits: decodedLimits.value,
   }, { initialPath: entry.path, tabHandoff: createBrowserTabHandoff() });
-  const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/', allowInsecureLoopback: localDev });
   const mounted = mountKhalaContent({
     target,
     application,
