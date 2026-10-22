@@ -3,6 +3,7 @@ import { readListeningMode } from '../mode';
 import { readActivity } from '../activity';
 import { listChannels, type ChannelRef } from '../channels';
 import { readCursor, unread, type Cursor } from '../inbox';
+import { isWakeEntry } from '../events/receive';
 import { stateRoot } from '../state';
 import type { WakeDriver, WakeDriverContext } from './driver';
 import { driverAllowed, newNonce, wakeLine, recordAttempt, cancelAttempt, settleAttempts, readWakeState } from './shared';
@@ -64,7 +65,7 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
         currentIdentities.set(channel.key, JSON.stringify([session?.roomId ?? channel.roomId, session?.userId, metadata?.joinedAt]));
         if (await readListeningMode(channel.files) === 'async') continue;
         eligible.push({ channel,
-          counts: { messages: (await unread(channel.files)).entries.filter(entry => entry.kind === 'message' && entry.sender !== session?.userId).length }, cursor: await readCursor(channel.files) });
+          counts: { messages: (await unread(channel.files)).entries.filter(entry => isWakeEntry(entry) && entry.sender !== session?.userId).length }, cursor: await readCursor(channel.files) });
       }
       const keys = new Set(currentIdentities.keys());
       const changed = new Set<string>();

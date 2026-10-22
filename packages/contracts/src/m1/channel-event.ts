@@ -1,4 +1,4 @@
-import { type Decoded, decodeWith, displayText, fail, label, literal, safeInteger, utcTimestamp, utf8Length, version } from '../messaging/decode';
+import { type Decoded, decodeWith, displayText, fail, label, literal, object, safeInteger, utcTimestamp, utf8Length, version } from '../messaging/decode';
 
 export const CHANNEL_EVENT_TYPE = 'com.khala.event.v1' as const;
 export const CHANNEL_EVENT_STATUSES = ['info', 'pending', 'success', 'failure', 'attention'] as const;
@@ -6,9 +6,13 @@ export type ChannelEventStatus = (typeof CHANNEL_EVENT_STATUSES)[number];
 export const MAX_CHANNEL_EVENT_BYTES = 4096;
 export type ChannelEventSubject = Readonly<{ ticket?: string; pr?: number; branch?: string; repo?: string; sha?: string }>;
 export type ChannelEventSource = Readonly<{ system: string; topic?: string; event_id?: string }>;
+/** Coordination kinds carry a validated `data` payload; every other kind is free-form. */
+export const COORDINATION_KINDS = ['handoff', 'handoff_ack', 'verdict', 'claim', 'release', 'note'] as const;
+export type CoordinationKind = (typeof COORDINATION_KINDS)[number];
+export type CoordinationData = Readonly<Record<string, string | number>>;
 export type ChannelEventInput = Readonly<{
   kind: string; summary: string; status?: ChannelEventStatus; subject?: ChannelEventSubject;
-  actor?: string; url?: string; occurred_at?: string; source?: ChannelEventSource; key?: string;
+  actor?: string; url?: string; occurred_at?: string; source?: ChannelEventSource; key?: string; data?: CoordinationData;
 }>;
 export type ChannelEventContent = ChannelEventInput & Readonly<{ v: 1; body: string }>;
 
@@ -63,8 +67,44 @@ export function decodeChannelEvent(raw: unknown): Decoded<ChannelEventContent> {
       ...(r.has('occurred_at') ? { occurred_at: utcTimestamp(r.field('occurred_at'), 'occurred_at') } : {}),
       ...(r.has('source') ? { source: readSource(r.field('source')) } : {}),
       ...(r.has('key') ? { key: nonempty(label(r.field('key'), 'key', 200), 'key') } : {}),
+      // Older senders may use these kind names without data: such events stay plain events.
+      ...(r.has('data') && isCoordinationKind(kind) ? { data: readData(kind, r.field('data')) } : {}),
     };
   }));
+}
+
+export function isCoordinationKind(kind: string): kind is CoordinationKind {
+  return (COORDINATION_KINDS as readonly string[]).includes(kind);
+}
+const short = (input: unknown, path: string) => display(input, path, 256, 64);
+const reason = (input: unknown, path: string) => display(input, path, 800, 200);
+function readData(kind: CoordinationKind, input: unknown): CoordinationData {
+  const fields = { handoff: ['ticket', 'from', 'to', 'reason', 'state'], handoff_ack: ['ticket'], verdict: ['pr', 'verdict', 'reason'],
+    claim: ['key'], release: ['key'], note: ['key', 'value'] }[kind];
+  const r = object(input, 'data', fields);
+  const read = (key: string) => {
+    const value = r.field(key);
+    switch (key) {
+      case 'pr': { const pr = safeInteger(value, r.at(key)); if (pr === 0) fail(r.at(key), 'invalid_value'); return pr; }
+      case 'verdict': return literal(value, r.at(key), ['approved', 'changes_requested']);
+      case 'reason': return reason(value, r.at(key));
+      case 'key': return nonempty(label(value, r.at(key), 128), r.at(key));
+      // An empty value clears the note.
+      case 'value': return typeof value === 'string' && value === '' ? '' : reason(value, r.at(key));
+      default: return short(value, r.at(key));
+    }
+  };
+  return Object.fromEntries(fields.map(key => [key, read(key)]));
+}
+function coordinationSummary(kind: CoordinationKind, d: CoordinationData): string {
+  switch (kind) {
+    case 'handoff': return `handoff ${d.ticket} ${d.from} → ${d.to} (${d.state}): ${d.reason}`;
+    case 'handoff_ack': return `handoff ${d.ticket} acknowledged`;
+    case 'verdict': return `PR #${d.pr} ${d.verdict === 'approved' ? 'approved' : 'changes requested'}: ${d.reason}`;
+    case 'claim': return `claimed ${d.key}`;
+    case 'release': return `released ${d.key}`;
+    case 'note': return d.value === '' ? `note ${d.key} cleared` : `note ${d.key} = ${d.value}`;
+  }
 }
 
 function readSubject(input: unknown): ChannelEventSubject {
@@ -111,7 +151,20 @@ export function formatChannelEventLine(content: Pick<ChannelEventInput, 'summary
 }
 export function encodeChannelEvent(input: unknown): Decoded<ChannelEventContent> {
   return safely(() => {
-    const checked = decodeWith(() => { record(input, ''); return { ...(input as Record<string, unknown>), v: 1, body: '' }; });
+    const checked = decodeWith(() => {
+      const r = record(input, '');
+      const raw = input as Record<string, unknown>;
+      const kind = raw.kind;
+      if (typeof kind !== 'string' || !isCoordinationKind(kind)) {
+        if (r.has('data')) fail('data', 'invalid_value');
+        return { ...raw, v: 1, body: '' };
+      }
+      const data = readData(kind, r.field('data'));
+      const derived = coordinationSummary(kind, data);
+      return { ...raw, v: 1, body: '', data,
+        ...(r.has('summary') ? {} : { summary: [...derived].length > 200 ? [...derived].slice(0, 199).join('') + '…' : derived }),
+        ...(r.has('status') || kind !== 'verdict' ? {} : { status: data.verdict === 'approved' ? 'success' : 'attention' }) };
+    });
     if (!checked.ok) return checked;
     const decoded = decodeChannelEvent(checked.value);
     if (!decoded.ok) return decoded;
@@ -136,6 +189,30 @@ export function statusFor(content: Pick<ChannelEventInput, 'kind' | 'status'>): 
     case 'agent.paused': case 'agent.blocked': case 'agent.pause.request': return 'attention';
     default: return content.kind.startsWith('agent.attention.') && !content.kind.endsWith('.resolved') ? 'attention' : 'info';
   }
+}
+export type CoordinationEvent = Readonly<{ sender: string; by: string; at: string; content: Pick<ChannelEventInput, 'kind' | 'data'> }>;
+export type ActiveClaim = { key: string; by: string; sender: string; at: string };
+export type OpenHandoff = { ticket: string; from: string; to: string; reason: string; state: string; by: string; at: string };
+export type CoordinationState = { openHandoffs: OpenHandoff[]; activeClaims: ActiveClaim[]; notes: Record<string, string> };
+/**
+ * Folds coordination events, oldest first, into the channel's current state. Claims are a
+ * race-tolerant convention, not a lock: the earliest claim by room order wins, and only its
+ * holder's release frees the key. A later handoff for the same ticket replaces the earlier one.
+ */
+export function foldCoordination(events: Iterable<CoordinationEvent>): CoordinationState {
+  const handoffs = new Map<string, OpenHandoff>();
+  const claims = new Map<string, ActiveClaim>();
+  const notes = new Map<string, string>();
+  for (const { sender, by, at, content: { kind, data } } of events) {
+    if (!data) continue;
+    const s = (key: string) => String(data[key]);
+    if (kind === 'handoff') { handoffs.delete(s('ticket')); handoffs.set(s('ticket'), { ticket: s('ticket'), from: s('from'), to: s('to'), reason: s('reason'), state: s('state'), by, at }); }
+    else if (kind === 'handoff_ack') handoffs.delete(s('ticket'));
+    else if (kind === 'claim' && !claims.has(s('key'))) claims.set(s('key'), { key: s('key'), by, sender, at });
+    else if (kind === 'release' && claims.get(s('key'))?.sender === sender) claims.delete(s('key'));
+    else if (kind === 'note') { notes.delete(s('key')); if (s('value') !== '') notes.set(s('key'), s('value')); }
+  }
+  return { openHandoffs: [...handoffs.values()], activeClaims: [...claims.values()], notes: Object.fromEntries(notes) };
 }
 export function dedupeByKey<T>(items: readonly T[], keyOf: (item: T) => string | undefined): T[] {
   const seen = new Set<string>();

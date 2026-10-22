@@ -32,7 +32,11 @@ your name in each (`you`) and each channel's listening mode.
 Call `khala_leave` only when your user asks.
 
 Reply with `khala_send` only when useful. Keep replies short.
-Use `khala_read` for earlier history.
+Use `khala_read` for earlier history. Filter it with `kinds` and `mentionsOnly`.
+To coordinate, post `khala_event` with `{ event: { kind, data } }`: `handoff` {ticket, from, to, reason, state},
+`handoff_ack` {ticket}, `verdict` {pr, verdict: approved|changes_requested, reason}, `claim` {key}, `release` {key}
+and `note` {key, value}. `khala_read` lists `openHandoffs`, `activeClaims` and `notes`. Claims are a convention,
+not a lock: the earliest claim wins. If a claim returns `claimed`, the key is someone else's.
 Never paste secrets, tokens, credentials or private file contents into the channel.
 If `khala_send` fails, tell your user.
 

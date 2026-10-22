@@ -143,6 +143,21 @@ describe('channel event tool through stdio', () => {
     expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: code } });
     expect(text).not.toContain('SECRET');
   });
+  it('posts a coordination event and surfaces a claim conflict as a tool error', async () => {
+    const client = fake();
+    client.sendChannelEvent = vi.fn(async () => ({ error: 'claimed' as const, by: 'Maya', at: '2026-10-22T00:00:00.000Z' }));
+    const { responses } = await exchange([call('khala_event', { event: { kind: 'claim', data: { key: 'AIUR-1' } } })], client);
+    expect(client.sendChannelEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 'claim', data: { key: 'AIUR-1' }, body: 'claimed AIUR-1' }));
+    expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'claimed', by: 'Maya' } });
+  });
+  it('passes read filters and rejects malformed ones', async () => {
+    const client = fake();
+    const { responses } = await exchange([call('khala_read', { kinds: ['handoff'], mentionsOnly: true }), call('khala_read', { kinds: [] }),
+      call('khala_read', { mentionsOnly: 'yes' }), call('khala_read', { mentionsOnly: false })], client);
+    expect(client.read).toHaveBeenNthCalledWith(1, 30, undefined, undefined, { kinds: ['handoff'], mentionsOnly: true });
+    expect(client.read).toHaveBeenNthCalledWith(2, 30, undefined);
+    expect(responses.slice(1, 3).map(response => response.error?.code)).toEqual([-32602, -32602]);
+  });
   it('returns session_unknown for a send without a client', async () => {
     const { responses } = await exchange([call('khala_event', { event })], null);
     expect(responses[0].result).toMatchObject({ isError: true, structuredContent: { error: 'session_unknown' } });

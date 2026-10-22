@@ -6,6 +6,7 @@ import { monitorStorage, monitorStorageCandidates } from './monitor-storage';
 import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
+import { isWakeEntry } from './events/receive';
 import { listChannels } from './channels';
 import { readJson, readWatcherStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
 import { readActivity } from './activity';
@@ -160,7 +161,7 @@ export async function watchSession(files: SessionFiles, io: {
         if (!await wakeAllowed()) return;
         if (latestSession?.userId !== session.userId || latestSession?.roomId !== session.roomId
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
-        const messages = fresh.filter(entry => entry.kind === 'message' && entry.sender !== session.userId
+        const messages = fresh.filter(entry => isWakeEntry(entry) && entry.sender !== session.userId
           && entry.roomId === session.roomId);
         if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async' && messages.length) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
@@ -198,7 +199,7 @@ export async function watchSession(files: SessionFiles, io: {
             if (!['connected', 'send_failed'].includes(status?.state ?? '')) continue;
             const cursor = await readCursor(channel.files);
             eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
-              .some(entry => entry.kind === 'message' && entry.sender !== session?.userId);
+              .some(entry => isWakeEntry(entry) && entry.sender !== session?.userId);
           }
           const activity = await readActivity(files);
           if (eligible && await ownsSession() && activity.state === 'idle') {

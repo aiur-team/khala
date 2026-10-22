@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decodeChannelEvent, encodeChannelEvent, formatChannelEventLine, statusFor, dedupeByKey, CHANNEL_EVENT_TYPE, MAX_CHANNEL_EVENT_BYTES } from './channel-event';
+import { decodeChannelEvent, encodeChannelEvent, foldCoordination, formatChannelEventLine, statusFor, dedupeByKey, CHANNEL_EVENT_TYPE, MAX_CHANNEL_EVENT_BYTES, type ChannelEventContent } from './channel-event';
 
 const minimal = { v: 1, kind: 'deploy.finished', summary: 'staging deployed', body: 'staging deployed' };
 const example = {
@@ -76,6 +76,48 @@ describe('channel-event', () => {
   it('keeps the first keyed item and all unkeyed items in order', () => {
     const a = { key: 'k1' }, b = {}, c = { key: 'k1' }, d = { key: 'k2' }, e = {};
     expect(dedupeByKey<{ key?: string }>([a, b, c, d, e], item => item.key)).toEqual([a, b, d, e]);
+  });
+  describe('coordination kinds', () => {
+    const encode = (kind: string, data: Record<string, unknown>) => {
+      const result = encodeChannelEvent({ kind, data });
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+      return result.value;
+    };
+    it('derives a compact summary and round trips data', () => {
+      const handoff = encode('handoff', { ticket: 'AIUR-12', from: 'PC', to: 'NUC', reason: 'out of budget', state: 'in_review' });
+      expect(handoff.summary).toBe('handoff AIUR-12 PC → NUC (in_review): out of budget');
+      expect(decodeChannelEvent(handoff)).toEqual({ ok: true, value: handoff });
+      expect(encode('verdict', { pr: 7, verdict: 'changes_requested', reason: 'no test' })).toMatchObject({ summary: 'PR #7 changes requested: no test', status: 'attention' });
+      expect(encode('verdict', { pr: 7, verdict: 'approved', reason: 'ok' }).status).toBe('success');
+      expect(encode('claim', { key: 'ticket:AIUR-12' }).body).toBe('claimed ticket:AIUR-12');
+      expect(encode('note', { key: 'freeze', value: '' }).summary).toBe('note freeze cleared');
+      expect([...encode('note', { key: 'k', value: 'é'.repeat(200) }).summary]).toHaveLength(200);
+    });
+    it.each([
+      ['handoff', { ticket: 'A' }, 'data.from'], ['verdict', { pr: 0, verdict: 'approved', reason: 'x' }, 'data.pr'],
+      ['verdict', { pr: 1, verdict: 'maybe', reason: 'x' }, 'data.verdict'], ['claim', { key: '' }, 'data.key'],
+      ['claim', { key: 'k', extra: 1 }, 'data.extra'], ['claim', undefined, 'data'], ['ci.passed', { key: 'k' }, 'data'],
+    ])('rejects %s data %j', (kind, data, path) => {
+      expect(encodeChannelEvent({ kind, summary: 's', ...(data ? { data } : {}) })).toMatchObject({ ok: false, error: { path } });
+    });
+    it('keeps legacy coordination-named events without data', () => {
+      expect(decodeChannelEvent({ ...minimal, kind: 'note' })).toEqual({ ok: true, value: { ...minimal, kind: 'note' } });
+    });
+    it('folds claims, handoffs and notes in room order', () => {
+      const at = (n: number) => `2026-10-22T00:00:0${n}Z`;
+      const ev = (sender: string, n: number, content: ChannelEventContent) => ({ sender, by: sender.toUpperCase(), at: at(n), content });
+      const state = foldCoordination([
+        ev('a', 1, encode('claim', { key: 'k' })), ev('b', 2, encode('claim', { key: 'k' })), ev('b', 3, encode('release', { key: 'k' })),
+        ev('a', 4, encode('handoff', { ticket: 'T1', from: 'A', to: 'B', reason: 'r', state: 's' })),
+        ev('a', 4, encode('handoff', { ticket: 'T2', from: 'A', to: 'B', reason: 'r', state: 's' })),
+        ev('b', 5, encode('handoff_ack', { ticket: 'T1' })), ev('a', 6, encode('note', { key: 'n', value: 'v' })),
+        ev('a', 7, encode('note', { key: 'gone', value: 'x' })), ev('b', 8, encode('note', { key: 'gone', value: '' })),
+      ]);
+      expect(state.activeClaims).toEqual([{ key: 'k', by: 'A', sender: 'a', at: at(1) }]);
+      expect(state.openHandoffs.map(h => h.ticket)).toEqual(['T2']);
+      expect(state.notes).toEqual({ n: 'v' });
+      expect(foldCoordination([ev('a', 1, encode('claim', { key: 'k' })), ev('a', 2, encode('release', { key: 'k' })), ev('b', 3, encode('claim', { key: 'k' }))]).activeClaims[0]?.sender).toBe('b');
+    });
   });
   it('never throws for nonobjects or unserializable values', () => {
     const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
