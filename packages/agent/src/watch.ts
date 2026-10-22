@@ -3,10 +3,9 @@ import { watch as watchDirectory, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { monitorStorage, monitorStorageCandidates } from './monitor-storage';
-import type { InboxEntry } from '@khala/contracts/m1/inbox';
 import { readCursor, readEntries, type Cursor } from './inbox';
 import { readListeningMode } from './mode';
-import { isWakeEntry } from './events/receive';
+import { isWakeEntry, mentions, wakesAgent } from './events/receive';
 import { listChannels } from './channels';
 import { readJson, readWatcherStatus, sessionFiles, stateRoot, writeJsonAtomic, SESSION_ID_PATTERN, type SessionFiles } from './state';
 import { readActivity } from './activity';
@@ -40,12 +39,6 @@ export async function monitorOwner(files: SessionFiles): Promise<Owner | undefin
 }
 export async function monitorArmed(files: SessionFiles): Promise<boolean> {
   return !!await monitorOwner(files);
-}
-
-export function mentions(entry: InboxEntry, name: string | undefined): boolean {
-  if (!name) return false;
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(entry.body);
 }
 function channelLabel(name: string): string {
   return Array.from(name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').trim()).slice(0, 80).join('');
@@ -163,7 +156,8 @@ export async function watchSession(files: SessionFiles, io: {
           || !['connected', 'send_failed'].includes(latestStatus?.state ?? '')) continue;
         const messages = fresh.filter(entry => isWakeEntry(entry) && entry.sender !== session.userId
           && entry.roomId === session.roomId);
-        if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async' && messages.length) {
+        if (io.harness !== 'muse' && !done && mode !== 'async' && latestMode !== 'async'
+          && messages.some(entry => wakesAgent(entry, latestMode, latestStatus?.displayName))) {
           const count = messages.filter(entry => mentions(entry, latestStatus?.displayName)).length;
           io.write(`khala: ${messages.length} new message${messages.length === 1 ? '' : 's'} in #${channelLabel(latestStatus?.channelName ?? channel.channelName ?? 'channel')} (${count} mentions you)\n`);
           if (qwen) { stop(); return; }
@@ -193,13 +187,14 @@ export async function watchSession(files: SessionFiles, io: {
           const channels = await listChannels(files);
           let eligible = false;
           for (const channel of channels) {
-            if (await readListeningMode(channel.files) === 'async') continue;
+            const channelMode = await readListeningMode(channel.files);
+            if (channelMode === 'async') continue;
             const session = await readJson<{ userId: string }>(channel.files.session);
             const status = await readWatcherStatus(channel.files);
             if (!['connected', 'send_failed'].includes(status?.state ?? '')) continue;
             const cursor = await readCursor(channel.files);
             eligible ||= (await readEntries(channel.files)).slice(cursor.deliveredCount)
-              .some(entry => isWakeEntry(entry) && entry.sender !== session?.userId);
+              .some(entry => entry.sender !== session?.userId && wakesAgent(entry, channelMode, status?.displayName));
           }
           const activity = await readActivity(files);
           if (eligible && await ownsSession() && activity.state === 'idle') {

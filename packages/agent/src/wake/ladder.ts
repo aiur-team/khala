@@ -3,12 +3,12 @@ import { readListeningMode } from '../mode';
 import { readActivity } from '../activity';
 import { listChannels, type ChannelRef } from '../channels';
 import { readCursor, unread, type Cursor } from '../inbox';
-import { isWakeEntry } from '../events/receive';
 import { stateRoot } from '../state';
 import type { WakeDriver, WakeDriverContext } from './driver';
 import { driverAllowed, newNonce, wakeLine, recordAttempt, cancelAttempt, settleAttempts, readWakeState } from './shared';
 import type { Activity } from '../activity';
-import { readJson, SESSION_ID_PATTERN, type SessionFiles } from '../state';
+import { readJson, SESSION_ID_PATTERN, type SessionFiles, type StatusFile } from '../state';
+import { wakesAgent } from '../events/receive';
 
 
 export type WakeLadderDeps = Readonly<{
@@ -63,9 +63,11 @@ export function createWakeLadder(deps: WakeLadderDeps): WakeLadder & { poll(): P
         const session = await readJson<{ roomId: string; userId: string }>(channel.files.session);
         const metadata = channel.legacy ? null : await readJson<{ joinedAt?: string }>(path.join(channel.files.dir, 'channel.json'));
         currentIdentities.set(channel.key, JSON.stringify([session?.roomId ?? channel.roomId, session?.userId, metadata?.joinedAt]));
-        if (await readListeningMode(channel.files) === 'async') continue;
+        const mode = await readListeningMode(channel.files);
+        if (mode === 'async') continue;
+        const you = (await readJson<StatusFile>(channel.files.status))?.displayName;
         eligible.push({ channel,
-          counts: { messages: (await unread(channel.files)).entries.filter(entry => isWakeEntry(entry) && entry.sender !== session?.userId).length }, cursor: await readCursor(channel.files) });
+          counts: { messages: (await unread(channel.files)).entries.filter(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you)).length }, cursor: await readCursor(channel.files) });
       }
       const keys = new Set(currentIdentities.keys());
       const changed = new Set<string>();

@@ -28,3 +28,12 @@ export const claudeStyleCodec: DeliverCodec = {
       : { hookSpecificOutput: { hookEventName: names[kind], additionalContext: frame } }) + '\n';
   },
 };
+
+/** Claude shows a Stop block reason twice (as a user turn and as a system note), so the frame
+ * goes in Stop additionalContext: delivered once, as context, and the turn still continues. */
+export const claudeCodec: DeliverCodec = {
+  ...claudeStyleCodec,
+  render: (kind, frame) => kind === 'stop'
+    ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: frame } }) + '\n'
+    : claudeStyleCodec.render(kind, frame),
+};

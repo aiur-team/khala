@@ -47,6 +47,8 @@ export function claudeStyleDriver(envKey: string): FakeHarnessDriver {
       if (!stdout) return { kind: 'none' };
       const output = JSON.parse(stdout);
       if (output.decision === 'block') return { kind: 'continue', frame: output.reason };
+      // Claude continues the turn after Stop additionalContext, like a block.
+      if (output.hookSpecificOutput?.hookEventName === 'Stop') return { kind: 'continue', frame: output.hookSpecificOutput.additionalContext };
       if (output.hookSpecificOutput?.additionalContext) return { kind: 'context', frame: output.hookSpecificOutput.additionalContext };
       return { kind: 'none' };
     },

@@ -9,7 +9,8 @@ import { wakeDisableNotice } from '../wake/status';
 import { settleAttempts } from '../wake/shared/nonce';
 import { capturePane } from '../wake/terminal/capture';
 import { readListeningMode } from '../mode';
-import { isWakeEntry } from '../events/receive';
+import { isWakeEntry, wakesAgent } from '../events/receive';
+import type { ListeningMode } from '@khala/contracts/m1/listening-mode';
 import type { ProcessReader } from './proc';
 import { recordHookSession } from './session-sources';
 import type { HarnessAdapter } from './adapter';
@@ -82,7 +83,7 @@ function selectFrame(channelName: string | undefined, entries: readonly InboxEnt
   };
 }
 
-type FrameGroup = { channel: ChannelRef; entries: readonly InboxEntry[]; cursor: Cursor; you?: string | undefined };
+type FrameGroup = { channel: ChannelRef; entries: readonly InboxEntry[]; cursor: Cursor; you?: string | undefined; mode?: ListeningMode };
 /** Later channels wait rather than truncating to the remainder of another channel's budget. */
 export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_BYTES) {
   const ordered = [...groups].filter(group => group.entries.length).sort((a, b) =>
@@ -101,14 +102,17 @@ export function selectFrames(groups: readonly FrameGroup[], budget = MAX_FRAME_B
   return selected;
 }
 
-async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWake: boolean, io: HookIO): Promise<string | null> {
+async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWake: boolean, io: HookIO, quiet = false): Promise<string | null> {
+  // A quiet (Stop) delivery re-opens the turn only for what wakesAgent allows; other batches wait.
+  const wakes = (group: FrameGroup & { consumed: readonly InboxEntry[] }) =>
+    group.consumed.some(entry => quiet ? wakesAgent(entry, group.mode, group.you) : isWakeEntry(entry));
   const groups: FrameGroup[] = [];
   for (const channel of await listChannels(files)) {
     const mode = await readListeningMode(channel.files);
     if (mode === 'async' || (steerOnly && mode !== 'steer')) continue;
     const [status, pending] = await Promise.all([readJson<StatusFile>(channel.files.status), unread(channel.files)]);
     groups.push({ channel: { ...channel, ...(status?.channelName !== undefined ? { channelName: status.channelName } : {}) },
-      ...pending, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
+      ...pending, mode, you: typeof status?.displayName === 'string' ? status.displayName : undefined });
   }
   const selected = selectFrames(groups);
   const emitted = new Map<number, string>();
@@ -117,15 +121,15 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
   // Commit wake-bearing groups first so conflicts cannot consume event-only groups
   // when the hook ultimately has no reason to emit anything.
   const order = selected.map((group, index) => ({ group, index }));
-  if (requireWake) order.sort((a, b) => Number(b.group.consumed.some(isWakeEntry)) - Number(a.group.consumed.some(isWakeEntry)));
+  if (requireWake) order.sort((a, b) => Number(wakes(b.group)) - Number(wakes(a.group)));
   let hasWake = false;
   const failures: unknown[] = [];
   for (const { group, index } of order) {
-    if (requireWake && !hasWake && !group.consumed.some(isWakeEntry)) continue;
+    if (requireWake && !hasWake && !wakes(group)) continue;
     try {
       let current = group;
       for (let attempt = 0; attempt < 2; attempt++) {
-        if (!current.frame || (requireWake && !hasWake && !current.consumed.some(isWakeEntry))) break;
+        if (!current.frame || (requireWake && !hasWake && !wakes(current))) break;
         if (await advanceCursor(current.channel.files, current.cursor, current.consumed) === 'conflict') {
           if (attempt === 0) {
             const pending = await unread(current.channel.files);
@@ -137,7 +141,7 @@ async function channelFrames(files: SessionFiles, steerOnly: boolean, requireWak
         }
         spare += Buffer.byteLength(group.frame!) - Buffer.byteLength(current.frame);
         emitted.set(index, current.frame);
-        hasWake ||= current.consumed.some(isWakeEntry);
+        hasWake ||= wakes(current);
         break;
       }
     } catch (error) {
@@ -250,7 +254,7 @@ export async function deliverCore(stdin: string, adapter: HarnessAdapter, io: Ho
               if (input.replay) { io.stdout.write(wake); return 0; }
             }
             const frame = await channelFrames(files, steerOnly,
-              input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io);
+              input.event !== 'prompt' || !codec.promptDeliversWithoutWake, io, input.event === 'stop');
             if (frame) {
               if (!wake) await writeActivity(files, 'busy', io.now);
               const notice = await wakeDisableNotice(files.dir);

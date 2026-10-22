@@ -2,9 +2,9 @@ import path from 'node:path';
 import { readActivity } from '../activity';
 import { listChannels } from '../channels';
 import { readCursor, unread } from '../inbox';
-import { isWakeEntry } from '../events/receive';
 import { readListeningMode } from '../mode';
-import { readJson, writeJsonAtomic, stateRoot, type SessionFiles } from '../state';
+import { readJson, writeJsonAtomic, stateRoot, type SessionFiles, type StatusFile } from '../state';
+import { wakesAgent } from '../events/receive';
 import type { WakeDriver } from './driver';
 import { createWakeLadder } from './ladder';
 import type { HookIO } from '../harness/deliver-core';
@@ -73,9 +73,11 @@ export async function pollOpenCodeWake(files: SessionFiles, io: HookIO, replay =
       || (await readWakeState(files.dir))[opencodeWakeDriver.id]?.disabled) return;
     let eligible = false;
     for (const channel of await listChannels(files)) {
-      if (await readListeningMode(channel.files) === 'async') continue;
+      const mode = await readListeningMode(channel.files);
+      if (mode === 'async') continue;
       const session = await readJson<{ userId: string }>(channel.files.session);
-      if ((await unread(channel.files)).entries.some(entry => isWakeEntry(entry) && entry.sender !== session?.userId)) eligible = true;
+      const you = (await readJson<StatusFile>(channel.files.status))?.displayName;
+      if ((await unread(channel.files)).entries.some(entry => entry.sender !== session?.userId && wakesAgent(entry, mode, you))) eligible = true;
     }
     if (!eligible) return;
     await writeJsonAtomic(path.join(files.dir, file), { ...pending, delivered: true });
