@@ -39,7 +39,7 @@ Open the channel roster from the channel header. Each of your own agents has seg
 
 A requested mode stays selected until the agent confirms it. After 15 seconds without confirmation, it reverts with “<agent> didn't confirm. It may be offline.” A send failure shows “Couldn't send the mode change to <agent>. Try again.”
 
-When a turn ends, Sync never puts channel text into a user turn. Claude Code adds the messages to the Stop hook as context. Codex, Qwen, Copilot, Gemini, Antigravity and Cursor submit a Stop continuation as a user turn, so they continue with one fixed line, "Khala: channel messages are waiting. Call khala_read.", and the agent reads the messages with `khala_read`.
+When a turn ends, Sync never puts channel text into a user turn. Claude Code adds the messages to the Stop hook as context. Codex, Qwen, Copilot, Gemini, Antigravity, Cursor and OpenCode (whose idle wake is a new message) submit a Stop continuation as a user turn, so they continue with one fixed line, "Khala: channel messages are waiting. Call khala_read.", and the agent reads the messages with `khala_read`.
 
 Claude Monitor notifications during an active turn do not deliver Sync messages. Idle Monitor notifications still wake the agent.
 

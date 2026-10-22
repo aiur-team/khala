@@ -1,8 +1,8 @@
-import type { DeliverCodec } from '../adapter';
+import { STOP_NUDGE, type DeliverCodec } from '../adapter';
 
 const events = { 'session-start': 'start', prompt: 'prompt', 'post-tool': 'tool', 'turn-end': 'stop', idle: 'stop' } as const;
 
-/** The plugin injects the raw frame returned by the CLI. */
+/** The plugin injects prompt and tool frames; an idle wake is a new user message, so it carries only the nudge. */
 export const opencodeCodec: DeliverCodec = {
   promptAcceptsContext: true,
   promptDeliversWithoutWake: true,
@@ -18,5 +18,5 @@ export const opencodeCodec: DeliverCodec = {
     } catch { return null; }
   },
   noop: () => '',
-  render: (_kind, frame) => frame,
+  render: (kind, frame) => kind === 'stop' ? STOP_NUDGE : frame,
 };
